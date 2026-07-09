@@ -72,8 +72,12 @@ class EnergonProvider(DatasetProvider):
         # Return the train split un-wrapped (not iter(...)) so the downstream RerunDataIterator's
         # ``iterable`` stays the EnergonDataloader and retains ``save_state``/``restore_state`` for
         # checkpoint save and resume. Wrapping it in iter() would strip that interface.
+        # EnergonMultiModalDataModule.test_dataloader() returns None (no distinct test split);
+        # honor that instead of aliasing the validation loader as a fake test set, which would
+        # otherwise report validation metrics as test metrics whenever eval_iters > 0.
+        test_dataloader = dataset.test_dataloader()
         return (
             dataset.train_dataloader(),
             iter(dataset.val_dataloader()),
-            iter(dataset.val_dataloader()),
+            iter(test_dataloader) if test_dataloader is not None else None,
         )

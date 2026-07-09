@@ -31,6 +31,8 @@ def _mock_datamodule(mock_datamodule_cls):
     mock_datamodule_cls.return_value = inst
     inst.train_dataloader.return_value = iter([])
     inst.val_dataloader.side_effect = lambda: iter([])
+    # Matches EnergonMultiModalDataModule: no distinct test split.
+    inst.test_dataloader.return_value = None
     return inst
 
 
@@ -65,6 +67,8 @@ class TestEnergonProvider:
         # So `val_dataloader()` is called twice.
         # We should make sure it returns a new iterable/iterator each time.
         mock_dataset_instance.val_dataloader.side_effect = lambda: iter([3, 4])
+        # No distinct test split: the datamodule returns None from test_dataloader().
+        mock_dataset_instance.test_dataloader.return_value = None
 
         mock_dataset_instance.seq_length = 2048
 
@@ -104,12 +108,14 @@ class TestEnergonProvider:
 
         # Check dataloader calls
         mock_dataset_instance.train_dataloader.assert_called_once()
-        assert mock_dataset_instance.val_dataloader.call_count == 2
+        mock_dataset_instance.val_dataloader.assert_called_once()
+        mock_dataset_instance.test_dataloader.assert_called_once()
 
         # Verify returned iterators
         assert list(train_iter) == [1, 2]
         assert list(val_iter) == [3, 4]
-        assert list(test_iter) == [3, 4]
+        # No test split -> None, so do_test stays False downstream (val is not reused as test).
+        assert test_iter is None
 
     # build_datasets() re-applies provider fields onto the eagerly-built task encoder so a
     # dataset.seq_length=... override reaches it before data loading.

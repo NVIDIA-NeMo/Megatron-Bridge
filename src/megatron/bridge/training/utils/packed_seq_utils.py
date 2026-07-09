@@ -21,6 +21,58 @@ from megatron.core.packed_seq_params import PackedSeqParams
 PackedMetadataValue = torch.Tensor | int | None
 
 
+def get_packed_seq_q_cu_seqlens(
+    packed_seq_params: PackedSeqParams,
+) -> tuple[torch.Tensor | None, torch.Tensor | None]:
+    """Return unpadded and physical query cumulative offsets.
+
+    Args:
+        packed_seq_params: MCore THD sequence metadata.
+
+    Returns:
+        Unpadded query offsets and physical offsets. Physical offsets use the
+        padded metadata when available and otherwise fall back to unpadded offsets.
+    """
+    cu_seqlens = packed_seq_params.cu_seqlens_q
+    cu_seqlens_padded = getattr(packed_seq_params, "cu_seqlens_q_padded", None)
+    if cu_seqlens_padded is None:
+        cu_seqlens_padded = cu_seqlens
+    return cu_seqlens, cu_seqlens_padded
+
+
+def get_packed_seq_cp_partition_indices(
+    packed_seq_params: PackedSeqParams,
+    *,
+    total_tokens: int,
+    cp_size: int,
+    cp_rank: int,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return the Transformer Engine partition indices for packed CP.
+
+    Args:
+        packed_seq_params: MCore THD metadata for the full packed stream.
+        total_tokens: Total padded token count before CP partitioning.
+        cp_size: Context-parallel world size.
+        cp_rank: Context-parallel rank.
+        device: Device on which the returned indices will be consumed.
+
+    Returns:
+        Long tensor containing this CP rank's indices into the full stream.
+
+    Raises:
+        ValueError: If packed query sequence boundaries are unavailable.
+    """
+    _, cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if cu_seqlens is None:
+        raise ValueError("Packed CP partitioning requires cu_seqlens_q metadata.")
+
+    import transformer_engine_torch as tex
+
+    index = tex.thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank)
+    return index.to(device=device, dtype=torch.long)
+
+
 def unpack_mcore_thd_tensor_for_position_ids(
     tensor: torch.Tensor,
     packed_seq_params: PackedSeqParams,
@@ -44,12 +96,9 @@ def unpack_mcore_thd_tensor_for_position_ids(
     """
     if tensor.dim() != 2 or tensor.size(0) != 1:
         raise ValueError("MCore THD position preparation expects a tensor with shape [1, total_tokens].")
-    cu_seqlens = packed_seq_params.cu_seqlens_q
+    cu_seqlens, cu_seqlens_padded = get_packed_seq_q_cu_seqlens(packed_seq_params)
     if not isinstance(cu_seqlens, torch.Tensor) or cu_seqlens.dim() != 1 or cu_seqlens.numel() < 2:
         raise ValueError("MCore THD position preparation requires 1D cu_seqlens_q metadata.")
-    cu_seqlens_padded = packed_seq_params.cu_seqlens_q_padded
-    if cu_seqlens_padded is None:
-        cu_seqlens_padded = cu_seqlens
     if not isinstance(cu_seqlens_padded, torch.Tensor) or cu_seqlens_padded.shape != cu_seqlens.shape:
         raise ValueError("cu_seqlens_q_padded must match cu_seqlens_q when provided.")
 
