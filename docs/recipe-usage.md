@@ -304,11 +304,12 @@ Library and performance recipes can declare process environment defaults in the 
 ```python
 cfg.env_vars.update(
     {
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "TORCHINDUCTOR_WORKER_START": "fork",
         "QUANTIZATION_TYPE_DEBUG": 1,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     }
@@ -317,11 +318,11 @@ cfg.env_vars.update(
 
 Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for library recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
 
-When launching through `scripts/performance/setup_experiment.py`, recipe defaults are copied into the Slurm or Kubeflow executor before distributed workers start. Explicit `--env` and `--custom_env_vars` values take precedence.
+When launching through `scripts/performance/setup_experiment.py`, a rank-local pre-exec wrapper resolves library or flat performance recipe defaults inside the worker container, then replaces itself with the selected training entry point. This keeps recipe imports off dependency-light launcher nodes. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
 
 Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={TORCHINDUCTOR_WORKER_START:fork,QUANTIZATION_TYPE_DEBUG:1}'`. Do not store credentials or other secrets in recipe configs.
 
-For library recipes, `setup_experiment.py` keeps `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN` aligned with its expert-parallel CLI override. When invoking a rank-local entry point directly, override topology-dependent environment values together with fields such as `model.expert_model_parallel_size`.
+For HybridEP recipes, the wrapper keeps `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN`, `NVLINK_DOMAIN_SIZE`, and `USE_MNNVL` aligned with the target GPU and effective expert-parallel size. Explicit Hydra environment overrides retain precedence. When invoking a rank-local training entry point directly, override topology-dependent environment values together with fields such as `model.expert_model_parallel_size`.
 
 ## Resources
 

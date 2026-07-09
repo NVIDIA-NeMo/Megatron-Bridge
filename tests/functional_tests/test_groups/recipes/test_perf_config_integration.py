@@ -157,6 +157,8 @@ class TestPerfConfigIntegration:
         assert cfg.num_gpus == 1024
         assert cfg.global_batch_size == recipe.train.global_batch_size
         assert cfg.tensor_model_parallel_size == recipe.model.tensor_model_parallel_size
+        assert cfg.env_vars == recipe.env_vars
+        assert cfg.env_vars is not recipe.env_vars
 
     def test_generated_workload_metadata_is_not_required(self):
         """Test that removed perf configs do not leave a generated metadata mirror."""

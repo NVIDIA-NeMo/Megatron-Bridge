@@ -22,9 +22,10 @@ import pkgutil
 import re
 import select
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, MutableMapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
@@ -132,6 +133,38 @@ class WorkloadBaseConfig:
     def gbs_scaling_factor(self) -> float:
         """Get the global batch size scaling factor."""
         return self.global_batch_size / self.num_gpus
+
+
+def get_hybridep_environment_defaults(gpu: str, expert_model_parallel_size: int) -> dict[str, str]:
+    """Return topology-consistent HybridEP environment defaults.
+
+    Explicit launcher or shell values are applied separately and retain higher
+    precedence than these defaults.
+    """
+    if (
+        not isinstance(expert_model_parallel_size, int)
+        or isinstance(expert_model_parallel_size, bool)
+        or expert_model_parallel_size <= 0
+    ):
+        raise ValueError("HybridEP expert parallel size must be a positive integer.")
+
+    normalized_gpu = gpu.lower()
+    if normalized_gpu in {"h100", "b200", "b300"}:
+        return {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": str(min(expert_model_parallel_size, 8)),
+            "NVLINK_DOMAIN_SIZE": "8",
+            "USE_MNNVL": "0",
+        }
+
+    if normalized_gpu not in {"gb200", "gb300", "vr200", "r100"}:
+        raise ValueError(f"Unsupported GPU type for HybridEP topology: {gpu!r}.")
+    if expert_model_parallel_size > 72:
+        raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
+    return {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": str(expert_model_parallel_size),
+        "NVLINK_DOMAIN_SIZE": "72",
+        "USE_MNNVL": "1",
+    }
 
 
 def _normalize_precision_name(precision: str) -> str:
@@ -355,6 +388,7 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
         expert_tensor_parallel_size=getattr(model, "expert_tensor_parallel_size", None),
         global_batch_size=train.global_batch_size,
         micro_batch_size=train.micro_batch_size,
+        env_vars=dict(getattr(config, "env_vars", {})),
         use_megatron_fsdp=getattr(ddp, "use_megatron_fsdp", None),
         nccl_ub=getattr(ddp, "nccl_ub", None),
         cuda_graph_impl=getattr(model, "cuda_graph_impl", None),
@@ -581,54 +615,38 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
 def add_library_recipe_environment_variables(
     *,
-    custom_env_vars: dict[str, str],
-    model_family_name: str,
-    model_recipe_name: str,
-    train_task: str,
+    custom_env_vars: MutableMapping[str, str],
+    config: Any,
     gpu: str,
-    experiment_name: str,
     expert_model_parallel_size: int | None = None,
+    protected_env_names: set[str] | None = None,
 ) -> None:
-    """Add library recipe environment defaults before launching distributed workers.
+    """Add library recipe environment defaults inside the worker container.
 
     Args:
         custom_env_vars: Existing user or cluster environment values to preserve.
-        model_family_name: Model family used to locate the recipe.
-        model_recipe_name: Model recipe selector name.
-        train_task: Training task such as pretrain or sft.
+        config: Resolved library recipe configuration.
         gpu: Target GPU architecture name.
-        experiment_name: Experiment name used when constructing a library recipe.
         expert_model_parallel_size: Optional launcher override for expert parallelism.
+        protected_env_names: Recipe environment names explicitly overridden by the user.
 
     Raises:
         TypeError: If a recipe environment value is not a supported scalar.
         ValueError: If an environment name is invalid or HybridEP exceeds the NVLink domain.
     """
-    config = get_library_recipe(
-        model_family_name=model_family_name,
-        model_recipe_name=model_recipe_name,
-        train_task=train_task,
-        wandb_experiment_name=experiment_name,
-    )
     model_config = config.model
     env_vars = dict(config.env_vars)
 
-    topology_env_name = "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"
-    if (
-        expert_model_parallel_size is not None
-        and topology_env_name in env_vars
-        and getattr(model_config, "moe_flex_dispatcher_backend", None) == "hybridep"
-    ):
-        if gpu.lower() in {"h100", "b200", "b300"}:
-            env_vars[topology_env_name] = min(expert_model_parallel_size, 8)
-            if "USE_MNNVL" in env_vars:
-                env_vars["USE_MNNVL"] = 0
-        else:
-            if expert_model_parallel_size > 72:
-                raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
-            env_vars[topology_env_name] = expert_model_parallel_size
-            if "USE_MNNVL" in env_vars:
-                env_vars["USE_MNNVL"] = 1
+    if getattr(model_config, "moe_flex_dispatcher_backend", None) == "hybridep":
+        effective_ep_size = (
+            expert_model_parallel_size
+            if expert_model_parallel_size is not None
+            else getattr(model_config, "expert_model_parallel_size", 1)
+        )
+        protected_env_names = protected_env_names or set()
+        for name, value in get_hybridep_environment_defaults(gpu, effective_ep_size).items():
+            if name not in protected_env_names:
+                env_vars[name] = value
 
     for name, value in env_vars.items():
         if not isinstance(name, str) or not name:
