@@ -45,21 +45,25 @@
 
 # Training script to run
 TRAINING_SCRIPT="run_recipe.py"
-# Options:
-# TRAINING_SCRIPT="run_recipe.py"
-# TRAINING_SCRIPT="pretrain_vlm.py"  # For VLM models
-# TRAINING_SCRIPT="finetune_vlm.py"  # For VLM finetuning
 
-# Recipe name (must match a recipe function from megatron.bridge.recipes)
+# Full recipe function name. Use SOURCE="auto" for library recipes, or
+# SOURCE="perf_recipes" when RECIPE is a flat performance recipe.
 RECIPE="llama32_1b_pretrain_config"
+SOURCE="auto"
 # Examples:
-# RECIPE="gemma3_1b_pretrain_config"
-# RECIPE="qwen3_8b_sft_config"
-# RECIPE="llama3_8b_pretrain_config"
-# RECIPE="qwen25_vl_pretrain_config"  # For VLM models
+# RECIPE="llama32_1b_sft_config"; SOURCE="auto"
+# RECIPE="llama3_8b_pretrain_8gpu_h100_bf16_config"; SOURCE="perf_recipes"
 
-# Forward step type (gpt or vlm)
-STEP_TYPE="gpt"
+# Optional selector mode. Leave RECIPE empty to use these fields instead.
+MODEL_RECIPE_NAME="llama3_8b"
+TASK="pretrain"
+NUM_GPUS=8
+GPU="h100"
+COMPUTE_DTYPE="bf16"
+
+# Runtime defaults.
+DOMAIN="llm"
+DATA="mock"
 
 # Optional: CLI overrides (Hydra-style dot notation)
 CLI_OVERRIDES=""
@@ -100,7 +104,8 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "GPUs per node: $SLURM_GPUS_PER_NODE"
 echo "Script: $TRAINING_SCRIPT"
-echo "Recipe: $RECIPE"
+echo "Recipe: ${RECIPE:-selector:$MODEL_RECIPE_NAME}"
+echo "Source: $SOURCE"
 if [ -n "$HF_TOKEN" ]; then
     echo "HF_TOKEN: Set"
 fi
@@ -126,8 +131,18 @@ CMD="$CMD --node_rank=\$SLURM_PROCID"
 CMD="$CMD --master_addr=\$(scontrol show hostname \$SLURM_NODELIST | head -n1)"
 CMD="$CMD --master_port=29500"
 CMD="$CMD $SCRIPT_PATH"
-CMD="$CMD --recipe $RECIPE"
-CMD="$CMD --step $STEP_TYPE"
+if [ -n "$RECIPE" ]; then
+    CMD="$CMD --recipe $RECIPE --source $SOURCE"
+else
+    CMD="$CMD --source $SOURCE"
+    CMD="$CMD --model $MODEL_RECIPE_NAME"
+    CMD="$CMD --task $TASK"
+    CMD="$CMD --gpus $NUM_GPUS"
+    CMD="$CMD --gpu $GPU"
+    CMD="$CMD --dtype $COMPUTE_DTYPE"
+fi
+CMD="$CMD --domain $DOMAIN"
+CMD="$CMD --data $DATA"
 
 # Add CLI overrides if specified
 if [ -n "$CLI_OVERRIDES" ]; then
@@ -158,4 +173,3 @@ $SRUN_CMD bash -c "$CMD"
 echo "======================================"
 echo "Job completed"
 echo "======================================"
-

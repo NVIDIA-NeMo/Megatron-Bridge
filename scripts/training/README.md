@@ -4,34 +4,86 @@ Generic launcher and training scripts that work with any GPT-based model family 
 
 ## Overview
 
-These scripts provide a generic interface for training GPT-based models in Megatron Bridge:
+These scripts provide a generic interface for training models in Megatron Bridge:
 
-- `run_recipe.py` - Generic pretraining/finetuning for GPT- and Mamba-based models.
+- `run_recipe.py` - Generic pretraining/finetuning for recipes from `megatron.bridge.recipes` and flat performance recipes from `megatron.bridge.perf_recipes`.
 - `launch_with_nemo_run.py` - NeMo-Run launcher (local or Slurm)
 - `launch_with_sbatch.sh` - Direct sbatch launcher
 
-All scripts dynamically import recipes from `megatron.bridge.recipes`, apply user-provided overrides to the configuration, then begin training.
+All scripts dynamically import a recipe, apply user-provided overrides to the configuration, then begin training.
 
-## Quick Start
+## Getting Started
 
 For the end-to-end overview of how recipes are structured, overridden, and launched, see the official [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
 
-### Pretrain (single-GPU)
+### 1. Dry-run a library recipe
 
 ```bash
-uv run python run_recipe.py --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
+uv run python scripts/training/run_recipe.py \
+    --recipe llama32_1b_pretrain_config \
+    --dry-run \
+    --save-config /tmp/llama32_1b.yaml \
+    --max-steps 10 \
+    --data mock
 ```
 
-### Pretrain (multi-GPU)
+`--recipe` first checks `megatron.bridge.recipes`, then falls back to
+`megatron.bridge.perf_recipes` when `--source auto` is used.
+
+### 2. Run the same library recipe with torch distributed
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
+uv run python -m torch.distributed.run --nproc_per_node=1 \
+    scripts/training/run_recipe.py \
+    --recipe llama32_1b_pretrain_config \
+    --data mock \
+    --max-steps 20 \
+    --global-batch-size 8 \
+    --micro-batch-size 1 \
+    optimizer.lr=0.0003
 ```
 
-### Finetune
+### 3. Select a flat performance recipe
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=8 run_recipe.py --recipe llama32_1b_sft_1gpu_h100_bf16_config
+uv run python scripts/training/run_recipe.py \
+    --source perf_recipes \
+    --model llama3_8b \
+    --task pretrain \
+    --gpus 8 \
+    --gpu h100 \
+    --dtype bf16 \
+    --dry-run \
+    --save-config /tmp/llama3_perf.yaml
+```
+
+The selector resolves to
+`llama3_8b_pretrain_8gpu_h100_bf16_config`. You can also pass the full flat
+recipe name directly:
+
+```bash
+uv run python scripts/training/run_recipe.py \
+    --recipe llama3_8b_pretrain_8gpu_h100_bf16_config \
+    --source perf_recipes \
+    --dry-run
+```
+
+### 4. Override datasets and config fields
+
+Use easy flags for common changes and `key=value` for any `ConfigContainer`
+field:
+
+```bash
+uv run python -m torch.distributed.run --nproc_per_node=1 \
+    scripts/training/run_recipe.py \
+    --recipe llama32_1b_pretrain_config \
+    --dataset llm-pretrain-mock \
+    --seq-length 512 \
+    --tokenizer-type NullTokenizer \
+    --vocab-size 32000 \
+    --set train.train_iters=20 \
+    model.hidden_size=256 \
+    model.num_layers=2
 ```
 
 ## Usage with Different Models
@@ -195,8 +247,8 @@ For git-based packaging:
 
 ```bash
 uv run python launch_with_nemo_run.py \
-    --script run_recipe.py \
     --recipe llama3_8b_pretrain_2gpu_h100_bf16_config \
+    --source perf_recipes \
     --nodes 2 \
     --partition gpu \
     --account my_account \
@@ -210,8 +262,7 @@ Use the fault-tolerant launcher for better resiliency:
 
 ```bash
 uv run python launch_with_nemo_run.py \
-    --script run_recipe.py \
-    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
+    --recipe llama32_1b_pretrain_config \
     --launcher ft \
     --nodes 2 \
     --partition gpu \
@@ -228,11 +279,9 @@ Edit the configuration section in `launch_with_sbatch.sh`:
 # Training script to run
 TRAINING_SCRIPT="run_recipe.py"
 
-# Recipe name
-RECIPE="llama32_1b_pretrain_1gpu_h100_bf16_config"
-
-# Step function (controls the step function: gpt_step, vlm_step, or llava_step)
-STEP_TYPE="gpt_step"
+# Full recipe function name
+RECIPE="llama32_1b_pretrain_config"
+SOURCE="auto"
 
 # Optional: CLI overrides
 CLI_OVERRIDES="train.train_iters=5000 optimizer.lr=0.0003"
@@ -267,8 +316,10 @@ The script automatically:
 
 ## Recipe Arguments
 
-Generic scripts call recipes with no arguments passed to the recipe function.
+`run_recipe.py` calls recipes with no constructor arguments by default. It only
+forwards optional constructor shortcuts (`--hf-path`, `--seq-length`,
+`--packed-sequence`, `--peft-scheme`) when the selected recipe function accepts
+them.
 
-All customization happens through CLI overrides after the config is built.
-
-If you need to pass arguments to the recipe constructor itself (e.g., custom parallelism at recipe build time), use model-specific examples or create a custom script.
+Most customization should happen after the config is built through easy flags
+or `ConfigContainer` overrides such as `model.tensor_model_parallel_size=2`.
