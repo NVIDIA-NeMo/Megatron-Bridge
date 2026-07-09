@@ -6,13 +6,13 @@ This guide will cover the next steps to make use of a training recipe, including
 ## Overview
 
 - **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
-- **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point. 
+- **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point.
 - **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md) (see the published docs as well: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/entry-points.html).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
 
 ## Choosing a recipe or a new config
 
-Start from an exported recipe when the model family and workflow already exist in `megatron.bridge.recipes`. Recipe functions such as `llama3_8b_pretrain_config`, `llama32_1b_sft_config`, and `qwen3_8b_peft_config` provide model, optimizer, scheduler, precision, dataset, logger, and checkpoint defaults in one `ConfigContainer`. Override those defaults for your dataset, checkpoint paths, run length, parallelism, or precision before creating a new recipe.
+Start from an exported recipe when the model family and workflow already exist in `megatron.bridge.recipes`. Hardware-specific H100 recipes such as `llama3_8b_pretrain_2gpu_h100_bf16_config`, `llama32_1b_sft_1gpu_h100_bf16_config`, and `qwen3_8b_peft_1gpu_h100_bf16_config` are the canonical recipe names and share the same `<model>_<task>_<num>gpu_<gpu>_<dtype>[_<variant>]_config` naming strategy as performance recipes. Other hardware-specific recipe namespaces will follow the same pattern as they are added. The older recipe names remain available as compatibility aliases. Override those defaults for your dataset, checkpoint paths, run length, parallelism, or precision before creating a new recipe.
 
 Create a new recipe or config when the base model architecture is not represented by an existing model provider, the checkpoint conversion needs a new bridge, the forward step or dataset provider is model-specific, or you need a reusable configuration that will be shared across jobs. If the Hugging Face model is already supported by `AutoBridge`, you usually only need to start from the closest recipe and override the model provider or `hf_path`.
 
@@ -21,7 +21,7 @@ Training mode follows the recipe and dataset type:
 | Workflow | Typical config | Entry point | Checkpoint expectation |
 |----------|----------------|-------------|------------------------|
 | LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
-| Full SFT | `FinetuningDatasetConfig`, `HFDatasetConfig`, or a dataset provider | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
+| Full SFT | `FinetuningDatasetConfig` or a dataset provider | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
 | VLM SFT or PEFT | VLM dataset provider such as Energon, HF, or preloaded JSON provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
@@ -125,7 +125,7 @@ final_overrides_as_dict = OmegaConf.to_container(merged_omega_conf, resolve=True
 apply_overrides(cfg, final_overrides_as_dict, excluded_fields)
 ```
 
-After the above snippet, `cfg` will be updated with all CLI-provided overrides. 
+After the above snippet, `cfg` will be updated with all CLI-provided overrides.
 A script containing the above code could be called like so:
 
 ```sh
@@ -204,8 +204,8 @@ if __name__ == "__main__":
     run.run(train_script, executor=executor)
 ```
 
-NeMo-Run supports launching on several different platforms, including [SLURM clusters](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/guides/execution.html#slurmexecutor).
-For more details, please see the NeMo-Run [documentation](https://docs.nvidia.com/nemo-framework/user-guide/latest/nemorun/guides/execution.html#) for a list of supported platforms, their corresponding executors, and configuration instructions.
+NeMo-Run supports launching on several different platforms, including [SLURM clusters](https://docs.nvidia.com/nemo/run/latest/guides/executors/slurm.html).
+For more details, please see the NeMo-Run [documentation](https://docs.nvidia.com/nemo/run/latest/guides/execution.html) for a list of supported platforms, their corresponding executors, and configuration instructions.
 
 You can also forward arguments from the NeMo-Run launch script to the target script:
 

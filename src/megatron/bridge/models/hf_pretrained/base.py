@@ -299,11 +299,13 @@ class PreTrainedBase(ABC):
         or a ".safetensors" checkpoint on disk, enabling lazy loading of tensors.
 
         Examples:
+            import re
+
             model.state()  # Get full state dict
             model.state["key"]  # Get single entry
             model.state[["key1", "key2"]]  # Get multiple entries
             model.state["*.weight"]  # Glob pattern
-            model.state.regex(r".*\\.bias$")  # Regex pattern
+            model.state[re.compile(r".*\\.bias$")]  # Regex pattern
         """
         if self._state_dict_accessor is None:
             source: Optional[Union[Dict[str, torch.Tensor], StateSource]] = None

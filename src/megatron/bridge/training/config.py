@@ -14,6 +14,7 @@
 
 import json
 import logging
+import math
 import os
 import warnings
 from abc import ABC, abstractmethod
@@ -47,8 +48,8 @@ from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -478,7 +479,8 @@ class FinetuningDatasetConfig(DataloaderConfig):
     seed: int = 1234
     memmap_workers: int = 1
     max_train_samples: Optional[int] = None
-    packed_sequence_specs: Optional[PackedSequenceSpecs] = None
+    enable_offline_packing: bool = False
+    offline_packing_specs: Optional[PackedSequenceSpecs] = None
     dataset_kwargs: Optional[dict[str, Any]] = None
     do_validation: bool = True
     do_test: bool = True
@@ -524,6 +526,11 @@ class SchedulerConfig(MTrainSchedulerConfig):
 class TrainingConfig(MTrainTrainingConfig):
     """Configuration settings related to the training loop and validation."""
 
+    num_epochs: float | None = None
+    """Number of passes over a finite training dataset. Supports fractional epochs."""
+
+    _train_iters_from_num_epochs: bool = field(default=False, init=False, repr=False)
+
     check_optimizer_step_success: bool = True
     """Checks optimizer.step() succeeded at each training step ."""
 
@@ -545,9 +552,21 @@ class TrainingConfig(MTrainTrainingConfig):
         """Validate training mode specification and calculate train_iters from train_samples if needed."""
         has_train_iters = self.train_iters is not None
         has_train_samples = self.train_samples is not None
+        has_num_epochs = self.num_epochs is not None
+        num_training_modes = sum(
+            (
+                has_train_iters and not self._train_iters_from_num_epochs,
+                has_train_samples,
+                has_num_epochs,
+            )
+        )
 
-        assert has_train_iters or has_train_samples, "Either train_iters or train_samples must be provided"
-        assert not (has_train_iters and has_train_samples), "Cannot specify both train_iters and train_samples"
+        assert num_training_modes > 0, "One of train_iters, train_samples, or num_epochs must be provided"
+        assert num_training_modes == 1, "Cannot specify more than one of train_iters, train_samples, or num_epochs"
+        if has_num_epochs:
+            assert self.num_epochs > 0, "num_epochs must be a positive number"
+            assert self.rampup_batch_size is None, "Batch size rampup not supported with epoch-based training"
+            assert self.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
         if has_train_samples:
             assert self.train_samples > 0, "train_samples must be positive"
             assert self.rampup_batch_size is None, "Batch size rampup not supported with sample-based training yet"
@@ -842,11 +861,16 @@ class TensorInspectConfig:
     feature_dirs: list[str] | None = None
     """Directories containing feature implementations (searched recursively)."""
 
+    allow_custom_feature_dirs: bool = False
+    """Allow user-provided feature implementation directories."""
+
     log_dir: str | None = None
     """Root directory to store inspection logs/statistics. Defaults to checkpoint save dir if unset."""
 
     init_training_step: int = 0
     """Initial training step for the inspector (used when resuming)."""
+
+    _feature_dirs_from_default: bool = field(default=False, init=False, repr=False)
 
     def finalize(self) -> None:
         """Populate sensible defaults when inspection is enabled.
@@ -864,6 +888,7 @@ class TensorInspectConfig:
                 te_features_dir = Path(te_features_mod.__file__).parent
                 if te_features_dir.exists():
                     self.feature_dirs = [str(te_features_dir)]
+                    self._feature_dirs_from_default = True
             except Exception:
                 pass
 
@@ -1027,10 +1052,10 @@ class ConfigContainer(Container):
     model: (
         GPTModelProvider
         | T5ModelProvider
-        | MambaModelProvider
+        | HybridModelProvider
         | MegatronMIMOProvider
         | GPTModelConfig
-        | MambaModelConfig
+        | HybridModelConfig
     )
     optimizer: OptimizerConfig
     optimizer_config_override_provider: OptimizerConfigOverrideProvider = field(
@@ -1053,6 +1078,7 @@ class ConfigContainer(Container):
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
+    _checkpoint_load_required: bool = field(default=False, init=False, repr=False)
 
     def get_data_parallel_size(self, world_size: int) -> int:
         """Calculate the data parallel size based on the model configuration."""
@@ -1183,11 +1209,43 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        if self.train.num_epochs is not None and not isinstance(self.dataset, FinetuningDatasetConfig):
+            raise ValueError(
+                "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+                "providers may build a requested number of samples instead of exposing their true dataset size."
+            )
+        if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
+            raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
+
+        enable_in_batch_packing = getattr(self.dataset, "enable_in_batch_packing", False)
+        enable_offline_packing = getattr(self.dataset, "enable_offline_packing", False)
+        offline_packing_specs = getattr(self.dataset, "offline_packing_specs", None)
+
+        if enable_offline_packing and enable_in_batch_packing:
+            raise ValueError("enable_offline_packing and enable_in_batch_packing are mutually exclusive.")
+        if enable_offline_packing and offline_packing_specs is None:
+            raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        if offline_packing_specs is not None and not enable_offline_packing:
+            raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
+
+        if hasattr(self.dataset, "pad_to_max_length"):
+            requires_fixed_seq_len = (
+                getattr(self.model, "pipeline_model_parallel_size", 1) > 1
+                or getattr(self.model, "expert_model_parallel_size", 1) > 1
+            )
+            self.dataset.pad_to_max_length = requires_fixed_seq_len
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
-        if getattr(self.dataset, "pack_sequences_in_batch", False):
-            self.model._pack_sequences_in_batch = True
+        if enable_in_batch_packing:
+            self.model._enable_in_batch_packing = True
+            if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
+                cp_size = getattr(self.model, "context_parallel_size", 1)
+                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+                has_sp = getattr(self.model, "sequence_parallel", False)
+                cp_multiple = 2 * cp_size if cp_size > 1 else 1
+                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
+                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1335,8 +1393,9 @@ class ConfigContainer(Container):
         # Cross-validation between training and scheduler configs
         self._validate_training_scheduler_compatibility()
 
-        # Calculate scheduler steps for both iteration-based and sample-based training
-        self._calculate_scheduler_steps()
+        # Epoch-based training is resolved after the finite dataset is built.
+        if self.train.train_iters is not None:
+            self._calculate_scheduler_steps()
 
         if self.model.context_parallel_size > 1:
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
@@ -1356,29 +1415,28 @@ class ConfigContainer(Container):
 
         self._validate_cp_comm_type()
 
-        if (
-            isinstance(self.dataset, FinetuningDatasetConfig)
-            and self.dataset.packed_sequence_specs is not None
-            and self.dataset.packed_sequence_specs.packed_sequence_size > 0
-            and self.train.micro_batch_size > 1
-        ):
-            packed_sequence_size = self.dataset.packed_sequence_specs.packed_sequence_size
-            raise ValueError(
-                "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
-                f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting for "
-                f"a packed dataset. Please update your config to the following: \n"
-                f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
-                f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
-                f"(currently {self.train.global_batch_size}) \n"
-                f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
-                f"(currently {packed_sequence_size}) \n"
-                f"For details please visit "
-                f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
-            )
+        if enable_offline_packing:
+            assert offline_packing_specs is not None
+            if offline_packing_specs.packed_sequence_size <= 0:
+                raise ValueError("offline_packing_specs.packed_sequence_size must be greater than 0.")
+            packed_sequence_size = offline_packing_specs.packed_sequence_size
+            if self.train.micro_batch_size > 1:
+                raise ValueError(
+                    "Micro batch size should be 1 when training with packed sequence, but your micro batch size "
+                    f"is {self.train.micro_batch_size}. \nThe following config is equivalent to your current setting "
+                    f"for a packed dataset. Please update your config to the following: \n"
+                    f"Set micro batch size to 1 (currently {self.train.micro_batch_size})\n"
+                    f"Set global batch size to {self.train.global_batch_size // self.train.micro_batch_size} "
+                    f"(currently {self.train.global_batch_size}) \n"
+                    f"Set packed sequence length to {packed_sequence_size * self.train.micro_batch_size} "
+                    f"(currently {packed_sequence_size}) \n"
+                    f"For details please visit "
+                    f"https://docs.nvidia.com/nemo-framework/user-guide/latest/sft_peft/packed_sequence.html"
+                )
 
-        if getattr(self.dataset, "pack_sequences_in_batch", False) and self.train.micro_batch_size == 1:
+        if enable_in_batch_packing and self.train.micro_batch_size == 1:
             raise ValueError(
-                "micro_batch_size should be greater than 1 when using pack_sequences_in_batch=True. "
+                "micro_batch_size should be greater than 1 when using enable_in_batch_packing=True. "
                 "In-batch packing concatenates multiple sequences within a microbatch, so at least 2 sequences "
                 "are required per micro-batch."
             )
@@ -1403,7 +1461,7 @@ class ConfigContainer(Container):
                 )
 
         # Validate DeepEP or HybridEP is supported for the current GPU architecture
-        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+        if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             validate_flex_dispatcher_backend(self.model.transformer)
         else:
             validate_flex_dispatcher_backend(self.model)
@@ -1478,6 +1536,22 @@ class ConfigContainer(Container):
                 "Can only specify one of lr_warmup_fraction or lr_warmup_iters"
             )
 
+    def _resolve_num_epochs(self, train_dataset_size: int) -> None:
+        """Calculate training iterations from the size of a finite training dataset."""
+        assert self.train.num_epochs is not None, "num_epochs must be set before resolving epoch-based training"
+        assert train_dataset_size > 0, "train dataset must contain at least one sample"
+        assert self.train.global_batch_size is not None, "global_batch_size must be set when using num_epochs"
+
+        train_iters_per_epoch = math.ceil(train_dataset_size / self.train.global_batch_size)
+        self.train.train_iters = math.ceil(self.train.num_epochs * train_iters_per_epoch)
+        self.train._train_iters_from_num_epochs = True
+        print_rank_0(
+            f"Setting training iterations to {self.train.train_iters} based on {self.train.num_epochs} epochs, "
+            f"{train_dataset_size} train samples, {train_iters_per_epoch} iterations per epoch, "
+            f"and global batch size {self.train.global_batch_size}"
+        )
+        self._calculate_scheduler_steps()
+
     def _calculate_scheduler_steps(self) -> None:
         """Calculate scheduler steps for both iteration-based and sample-based training."""
         is_sample_based = self.train.train_samples is not None
@@ -1542,7 +1616,7 @@ class ConfigContainer(Container):
         For configs that don't inherit from Mcore, key values are logged via
         `_get_key_config_values`, which excludes None values and callables.
         """
-        if isinstance(self.model, (GPTModelConfig, MambaModelConfig)):
+        if isinstance(self.model, (GPTModelConfig, HybridModelConfig)):
             transformer_cfg = self.model.transformer
         else:
             transformer_cfg = self.model
@@ -1751,6 +1825,9 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
+    if cfg.train.num_epochs is not None:
+        raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
+
     # MegatronMIMO: data_parallel_size is always 1 from the training loop's perspective.
     cfg.data_parallel_size = 1
 

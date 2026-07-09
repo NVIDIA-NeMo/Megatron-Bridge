@@ -24,7 +24,15 @@ import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import (
+    _select_sequence,
+    _split_if_full_sequence,
+)
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import (
+    _get_flat_packed_ranges,
+    get_packed_seq_attention_mask,
+    get_rope_index,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
@@ -51,6 +59,92 @@ Test utils functions for Qwen3VL model.
     Run with: uv run torchrun --nproc_per_node=2 -m pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
     Or for single GPU: uv run pytest tests/unit_tests/models/qwen_vl/modelling_qwen3_vl/test_utils.py
 """
+
+
+def test_select_sequence_handles_none_and_selects_dimension():
+    """Test packed CP indexing helper handles optional tensors and keeps output contiguous."""
+    index = torch.tensor([2, 0], dtype=torch.long)
+    value = torch.arange(6).view(1, 3, 2)
+
+    assert _select_sequence(None, index, seq_dim=1) is None
+
+    selected = _select_sequence(value, index, seq_dim=1)
+
+    assert torch.equal(selected, value.index_select(1, index))
+    assert selected.is_contiguous()
+
+
+def test_split_if_full_sequence_only_splits_full_length_inputs():
+    """Dense CP helpers should not double-slice tensors that are already local."""
+    full = torch.arange(16).view(1, 16)
+    split, was_split = _split_if_full_sequence(
+        full,
+        cp_size=2,
+        seq_dim=1,
+        cp_rank=0,
+        full_sequence_length=16,
+    )
+
+    assert was_split
+    assert torch.equal(split, torch.tensor([[0, 1, 2, 3, 12, 13, 14, 15]]))
+
+    already_local = torch.arange(8).view(1, 8)
+    unchanged, was_split = _split_if_full_sequence(
+        already_local,
+        cp_size=2,
+        seq_dim=1,
+        cp_rank=0,
+        full_sequence_length=16,
+    )
+
+    assert not was_split
+    assert unchanged is already_local
+
+
+def test_get_flat_packed_ranges_rejects_invalid_or_truncated_metadata():
+    """Test flat packed geometry requires complete, consistent metadata."""
+    input_ids = torch.zeros((1, 4), dtype=torch.long)
+    invalid_params = SimpleNamespace(
+        cu_seqlens_q=torch.tensor([0, 2], dtype=torch.int32),
+        cu_seqlens_q_padded=torch.tensor([0, 2, 4], dtype=torch.int32),
+    )
+    truncated_params = SimpleNamespace(
+        cu_seqlens_q=torch.tensor([0, 3, 5], dtype=torch.int32),
+        cu_seqlens_q_padded=torch.tensor([0, 5, 8], dtype=torch.int32),
+    )
+
+    assert _get_flat_packed_ranges(input_ids, invalid_params) is None
+    assert _get_flat_packed_ranges(input_ids, truncated_params) is None
+
+
+def test_get_rope_index_video_tokens_use_video_grid():
+    """Test MRoPE position construction covers video-only visual segments."""
+    vision_start_token_id = 151652
+    image_token_id = 151655
+    video_token_id = 151656
+    input_ids = torch.tensor(
+        [[10, vision_start_token_id, video_token_id, video_token_id, video_token_id, video_token_id, 11]]
+    )
+
+    position_ids, deltas = get_rope_index(
+        spatial_merge_size=2,
+        image_token_id=image_token_id,
+        video_token_id=video_token_id,
+        vision_start_token_id=vision_start_token_id,
+        input_ids=input_ids,
+        video_grid_thw=torch.tensor([[1, 4, 4]]),
+    )
+
+    expected_video_positions = torch.tensor(
+        [
+            [2, 2, 2, 2],
+            [2, 2, 3, 3],
+            [2, 3, 2, 3],
+        ]
+    )
+    assert position_ids.shape == (3, 1, input_ids.size(1))
+    assert torch.equal(position_ids[:, 0, 2:6], expected_video_positions)
+    assert deltas.shape == (1, 1)
 
 
 class TestQwen3VLUtils:
@@ -485,6 +579,78 @@ class TestQwen3VLUtils:
 
         assert torch.equal(position_ids, expected_positions)
         assert torch.equal(deltas, expected_deltas)
+
+    def test_get_packed_seq_attention_mask_flat_padded(self):
+        """Test packed metadata produces a dense mask for flat padded packed batches."""
+        input_ids = torch.zeros((1, 12), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+
+        expected = torch.tensor([[1, 1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 0]], dtype=torch.bool)
+        assert torch.equal(attention_mask, expected)
+
+    def test_get_packed_seq_attention_mask_uses_flat_ranges(self):
+        """Test flat packed mask geometry matches flat packed MRoPE ranges."""
+        input_ids = torch.zeros((1, 12), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+        ranges = _get_flat_packed_ranges(input_ids, packed_seq_params)
+        assert ranges is not None
+
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params)
+
+        expected = torch.zeros_like(input_ids, dtype=torch.bool)
+        for padded_start, valid_end, _ in ranges:
+            expected[0, padded_start:valid_end] = True
+        assert torch.equal(attention_mask, expected)
+
+    def test_get_packed_seq_attention_mask_flat_padded_truncated(self):
+        """Test flat packed mask rejects metadata that exceeds the input."""
+        input_ids = torch.zeros((1, 10), dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, 7, 10], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+
+        assert _get_flat_packed_ranges(input_ids, packed_seq_params) is None
+        with pytest.raises(ValueError, match="does not match its padded cu-seqlens"):
+            get_packed_seq_attention_mask(input_ids, packed_seq_params)
+
+    def test_get_rope_index_flat_packed_resets_positions_per_segment(self):
+        """Test packed-flat Qwen MRoPE resets position ids at each cu_seqlens boundary."""
+        vision_start_token_id = 151652
+        image_token_id = 151655
+        video_token_id = 151656
+        seq0 = torch.tensor(
+            [10, vision_start_token_id, image_token_id, image_token_id, image_token_id, image_token_id, 11]
+        )
+        seq1 = torch.tensor([20, 21, 22])
+        input_ids = torch.tensor([seq0.tolist() + [0] + seq1.tolist() + [0]], dtype=torch.long)
+        packed_seq_params = SimpleNamespace(
+            cu_seqlens_q=torch.tensor([0, seq0.numel(), seq0.numel() + seq1.numel()], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 8, 12], dtype=torch.int32),
+        )
+
+        position_ids, deltas = get_rope_index(
+            spatial_merge_size=2,
+            image_token_id=image_token_id,
+            video_token_id=video_token_id,
+            vision_start_token_id=vision_start_token_id,
+            input_ids=input_ids,
+            image_grid_thw=torch.tensor([[1, 4, 4]]),
+            packed_seq_params=packed_seq_params,
+        )
+
+        expected_seq1_positions = torch.arange(seq1.numel()).view(1, -1).expand(3, -1)
+        assert position_ids.shape == (3, 1, 12)
+        assert torch.equal(position_ids[:, 0, 8:11], expected_seq1_positions)
+        assert deltas.shape == (2, 1)
 
     def test_get_rope_index_packed_seq_params_fallback_dense_mask(self):
         """Test get_rope_index falls back to dense mask when cu_seqlens is missing."""

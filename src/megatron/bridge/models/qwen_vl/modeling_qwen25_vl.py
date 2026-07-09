@@ -29,6 +29,10 @@ from transformers.models.qwen2_5_vl.modeling_qwen2_5_vl import (
 )
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.training.utils.packed_seq_utils import (
+    repack_mcore_thd_position_ids,
+    unpack_mcore_thd_tensor_for_position_ids,
+)
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -212,17 +216,24 @@ class Qwen25VLModel(MegatronModule):
         # Compute MRoPE position_ids on ALL pipeline stages
         # Each stage has input_ids and visual grid info from the data iterator
         # This avoids any broadcasting overhead
+        rope_input_ids = input_ids
         hf_attention_mask = None
+        packed_row_starts = None
+        packed_row_lengths = None
+        if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
+            rope_input_ids, hf_attention_mask, packed_row_starts, packed_row_lengths = (
+                unpack_mcore_thd_tensor_for_position_ids(input_ids, packed_seq_params)
+            )
 
         # Build mm_token_type_ids: 0=text, 1=image, 2=video
-        mm_token_type_ids = torch.zeros_like(input_ids, dtype=torch.int)
-        mm_token_type_ids[input_ids == self.config.image_token_id] = 1
-        mm_token_type_ids[input_ids == self.config.video_token_id] = 2
+        mm_token_type_ids = torch.zeros_like(rope_input_ids, dtype=torch.int)
+        mm_token_type_ids[rope_input_ids == self.config.image_token_id] = 1
+        mm_token_type_ids[rope_input_ids == self.config.video_token_id] = 2
 
         # In transformers 5.3.0+, get_rope_index requires mm_token_type_ids as the second argument
         if is_transformers_min_version("5.3.0"):
             position_ids, rope_deltas = self.get_rope_index(
-                input_ids,
+                rope_input_ids,
                 mm_token_type_ids,
                 image_grid_thw,
                 video_grid_thw,
@@ -231,11 +242,18 @@ class Qwen25VLModel(MegatronModule):
             )
         else:
             position_ids, rope_deltas = self.get_rope_index(
-                input_ids,
+                rope_input_ids,
                 image_grid_thw,
                 video_grid_thw,
                 second_per_grid_ts=second_per_grid_ts,
                 attention_mask=hf_attention_mask,
+            )
+        if packed_row_starts is not None and packed_row_lengths is not None:
+            position_ids = repack_mcore_thd_position_ids(
+                position_ids,
+                padded_starts=packed_row_starts,
+                lengths=packed_row_lengths,
+                total_length=input_ids.size(1),
             )
 
         outputs = self.language_model.forward(

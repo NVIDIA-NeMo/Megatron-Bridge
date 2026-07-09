@@ -165,7 +165,6 @@ Tasks:
   - `QKVMapping` for fused QKV if applicable.
   - `GatedMLPMapping` for gate/up if applicable.
 - Use `*` wildcards consistently between Megatron and HF patterns.
-- Add model organization to SAFE_REPOS list at `megatron.bridge.models.hf_pretrained.utils`
 
 References:
 - `src/megatron/bridge/models/conversion/model_bridge.py`
@@ -214,7 +213,7 @@ uv run python examples/conversion/convert_checkpoints.py import --hf-model <org>
 ```
 ## 7) Add tests
 
-Add or extend tests under `tests/functional_tests/models/<your_model>/` and `tests/unit_tests/models/`:
+Add or extend tests under `tests/functional_tests/test_groups/models/<your_model>/` and `tests/unit_tests/models/`:
 
 Tests are organized in model-specific subdirectories that mirror the source structure in `src/megatron/bridge/models/`.
 
@@ -227,18 +226,18 @@ Tests are organized in model-specific subdirectories that mirror the source stru
   - Forward parity on a handful of tokens comparing HF vs Megatron outputs
 
 Examples to reference:
-- `tests/functional_tests/models/qwen/test_qwen3_provider.py`
-- `tests/functional_tests/models/qwen/test_qwen3_conversion.py`
+- `tests/functional_tests/test_groups/models/exaone/test_exaone4_provider.py`
+- `tests/functional_tests/test_groups/models/qwen/test_qwen3_conversion.py`
 
 Run fast tests locally:
 ```sh
-uv run pytest -q tests/functional_tests/models/<your_model>/test_<your_model>_provider.py -k your_model | cat
-uv run pytest -q tests/functional_tests/models/<your_model>/test_<your_model>_conversion.py -k your_model | cat
+uv run python -m pytest -q tests/functional_tests/test_groups/models/<your_model>/test_<your_model>_provider.py -k your_model | cat
+uv run python -m pytest -q tests/functional_tests/test_groups/models/<your_model>/test_<your_model>_conversion.py -k your_model | cat
 ```
 
 Full suite (slower):
 ```sh
-uv run pytest -q tests | cat
+uv run python -m pytest -q tests | cat
 ```
 
 ### 7.1) Model not found in CI Cache
@@ -257,7 +256,7 @@ you are adding support for in your PR.
 ```text
 You are working in the Megatron Bridge repo. Add tests for a new model `<your_model>`.
 
-Create a subdirectory `tests/functional_tests/models/<your_model>/` with an `__init__.py` file and two test modules:
+Create a subdirectory `tests/functional_tests/test_groups/models/<your_model>/` with an `__init__.py` file and two test modules:
 1) `test_<your_model>_provider.py`
    - Build a tiny HF model/config (or use `<org>/<tiny-model-id>` if available).
    - Use the bridge to derive a provider and construct the model with TP=PP=1.
@@ -268,7 +267,8 @@ Create a subdirectory `tests/functional_tests/models/<your_model>/` with an `__i
    - Megatron → HF: export a subset of tensors; assert shape/dtype parity with HF.
    - Optionally run a short generation on CPU and compare logits numerically within tolerance.
 
-Use `tests/functional_tests/models/qwen/test_qwen3_provider.py` and `test_qwen3_conversion.py` as templates.
+Use `tests/functional_tests/test_groups/models/exaone/test_exaone4_provider.py` and
+`tests/functional_tests/test_groups/models/qwen/test_qwen3_conversion.py` as templates.
 
 Provide `-k your_model` selectors and guard long tests with `pytest.skip` if external weights are unavailable.
 ```
@@ -305,4 +305,3 @@ logging.getLogger("megatron.bridge").setLevel(logging.DEBUG)
 - Code examples: [examples/conversion/](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/conversion)
 - Providers and bridges: [src/megatron/bridge/models/](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/models)
 - GitHub source tree: [Megatron Bridge src/megatron/bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge)
-

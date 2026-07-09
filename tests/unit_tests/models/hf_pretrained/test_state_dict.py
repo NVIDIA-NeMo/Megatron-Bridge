@@ -180,11 +180,12 @@ class TestStateDictKeyRetrieval:
         assert len(keys) == 7
         assert keys == sorted(keys)
 
-    def test_items_method(self, mock_model):
-        """Test items method."""
+    def test_inherited_mapping_items(self, mock_model):
+        """Test items behavior inherited from Mapping."""
         state_dict_source = mock_model.state_dict()
         state_dict = StateDict(state_dict_source)
 
+        assert "items" not in StateDict.__dict__
         items = list(state_dict.items())
 
         assert isinstance(items, list)
@@ -395,33 +396,6 @@ class TestStateDictIndexing:
 
         with pytest.raises(TypeError, match="Key must be str, list of str, or compiled regex"):
             _ = state_dict[123]
-
-
-class TestStateDictConvenienceMethods:
-    """Test convenience methods for pattern matching."""
-
-    def test_regex_method(self, mock_model):
-        """Test regex convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
-
-        tensors = state_dict.regex(r".*\.weight$")
-
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.endswith(".weight") for key in tensors)
-
-    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
-    def test_glob_method(self, mock_model):
-        """Test glob convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
-
-        tensors = state_dict.glob("transformer.*.weight")
-
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.startswith("transformer") and key.endswith("weight") for key in tensors)
 
 
 class TestSafeTensorsStateSourceSave:

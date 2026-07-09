@@ -21,6 +21,7 @@ import torch.nn as nn
 from megatron.core.transformer.attention import SelfAttentionSubmodules
 from megatron.core.transformer.enums import AttnMaskType
 
+from megatron.bridge.diffusion.models.common import dit_attention as dit_attention_module
 from megatron.bridge.diffusion.models.common.dit_attention import (
     DiTCrossAttention,
     DiTCrossAttentionSubmodules,
@@ -267,6 +268,18 @@ class TestDiTSelfAttentionGetQKV:
         assert q is not None and k is not None and v is not None
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.parallel_state")
+    def test_accepts_mcore_head_wise_gate_keyword(self, mock_ps):
+        mock_ps.get_tensor_model_parallel_world_size.return_value = 1
+        attn = self._make_attn(hidden_size=64, num_heads=4, with_layernorm=False)
+        q, k, v = attn.get_query_key_value_tensors(torch.randn(8, 2, 64), head_wise_gate=False)
+        assert q is not None and k is not None and v is not None
+
+    def test_rejects_enabled_head_wise_gate(self):
+        attn = self._make_attn(hidden_size=64, num_heads=4, with_layernorm=False)
+        with pytest.raises(ValueError, match="head_wise_attn_gate"):
+            attn.get_query_key_value_tensors(torch.randn(8, 2, 64), head_wise_gate=True)
+
+    @patch("megatron.bridge.diffusion.models.common.dit_attention.parallel_state")
     def test_gqa_shapes(self, mock_ps):
         """Group Query Attention: fewer KV groups than query heads."""
         mock_ps.get_tensor_model_parallel_world_size.return_value = 1
@@ -381,7 +394,10 @@ class TestDiTCrossAttentionGetQKV:
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.parallel_state")
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.get_query_key_value_tensors")
-    def test_delegates_to_super(self, mock_super_qkv, mock_ps):
+    def test_delegates_to_super_without_head_wise_gate_when_parent_does_not_support_it(
+        self, mock_super_qkv, mock_ps, monkeypatch
+    ):
+        monkeypatch.setattr(dit_attention_module, "_CROSS_ATTENTION_SUPPORTS_HEAD_WISE_GATE", False)
         mock_ps.get_tensor_model_parallel_world_size.return_value = 1
         q = torch.randn(8, 2, 4, 16)
         k = torch.randn(8, 2, 4, 16)
@@ -392,12 +408,46 @@ class TestDiTCrossAttentionGetQKV:
         hidden = torch.randn(8, 2, 64)
         kv_states = torch.randn(8, 2, 64)
 
-        q_out, k_out, v_out = attn.get_query_key_value_tensors(hidden, kv_states)
+        q_out, k_out, v_out = attn.get_query_key_value_tensors(hidden, kv_states, head_wise_gate=False)
 
         mock_super_qkv.assert_called_once()
+        assert "head_wise_gate" not in mock_super_qkv.call_args.kwargs
         assert torch.equal(q_out, q)
         assert torch.equal(k_out, k)
         assert torch.equal(v_out, v)
+
+    @patch("megatron.bridge.diffusion.models.common.dit_attention.parallel_state")
+    @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.get_query_key_value_tensors")
+    def test_delegates_to_super_with_head_wise_gate_when_parent_supports_it(
+        self, mock_super_qkv, mock_ps, monkeypatch
+    ):
+        monkeypatch.setattr(dit_attention_module, "_CROSS_ATTENTION_SUPPORTS_HEAD_WISE_GATE", True)
+        mock_ps.get_tensor_model_parallel_world_size.return_value = 1
+        q = torch.randn(8, 2, 4, 16)
+        k = torch.randn(8, 2, 4, 16)
+        v = torch.randn(8, 2, 4, 16)
+        mock_super_qkv.return_value = (q, k, v)
+
+        attn = self._make_attn(with_layernorm=False)
+        hidden = torch.randn(8, 2, 64)
+        kv_states = torch.randn(8, 2, 64)
+
+        q_out, k_out, v_out = attn.get_query_key_value_tensors(hidden, kv_states, head_wise_gate=False)
+
+        mock_super_qkv.assert_called_once()
+        assert mock_super_qkv.call_args.kwargs["head_wise_gate"] is False
+        assert torch.equal(q_out, q)
+        assert torch.equal(k_out, k)
+        assert torch.equal(v_out, v)
+
+    @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.get_query_key_value_tensors")
+    def test_rejects_enabled_head_wise_gate(self, mock_super_qkv):
+        attn = self._make_attn(with_layernorm=False)
+
+        with pytest.raises(ValueError, match="head_wise_attn_gate"):
+            attn.get_query_key_value_tensors(torch.randn(8, 2, 64), torch.randn(8, 2, 64), head_wise_gate=True)
+
+        mock_super_qkv.assert_not_called()
 
     @patch("megatron.bridge.diffusion.models.common.dit_attention.parallel_state")
     @patch("megatron.bridge.diffusion.models.common.dit_attention.CrossAttention.get_query_key_value_tensors")

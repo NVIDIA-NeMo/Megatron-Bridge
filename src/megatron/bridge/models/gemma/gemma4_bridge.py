@@ -127,6 +127,17 @@ class Gemma4Bridge(MegatronModelBridge):
         self._is_dense = False
         return self._build_moe_provider(hf_config)
 
+    def _text_config(self) -> Any | None:
+        """Return the text config used to dispatch dense vs MoE behavior."""
+        return getattr(self, "hf_config", None)
+
+    def _is_dense_config(self) -> bool:
+        """Return whether the current HF config describes a dense Gemma 4 model."""
+        if getattr(self, "_is_dense", False):
+            return True
+        text_config = self._text_config()
+        return text_config is not None and not getattr(text_config, "enable_moe_block", False)
+
     def _build_dense_provider(self, hf_config) -> Gemma4DenseProvider:
         """Build a Gemma4DenseProvider from HF config."""
         rope_params = getattr(hf_config, "rope_parameters", {}) or {}
@@ -168,6 +179,7 @@ class Gemma4Bridge(MegatronModelBridge):
             num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
             per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
+            final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", None),
             bf16=True,
         )
 
@@ -215,6 +227,13 @@ class Gemma4Bridge(MegatronModelBridge):
         provider.make_vocab_size_divisible_by = 128
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict:
+        """Convert a Gemma 4 provider config back to Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+        return hf_config
 
     def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
         """Un-fuse fused weights and drop synthesized keys on export."""
@@ -269,13 +288,24 @@ class Gemma4Bridge(MegatronModelBridge):
 
             if k_name not in hf_state_dict and v_name not in hf_state_dict:
                 q_weight = hf_state_dict[q_name]
-                num_q_heads = getattr(self, "_dense_num_attention_heads", 8)
-                kv_head_dim = q_weight.shape[0] // num_q_heads
-                num_kv_heads = getattr(
-                    self,
-                    "_dense_num_global_query_groups",
-                    getattr(self, "_dense_num_query_groups", 2),
+                text_config = self._text_config()
+                num_q_heads = getattr(
+                    text_config, "num_attention_heads", getattr(self, "_dense_num_attention_heads", 8)
                 )
+                kv_head_dim = q_weight.shape[0] // num_q_heads
+                num_kv_heads = getattr(text_config, "num_key_value_heads", getattr(self, "_dense_num_query_groups", 2))
+                layer_match = re.search(r"layers\.(\d+)\.", q_name)
+                layer_types = getattr(text_config, "layer_types", None)
+                if layer_match and layer_types:
+                    layer_idx = int(layer_match.group(1))
+                    if layer_idx < len(layer_types) and layer_types[layer_idx] == "full_attention":
+                        num_kv_heads = getattr(
+                            text_config,
+                            "num_global_key_value_heads",
+                            getattr(self, "_dense_num_global_query_groups", num_kv_heads),
+                        )
+                elif hasattr(self, "_dense_num_global_query_groups"):
+                    num_kv_heads = self._dense_num_global_query_groups
                 kv_shape = (num_kv_heads * kv_head_dim, q_weight.shape[1])
                 k_zero = torch.zeros(kv_shape, dtype=q_weight.dtype, device=q_weight.device)
                 return {"q": q_weight, "k": k_zero, "v": torch.zeros_like(k_zero)}
@@ -340,7 +370,7 @@ class Gemma4Bridge(MegatronModelBridge):
         return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
-        if getattr(self, "_is_dense", False):
+        if self._is_dense_config():
             return self._dense_mapping_registry()
         return self._moe_mapping_registry()
 

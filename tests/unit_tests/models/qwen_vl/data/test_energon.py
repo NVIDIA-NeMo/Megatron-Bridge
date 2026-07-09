@@ -250,6 +250,27 @@ class TestQwenVLTaskEncoder(unittest.TestCase):
             ],
         )
 
+    def test_encode_sample_preserves_tools_and_tool_calls(self):
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
+        tool_calls = [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]
+        sample = ChatMLSample(
+            **sample_metadata_kwargs(key="tools", restore_key="restore_key", subflavors={}),
+            conversation=json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "Weather?"},
+                        {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                    ],
+                    "tools": tools,
+                }
+            ),
+        )
+
+        encoded = self.encoder.encode_sample(sample)
+
+        self.assertEqual(encoded.example["tools"], tools)
+        self.assertEqual(encoded.example["conversation"][1]["tool_calls"], tool_calls)
+
     def test_encode_sample_preserves_multiturn_assistant_content(self):
         """Assistant turns should remain available for shared collate masking."""
         sample = ChatMLSample(

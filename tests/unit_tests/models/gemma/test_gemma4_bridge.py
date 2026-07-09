@@ -237,6 +237,20 @@ class TestGemma4BridgeProviderBridgeDense:
     def test_does_not_return_moe_provider(self, bridge, mock_pretrained_dense):
         assert not isinstance(bridge.provider_bridge(mock_pretrained_dense), Gemma4ModelProvider)
 
+    def test_logit_softcapping(self, bridge, mock_pretrained_dense):
+        """Dense providers must preserve HF's final-logit softcap configuration."""
+        assert bridge.provider_bridge(mock_pretrained_dense).final_logit_softcapping == 30.0
+
+    def test_missing_logit_softcapping_disables_it(self, bridge, mock_pretrained_dense):
+        del mock_pretrained_dense.config.final_logit_softcapping
+        assert bridge.provider_bridge(mock_pretrained_dense).final_logit_softcapping is None
+
+
+@pytest.mark.parametrize("provider_cls", [Gemma4DenseProvider, Gemma4ModelProvider])
+def test_megatron_to_hf_config_preserves_final_logit_softcapping(provider_cls):
+    provider = provider_cls(final_logit_softcapping=17.0)
+    assert Gemma4Bridge.megatron_to_hf_config(provider)["final_logit_softcapping"] == 17.0
+
 
 # ===========================================================================
 # _infer_attn_pattern helper
@@ -307,6 +321,25 @@ class TestMaybeModifyLoadedHFWeight:
         # q_weight has 8 query heads and global K/V uses 2 heads in the fixture.
         assert result["k"].shape == (4, 8)
         assert result["v"].shape == (4, 8)
+
+    def test_kv_synthesis_uses_hf_config_without_provider_bridge(self, bridge, mock_hf_config_dense):
+        bridge.hf_config = mock_hf_config_dense
+        mock_hf_config_dense.num_attention_heads = 6
+        mock_hf_config_dense.num_key_value_heads = 5
+        mock_hf_config_dense.num_global_key_value_heads = 3
+        mock_hf_config_dense.layer_types = ["full_attention"]
+        q_weight = torch.randn(24, 8)
+        sd = {"model.layers.0.self_attn.q_proj.weight": q_weight}
+        hf_param = {
+            "q": "model.layers.0.self_attn.q_proj.weight",
+            "k": "model.layers.0.self_attn.k_proj.weight",
+            "v": "model.layers.0.self_attn.v_proj.weight",
+        }
+
+        result = bridge.maybe_modify_loaded_hf_weight(hf_param, sd)
+
+        assert result["k"].shape == (12, 8)
+        assert result["v"].shape == (12, 8)
 
     def test_kv_passthrough_when_v_present(self, bridge):
         sd = self._make_sd()
@@ -485,6 +518,30 @@ class TestGemma4BridgeMappingRegistry:
     def test_has_post_moe_layernorm(self, bridge):
         names = self._collect_names(bridge.mapping_registry())
         assert any("post_moe_layernorm" in n for n in names)
+
+    def test_selects_dense_registry_from_hf_config_without_provider_bridge(self, bridge, mock_hf_config_dense):
+        bridge.hf_config = mock_hf_config_dense
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "per_layer_embedding.weight" in names
+        assert "decoder.layers.*.mlp.router.weight" not in names
+
+    def test_selects_dense_registry_when_enable_moe_block_missing(self, bridge):
+        bridge.hf_config = Mock(spec=[])
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "per_layer_embedding.weight" in names
+        assert "decoder.layers.*.mlp.router.weight" not in names
+
+    def test_selects_moe_registry_from_hf_config_without_provider_bridge(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+
+        names = self._collect_names(bridge.mapping_registry())
+
+        assert "decoder.layers.*.mlp.router.weight" in names
+        assert "per_layer_embedding.weight" not in names
 
     def test_has_layer_scalar_mapping(self, bridge):
         names = self._collect_names(bridge.mapping_registry())

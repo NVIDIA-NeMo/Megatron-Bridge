@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -20,14 +21,13 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.hf_processors.squad import process_squad_example
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
+    FinetuningDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -113,6 +113,7 @@ class TestDoRAFinetune:
                 dora_tensorboard_dir,
                 seq_length,
                 pretrain_checkpoint_dir,
+                dataset_root=self._write_sft_dataset(shared_base_dir),
             )
 
             # Run DoRA finetuning
@@ -194,19 +195,28 @@ class TestDoRAFinetune:
             num_workers=1,
         )
 
-    def _create_squad_dataset_config(self, seq_length, seed=5678):
-        """Create a SQuAD dataset configuration."""
-        return HFDatasetConfig(
-            dataset_name="rajpurkar/squad",
-            process_example_fn=process_squad_example,
+    def _write_sft_dataset(self, base_dir):
+        """Create a tiny local SFT dataset shared by all distributed ranks."""
+        dataset_root = os.path.join(base_dir, "sft_data")
+        if torch.distributed.get_rank() == 0:
+            os.makedirs(dataset_root, exist_ok=True)
+            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(64)]
+            with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
+        torch.distributed.barrier()
+        return dataset_root
+
+    def _create_sft_dataset_config(self, dataset_root, seq_length, seed=5678):
+        """Create a local SFT dataset configuration."""
+        return FinetuningDatasetConfig(
+            dataset_root=dataset_root,
             seq_length=seq_length,
             seed=seed,
             dataloader_type="single",
             num_workers=1,
             do_validation=False,
             do_test=False,
-            val_proportion=None,
-            rewrite=False,
         )
 
     def _create_logger_config(self, tensorboard_dir):
@@ -275,9 +285,12 @@ class TestDoRAFinetune:
         pretrained_checkpoint,
         seed=5678,
         load_checkpoint=None,
+        dataset_root=None,
     ):
         """Create a complete DoRA finetuning configuration including model."""
         model = self._create_model_provider(seq_length)
+        if dataset_root is None:
+            raise ValueError("dataset_root is required for DoRA finetune functional tests.")
 
         return ConfigContainer(
             model=model,
@@ -286,7 +299,7 @@ class TestDoRAFinetune:
             optimizer=self._create_optimizer_config(lr=1e-4),  # Lower LR for finetuning
             scheduler=self._create_scheduler_config(train_iters),
             ddp=self._create_ddp_config(),
-            dataset=self._create_squad_dataset_config(seq_length, seed),
+            dataset=self._create_sft_dataset_config(dataset_root, seq_length, seed),
             logger=self._create_logger_config(tensorboard_dir),
             tokenizer=TokenizerConfig(
                 tokenizer_type="HuggingFaceTokenizer",

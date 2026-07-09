@@ -13,11 +13,15 @@
 # limitations under the License.
 
 import json
+from collections import defaultdict
+from collections.abc import Iterable, Iterator
+from pathlib import Path
 
 import pytest
 import torch
 from safetensors import safe_open
 
+from megatron.bridge.models.hf_pretrained import state as state_module
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, _resolve_output_shard_path
 
 
@@ -102,3 +106,51 @@ def test_save_generator_strict_false_writes_nested_partial_shard(tmp_path) -> No
 
     index_data = json.loads((output_path / "model.safetensors.index.json").read_text(encoding="utf-8"))
     assert index_data["weight_map"] == {"model.present": shard_filename}
+
+
+def test_save_generator_writes_shard_as_soon_as_its_remaining_keys_arrive(tmp_path, monkeypatch) -> None:
+    class _SubsetForbiddenSet(set[str]):
+        def issubset(self, _other: Iterable[object]) -> bool:
+            raise AssertionError("save_generator must not scan shard subsets for each yielded tensor")
+
+    def tracking_defaultdict(_default_factory: object) -> defaultdict[str, _SubsetForbiddenSet]:
+        return defaultdict(_SubsetForbiddenSet)
+
+    first_shard = "model-00001-of-00002.safetensors"
+    second_shard = "model-00002-of-00002.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.first.weight": first_shard,
+            "model.first.bias": first_shard,
+            "model.second.weight": second_shard,
+            "model.second.bias": second_shard,
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    saved_shards: list[tuple[str, set[str]]] = []
+
+    def record_save(tensors: dict[str, torch.Tensor], output_file: str | Path) -> None:
+        saved_shards.append((str(output_file), set(tensors)))
+
+    monkeypatch.setattr(state_module, "defaultdict", tracking_defaultdict)
+    monkeypatch.setattr("safetensors.torch.save_file", record_save)
+
+    def tensors() -> Iterator[tuple[str, torch.Tensor]]:
+        yield "model.first.weight", torch.ones(1)
+        assert saved_shards == []
+
+        yield "model.second.weight", torch.full((1,), 2.0)
+        assert saved_shards == []
+
+        yield "model.first.bias", torch.zeros(1)
+        assert saved_shards == [(str(tmp_path / "output" / first_shard), {"model.first.weight", "model.first.bias"})]
+
+        yield "model.second.bias", torch.full((1,), 3.0)
+
+    source.save_generator(tensors(), tmp_path / "output")
+
+    assert saved_shards == [
+        (str(tmp_path / "output" / first_shard), {"model.first.weight", "model.first.bias"}),
+        (str(tmp_path / "output" / second_shard), {"model.second.weight", "model.second.bias"}),
+    ]

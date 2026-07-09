@@ -57,6 +57,7 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 from megatron.bridge.training.state import GlobalState, TrainState
+from megatron.bridge.utils.instantiate_utils import InstantiationException
 
 
 class _DummyClass:
@@ -686,6 +687,97 @@ class TestSaveCheckpoint:
         # Check that the iteration (1000) was written
         written_content = "".join([str(call[0][0]) for call in write_calls if len(call[0]) > 0])
         assert "1000" in written_content, f"Expected '1000' in written content, got: {written_content}"
+
+    def test_async_retention_keeps_tracker_checkpoint_until_finalize(self, tmp_path, save_checkpoint_fixtures):
+        """The tracker-selected checkpoint must survive until its async replacement is durable."""
+        old_checkpoint = tmp_path / "iter_0000500"
+        old_checkpoint.mkdir()
+        torch.save({"step": torch.tensor(500)}, old_checkpoint / "train_state.pt")
+        latest_train_state = tmp_path / "latest_train_state.pt"
+        torch.save({"step": torch.tensor(500)}, latest_train_state)
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.cfg.checkpoint.save = str(tmp_path)
+        state.cfg.checkpoint.async_save = True
+        state.cfg.checkpoint.most_recent_k = 1
+        state.wandb_logger = Mock()
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        finalize_fns = []
+        call_order = []
+        async_request = Mock()
+
+        def add_finalize_fn(finalize_fn):
+            finalize_fns.append(finalize_fn)
+            if finalize_fn.__name__ == "cleanup_old_checkpoints_finalize_fn":
+                call_order.append("register_cleanup")
+
+        async_request.add_finalize_fn.side_effect = add_finalize_fn
+
+        def start_async_save(*args, **kwargs):
+            (tmp_path / "iter_0001000").mkdir(exist_ok=True)
+            return async_request
+
+        def run_cleanup_immediately(*, target, args):
+            thread = Mock()
+            thread.start.side_effect = lambda: target(*args)
+            return thread
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", side_effect=start_async_save),
+            patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch(
+                "megatron.bridge.training.checkpointing.schedule_async_save",
+                side_effect=lambda *args, **kwargs: call_order.append("schedule"),
+            ),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("megatron.bridge.training.checkpointing.threading.Thread", side_effect=run_cleanup_immediately),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context={},
+            )
+
+            assert call_order == ["register_cleanup", "schedule"]
+            assert old_checkpoint.is_dir()
+            assert torch.load(latest_train_state, weights_only=True)["step"].item() == 500
+
+            for finalize_fn in finalize_fns:
+                finalize_fn()
+
+        assert not old_checkpoint.exists()
+        assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
@@ -1552,6 +1644,24 @@ class TestCleanupNonPersistentCheckpoints:
         with patch("shutil.rmtree") as mock_rmtree:
             cleanup_old_non_persistent_checkpoint("/fake/dir", leave_ckpt_num=1)
             mock_rmtree.assert_not_called()
+
+    @patch("torch.distributed.is_initialized")
+    @patch("torch.distributed.get_rank")
+    @patch("shutil.rmtree")
+    def test_cleanup_old_non_persistent_checkpoint_leave_zero(self, mock_rmtree, mock_get_rank, mock_dist_init):
+        """leave_ckpt_num=0 should remove all checkpoints, not keep them (guards the [:-0] pitfall)."""
+        mock_dist_init.return_value = True
+        mock_get_rank.return_value = 0
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_dir = Path(temp_dir)
+            for name in ("iter_0001000", "iter_0002000", "iter_0003000"):
+                (save_dir / name).mkdir()
+
+            cleanup_old_non_persistent_checkpoint(str(save_dir), leave_ckpt_num=0, do_async=False)
+
+            # All three checkpoints must be scheduled for removal.
+            assert mock_rmtree.call_count == 3
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -2717,6 +2827,21 @@ class TestGetTrainStateFromStateDict:
 class TestCheckpointIterationResolution:
     """Test checkpoint iteration resolution logic."""
 
+    def test_inprocess_restart_refreshes_mutable_bridge_tracker(self, tmp_path):
+        """Restart teardown must invalidate a cached tracker overwritten by a later save."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        tracker = get_checkpoint_train_state_filename(str(tmp_path), prefix="latest")
+        first_state = TrainState(step=5)
+        torch.save(first_state.state_dict(), tracker)
+        assert _resolve_checkpoint_iteration(str(tmp_path), None) == (5, False)
+
+        latest_state = TrainState(step=10)
+        torch.save(latest_state.state_dict(), tracker)
+        GlobalState().reset_for_restart()
+
+        assert _resolve_checkpoint_iteration(str(tmp_path), None) == (10, False)
+
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     def test_loads_from_bridge_tracker(self, mock_read_train_state, mock_file_exists):
@@ -3561,7 +3686,7 @@ class TestCheckpointManager:
 
     def test_create_checkpoint_manager_missing_module_raises(self):
         """Test create_checkpoint_manager raises ImportError for non-existent module."""
-        config = CheckpointConfig(custom_manager_class="nonexistent.module.ClassName")
+        config = CheckpointConfig(custom_manager_class="megatron.bridge.nonexistent_module.ClassName")
 
         with pytest.raises(ImportError, match="Could not import module"):
             create_checkpoint_manager(config)
@@ -3569,10 +3694,20 @@ class TestCheckpointManager:
     def test_create_checkpoint_manager_missing_class_raises(self):
         """Test create_checkpoint_manager raises AttributeError for non-existent class."""
         # Use a real module but non-existent class
-        config = CheckpointConfig(custom_manager_class="os.path.NonExistentClass")
+        config = CheckpointConfig(custom_manager_class="megatron.bridge.training.checkpointing.NonExistentClass")
 
         with pytest.raises(AttributeError, match="does not have class"):
             create_checkpoint_manager(config)
+
+    def test_create_checkpoint_manager_rejects_unallowed_custom_class_before_import(self):
+        """Test custom manager class paths are allowlist-validated before import."""
+        config = CheckpointConfig(custom_manager_class="attacker_pkg.manager.PayloadManager")
+
+        with patch("importlib.import_module") as mock_import:
+            with pytest.raises(InstantiationException, match="not in the allowlist"):
+                create_checkpoint_manager(config)
+
+        mock_import.assert_not_called()
 
     def test_create_checkpoint_manager_custom_class(self):
         """Test create_checkpoint_manager loads and instantiates a custom class."""
@@ -3598,7 +3733,7 @@ class TestCheckpointManager:
             mock_module.CustomTestManager = CustomTestManager
             mock_import.return_value = mock_module
 
-            config = CheckpointConfig(custom_manager_class="test.module.CustomTestManager")
+            config = CheckpointConfig(custom_manager_class="megatron.bridge.test.CustomTestManager")
             manager = create_checkpoint_manager(config)
 
             assert isinstance(manager, CustomTestManager)

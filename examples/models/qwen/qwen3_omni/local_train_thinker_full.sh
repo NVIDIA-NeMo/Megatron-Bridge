@@ -262,10 +262,8 @@ CMD=(
     --master_addr="${MASTER_ADDR}"
     --master_port="${MASTER_PORT}"
     "${ROOT_DIR}/scripts/training/run_recipe.py"
-    --mode finetune
     --recipe "${RECIPE}"
     --step_func "${STEP_FUNC}"
-    --hf_path "${EFFECTIVE_HF_MODEL_PATH}"
     checkpoint.pretrained_checkpoint="${EFFECTIVE_HF_MODEL_PATH}"
     checkpoint.save="${RESULTS_DIR}/${RUN_NAME}"
     checkpoint.save_interval="${SAVE_INTERVAL}"
@@ -300,7 +298,7 @@ CMD=(
     dataset.test_data_path="${TEST_JSONL}"
     dataset.num_workers="${DATASET_NUM_WORKERS}"
     dataset.persistent_workers="${DATASET_PERSISTENT_WORKERS}"
-    dataset.pack_sequences_in_batch=False
+    dataset.enable_in_batch_packing=False
 )
 
 if [[ -n "${RECOMPUTE_GRANULARITY}" ]]; then

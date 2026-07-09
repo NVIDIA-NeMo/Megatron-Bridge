@@ -20,6 +20,8 @@ import types
 import typing
 from types import SimpleNamespace
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 if "megatron.energon" not in sys.modules:
     fake_energon = types.ModuleType("megatron.energon")
@@ -40,7 +42,7 @@ if "megatron.bridge.recipes.common" not in sys.modules:
             train=SimpleNamespace(train_iters=0, global_batch_size=0, micro_batch_size=0),
             optimizer=SimpleNamespace(lr=0.0),
             scheduler=SimpleNamespace(),
-            dataset=SimpleNamespace(seq_length=0, hf_processor_path=None, pack_sequences_in_batch=True),
+            dataset=SimpleNamespace(seq_length=0, hf_processor_path=None, enable_in_batch_packing=True),
             tokenizer=SimpleNamespace(),
             checkpoint=SimpleNamespace(),
             ddp=SimpleNamespace(
@@ -77,7 +79,7 @@ if "megatron.bridge.data.vlm_datasets.preloaded_provider" not in sys.modules:
         def __init__(self, **kwargs):
             for key, value in kwargs.items():
                 setattr(self, key, value)
-            self.pack_sequences_in_batch = False
+            self.enable_in_batch_packing = False
 
     fake_preloaded.PreloadedVLMConversationProvider = _FakePreloadedVLMConversationProvider
     sys.modules["megatron.bridge.data.vlm_datasets.preloaded_provider"] = fake_preloaded
@@ -134,7 +136,7 @@ class _FakeAutoBridge:
 
 
 def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
-    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_config()
 
@@ -157,14 +159,14 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     assert cfg.model.multimodal_attn_impl == "auto"
 
     assert cfg.dataset.seq_length == 4096
-    assert cfg.dataset.pack_sequences_in_batch is False
+    assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
     assert cfg.optimizer.lr == 5e-6
 
 
 def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
-    monkeypatch.setattr(_qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_preloaded_config()
 
@@ -174,4 +176,4 @@ def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
     assert cfg.dataset.train_data_path is None
     assert cfg.dataset.valid_data_path is None
     assert cfg.dataset.test_data_path is None
-    assert cfg.dataset.pack_sequences_in_batch is False
+    assert cfg.dataset.enable_in_batch_packing is False

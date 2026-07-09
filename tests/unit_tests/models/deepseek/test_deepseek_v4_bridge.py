@@ -312,6 +312,13 @@ class TestDeepSeekV4QuantizedExport:
         assert torch.equal(restored_mxfp4.float(), mxfp4_weight.float())
 
 
+def test_sequential_expert_mappings_present(bridge_with_mtp):
+    """Sequential (non-grouped) expert mappings exist for moe_grouped_gemm=False (ModelOpt pruning)."""
+    params = _by_megatron(bridge_with_mtp.mapping_registry())
+    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight" in params
+    assert "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight" in params
+
+
 class TestDecoderHCHeadMappings:
     """The global decoder HC-head triplet must be replicated mappings."""
 
@@ -418,13 +425,17 @@ class TestDeepSeekV4HardwareDefaults:
             patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
             patch.object(torch.cuda, "is_available", return_value=True),
             patch.object(torch.cuda, "get_device_capability", return_value=capability),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_fused_dsa_kernels",
+                return_value=True,
+            ),
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.apply_dsa_kernel_fusion is expected
         assert out.use_fused_mhc is expected
 
-    def test_provider_bridge_preserves_fused_defaults_without_cuda(self):
+    def test_provider_bridge_disables_blackwell_only_fusions_without_cuda(self):
         hf_pretrained = MagicMock()
         hf_pretrained.config = _deepseek_v4_hf_config()
         provider = MagicMock()
@@ -436,7 +447,27 @@ class TestDeepSeekV4HardwareDefaults:
         ):
             out = bridge.provider_bridge(hf_pretrained)
 
-        assert out.apply_dsa_kernel_fusion is True
+        assert out.apply_dsa_kernel_fusion is False
+        assert out.use_fused_mhc is False
+
+    def test_provider_bridge_disables_dsa_fusion_when_optional_kernels_are_missing(self):
+        hf_pretrained = MagicMock()
+        hf_pretrained.config = _deepseek_v4_hf_config()
+        provider = MagicMock()
+
+        bridge = DeepSeekV4Bridge.__new__(DeepSeekV4Bridge)
+        with (
+            patch.object(MegatronModelBridge, "provider_bridge", return_value=provider),
+            patch.object(torch.cuda, "is_available", return_value=True),
+            patch.object(torch.cuda, "get_device_capability", return_value=(10, 0)),
+            patch(
+                "megatron.bridge.models.deepseek.deepseek_v4_bridge.deepseek_v4_supports_fused_dsa_kernels",
+                return_value=False,
+            ),
+        ):
+            out = bridge.provider_bridge(hf_pretrained)
+
+        assert out.apply_dsa_kernel_fusion is False
         assert out.use_fused_mhc is True
 
 
