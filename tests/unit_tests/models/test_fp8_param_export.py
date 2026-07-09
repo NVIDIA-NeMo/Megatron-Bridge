@@ -14,7 +14,6 @@
 
 """Unit tests for FP8 export behavior."""
 
-import builtins
 import logging
 import sys
 import types
@@ -280,11 +279,11 @@ class TestFp8ParamExport:
         if tasks[1].param_weight.shape == rowwise.shape:
             assert tasks[1].param_weight.data_ptr() == rowwise.data_ptr()
 
-    def test_detect_fp8_params_blockwise(self, monkeypatch):
+    def test_detect_fp8_params_without_top_level_te_class(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
 
-        class TeTensor:
+        class BlockwiseMetadataTensor:
             pass
 
         monkeypatch.setitem(
@@ -292,10 +291,9 @@ class TestFp8ParamExport:
             "transformer_engine.pytorch",
             types.ModuleType("transformer_engine.pytorch"),
         )
-        sys.modules["transformer_engine.pytorch"].Float8BlockwiseQTensor = TeTensor
 
-        holder = TeTensor()
-        holder.get_metadata = lambda: {"rowwise_scale_inv": torch.ones(1)}
+        holder = BlockwiseMetadataTensor()
+        holder.get_metadata = lambda: {"rowwise_scale_inv": torch.ones(1), "is_2D_scaled": False}
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
@@ -318,17 +316,9 @@ class TestFp8ParamExport:
         )
         assert flags[gname] and flags["decoder.layers.1.other.weight"]
 
-    def test_detect_fp8_params_te_import_fails(self, monkeypatch):
+    def test_detect_fp8_params_ignores_tensor_without_blockwise_metadata(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
-        real_imp = builtins.__import__
-
-        def guard(name, glb=None, loc=None, fromlist=(), level=0):
-            if name == "transformer_engine.pytorch":
-                raise ImportError("no te")
-            return real_imp(name, glb, loc, fromlist, level)
-
-        monkeypatch.setattr(builtins, "__import__", guard)
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],

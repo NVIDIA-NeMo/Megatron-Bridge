@@ -1603,6 +1603,40 @@ class TestGroupedExpertLinearAdapter:
         with patch("megatron.bridge.peft.utils.torch.cuda.get_device_capability", return_value=(8, 0)):
             assert not adapter._can_use_grouped_mm(fake_x)
 
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for BF16 grouped expert weights")
+    def test_grouped_expert_linear_adapter_noncontiguous_input_uses_fallback(self):
+        """Unsupported input strides should use the correct per-expert linear fallback."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=8,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_device=torch.device("cuda"),
+            params_dtype=torch.bfloat16,
+        )
+        with torch.no_grad():
+            adapter.linear_in.weight.normal_()
+            adapter.linear_out.weight.normal_()
+        x = torch.randn(16, 5, device="cuda", dtype=torch.bfloat16).transpose(0, 1)
+        assert not x.is_contiguous()
+
+        with patch(
+            "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+            side_effect=AssertionError("non-contiguous input should use the fallback"),
+            create=True,
+        ):
+            output = adapter(x, [2, 3])
+
+        expected_chunks = []
+        for expert_idx, expert_input in enumerate(x.split([2, 3])):
+            hidden = nn.functional.linear(expert_input, adapter.linear_in.weight[expert_idx])
+            expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
+        torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
+
     def test_grouped_expert_linear_adapter_te_grouped_mlp_split_call_uses_public_grouped_mm(self):
         """TEGroupedMLP-style positional splits should work through the public backend."""
         adapter = GroupedExpertLinearAdapter(

@@ -1726,10 +1726,6 @@ class MegatronModelBridge(
         """
         local_fp8_flags: Dict[str, bool] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
-        try:
-            from transformer_engine.pytorch import Float8BlockwiseQTensor
-        except Exception:
-            Float8BlockwiseQTensor = None
         scale_inv_metadata_key = fp8_scale_inv_attr.removeprefix("_")
 
         for vp_stage, model in enumerate(megatron_model):
@@ -1750,15 +1746,18 @@ class MegatronModelBridge(
                 # We intentionally require the scale_inv metadata to be non-None:
                 # - Some initialization paths may leave scale tensors unset; we should not emit
                 #   a scale task in that case (would break deterministic export/consumer assumptions).
-                is_blockwise_fp8 = False
-                if Float8BlockwiseQTensor is not None:
+                metadata = {}
+                get_metadata = getattr(local_weights, "get_metadata", None)
+                if callable(get_metadata):
                     try:
-                        is_blockwise_fp8 = isinstance(local_weights, Float8BlockwiseQTensor)
-                    except Exception:
-                        is_blockwise_fp8 = False
+                        candidate_metadata = get_metadata()
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+                    else:
+                        if isinstance(candidate_metadata, dict):
+                            metadata = candidate_metadata
 
-                metadata = local_weights.get_metadata() if is_blockwise_fp8 else {}
-                if metadata.get(scale_inv_metadata_key) is not None:
+                if "is_2D_scaled" in metadata and metadata.get(scale_inv_metadata_key) is not None:
                     local_fp8_flags[global_name] = True
 
         # Gather across PP ranks to ensure consistent insertion decisions

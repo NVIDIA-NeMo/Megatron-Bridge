@@ -1883,6 +1883,12 @@ class GroupedExpertLinearAdapter(nn.Module):
             return False
         if self.linear_in.weight.dtype != torch.bfloat16 or self.linear_out.weight.dtype != torch.bfloat16:
             return False
+        if (
+            not x.is_contiguous()
+            or not self.linear_in.weight.is_contiguous()
+            or not self.linear_out.weight.is_contiguous()
+        ):
+            return False
         # grouped_mm forward and weight-gradient kernels require matrix strides
         # to be multiples of 16 bytes, so every local matrix dimension in both
         # projections must be divisible by eight for BF16 tensors.
