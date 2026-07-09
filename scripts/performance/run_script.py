@@ -25,9 +25,11 @@ from typing import cast
 import torch
 from argument_parser import parse_cli_args
 from utils.overrides import set_cli_overrides, set_user_overrides
+from utils.utils import explicit_environment_override_names
 
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment
 from megatron.bridge.training.config import ConfigContainer, apply_environment_variables, runtime_config_update
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -145,8 +147,19 @@ def main():
         config_variant=getattr(args, "config_variant", None),
     )
 
+    base_env_vars = dict(recipe.env_vars)
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    apply_perf_recipe_environment(
+        recipe,
+        model_family_name=args.model_family_name,
+        model_recipe_name=args.model_recipe_name,
+        gpu=args.gpu,
+        compute_dtype=args.compute_dtype,
+        train_task=args.task,
+        protected_env_names=protected_env_names,
+    )
     apply_environment_variables(recipe)
 
     if args.dump_env:
@@ -156,11 +169,6 @@ def main():
     # optimizer-step overlap is encoded directly in the flat perf recipes.
     if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
-
-    # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
-    if getattr(recipe.ddp, "nccl_ub", False):
-        os.environ["NCCL_NVLS_ENABLE"] = "1"
-        os.environ["NCCL_CTA_POLICY"] = "1"
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"

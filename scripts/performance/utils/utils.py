@@ -22,7 +22,7 @@ import pkgutil
 import re
 import select
 import sys
-from collections.abc import Callable, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -167,6 +167,34 @@ def get_hybridep_environment_defaults(gpu: str, expert_model_parallel_size: int)
     }
 
 
+def explicit_environment_override_names(
+    cli_overrides: list[str], base_env_vars: dict, effective_env_vars: dict
+) -> set[str]:
+    """Return recipe env names explicitly selected through Hydra overrides."""
+    names = set()
+    for override in cli_overrides:
+        key = override.split("=", 1)[0].lstrip("+~")
+        if key == "env_vars":
+            # Preserve keys that were explicitly supplied even when their
+            # values happen to equal the baked recipe defaults.
+            from hydra.core.override_parser.overrides_parser import OverridesParser
+
+            override_value = OverridesParser.create().parse_override(override).value()
+            if isinstance(override_value, Mapping):
+                names.update(override_value)
+            changed_names = {
+                name
+                for name in base_env_vars.keys() | effective_env_vars.keys()
+                if name not in base_env_vars
+                or name not in effective_env_vars
+                or base_env_vars[name] != effective_env_vars[name]
+            }
+            names.update(changed_names)
+        elif key.startswith("env_vars."):
+            names.add(key.removeprefix("env_vars.").split(".", 1)[0])
+    return names
+
+
 def _normalize_precision_name(precision: str) -> str:
     return _PRECISION_NAME_MAP.get(precision.lower(), precision.lower().replace("_", ""))
 
@@ -252,6 +280,41 @@ def find_perf_recipe(recipe_name: str) -> Callable | None:
     return None
 
 
+def _perf_recipe_family_name(recipe_fn: Callable[..., Any]) -> str:
+    """Return the family package containing a flat performance recipe."""
+    module_parts = recipe_fn.__module__.split(".")
+    try:
+        perf_recipes_index = module_parts.index("perf_recipes")
+        return module_parts[perf_recipes_index + 1]
+    except (ValueError, IndexError) as error:
+        raise ValueError(f"Unable to infer perf recipe family from {recipe_fn.__module__!r}.") from error
+
+
+def _apply_flat_perf_recipe_environment(
+    config: Any,
+    *,
+    recipe_fn: Callable[..., Any],
+    model_recipe_name: str,
+    task: str,
+    gpu: str,
+    precision: str,
+    protected_env_names: set[str] | None = None,
+) -> Any:
+    """Apply package-owned performance environment rules to a resolved recipe."""
+    from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment
+
+    apply_perf_recipe_environment(
+        config,
+        model_family_name=_perf_recipe_family_name(recipe_fn),
+        model_recipe_name=model_recipe_name,
+        gpu=gpu,
+        compute_dtype=precision,
+        train_task=task,
+        protected_env_names=protected_env_names,
+    )
+    return config
+
+
 @functools.lru_cache(maxsize=1)
 def flat_perf_recipe_names() -> tuple[str, ...]:
     """Return flat perf recipe names without importing recipe family modules."""
@@ -269,6 +332,8 @@ def get_perf_recipe_by_name(
     gpu: str,
     precision: str,
     config_variant: str | None = None,
+    *,
+    apply_environment: bool = True,
 ):
     """Load a flat perf recipe from ``megatron.bridge.perf_recipes``."""
     name = _recipe_function_name(
@@ -283,7 +348,17 @@ def get_perf_recipe_by_name(
     if recipe_fn is None:
         searched_modules = ", ".join(perf_recipe_family_modules()) or "none"
         raise ValueError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
-    return recipe_fn()
+    config = recipe_fn()
+    if apply_environment:
+        _apply_flat_perf_recipe_environment(
+            config,
+            recipe_fn=recipe_fn,
+            model_recipe_name=model_recipe_name,
+            task=task,
+            gpu=gpu,
+            precision=precision,
+        )
+    return config
 
 
 def _variant_pattern(
@@ -432,7 +507,15 @@ def get_workload_base_config(
     recipe_fn = find_perf_recipe(recipe_name)
     if recipe_fn is None:
         raise ValueError(f"No perf recipe {recipe_name!r} found.")
-    return _workload_base_config_from_recipe(recipe_fn(), num_gpus=int(gpu_match.group(1)))
+    config = _apply_flat_perf_recipe_environment(
+        recipe_fn(),
+        recipe_fn=recipe_fn,
+        model_recipe_name=model_recipe_name,
+        task=task,
+        gpu=gpu,
+        precision=compute_dtype,
+    )
+    return _workload_base_config_from_recipe(config, num_gpus=int(gpu_match.group(1)))
 
 
 def get_exp_name_config(

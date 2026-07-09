@@ -43,11 +43,6 @@ if HAS_NEMO_RUN:
 def test_set_determinism_env_vars_writes_three_keys():
     plugin = PerfEnvPlugin(
         deterministic=True,
-        model_family_name="llama",
-        model_recipe_name="llama3_70b",
-        gpu="h100",
-        compute_dtype="bf16",
-        train_task="pretrain",
     )
     executor = MagicMock()
     executor.env_vars = {}
@@ -59,16 +54,9 @@ def test_set_determinism_env_vars_writes_three_keys():
     assert executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
 
 
-def test_recipe_environment_defaults_preserve_explicit_values_and_track_ep_override():
-    """Explicit env wins while recipe topology follows the effective CLI EP size."""
-    plugin = PerfEnvPlugin(
-        model_family_name="deepseek",
-        model_recipe_name="deepseek_v3",
-        gpu="gb200",
-        compute_dtype="bf16",
-        train_task="pretrain",
-        ep_size=32,
-    )
+def test_finalized_recipe_environment_is_copied_without_rederivation():
+    """Executor values win while the plugin copies finalized recipe environment."""
+    plugin = PerfEnvPlugin()
     executor = MagicMock()
     executor.env_vars = {
         "NVTE_FWD_LAYERNORM_SM_MARGIN": "48",
@@ -79,7 +67,7 @@ def test_recipe_environment_defaults_preserve_explicit_values_and_track_ep_overr
             "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
             "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
             "TORCHINDUCTOR_WORKER_START": "fork",
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
             "NVLINK_DOMAIN_SIZE": 72,
             "USE_MNNVL": 1,
         },
@@ -97,16 +85,9 @@ def test_recipe_environment_defaults_preserve_explicit_values_and_track_ep_overr
     assert executor.env_vars["NVLINK_DOMAIN_SIZE"] == "72"
 
 
-def test_hydra_topology_environment_override_beats_derived_defaults():
-    """Explicit recipe env overrides should not be replaced by derived EP topology."""
-    plugin = PerfEnvPlugin(
-        model_family_name="deepseek",
-        model_recipe_name="deepseek_v3",
-        gpu="gb200",
-        compute_dtype="bf16",
-        train_task="pretrain",
-        ep_size=32,
-    )
+def test_explicit_recipe_environment_is_copied_unchanged():
+    """The plugin must not rederive an explicit recipe environment override."""
+    plugin = PerfEnvPlugin()
     executor = MagicMock()
     executor.env_vars = {}
     workload_config = WorkloadBaseConfig(

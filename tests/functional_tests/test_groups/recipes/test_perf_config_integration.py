@@ -160,6 +160,111 @@ class TestPerfConfigIntegration:
         assert cfg.env_vars == recipe.env_vars
         assert cfg.env_vars is not recipe.env_vars
 
+    @pytest.mark.parametrize(
+        ("family", "recipe_name", "num_gpus", "gpu", "precision", "expected_env"),
+        [
+            (
+                "deepseek",
+                "deepseek_v3",
+                256,
+                "gb200",
+                "bf16",
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "USE_MNNVL": 1,
+                    "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+                },
+            ),
+            (
+                "gpt_oss",
+                "gpt_oss_120b",
+                64,
+                "gb200",
+                "fp8_mx",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "kimi",
+                "kimi_k2",
+                256,
+                "gb300",
+                "fp8_mx",
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "NVTE_NORM_FWD_USE_CUDNN": 1,
+                },
+            ),
+            (
+                "llama",
+                "llama3_8b",
+                8,
+                "h100",
+                "fp8_cs",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "NCCL_CTA_POLICY": 1},
+            ),
+            (
+                "nemotronh",
+                "nemotron_3_super",
+                64,
+                "gb200",
+                "bf16",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "qwen",
+                "qwen3_30b_a3b",
+                8,
+                "gb200",
+                "fp8_mx",
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+                },
+            ),
+            (
+                "qwen_vl",
+                "qwen3_vl_30b_a3b",
+                8,
+                "gb200",
+                "bf16",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "wan",
+                "wan_14b",
+                32,
+                "h100",
+                "bf16",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
+            ),
+        ],
+    )
+    def test_nemo_ci_perf_families_embed_environment_settings(
+        self,
+        family,
+        recipe_name,
+        num_gpus,
+        gpu,
+        precision,
+        expected_env,
+    ):
+        """Every active nemo-ci perf family should carry its process settings in the recipe."""
+        from utils.utils import get_perf_recipe_by_name
+
+        recipe = get_perf_recipe_by_name(
+            model_recipe_name=recipe_name,
+            task="pretrain",
+            num_gpus=num_gpus,
+            gpu=gpu,
+            precision=precision,
+            config_variant=None,
+        )
+
+        assert recipe.env_vars.items() >= expected_env.items(), family
+
     def test_generated_workload_metadata_is_not_required(self):
         """Test that removed perf configs do not leave a generated metadata mirror."""
         assert not (SCRIPTS_PERF_PATH / "utils" / "workload_metadata.py").exists()

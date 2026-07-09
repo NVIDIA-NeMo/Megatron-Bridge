@@ -149,11 +149,43 @@ def test_workload_base_config_copies_recipe_environment():
     assert workload_config.env_vars is not recipe_env
 
 
+def test_flat_recipe_resolver_applies_package_environment(monkeypatch):
+    """Resolved flat recipes should carry package-owned env settings by default."""
+    recipe = SimpleNamespace(env_vars={})
+
+    def recipe_fn():
+        return recipe
+
+    recipe_fn.__module__ = "megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe"
+    calls = []
+
+    def apply_environment(config, **kwargs):
+        calls.append((config, kwargs))
+        config.env_vars["ENV_APPLIED"] = 1
+        return config
+
+    monkeypatch.setattr(utils, "find_perf_recipe", lambda name: recipe_fn)
+    monkeypatch.setattr(utils, "_apply_flat_perf_recipe_environment", apply_environment)
+
+    resolved = utils.get_perf_recipe_by_name(
+        model_recipe_name="qwen3_30b_a3b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="gb200",
+        precision="bf16",
+    )
+
+    assert resolved is recipe
+    assert resolved.env_vars["ENV_APPLIED"] == 1
+    assert calls[0][1]["model_recipe_name"] == "qwen3_30b_a3b"
+    assert calls[0][1]["gpu"] == "gb200"
+
+
 def test_explicit_environment_map_protects_values_equal_to_recipe_defaults():
     """Explicit same-valued topology settings must still beat derived topology."""
     base_env = {"NVLINK_DOMAIN_SIZE": 8, "USE_MNNVL": 0}
 
-    protected = run_script_with_env._explicit_environment_override_names(
+    protected = utils.explicit_environment_override_names(
         ["++env_vars={NVLINK_DOMAIN_SIZE:8,USE_MNNVL:0}"],
         base_env,
         base_env.copy(),
@@ -198,6 +230,10 @@ def test_perf_wrapper_applies_cli_overrides_before_deriving_environment(monkeypa
         calls.append(("workload", recipe, num_gpus))
         return workload_config
 
+    def finalize_environment(recipe, parsed_args, protected_env_names):
+        calls.append(("finalize", recipe, parsed_args, protected_env_names))
+        return recipe
+
     class FakePerfEnvPlugin:
         def __init__(self, **kwargs):
             pass
@@ -206,17 +242,19 @@ def test_perf_wrapper_applies_cli_overrides_before_deriving_environment(monkeypa
             calls.append(("environment", config, protected_recipe_env_names))
 
     monkeypatch.setattr(run_script_with_env, "_apply_perf_recipe_overrides", apply_overrides)
+    monkeypatch.setattr(run_script_with_env, "_finalize_perf_recipe_environment", finalize_environment)
     monkeypatch.setattr(run_script_with_env, "_workload_base_config_from_recipe", build_workload)
     monkeypatch.setattr(run_script_with_env, "PerfEnvPlugin", FakePerfEnvPlugin)
     monkeypatch.setattr(run_script_with_env.os, "execvpe", lambda *args: None)
 
     run_script_with_env.main()
 
-    assert calls[:2] == [
+    assert calls[:3] == [
         ("overrides", base_recipe, cli_overrides, args),
+        ("finalize", effective_recipe, args, {"TORCHINDUCTOR_WORKER_START"}),
         ("workload", effective_recipe, 8),
     ]
-    assert calls[2] == ("environment", workload_config, {"TORCHINDUCTOR_WORKER_START"})
+    assert calls[3] == ("environment", workload_config, {"TORCHINDUCTOR_WORKER_START"})
 
 
 def test_library_wrapper_applies_known_ep_override_to_effective_recipe():
