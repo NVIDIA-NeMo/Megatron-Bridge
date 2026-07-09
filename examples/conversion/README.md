@@ -4,7 +4,7 @@ This directory contains example scripts that demonstrate how to use the Megatron
 
 ## Available Scripts
 
-### `truncate_hf_checkpoint.py` - Preserve Weights in a Shallow Test Checkpoint
+### `create_hf_toy_model.py` - Preserve Weights in a Shallow Test Checkpoint
 
 Creates a smaller checkpoint by retaining the first transformer layers from an
 existing Hugging Face safetensors checkpoint. Unlike a randomly initialized toy
@@ -18,7 +18,7 @@ CPU or GPU memory.
 
 ```bash
 # Qwen3 example: retain the first four layers
-uv run python examples/conversion/truncate_hf_checkpoint.py \
+uv run python examples/conversion/create_hf_toy_model.py \
   Qwen/Qwen3-0.6B \
   /tmp/qwen3-0.6b-4layers \
   --num-hidden-layers 4
