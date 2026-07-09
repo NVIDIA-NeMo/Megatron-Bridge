@@ -20,7 +20,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import PreTrainedTokenizer
+from transformers import BertConfig, GPT2Config, PreTrainedTokenizer
 
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 
@@ -86,9 +86,11 @@ class TestPreTrainedMaskedLMConfigProperty:
 class TestPreTrainedMaskedLMModelProperty:
     """Test model property, lazy loading, and the AutoModelForMaskedLM/AutoModel fallback."""
 
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.safe_load_config_with_retry")
     @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
-    def test_model_lazy_load_via_masked_lm_head(self, mock_from_pretrained, mock_model):
+    def test_model_lazy_load_via_masked_lm_head(self, mock_from_pretrained, mock_load_config, mock_model):
         """Test model is loaded via AutoModelForMaskedLM when a masked-LM head is registered."""
+        mock_load_config.return_value = BertConfig()
         mock_from_pretrained.return_value = mock_model
 
         lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
@@ -99,13 +101,15 @@ class TestPreTrainedMaskedLMModelProperty:
         assert model is mock_model
         mock_from_pretrained.assert_called_once()
 
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.safe_load_config_with_retry")
     @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModel.from_pretrained")
     @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
     def test_model_falls_back_to_auto_model(
-        self, mock_masked_lm_from_pretrained, mock_auto_model_from_pretrained, mock_model
+        self, mock_masked_lm_from_pretrained, mock_auto_model_from_pretrained, mock_load_config, mock_model
     ):
-        """Test model loading falls back to AutoModel when no masked-LM head is registered."""
-        mock_masked_lm_from_pretrained.side_effect = ValueError("Unrecognized configuration class")
+        """Test model loading falls back to AutoModel when the config has no registered masked-LM head."""
+        # GPT2Config has no entry in MODEL_FOR_MASKED_LM_MAPPING.
+        mock_load_config.return_value = GPT2Config()
         mock_auto_model_from_pretrained.return_value = mock_model
 
         lm = PreTrainedMaskedLM(model_name_or_path="some-encoder-only-model")
@@ -113,6 +117,33 @@ class TestPreTrainedMaskedLMModelProperty:
 
         assert model is mock_model
         mock_auto_model_from_pretrained.assert_called_once()
+        # AutoModelForMaskedLM must not even be attempted for an unregistered config class.
+        mock_masked_lm_from_pretrained.assert_not_called()
+
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.safe_load_config_with_retry")
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModel.from_pretrained")
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
+    def test_model_reraises_unrelated_value_error(
+        self, mock_masked_lm_from_pretrained, mock_auto_model_from_pretrained, mock_load_config
+    ):
+        """Regression test: a ValueError unrelated to a missing masked-LM head must propagate.
+
+        Previously, any `ValueError` raised by `AutoModelForMaskedLM.from_pretrained` (even one
+        caused by invalid loader/config options or a bug in a custom MLM implementation) was
+        swallowed and silently retried via `AutoModel`, which could return a model without the
+        MLM head. Now that the fallback decision is based on the config's registry membership
+        (BertConfig *is* registered), an unrelated `ValueError` must propagate untouched instead
+        of triggering the `AutoModel` fallback.
+        """
+        mock_load_config.return_value = BertConfig()
+        mock_masked_lm_from_pretrained.side_effect = ValueError("invalid loader option")
+
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+
+        with pytest.raises(ValueError, match="invalid loader option"):
+            _ = lm.model
+
+        mock_auto_model_from_pretrained.assert_not_called()
 
     def test_model_without_model_path(self):
         """Test accessing model without model_name_or_path raises error."""
@@ -134,9 +165,11 @@ class TestPreTrainedMaskedLMModelProperty:
 class TestPreTrainedMaskedLMMethods:
     """Test forward call, encode, and decode."""
 
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.safe_load_config_with_retry")
     @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoModelForMaskedLM.from_pretrained")
-    def test_call_method(self, mock_from_pretrained, mock_model):
+    def test_call_method(self, mock_from_pretrained, mock_load_config, mock_model):
         """Test __call__ forwards to the underlying model."""
+        mock_load_config.return_value = BertConfig()
         mock_from_pretrained.return_value = mock_model
         mock_model.return_value = "model_output"
 

@@ -25,6 +25,7 @@ from transformers import (
     PreTrainedModel,
     PreTrainedTokenizer,
 )
+from transformers.models.auto.modeling_auto import MODEL_FOR_MASKED_LM_MAPPING
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -111,17 +112,35 @@ class PreTrainedMaskedLM(PreTrainedBase, Generic[MaskedLMType]):
         }
         if self.torch_dtype is not None:
             model_kwargs["torch_dtype"] = self.torch_dtype
-        config = getattr(self, "_config", None)
-        if config is not None:
-            model_kwargs["config"] = config
+        # Loading the config up front (rather than letting `from_pretrained` load it
+        # implicitly) lets us decide the model class from the registry instead of
+        # relying on catching whatever `ValueError` `from_pretrained` happens to raise.
+        config = self.config
+        model_kwargs["config"] = config
 
-        try:
+        if self._has_registered_masked_lm_head(config):
             model = AutoModelForMaskedLM.from_pretrained(self.model_name_or_path, **model_kwargs)
-        except ValueError:
-            # Some encoder-only checkpoints (or config classes) have no registered
-            # masked-LM head; fall back to the bare encoder via AutoModel.
+        else:
+            # The config class has no registered masked-LM head (e.g. encoder-only
+            # checkpoints that only expose a base encoder); fall back to AutoModel.
             model = AutoModel.from_pretrained(self.model_name_or_path, **model_kwargs)
         return model.to(self.device)
+
+    @staticmethod
+    def _has_registered_masked_lm_head(config: AutoConfig) -> bool:
+        """Return whether ``config``'s class resolves to a masked-LM head.
+
+        Checks the static Transformers registry (``MODEL_FOR_MASKED_LM_MAPPING``) as
+        well as a ``trust_remote_code`` config's ``auto_map``, which declares custom
+        classes that are not part of the static registry.
+        """
+        auto_map = getattr(config, "auto_map", None)
+        if auto_map and "AutoModelForMaskedLM" in auto_map:
+            return True
+        # `AutoConfig` is a dynamic dispatcher: at runtime `config` is always an
+        # instance of a concrete `PretrainedConfig` subclass (e.g. `BertConfig`), but
+        # mypy only sees the static `AutoConfig` annotation, hence the mismatch below.
+        return type(config) in MODEL_FOR_MASKED_LM_MAPPING  # type: ignore[comparison-overlap]
 
     def _load_config(self) -> AutoConfig:
         """Load the model config with thread-safety protection."""
