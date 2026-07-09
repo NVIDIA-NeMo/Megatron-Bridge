@@ -37,9 +37,9 @@ from nemo_run import Plugin, Script, SlurmExecutor
 
 
 try:
-    from utils.utils import WorkloadBaseConfig
+    from utils.utils import WorkloadBaseConfig, get_hybridep_environment_defaults
 except (ImportError, ModuleNotFoundError):
-    from .utils.utils import WorkloadBaseConfig
+    from .utils.utils import WorkloadBaseConfig, get_hybridep_environment_defaults
 
 logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
@@ -378,21 +378,13 @@ class PerfEnvPlugin(Plugin):
         moe_flex_dispatcher_backend: str,
         gpu: str,
         ep_size: int,
+        protected_env_names: set[str] | None = None,
     ):
         if moe_flex_dispatcher_backend == "hybridep":
-            if gpu in ["h100", "b200", "b300"]:
-                # Hopper/B200/B300 use NVL8 topology
-                executor.env_vars.setdefault("NVLINK_DOMAIN_SIZE", "8")
-                executor.env_vars.setdefault("USE_MNNVL", "0")
-                executor.env_vars.setdefault(
-                    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN", "8" if ep_size > 8 else str(ep_size)
-                )
-            else:
-                # GB200/GB300 use NVL72 topology
-                assert ep_size <= 72, "ep_size must be less than or equal to 72"
-                executor.env_vars.setdefault("NVLINK_DOMAIN_SIZE", "72")
-                executor.env_vars.setdefault("USE_MNNVL", "1")
-                executor.env_vars.setdefault("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN", str(ep_size))
+            protected_env_names = protected_env_names or set()
+            for name, value in get_hybridep_environment_defaults(gpu, ep_size).items():
+                if name not in protected_env_names:
+                    executor.env_vars.setdefault(name, value)
             # Workaround for unfused combine performance regression in DeepEP hybrid-ep.
             # Remove after https://github.com/NVIDIA/Megatron-LM/pull/4089 lands.
             executor.env_vars.setdefault("NUM_OF_TOKENS_PER_CHUNK_COMBINE_API", "128")
@@ -509,20 +501,30 @@ class PerfEnvPlugin(Plugin):
         task: Union["run.Partial", "run.Script", None],
         executor: "run.Executor",
         workload_base_config: WorkloadBaseConfig,
+        protected_recipe_env_names: set[str] | None = None,
     ) -> None:
         """Apply recipe-dependent environment settings inside the training container."""
-        for name, value in workload_base_config.env_vars.items():
-            executor.env_vars.setdefault(name, str(value))
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
         ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
 
+        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
+        recipe_env_vars = dict(workload_base_config.env_vars)
+        if moe_flex_dispatcher_backend == "hybridep":
+            # Keep recipe defaults aligned with the effective CLI topology while
+            # preserving any explicit shell, launcher, or container values.
+            protected_recipe_env_names = protected_recipe_env_names or set()
+            for name, value in get_hybridep_environment_defaults(self.gpu, ep_size).items():
+                if name not in protected_recipe_env_names:
+                    recipe_env_vars[name] = value
+        for name, value in recipe_env_vars.items():
+            executor.env_vars.setdefault(name, str(value))
+
         if getattr(workload_base_config, "fine_grained_activation_offloading", False):
             executor.env_vars["NVTE_CPU_OFFLOAD_V1"] = "1"
 
         # Force program order kernel launch for TP, CP overlap
-        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
         moe_a2a_overlap = (
             self.moe_a2a_overlap
             if self.moe_a2a_overlap is not None
@@ -551,6 +553,7 @@ class PerfEnvPlugin(Plugin):
             moe_flex_dispatcher_backend,
             self.gpu,
             ep_size,
+            protected_recipe_env_names,
         )
 
         # Set the chunk size of P2P communications
