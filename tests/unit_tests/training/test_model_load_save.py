@@ -23,6 +23,7 @@ import torch
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
+from megatron.bridge.training import model_load_save
 from megatron.bridge.training.config import TokenizerConfig
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
@@ -34,6 +35,59 @@ from megatron.bridge.training.model_load_save import (
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+
+
+class TestNormalizeMoeDispatcherSmConfig:
+    """Test compatibility migration for legacy MoE dispatcher SM-count fields."""
+
+    @pytest.mark.parametrize(
+        "backend,unified_value,expected",
+        [
+            ("deepep", None, 20),
+            ("hybridep", None, 16),
+            ("hybridep", 12, 12),
+        ],
+    )
+    def test_migrates_legacy_fields_for_unified_mcore(self, backend, unified_value, expected):
+        """Select the active backend's value and clear both deprecated aliases."""
+
+        class UnifiedTransformerConfig:
+            moe_flex_dispatcher_num_sms = None
+
+        model_dict = {
+            "moe_flex_dispatcher_backend": backend,
+            "moe_flex_dispatcher_num_sms": unified_value,
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
+
+        with patch.object(model_load_save, "TransformerConfig", UnifiedTransformerConfig):
+            model_load_save._normalize_moe_dispatcher_sm_config(model_dict)
+
+        assert model_dict["moe_flex_dispatcher_num_sms"] == expected
+        assert model_dict["moe_deepep_num_sms"] is None
+        assert model_dict["moe_hybridep_num_sms"] is None
+
+    def test_leaves_legacy_fields_for_mcore_without_unified_field(self):
+        """Keep the legacy fields intact for the current MCore dev config API."""
+
+        class LegacyTransformerConfig:
+            pass
+
+        model_dict = {
+            "moe_flex_dispatcher_backend": "hybridep",
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
+
+        with patch.object(model_load_save, "TransformerConfig", LegacyTransformerConfig):
+            model_load_save._normalize_moe_dispatcher_sm_config(model_dict)
+
+        assert model_dict == {
+            "moe_flex_dispatcher_backend": "hybridep",
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
 
 
 class TestTorchDtypeFromMcoreConfig:
