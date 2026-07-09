@@ -36,7 +36,12 @@ def configure_ci_pretraining_dataset(config: ConfigContainer, test_data_root: Pa
     MoE performance proxies, so the production ``GPTDatasetConfig`` path can be
     exercised without adding a model-specific tokenizer or online dependency.
     """
-    data_prefix = Path(test_data_root) / "datasets" / "fim" / "fim_text_document"
+    # torchrun starts one independent pytest process per rank, so each process
+    # receives a different tmp_path_factory directory. MCore builds dataset
+    # indices on rank 0 only; all ranks therefore need to use rank 0's copy of
+    # the downloaded corpus and its shared index cache.
+    shared_test_data_root = Path(broadcast_path(test_data_root))
+    data_prefix = shared_test_data_root / "datasets" / "fim" / "fim_text_document"
     for suffix in (".bin", ".idx"):
         data_file = data_prefix.with_suffix(suffix)
         if not data_file.is_file():
@@ -45,6 +50,7 @@ def configure_ci_pretraining_dataset(config: ConfigContainer, test_data_root: Pa
     config.dataset.blend = None
     config.dataset.blend_per_split = None
     config.dataset.data_path = str(data_prefix)
+    config.dataset.split = "100,0,0"
     config.dataset.num_workers = 0
 
 
@@ -168,13 +174,13 @@ def run_pretrain_recipe_test(
         clear_directories(tmp_path)
 
 
-def run_pretrain_recipe_perf_test(
+def _run_pretrain_without_checkpoint(
     config_func: Callable,
     recipe_name: str,
     config_overrides: Optional[dict] = None,
 ):
     """
-    Common test implementation for pretrain perf recipe configurations.
+    Common implementation for short pretraining tests without checkpoint I/O.
 
     This function runs a minimal training session to verify that:
     1. The recipe config can be loaded without errors
@@ -190,6 +196,9 @@ def run_pretrain_recipe_perf_test(
 
     # Pretrain configs use parameterless API - call without arguments
     config: ConfigContainer = config_func()
+    config.checkpoint.save = None
+    config.checkpoint.load = None
+    config.checkpoint.pretrained_checkpoint = None
     # Keep runs short and consistent across tests
     config.train.train_iters = 10
     config.validation.eval_interval = 5
@@ -215,6 +224,30 @@ def run_pretrain_recipe_perf_test(
                 setattr(config_obj, key, value)
 
     pretrain(config, forward_step)
+
+
+def run_perf_recipe_proxy_test(
+    config_func: Callable,
+    recipe_name: str,
+    config_overrides: Optional[dict] = None,
+):
+    """Run a compact functional proxy derived from a production performance recipe.
+
+    Callers should keep performance behavior in ``config_func`` and limit
+    overrides to reductions required by the CI topology, dataset, and run
+    length. This prevents functional tests from growing a second, manually
+    maintained copy of the production performance configuration.
+    """
+    _run_pretrain_without_checkpoint(config_func, recipe_name, config_overrides)
+
+
+def run_pretrain_feature_test(
+    config_func: Callable,
+    test_name: str,
+    config_overrides: Optional[dict] = None,
+):
+    """Run a short no-checkpoint pretraining test for a focused training feature."""
+    _run_pretrain_without_checkpoint(config_func, test_name, config_overrides)
 
 
 def run_pretrain_config_override_test(config_func: Callable):

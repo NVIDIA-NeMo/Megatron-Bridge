@@ -23,12 +23,15 @@ from megatron.bridge.perf_recipes.gpt_oss import gpt_oss_120b_pretrain_64gpu_gb2
 from megatron.bridge.training.config import ConfigContainer
 from tests.functional_tests.test_groups.recipes.utils import (
     configure_ci_pretraining_dataset,
-    run_pretrain_recipe_perf_test,
+    run_perf_recipe_proxy_test,
 )
 
 
 def _gpt_oss_120b_gb200_proxy() -> ConfigContainer:
     """Reduce model depth while retaining the production 120B provider and EP path."""
+    assert os.environ.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN") == "4"
+    assert os.environ.get("NVLINK_DOMAIN_SIZE") == "4"
+
     config = gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config()
     config.model.num_layers = 2
     config.model.tensor_model_parallel_size = 1
@@ -75,4 +78,4 @@ class TestGPTOSS120BPerfProxy:
             configure_ci_pretraining_dataset(config, ensure_test_data)
             return config
 
-        run_pretrain_recipe_perf_test(proxy_config, "gpt_oss_120b_gb200_fp8mx_proxy")
+        run_perf_recipe_proxy_test(proxy_config, "gpt_oss_120b_gb200_fp8mx_proxy")
