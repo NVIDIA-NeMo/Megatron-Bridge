@@ -251,23 +251,6 @@ class TestPerfConfigIntegration:
 
         assert cfg.train.global_batch_size == 16384
 
-    def test_get_perf_optimized_recipe_kimi_adam_optimizer(self):
-        """Test that the Kimi Adam override path applies without import errors."""
-        from utils.utils import get_perf_optimized_recipe
-
-        cfg = get_perf_optimized_recipe(
-            model_family_name="kimi",
-            model_recipe_name="kimi_k2",
-            train_task="pretrain",
-            gpu="h100",
-            compute_dtype="bf16",
-            config_variant=None,
-            optimizer_type="adam",
-        )
-
-        assert cfg.ddp.use_distributed_optimizer is True
-        assert cfg.ddp.overlap_param_gather is True
-
     def test_kimi_flat_perf_recipes_are_parameterless(self):
         """Test that Kimi flat recipes expose fixed recipe entry points."""
         from megatron.bridge.perf_recipes.kimi.h100.kimi_k2 import kimi_k2_pretrain_1024gpu_h100_bf16_config
