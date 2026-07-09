@@ -236,7 +236,6 @@ def test_collect_modelopt_quant_metadata_skips_unquantized_tasks(monkeypatch):
 
     metadata = collect_modelopt_quant_metadata(
         [
-            None,
             _task(
                 "missing.module.weight",
                 "hf.missing.weight",
