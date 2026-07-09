@@ -16,16 +16,14 @@
 VLM dataset utilities.
 
 Public API re-exports:
-- Providers: VLM-specific mock and preloaded dataset providers
+- Providers: VLM-specific mock and Energon dataset providers
 """
 
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
-from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 
 
 __all__ = [
-    "PreloadedVLMConversationProvider",
     "MockVLMConversationProvider",
     "EnergonProvider",
 ]

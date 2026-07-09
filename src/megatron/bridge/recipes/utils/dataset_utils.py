@@ -22,11 +22,11 @@ from megatron.bridge.data.builders import (
     DirectHFSFTDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
+    LocalConversationDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -121,7 +121,7 @@ DATASET_TYPES = [
     "llm-finetune-preloaded",
     "vlm-energon",
     "vlm-hf",
-    "vlm-preloaded",
+    "vlm-local",
 ]
 
 LLM_FINETUNE_PRESETS: dict[str, Callable] = {
@@ -268,15 +268,20 @@ def apply_dataset_override(
             enable_in_batch_packing=False,
         )
 
-    elif dataset_type == "vlm-preloaded":
-        config.dataset = PreloadedVLMConversationProvider(
+    elif dataset_type == "vlm-local":
+        config.dataset = DirectHFSFTDatasetConfig(
             seq_length=resolved_seq_length,
+            preprocessing=ChatSFTPreprocessingConfig(),
             hf_processor_path=None,
-            train_data_path=None,
-            valid_data_path=None,
-            test_data_path=None,
+            source=LocalConversationDatasetSourceConfig(path=None),
+            do_validation=False,
+            do_test=False,
             dataloader_type="single",
             num_workers=2,
+            data_sharding=True,
+            pin_memory=True,
+            persistent_workers=False,
+            enable_in_batch_packing=False,
         )
 
     else:

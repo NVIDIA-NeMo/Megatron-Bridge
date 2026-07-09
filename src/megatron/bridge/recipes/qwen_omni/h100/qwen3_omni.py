@@ -21,7 +21,11 @@ from typing import TYPE_CHECKING
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    LocalConversationDatasetSourceConfig,
+)
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
@@ -89,8 +93,8 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     return cfg
 
 
-def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config() -> "ConfigContainer":
-    """Return a thinker-only SFT config backed by preloaded local JSON/JSONL data."""
+def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_local_config() -> "ConfigContainer":
+    """Return a thinker-only SFT config backed by local JSON/JSONL data."""
 
     cfg = _sft_common_vlm()
 
@@ -129,12 +133,15 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config() -> "ConfigContainer
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    cfg.dataset = PreloadedVLMConversationProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=cfg.model.seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_QWEN3_OMNI_HF_PATH,
-        train_data_path=None,
-        valid_data_path=None,
-        test_data_path=None,
+        source=LocalConversationDatasetSourceConfig(path=None),
+        validation_source=LocalConversationDatasetSourceConfig(path=None),
+        test_source=LocalConversationDatasetSourceConfig(path=None),
+        do_validation=True,
+        do_test=True,
         dataloader_type="single",
         num_workers=2,
     )
@@ -154,5 +161,5 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config() -> "ConfigContainer
 
 __all__ = [
     "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config",
-    "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config",
+    "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_local_config",
 ]

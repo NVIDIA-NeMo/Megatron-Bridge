@@ -279,7 +279,7 @@ class TestInferModeFromDataset:
 
     @pytest.mark.parametrize(
         "dataset_type",
-        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf", "vlm-preloaded"],
+        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf", "vlm-local"],
     )
     def test_finetune_types(self, dataset_type):
         assert infer_mode_from_dataset(dataset_type) == "finetune"
@@ -421,14 +421,16 @@ class TestApplyDatasetOverride:
         assert result.dataset.seq_length == 4096
         assert result.dataset.source.dataset_name == "cord_v2"
 
-    # -- VLM preloaded --------------------------------------------------------
+    # -- VLM local ------------------------------------------------------------
 
-    def test_vlm_preloaded_creates_provider(self):
-        from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+    def test_vlm_local_creates_direct_sft_config(self):
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, LocalConversationDatasetSourceConfig
 
         config = _make_mock_config()
-        result = apply_dataset_override(config, "vlm-preloaded", seq_length=2048)
-        assert isinstance(result.dataset, PreloadedVLMConversationProvider)
+        result = apply_dataset_override(config, "vlm-local", seq_length=2048)
+        assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
+        assert isinstance(result.dataset.source, LocalConversationDatasetSourceConfig)
+        assert result.dataset.source.path is None
         assert result.dataset.seq_length == 2048
 
     # -- Unknown type ---------------------------------------------------------
@@ -468,7 +470,8 @@ class TestRegistryConstants:
         assert "llm-finetune-preloaded" in DATASET_TYPES
         assert "vlm-energon" in DATASET_TYPES
         assert "vlm-hf" in DATASET_TYPES
-        assert "vlm-preloaded" in DATASET_TYPES
+        assert "vlm-local" in DATASET_TYPES
+        assert "vlm-preloaded" not in DATASET_TYPES
 
     def test_llm_finetune_presets_has_expected_keys(self):
         assert "squad" in LLM_FINETUNE_PRESETS

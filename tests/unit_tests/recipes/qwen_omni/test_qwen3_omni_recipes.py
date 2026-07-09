@@ -72,18 +72,6 @@ if "megatron.bridge.recipes.utils.optimizer_utils" not in sys.modules:
     )
     sys.modules["megatron.bridge.recipes.utils.optimizer_utils"] = fake_optimizer_utils
 
-if "megatron.bridge.data.vlm_datasets.preloaded_provider" not in sys.modules:
-    fake_preloaded = types.ModuleType("megatron.bridge.data.vlm_datasets.preloaded_provider")
-
-    class _FakePreloadedVLMConversationProvider:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-            self.enable_in_batch_packing = False
-
-    fake_preloaded.PreloadedVLMConversationProvider = _FakePreloadedVLMConversationProvider
-    sys.modules["megatron.bridge.data.vlm_datasets.preloaded_provider"] = fake_preloaded
-
 _RECIPE_PATH = (
     pathlib.Path(__file__).resolve().parents[4]
     / "src"
@@ -165,15 +153,20 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     assert cfg.optimizer.lr == 5e-6
 
 
-def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
+def test_qwen3_omni_local_recipe_uses_unified_direct_sft_config(monkeypatch):
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, LocalConversationDatasetSourceConfig
+
     patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_preloaded_config()
+    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_local_config()
 
-    assert cfg.dataset is not None
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
-    assert cfg.dataset.train_data_path is None
-    assert cfg.dataset.valid_data_path is None
-    assert cfg.dataset.test_data_path is None
+    assert isinstance(cfg.dataset.source, LocalConversationDatasetSourceConfig)
+    assert isinstance(cfg.dataset.validation_source, LocalConversationDatasetSourceConfig)
+    assert isinstance(cfg.dataset.test_source, LocalConversationDatasetSourceConfig)
+    assert cfg.dataset.source.path is None
+    assert cfg.dataset.validation_source.path is None
+    assert cfg.dataset.test_source.path is None
     assert cfg.dataset.enable_in_batch_packing is False

@@ -33,6 +33,9 @@ LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
+QWEN_OMNI_RECIPE = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "qwen_omni" / "h100" / "qwen3_omni.py"
+QWEN_OMNI_TRAINING_SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_omni" / "local_train_thinker_full.sh"
+PRELOADED_VLM_PROVIDER = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "vlm_datasets" / "preloaded_provider.py"
 
 
 def _read(p: Path) -> str:
@@ -96,6 +99,18 @@ def test_dclm_readme_megatron_lm_tool_path():
     assert not re.search(r"(?<![\w/])Megatron-LM/tools/preprocess_data\.py", text), (
         "stale bare Megatron-LM path present"
     )
+
+
+def test_local_vlm_scripts_use_unified_builder_without_removed_provider():
+    """Local VLM entrypoints should use the unified direct-SFT config and source."""
+    assert not PRELOADED_VLM_PROVIDER.exists()
+    for path in (RUN_RECIPE, QWEN_OMNI_RECIPE, QWEN_OMNI_TRAINING_SCRIPT):
+        text = _read(path)
+        assert "PreloadedVLMConversationProvider" not in text
+        assert "vlm-preloaded" not in text
+    assert "DirectHFSFTDatasetConfig" in _read(QWEN_OMNI_RECIPE)
+    assert "LocalConversationDatasetSourceConfig" in _read(QWEN_OMNI_RECIPE)
+    assert "dataset.source.path" in _read(QWEN_OMNI_TRAINING_SCRIPT)
 
 
 if __name__ == "__main__":
