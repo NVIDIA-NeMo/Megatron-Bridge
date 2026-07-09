@@ -30,7 +30,7 @@ from tests.functional_tests.test_groups.recipes.utils import (
 def _deepseek_v3_gb200_proxy() -> ConfigContainer:
     """Reduce model scale while preserving PP, MTP, and the production MoE path."""
     assert os.environ.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN") == "2"
-    assert os.environ.get("NVLINK_DOMAIN_SIZE") == "2"
+    assert os.environ.get("NVLINK_DOMAIN_SIZE") == "4"
 
     config = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
 
