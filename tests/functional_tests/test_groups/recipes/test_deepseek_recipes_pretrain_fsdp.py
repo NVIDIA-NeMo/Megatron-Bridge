@@ -60,6 +60,9 @@ class TestDeepSeekFSDPPerfProxy:
         if torch.cuda.get_device_capability()[0] < 10:
             pytest.skip("The DeepSeek FSDP MXFP8 compatibility proxy requires Blackwell GPUs.")
 
+        assert os.environ.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN") == "4"
+        assert os.environ.get("NVLINK_DOMAIN_SIZE") == "4"
+
         os.environ["NVTE_CPU_OFFLOAD_V1"] = "1"
         os.environ["NVTE_FWD_LAYERNORM_SM_MARGIN"] = "0"
         os.environ["NVTE_BWD_LAYERNORM_SM_MARGIN"] = "0"

@@ -75,6 +75,8 @@ class TestQwen3MoePerfProxy:
     @pytest.mark.run_only_on("GPU")
     def test_gb200_fp8mx(self, ensure_test_data):
         assert torch.cuda.get_device_capability()[0] >= 10, "The GB200 MXFP8 proxy requires Blackwell GPUs."
+        assert os.environ.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN") == "4"
+        assert os.environ.get("NVLINK_DOMAIN_SIZE") == "4"
 
         def proxy_config() -> ConfigContainer:
             assert os.environ.get("NVTE_CUTEDSL_FUSED_GROUPED_MLP") == "1"

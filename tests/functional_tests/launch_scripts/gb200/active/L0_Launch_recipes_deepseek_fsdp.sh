@@ -17,6 +17,10 @@
 set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
 
 export CUDA_VISIBLE_DEVICES="0,1,2,3"
+export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=4
+export NUM_OF_TOKENS_PER_CHUNK_COMBINE_API=128
+export NVLINK_DOMAIN_SIZE=4
+export USE_MNNVL=1
 MEGATRON_BRIDGE_ROOT="/opt/Megatron-Bridge/"
 
 # Run the canonical GB300 DeepSeek V3 FSDP recipe as a compact compatibility

@@ -29,6 +29,9 @@ from tests.functional_tests.test_groups.recipes.utils import (
 
 def _gpt_oss_120b_gb200_proxy() -> ConfigContainer:
     """Reduce model depth while retaining the production 120B provider and EP path."""
+    assert os.environ.get("NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN") == "4"
+    assert os.environ.get("NVLINK_DOMAIN_SIZE") == "4"
+
     config = gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config()
     config.model.num_layers = 2
     config.model.tensor_model_parallel_size = 1
