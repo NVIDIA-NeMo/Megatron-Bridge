@@ -548,6 +548,7 @@ class TestGetBatch:
         )
         state.timers = _NoopTimer()
         state.straggler_timer = _NoopTimer()
+        state._flops_seqlen_sum = 0
         config = type(
             "Config",
             (),
@@ -572,6 +573,7 @@ class TestGetBatch:
         assert torch.equal(inner_model.forward_kwargs["input_ids"], tokens)
         assert torch.equal(inner_model.forward_kwargs["position_ids"], position_ids)
         assert torch.equal(inner_model.forward_kwargs["labels"], labels)
+        assert state._flops_seqlen_sum == 0
 
     def test_forward_common_uses_model_chunk_vp_stage_instead_of_global_vpp_rank(self, monkeypatch):
         """The model chunk VP stage must override stale global VPP rank state."""
