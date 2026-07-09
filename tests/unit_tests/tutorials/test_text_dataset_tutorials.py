@@ -70,10 +70,11 @@ def test_direct_hf_sft_tutorial_documents_hosted_native_messages_source():
     assert "schema_adapter" in readme
 
 
-def test_direct_hf_sft_tutorial_documents_unified_local_conversation_source():
+def test_direct_hf_sft_tutorial_routes_json_through_hf_loader():
     readme = (DIRECT_HF_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
 
-    assert "LocalConversationDatasetSourceConfig" in readme
-    assert 'media_root="/data/vlm/media"' in readme
-    assert "vlm-local" in readme
+    assert 'path_or_dataset="json"' in readme
+    assert 'load_kwargs={"data_files"' in readme
+    assert "LocalConversationDatasetSourceConfig" not in readme
+    assert "vlm-local" not in readme
     assert "vlm-preloaded" in readme  # Migration guidance names the removed selector.

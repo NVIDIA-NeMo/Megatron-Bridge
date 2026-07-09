@@ -143,29 +143,37 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
-## Direct Hosted or Local SFT Data
+## Direct Hugging Face SFT Data
 
-`DirectHFSFTDatasetConfig` is the direct source path shared by text, VLM, and audio/omni recipes. It accepts hosted/custom Hugging Face data through `HFDatasetSourceConfig` and local conversation JSON/JSONL through `LocalConversationDatasetSourceConfig`. Both sources use one `DirectHFSFTDatasetBuilder`, which binds the processor/tokenizer and collator and repeats examples to the sample counts requested by the iteration schedule. The source config remains serializable; runtime file loading, processors, collators, and datasets remain builder responsibilities.
+`DirectHFSFTDatasetConfig` is the direct source path shared by text, VLM, and audio/omni recipes. Every source uses `HFDatasetSourceConfig`: select a Hub dataset, a custom Hugging Face dataset, or the Hugging Face `json` loader for JSON/JSONL files. `DirectHFSFTDatasetBuilder` binds the processor/tokenizer and collator and repeats examples to the sample counts requested by the iteration schedule. The source config remains serializable; Hugging Face datasets owns source loading, while processors, collators, and runtime datasets remain builder responsibilities.
 
 ```python
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
-    LocalConversationDatasetSourceConfig,
+    HFDatasetSourceConfig,
 )
 
 dataset = DirectHFSFTDatasetConfig(
     seq_length=4096,
     preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
     hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
-    source=LocalConversationDatasetSourceConfig(path="/data/chat/training.jsonl"),
-    validation_source=LocalConversationDatasetSourceConfig(path="/data/chat/validation.jsonl"),
+    source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="train",
+        load_kwargs={"data_files": {"train": "/data/chat/training.jsonl"}},
+    ),
+    validation_source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="validation",
+        load_kwargs={"data_files": {"validation": "/data/chat/validation.jsonl"}},
+    ),
     do_test=False,
     enable_in_batch_packing=True,
 )
 ```
 
-Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. For local multimodal rows, set `media_root` on each local source to resolve relative image, video, and audio paths. Collator callables are runtime builder inputs, not serializable config fields.
+Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Media references in JSON rows must be resolvable by every worker; for large local media collections that need managed sharding and asset loading, use Energon. Collator callables are runtime builder inputs, not serializable config fields.
 
 For paired text that must not use a model chat template, select prompt-completion preprocessing instead. The prompt and completion are tokenized separately, and `loss_mode="completion"` masks the prompt:
 
@@ -193,20 +201,19 @@ The package structure separates declarative construction, runtime storage, sourc
 | Responsibility | Module |
 | --- | --- |
 | Materialized JSONL/offline-packed config and builder | `megatron.bridge.data.builders.gpt_sft` |
-| Direct hosted/local config and builder | `megatron.bridge.data.builders.direct_hf_sft` |
+| Direct Hugging Face config and builder | `megatron.bridge.data.builders.direct_hf_sft` |
 | GPT SFT runtime datasets | `megatron.bridge.data.datasets.gpt_sft` |
 | Direct normalized-example runtime dataset | `megatron.bridge.data.datasets.direct_sft` |
 | Hugging Face source loading and schema adapters | `megatron.bridge.data.sources.hf`, `megatron.bridge.data.sources.hf_adapters` |
-| Local JSON/JSONL loading and media normalization | `megatron.bridge.data.sources.local_conversation` |
 | Shared text SFT collators | `megatron.bridge.data.collators.sft` |
 
 The direct runtime dataset is named `DirectSFTDataset` because it receives normalized examples and has no Hugging Face loading responsibility. Source-specific work remains in the builder and source modules.
 
-For hosted and local datasets, text and multimodal schemas, split sources, in-batch packing, processor selection, and all available knobs, see the [direct SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/direct-hf-sft/README.md).
+For Hub and file-backed Hugging Face datasets, text and multimodal schemas, split sources, in-batch packing, processor selection, and all available knobs, see the [direct SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/direct-hf-sft/README.md).
 
 ## VLM Fine-Tuning Data
 
-VLM recipes use either the canonical Direct SFT Config + Builder path or Energon. Hosted Hugging Face and local JSON/JSONL conversations select different serializable source configs but share the same runtime builder, processor, model collator, chat-template/loss-mask logic, CP/SP padding, and supported in-batch packing behavior.
+VLM recipes use either the canonical Direct Hugging Face SFT Config + Builder path or Energon. No separate preloaded/local conversation provider is supported.
 
 For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
 
@@ -219,7 +226,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-For local VLM JSON or JSONL, use records with `messages`, `conversation`, or legacy `conversations` plus media paths. Relative image, video, and audio paths are resolved against `dataset.source.media_root`:
+For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations` plus worker-resolvable media paths:
 
 ```json
 {"messages": [{"role": "user", "content": "<image>Describe the image."}, {"role": "assistant", "content": "A receipt."}], "images": ["receipt_0001.jpg"]}
@@ -228,16 +235,18 @@ For local VLM JSON or JSONL, use records with `messages`, `conversation`, or leg
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_config \
-    --dataset vlm-local \
+    --dataset vlm-hf \
     --step_func qwen3_vl_step \
-    dataset.source.path=/data/vlm/train.jsonl \
-    dataset.validation_source.path=/data/vlm/validation.jsonl \
-    dataset.source.media_root=/data/vlm/images \
+    dataset.source.dataset_name=null \
+    dataset.source.path_or_dataset=json \
+    'dataset.source.load_kwargs={data_files:{train:/data/vlm/train.jsonl}}' \
+    dataset.do_validation=False \
+    dataset.do_test=False \
     dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-Local files do not derive validation or test splits. With `--dataset vlm-local`, optional `dataset.validation_source.path` and `dataset.test_source.path` overrides construct those split sources; omitted splits are disabled. In Python, set them to additional `LocalConversationDatasetSourceConfig` objects. The `vlm-preloaded` selector and `PreloadedVLMConversationProvider` were removed; migrate their train/validation/test paths to `source.path`, `validation_source.path`, and `test_source.path`, and migrate `image_folder` to the modality-neutral `media_root`.
+The `vlm-preloaded` selector and `PreloadedVLMConversationProvider` were removed without a replacement local selector. Use `vlm-hf` plus `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` for files supported by Hugging Face datasets, or convert the data to Energon. File-based validation and test data require explicit `validation_source` and `test_source` configs in Python; otherwise disable those stages. There is no `image_folder` compatibility field: keep media references resolvable in the rows, use an adapter-owned root where available, or use Energon.
 
 For a complete WebDataset/Energon preparation example, see [VALOR32K-AVQA Dataset Preparation Guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md).
 

@@ -62,6 +62,8 @@ This produces:
 - `./omni_bench_fix_simple/test/test.jsonl`
 - extracted media under `./omni_bench_fix_simple/{split}/media`
 
+The training example loads these files through the Hugging Face datasets `json` builder; it does not use a preloaded/local dataset provider.
+
 ## Checkpoint Conversion
 
 Run the full local smoke conversion flow:
@@ -116,7 +118,7 @@ Useful overrides:
 
 The omni inference helper depends on `qwen-omni-utils[decord]` for video/audio preprocessing.
 
-## Training (local)
+## Training (Hugging Face JSON loader)
 
 The training recipe entrypoint is:
 
@@ -136,9 +138,9 @@ Optional overrides:
 - `WORKSPACE` (default: `${PWD}/.cache/qwen3_omni_train`)
 - `RESULTS_DIR` / `LOG_DIR` (default: under `WORKSPACE`)
 - `VALID_JSONL` / `TEST_JSONL` for explicit local validation and test sources; unset values disable those splits
-- `RECIPE` (default: `qwen3_omni_30b_a3b_sft_local_config`)
+- `RECIPE` (default: `qwen3_omni_30b_a3b_sft_hf_json_config`)
 
-The local recipe uses `DirectHFSFTDatasetConfig` with `LocalConversationDatasetSourceConfig`. It follows the same processor, collator, assistant loss-mask, and padding path as hosted Direct-HF data. If your JSONL stores relative media paths, set the corresponding source `media_root` through a recipe or CLI override.
+The recipe uses `DirectHFSFTDatasetConfig` with `HFDatasetSourceConfig(path_or_dataset="json")`. Hugging Face datasets loads each JSONL split, after which the normal Direct SFT processor, collator, assistant loss-mask, and padding path applies. Media paths written into the rows must be resolvable by every worker.
 
 To apply the 4-node TP2/PP2/EP8/SP preset used in our 32-GPU validation:
 

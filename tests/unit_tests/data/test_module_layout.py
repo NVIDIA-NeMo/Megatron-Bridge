@@ -16,6 +16,7 @@ pytestmark = pytest.mark.unit
         "megatron.bridge.data.datasets.sft",
         "megatron.bridge.data.hf_datasets",
         "megatron.bridge.data.hf_source",
+        "megatron.bridge.data.sources.local_conversation",
         "megatron.bridge.data.vlm_datasets.preloaded_provider",
     ],
 )

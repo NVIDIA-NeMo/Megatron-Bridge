@@ -153,20 +153,20 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     assert cfg.optimizer.lr == 5e-6
 
 
-def test_qwen3_omni_local_recipe_uses_unified_direct_sft_config(monkeypatch):
-    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, LocalConversationDatasetSourceConfig
+def test_qwen3_omni_hf_json_recipe_uses_direct_hf_source(monkeypatch):
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 
     patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_local_config()
+    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_hf_json_config()
 
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
-    assert cfg.dataset.seq_length == 4096
+    assert isinstance(cfg.dataset.source, HFDatasetSourceConfig)
+    assert isinstance(cfg.dataset.validation_source, HFDatasetSourceConfig)
+    assert isinstance(cfg.dataset.test_source, HFDatasetSourceConfig)
+    assert cfg.dataset.source.path_or_dataset == "json"
+    assert cfg.dataset.source.load_kwargs == {"data_files": {"train": None}}
+    assert cfg.dataset.validation_source.load_kwargs == {"data_files": {"validation": None}}
+    assert cfg.dataset.test_source.load_kwargs == {"data_files": {"test": None}}
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
-    assert isinstance(cfg.dataset.source, LocalConversationDatasetSourceConfig)
-    assert isinstance(cfg.dataset.validation_source, LocalConversationDatasetSourceConfig)
-    assert isinstance(cfg.dataset.test_source, LocalConversationDatasetSourceConfig)
-    assert cfg.dataset.source.path is None
-    assert cfg.dataset.validation_source.path is None
-    assert cfg.dataset.test_source.path is None
     assert cfg.dataset.enable_in_batch_packing is False

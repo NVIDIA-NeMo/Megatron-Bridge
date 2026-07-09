@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Serializable config and runtime builder for direct hosted or local SFT."""
+"""Serializable config and runtime builder for direct Hugging Face SFT."""
 
 import logging
 from collections.abc import Callable
@@ -41,10 +41,6 @@ from megatron.bridge.data.sources.hf import (
     load_and_adapt_hf_dataset,
     prepare_hf_dataset_sources,
 )
-from megatron.bridge.data.sources.local_conversation import (
-    LocalConversationDatasetSourceConfig,
-    load_local_conversation_examples,
-)
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
@@ -52,12 +48,11 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 logger = logging.getLogger(__name__)
 
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
-DirectSFTDatasetSourceConfig = HFDatasetSourceConfig | LocalConversationDatasetSourceConfig
 
 
 @dataclass(kw_only=True)
 class DirectHFSFTDatasetConfig(DataloaderConfig):
-    """Serializable configuration for direct hosted or local SFT datasets.
+    """Serializable configuration for direct Hugging Face SFT datasets.
 
     Chat preprocessing is the compatibility default for multimodal and
     conversation sources. New text recipes should select chat or paired-text
@@ -65,9 +60,9 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     """
 
     seq_length: int
-    source: DirectSFTDatasetSourceConfig
-    validation_source: DirectSFTDatasetSourceConfig | None = None
-    test_source: DirectSFTDatasetSourceConfig | None = None
+    source: HFDatasetSourceConfig
+    validation_source: HFDatasetSourceConfig | None = None
+    test_source: HFDatasetSourceConfig | None = None
     preprocessing: SFTPreprocessingConfig = field(default_factory=ChatSFTPreprocessingConfig)
     hf_processor_path: str | None = None
     do_validation: bool = True
@@ -156,15 +151,11 @@ def load_direct_hf_sft_processor(config: DirectHFSFTDatasetConfig, tokenizer: An
 
 
 def load_direct_hf_sft_examples(
-    source: DirectSFTDatasetSourceConfig,
+    source: HFDatasetSourceConfig,
     preprocessing: SFTPreprocessingConfig,
 ) -> list[dict[str, Any]]:
-    """Load and normalize one declarative hosted or local SFT source."""
-    if isinstance(source, HFDatasetSourceConfig):
-        examples = load_and_adapt_hf_dataset(source)
-    else:
-        examples = load_local_conversation_examples(source)
-    return normalize_sft_examples(examples, preprocessing)
+    """Load and normalize one declarative Hugging Face source."""
+    return normalize_sft_examples(load_and_adapt_hf_dataset(source), preprocessing)
 
 
 def select_direct_hf_sft_collate(
@@ -190,7 +181,7 @@ def select_direct_hf_sft_collate(
 
 def build_direct_hf_sft_split(
     config: DirectHFSFTDatasetConfig,
-    source: DirectSFTDatasetSourceConfig,
+    source: HFDatasetSourceConfig,
     target_length: int,
     processor: Any,
     *,
@@ -215,7 +206,7 @@ def build_direct_hf_sft_split(
 
 
 class DirectHFSFTDatasetBuilder:
-    """Build runtime SFT datasets from declarative hosted or local sources."""
+    """Build runtime SFT datasets from declarative Hugging Face sources."""
 
     def __init__(
         self,
@@ -236,40 +227,28 @@ class DirectHFSFTDatasetBuilder:
             self.config.do_validation
             and context.valid_samples > 0
             and self.config.validation_source is None
-            and (
-                not isinstance(self.config.source, HFDatasetSourceConfig)
-                or not hf_dataset_supports_split(self.config.source, "validation")
-            )
+            and not hf_dataset_supports_split(self.config.source, "validation")
         ):
             raise ValueError(
-                "The selected source has no validation split to derive; disable validation or set validation_source."
+                "The selected Hugging Face source has no validation split; disable validation or set one."
             )
         if (
             self.config.do_test
             and context.test_samples > 0
             and self.config.test_source is None
-            and (
-                not isinstance(self.config.source, HFDatasetSourceConfig)
-                or not hf_dataset_supports_split(self.config.source, "test")
-            )
+            and not hf_dataset_supports_split(self.config.source, "test")
         ):
-            raise ValueError("The selected source has no test split to derive; disable test or set test_source.")
-        validation_source = self.config.validation_source
-        if validation_source is None and isinstance(self.config.source, HFDatasetSourceConfig):
-            validation_source = self.config.source.with_split("validation")
-        test_source = self.config.test_source
-        if test_source is None and isinstance(self.config.source, HFDatasetSourceConfig):
-            test_source = self.config.source.with_split("test")
+            raise ValueError("The selected Hugging Face source has no test split; disable test or set one.")
+        validation_source = self.config.validation_source or self.config.source.with_split("validation")
+        test_source = self.config.test_source or self.config.source.with_split("test")
         requested_sources = []
         if context.train_samples > 0:
             requested_sources.append(self.config.source)
-        if self.config.do_validation and context.valid_samples > 0 and validation_source is not None:
+        if self.config.do_validation and context.valid_samples > 0:
             requested_sources.append(validation_source)
-        if self.config.do_test and context.test_samples > 0 and test_source is not None:
+        if self.config.do_test and context.test_samples > 0:
             requested_sources.append(test_source)
-        prepare_hf_dataset_sources(
-            [source for source in requested_sources if isinstance(source, HFDatasetSourceConfig)]
-        )
+        prepare_hf_dataset_sources(requested_sources)
 
         processor = load_direct_hf_sft_processor(self.config, context.tokenizer)
         train_dataset = build_direct_hf_sft_split(
@@ -287,7 +266,7 @@ class DirectHFSFTDatasetBuilder:
                 processor,
                 collate_impl=self._collate_impl,
             )
-            if self.config.do_validation and validation_source is not None
+            if self.config.do_validation
             else None
         )
         test_dataset = (
@@ -298,7 +277,7 @@ class DirectHFSFTDatasetBuilder:
                 processor,
                 collate_impl=self._collate_impl,
             )
-            if self.config.do_test and test_source is not None
+            if self.config.do_test
             else None
         )
         return train_dataset, valid_dataset, test_dataset

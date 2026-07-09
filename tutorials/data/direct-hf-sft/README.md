@@ -1,6 +1,6 @@
 # Direct SFT Dataset Tutorial
 
-Choose this path when you want to train directly from hosted Hugging Face rows or local JSON/JSONL conversations without first materializing text-only SFT data. Both source types use `DirectHFSFTDatasetConfig` and `DirectHFSFTDatasetBuilder`. The path supports text, vision, video, audio, and omni examples, as well as collate-time in-batch packing. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) for a comparison with transitional materialized text-only SFT and Energon.
+Choose this path when you want to train directly from a Hugging Face dataset, including JSON/JSONL files loaded by the Hugging Face `json` dataset builder, without first materializing text-only SFT data. All inputs use `HFDatasetSourceConfig`, `DirectHFSFTDatasetConfig`, and `DirectHFSFTDatasetBuilder`. The path supports text, vision, video, audio, and omni examples, as well as collate-time in-batch packing. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) for a comparison with transitional materialized text-only SFT and Energon.
 
 ## Start with a hosted chat dataset
 
@@ -35,7 +35,7 @@ The base checkpoint must be a native Megatron checkpoint or a local Hugging Face
 
 Use a registered `schema_adapter` when hosted columns are not already one of `messages`, `conversation`, or `conversations`. Built-in examples are listed in [Available knobs](#available-knobs). `load_kwargs` belongs to dataset loading; `adapter_kwargs` belongs only to row conversion.
 
-## Use local conversation JSON or JSONL
+## Load conversation JSON or JSONL through Hugging Face datasets
 
 Generate small `messages` JSONL files from the repository root:
 
@@ -50,26 +50,34 @@ Native chat rows look like this:
 {"messages": [{"role": "user", "content": "What belongs in config?"}, {"role": "assistant", "content": "Validated declarative data."}]}
 ```
 
-Select each local split explicitly. The source config stays serializable; the builder opens and normalizes the file at runtime:
+Select each file through the Hugging Face `json` dataset builder. The source config stays serializable; `datasets.load_dataset` opens the files and the Direct SFT builder normalizes the resulting rows at runtime:
 
 ```python
-from megatron.bridge.data.builders import LocalConversationDatasetSourceConfig
-
 cfg.dataset = DirectHFSFTDatasetConfig(
     seq_length=cfg.model.seq_length,
     preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
     hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
-    source=LocalConversationDatasetSourceConfig(path="/tmp/bridge-direct-hf-sft/training.jsonl"),
-    validation_source=LocalConversationDatasetSourceConfig(
-        path="/tmp/bridge-direct-hf-sft/validation.jsonl"
+    source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="train",
+        load_kwargs={"data_files": {"train": "/tmp/bridge-direct-hf-sft/training.jsonl"}},
     ),
-    test_source=LocalConversationDatasetSourceConfig(path="/tmp/bridge-direct-hf-sft/test.jsonl"),
+    validation_source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="validation",
+        load_kwargs={"data_files": {"validation": "/tmp/bridge-direct-hf-sft/validation.jsonl"}},
+    ),
+    test_source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="test",
+        load_kwargs={"data_files": {"test": "/tmp/bridge-direct-hf-sft/test.jsonl"}},
+    ),
     do_validation=True,
     do_test=True,
 )
 ```
 
-JSON files may contain a record list, one record, or a list under `data`, `examples`, or `records`; set `records_key` for another wrapper. JSONL files contain one record per line. Rows may use `messages`, singular `conversation`, or legacy `conversations` with `from`/`value` turns.
+Use a JSON array or one object per line in JSONL. Rows may use `messages`, singular `conversation`, or legacy `conversations` with `from`/`value` turns.
 
 For local multimodal rows, use typed content directly or legacy placeholders plus top-level media lists:
 
@@ -77,30 +85,21 @@ For local multimodal rows, use typed content directly or legacy placeholders plu
 {"messages": [{"role": "user", "content": "<image>Describe this receipt."}, {"role": "assistant", "content": "A store receipt."}], "images": ["receipts/0001.png"]}
 ```
 
-Set `media_root` to resolve relative image, video, and audio paths without embedding machine-specific absolute paths in the data:
-
-```python
-source=LocalConversationDatasetSourceConfig(
-    path="/data/vlm/training.jsonl",
-    media_root="/data/vlm/media",
-)
-```
-
-Local rows then follow the same chat-template/loss-mask logic and model processor/collator path as hosted rows. CP/SP padding and supported in-batch packing settings remain fields of `DirectHFSFTDatasetConfig`, independent of source type.
+Media references are row data, so use paths or URLs that the workers can resolve. For large local media collections that need dataset-managed sharding and asset loading, use Energon. Rows loaded by the Hugging Face `json` builder follow the same chat-template/loss-mask logic and model processor/collator path as Hub rows. CP/SP padding and supported in-batch packing settings remain fields of `DirectHFSFTDatasetConfig`.
 
 ### Migrate from `vlm-preloaded`
 
-`PreloadedVLMConversationProvider` and the `vlm-preloaded` launcher selector have been removed. Use the unified builder instead; no deprecated provider alias remains.
+`PreloadedVLMConversationProvider` and the `vlm-preloaded` launcher selector have been removed. No deprecated provider or replacement local selector remains. Use `vlm-hf` for Hub datasets or files accepted by Hugging Face datasets, and use `vlm-energon` for Energon/WebDataset data.
 
 | Removed setting | Unified setting |
 | --- | --- |
-| `--dataset vlm-preloaded` | `--dataset vlm-local` |
-| `dataset.train_data_path` | `dataset.source.path` |
-| `dataset.valid_data_path` | `dataset.validation_source.path` |
-| `dataset.test_data_path` | `dataset.test_source.path` |
-| `dataset.image_folder` | `dataset.source.media_root` (and the corresponding split source when needed) |
+| `--dataset vlm-preloaded` | `--dataset vlm-hf` or `--dataset vlm-energon` |
+| `dataset.train_data_path` | `source=HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": {"train": ...}})` |
+| `dataset.valid_data_path` | An explicit HF `validation_source`, or an Energon split |
+| `dataset.test_data_path` | An explicit HF `test_source`, or an Energon split |
+| `dataset.image_folder` | Store worker-resolvable media references in HF rows, use an adapter-owned root, or use Energon |
 
-The replacement keeps chat rendering, assistant loss masking, processor-selected VLM/omni collation, CP/SP padding, and supported in-batch packing in `DirectHFSFTDatasetBuilder`; only source loading moves into `LocalConversationDatasetSourceConfig`.
+The Direct HF path keeps chat rendering, assistant loss masking, processor-selected VLM/omni collation, CP/SP padding, and supported in-batch packing in `DirectHFSFTDatasetBuilder`; Hugging Face datasets owns source loading.
 
 ## Train paired text without a chat template
 
@@ -144,12 +143,13 @@ cfg.dataset = DirectHFSFTDatasetConfig(
 
 Use the corresponding recipe step, such as `vlm_step`, `qwen3_vl_step`, or an audio/omni step. Collators are inferred at runtime from processor type. Runtime callable collator overrides are intentionally not config fields; custom integrations can inject them into `DirectHFSFTDatasetBuilder` without making serialized configs provider-specific.
 
-For local multimodal data, replace only the source:
+For JSON/JSONL accepted by Hugging Face datasets, replace only the source:
 
 ```python
-cfg.dataset.source = LocalConversationDatasetSourceConfig(
-    path="/data/vlm/training.jsonl",
-    media_root="/data/vlm/media",
+cfg.dataset.source = HFDatasetSourceConfig(
+    path_or_dataset="json",
+    split="train",
+    load_kwargs={"data_files": {"train": "/data/vlm/training.jsonl"}},
 )
 cfg.dataset.do_validation = False
 cfg.dataset.do_test = False
@@ -170,8 +170,7 @@ In-batch packing requires micro batch size greater than 1. `in_batch_packing_pad
 
 | Area | Knobs | Purpose |
 | --- | --- | --- |
-| Source | `HFDatasetSourceConfig` or `LocalConversationDatasetSourceConfig` | Hosted/custom Hugging Face rows or local JSON/JSONL conversations |
-| Local files | `path`, optional `media_root` and `records_key` | Split file, relative-media root, and optional JSON wrapper key |
+| Source | `HFDatasetSourceConfig` | Hub datasets or custom sources accepted by Hugging Face datasets, including its `json` loader |
 | Adaptation | `source.schema_adapter`, `source.adapter_kwargs` | Optional conversion to canonical chat or prompt-completion rows; presets own their adapter |
 | Preprocessing | `ChatSFTPreprocessingConfig`, `PromptCompletionSFTPreprocessingConfig` | Chat-template loss policy or raw paired-text formatting/loss policy |
 | Split overrides | `validation_source`, `test_source`, `do_validation`, `do_test` | Per-split loading and optional split construction |
@@ -187,6 +186,6 @@ Built-in registered adapters include `squad`, `gsm8k`, `cord_v2`, and `cv17`; na
 
 - If `hf_processor_path` is unset, the build context must contain a training tokenizer.
 - An unknown processor type means its multimodal collator is not registered; text rows select a shared collator from the preprocessing config automatically.
-- A source must return non-empty normalized rows for every enabled split with a positive requested sample count. Local files do not derive validation or test splits; set explicit split sources or disable those stages.
+- A source must return non-empty normalized rows for every enabled split with a positive requested sample count. File-based sources should provide explicit validation/test `data_files` and split sources, or disable those stages.
 - Chat rows should follow the role ordering accepted by the selected model template. Rows with no trainable assistant tokens emit a warning and contribute zero loss.
 - Unsupported in-batch packing fails early when a custom/model collator cannot accept packing metadata.

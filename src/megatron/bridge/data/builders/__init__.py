@@ -17,7 +17,6 @@ from megatron.bridge.data.sft_processing import (
     SFTPreprocessingConfig,
 )
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
-from megatron.bridge.data.sources.local_conversation import LocalConversationDatasetSourceConfig
 
 
 # =============================================================================
@@ -32,7 +31,6 @@ __all__ = [
     "GPTSFTDatasetConfig",
     "ChatSFTPreprocessingConfig",
     "HFDatasetSourceConfig",
-    "LocalConversationDatasetSourceConfig",
     "DirectHFSFTDatasetBuilder",
     "DirectHFSFTDatasetConfig",
     "PromptCompletionSFTPreprocessingConfig",

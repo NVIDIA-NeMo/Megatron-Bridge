@@ -79,16 +79,6 @@ Usage:
             dataset.path=/data/energon \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
-    VLM with local JSON/JSONL:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe qwen3_vl_8b_peft_config \\
-            --dataset vlm-local \\
-            --step_func qwen3_vl_step \\
-            dataset.source.path=/data/vlm_train.jsonl \\
-            dataset.source.media_root=/data/vlm_images \\
-            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
-            checkpoint.pretrained_checkpoint=/path/to/checkpoint
-
     With CLI overrides (Hydra-style, works for any config field):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
             --recipe llama32_1b_pretrain_config \\
@@ -183,8 +173,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
             "VLM datasets:\n"
             "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
-            "  vlm-hf                 Direct HF SFT (set dataset.source.dataset_name=<preset>)\n"
-            "  vlm-local              Local JSON/JSONL SFT (set dataset.source.path=<path>)"
+            "  vlm-hf                 Direct HF SFT (set dataset.source.dataset_name=<preset>)"
         ),
     )
     parser.add_argument(

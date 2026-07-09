@@ -279,7 +279,7 @@ class TestInferModeFromDataset:
 
     @pytest.mark.parametrize(
         "dataset_type",
-        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf", "vlm-local"],
+        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf"],
     )
     def test_finetune_types(self, dataset_type):
         assert infer_mode_from_dataset(dataset_type) == "finetune"
@@ -421,38 +421,6 @@ class TestApplyDatasetOverride:
         assert result.dataset.seq_length == 4096
         assert result.dataset.source.dataset_name == "cord_v2"
 
-    # -- VLM local ------------------------------------------------------------
-
-    def test_vlm_local_creates_direct_sft_config(self):
-        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, LocalConversationDatasetSourceConfig
-
-        config = _make_mock_config()
-        overrides = [
-            "dataset.source.path=/data/train.jsonl",
-            "dataset.source.media_root=/data/media",
-            "dataset.validation_source.path=/data/validation.json",
-            "train.train_iters=10",
-        ]
-        result = apply_dataset_override(config, "vlm-local", seq_length=2048, cli_overrides=overrides)
-        assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
-        assert isinstance(result.dataset.source, LocalConversationDatasetSourceConfig)
-        assert isinstance(result.dataset.validation_source, LocalConversationDatasetSourceConfig)
-        assert result.dataset.source.path == "/data/train.jsonl"
-        assert result.dataset.source.media_root == "/data/media"
-        assert result.dataset.validation_source.path == "/data/validation.json"
-        assert result.dataset.validation_source.media_root == "/data/media"
-        assert result.dataset.test_source is None
-        assert result.dataset.do_validation is True
-        assert result.dataset.do_test is False
-        assert result.dataset.seq_length == 2048
-        assert overrides == ["train.train_iters=10"]
-
-    def test_vlm_local_requires_train_source(self):
-        config = _make_mock_config()
-
-        with pytest.raises(ValueError, match="requires dataset.source.path"):
-            apply_dataset_override(config, "vlm-local", seq_length=2048)
-
     # -- Unknown type ---------------------------------------------------------
 
     def test_unknown_dataset_type_raises(self):
@@ -490,7 +458,7 @@ class TestRegistryConstants:
         assert "llm-finetune-preloaded" in DATASET_TYPES
         assert "vlm-energon" in DATASET_TYPES
         assert "vlm-hf" in DATASET_TYPES
-        assert "vlm-local" in DATASET_TYPES
+        assert "vlm-local" not in DATASET_TYPES
         assert "vlm-preloaded" not in DATASET_TYPES
 
     def test_llm_finetune_presets_has_expected_keys(self):

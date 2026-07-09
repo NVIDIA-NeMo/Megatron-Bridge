@@ -1,7 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import importlib
-import json
 
 import pytest
 from megatron.training.config.instantiate_utils import instantiate
@@ -12,7 +11,6 @@ from megatron.bridge.data.builders import (
     DirectHFSFTDatasetBuilder,
     DirectHFSFTDatasetConfig,
     HFDatasetSourceConfig,
-    LocalConversationDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
 from megatron.bridge.data.builders import direct_hf_sft as builder_module
@@ -336,70 +334,25 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
     assert "tokenizer" not in serialized
 
 
-def test_local_conversation_config_round_trip_is_declarative():
+def test_hf_json_data_file_can_be_supplied_by_cli_override():
     config = DirectHFSFTDatasetConfig(
         seq_length=128,
-        source=LocalConversationDatasetSourceConfig(
-            path="training.jsonl",
-            media_root="media",
+        source=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            split="train",
+            load_kwargs={"data_files": {"train": None}},
         ),
         do_validation=False,
         do_test=False,
     )
 
-    serialized = ConfigContainer._convert_value_to_dict(config)
-    restored = instantiate(serialized)
-
-    assert isinstance(restored, DirectHFSFTDatasetConfig)
-    assert isinstance(restored.source, LocalConversationDatasetSourceConfig)
-    assert restored.source.path == "training.jsonl"
-    assert restored.source.media_root == "media"
-    assert "collate_impl" not in serialized
-
-
-def test_local_conversation_source_path_can_be_supplied_by_cli_override():
-    config = DirectHFSFTDatasetConfig(
-        seq_length=128,
-        source=LocalConversationDatasetSourceConfig(path=None),
-        do_validation=False,
-        do_test=False,
+    process_config_with_overrides(
+        config,
+        cli_overrides=["source.load_kwargs.data_files.train=/data/training.jsonl"],
     )
 
-    process_config_with_overrides(config, cli_overrides=["source.path=training.jsonl"])
-
-    assert isinstance(config.source, LocalConversationDatasetSourceConfig)
-    assert config.source.path == "training.jsonl"
+    assert config.source.load_kwargs == {"data_files": {"train": "/data/training.jsonl"}}
     config.validate()
-
-
-@pytest.mark.parametrize("suffix", [".json", ".jsonl"])
-def test_builder_loads_local_conversations_through_unified_runtime(tmp_path, suffix):
-    source_path = tmp_path / f"training{suffix}"
-    row = {
-        "messages": [
-            {"role": "user", "content": "question"},
-            {"role": "assistant", "content": "answer"},
-        ]
-    }
-    payload = json.dumps(row) + "\n" if suffix == ".jsonl" else json.dumps([row])
-    source_path.write_text(payload, encoding="utf-8")
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=LocalConversationDatasetSourceConfig(path=str(source_path)),
-        pad_to_multiple_of=1,
-        do_validation=False,
-        do_test=False,
-    )
-
-    train, validation, test = DirectHFSFTDatasetBuilder(config).build(
-        DatasetBuildContext(2, 0, 0, tokenizer=_Tokenizer())
-    )
-
-    assert train is not None
-    assert len(train) == 2
-    assert train[0]["conversation"][1]["content"][0]["text"] == "answer"
-    assert train.collate_fn([train[0]])["tokens"].tolist() == [[1, 2, 3]]
-    assert (validation, test) == (None, None)
 
 
 def test_prompt_completion_config_round_trip_is_declarative():

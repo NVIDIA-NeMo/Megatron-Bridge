@@ -20,11 +20,11 @@ from megatron.bridge.recipes.qwen_omni.h100.qwen3_omni import (
     qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config as qwen3_omni_30b_a3b_sft_config,
 )
 from megatron.bridge.recipes.qwen_omni.h100.qwen3_omni import (
-    qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_local_config as qwen3_omni_30b_a3b_sft_local_config,
+    qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_hf_json_config as qwen3_omni_30b_a3b_sft_hf_json_config,
 )
 
 
 __all__ = [
     "qwen3_omni_30b_a3b_sft_config",
-    "qwen3_omni_30b_a3b_sft_local_config",
+    "qwen3_omni_30b_a3b_sft_hf_json_config",
 ]
