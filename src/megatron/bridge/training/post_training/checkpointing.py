@@ -21,7 +21,9 @@ except ImportError as e:
 
 import os
 
+import torch
 from megatron.core import dist_checkpointing
+from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
 
@@ -83,7 +85,7 @@ def has_modelopt_state(checkpoint_path: str) -> bool:
     if not os.path.isdir(modelopt_state_path):
         return False
 
-    modelopt_state = dist_checkpointing.load_common_state_dict(modelopt_state_path)
+    modelopt_state = torch.load(modelopt_state_path + "/" + COMMON_STATE_FNAME, weights_only=True)
     modes = modelopt_state["modelopt_state_dict"]
     if len(modes) == 1 and modes[0][0] == "kd_loss":
         # Ignore KD state

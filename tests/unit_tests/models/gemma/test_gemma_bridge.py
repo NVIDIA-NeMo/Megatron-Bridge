@@ -157,14 +157,7 @@ class TestMegatronGemmaBridge:
         assert result.num_attention_heads == gemma_2b_config.num_attention_heads
         assert result.seq_length == gemma_2b_config.max_position_embeddings
         assert result.rotary_base == gemma_2b_config.rope_parameters["rope_theta"]
-        assert result.activation_func is torch.nn.functional.gelu
-
-    def test_provider_bridge_maps_tanh_gelu(self, mock_pretrained_gemma_2b):
-        """Map the explicit HF tanh-approximate GELU activation to MCore fast_gelu."""
-        mock_pretrained_gemma_2b.config.hidden_act = "gelu_pytorch_tanh"
-
-        result = GemmaBridge().provider_bridge(mock_pretrained_gemma_2b)
-
+        # Gemma runs tanh-approximate GELU (fast_gelu), despite the legacy hidden_act="gelu".
         assert result.activation_func is fast_gelu
 
     def test_provider_bridge_basic_7b(self, mock_pretrained_gemma_7b, gemma_7b_config):

@@ -13,7 +13,6 @@
 # limitations under the License.
 """Unit tests for megatron.bridge.training.post_training.checkpointing module."""
 
-import json
 import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
@@ -40,8 +39,6 @@ def mock_model_fixtures():
 
 def _write_modelopt_common_state(modelopt_state_dir: Path, states):
     """Helper to write a common_state file with the given modelopt states."""
-    with open(modelopt_state_dir / "metadata.json", "w") as metadata_file:
-        json.dump({"sharded_backend": "torch_dist", "sharded_backend_version": 1}, metadata_file)
     common_state_file = modelopt_state_dir / COMMON_STATE_FNAME
     torch.save({"modelopt_state_dict": states}, common_state_file)
     return common_state_file
@@ -320,12 +317,12 @@ class TestPostTrainingCheckpointUtilities:
             result = has_modelopt_state(str(checkpoint_path))
             assert result is False
 
-    @patch("megatron.bridge.training.post_training.checkpointing.dist_checkpointing.load_common_state_dict")
+    @patch("megatron.bridge.training.post_training.checkpointing.torch.load")
     @patch("megatron.bridge.training.post_training.checkpointing.os.path.isdir")
-    def test_has_modelopt_state_with_mock(self, mock_isdir, mock_load_common_state):
-        """Test has_modelopt_state with a mocked distributed-checkpoint loader."""
+    def test_has_modelopt_state_with_mock(self, mock_isdir, mock_torch_load):
+        """Test has_modelopt_state with mocked os.path.isdir and torch.load."""
         mock_isdir.return_value = True
-        mock_load_common_state.return_value = {"modelopt_state_dict": [("quantization", {"foo": "bar"})]}
+        mock_torch_load.return_value = {"modelopt_state_dict": [("quantization", {"foo": "bar"})]}
 
         result = has_modelopt_state("/fake/checkpoint/path")
         assert result is True
@@ -335,7 +332,6 @@ class TestPostTrainingCheckpointUtilities:
         assert mock_isdir.call_count == 2
         mock_isdir.assert_any_call("/fake/checkpoint/path")
         mock_isdir.assert_any_call("/fake/checkpoint/path/modelopt_state")
-        mock_load_common_state.assert_called_once_with("/fake/checkpoint/path/modelopt_state")
 
     def test_has_modelopt_state_with_none_path(self):
         """Test has_modelopt_state with None checkpoint path."""
@@ -392,11 +388,7 @@ class TestPostTrainingCheckpointUtilities:
 
             # Mock the dist_checkpointing.load_common_state_dict
             with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
-                mock_load.side_effect = lambda path: (
-                    {"modelopt_state_dict": [("quantization", {"value": 1})]}
-                    if str(path).endswith("modelopt_state")
-                    else {"iteration": 100}
-                )
+                mock_load.return_value = {"iteration": 100}
 
                 result = has_modelopt_state(str(checkpoint_path))
                 assert result is True
@@ -435,8 +427,6 @@ class TestPostTrainingCheckpointUtilities:
             with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
 
                 def load_side_effect(path):
-                    if str(path).endswith("modelopt_state"):
-                        return {"modelopt_state_dict": [("quantization", {"value": 2})]}
                     if "iter_0000100" in path:
                         return {"iteration": 100}
                     elif "iter_0000200" in path:
