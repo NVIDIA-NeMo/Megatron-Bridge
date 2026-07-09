@@ -23,7 +23,7 @@ from megatron.bridge.perf_recipes.deepseek import deepseek_v3_pretrain_256gpu_gb
 from megatron.bridge.training.config import ConfigContainer
 from tests.functional_tests.test_groups.recipes.utils import (
     configure_ci_pretraining_dataset,
-    run_pretrain_recipe_perf_test,
+    run_perf_recipe_proxy_test,
 )
 
 
@@ -84,4 +84,4 @@ class TestDeepSeekV3PerfProxy:
             configure_ci_pretraining_dataset(config, ensure_test_data)
             return config
 
-        run_pretrain_recipe_perf_test(proxy_config, "deepseek_v3_gb200_fp8mx_proxy")
+        run_perf_recipe_proxy_test(proxy_config, "deepseek_v3_gb200_fp8mx_proxy")

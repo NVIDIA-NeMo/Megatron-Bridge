@@ -27,7 +27,7 @@ from megatron.bridge.perf_recipes.qwen import (
 from megatron.bridge.training.config import ConfigContainer
 from tests.functional_tests.test_groups.recipes.utils import (
     configure_ci_pretraining_dataset,
-    run_pretrain_recipe_perf_test,
+    run_perf_recipe_proxy_test,
 )
 
 
@@ -70,7 +70,7 @@ class TestQwen3MoePerfProxy:
             assert config.mixed_precision.fp8_recipe == "tensorwise"
             return config
 
-        run_pretrain_recipe_perf_test(proxy_config, "qwen3_30b_a3b_h100_fp8cs_proxy")
+        run_perf_recipe_proxy_test(proxy_config, "qwen3_30b_a3b_h100_fp8cs_proxy")
 
     @pytest.mark.run_only_on("GPU")
     def test_gb200_fp8mx(self, ensure_test_data):
@@ -98,4 +98,4 @@ class TestQwen3MoePerfProxy:
             assert config.comm_overlap.delay_wgrad_compute is True
             return config
 
-        run_pretrain_recipe_perf_test(proxy_config, "qwen3_30b_a3b_gb200_fp8mx_proxy")
+        run_perf_recipe_proxy_test(proxy_config, "qwen3_30b_a3b_gb200_fp8mx_proxy")

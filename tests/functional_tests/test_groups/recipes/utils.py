@@ -168,13 +168,13 @@ def run_pretrain_recipe_test(
         clear_directories(tmp_path)
 
 
-def run_pretrain_recipe_perf_test(
+def _run_pretrain_without_checkpoint(
     config_func: Callable,
     recipe_name: str,
     config_overrides: Optional[dict] = None,
 ):
     """
-    Common test implementation for pretrain perf recipe configurations.
+    Common implementation for short pretraining tests without checkpoint I/O.
 
     This function runs a minimal training session to verify that:
     1. The recipe config can be loaded without errors
@@ -215,6 +215,30 @@ def run_pretrain_recipe_perf_test(
                 setattr(config_obj, key, value)
 
     pretrain(config, forward_step)
+
+
+def run_perf_recipe_proxy_test(
+    config_func: Callable,
+    recipe_name: str,
+    config_overrides: Optional[dict] = None,
+):
+    """Run a compact functional proxy derived from a production performance recipe.
+
+    Callers should keep performance behavior in ``config_func`` and limit
+    overrides to reductions required by the CI topology, dataset, and run
+    length. This prevents functional tests from growing a second, manually
+    maintained copy of the production performance configuration.
+    """
+    _run_pretrain_without_checkpoint(config_func, recipe_name, config_overrides)
+
+
+def run_pretrain_feature_test(
+    config_func: Callable,
+    test_name: str,
+    config_overrides: Optional[dict] = None,
+):
+    """Run a short no-checkpoint pretraining test for a focused training feature."""
+    _run_pretrain_without_checkpoint(config_func, test_name, config_overrides)
 
 
 def run_pretrain_config_override_test(config_func: Callable):
