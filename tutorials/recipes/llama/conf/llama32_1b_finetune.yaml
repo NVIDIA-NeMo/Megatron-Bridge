@@ -19,7 +19,7 @@
 # Data configuration
 dataset:
   # Replace with a directory containing training.jsonl, validation.jsonl, and optionally test.jsonl
-  # dataset_root: /path/to/your/finetuning_dataset_dir
+  # dataset_root: /path/to/your/gpt_sft_dataset_dir
   seq_length: 4096
 
 # Training configuration

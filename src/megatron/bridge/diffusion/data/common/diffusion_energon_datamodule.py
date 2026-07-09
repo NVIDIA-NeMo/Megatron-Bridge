@@ -22,8 +22,8 @@ from typing import Any, Dict, Literal
 from megatron.energon import DefaultTaskEncoder, get_train_dataset
 from torch import int_repr
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
