@@ -184,8 +184,8 @@ def test_library_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch
     assert library_config.env_vars["USE_MNNVL"] == 0
     assert perf_config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
     assert perf_config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
-    assert "TORCHINDUCTOR_WORKER_START" not in perf_config.env_vars
-    assert "QUANTIZATION_TYPE_DEBUG" not in perf_config.env_vars
+    assert perf_config.env_vars["TORCHINDUCTOR_WORKER_START"] == "fork"
+    assert perf_config.env_vars["QUANTIZATION_TYPE_DEBUG"] == 1
     assert perf_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert perf_config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert perf_config.env_vars["USE_MNNVL"] == 1

@@ -66,22 +66,6 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     return set_user_overrides(recipe, args)
 
 
-def _finalize_perf_recipe_environment(recipe, args, protected_env_names: set[str]):
-    """Compose env settings after CLI/Hydra model overrides are resolved."""
-    from megatron.bridge.perf_recipes.environment import apply_perf_recipe_environment
-
-    apply_perf_recipe_environment(
-        recipe,
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        gpu=args.gpu,
-        compute_dtype=args.compute_dtype,
-        train_task=args.task,
-        protected_env_names=protected_env_names,
-    )
-    return recipe
-
-
 def main() -> None:
     """Apply the selected recipe's environment and replace this process with its runner."""
     parser = parse_cli_args()
@@ -113,10 +97,7 @@ def main() -> None:
             precision=args.compute_dtype,
             config_variant=args.config_variant,
         )
-        base_env_vars = dict(recipe.env_vars)
         recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
-        protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
-        recipe = _finalize_perf_recipe_environment(recipe, args, protected_env_names)
         workload_base_config = _workload_base_config_from_recipe(recipe, num_gpus=args.num_gpus)
 
         plugin = PerfEnvPlugin(
@@ -126,7 +107,6 @@ def main() -> None:
             None,
             _EnvironmentExecutor(),
             workload_base_config,
-            protected_recipe_env_names=protected_env_names,
         )
         runner_name = "run_script.py"
 
