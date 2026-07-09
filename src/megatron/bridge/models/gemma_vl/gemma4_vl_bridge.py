@@ -152,6 +152,14 @@ class Gemma4VLBridge(Gemma4Bridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma4VLModelProvider | Gemma4DenseVLProvider) -> dict:
+        """Convert a Gemma 4 VL provider config back to Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        final_logit_softcapping = hf_config.pop("final_logit_softcapping")
+        hf_config.setdefault("text_config", {})["final_logit_softcapping"] = final_logit_softcapping
+        return hf_config
+
     def _conversion_mode(self) -> str:
         mode = getattr(self, "gemma4_conversion_mode", None) or os.environ.get("GEMMA4_CONVERSION_MODE", "auto")
         mode = mode.lower()
