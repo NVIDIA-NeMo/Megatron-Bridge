@@ -20,6 +20,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -45,6 +46,7 @@ def _get_olmoe_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
+@library_recipe_environment(model_family_name="olmoe")
 def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for OLMoE-7B (7B total, ~1B active).
 
@@ -183,6 +185,7 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="olmoe")
 def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for OLMoE-7B (7B total, ~1B active).
 
@@ -329,6 +332,7 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
+@library_recipe_environment(model_family_name="olmoe")
 def olmoe_7b_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:

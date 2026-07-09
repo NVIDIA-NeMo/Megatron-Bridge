@@ -325,6 +325,8 @@ For HybridEP recipes, the wrapper keeps `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAI
 
 Every flat performance recipe builder uses `@perf_recipe_environment(...)` to compose its process settings before returning the config. Common rules are feature-derived: dispatcher backend selects the LayerNorm SM margin, GPU and parallelism select `CUDA_DEVICE_MAX_CONNECTIONS`, HybridEP selects the NVLink topology, CUDA graph mode selects allocator/record-stream behavior, and precision selects settings such as `NVTE_USE_FAST_MATH`. A small number of measured model exceptions remain family-specific. This keeps direct builder calls self-describing without copying the same environment dictionary into every config function. Launchers reapply composition after overrides so dependent settings follow the effective config.
 
+Library recipes also own their process defaults. Common pretraining, SFT, and PEFT configs seed the legacy-compatible allocator, NCCL, and cuDNN LayerNorm settings, while hardware builders use `@library_recipe_environment(...)` to finalize topology-dependent values. The `--use_recipes` worker wrapper reapplies this composition after overrides. The nemo-ci executors under `scripts/performance` do not provide fallback values for recipe-owned process settings.
+
 Cluster fabric and orchestration settings do not belong in recipes. Keep credentials, cache/offline policy, scheduler metadata, W&B state, and cluster-specific NCCL network tuning in the launcher or executor. In particular, settings such as `NCCL_NET_GDR_LEVEL`, `NCCL_NET_GDR_C2C`, and `NCCL_IB_QPS_PER_CONNECTION` must remain deployment-owned.
 
 ## Resources

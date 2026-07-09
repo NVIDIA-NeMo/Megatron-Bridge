@@ -23,6 +23,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -30,6 +31,7 @@ from megatron.bridge.training.config import ConfigContainer
 # =============================================================================
 # Ministral3 3B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="ministral3")
 def ministral3_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Ministral3 3B.
 
@@ -141,6 +143,7 @@ def ministral3_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Ministral3 8B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="ministral3")
 def ministral3_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Ministral3 8B.
 
@@ -252,6 +255,7 @@ def ministral3_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Ministral3 14B SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="ministral3")
 def ministral3_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Ministral3 14B.
 
@@ -363,6 +367,7 @@ def ministral3_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # Ministral3 3B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="ministral3")
 def ministral3_3b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Ministral3 3B.
 
@@ -483,6 +488,7 @@ def ministral3_3b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 # =============================================================================
 # Ministral3 8B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="ministral3")
 def ministral3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Ministral3 8B.
 
@@ -603,6 +609,7 @@ def ministral3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 # =============================================================================
 # Ministral3 14B PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="ministral3")
 def ministral3_14b_peft_2gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Ministral3 14B.
 

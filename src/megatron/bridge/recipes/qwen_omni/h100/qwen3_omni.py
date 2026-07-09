@@ -23,6 +23,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
 
@@ -33,6 +34,7 @@ if TYPE_CHECKING:
 _QWEN3_OMNI_HF_PATH = "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
 
+@library_recipe_environment(model_family_name="qwen_omni")
 def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     """Return an 8-GPU thinker-only SFT config for Qwen3-Omni 30B-A3B.
 
@@ -93,6 +95,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     return cfg
 
 
+@library_recipe_environment(model_family_name="qwen_omni")
 def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
     """Return an 8-GPU SFT config for JSONL loaded through Hugging Face datasets."""
 

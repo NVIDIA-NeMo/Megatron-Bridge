@@ -16,12 +16,14 @@ import torch
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h12288_tp4_mbs1_seqlen2048
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
+@library_recipe_environment(model_family_name="gpt")
 def gpt3_175b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for GPT3-175B.
 

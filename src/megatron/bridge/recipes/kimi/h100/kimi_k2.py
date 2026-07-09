@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
@@ -87,6 +88,7 @@ def _apply_kimi_k2_optimizer(cfg: ConfigContainer, optimizer_type: str) -> None:
     cfg.ddp.grad_reduce_in_fp32 = grad_reduce_in_fp32
 
 
+@library_recipe_environment(model_family_name="kimi")
 def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Kimi-K2 (1T).
 

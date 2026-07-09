@@ -18,6 +18,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import (
+    library_recipe_environment,
     set_common_recipe_environment_defaults,
     set_hybridep_environment_defaults,
 )
@@ -91,6 +92,7 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
         model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
 
+@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for DeepSeek-V3 (671B).
 
@@ -248,6 +250,7 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     """Return a pre-training config for DeepSeek-V3 (671B) with minimal nodes (32).
 

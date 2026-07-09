@@ -85,27 +85,9 @@ bash -c '{{ pre_cmds }} {{ command }}'
 """
 
 PERF_ENV_VARS = {
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
     "TRANSFORMERS_OFFLINE": "1",  # Default for benchmark runs that mostly use NullTokenizer.
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
-    "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
-    "NVTE_NORM_FWD_USE_CUDNN": "1",
-    "NVTE_NORM_BWD_USE_CUDNN": "1",
-    "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-    "NCCL_GRAPH_REGISTER": "0",
-}
-
-# Flat performance recipes own these process settings. Library-recipe launches
-# retain the legacy executor defaults until their builders are migrated too.
-RECIPE_OWNED_PERF_ENV_NAMES = {
-    "NCCL_GRAPH_REGISTER",
-    "NCCL_NVLS_ENABLE",
-    "NVTE_NORM_BWD_USE_CUDNN",
-    "NVTE_NORM_FWD_USE_CUDNN",
-    "PYTORCH_CUDA_ALLOC_CONF",
-    "TORCH_NCCL_AVOID_RECORD_STREAMS",
 }
 
 
@@ -131,7 +113,6 @@ def slurm_executor(
     gres: Optional[str] = None,
     packager: str = "git",
     enable_pct_binding: bool = True,
-    recipe_owned_environment: bool = False,
 ) -> run.SlurmExecutor:
     """
     Slurm cluster definition with appropriate cluster params and NeMo container params needed for pre-training
@@ -143,8 +124,6 @@ def slurm_executor(
             Example: {"nodelist": "node001,node002", "constraint": "gpu"} will generate:
                 #SBATCH --nodelist=node001,node002
                 #SBATCH --constraint=gpu
-        recipe_owned_environment: Remove process settings now composed by flat
-            performance recipes. Library recipes retain the legacy defaults.
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
     mounts = []
@@ -165,9 +144,6 @@ def slurm_executor(
             )
 
     perf_env = PERF_ENV_VARS.copy()
-    if recipe_owned_environment:
-        for name in RECIPE_OWNED_PERF_ENV_NAMES:
-            perf_env.pop(name, None)
 
     if wandb_key is not None:
         perf_env["WANDB_API_KEY"] = wandb_key
@@ -308,12 +284,10 @@ def kubeflow_executor(
     Returns:
         Configured ``run.KubeflowExecutor`` instance.
     """
-    # K8s/Kubeflow jobs deliberately do NOT inherit PERF_ENV_VARS. That dict was
-    # tuned for the Slurm perf-benchmark path; the verified standalone K8s launch
-    # (real_trainjob.py) carried its own minimal env. On Kubeflow the cluster
-    # supplies all NCCL/fabric/perf tuning explicitly via KUBEFLOW_ENV_LIST_JSON
-    # (-> custom_env_vars / env_list) in ci_cluster_config.yml, so start empty and
-    # only layer on secrets + whatever the cluster passed in.
+    # K8s/Kubeflow jobs deliberately do NOT inherit the Slurm orchestration
+    # defaults in PERF_ENV_VARS. Recipe-owned process settings are applied by
+    # the worker wrapper; the cluster supplies fabric tuning explicitly via
+    # KUBEFLOW_ENV_LIST_JSON (-> custom_env_vars / env_list).
     env_vars: Dict[str, str] = {}
     if wandb_key is not None:
         env_vars["WANDB_API_KEY"] = wandb_key

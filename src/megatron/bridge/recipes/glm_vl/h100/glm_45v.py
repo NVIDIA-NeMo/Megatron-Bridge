@@ -26,6 +26,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -84,6 +85,7 @@ def set_glm_45v_pipeline_model_parallel_layout(
 # =============================================================================
 # GLM-4.5V SFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="glm_vl")
 def glm_45v_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for GLM-4.5V (106B MoE).
 
@@ -227,6 +229,7 @@ def glm_45v_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 # GLM-4.5V PEFT Configuration
 # =============================================================================
+@library_recipe_environment(model_family_name="glm_vl")
 def glm_45v_peft_32gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for GLM-4.5V (106B MoE).
 
