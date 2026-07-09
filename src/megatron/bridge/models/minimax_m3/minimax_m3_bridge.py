@@ -28,7 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 try:
@@ -143,7 +143,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
             return quick_gelu
         return super().hf_to_megatron_activation(hidden_act)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> MiniMaxM3ModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MiniMaxM3ModelProvider:
         """Convert the HuggingFace MiniMax-M3 config to a GPTModelProvider."""
         hf_config = hf_pretrained.config
         text_config = getattr(hf_config, "text_config", hf_config)

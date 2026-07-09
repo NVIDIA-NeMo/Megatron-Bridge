@@ -24,7 +24,7 @@ from transformers import GenerationConfig, PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     MiniMaxM3Bridge,
     MiniMaxM3ModelProvider,
@@ -106,7 +106,7 @@ def _make_pretrained(text_overrides: dict | None = None) -> Mock:
         setattr(outer_cfg, k, v)
     outer_cfg.text_config = text_cfg
 
-    m = Mock(spec=PreTrainedVLM)
+    m = Mock(spec=PreTrainedCausalLM)
     m.config = outer_cfg
     m.generation_config = Mock(spec=GenerationConfig)
     return m
@@ -238,7 +238,7 @@ class TestMiniMaxM3Bridge:
     def test_provider_bridge_flat_text_config(self):
         """A flat (non-nested) text config is accepted for text-only checkpoints."""
         text_cfg = _make_text_config()
-        m = Mock(spec=PreTrainedVLM)
+        m = Mock(spec=PreTrainedCausalLM)
         m.config = text_cfg
         m.generation_config = Mock(spec=GenerationConfig)
 
