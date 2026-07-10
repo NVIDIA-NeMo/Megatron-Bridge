@@ -1259,6 +1259,9 @@ class ConfigContainer(Container):
                 "Gradient accumulation fusion is not supported with ModelOpt/Quantized models. "
                 "Please set model.gradient_accumulation_fusion=False"
             )
+            from megatron.bridge.training.post_training.checkpointing import _validate_modelopt_checkpointing
+
+            _validate_modelopt_checkpointing(self.checkpoint.non_persistent_ckpt_type)
 
         # Checkpoint
         self._validate_hf_checkpoint_export_source()
