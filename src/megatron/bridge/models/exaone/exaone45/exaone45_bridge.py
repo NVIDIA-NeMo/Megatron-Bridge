@@ -26,7 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.exaone.exaone45.exaone45_provider import Exaone45ModelProvider
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.model import Exaone45Model
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 AutoMapping.register_module_type("TERowParallelLinearLayerNorm", "row")
@@ -58,7 +58,7 @@ class Exaone45Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Exaone45ModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Exaone45ModelProvider:
         """
         Create a Exaone45ModelProvider from a HuggingFace pretrained model.
 
