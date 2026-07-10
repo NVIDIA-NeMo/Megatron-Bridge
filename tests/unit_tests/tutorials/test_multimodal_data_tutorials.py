@@ -7,6 +7,7 @@ import tarfile
 from pathlib import Path
 
 import pytest
+from PIL import Image
 
 
 pytestmark = pytest.mark.unit
@@ -112,6 +113,75 @@ def test_energon_preparation_uses_noninteractive_explicit_splits(tmp_path: Path,
     ]
 
 
+def test_medpix_energon_preparation_writes_real_schema_without_downloading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_medpix_data.py"))
+    calls = []
+
+    def fake_load_dataset(dataset_id: str, *, split: str):
+        calls.append((dataset_id, split))
+        count = 2 if split.startswith("train") else 1
+        return [
+            {
+                "image_id": Image.new("RGB", (16 + index, 12), (20 * index, 40, 80)),
+                "question": f"Question {index}?",
+                "answer": f"Answer {index}.",
+            }
+            for index in range(count)
+        ]
+
+    prepare_medpix_data = module["prepare_medpix_data"]
+    monkeypatch.setitem(prepare_medpix_data.__globals__, "load_dataset", fake_load_dataset)
+    prepare_medpix_data(
+        tmp_path,
+        train_rows=2,
+        validation_rows=1,
+        run_prepare=False,
+    )
+
+    assert calls == [
+        ("mmoukouba/MedPix-VQA", "train[:2]"),
+        ("mmoukouba/MedPix-VQA", "validation[:1]"),
+    ]
+    with tarfile.open(tmp_path / "train-shard-000000.tar") as archive:
+        assert archive.getnames() == [
+            "train-000000.image.png",
+            "train-000000.conversation.json",
+            "train-000001.image.png",
+            "train-000001.conversation.json",
+        ]
+        conversation = json.load(archive.extractfile("train-000000.conversation.json"))
+    assert conversation[0]["content"] == [
+        {"type": "image"},
+        {"type": "text", "text": "Question 0?"},
+    ]
+    assert conversation[1]["content"] == [{"type": "text", "text": "Answer 0."}]
+
+    manifest = json.loads((tmp_path / "manifest.json").read_text(encoding="utf-8"))
+    assert manifest == {
+        "dataset": "mmoukouba/MedPix-VQA",
+        "train_split": "train[:2]",
+        "validation_split": "validation[:1]",
+        "train_rows": 2,
+        "validation_rows": 1,
+    }
+    dataset_yaml = (tmp_path / ".nv-meta" / "dataset.yaml").read_text(encoding="utf-8")
+    assert "imgs: image.png" in dataset_yaml
+    assert "conversation: conversation.json" in dataset_yaml
+
+
+def test_medpix_training_slice_override_preserves_hydra_brackets():
+    from omegaconf import OmegaConf
+
+    from megatron.bridge.training.utils.omegaconf_utils import parse_hydra_overrides
+
+    config = OmegaConf.create({"dataset": {"source": {"dataset_name": "medpix", "split": None}}})
+    result = parse_hydra_overrides(config, ['dataset.source.split="train[:16]"'])
+
+    assert result.dataset.source.split == "train[:16]"
+
+
 def test_multimodal_tutorials_document_runnable_qwen_paths():
     direct = (DIRECT_TUTORIAL / "README.md").read_text(encoding="utf-8")
     energon = (ENERGON_TUTORIAL / "README.md").read_text(encoding="utf-8")
@@ -122,10 +192,15 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     assert "--dataset vlm-hf" in direct
     assert "dataset.source.path_or_dataset=json" in direct
     assert "dataset.source.load_kwargs={data_files:{train:" in direct
+    assert "dataset.source.dataset_name=medpix" in direct
+    assert 'dataset.source.split="train[:16]"' in direct
+    assert "logger.wandb_project=bridge-qwen3-vl-medpix" in direct
     assert "dataset.defer_in_batch_packing_to_step=True" in direct
     assert "qwen3_vl_8b_peft_energon_config" in energon
     assert "--dataset vlm-energon" in energon
     assert "train:train-shard-.*" in energon
+    assert "prepare_medpix_data.py" in energon
+    assert "dataset.enable_in_batch_packing=True" in energon
     assert "min_pixels` and `max_pixels` are not visual keys" in energon
     assert "multimodal Direct-HF tutorial" in qwen
     assert "multimodal Energon tutorial" in qwen

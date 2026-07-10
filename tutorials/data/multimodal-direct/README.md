@@ -90,7 +90,67 @@ Success means the launcher loads the native checkpoint, the Qwen processor opens
 
 `--dataset vlm-hf` selects the generic `DirectHFSFTDatasetConfig`; the remaining overrides select Qwen's processor and the local JSON source. Passing the selector also makes `--seq_length` update both model and dataset lengths.
 
-## 4. Configure explicit validation and test files
+## 4. Run the MedPix Hub preset with W&B
+
+`medpix` is a built-in source preset for
+[`mmoukouba/MedPix-VQA`](https://huggingface.co/datasets/mmoukouba/MedPix-VQA). It owns the Hub path,
+the MedPix schema adapter, and the published train/validation split names. The dataset has no test split, so disable
+test data. With `WANDB_API_KEY` configured (or after `wandb login`), this command runs three Qwen3-VL LoRA steps,
+one validation step, checkpoint save, and online metric logging:
+
+```bash
+export OUTPUT_DIR="$WORKSPACE/results/qwen3-vl-medpix-direct"
+
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen3_vl_8b_peft_config \
+  --dataset vlm-hf \
+  --step_func qwen3_vl_step \
+  --peft_scheme lora \
+  --seq_length 1024 \
+  checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
+  checkpoint.load=null \
+  checkpoint.save="$OUTPUT_DIR/checkpoints" \
+  checkpoint.save_interval=3 \
+  train.train_iters=3 \
+  train.global_batch_size=1 \
+  train.micro_batch_size=1 \
+  validation.eval_interval=3 \
+  validation.eval_iters=1 \
+  validation.eval_micro_batch_size=1 \
+  dataset.source.dataset_name=medpix \
+  dataset.hf_processor_path="$MODEL_ID" \
+  dataset.do_validation=True \
+  dataset.do_test=False \
+  dataset.num_workers=0 \
+  dataset.persistent_workers=False \
+  dataset.enable_in_batch_packing=False \
+  scheduler.lr_warmup_iters=0 \
+  scheduler.lr_decay_iters=3 \
+  logger.log_interval=1 \
+  logger.tensorboard_log_interval=1 \
+  logger.log_throughput_to_tensorboard=True \
+  logger.log_memory_to_tensorboard=True \
+  logger.wandb_project=bridge-qwen3-vl-medpix \
+  logger.wandb_exp_name=direct-hf-medpix \
+  logger.wandb_save_dir="$OUTPUT_DIR/wandb"
+```
+
+The current Direct-HF implementation materializes each requested split before training. The first MedPix run downloads
+the complete Hub shards and needs substantially more host memory than the three target training samples alone imply.
+For a smaller training-only data-path check, add the following overrides; the nested quotes around the sliced split are
+required by Hydra:
+
+```bash
+'dataset.source.split="train[:16]"' \
+dataset.do_validation=False \
+validation.eval_iters=0
+```
+
+Use the normal preset-derived validation split for a real training run. A CLI mapping cannot construct an optional
+`validation_source` that started as `None`; define custom per-split sources in Python as shown next.
+
+## 5. Configure explicit validation and test files
 
 File-backed sources do not invent missing splits. For a production Python recipe, give every enabled split its own serializable source:
 
@@ -120,7 +180,7 @@ cfg.dataset = DirectHFSFTDatasetConfig(
 
 Disable `do_validation` or `do_test` when that split is intentionally absent.
 
-## 5. Enable Qwen in-batch packing
+## 6. Enable Qwen in-batch packing
 
 Qwen3-VL defers packing until its model step has consumed the original visual tensors. Packing requires a configured micro batch greater than one:
 

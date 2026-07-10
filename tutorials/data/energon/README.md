@@ -112,7 +112,39 @@ Success means Energon restores both split loaders, the Qwen task encoder decodes
 
 Energon owns its loader micro batch, so `dataset.micro_batch_size`, `train.micro_batch_size`, and `validation.eval_micro_batch_size` must match. Energon currently exposes train and validation iterators, not a test iterator.
 
-## 4. Prepare production shards
+## 4. Convert a MedPix smoke set
+
+To compare Energon against the Direct-HF `medpix` preset with real medical images, package fixed slices of the same
+[`mmoukouba/MedPix-VQA`](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) source:
+
+```bash
+export ENERGON_PATH=/tmp/bridge-energon-medpix
+
+uv run python tutorials/data/energon/prepare_medpix_data.py \
+  --output-dir "$ENERGON_PATH" \
+  --train-rows 16 \
+  --validation-rows 8 \
+  --num-workers 2
+```
+
+The helper verifies that MedPix `image_id` values decode as PIL images, writes processor-compatible conversations,
+indexes `train` and `val` shards, and records the selected slices in `manifest.json`. Hugging Face may still download
+the complete underlying Parquet shards on the first invocation. The small row defaults are intended for correctness
+smokes, not meaningful medical-model evaluation.
+
+Run the one-GPU command from the previous section with this `ENERGON_PATH`. For an online three-step comparison, set
+`WANDB_MODE=online`, change `train.train_iters=3`, `checkpoint.save_interval=3`, and configure:
+
+```bash
+logger.wandb_project=bridge-qwen3-vl-medpix \
+logger.wandb_exp_name=energon-medpix \
+logger.wandb_save_dir="$OUTPUT_DIR/wandb"
+```
+
+The unpacked baseline uses `dataset.enable_in_batch_packing=False`. After it passes, repeat with
+`dataset.enable_in_batch_packing=True` to exercise Qwen's deferred packing path on the same shards.
+
+## 5. Prepare production shards
 
 For your own dataset, write one or more media members plus one conversation member per sample key. Use split-prefixed tar names, then index them non-interactively:
 
@@ -140,7 +172,7 @@ Common field mappings are:
 
 For a real multi-image converter, see `examples/models/qwen/qwen3_vl/prepare_mantis_energon.py`. For a production audio-video example with explicit train/val/test shard construction, see [VALOR32K-AVQA](../valor32k-avqa/data-preparation.md).
 
-## 5. Processor inputs, outputs, and budgets
+## 6. Processor inputs, outputs, and budgets
 
 These similarly named task-encoder settings have different roles:
 
@@ -153,7 +185,7 @@ These similarly named task-encoder settings have different roles:
 
 `min_pixels` and `max_pixels` are not visual keys. Qwen has fixed model-owned output keys and exposes the pixel bounds independently.
 
-## 6. Enable in-batch packing
+## 7. Enable in-batch packing
 
 Qwen3-VL's Energon recipe defers packing to the model step. Keep configured micro batch greater than one:
 
