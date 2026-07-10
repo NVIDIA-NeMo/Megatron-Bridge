@@ -34,11 +34,13 @@ try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.evaluate import calc_convergence_and_performance
     from utils.executors import kubeflow_executor, slurm_executor
+    from utils.model_aliases import resolve_model_alias
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import kubeflow_executor, slurm_executor
+    from .utils.model_aliases import resolve_model_alias
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -468,6 +470,8 @@ def main(
     packager: str = "git",
 ):
     """Sets up the experiment and runs it."""
+    model_family_name, model_recipe_name = resolve_model_alias(model_family_name, model_recipe_name)
+
     if (
         model_family_name in ["qwen3"]
         and model_recipe_name

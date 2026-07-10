@@ -24,6 +24,7 @@ from typing import cast
 
 import torch
 from argument_parser import parse_cli_args
+from utils.model_aliases import resolve_model_alias
 from utils.overrides import set_cli_overrides, set_user_overrides
 
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
@@ -133,6 +134,10 @@ def main():
     # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
+    args.model_family_name, args.model_recipe_name = resolve_model_alias(
+        args.model_family_name,
+        args.model_recipe_name,
+    )
 
     if args.dump_env:
         _dump_env_rank0()
