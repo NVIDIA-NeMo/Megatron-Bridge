@@ -71,6 +71,6 @@ if [ -n "$CONTAINER_MOUNTS" ]; then
 fi
 
 $SRUN_CMD bash -c "
-    uv run --no-sync python /opt/Megatron-Bridge/scripts/training/pack_sft_data.py \
+    uv run --no-sync python /opt/Megatron-Bridge/scripts/training/prepare_gpt_sft_packed_data.py \
         --recipe gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config
 "

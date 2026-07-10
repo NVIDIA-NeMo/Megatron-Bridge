@@ -28,7 +28,7 @@ Control when training stops using iteration counts, sample counts, or time-based
 |-----------|------|---------|-------------|
 | `train_iters` | `Optional[int]` | `None` | Total number of iterations to train |
 | `train_samples` | `Optional[int]` | `None` | Total number of samples to train |
-| `num_epochs` | `Optional[float]` | `None` | Number of passes over a finite finetuning dataset; fractional values are supported |
+| `num_epochs` | `Optional[float]` | `None` | Number of passes over a finite GPT SFT dataset; fractional values are supported |
 | `exit_interval` | `Optional[int]` | `None` | Exit after iteration divisible by this value |
 | `exit_duration_in_mins` | `Optional[int]` | `None` | Exit after this many minutes |
 
@@ -38,12 +38,12 @@ Megatron-Bridge supports three modes for specifying training duration:
 
 1. **Iteration-based training**: Specify `train_iters` to control the total number of training iterations.
 2. **Sample-based training**: Specify `train_samples` to control the total number of training samples.
-3. **Epoch-based training**: Specify `num_epochs` to calculate iterations from the loaded finetuning dataset size and `global_batch_size`.
+3. **Epoch-based training**: Specify `num_epochs` to calculate iterations from the loaded GPT SFT dataset size and `global_batch_size`.
 
 **Important constraints:**
 - You must specify **exactly one** of `train_iters`, `train_samples`, or `num_epochs`.
 - When using `train_samples`, training iterations are automatically calculated as `train_samples // global_batch_size`.
-- Epoch-based training is supported only for finite `FinetuningDatasetConfig` datasets with `dataloader_type="batch"` and calculates total iterations as `ceil(num_epochs * ceil(dataset_size / global_batch_size))`; the final incomplete global batch is padded and kept.
+- Epoch-based training is supported only for finite `GPTSFTDatasetConfig` datasets with `dataloader_type="batch"` and calculates total iterations as `ceil(num_epochs * ceil(dataset_size / global_batch_size))`; the final incomplete global batch is padded and kept.
 - Batch size rampup (`rampup_batch_size`) is not currently supported with sample-based or epoch-based training.
 - Your scheduler configuration should match your training mode (see [Learning Rate Scheduling](optimizer-scheduler.md#learning-rate-scheduling)).
 

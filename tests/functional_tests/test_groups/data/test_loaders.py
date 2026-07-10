@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.loaders import (
     build_train_valid_test_data_loaders,
     build_train_valid_test_datasets_for_num_epochs,
@@ -34,7 +35,6 @@ from megatron.bridge.training.config import (
     ConfigContainer,
     DistributedDataParallelConfig,
     DistributedInitConfig,
-    FinetuningDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -394,7 +394,7 @@ class TestEpochBasedDataLoaders:
         cfg = create_simple_test_config()
         cfg.train.train_iters = None
         cfg.train.num_epochs = 0.5
-        cfg.dataset = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
         train_ds = list(range(100))
         dataset_provider = mock.Mock(return_value=(train_ds, None, None))
 
@@ -408,7 +408,7 @@ class TestEpochBasedDataLoaders:
         cfg = create_simple_test_config()
         cfg.train.train_iters = None
         cfg.train.num_epochs = 1.0
-        cfg.dataset = FinetuningDatasetConfig(
+        cfg.dataset = GPTSFTDatasetConfig(
             dataset_root="/tmp/dataset",
             seq_length=512,
             dataloader_type="single",
@@ -424,7 +424,7 @@ class TestEpochBasedDataLoaders:
         cfg = create_simple_test_config()
         cfg.train.train_iters = None
         cfg.train.num_epochs = 1.0
-        cfg.dataset = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
 
         with pytest.raises(ValueError, match="num_epochs requires a training dataset"):
             build_train_valid_test_datasets_for_num_epochs(cfg, mock.Mock(return_value=(None, None, None)))
@@ -437,7 +437,7 @@ class TestEpochBasedDataLoaders:
         cfg = create_simple_test_config()
         cfg.train.train_iters = None
         cfg.train.num_epochs = 1.0
-        cfg.dataset = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
 
         with pytest.raises(ValueError, match="finite length"):
             build_train_valid_test_datasets_for_num_epochs(cfg, mock.Mock(return_value=(UnsizedDataset(), None, None)))
@@ -452,7 +452,7 @@ class TestEpochBasedDataLoaders:
         cfg = create_simple_test_config()
         cfg.train.num_epochs = 1.0
         cfg.validation.eval_iters = 0
-        cfg.dataset = FinetuningDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
         train_ds = mock.MagicMock()
         train_ds.__len__.return_value = 4
 
@@ -475,7 +475,7 @@ class TestEpochBasedDataLoaders:
         cfg = create_simple_test_config()
         cfg.train.num_epochs = 1.0
         cfg.validation.eval_iters = 0
-        cfg.dataset = FinetuningDatasetConfig(
+        cfg.dataset = GPTSFTDatasetConfig(
             dataset_root="/tmp/dataset",
             seq_length=512,
             dataloader_type="single",

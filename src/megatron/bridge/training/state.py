@@ -200,7 +200,9 @@ class GlobalState:
 
                 import wandb
 
-                save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
+                save_dir = self.cfg.logger.wandb_save_dir
+                if not save_dir:
+                    save_dir = os.path.join(self.cfg.checkpoint.save, "wandb") if self.cfg.checkpoint.save else None
 
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))

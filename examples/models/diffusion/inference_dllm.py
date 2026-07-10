@@ -213,13 +213,13 @@ def parse_args():
     return p.parse_args()
 
 
-def _encode_prompts(tokenizer, prompts, use_chat_template):
+def _encode_prompts(tokenizer, prompts, use_chat_template, model):
     """Tokenize prompts, optionally wrapping each in the tokenizer's chat template.
 
-    Uses **right**-padding: Megatron applies RoPE by absolute sequence index and
-    ignores ``position_ids``, so the first real token must sit at index 0. Left-
-    padding would shift every prompt token's RoPE phase and corrupt generation.
-    The trailing pad positions are blocked by the key-padding mask in the loop.
+    LLaDA uses **left**-padding because Megatron applies RoPE by physical sequence
+    index. This shifts a short prompt and its generated suffix together, preserving
+    their relative positions; right-padding would insert a positional gap. Other
+    adapters retain their existing right-padding behavior.
     """
     if use_chat_template and getattr(tokenizer, "chat_template", None):
         texts = [
@@ -228,7 +228,8 @@ def _encode_prompts(tokenizer, prompts, use_chat_template):
         ]
     else:
         texts = prompts
-    return tokenizer(texts, return_tensors="pt", padding=True, padding_side="right")
+    padding_side = "left" if model == "llada15" else "right"
+    return tokenizer(texts, return_tensors="pt", padding=True, padding_side=padding_side)
 
 
 def main():
@@ -276,7 +277,12 @@ def main():
 
     model = adapter["load"](args)
 
-    inputs = _encode_prompts(tokenizer, args.prompts, use_chat_template=not args.no_chat_template)
+    inputs = _encode_prompts(
+        tokenizer,
+        args.prompts,
+        use_chat_template=not args.no_chat_template,
+        model=args.model,
+    )
     prompt_ids = inputs.input_ids.cuda()
     prompt_len = prompt_ids.shape[1]
 
