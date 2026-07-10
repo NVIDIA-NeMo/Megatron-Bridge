@@ -23,6 +23,9 @@ silent wipes after upstream PR #3470 (2026-04-23).
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 
 SCRIPTS_PERF_PATH = Path(__file__).parents[3] / "scripts" / "performance"
@@ -92,6 +95,20 @@ def _apply(recipe, cli_overrides=None, args_overrides=None, run_post=True, num_g
             config_variant="v1",
         )
     return recipe
+
+
+def _minimal_cuda_graph_recipe():
+    """Return the config surface used by the CUDA graph override helper."""
+    return SimpleNamespace(
+        model=SimpleNamespace(
+            cuda_graph_impl="none",
+            cuda_graph_modules=[],
+            cuda_graph_scope=None,
+            use_te_rng_tracker=False,
+        ),
+        rng=SimpleNamespace(te_rng_tracker=False),
+        rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -218,6 +235,91 @@ class TestGbsPrecedence:
 
 
 # ---------------------------------------------------------------------------
+# CUDA graph override normalization
+# ---------------------------------------------------------------------------
+
+
+class TestCudaGraphOverrides:
+    def test_none_with_explicit_empty_scope_clears_stale_modules(self):
+        """Disabled graphs use the current MCore representation."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+        recipe = _minimal_cuda_graph_recipe()
+        recipe.model.cuda_graph_impl = "transformer_engine"
+        recipe.model.cuda_graph_modules = ["attn"]
+        recipe.model.use_te_rng_tracker = True
+        recipe.rng.te_rng_tracker = True
+
+        recipe = _set_cuda_graph_overrides(
+            recipe,
+            cuda_graph_impl="none",
+            cuda_graph_scope=[],
+        )
+
+        assert recipe.model.cuda_graph_impl == "none"
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
+        assert cuda_graph_module_names(recipe.model) == []
+        assert recipe.model.use_te_rng_tracker is False
+        assert recipe.rng.te_rng_tracker is False
+
+    def test_local_full_iteration_is_normalized(self):
+        """The legacy local/full_iteration pair maps to the current implementation."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
+
+        recipe = _set_cuda_graph_overrides(
+            _minimal_cuda_graph_recipe(),
+            cuda_graph_impl="local",
+            cuda_graph_scope="full_iteration",
+        )
+
+        assert recipe.model.cuda_graph_impl == "full_iteration"
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
+        assert cuda_graph_module_names(recipe.model) == []
+        assert is_full_iteration_cuda_graph(recipe.model)
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
+        assert recipe.rerun_state_machine.check_for_nan_in_loss is False
+
+    def test_local_scoped_graph_is_rejected(self):
+        """Local graphs cannot capture individual layer modules in Bridge."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        with pytest.raises(
+            ValueError,
+            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+        ):
+            _set_cuda_graph_overrides(
+                _minimal_cuda_graph_recipe(),
+                cuda_graph_impl="local",
+                cuda_graph_scope="mlp",
+            )
+
+    def test_transformer_engine_scoped_graph_is_normalized(self):
+        """TE scoped graphs populate current MCore module values."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+        recipe = _set_cuda_graph_overrides(
+            _minimal_cuda_graph_recipe(),
+            cuda_graph_impl="transformer_engine",
+            cuda_graph_scope=["attn", "mlp"],
+        )
+
+        assert recipe.model.cuda_graph_impl == "transformer_engine"
+        assert recipe.model.cuda_graph_scope is None
+        assert cuda_graph_module_names(recipe.model) == ["attn", "mlp"]
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
+
+
+# ---------------------------------------------------------------------------
 # Consistency check: full override chain produces expected final state
 # ---------------------------------------------------------------------------
 
@@ -249,6 +351,7 @@ class TestFullChainSanity:
         assert recipe.model.recompute_modules == ["mlp", "mla_up_proj"]
         assert recipe.model.recompute_granularity == "selective"
         assert recipe.model.cuda_graph_impl == "none"
-        assert recipe.model.cuda_graph_scope == []
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
         assert recipe.train.micro_batch_size == 2
         assert recipe.train.global_batch_size == 128

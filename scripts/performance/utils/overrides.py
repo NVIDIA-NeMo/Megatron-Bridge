@@ -121,6 +121,8 @@ def _set_cuda_graph_overrides(
 
     if recipe.model.cuda_graph_impl == "none":
         recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+        # Normalize to MCore's current disabled representation: an empty
+        # cuda_graph_modules list and no deprecated cuda_graph_scope value.
         validate_cuda_graph_configuration(recipe.model, config_name="model")
         return recipe
 
