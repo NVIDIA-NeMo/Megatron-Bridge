@@ -18,9 +18,11 @@ from __future__ import annotations
 
 from megatron.bridge.recipes.llama.h100.llama2 import (
     llama2_7b_pretrain_2gpu_h100_bf16_config as llama2_7b_pretrain_config,
+    llama2_70b_peft_8gpu_h100_bf16_config as llama2_70b_peft_config,
 )
 
 
 __all__ = [
     "llama2_7b_pretrain_config",
+    "llama2_70b_peft_config",
 ]

@@ -15,6 +15,7 @@
 # Llama2 models
 from .llama2 import (
     llama2_7b_pretrain_config,
+    llama2_70b_peft_config,
 )
 
 # Llama3 models
@@ -56,6 +57,7 @@ from .llama3 import (
 __all__ = [
     # Llama2 models
     "llama2_7b_pretrain_config",
+    "llama2_70b_peft_config",
     # Llama3 models
     "llama3_8b_pretrain_config",
     "llama3_8b_16k_pretrain_config",
