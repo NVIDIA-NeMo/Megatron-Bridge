@@ -45,7 +45,6 @@ from megatron.bridge.models.conversion.model_bridge import (
 )
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
@@ -995,40 +994,33 @@ class AutoBridge(Generic[MegatronModelT]):
 
         def _save_artifacts():
             if is_config_only:
-                import json
+                artifact_source_path = self.hf_model_id or source_path
+                if artifact_source_path is not None:
+                    model_bridge_instance = self._model_bridge
+                    artifact_kwargs = {}
+                    if hasattr(model_bridge_instance, "get_hf_tokenizer_kwargs"):
+                        artifact_kwargs.update(model_bridge_instance.get_hf_tokenizer_kwargs() or {})
+                    artifact_kwargs["trust_remote_code"] = self.trust_remote_code
 
-                # Config-only path: write config.json and optionally download modeling files from Hub.
-                Path(path).mkdir(parents=True, exist_ok=True)
-                config_dict = self.hf_pretrained.to_dict()
-                if not self.trust_remote_code:
-                    config_dict.pop("auto_map", None)
-                with open(Path(path) / "config.json", "w") as _f:
-                    json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
+                    # This wrapper loads artifacts lazily; model weights are never materialized here.
+                    artifact_source = PreTrainedCausalLM.from_pretrained(artifact_source_path, **artifact_kwargs)
+                    artifact_source.config = self.hf_pretrained
+                    additional_files = getattr(model_bridge_instance, "ADDITIONAL_FILE_PATTERNS", None) or None
+                    artifact_source.save_artifacts(
+                        path,
+                        original_source_path=source_path,
+                        additional_files=additional_files,
+                    )
+                else:
+                    import json
 
-                # Download custom modeling files only when the export is meant to preserve remote code.
-                hub_repo = self.hf_model_id
-                if hub_repo and self.trust_remote_code:
-                    try:
-                        from huggingface_hub import hf_hub_download, list_repo_files
-
-                        repo_files = list_repo_files(hub_repo)
-                        py_files = [f for f in repo_files if f.endswith(".py")]
-                        for py_file in py_files:
-                            hf_hub_download(
-                                repo_id=hub_repo,
-                                filename=py_file,
-                                local_dir=path,
-                            )
-                    except Exception as exc:
-                        logger.warning(
-                            "Could not download modeling files from %s: %s. "
-                            "This is expected for models that use standard transformers "
-                            "modeling classes and do not define custom .py files.",
-                            hub_repo,
-                            exc,
-                        )
-                    finally:
-                        PreTrainedBase._cleanup_hf_local_dir_cache(Path(path))
+                    # A bridge built directly from a config has no reference artifacts to preserve.
+                    Path(path).mkdir(parents=True, exist_ok=True)
+                    config_dict = self.hf_pretrained.to_dict()
+                    if not self.trust_remote_code:
+                        config_dict.pop("auto_map", None)
+                    with open(Path(path) / "config.json", "w") as _f:
+                        json.dump(config_dict, _f, indent=2, sort_keys=True, allow_nan=True)
 
             else:
                 # Get bridge-level ADDITIONAL_FILE_PATTERNS if configured

@@ -32,12 +32,10 @@ from nemo_run.config import get_nemorun_home
 
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from utils.evaluate import calc_convergence_and_performance
     from utils.executors import kubeflow_executor, slurm_executor
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from .utils.evaluate import calc_convergence_and_performance
     from .utils.executors import kubeflow_executor, slurm_executor
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
@@ -48,19 +46,16 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
+from megatron.bridge.recipes.run_plugins import PreemptionPlugin
+
+
 try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
-try:
-    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-except (ImportError, ModuleNotFoundError):
-    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-
-
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script.py"
+ENTRYPOINT_PERFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -103,6 +98,30 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _build_csp_plugin(csp: str) -> Any:
+    """Build a CSP plugin lazily so Slurm/login-node launch does not import Kubeflow helpers."""
+    try:
+        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+
+    if csp == "aws":
+        return EKSEnvPlugin()
+    if csp == "gcp":
+        return GKEEnvPlugin()
+    raise ValueError(f"Unsupported CSP plugin: {csp}")
+
+
+def _calc_convergence_and_performance(**kwargs: Any) -> Any:
+    """Load the evaluator only after training finishes and validation is requested."""
+    try:
+        from utils.evaluate import calc_convergence_and_performance
+    except (ImportError, ModuleNotFoundError):
+        from .utils.evaluate import calc_convergence_and_performance
+
+    return calc_convergence_and_performance(**kwargs)
 
 
 def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
@@ -436,6 +455,7 @@ def main(
     save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
+    preempt_time: int,
     additional_slurm_params: Optional[Dict[str, Any]],
     enable_pct_binding: bool,
     golden_values_path: str,
@@ -462,7 +482,7 @@ def main(
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
     deterministic: bool = False,
-    config_variant: str = "v1",
+    config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
 ):
@@ -518,27 +538,28 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
-        # Create a simple namespace with the args needed by get_exp_name_config
-        args_for_config = SimpleNamespace(
-            num_gpus=num_gpus,
-            tensor_model_parallel_size=tp_size,
-            pipeline_model_parallel_size=pp_size,
-            context_parallel_size=cp_size,
-            virtual_pipeline_model_parallel_size=vp_size,
-            expert_model_parallel_size=ep_size,
-            expert_tensor_parallel_size=etp_size,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-        )
-        exp_config = get_exp_name_config(
-            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-        )
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
-        )
+        script_name = ENTRYPOINT_PERFORMANCE
+        if wandb_experiment_name is not None:
+            # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
+            # login node in this path: recipe imports belong in the training container.
+            exp_name = wandb_experiment_name
+        else:
+            # Create a simple namespace with the args needed by get_exp_name_config
+            args_for_config = SimpleNamespace(
+                num_gpus=num_gpus,
+                tensor_model_parallel_size=tp_size,
+                pipeline_model_parallel_size=pp_size,
+                context_parallel_size=cp_size,
+                virtual_pipeline_model_parallel_size=vp_size,
+                expert_model_parallel_size=ep_size,
+                expert_tensor_parallel_size=etp_size,
+                micro_batch_size=micro_batch_size,
+                global_batch_size=global_batch_size,
+            )
+            exp_config = get_exp_name_config(
+                args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            )
+            exp_name = f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -644,13 +665,20 @@ def main(
 
     plugins = []
 
+    # Long-convergence runs are split across walltime slices and resume from the last
+    # checkpoint each slice. Without a preemption signal, Slurm hard-kills the slice at
+    # the time limit before a checkpoint is written, so no progress persists and the
+    # resume loop stalls. The PreemptionPlugin sends SIGTERM `preempt_time` seconds
+    # before the limit and enables the training exit handler, so each slice saves and
+    # exits gracefully and the next slice resumes from it (inert off Slurm).
+    if is_long_convergence_run:
+        plugins.append(PreemptionPlugin(preempt_time=preempt_time, enable_exit_handler=True))
+
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
     # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
-    if csp == "aws":
-        plugins.append(EKSEnvPlugin())
-    elif csp == "gcp":
-        plugins.append(GKEEnvPlugin())
+    if csp is not None:
+        plugins.append(_build_csp_plugin(csp))
 
     if not use_recipes:
         plugins.append(
@@ -836,7 +864,7 @@ def main(
                     else None
                 )
 
-                is_testing_passed, error_msg, merged_values = calc_convergence_and_performance(
+                is_testing_passed, error_msg, merged_values = _calc_convergence_and_performance(
                     model_family_name=model_family_name,
                     model_recipe_name=model_recipe_name,
                     assets_dir=os.path.join(job_dir, exp_name),
@@ -991,6 +1019,7 @@ if __name__ == "__main__":
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
+        preempt_time=args.preempt_time,
         additional_slurm_params=args.additional_slurm_params,
         enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,

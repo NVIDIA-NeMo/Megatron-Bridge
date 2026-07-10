@@ -277,6 +277,32 @@ class TestStep35BridgeProviderBridge:
         assert p.head_wise_attn_gate is True
         assert p.attention_output_gate is True
 
+    def test_head_wise_gate_without_native_support_enables_output_gate_fallback(self, monkeypatch):
+        """The published Step-3.5-Flash config carries no ``attention_output_gate``."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": None,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
+
+    def test_head_wise_gate_with_native_support_keeps_output_gate_off(self, monkeypatch):
+        """With native scalar gates, no fallback is enabled for the published config."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": None,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is False
+
     def test_attention_output_gate_preserved_without_head_wise_gate(self):
         _, p = self._run(
             hf_overrides={
