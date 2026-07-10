@@ -14,18 +14,50 @@
 
 """Input/output checkpointing for ModelOpt."""
 
+import logging
+import os
+
+
 try:
-    from modelopt.torch.opt.plugins import restore_sharded_modelopt_state
+    import modelopt
+    import modelopt.torch.opt as mto
+    from modelopt.torch.opt.plugins.mcore_dist_checkpointing import _load_extra_state_from_sharded_checkpoint
 except ImportError as e:
     raise ImportError('Required `"nvidia-modelopt[torch]"` is not installed!') from e
 
-import os
-
-import torch
 from megatron.core import dist_checkpointing
-from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAME
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.utils import unwrap_model
+
+
+logger = logging.getLogger(__name__)
+
+
+def restore_sharded_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
+    """Restore ModelOpt state saved in legacy or current MCore checkpoint layouts.
+
+    Args:
+        model: Unwrapped model chunks to restore.
+        checkpoint_path: Iteration checkpoint directory containing ``modelopt_state``.
+
+    Raises:
+        ValueError: If virtual pipeline parallelism produced multiple model chunks.
+    """
+    if len(model) > 1:
+        raise ValueError("sharded_modelopt_state does not support virtual pipeline parallel")
+
+    modelopt_state_path = os.path.join(checkpoint_path, "modelopt_state")
+    if not os.path.isdir(modelopt_state_path) or mto.ModeloptStateManager.is_converted(model[0]):
+        return
+
+    modelopt_state = dist_checkpointing.load_common_state_dict(modelopt_state_path)
+    logger.info(
+        "Restoring NVIDIA ModelOpt checkpoint version %s with installed version %s",
+        modelopt_state["modelopt_version"],
+        modelopt.__version__,
+    )
+    model[0] = mto.restore_from_modelopt_state(model[0], modelopt_state)
+    _load_extra_state_from_sharded_checkpoint(model[0], checkpoint_path, prefix="")
 
 
 def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
@@ -85,13 +117,9 @@ def has_modelopt_state(checkpoint_path: str) -> bool:
     if not os.path.isdir(modelopt_state_path):
         return False
 
-    modelopt_state = torch.load(modelopt_state_path + "/" + COMMON_STATE_FNAME, weights_only=True)
+    modelopt_state = dist_checkpointing.load_common_state_dict(modelopt_state_path)
     modes = modelopt_state["modelopt_state_dict"]
-    if len(modes) == 1 and modes[0][0] == "kd_loss":
-        # Ignore KD state
-        modes.pop()
-
-    return len(modes) > 0
+    return any(mode[0] != "kd_loss" for mode in modes)
 
 
 def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
