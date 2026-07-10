@@ -216,8 +216,8 @@ def apply_library_target_topology_environment(
 def apply_library_argparse_overrides(config: Any, args: Any) -> Any:
     """Apply argparse values that affect library recipe configuration.
 
-    Both the worker pre-exec wrapper and the final library runner call this
-    helper before Hydra overrides so their effective training configs match.
+    Both passes of the library runner's self-exec bootstrap call this helper
+    before Hydra overrides so their effective training configs match.
     """
     if getattr(args, "nccl_ub", False):
         config.ddp.nccl_ub = True

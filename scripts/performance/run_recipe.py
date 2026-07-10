@@ -21,30 +21,13 @@ import logging
 import os
 import sys
 
-import torch
 from argument_parser import parse_cli_args
-from utils.datasets import (
-    create_mock_dataset_config,
-    create_rp2_dataset_config,
-    create_squad_dataset_config,
-)
-from utils.utils import (
-    apply_library_argparse_overrides,
-    apply_library_target_topology_environment,
-    explicit_environment_override_names,
-    finalize_library_config_overrides,
-    get_library_recipe,
-)
-
-from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.training.config import apply_environment_variables
-from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
-from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 # Diffusion model families manage their own dataset configs and require
 # a dedicated forward step function rather than the standard GPT step.
 DIFFUSION_FAMILIES = frozenset({"flux", "wan"})
+ENV_BOOTSTRAP_MARKER = "_MB_PERF_ENV_BOOTSTRAPPED"
 
 
 def _get_diffusion_step(model_family_name: str):
@@ -62,6 +45,9 @@ def _get_diffusion_step(model_family_name: str):
 
 def set_user_overrides(config, args):
     """Apply CLI arguments to ConfigContainer fields."""
+    from utils.datasets import create_mock_dataset_config, create_rp2_dataset_config, create_squad_dataset_config
+    from utils.utils import apply_library_argparse_overrides
+
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
     config = apply_library_argparse_overrides(config, args)
 
@@ -194,6 +180,8 @@ def set_user_overrides(config, args):
         config.logger.wandb_save_dir = args.wandb_save_dir
 
     if args.deterministic:
+        from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
         apply_determinism_overrides(config)
 
     # Handle convergence mode configuration
@@ -220,36 +208,86 @@ def set_user_overrides(config, args):
     return config
 
 
-def main():
-    """Main entry point for the training script."""
+def _get_library_recipe(args):
+    """Resolve the selected library recipe without importing it at module load time."""
+    from utils.utils import get_library_recipe
 
-    # Parse known args and capture unknown ones for Hydra-style config overrides
-    # (e.g. model.hidden_size=15360 model.num_moe_experts=8)
-    parser = parse_cli_args()
-    args, cli_overrides = parser.parse_known_args()
-
-    recipe = get_library_recipe(
+    return get_library_recipe(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
         train_task=args.task,
         wandb_experiment_name=args.wandb_experiment_name,
     )
 
-    base_env_vars = dict(recipe.env_vars)
-    recipe = set_user_overrides(recipe, args)
 
+def _process_library_hydra_overrides(recipe, cli_overrides: list[str]):
+    """Apply Hydra overrides using the same ordering in both self-exec passes."""
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    return process_config_with_overrides(recipe, cli_overrides=cli_overrides)
+
+
+def _apply_library_recipe_overrides(recipe, cli_overrides: list[str], args):
+    """Apply env-relevant argparse and Hydra overrides before self-exec."""
+    from utils.utils import apply_library_argparse_overrides, finalize_library_config_overrides
+
+    recipe = apply_library_argparse_overrides(recipe, args)
     if cli_overrides:
-        logging.info("Applying %d CLI config override(s)", len(cli_overrides))
-        recipe = process_config_with_overrides(recipe, cli_overrides=cli_overrides)
+        recipe = _process_library_hydra_overrides(recipe, cli_overrides)
+    return finalize_library_config_overrides(recipe)
 
-    recipe = finalize_library_config_overrides(recipe)
+
+def _apply_target_environment(recipe, base_env_vars: dict, cli_overrides: list[str], args) -> None:
+    """Finalize target-dependent recipe environment defaults."""
+    from utils.utils import apply_library_target_topology_environment, explicit_environment_override_names
+
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
     apply_library_target_topology_environment(
         recipe,
         gpu=args.gpu,
         protected_env_names=protected_env_names,
     )
+
+
+def _apply_recipe_environment(recipe) -> None:
+    """Project recipe env defaults onto the current process."""
+    from megatron.bridge.training.config import apply_environment_variables
+
     apply_environment_variables(recipe)
+
+
+def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
+    """Apply the effective recipe env and replace this process with a clean interpreter."""
+    recipe = _get_library_recipe(args)
+    base_env_vars = dict(recipe.env_vars)
+    recipe = _apply_library_recipe_overrides(recipe, cli_overrides, args)
+    _apply_target_environment(recipe, base_env_vars, cli_overrides, args)
+    _apply_recipe_environment(recipe)
+
+    environment = dict(os.environ)
+    environment[ENV_BOOTSTRAP_MARKER] = str(os.getpid())
+    os.execvpe(sys.executable, [sys.executable, __file__, *sys.argv[1:]], environment)
+
+
+def _run_training(args, cli_overrides: list[str]) -> None:
+    """Build the final recipe and run training after environment bootstrap."""
+    import torch
+
+    from megatron.bridge.utils.common_utils import get_rank_safe
+
+    recipe = _get_library_recipe(args)
+    base_env_vars = dict(recipe.env_vars)
+    recipe = set_user_overrides(recipe, args)
+
+    if cli_overrides:
+        logging.info("Applying %d CLI config override(s)", len(cli_overrides))
+        recipe = _process_library_hydra_overrides(recipe, cli_overrides)
+
+    from utils.utils import finalize_library_config_overrides
+
+    recipe = finalize_library_config_overrides(recipe)
+    _apply_target_environment(recipe, base_env_vars, cli_overrides, args)
+    _apply_recipe_environment(recipe)
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
@@ -289,6 +327,17 @@ def main():
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
+
+
+def main() -> None:
+    """Bootstrap recipe env on the first pass and train in the self-exec process."""
+    parser = parse_cli_args()
+    args, cli_overrides = parser.parse_known_args()
+
+    if os.environ.get(ENV_BOOTSTRAP_MARKER) != str(os.getpid()):
+        _bootstrap_recipe_environment(args, cli_overrides)
+    else:
+        _run_training(args, cli_overrides)
 
 
 if __name__ == "__main__":

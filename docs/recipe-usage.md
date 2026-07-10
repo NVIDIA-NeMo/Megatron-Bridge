@@ -318,7 +318,7 @@ cfg.env_vars.update(
 
 Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for library recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
 
-When launching through `scripts/performance/setup_experiment.py`, a rank-local pre-exec wrapper resolves library or flat performance recipe defaults inside the worker container, then replaces itself with the selected training entry point. This keeps recipe imports off dependency-light launcher nodes. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
+When launching through `scripts/performance/setup_experiment.py`, the selected rank-local training script resolves its library or flat performance recipe defaults inside the worker container, exports them, and then replaces itself with a clean interpreter running that same script. This keeps recipe imports off dependency-light launcher nodes and ensures training-framework imports observe recipe-owned process settings. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
 
 Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={TORCHINDUCTOR_WORKER_START:fork,QUANTIZATION_TYPE_DEBUG:1}'`. Do not store credentials or other secrets in recipe configs.
 
