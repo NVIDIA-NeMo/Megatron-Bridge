@@ -223,6 +223,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
+| [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |
 | [**Llama**](docs/models/llama/index.md) | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7 |
