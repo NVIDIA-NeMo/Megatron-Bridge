@@ -91,6 +91,7 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
         calls.append(("exec", executable, argv, env))
 
     monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", get_recipe)
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda config, _overrides, _args: config)
     monkeypatch.setattr(run_script, "_workload_base_config_from_recipe", build_workload)
     monkeypatch.setattr(run_script, "PerfEnvPlugin", FakePerfEnvPlugin)
     monkeypatch.setattr(run_script.os, "execvpe", exec_runner)
@@ -112,7 +113,7 @@ def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):
 
     monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
     monkeypatch.setenv(run_script.ENV_BOOTSTRAP_MARKER, str(run_script.os.getpid()))
-    monkeypatch.setattr(run_script, "_bootstrap_recipe_environment", lambda _: calls.append("bootstrap"))
+    monkeypatch.setattr(run_script, "_bootstrap_recipe_environment", lambda *_: calls.append("bootstrap"))
     monkeypatch.setattr(
         run_script, "_run_training", lambda parsed_args, overrides: calls.append((parsed_args, overrides))
     )
@@ -129,16 +130,31 @@ def test_run_script_ignores_stale_bootstrap_marker(monkeypatch):
 
     monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
     monkeypatch.setenv(run_script.ENV_BOOTSTRAP_MARKER, "stale-pid")
-    monkeypatch.setattr(run_script, "_bootstrap_recipe_environment", lambda parsed_args: calls.append(parsed_args))
+    monkeypatch.setattr(
+        run_script,
+        "_bootstrap_recipe_environment",
+        lambda parsed_args, overrides: calls.append((parsed_args, overrides)),
+    )
     monkeypatch.setattr(run_script, "_run_training", lambda *_: calls.append("training"))
 
     run_script.main()
 
-    assert calls == [args]
+    assert calls == [(args, [])]
 
 
 def test_run_script_defers_training_framework_imports():
     tree = ast.parse((_PERF_SCRIPTS_DIR / "run_script.py").read_text())
+    top_level_imports = {alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names}
+    top_level_imports.update(
+        node.module for node in tree.body if isinstance(node, ast.ImportFrom) and node.module is not None
+    )
+
+    assert "torch" not in top_level_imports
+    assert not any(module.startswith("megatron.bridge") for module in top_level_imports)
+
+
+def test_run_recipe_defers_training_framework_imports():
+    tree = ast.parse((_PERF_SCRIPTS_DIR / "run_recipe.py").read_text())
     top_level_imports = {alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names}
     top_level_imports.update(
         node.module for node in tree.body if isinstance(node, ast.ImportFrom) and node.module is not None

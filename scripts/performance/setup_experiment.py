@@ -66,7 +66,7 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 def _filter_run_script_args(argv: List[str]) -> List[str]:
     """Drop launcher-only args before forwarding argv to the rank-local script.
 
-    The launcher (this script) and the rank-local pre-exec wrapper share one
+    The launcher (this script) and the rank-local training scripts share one
     parser, but some args are meaningful only to the launcher and must not
     reach the rank-local scripts:
 
