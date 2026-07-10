@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Submit a recipe-based training experiment locally or through Slurm."""
+"""Submit a recipe-based training experiment through Slurm."""
 
 import argparse
 import logging
@@ -25,7 +25,6 @@ from nemo_run.config import get_nemorun_home
 
 logger = logging.getLogger(__name__)
 
-SCRIPT_DIR = Path(__file__).resolve().parent
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
 INHERITED_ENV_VARS = (
     "DCLM_CACHE",
@@ -65,9 +64,6 @@ def _build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         epilog="""
 Training examples:
-  ./scripts/training/train.sh --local --gpus-per-node 1 \\
-      --recipe llama32_1b_pretrain_config --mode pretrain --dataset mock
-
   ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 \\
       --account ACCOUNT --partition PARTITION --container-image IMAGE \\
       --recipe gpt_oss_20b_pretrain_16gpu_h100_bf16_config \\
@@ -79,7 +75,6 @@ Trailing KEY=VALUE arguments override the resolved ConfigContainer.
 """,
     )
     execution = parser.add_argument_group("Execution")
-    execution.add_argument("--local", action="store_true", help="Run locally instead of submitting to Slurm.")
     execution.add_argument("--nodes", type=int, default=1, help="Number of nodes.")
     execution.add_argument(
         "--gpus-per-node",
@@ -118,13 +113,6 @@ Trailing KEY=VALUE arguments override the resolved ConfigContainer.
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument("--dry-run", action="store_true", help="Render the launch without submitting it.")
-    execution.add_argument(
-        "--detach",
-        action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Detach after submission.",
-    )
-    execution.add_argument("--tail-logs", action="store_true", help="Tail logs for a non-detached experiment.")
     return parser
 
 
@@ -250,27 +238,20 @@ def _validate_args(args: argparse.Namespace, training_args: list[str]) -> None:
         raise ValueError("--recipe already identifies the model; do not also pass --model.")
     if not uses_recipe and not uses_model:
         raise ValueError("Pass --recipe, or pass --family/--model/--mode to select a training recipe.")
-    if not args.local:
-        if not args.account or not args.partition:
-            raise ValueError("Slurm execution requires --account and --partition.")
-        if not args.container_image:
-            raise ValueError("Slurm execution requires --container-image or MB_CONTAINER_IMAGE.")
+    if not args.account or not args.partition:
+        raise ValueError("Slurm execution requires --account and --partition.")
+    if not args.container_image:
+        raise ValueError("Slurm execution requires --container-image or MB_CONTAINER_IMAGE.")
 
 
 def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: list[str]) -> object:
-    """Build a local or Slurm NeMo-Run executor."""
-    if args.local:
-        executor = run.LocalExecutor(ntasks_per_node=args.gpus_per_node, launcher="torchrun")
-        executor.env_vars = env_vars
-        return executor
-
+    """Build a Slurm NeMo-Run executor."""
     packager = run.GitArchivePackager(include_submodules=False) if args.packager == "git" else run.Packager()
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
-        gpus_per_node=args.gpus_per_node,
         mem="0",
         exclusive=True,
         time=args.time,
@@ -284,19 +265,6 @@ def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: 
     executor.container_env = sorted(env_vars)
     executor.srun_args = ["--mpi=pmix", "--no-container-mount-home", "--container-writable"]
     return executor
-
-
-def _ensure_experiment_succeeded(experiment_name: str) -> None:
-    """Raise when any task in a synchronous experiment did not succeed."""
-    statuses = run.Experiment.from_title(experiment_name).status(return_dict=True)
-    failed_tasks = []
-    for task_name, task_info in statuses.items():
-        status = str(task_info.get("status", "UNKNOWN"))
-        if status != "SUCCEEDED":
-            failed_tasks.append(f"{task_name}={status}")
-    if failed_tasks:
-        failure_summary = ", ".join(failed_tasks)
-        raise RuntimeError(f"Experiment '{experiment_name}' failed: {failure_summary}.")
 
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
@@ -319,11 +287,8 @@ def main(argv: list[str] | None = None) -> None:
     mounts = _discover_mounts(training_args, args.mount)
     executor = _build_executor(args, env_vars, mounts)
 
-    script_path = (
-        SCRIPT_DIR / "run_recipe.sh" if args.local else CONTAINER_REPO_ROOT / "scripts/training/run_recipe.sh"
-    )
     task = run.Script(
-        path=str(script_path),
+        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.sh"),
         entrypoint="bash",
         args=training_args,
     )
@@ -337,9 +302,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=args.detach, tail_logs=args.tail_logs)
-        if not args.detach:
-            _ensure_experiment_succeeded(experiment_name)
+        experiment.run(detach=True)
 
 
 if __name__ == "__main__":

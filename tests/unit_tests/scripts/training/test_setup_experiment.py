@@ -52,7 +52,6 @@ def test_parser_forwards_training_selection_and_overrides():
 
     args, training_args = module.parse_args(
         [
-            "--local",
             "--gpus-per-node",
             "1",
             "--recipe",
@@ -65,7 +64,7 @@ def test_parser_forwards_training_selection_and_overrides():
         ]
     )
 
-    assert args.local is True
+    assert args.gpus_per_node == 1
     assert training_args == [
         "--recipe",
         "gpt_oss_20b_sft_config",
@@ -113,9 +112,14 @@ def test_recipe_and_model_are_mutually_exclusive():
     module = _load_setup_experiment_module()
     args, training_args = module.parse_args(
         [
-            "--local",
             "--gpus-per-node",
             "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
             "--recipe",
             "gpt_oss_20b_pretrain_config",
             "--model",
@@ -187,31 +191,58 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     executor = module._build_executor(args, {}, [])
 
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
+    assert executor.kwargs["ntasks_per_node"] == 1
+    assert "gpus_per_node" not in executor.kwargs
 
 
-@pytest.mark.parametrize("status", ["FAILED", "CANCELLED", "UNKNOWN"])
-def test_synchronous_experiment_failure_is_propagated(status):
+def test_main_submits_experiment_in_detached_mode(monkeypatch):
     module = _load_setup_experiment_module()
+    run_kwargs = []
+
+    class _Script:
+        def __init__(self, *, path, entrypoint, args):
+            self.path = path
+            self.entrypoint = entrypoint
+            self.args = args
+
+        def to_command(self):
+            return [self.entrypoint, self.path, *self.args]
 
     class _Experiment:
-        @staticmethod
-        def from_title(_experiment_name):
-            return types.SimpleNamespace(status=lambda **_kwargs: {"training": {"status": status}})
+        def __init__(self, _name):
+            pass
 
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, _task, *, executor, name):
+            assert executor is sentinel_executor
+            assert name == "training"
+
+        def run(self, **kwargs):
+            run_kwargs.append(kwargs)
+
+    sentinel_executor = object()
+    module.run.Script = _Script
     module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
 
-    with pytest.raises(RuntimeError, match=rf"training={status}"):
-        module._ensure_experiment_succeeded("test-experiment")
+    module.main(
+        [
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+        ]
+    )
 
-
-def test_synchronous_experiment_success_is_accepted():
-    module = _load_setup_experiment_module()
-
-    class _Experiment:
-        @staticmethod
-        def from_title(_experiment_name):
-            return types.SimpleNamespace(status=lambda **_kwargs: {"training": {"status": "SUCCEEDED"}})
-
-    module.run.Experiment = _Experiment
-
-    module._ensure_experiment_succeeded("test-experiment")
+    assert run_kwargs == [{"detach": True}]

@@ -16,4 +16,11 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec uv run --no-sync python "${SCRIPT_DIR}/run_recipe.py" "$@"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+cd "${REPO_ROOT}"
+
+UV_ARGS=(--no-sync)
+if [[ -n "${VIRTUAL_ENV:-}" ]]; then
+    UV_ARGS=(--active --no-sync)
+fi
+exec uv run "${UV_ARGS[@]}" python "${SCRIPT_DIR}/run_recipe.py" "$@"

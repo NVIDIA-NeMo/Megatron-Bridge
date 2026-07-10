@@ -6,7 +6,7 @@ Megatron Bridge training uses one public launcher:
 ./scripts/training/train.sh [launch options] [training options] [KEY=VALUE overrides]
 ```
 
-`train.sh` invokes `setup_experiment.py`, which launches `run_recipe.py` locally or through Slurm. The setup layer
+`train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` through Slurm. The setup layer
 only owns resources, containers, environment variables, and mounts. Recipe selection, dataset construction, and
 ConfigContainer overrides are resolved inside the training environment.
 
@@ -22,7 +22,9 @@ A complete recipe already identifies the model and default training configuratio
 
 ```bash
 ./scripts/training/train.sh \
-    --local --gpus-per-node 1 \
+    --nodes 1 --gpus-per-node 8 \
+    --account ACCOUNT --partition PARTITION \
+    --container-image /path/to/container.sqsh \
     --recipe llama32_1b_pretrain_config \
     --mode pretrain --dataset mock
 ```
@@ -110,7 +112,9 @@ Common values have flags and every ConfigContainer field can be overridden with 
 
 ```bash
 ./scripts/training/train.sh \
-    --local --gpus-per-node 1 \
+    --nodes 1 --gpus-per-node 8 \
+    --account ACCOUNT --partition PARTITION \
+    --container-image /path/to/container.sqsh \
     --recipe llama32_1b_pretrain_config \
     --mode pretrain --dataset mock \
     --max-steps 10 --global-batch-size 8 --micro-batch-size 1 \
@@ -137,6 +141,9 @@ Use repeated `--mount host:container` and `--env KEY=VALUE` values for deploymen
 automatically inherits the standard HF/NeMo/DCLM/uv cache variables and authentication variables without logging
 their values. Existing dataset, checkpoint, cache, and output paths passed through common flags are mounted at the
 same path automatically.
+
+The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
+logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.
 
 Use `--dry-run` to render the NeMo-Run experiment without submitting it. For a rank-local ConfigContainer dry run,
 invoke `run_recipe.py` directly:
