@@ -41,6 +41,8 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     """
     cfg.train.train_iters = 50
     cfg.train.eval_iters = 0
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
 
     cfg.checkpoint.save = None
 

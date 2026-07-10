@@ -213,6 +213,22 @@ def apply_library_target_topology_environment(
             config.env_vars[name] = value
 
 
+def apply_library_feature_environment(
+    config: Any,
+    *,
+    nccl_ub_override: bool | None,
+    protected_env_names: set[str] | None = None,
+) -> None:
+    """Keep library feature flags and their process settings consistent."""
+    protected = protected_env_names or set()
+    if nccl_ub_override is not True:
+        return
+
+    for name, value in {"NCCL_NVLS_ENABLE": 1, "NCCL_CTA_POLICY": 1}.items():
+        if name not in protected:
+            config.env_vars[name] = value
+
+
 def apply_library_argparse_overrides(config: Any, args: Any) -> Any:
     """Apply argparse values that affect library recipe configuration.
 
@@ -268,13 +284,13 @@ def _normalize_precision_name(precision: str) -> str:
 
 
 def _recipe_variant_suffix(config_variant: str | None) -> str:
-    if config_variant is None:
+    if config_variant is None or config_variant.lower() in {"v1", "v2"}:
         return ""
     return f"_{config_variant.lower()}"
 
 
 def _recipe_variant_name(config_variant: str | None) -> str | None:
-    return None if config_variant is None else config_variant.lower()
+    return None if config_variant is None or config_variant.lower() in {"v1", "v2"} else config_variant.lower()
 
 
 def _display_config_variant(config_variant: str | None) -> str:
