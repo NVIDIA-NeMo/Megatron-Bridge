@@ -66,7 +66,8 @@ def _install_lightweight_environment_utils() -> None:
 
 _install_lightweight_environment_utils()
 
-import run_script_with_env
+import run_recipe
+import run_script
 from utils import utils
 
 
@@ -161,7 +162,7 @@ def test_explicit_environment_map_protects_target_topology_values():
 
 
 def test_workload_base_config_copies_recipe_environment():
-    """The pre-exec perf wrapper should receive an isolated copy of recipe env defaults."""
+    """The pre-exec perf bootstrap should receive an isolated copy of recipe env defaults."""
     recipe_env = {"TORCHINDUCTOR_WORKER_START": "fork", "QUANTIZATION_TYPE_DEBUG": 1}
     config = SimpleNamespace(
         env_vars=recipe_env,
@@ -182,7 +183,7 @@ def test_workload_base_config_copies_recipe_environment():
     assert workload_config.env_vars is not recipe_env
 
 
-def test_perf_wrapper_applies_cli_environment_overrides_before_export(monkeypatch):
+def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch):
     """Hydra env overrides must be reflected in the pre-exec workload config."""
     args = SimpleNamespace(
         model_family_name=None,
@@ -206,9 +207,7 @@ def test_perf_wrapper_applies_cli_environment_overrides_before_export(monkeypatc
     workload_config = SimpleNamespace()
     calls = []
 
-    parser = SimpleNamespace(parse_known_args=lambda: (args, cli_overrides))
-    monkeypatch.setattr(run_script_with_env, "parse_cli_args", lambda: parser)
-    monkeypatch.setattr(run_script_with_env, "get_perf_recipe_by_name", lambda **kwargs: base_recipe)
+    monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", lambda **kwargs: base_recipe)
 
     def apply_overrides(recipe, overrides, parsed_args):
         calls.append(("overrides", recipe, overrides, parsed_args))
@@ -222,24 +221,24 @@ def test_perf_wrapper_applies_cli_environment_overrides_before_export(monkeypatc
         def __init__(self, **kwargs):
             pass
 
-        def setup_recipe_environment(self, task, executor, config, protected_recipe_env_names=None):
-            calls.append(("environment", config, protected_recipe_env_names))
+        def setup_recipe_environment(self, task, executor, config):
+            calls.append(("environment", config))
 
-    monkeypatch.setattr(run_script_with_env, "_apply_perf_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_script_with_env, "_workload_base_config_from_recipe", build_workload)
-    monkeypatch.setattr(run_script_with_env, "PerfEnvPlugin", FakePerfEnvPlugin)
-    monkeypatch.setattr(run_script_with_env.os, "execvpe", lambda *args: None)
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
+    monkeypatch.setattr(run_script, "_workload_base_config_from_recipe", build_workload)
+    monkeypatch.setattr(run_script, "PerfEnvPlugin", FakePerfEnvPlugin)
+    monkeypatch.setattr(run_script.os, "execvpe", lambda *args: None)
 
-    run_script_with_env.main()
+    run_script._bootstrap_recipe_environment(args, cli_overrides)
 
     assert calls[:2] == [
         ("overrides", base_recipe, cli_overrides, args),
         ("workload", effective_recipe, 8),
     ]
-    assert calls[2] == ("environment", workload_config, None)
+    assert calls[2] == ("environment", workload_config)
 
 
-def test_library_wrapper_applies_known_ep_override_to_effective_recipe():
+def test_library_runner_applies_known_ep_override_to_effective_recipe():
     """The library pre-exec config should mirror run_recipe's argparse EP update."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(expert_model_parallel_size=8),
@@ -247,12 +246,12 @@ def test_library_wrapper_applies_known_ep_override_to_effective_recipe():
     )
     args = SimpleNamespace(expert_model_parallel_size=32)
 
-    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
 
     assert effective_recipe.model.expert_model_parallel_size == 32
 
 
-def test_library_wrapper_applies_env_relevant_argparse_overrides():
+def test_library_runner_applies_env_relevant_argparse_overrides():
     """NCCL-UB and dispatcher settings must be visible before the runner execs."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -275,7 +274,7 @@ def test_library_wrapper_applies_env_relevant_argparse_overrides():
         moe_flex_dispatcher_backend="hybridep",
     )
 
-    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
 
     assert effective_recipe.ddp.nccl_ub is True
     assert effective_recipe.ddp.average_in_collective is False
@@ -285,7 +284,7 @@ def test_library_wrapper_applies_env_relevant_argparse_overrides():
     assert effective_recipe.model.moe_shared_expert_overlap is False
 
 
-def test_library_wrapper_disables_flex_dispatcher_consistently():
+def test_library_runner_disables_flex_dispatcher_consistently():
     """The explicit None backend must clear both flex dispatcher fields."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -303,14 +302,14 @@ def test_library_wrapper_disables_flex_dispatcher_consistently():
         moe_flex_dispatcher_backend=None,
     )
 
-    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
 
     assert effective_recipe.model.moe_token_dispatcher_type == "alltoall"
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
 @pytest.mark.parametrize("dispatcher_override", [-1, "hybridep"])
-def test_library_wrapper_preserves_dense_dispatcher_fields(dispatcher_override):
+def test_library_runner_preserves_dense_dispatcher_fields(dispatcher_override):
     """Finalization must not rewrite dense-model dispatcher defaults."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -327,26 +326,26 @@ def test_library_wrapper_preserves_dense_dispatcher_fields(dispatcher_override):
         moe_flex_dispatcher_backend=dispatcher_override,
     )
 
-    effective_recipe = run_script_with_env._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
 
     assert effective_recipe.model.moe_token_dispatcher_type is None
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
-def test_library_wrapper_and_final_runner_share_environment_override_helper():
-    """Pre-exec and final-runner config must use the same argparse logic."""
+def test_library_runner_uses_shared_environment_override_helpers():
+    """Both self-exec passes must use the shared argparse and topology logic."""
     repo_root = Path(__file__).resolve().parents[4]
     expected_calls = {
-        repo_root / "scripts" / "performance" / "run_script_with_env.py": {
+        repo_root / "scripts" / "performance" / "run_recipe.py": {
             "_apply_library_recipe_overrides": {
                 "apply_library_argparse_overrides",
                 "finalize_library_config_overrides",
             },
-            "main": {"apply_library_target_topology_environment"},
-        },
-        repo_root / "scripts" / "performance" / "run_recipe.py": {
             "set_user_overrides": {"apply_library_argparse_overrides"},
-            "main": {"finalize_library_config_overrides", "apply_library_target_topology_environment"},
+            "_apply_target_environment": {
+                "explicit_environment_override_names",
+                "apply_library_target_topology_environment",
+            },
         },
     }
 
@@ -378,9 +377,9 @@ def test_library_hydra_ep_override_wins_after_known_ep_override(monkeypatch):
         config.model.expert_model_parallel_size = 64
         return config
 
-    monkeypatch.setattr(run_script_with_env, "_process_library_hydra_overrides", apply_hydra)
+    monkeypatch.setattr(run_recipe, "_process_library_hydra_overrides", apply_hydra)
 
-    effective_recipe = run_script_with_env._apply_library_recipe_overrides(
+    effective_recipe = run_recipe._apply_library_recipe_overrides(
         recipe,
         ["model.expert_model_parallel_size=64"],
         args,
@@ -417,9 +416,9 @@ def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
         config.model.moe_flex_dispatcher_backend = None
         return config
 
-    monkeypatch.setattr(run_script_with_env, "_process_library_hydra_overrides", apply_hydra)
+    monkeypatch.setattr(run_recipe, "_process_library_hydra_overrides", apply_hydra)
 
-    effective_recipe = run_script_with_env._apply_library_recipe_overrides(
+    effective_recipe = run_recipe._apply_library_recipe_overrides(
         recipe,
         ["ddp.nccl_ub=false", "model.moe_flex_dispatcher_backend=null"],
         args,
@@ -431,8 +430,8 @@ def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
-def test_library_wrapper_exports_resolved_recipe_environment_before_exec(monkeypatch):
-    """The wrapper exports the explicit env map after user and Hydra overrides."""
+def test_library_runner_exports_resolved_recipe_environment_before_exec(monkeypatch):
+    """The original runner exports its explicit env map before self-exec."""
     args = SimpleNamespace(
         use_recipes=True,
         model_family_name="deepseek",
@@ -452,33 +451,40 @@ def test_library_wrapper_exports_resolved_recipe_environment_before_exec(monkeyp
     )
     calls = []
     cli_overrides = ["model.expert_model_parallel_size=64"]
-    parser = SimpleNamespace(parse_known_args=lambda: (args, cli_overrides))
-
-    monkeypatch.setattr(run_script_with_env, "parse_cli_args", lambda: parser)
-    monkeypatch.setattr(run_script_with_env, "get_library_recipe", lambda **kwargs: base_recipe)
+    monkeypatch.setattr(run_recipe, "_get_library_recipe", lambda parsed_args: base_recipe)
 
     def apply_overrides(recipe, overrides, parsed_args):
         calls.append(("overrides", recipe, overrides, parsed_args))
         return effective_recipe
 
-    def add_environment(**kwargs):
-        calls.append(("environment", kwargs))
+    def apply_target(recipe, base_env_vars, overrides, parsed_args):
+        calls.append(("target", recipe, base_env_vars, overrides, parsed_args))
+
+    def apply_environment(recipe):
+        calls.append(("environment", recipe))
 
     def exec_runner(executable, argv, env):
         calls.append(("exec", executable, argv, env))
 
-    monkeypatch.setattr(run_script_with_env, "_apply_library_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_script_with_env, "add_library_recipe_environment_variables", add_environment)
-    monkeypatch.setattr(run_script_with_env.os, "execvpe", exec_runner)
+    monkeypatch.setattr(run_recipe, "_apply_library_recipe_overrides", apply_overrides)
+    monkeypatch.setattr(run_recipe, "_apply_target_environment", apply_target)
+    monkeypatch.setattr(run_recipe, "_apply_recipe_environment", apply_environment)
+    monkeypatch.setattr(run_recipe.os, "execvpe", exec_runner)
 
-    run_script_with_env.main()
+    run_recipe._bootstrap_recipe_environment(args, cli_overrides)
 
     assert calls[0] == ("overrides", base_recipe, cli_overrides, args)
-    assert calls[1][0] == "environment"
-    assert calls[1][1]["config"] is effective_recipe
-    assert set(calls[1][1]) == {"config", "custom_env_vars"}
-    assert calls[2][0] == "exec"
-    assert calls[2][2][1].endswith("run_recipe.py")
+    assert calls[1] == (
+        "target",
+        effective_recipe,
+        {"TORCHINDUCTOR_WORKER_START": "fork"},
+        cli_overrides,
+        args,
+    )
+    assert calls[2] == ("environment", effective_recipe)
+    assert calls[3][0] == "exec"
+    assert calls[3][2][1].endswith("run_recipe.py")
+    assert calls[3][3][run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())
 
 
 def test_library_recipe_environment_rejects_non_scalar_values():

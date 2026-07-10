@@ -136,10 +136,16 @@ class _EnvironmentExecutor:
         self.env_vars = os.environ
 
 
-def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
-    """Install recipe env and re-exec this script in a clean interpreter."""
+def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
+    """Apply the same CLI and argparse overrides in both self-exec passes."""
     from utils.overrides import set_cli_overrides, set_user_overrides
 
+    recipe = set_cli_overrides(recipe, cli_overrides)
+    return set_user_overrides(recipe, args)
+
+
+def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
+    """Install recipe env and re-exec this script in a clean interpreter."""
     recipe = get_perf_recipe_for_environment(
         model_recipe_name=args.model_recipe_name,
         task=args.task,
@@ -148,8 +154,7 @@ def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
         precision=args.compute_dtype,
         config_variant=args.config_variant,
     )
-    recipe = set_cli_overrides(recipe, cli_overrides)
-    recipe = set_user_overrides(recipe, args)
+    recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
     workload_base_config = _workload_base_config_from_recipe(recipe, num_gpus=args.num_gpus)
     plugin = PerfEnvPlugin(
         deterministic=args.deterministic,
@@ -166,7 +171,6 @@ def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
 def _run_training(args, cli_overrides: list[str]) -> None:
     """Import the training stack after env bootstrap and run the workload."""
     import torch
-    from utils.overrides import set_cli_overrides, set_user_overrides
 
     from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
     from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
@@ -184,8 +188,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         config_variant=getattr(args, "config_variant", None),
     )
 
-    recipe = set_cli_overrides(recipe, cli_overrides)
-    recipe = set_user_overrides(recipe, args)
+    recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
     apply_environment_variables(recipe)
 
     if args.dump_env:
