@@ -6,16 +6,24 @@ The HF checkpoint depends on custom modeling code, so all commands below pass `-
 
 ## Hardware Requirements
 
-MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversion. The full FP8 checkpoint cannot fit on a single 8-GPU node because:
+MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversion. Although the source checkpoint is FP8, conversion dequantizes its weights to BF16 before loading them into Megatron. The 47 MoE layers contain about 302.8B expert parameters, or about 605.6 GB in BF16, so the parallel layout must shard the target expert weights with enough headroom for the rest of the model and communication workspaces.
 
-- TEGroupedMLP workspace is proportional to `num_experts / EP`; with EP=8 on 1 node, workspace alone OOMs.
-- TP does **not** reduce expert memory — increase EP instead.
+- With `EP=8, ETP=1`, each rank holds about 75.7 GB of BF16 expert parameters before dense parameters and communication workspaces, leaving insufficient memory headroom.
+- Dense TP does **not** reduce expert memory when `ETP=1`. Set expert tensor parallelism (`--etp`) to shard each expert's matrices when using TP, or combine PP and EP so each rank holds fewer MoE layers/experts.
 - Context parallelism is **not** supported (TE backends refuse CP + learnable softmax on SWA layers).
 - TP size must be ≤ `min(num_key_value_heads, swa_num_key_value_heads)`.
 
+The conversion sweep uses layouts that keep dequantized expert parameters near 37.85 GB per GPU:
+
+| TP | PP | EP | ETP |
+|----|----|----|-----|
+| 2  | 1  | 8  | 2   |
+| 1  | 2  | 8  | 1   |
+| 2  | 2  | 4  | 2   |
+
 ## Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP configs to verify HF ↔ Megatron round-trip conversion.
+[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP/ETP configs to verify HF ↔ Megatron round-trip conversion.
 
 ### Setup
 
@@ -44,7 +52,7 @@ detected")` on any mismatch (which the wrapper turns into an `ERROR`
 line and a non-zero exit). A successful run ends with:
 
 ```
-[OK] Config 3: TP=2, PP=2, EP=4 passed
+[OK] Config 3: TP=2, PP=2, EP=4, ETP=2 passed
 
 ======================================
 All 3 configs passed
