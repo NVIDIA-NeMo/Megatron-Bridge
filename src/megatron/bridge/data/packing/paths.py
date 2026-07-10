@@ -15,10 +15,15 @@
 """Path detection and resolution for packed Parquet artifacts."""
 
 import glob
+import logging
 import os
+import time
 from pathlib import Path
 
 from megatron.core.msc_utils import MultiStorageClientFeature
+
+
+logger = logging.getLogger(__name__)
 
 
 def is_packed_parquet_file(path) -> bool:
@@ -212,3 +217,65 @@ def resolve_packed_parquet_paths(spec: str | Path) -> list[str]:
         ValueError: If no matching files are found.
     """
     return _resolve_parquet_paths(str(spec))
+
+
+def _refresh_directory_metadata(spec: str) -> None:
+    """Force a directory listing so shared-filesystem clients drop stale negative entries."""
+    base = spec.split("*", 1)[0]
+    directory = base if os.path.isdir(base) else os.path.dirname(base)
+    try:
+        os.listdir(directory or ".")
+    except OSError:
+        pass
+
+
+def resolve_packed_parquet_paths_with_refresh(
+    spec: str | Path,
+    *,
+    max_attempts: int = 5,
+    backoff_s: float = 2.0,
+) -> list[str]:
+    """Resolve a packed parquet spec, retrying with directory-metadata refresh on empty results.
+
+    On shared filesystems (e.g. Lustre, NFS) a ``torch.distributed.barrier()`` guarantees the
+    producer rank *finished writing*, but not that other nodes' filesystem clients refreshed
+    their directory metadata. A non-producer node can therefore transiently resolve zero files
+    for a packed Parquet artifact that rank 0 just wrote (#4207). Retry resolution a bounded
+    number of times, forcing a parent-directory listing between attempts.
+
+    Args:
+        spec: Path specification (file, glob pattern, or directory).
+        max_attempts: Maximum number of resolution attempts.
+        backoff_s: Base sleep between attempts; attempt ``i`` sleeps ``backoff_s * i``.
+
+    Returns:
+        Sorted list of resolved file paths.
+
+    Raises:
+        ValueError: If no matching files are found after all attempts.
+    """
+    spec_str = str(spec)
+    last_error: ValueError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resolved = _resolve_parquet_paths(spec_str)
+        except ValueError as exc:
+            resolved = []
+            last_error = exc
+        if resolved:
+            return resolved
+        if attempt < max_attempts:
+            logger.warning(
+                "Packed Parquet spec %s resolved to no files (attempt %d/%d); "
+                "refreshing directory metadata and retrying — this can happen on shared "
+                "filesystems right after another node wrote the artifact.",
+                spec_str,
+                attempt,
+                max_attempts,
+            )
+            _refresh_directory_metadata(spec_str)
+            time.sleep(backoff_s * attempt)
+
+    if last_error is not None:
+        raise last_error
+    return []
