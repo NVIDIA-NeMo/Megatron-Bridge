@@ -351,6 +351,66 @@ def train(
         model_config.param_sync_func = None
         pre_hook_enabled = False
 
+    # Optional cross-process determinism collective trace (env-gated, debug only).
+    # DET_TRACE_OUT_DIR enables it (per-logical-rank stream files for offline diff);
+    # DET_TRACE_ITERS selects iterations to capture. Inert when the env var is unset.
+    # See training/utils/determinism/ and docs/determinism-debug-tool.md.
+    det_trace = None
+    det_op_trace = None
+    det_module_scope = None
+    # None means "all steps"; otherwise a set of step indices to capture.
+    det_trace_iters: set[int] | None = set()
+    det_trace_out_dir = os.environ.get("DET_TRACE_OUT_DIR")
+    if det_trace_out_dir:
+        from megatron.bridge.training.utils.determinism import collective_trace as det_trace
+        from megatron.bridge.training.utils.determinism import module_scope as det_module_scope
+
+        det_trace.enable(out_dir=det_trace_out_dir)
+        # DET_TRACE_ITERS: "all", a range "a-b", and/or a comma list (e.g. "1,5,40-44").
+        # A malformed token must not crash the whole job — warn and skip it.
+        _raw_iters = os.environ.get("DET_TRACE_ITERS", "1").strip()
+        if _raw_iters == "all":
+            det_trace_iters = None
+        else:
+            det_trace_iters = set()
+            for _tok in _raw_iters.split(","):
+                _tok = _tok.strip()
+                if not _tok:
+                    continue
+                try:
+                    if "-" in _tok:
+                        _a, _b = (int(v) for v in _tok.split("-", 1))
+                        det_trace_iters.update(range(min(_a, _b), max(_a, _b) + 1))
+                    else:
+                        det_trace_iters.add(int(_tok))
+                except ValueError:
+                    print_rank_0(f"[det-trace] ignoring malformed DET_TRACE_ITERS token: {_tok!r}")
+        # Per-layer attribution: tag every record with its enclosing module (forward pass).
+        # Prefix each chunk's names so VPP/multi-chunk runs don't collide on identical
+        # relative names. DET_TRACE_BWD_SCOPE adds [bwd] labels but is PP-INCOMPATIBLE
+        # (backward hooks alias module outputs → break PP output deallocation); keep OFF
+        # for PP>1 (backward divergences are still captured, just not [bwd]-labelled).
+        _bwd_scope = bool(os.environ.get("DET_TRACE_BWD_SCOPE"))
+        _multi_chunk = len(model) > 1
+        for _i, _chunk in enumerate(model):
+            _prefix = f"chunk{_i}." if _multi_chunk else ""
+            det_module_scope.register(
+                _chunk.module if hasattr(_chunk, "module") else _chunk,
+                prefix=_prefix,
+                backward_scope=_bwd_scope,
+            )
+        # DET_TRACE_OPS additionally fingerprints every ATen op output (heavier; names the
+        # exact compute op that first diverges, not just the downstream collective).
+        if os.environ.get("DET_TRACE_OPS"):
+            from megatron.bridge.training.utils.determinism import op_trace as det_op_trace
+
+            det_op_trace.enable()
+        print_rank_0(
+            f"[det-trace] enabled -> {det_trace_out_dir}; "
+            f"iters={'all' if det_trace_iters is None else sorted(det_trace_iters)}; per-layer ON"
+            f"{'; op-level ON' if det_op_trace is not None else ''}"
+        )
+
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
@@ -447,26 +507,38 @@ def train(
         global_state._flops_vision_patches = 0
         global_state._flops_requires_global_reduce = False
 
-        (
-            loss_dict,
-            skipped_iter,
-            should_checkpoint,
-            should_exit,
-            exit_code,
-            grad_norm,
-            num_zeros_in_grad,
-            log_max_attention_logit,
-        ) = wrapped_train_step(
-            wrapped_forward_step_func,
-            train_data_iterator,
-            model,
-            optimizer,
-            scheduler,
-            global_state,
-            pg_collection,
-            forward_backward_func,
-            p2p_communicator,
+        # Determinism trace: capture this iteration's collectives (env-gated debug only).
+        det_trace_on = det_trace is not None and (
+            det_trace_iters is None or global_state.train_state.step in det_trace_iters
         )
+        if det_trace_on:
+            det_trace.set_active(True, window=global_state.train_state.step)
+        try:
+            (
+                loss_dict,
+                skipped_iter,
+                should_checkpoint,
+                should_exit,
+                exit_code,
+                grad_norm,
+                num_zeros_in_grad,
+                log_max_attention_logit,
+            ) = wrapped_train_step(
+                wrapped_forward_step_func,
+                train_data_iterator,
+                model,
+                optimizer,
+                scheduler,
+                global_state,
+                pg_collection,
+                forward_backward_func,
+                p2p_communicator,
+            )
+        finally:
+            # Always deactivate for this iter, even if the step raised, so a recovered
+            # exception does not leave collectives traced across later iterations.
+            if det_trace_on:
+                det_trace.set_active(False)
 
         fault_tolerance.on_training_step_end(global_state)
 
@@ -729,6 +801,14 @@ def train(
                 train_data_iterator=train_data_iterator,
                 callback_manager=callback_manager,
             )
+
+    # Determinism trace: flush/close streams and restore collectives (env-gated debug only).
+    if det_op_trace is not None:
+        det_op_trace.disable()
+    if det_module_scope is not None:
+        det_module_scope.unregister()
+    if det_trace is not None:
+        det_trace.disable()
 
     _delete_cuda_graphs(cuda_graph_helper)
 
