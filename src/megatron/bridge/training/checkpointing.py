@@ -140,6 +140,38 @@ _DIRECT_ITERATION_DIR_SENTINEL = -2
 HF_WEIGHTS_SUBDIR = "hf"
 
 
+class SyncSaveWithConfiguredAsyncStrategy(TorchDistSaveShardedStrategy):
+    """torch_dist save strategy whose synchronous ``save`` honors ``CheckpointConfig.async_strategy``.
+
+    MCore's ``TorchDistSaveShardedStrategy.save`` hardcodes the deprecated ``mcore``
+    async-finalize path for synchronous saves, silently ignoring the configured
+    ``async_strategy``. Route the sync save through ``async_save`` with the configured
+    strategy followed by ``execute_sync`` so ``async_save=False`` saves (e.g.
+    ``AutoBridge.save_megatron_model``) use the same strategy as async ones (#4639).
+    """
+
+    def __init__(self, *args: Any, sync_async_strategy: str = "nvrx", **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.sync_async_strategy = sync_async_strategy
+
+    def save(self, sharded_state_dict: ShardedStateDict, checkpoint_dir: Path) -> None:
+        """Synchronously save using the configured async strategy's writer/finalize path."""
+        if (
+            self.sync_async_strategy == "mcore"
+            or "async_strategy" not in inspect.signature(self.async_save).parameters
+        ):
+            # "mcore" matches the built-in behavior; newer MCore branches removed the kwarg.
+            return super().save(sharded_state_dict, checkpoint_dir)
+        try:
+            async_request = self.async_save(
+                sharded_state_dict, checkpoint_dir, async_strategy=self.sync_async_strategy
+            )
+        except (ImportError, ModuleNotFoundError):
+            # Environment lacks the configured strategy's modules (e.g. no nvidia-resiliency-ext).
+            return super().save(sharded_state_dict, checkpoint_dir)
+        async_request.execute_sync()
+
+
 # ============================================================================
 # Checkpoint version and utilities
 # ============================================================================
@@ -1284,10 +1316,11 @@ def save_checkpoint(
             else:
                 validate_sharding_integrity = True
                 if ckpt_cfg.ckpt_format == "torch_dist":
-                    save_strategy = TorchDistSaveShardedStrategy(
+                    save_strategy = SyncSaveWithConfiguredAsyncStrategy(
                         "torch_dist",
                         1,
                         thread_count=ckpt_cfg.storage_writers_per_rank,
+                        sync_async_strategy=ckpt_cfg.async_strategy,
                     )
                 else:
                     save_strategy = get_default_save_sharded_strategy(ckpt_cfg.ckpt_format)

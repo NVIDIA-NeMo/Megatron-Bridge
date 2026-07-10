@@ -16,7 +16,7 @@
 import os
 import tempfile
 from pathlib import Path
-from unittest.mock import Mock, mock_open, patch
+from unittest.mock import MagicMock, Mock, mock_open, patch
 
 import pytest
 import torch
@@ -4213,3 +4213,68 @@ class TestLayerWiseOptimizerCheckpointing:
         # Standard load_state_dict must be called; per-rank file loader must NOT be called.
         mock_layer_wise_optim.load_state_dict.assert_called_once_with(mock_state_dict["optimizer"])
         mock_layer_wise_optim.load_state_dict_from_file.assert_not_called()
+
+
+class TestSyncSaveWithConfiguredAsyncStrategy:
+    """Sync torch_dist saves must honor CheckpointConfig.async_strategy (#4639)."""
+
+    def _strategy(self, sync_async_strategy="nvrx"):
+        from megatron.bridge.training.checkpointing import SyncSaveWithConfiguredAsyncStrategy
+
+        return SyncSaveWithConfiguredAsyncStrategy(
+            "torch_dist", 1, thread_count=2, sync_async_strategy=sync_async_strategy
+        )
+
+    def test_save_routes_through_configured_async_strategy(self):
+        strategy = self._strategy("nvrx")
+        request = MagicMock()
+        received = {}
+
+        def fake_async_save(sharded_state_dict, checkpoint_dir, async_strategy="nvrx"):
+            received["async_strategy"] = async_strategy
+            return request
+
+        with patch.object(type(strategy), "async_save", staticmethod(fake_async_save)):
+            strategy.save({"a": 1}, "/tmp/ckpt")
+
+        assert received["async_strategy"] == "nvrx"
+        request.execute_sync.assert_called_once_with()
+
+    def test_save_mcore_strategy_uses_builtin_save(self):
+        from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
+
+        strategy = self._strategy("mcore")
+        with patch.object(TorchDistSaveShardedStrategy, "save", autospec=True) as base_save:
+            strategy.save({"a": 1}, "/tmp/ckpt")
+        base_save.assert_called_once()
+
+    def test_save_falls_back_when_strategy_modules_missing(self):
+        from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
+
+        strategy = self._strategy("nvrx")
+
+        def raising_async_save(sharded_state_dict, checkpoint_dir, async_strategy="nvrx"):
+            raise ImportError("nvidia-resiliency-ext not installed")
+
+        with (
+            patch.object(type(strategy), "async_save", staticmethod(raising_async_save)),
+            patch.object(TorchDistSaveShardedStrategy, "save", autospec=True) as base_save,
+        ):
+            strategy.save({"a": 1}, "/tmp/ckpt")
+        base_save.assert_called_once()
+
+    def test_save_falls_back_when_kwarg_unsupported(self):
+        """Newer MCore branches removed the async_strategy kwarg from async_save."""
+        from megatron.core.dist_checkpointing.strategies.torch import TorchDistSaveShardedStrategy
+
+        strategy = self._strategy("nvrx")
+
+        def no_kwarg_async_save(sharded_state_dict, checkpoint_dir):
+            raise AssertionError("should not be called: sync fallback must use built-in save")
+
+        with (
+            patch.object(type(strategy), "async_save", staticmethod(no_kwarg_async_save)),
+            patch.object(TorchDistSaveShardedStrategy, "save", autospec=True) as base_save,
+        ):
+            strategy.save({"a": 1}, "/tmp/ckpt")
+        base_save.assert_called_once()
