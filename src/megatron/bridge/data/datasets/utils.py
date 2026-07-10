@@ -24,7 +24,7 @@ import signal
 import time
 from functools import lru_cache, partial
 from queue import Empty
-from typing import Any, Callable, Optional, Pattern, Type
+from typing import Any, Callable, Literal, Optional, Pattern, Type
 
 import numpy as np
 import torch
@@ -873,6 +873,11 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
         elif source.get("messages"):
             # HuggingFace chat template {"messages": [{"role": "system/user/assistant", "content": ""}]}
             chat = source.get("messages")
+        elif source.get("conversation"):
+            # Processor-ready singular conversation schema.
+            chat = source.get("conversation")
+        else:
+            raise ValueError("Chat rows must contain 'messages', 'conversation', or 'conversations'.")
     else:
         chat = source
 
@@ -890,7 +895,12 @@ def _chat_template_input_ids(tokenized_chat: Any) -> list[int]:
     return [int(token_id) for token_id in input_ids]
 
 
-def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
+def _chat_preprocess(
+    source: dict,
+    tokenizer: MegatronTokenizer,
+    tool_schemas: dict[str, Any] | list[dict[str, Any]] | None = None,
+    loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
 
@@ -910,6 +920,7 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
         tokenizer - tokenizer to apply chat templates to
         tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
            by tools supplied with the message
+        loss_mode - Assistant-only, final-assistant-turn, or full-sequence loss
 
     Output:
         {
@@ -926,90 +937,40 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     * answer_ids contain tokenized messages with chat template applied for only the assistant's last generated
     output
     """
-    if not hasattr(tokenizer, "_tokenizer") or not hasattr(tokenizer._tokenizer, "apply_chat_template"):
-        raise ValueError(
-            "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
-            "The tokenizer must have a '_tokenizer' attribute with an 'apply_chat_template' method."
+    from megatron.bridge.data.conversation_processing import tokenize_chat_example
+    from megatron.bridge.data.token_utils import extract_skipped_token_ids
+
+    try:
+        tokenized = tokenize_chat_example(
+            source,
+            tokenizer,
+            tool_schemas=tool_schemas,
+            skipped_tokens=extract_skipped_token_ids(tokenizer),
+            loss_mode=loss_mode,
+            return_final_assistant_start=True,
         )
-
-    chat = _convert_to_openai_messages(source)
-    tools = None
-    if isinstance(source, dict):
-        tools = source.get("tools") or tool_schemas
-    else:
-        tools = tool_schemas
-
-    if getattr(tokenizer, "legacy", False):
-        tokenizer = tokenizer._tokenizer
-
-    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
-    from megatron.bridge.data.vlm_processing import build_assistant_loss_mask, infer_assistant_mask_boundary_config
-
-    known_boundary_markers = ("<|im_start|>assistant", "<|turn>model", "<start_of_turn>model")
-    boundary_config = (
-        infer_assistant_mask_boundary_config(tokenizer)
-        if any(marker in tokenizer.chat_template for marker in known_boundary_markers)
-        else None
-    )
-
-    if template_has_generation_kwd:
-        tokenized_chat = tokenizer.apply_chat_template(
-            chat,
-            tools=tools,
-            tokenize=True,
-            return_dict=True,
-            return_assistant_tokens_mask=True,
-        )
-        input_ids = _chat_template_input_ids(tokenized_chat)
-        if boundary_config is None:
-            mask = tokenized_chat["assistant_masks"]
-        else:
-            chat_example = {"conversation": chat}
-            if tools is not None:
-                chat_example["tools"] = tools
-            mask = (
-                build_assistant_loss_mask(
-                    chat_example,
-                    torch.LongTensor(input_ids),
-                    tokenizer,
-                    boundary_config=boundary_config,
-                )
-                .to(dtype=torch.bool)
-                .tolist()
-            )
-    else:
-        if boundary_config is None:
+    except ValueError as error:
+        if str(error).startswith("Chat preprocessing requires"):
+            raise ValueError(
+                "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
+                "The tokenizer must expose an 'apply_chat_template' method."
+            ) from error
+        if str(error).startswith("Unable to build assistant loss mask"):
             raise ValueError(
                 "The tokenizer's chat_template does not contain a {% generation %} block and Bridge could not "
                 "infer assistant boundary markers for an assistant-only loss mask. Add a generation block to the "
-                "chat_template or use a model collate path that passes AssistantMaskBoundaryConfig explicitly."
-            )
+                "chat_template or pass AssistantMaskBoundaryConfig explicitly."
+            ) from error
+        raise
+    input_ids = tokenized.input_ids.tolist()
+    mask = tokenized.assistant_mask.tolist()
 
-        tokenized_chat = tokenizer.apply_chat_template(
-            chat,
-            tools=tools,
-            tokenize=True,
-            return_dict=True,
-        )
-        input_ids = _chat_template_input_ids(tokenized_chat)
-        mask = (
-            build_assistant_loss_mask(
-                chat,
-                torch.LongTensor(input_ids),
-                tokenizer,
-                boundary_config=boundary_config,
-            )
-            .to(dtype=torch.bool)
-            .tolist()
-        )
-
-    # Choose the last conversation as answer other history are context by finding the last masked token
-    # which indicates end of context and beginning of answer
-    if 0 in mask:
-        # traverse the list backward for first occurrence of masked token
-        context_end_idx = len(mask) - mask[::-1].index(0)
-    else:
-        context_end_idx = len(mask)
+    # Split generation context from the final assistant response using the
+    # rendered turn boundary, never the selected loss policy. Full loss and
+    # skipped control tokens can change mask values without changing the turn.
+    context_end_idx = tokenized.final_assistant_start
+    if context_end_idx is None:
+        context_end_idx = len(input_ids)
 
     context_ids = input_ids[:context_end_idx]
     answer_ids = input_ids[context_end_idx:]

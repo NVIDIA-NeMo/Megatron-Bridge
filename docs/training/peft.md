@@ -281,8 +281,12 @@ from megatron.bridge.training.config import (
     SchedulerConfig,
     TrainingConfig,
 )
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_datasets import HFTextSFTDatasetProvider
+from megatron.bridge.data.builders import (
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -307,11 +311,12 @@ config = ConfigContainer(
         lr_warmup_iters=100,
         lr_decay_iters=1000,
     ),
-    dataset=HFTextSFTDatasetProvider(
+    dataset=GPTSFTDatasetConfig(
         seq_length=512,
-        maker_name="squad",
-        maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
-        val_proportion=0.1,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        hf_validation_proportion=0.1,
+        seed=5678,
         do_validation=True,
         do_test=False,
         dataset_kwargs={"pad_to_max_length": True},

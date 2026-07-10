@@ -379,7 +379,7 @@ def llama3_70b_sft_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB200, BF16, GBS=64, seq_length=2048."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("bf16")
@@ -416,7 +416,7 @@ def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB200, FP8 current-scaling, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("fp8_cs")
@@ -451,7 +451,7 @@ def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB200, MXFP8, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("fp8_mx")

@@ -23,8 +23,10 @@ import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
+from megatron.bridge.data.conversation_processing import (
+    build_assistant_loss_mask as canonical_build_assistant_loss_mask,
+)
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask as canonical_build_assistant_loss_mask
 
 
 pytestmark = pytest.mark.unit

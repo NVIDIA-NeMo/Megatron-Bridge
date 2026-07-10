@@ -630,8 +630,8 @@ class TestQwen35MoEBridge:
         assert "QKVMapping" in mapping_types
         assert "GatedMLPMapping" in mapping_types
         assert "GDNLinearMappingSeparate" in mapping_types
-        assert "FusedGatedExpertMapping" in mapping_types
-        assert "FusedExpertMapping" in mapping_types
+        # Routed-expert mappings default to per-expert without a checkpoint; the fused vs per-expert
+        # selection is covered by test_moe_expert_mappings_fused_vs_per_expert.
         assert "ReplicatedMapping" in mapping_types
         assert "RMSNorm2ZeroCenteredRMSNormMapping" in mapping_types
 
@@ -740,19 +740,40 @@ class TestQwen35MoEBridge:
         replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
         assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
 
-        # Check for fused expert mappings
-        fused_gated_expert_mappings = [m for m in registry.mappings if type(m).__name__ == "FusedGatedExpertMapping"]
-        assert len(fused_gated_expert_mappings) > 0
+        # Routed-expert mappings exist for both the grouped-GEMM (experts.linear_fc*.weight*) and
+        # SequentialMLP (local_experts.*.linear_fc*) layouts. Their fused-vs-per-expert form depends
+        # on the checkpoint and is covered by test_moe_expert_mappings_fused_vs_per_expert.
+        megatron_params = [getattr(m, "megatron_param", "") for m in registry.mappings]
+        assert any(p.endswith("mlp.experts.linear_fc1.weight*") for p in megatron_params)
+        assert any(p.endswith("local_experts.*.linear_fc1.weight") for p in megatron_params)
 
-        fused_expert_mappings = [m for m in registry.mappings if type(m).__name__ == "FusedExpertMapping"]
-        assert len(fused_expert_mappings) > 0
+    def test_moe_expert_mappings_fused_vs_per_expert(self):
+        """Routed-expert mappings match the detected checkpoint layout, for grouped and sequential."""
 
-        # Sequential (non-grouped) expert mappings must also be present, for moe_grouped_gemm=False
-        # (e.g. ModelOpt pruning). Guards against accidental removal.
-        seq_params = [
-            getattr(m, "megatron_param", "")
-            for m in registry.mappings
-            if "experts.local_experts." in getattr(m, "megatron_param", "")
-        ]
-        assert any(p.endswith("linear_fc1.weight") for p in seq_params)
-        assert any(p.endswith("linear_fc2.weight") for p in seq_params)
+        def mapping_types(experts_packed):
+            mappings = Qwen35MoEBridge._get_moe_lm_mappings(experts_packed=experts_packed)
+
+            def _type(suffix):
+                return type(next(m for m in mappings if getattr(m, "megatron_param", "").endswith(suffix))).__name__
+
+            return {
+                "grouped_fc1": _type("mlp.experts.linear_fc1.weight*"),
+                "grouped_fc2": _type("mlp.experts.linear_fc2.weight*"),
+                "seq_fc1": _type("local_experts.*.linear_fc1.weight"),
+                "seq_fc2": _type("local_experts.*.linear_fc2.weight"),
+            }
+
+        # Fused checkpoint (real Qwen3.5/3.6): read the stacked experts.gate_up_proj / down_proj.
+        assert mapping_types(experts_packed=True) == {
+            "grouped_fc1": "FusedGatedExpertMapping",
+            "grouped_fc2": "FusedExpertMapping",
+            "seq_fc1": "FusedGatedExpertMapping",
+            "seq_fc2": "FusedExpertMapping",
+        }
+        # Per-expert checkpoint (save_pretrained output): read experts.*.gate_proj / up_proj / down_proj.
+        assert mapping_types(experts_packed=False) == {
+            "grouped_fc1": "GatedMLPMapping",
+            "grouped_fc2": "AutoMapping",
+            "seq_fc1": "GatedMLPMapping",
+            "seq_fc2": "AutoMapping",
+        }
