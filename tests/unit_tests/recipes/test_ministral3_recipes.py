@@ -25,6 +25,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _ministral3_module = importlib.import_module("megatron.bridge.recipes.ministral3.ministral3")
 
@@ -100,7 +102,7 @@ def _assert_basic_config(cfg):
 def test_each_ministral3_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Ministral3 SFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -127,7 +129,7 @@ def test_each_ministral3_sft_recipe_builds_config(recipe_func: Callable, monkeyp
 def test_each_ministral3_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Ministral3 PEFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()  # Default peft_scheme="lora"
 
@@ -157,7 +159,7 @@ def test_each_ministral3_peft_recipe_builds_config(recipe_func: Callable, monkey
 def test_ministral3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
     """Test that different PEFT schemes are correctly applied for Ministral3 models."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
 
@@ -173,7 +175,7 @@ def test_ministral3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkey
 def test_ministral3_3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 3B SFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 
@@ -188,7 +190,7 @@ def test_ministral3_3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_3b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 3B LoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_peft_config(peft_scheme="lora")
 
@@ -207,7 +209,7 @@ def test_ministral3_3b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_3b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 3B DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_peft_config(peft_scheme="dora")
 
@@ -226,7 +228,7 @@ def test_ministral3_3b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_8b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B SFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_8b_sft_config()
 
@@ -241,7 +243,7 @@ def test_ministral3_8b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_8b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_8b_peft_config()
 
@@ -258,7 +260,7 @@ def test_ministral3_8b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_14b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 14B SFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_14b_sft_config()
 
@@ -273,7 +275,7 @@ def test_ministral3_14b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_14b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 14B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_14b_peft_config()
 
@@ -290,7 +292,7 @@ def test_ministral3_14b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_14b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 14B DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_14b_peft_config(peft_scheme="dora")
 
@@ -305,33 +307,33 @@ def test_ministral3_14b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_ministral3_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_ministral3_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_ministral3_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 
@@ -344,7 +346,7 @@ def test_ministral3_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_precision_config(monkeypatch: pytest.MonkeyPatch):
     """Test that precision config is correctly set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 
@@ -357,7 +359,7 @@ def test_ministral3_precision_config(monkeypatch: pytest.MonkeyPatch):
 def test_ministral3_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that DDP config is correctly set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_ministral3_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 

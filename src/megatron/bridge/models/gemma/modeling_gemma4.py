@@ -28,6 +28,7 @@ MoE layer specification:
 """
 
 import copy
+import inspect
 import types
 import weakref
 from dataclasses import dataclass
@@ -898,6 +899,19 @@ def _gemma4_layer_input(
     return per_layer_inputs[:, :, global_layer_idx, :].transpose(0, 1)
 
 
+def _gemma4_layer_accepts_input_ids(layer: "torch.nn.Module") -> bool:
+    forward_attention = getattr(layer, "_forward_attention", None)
+    if forward_attention is None:
+        return False
+    try:
+        parameters = inspect.signature(forward_attention).parameters
+    except (TypeError, ValueError):
+        return False
+    return "input_ids" in parameters or any(
+        parameter.kind == inspect.Parameter.VAR_KEYWORD for parameter in parameters.values()
+    )
+
+
 def _gemma4_checkpointed_forward(
     self: "torch.nn.Module",
     hidden_states: Tensor,
@@ -911,6 +925,7 @@ def _gemma4_checkpointed_forward(
     padding_mask: "Optional[Tensor]" = None,
     extract_layer_indices: "Optional[set[int]]" = None,
     layer_offset: int = 0,
+    input_ids: "Optional[Tensor]" = None,
     per_layer_inputs: "Optional[Tensor]" = None,
 ):
     """MCore recompute helper variant that carries Gemma4 PLE through checkpoint args."""
@@ -964,6 +979,12 @@ def _gemma4_checkpointed_forward(
                     padding_mask=padding_mask,
                     per_layer_input=_gemma4_layer_input(per_layer_inputs, layer),
                 )
+                if (
+                    input_ids is not None
+                    and isinstance(layer, TransformerLayer)
+                    and _gemma4_layer_accepts_input_ids(layer)
+                ):
+                    layer_kwargs["input_ids"] = input_ids
                 with inner_quantization_context:
                     if isinstance(layer, TransformerLayer):
                         hidden_states, context = layer(**layer_kwargs)
@@ -1075,13 +1096,28 @@ def _patch_ple_block_threading(decoder: "torch.nn.Module") -> None:
 
         previous = getattr(self, "_gemma4_current_per_layer_inputs", None)
         had_previous = hasattr(self, "_gemma4_current_per_layer_inputs")
-        orig_checkpointed_forward = transformer_block_module.checkpointed_forward
+        orig_module_checkpointed_forward = getattr(transformer_block_module, "checkpointed_forward", None)
+        orig_instance_checkpointed_forward = getattr(self, "_checkpointed_forward", None)
+        had_instance_checkpointed_forward = "_checkpointed_forward" in getattr(self, "__dict__", {})
+        patched_module_checkpointed_forward = False
+        patched_instance_checkpointed_forward = False
         self._gemma4_current_per_layer_inputs = per_layer_inputs
 
-        def _checkpointed_forward_with_ple(block, *cf_args, **cf_kwargs):
+        def _module_checkpointed_forward_with_ple(block, *cf_args, **cf_kwargs):
             block_per_layer_inputs = getattr(block, "_gemma4_current_per_layer_inputs", None)
             if block is not self or block_per_layer_inputs is None:
-                return orig_checkpointed_forward(block, *cf_args, **cf_kwargs)
+                return orig_module_checkpointed_forward(block, *cf_args, **cf_kwargs)
+            return _gemma4_checkpointed_forward(
+                block,
+                *cf_args,
+                **cf_kwargs,
+                per_layer_inputs=block_per_layer_inputs,
+            )
+
+        def _instance_checkpointed_forward_with_ple(block, *cf_args, **cf_kwargs):
+            block_per_layer_inputs = getattr(block, "_gemma4_current_per_layer_inputs", None)
+            if block_per_layer_inputs is None:
+                return orig_instance_checkpointed_forward(*cf_args, **cf_kwargs)
             return _gemma4_checkpointed_forward(
                 block,
                 *cf_args,
@@ -1090,11 +1126,24 @@ def _patch_ple_block_threading(decoder: "torch.nn.Module") -> None:
             )
 
         if per_layer_inputs is not None:
-            transformer_block_module.checkpointed_forward = _checkpointed_forward_with_ple
+            # TODO: remove this guard when both MCore main and dev call
+            # TransformerBlock._checkpointed_forward directly.
+            if orig_module_checkpointed_forward is not None:
+                transformer_block_module.checkpointed_forward = _module_checkpointed_forward_with_ple
+                patched_module_checkpointed_forward = True
+            if orig_instance_checkpointed_forward is not None:
+                self._checkpointed_forward = types.MethodType(_instance_checkpointed_forward_with_ple, self)
+                patched_instance_checkpointed_forward = True
         try:
             return orig_decoder_forward(*args, **kwargs)
         finally:
-            transformer_block_module.checkpointed_forward = orig_checkpointed_forward
+            if patched_module_checkpointed_forward:
+                transformer_block_module.checkpointed_forward = orig_module_checkpointed_forward
+            if patched_instance_checkpointed_forward:
+                if had_instance_checkpointed_forward:
+                    self._checkpointed_forward = orig_instance_checkpointed_forward
+                else:
+                    delattr(self, "_checkpointed_forward")
             if had_previous:
                 self._gemma4_current_per_layer_inputs = previous
             else:

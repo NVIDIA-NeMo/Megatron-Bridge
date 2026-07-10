@@ -22,6 +22,7 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_ultra import (
     nemotron_3_ultra_pretrain_config,
     nemotron_3_ultra_sft_openmathinstruct2_packed_config,
 )
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 class _FakeUltraProvider:
@@ -49,7 +50,7 @@ class _FakeAutoBridge:
 def _patch_autobridge(monkeypatch: pytest.MonkeyPatch) -> None:
     """Patch AutoBridge in the recipe module to avoid Hugging Face access."""
     mod = importlib.import_module("megatron.bridge.recipes.nemotronh.nemotron_3_ultra")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
 
 
 @pytest.mark.unit
@@ -102,7 +103,7 @@ def test_openmath_sft_uses_initial_parallelism_values() -> None:
     assert cfg.train.global_batch_size == 128
     assert cfg.checkpoint.async_save is True
     assert cfg.checkpoint.async_strategy == "mcore"
-    assert cfg.dataset.maker_kwargs["path_or_dataset"] == "nvidia/OpenMathInstruct-2"
+    assert cfg.dataset.hf_dataset.dataset_name == "openmathinstruct2"
     assert cfg.dataset.offline_packing_specs is not None
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 4096
     assert cfg.dataset.offline_packing_specs.tokenizer_model_name == NEMOTRON_3_ULTRA_TOKENIZER_NAME
@@ -134,7 +135,7 @@ def test_openmath_peft_uses_validated_parallelism_values() -> None:
 
 @pytest.mark.unit
 def test_openmath_peft_none_disables_adapter() -> None:
-    cfg = nemotron_3_ultra_peft_openmathinstruct2_packed_config(peft="none")
+    cfg = nemotron_3_ultra_peft_openmathinstruct2_packed_config(peft_scheme="none")
     assert cfg.peft is None
 
 

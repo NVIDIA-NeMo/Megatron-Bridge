@@ -320,6 +320,14 @@ Additionally, because CP shards activations, it also partitions optimizer states
    >    > 2. `TransformerConfig.recompute_method=block`
    >    > 3. `TransformerConfig.recompute_num_layers=<int:≤num_layers_in_the_model>`
 
+   > 3. LoRA training with tensor and sequence parallelism can retain the sequence-local LoRA-A input for
+   > column-parallel `linear_qkv` and `linear_fc1` adapters. Set `LoRA(sequence_parallel_input_regather=True)` to
+   > gather the full LayerNorm output temporarily in forward, release it after LoRA-A, and gather it again during
+   > backward for the LoRA-A weight gradient. MCore overlaps the backward all-gather with dgrad computation when
+   > possible. The option has no effect when sequence parallelism is disabled and falls back to the existing path
+   > for row-parallel or expert adapters, CPU activation offload, CUDA graphs, full-layer recompute, and `linear_fc1`
+   > covered by selective MLP recompute.
+
 2. Activation offloading to host memory
 
    > 1. Megatron-Bridge supports offloading activation memory to host memory, essential for training tasks constrained by activation memory. This is particularly useful for scenarios like (1) FSDP, where model state memory is minimized through sharding but activation memory remains high, (2) LoRA, which has frozen parameters but significant activation memory demands, and (3) the training with a large sequence length. The efficiency of activation offloading depends on both the interconnect bandwidth between the GPU and host and the host memory bandwidth. From this perspective, Grace-based systems like the GB200 enhance offloading performance by optimizing these bandwidths.
@@ -415,8 +423,8 @@ Additionally, because CP shards activations, it also partitions optimizer states
 
 3. Enabled with:
 
-   > 1. `FinetuningDatasetConfig.enable_offline_packing=True`
-   > 2. `FinetuningDatasetConfig.offline_packing_specs.packed_sequence_size=<max sequence length>`
+   > 1. `GPTSFTDatasetConfig.enable_offline_packing=True`
+   > 2. `GPTSFTDatasetConfig.offline_packing_specs.packed_sequence_size=<max sequence length>`
    > 3. `TrainingConfig.micro_batch_size=1`
 
 4. Performance benefits also include:
@@ -746,8 +754,8 @@ uv run python -u /home/dpsk_a2a/deepep/tests/test_internode.py
 - `NVTE_FWD_LAYERNORM_SM_MARGIN=<#SM for DP collectives`
 - `PYTORCH_CUDA_ALLOC_CONF`
 - `TrainingConfig.micro_batch_size`
-- `FinetuningDatasetConfig.enable_offline_packing`
-- `FinetuningDatasetConfig.offline_packing_specs.packed_sequence_size`
+- `GPTSFTDatasetConfig.enable_offline_packing`
+- `GPTSFTDatasetConfig.offline_packing_specs.packed_sequence_size`
 - `TransformerConfig.apply_rope_fusion`
 - `TransformerConfig.bias_activation_fusion`
 - `TransformerConfig.bias_dropout_fusion`

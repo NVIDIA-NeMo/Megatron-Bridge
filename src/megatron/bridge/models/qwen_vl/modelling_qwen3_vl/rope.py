@@ -29,6 +29,70 @@ from megatron.core.utils import deprecate_inference_params
 from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_q_cu_seqlens
+
+
+def _get_flat_packed_ranges(
+    input_ids: torch.Tensor,
+    packed_seq_params: PackedSeqParams | None,
+) -> list[tuple[int, int, int]] | None:
+    """Return ``(padded_start, valid_end, padded_end)`` ranges for flat packed input."""
+    if packed_seq_params is None or input_ids is None or input_ids.dim() != 2 or input_ids.size(0) != 1:
+        return None
+
+    cu_seqlens_unpadded, cu_seqlens_padded = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if (
+        cu_seqlens_padded is None
+        or cu_seqlens_unpadded is None
+        or cu_seqlens_padded.numel() < 3
+        or cu_seqlens_unpadded.numel() < cu_seqlens_padded.numel()
+    ):
+        return None
+
+    max_len = input_ids.size(1)
+    if int(cu_seqlens_padded[-1].item()) != max_len:
+        return None
+
+    ranges = []
+    for idx in range(cu_seqlens_padded.numel() - 1):
+        padded_start = int(cu_seqlens_padded[idx].item())
+        padded_end = int(cu_seqlens_padded[idx + 1].item())
+        unpadded_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())
+        valid_end = min(padded_start + unpadded_len, padded_end)
+        ranges.append((padded_start, valid_end, padded_end))
+    return ranges
+
+
+def get_packed_seq_attention_mask(input_ids: torch.Tensor, packed_seq_params: PackedSeqParams) -> torch.Tensor:
+    """Build a dense keep mask matching packed sequence metadata.
+
+    Collate-time in-batch packing emits a flattened ``[1, total_padded]``
+    token tensor. ``cu_seqlens_q_padded`` identifies segment boundaries in
+    that flattened tensor, while ``cu_seqlens_q`` may identify the unpadded
+    token counts. Qwen3-VL still needs a dense mask for its local THD
+    conversion, so derive it from the same metadata used by attention.
+    """
+    cu_seqlens_unpadded, cu_seqlens_padded = get_packed_seq_q_cu_seqlens(packed_seq_params)
+
+    if cu_seqlens_padded is None or cu_seqlens_unpadded is None or cu_seqlens_padded.numel() < 2:
+        return torch.ones_like(input_ids, dtype=torch.bool)
+
+    attention_mask = torch.zeros_like(input_ids, dtype=torch.bool)
+    seq_count = cu_seqlens_padded.numel() - 1
+
+    flat_packed_ranges = _get_flat_packed_ranges(input_ids, packed_seq_params)
+    if flat_packed_ranges is not None:
+        for padded_start, valid_end, _ in flat_packed_ranges:
+            attention_mask[0, padded_start:valid_end] = True
+        return attention_mask
+
+    if input_ids.dim() == 2 and input_ids.size(0) == 1 and seq_count > 1:
+        raise ValueError("Flat packed input length does not match its padded cu-seqlens metadata.")
+
+    for idx in range(min(input_ids.size(0), seq_count)):
+        seq_len = int((cu_seqlens_unpadded[idx + 1] - cu_seqlens_unpadded[idx]).item())
+        attention_mask[idx, : min(seq_len, input_ids.size(1))] = True
+    return attention_mask
 
 
 class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
@@ -178,6 +242,81 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         return rotary_seq_len
 
 
+def _build_llm_rope_positions(
+    sample_input_ids: torch.Tensor,
+    *,
+    spatial_merge_size: int,
+    image_token_id: int,
+    video_token_id: int,
+    vision_start_token_id: int,
+    image_grid_thw: torch.Tensor | None,
+    video_grid_thw: torch.Tensor | None,
+    image_index: int,
+    video_index: int,
+) -> tuple[torch.Tensor, int, int]:
+    """Build Qwen3-VL MRoPE positions for one logical sample."""
+    vision_start_indices = torch.argwhere(sample_input_ids == vision_start_token_id).squeeze(1)
+    vision_tokens = sample_input_ids[vision_start_indices + 1]
+    image_nums = int((vision_tokens == image_token_id).sum().item())
+    video_nums = int((vision_tokens == video_token_id).sum().item())
+    input_tokens = sample_input_ids.tolist()
+    llm_pos_ids_list: list[torch.Tensor] = []
+    st = 0
+    remain_images, remain_videos = image_nums, video_nums
+    for _ in range(image_nums + video_nums):
+        if image_token_id in input_tokens and remain_images > 0:
+            ed_image = input_tokens.index(image_token_id, st)
+        else:
+            ed_image = len(input_tokens) + 1
+        if video_token_id in input_tokens and remain_videos > 0:
+            ed_video = input_tokens.index(video_token_id, st)
+        else:
+            ed_video = len(input_tokens) + 1
+        if ed_image < ed_video:
+            t, h, w = (
+                image_grid_thw[image_index][0],
+                image_grid_thw[image_index][1],
+                image_grid_thw[image_index][2],
+            )
+            image_index += 1
+            remain_images -= 1
+            ed = ed_image
+
+        else:
+            t, h, w = (
+                video_grid_thw[video_index][0],
+                video_grid_thw[video_index][1],
+                video_grid_thw[video_index][2],
+            )
+            video_index += 1
+            remain_videos -= 1
+            ed = ed_video
+        llm_grid_t, llm_grid_h, llm_grid_w = (
+            t.item(),
+            h.item() // spatial_merge_size,
+            w.item() // spatial_merge_size,
+        )
+        text_len = ed - st
+
+        st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
+        llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
+
+        # t_index is always 0 because timestamps encode temporal information for videos.
+        t_index = torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
+        h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
+        w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
+        llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
+        st = ed + llm_grid_t * llm_grid_h * llm_grid_w
+
+    if st < len(input_tokens):
+        st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
+        text_len = len(input_tokens) - st
+        llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
+
+    llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
+    return llm_positions, image_index, video_index
+
+
 # Slightly modified from Qwen3VLModel.get_rope_index
 def get_rope_index(
     spatial_merge_size: int,
@@ -197,20 +336,37 @@ def get_rope_index(
         video_grid_thw = torch.repeat_interleave(video_grid_thw, video_grid_thw[:, 0], dim=0)
         video_grid_thw[:, 0] = 1
 
+    flat_packed_ranges = _get_flat_packed_ranges(input_ids, packed_seq_params)
+    if flat_packed_ranges is not None:
+        position_ids = torch.ones(
+            3,
+            input_ids.shape[0],
+            input_ids.shape[1],
+            dtype=input_ids.dtype,
+            device=input_ids.device,
+        )
+        image_index, video_index = 0, 0
+        mrope_position_deltas = []
+        for padded_start, valid_end, padded_end in flat_packed_ranges:
+            sample_input_ids = input_ids[0, padded_start:valid_end]
+            llm_positions, image_index, video_index = _build_llm_rope_positions(
+                sample_input_ids,
+                spatial_merge_size=spatial_merge_size,
+                image_token_id=image_token_id,
+                video_token_id=video_token_id,
+                vision_start_token_id=vision_start_token_id,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                image_index=image_index,
+                video_index=video_index,
+            )
+            position_ids[..., 0, padded_start:valid_end] = llm_positions.to(position_ids.device)
+            mrope_position_deltas.append(llm_positions.max() + 1 - (padded_end - padded_start))
+        mrope_position_deltas = torch.tensor(mrope_position_deltas, device=input_ids.device).unsqueeze(1)
+        return position_ids, mrope_position_deltas
+
     if packed_seq_params is not None and attention_mask is None and input_ids is not None:
-        # Build an attention mask from packed sequence metadata when one is not provided.
-        # cu_seqlens_q entries are cumulative lengths; their diffs give per-sample lengths.
-        cu_seqlens = packed_seq_params.cu_seqlens_q
-        if cu_seqlens is not None and cu_seqlens.numel() >= 2:
-            seq_lens = cu_seqlens[1:] - cu_seqlens[:-1]
-            attention_mask = torch.zeros_like(input_ids, dtype=input_ids.dtype)
-            max_len = attention_mask.shape[1]
-            for i, seq_len in enumerate(seq_lens.tolist()):
-                valid = min(int(seq_len), max_len)
-                attention_mask[i, :valid] = 1
-        else:
-            # Fallback to a dense mask if packed metadata is missing.
-            attention_mask = torch.ones_like(input_ids)
+        attention_mask = get_packed_seq_attention_mask(input_ids, packed_seq_params).to(dtype=input_ids.dtype)
 
     mrope_position_deltas = []
     if input_ids is not None and (image_grid_thw is not None or video_grid_thw is not None):
@@ -235,66 +391,17 @@ def get_rope_index(
         attention_mask = attention_mask.to(total_input_ids.device)
         for i, sample_input_ids in enumerate(total_input_ids):
             sample_input_ids = sample_input_ids[attention_mask[i] == 1]
-            image_nums, video_nums = 0, 0
-            vision_start_indices = torch.argwhere(sample_input_ids == vision_start_token_id).squeeze(1)
-            vision_tokens = sample_input_ids[vision_start_indices + 1]
-            image_nums = (vision_tokens == image_token_id).sum()
-            video_nums = (vision_tokens == video_token_id).sum()
-            input_tokens = sample_input_ids.tolist()
-            llm_pos_ids_list: list = []
-            st = 0
-            remain_images, remain_videos = image_nums, video_nums
-            for _ in range(image_nums + video_nums):
-                if image_token_id in input_tokens and remain_images > 0:
-                    ed_image = input_tokens.index(image_token_id, st)
-                else:
-                    ed_image = len(input_tokens) + 1
-                if video_token_id in input_tokens and remain_videos > 0:
-                    ed_video = input_tokens.index(video_token_id, st)
-                else:
-                    ed_video = len(input_tokens) + 1
-                if ed_image < ed_video:
-                    t, h, w = (
-                        image_grid_thw[image_index][0],
-                        image_grid_thw[image_index][1],
-                        image_grid_thw[image_index][2],
-                    )
-                    image_index += 1
-                    remain_images -= 1
-                    ed = ed_image
-
-                else:
-                    t, h, w = (
-                        video_grid_thw[video_index][0],
-                        video_grid_thw[video_index][1],
-                        video_grid_thw[video_index][2],
-                    )
-                    video_index += 1
-                    remain_videos -= 1
-                    ed = ed_video
-                llm_grid_t, llm_grid_h, llm_grid_w = (
-                    t.item(),
-                    h.item() // spatial_merge_size,
-                    w.item() // spatial_merge_size,
-                )
-                text_len = ed - st
-
-                st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
-                llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
-
-                # t_index is always 0 because llm_grid_t is always 1 (we use timestamps to encode the temporal information for videos)
-                t_index = torch.arange(llm_grid_t).view(-1, 1).expand(-1, llm_grid_h * llm_grid_w).flatten()
-                h_index = torch.arange(llm_grid_h).view(1, -1, 1).expand(llm_grid_t, -1, llm_grid_w).flatten()
-                w_index = torch.arange(llm_grid_w).view(1, 1, -1).expand(llm_grid_t, llm_grid_h, -1).flatten()
-                llm_pos_ids_list.append(torch.stack([t_index, h_index, w_index]) + text_len + st_idx)
-                st = ed + llm_grid_t * llm_grid_h * llm_grid_w
-
-            if st < len(input_tokens):
-                st_idx = llm_pos_ids_list[-1].max() + 1 if len(llm_pos_ids_list) > 0 else 0
-                text_len = len(input_tokens) - st
-                llm_pos_ids_list.append(torch.arange(text_len).view(1, -1).expand(3, -1) + st_idx)
-
-            llm_positions = torch.cat(llm_pos_ids_list, dim=1).reshape(3, -1)
+            llm_positions, image_index, video_index = _build_llm_rope_positions(
+                sample_input_ids,
+                spatial_merge_size=spatial_merge_size,
+                image_token_id=image_token_id,
+                video_token_id=video_token_id,
+                vision_start_token_id=vision_start_token_id,
+                image_grid_thw=image_grid_thw,
+                video_grid_thw=video_grid_thw,
+                image_index=image_index,
+                video_index=video_index,
+            )
             position_ids[..., i, attention_mask[i] == 1] = llm_positions.to(position_ids.device)
             mrope_position_deltas.append(llm_positions.max() + 1 - len(total_input_ids[i]))
         mrope_position_deltas = torch.tensor(mrope_position_deltas, device=total_input_ids.device).unsqueeze(1)
