@@ -22,7 +22,6 @@ built with small overrides.
 """
 
 import importlib
-from types import SimpleNamespace
 from typing import Callable
 
 import pytest
@@ -35,10 +34,6 @@ from megatron.bridge.recipes.deepseek import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import _build_standalone_mtp_layout
-from megatron.bridge.recipes.utils.environment_utils import (
-    set_common_recipe_environment_defaults,
-    set_hybridep_environment_defaults,
-)
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
@@ -189,24 +184,6 @@ def test_library_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch
     assert perf_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert perf_config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert perf_config.env_vars["USE_MNNVL"] == 1
-
-
-def test_recipe_environment_helpers_preserve_composed_values():
-    """Recipe defaults should not replace values installed by an earlier composition layer."""
-    config = SimpleNamespace(
-        env_vars={
-            "NVTE_FWD_LAYERNORM_SM_MARGIN": 48,
-            "NVLINK_DOMAIN_SIZE": 4,
-        }
-    )
-
-    set_common_recipe_environment_defaults(config)
-    set_hybridep_environment_defaults(config, ranks_per_nvlink_domain=64, use_mnnvl=True)
-
-    assert config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 48
-    assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 4
-    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
-    assert config.env_vars["USE_MNNVL"] == 1
 
 
 def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():

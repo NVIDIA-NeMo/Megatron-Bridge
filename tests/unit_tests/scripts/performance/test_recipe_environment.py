@@ -70,24 +70,17 @@ import run_script_with_env
 from utils import utils
 
 
-def _add_environment(config, custom_env_vars, **overrides):
-    args = {
-        "custom_env_vars": custom_env_vars,
-        "config": config,
-        "gpu": "h100",
-    }
-    args.update(overrides)
-    utils.add_library_recipe_environment_variables(**args)
+def _add_environment(config, custom_env_vars):
+    utils.add_library_recipe_environment_variables(custom_env_vars=custom_env_vars, config=config)
 
 
-def test_library_recipe_environment_mutates_existing_mapping_and_preserves_explicit_values():
+def test_library_recipe_environment_copies_explicit_values_and_preserves_launcher_values():
     config = SimpleNamespace(
         env_vars={
             "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
             "TORCHINDUCTOR_WORKER_START": "fork",
+            "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         },
-        model=SimpleNamespace(moe_flex_dispatcher_backend=None),
-        ddp=SimpleNamespace(nccl_ub=False),
     )
     custom_env_vars = {"NVTE_FWD_LAYERNORM_SM_MARGIN": "48"}
     original_mapping = custom_env_vars
@@ -102,87 +95,69 @@ def test_library_recipe_environment_mutates_existing_mapping_and_preserves_expli
 
 @pytest.mark.parametrize(
     ("gpu", "ep_size", "expected_ranks", "expected_domain", "expected_mnnvl"),
-    [("h100", 4, "4", "8", "0"), ("gb200", 32, "32", "72", "1")],
+    [("h100", 32, 8, 8, 0), ("gb200", 32, 32, 72, 1), ("vr200", 64, 64, 72, 1)],
 )
-def test_library_hybridep_topology_environment_tracks_final_ep_size(
-    gpu, ep_size, expected_ranks, expected_domain, expected_mnnvl
-):
+def test_library_target_topology_adapts_only_hybridep(gpu, ep_size, expected_ranks, expected_domain, expected_mnnvl):
     config = SimpleNamespace(
         env_vars={
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
-            "USE_MNNVL": 1,
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+            "MODEL_SPECIFIC": 1,
         },
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=ep_size),
-        ddp=SimpleNamespace(nccl_ub=False),
     )
-    custom_env_vars = {}
 
-    _add_environment(config, custom_env_vars, gpu=gpu)
+    utils.apply_library_target_topology_environment(config, gpu=gpu)
 
-    assert custom_env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ranks
-    assert custom_env_vars["NVLINK_DOMAIN_SIZE"] == expected_domain
-    assert custom_env_vars["USE_MNNVL"] == expected_mnnvl
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ranks
+    assert config.env_vars["NVLINK_DOMAIN_SIZE"] == expected_domain
+    assert config.env_vars["USE_MNNVL"] == expected_mnnvl
+    assert config.env_vars["MODEL_SPECIFIC"] == 1
 
 
-@pytest.mark.parametrize(
-    ("gpu", "expected_ranks", "expected_domain", "expected_mnnvl"),
-    [("h100", "8", "8", "0"), ("gb200", "32", "72", "1")],
-)
-def test_library_hybridep_topology_uses_recipe_ep_without_override(
-    gpu, expected_ranks, expected_domain, expected_mnnvl
-):
-    """The GPU topology must be normalized even when the launcher has no EP override."""
+def test_library_target_topology_removes_disabled_hybridep_values():
+    config = SimpleNamespace(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        },
+        model=SimpleNamespace(moe_flex_dispatcher_backend=None, expert_model_parallel_size=8),
+    )
+
+    utils.apply_library_target_topology_environment(config, gpu="h100")
+
+    assert not config.env_vars
+
+
+def test_library_target_topology_rejects_nonpositive_ep_size():
     config = SimpleNamespace(
         env_vars={},
+        model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=0),
+    )
+
+    with pytest.raises(ValueError, match="must be positive"):
+        utils.apply_library_target_topology_environment(config, gpu="h100")
+
+
+def test_explicit_environment_map_protects_target_topology_values():
+    base_env = {"NVLINK_DOMAIN_SIZE": 8, "USE_MNNVL": 0}
+    protected = utils.explicit_environment_override_names(
+        ["++env_vars={NVLINK_DOMAIN_SIZE:8,USE_MNNVL:0}"],
+        base_env,
+        base_env.copy(),
+    )
+    config = SimpleNamespace(
+        env_vars=base_env.copy(),
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=32),
-        ddp=SimpleNamespace(nccl_ub=False),
     )
-    custom_env_vars = {}
 
-    _add_environment(config, custom_env_vars, gpu=gpu)
+    utils.apply_library_target_topology_environment(config, gpu="gb200", protected_env_names=protected)
 
-    assert custom_env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ranks
-    assert custom_env_vars["NVLINK_DOMAIN_SIZE"] == expected_domain
-    assert custom_env_vars["USE_MNNVL"] == expected_mnnvl
-    assert custom_env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-
-
-def test_library_hybridep_topology_preserves_explicit_values():
-    """Explicit launcher values retain precedence over normalized recipe defaults."""
-    config = SimpleNamespace(
-        env_vars={},
-        model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=32),
-        ddp=SimpleNamespace(nccl_ub=False),
-    )
-    custom_env_vars = {
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": "custom-ranks",
-        "NVLINK_DOMAIN_SIZE": "custom-domain",
-        "USE_MNNVL": "custom-mnnvl",
-    }
-
-    _add_environment(config, custom_env_vars, gpu="gb200")
-
-    assert custom_env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "custom-ranks"
-    assert custom_env_vars["NVLINK_DOMAIN_SIZE"] == "custom-domain"
-    assert custom_env_vars["USE_MNNVL"] == "custom-mnnvl"
-
-
-def test_library_recipe_owns_legacy_process_defaults_and_nccl_ub_overrides():
-    config = SimpleNamespace(
-        env_vars={},
-        model=SimpleNamespace(moe_flex_dispatcher_backend=None),
-        ddp=SimpleNamespace(nccl_ub=True),
-    )
-    custom_env_vars = {}
-
-    _add_environment(config, custom_env_vars, gpu="h100")
-
-    assert config.env_vars["NCCL_NVLS_ENABLE"] == 1
-    assert config.env_vars["NCCL_CTA_POLICY"] == 1
-    assert config.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == 1
-    assert config.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == 1
-    assert config.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
-    assert custom_env_vars["NCCL_NVLS_ENABLE"] == "1"
+    assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert config.env_vars["USE_MNNVL"] == 0
+    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
 
 
 def test_workload_base_config_copies_recipe_environment():
@@ -205,19 +180,6 @@ def test_workload_base_config_copies_recipe_environment():
 
     assert workload_config.env_vars == recipe_env
     assert workload_config.env_vars is not recipe_env
-
-
-def test_explicit_environment_map_protects_values_equal_to_recipe_defaults():
-    """Explicit same-valued topology settings must still beat derived topology."""
-    base_env = {"NVLINK_DOMAIN_SIZE": 8, "USE_MNNVL": 0}
-
-    protected = utils.explicit_environment_override_names(
-        ["++env_vars={NVLINK_DOMAIN_SIZE:8,USE_MNNVL:0}"],
-        base_env,
-        base_env.copy(),
-    )
-
-    assert protected == {"NVLINK_DOMAIN_SIZE", "USE_MNNVL"}
 
 
 def test_perf_wrapper_applies_cli_environment_overrides_before_export(monkeypatch):
@@ -377,13 +339,14 @@ def test_library_wrapper_and_final_runner_share_environment_override_helper():
     expected_calls = {
         repo_root / "scripts" / "performance" / "run_script_with_env.py": {
             "_apply_library_recipe_overrides": {
-                "apply_library_environment_overrides",
-                "finalize_library_environment_overrides",
-            }
+                "apply_library_argparse_overrides",
+                "finalize_library_config_overrides",
+            },
+            "main": {"apply_library_target_topology_environment"},
         },
         repo_root / "scripts" / "performance" / "run_recipe.py": {
-            "set_user_overrides": {"apply_library_environment_overrides"},
-            "main": {"finalize_library_environment_overrides"},
+            "set_user_overrides": {"apply_library_argparse_overrides"},
+            "main": {"finalize_library_config_overrides", "apply_library_target_topology_environment"},
         },
     }
 
@@ -468,8 +431,8 @@ def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
-def test_library_wrapper_resolves_environment_inside_worker_before_exec(monkeypatch):
-    """Library env derives from the final user-then-Hydra effective recipe."""
+def test_library_wrapper_exports_resolved_recipe_environment_before_exec(monkeypatch):
+    """The wrapper exports the explicit env map after user and Hydra overrides."""
     args = SimpleNamespace(
         use_recipes=True,
         model_family_name="deepseek",
@@ -513,18 +476,13 @@ def test_library_wrapper_resolves_environment_inside_worker_before_exec(monkeypa
     assert calls[0] == ("overrides", base_recipe, cli_overrides, args)
     assert calls[1][0] == "environment"
     assert calls[1][1]["config"] is effective_recipe
-    assert calls[1][1]["gpu"] == "gb200"
-    assert "expert_model_parallel_size" not in calls[1][1]
+    assert set(calls[1][1]) == {"config", "custom_env_vars"}
     assert calls[2][0] == "exec"
     assert calls[2][2][1].endswith("run_recipe.py")
 
 
 def test_library_recipe_environment_rejects_non_scalar_values():
-    config = SimpleNamespace(
-        env_vars={"INVALID": ["value"]},
-        model=SimpleNamespace(moe_flex_dispatcher_backend=None),
-        ddp=SimpleNamespace(nccl_ub=False),
-    )
+    config = SimpleNamespace(env_vars={"INVALID": ["value"]})
 
     with pytest.raises(TypeError, match="must have a scalar value"):
         _add_environment(config, {})

@@ -20,7 +20,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -37,14 +37,13 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
-@library_recipe_environment(model_family_name="qwen2_audio")
 def qwen2_audio_7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a fine-tuning config for Qwen2-Audio 7B Instruct.
 
     Default configuration: 1 node, TP=1, PP=1
     - Full SFT: LR=5e-6
     """
-    return _qwen2_audio_common(
+    cfg = _qwen2_audio_common(
         hf_path="Qwen/Qwen2-Audio-7B-Instruct",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
@@ -52,17 +51,28 @@ def qwen2_audio_7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
         finetune_lr=5e-6,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
-@library_recipe_environment(model_family_name="qwen2_audio")
+
 def qwen2_audio_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2-Audio 7B Instruct."""
-    return _qwen2_audio_common(
+    cfg = _qwen2_audio_common(
         hf_path="Qwen/Qwen2-Audio-7B-Instruct",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         peft=peft_scheme,
         finetune_lr=1e-4,
     )
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
 def _qwen2_audio_common(

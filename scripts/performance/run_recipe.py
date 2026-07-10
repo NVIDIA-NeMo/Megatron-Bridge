@@ -29,14 +29,14 @@ from utils.datasets import (
     create_squad_dataset_config,
 )
 from utils.utils import (
-    apply_library_environment_overrides,
+    apply_library_argparse_overrides,
+    apply_library_target_topology_environment,
     explicit_environment_override_names,
-    finalize_library_environment_overrides,
+    finalize_library_config_overrides,
     get_library_recipe,
 )
 
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.recipes.utils.environment_utils import apply_library_recipe_environment
 from megatron.bridge.training.config import apply_environment_variables
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 from megatron.bridge.utils.common_utils import get_rank_safe
@@ -63,7 +63,7 @@ def _get_diffusion_step(model_family_name: str):
 def set_user_overrides(config, args):
     """Apply CLI arguments to ConfigContainer fields."""
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
-    config = apply_library_environment_overrides(config, args)
+    config = apply_library_argparse_overrides(config, args)
 
     # Training configuration
     if args.max_steps:
@@ -242,9 +242,13 @@ def main():
         logging.info("Applying %d CLI config override(s)", len(cli_overrides))
         recipe = process_config_with_overrides(recipe, cli_overrides=cli_overrides)
 
-    recipe = finalize_library_environment_overrides(recipe)
+    recipe = finalize_library_config_overrides(recipe)
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
-    apply_library_recipe_environment(recipe, gpu=args.gpu, protected_env_names=protected_env_names)
+    apply_library_target_topology_environment(
+        recipe,
+        gpu=args.gpu,
+        protected_env_names=protected_env_names,
+    )
     apply_environment_variables(recipe)
 
     if args.dryrun:
