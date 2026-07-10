@@ -228,7 +228,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/launch_with_nemo_run.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/launch_with_nemo_run.py).
+For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/setup_experiment.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/setup_experiment.py).
 
 #### Plugins
 

@@ -16,7 +16,9 @@
 
 import argparse
 import logging
+import os
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
@@ -46,9 +48,46 @@ from megatron.bridge.recipes.utils.dataset_utils import (  # noqa: E402
     apply_dataset_override,
     infer_mode_from_dataset,
 )
+from megatron.bridge.recipes.utils.finetune_utils import (  # noqa: E402
+    default_openmathinstruct2_thinking_packed_config,
+)
 
 
 TrainMode = Literal["pretrain", "finetune"]
+UserMode = Literal["pretrain", "sft", "peft", "lora", "dora"]
+
+
+@dataclass(frozen=True)
+class _DatasetSelection:
+    """Resolved user-facing dataset selection."""
+
+    dataset_type: str
+    preset: str | None = None
+    packed_sequence: bool = False
+    thinking_format: bool = False
+
+
+DATASET_PRESETS = {
+    "mock": _DatasetSelection("llm-pretrain-mock"),
+    "dclm": _DatasetSelection("llm-pretrain"),
+    "rp2": _DatasetSelection("llm-pretrain"),
+    "c4": _DatasetSelection("llm-pretrain"),
+    "squad": _DatasetSelection("llm-finetune", preset="squad"),
+    "squad-packed": _DatasetSelection("llm-finetune", preset="squad", packed_sequence=True),
+    "squad_packed": _DatasetSelection("llm-finetune", preset="squad", packed_sequence=True),
+    "openmathinstruct2": _DatasetSelection("llm-finetune", preset="openmathinstruct2"),
+    "openmathinstruct2-thinking": _DatasetSelection(
+        "llm-finetune",
+        packed_sequence=True,
+        thinking_format=True,
+    ),
+    "openmathinstruct2_thinking": _DatasetSelection(
+        "llm-finetune",
+        packed_sequence=True,
+        thinking_format=True,
+    ),
+    "gsm8k": _DatasetSelection("llm-finetune", preset="gsm8k"),
+}
 
 DATASET_ALIASES = {
     "mock": "llm-pretrain-mock",
@@ -80,7 +119,7 @@ def _normalize_task(task: str | None) -> str:
     lowered = task.lower()
     if lowered == "finetune":
         return "sft"
-    if lowered == "lora":
+    if lowered in {"lora", "dora"}:
         return "peft"
     return lowered
 
@@ -88,6 +127,19 @@ def _normalize_task(task: str | None) -> str:
 def _mode_from_task(task: str) -> TrainMode:
     """Map a normalized task name to the Bridge training loop mode."""
     return "pretrain" if task == "pretrain" else "finetune"
+
+
+def _task_from_recipe_name(recipe_name: str) -> str | None:
+    """Return the public task encoded in a conventional recipe name."""
+    padded_name = f"_{recipe_name.lower().strip('_')}_"
+    tasks = set()
+    if "_pretrain_" in padded_name:
+        tasks.add("pretrain")
+    if "_sft_" in padded_name or "_finetune_" in padded_name:
+        tasks.add("sft")
+    if any(marker in padded_name for marker in ("_peft_", "_lora_", "_dora_")):
+        tasks.add("peft")
+    return tasks.pop() if len(tasks) == 1 else None
 
 
 def _parse_key_value(value: str) -> str:
@@ -140,9 +192,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     selection.add_argument(
         "--task",
-        choices=["pretrain", "sft", "finetune", "peft", "lora"],
+        choices=["pretrain", "sft", "finetune", "peft", "lora", "dora"],
         default=None,
-        help="Training task for selector mode. Full --recipe names infer this when omitted.",
+        help="Compatibility alias for --mode.",
     )
     selection.add_argument(
         "--gpus",
@@ -172,8 +224,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     selection.add_argument(
         "--mode",
-        choices=["pretrain", "finetune"],
-        help="Override training loop selection when it cannot be inferred.",
+        choices=["pretrain", "sft", "finetune", "peft", "lora", "dora"],
+        help="User-facing training mode. lora/dora select a PEFT recipe and scheme.",
     )
     selection.add_argument(
         "--domain",
@@ -211,8 +263,10 @@ def _build_parser() -> argparse.ArgumentParser:
     data = parser.add_argument_group("Dataset and tokenizer overrides")
     data.add_argument(
         "--dataset",
-        choices=DATASET_TYPES,
-        help="Replace the recipe dataset with a standard Bridge dataset preset.",
+        help=(
+            "Dataset preset (dclm, openmathinstruct2, openmathinstruct2-thinking, squad, gsm8k, mock) "
+            "or a compatibility llm-/vlm- dataset type."
+        ),
     )
     data.add_argument(
         "--data",
@@ -225,6 +279,18 @@ def _build_parser() -> argparse.ArgumentParser:
         dest="dataset_preset",
         choices=["squad", "openmathinstruct2", "gsm8k"],
         help="Preset for --dataset llm-finetune.",
+    )
+    data.add_argument(
+        "--dataset-path",
+        action="append",
+        default=[],
+        dest="dataset_paths",
+        help="Preprocessed dataset prefix or directory. Repeat for multiple DCLM prefixes.",
+    )
+    data.add_argument(
+        "--dataset-cache",
+        dest="dataset_cache",
+        help="Dataset index/cache directory. DCLM also reads DCLM_CACHE when omitted.",
     )
     data.add_argument(
         "--tokenizer-type",
@@ -281,7 +347,13 @@ def _build_parser() -> argparse.ArgumentParser:
     )
 
     checkpoint = parser.add_argument_group("Checkpointing")
-    checkpoint.add_argument("--pretrained-checkpoint", "--pretrained_checkpoint", dest="pretrained_checkpoint")
+    checkpoint.add_argument(
+        "--from",
+        "--pretrained-checkpoint",
+        "--pretrained_checkpoint",
+        dest="pretrained_checkpoint",
+        help="Checkpoint or Hugging Face model used to initialize SFT/PEFT.",
+    )
     checkpoint.add_argument("--save-dir", "--save_dir", dest="save_dir")
     checkpoint.add_argument("--load-dir", "--load_dir", dest="load_dir")
     checkpoint.add_argument("--save-interval", "--save_interval", type=int, dest="save_interval")
@@ -330,15 +402,106 @@ def _collect_overrides(parser: argparse.ArgumentParser, args: argparse.Namespace
     return overrides
 
 
-def _resolve_dataset(args: argparse.Namespace) -> str | None:
-    """Resolve canonical dataset type from --dataset or --data."""
+def _resolve_dataset(args: argparse.Namespace) -> _DatasetSelection | None:
+    """Resolve a public dataset name or compatibility dataset type."""
     if args.dataset is not None:
-        return args.dataset
+        normalized = args.dataset.lower()
+        if normalized in DATASET_PRESETS:
+            return DATASET_PRESETS[normalized]
+        if normalized in DATASET_TYPES:
+            return _DatasetSelection(normalized, preset=args.dataset_preset)
+        choices = sorted({*DATASET_PRESETS, *DATASET_TYPES})
+        raise ValueError(f"Unknown dataset '{args.dataset}'. Choose from: {', '.join(choices)}")
     if args.data is None:
         return None
-    if args.data == "squad_packed":
-        args.packed_sequence = True
-    return DATASET_ALIASES[args.data]
+    return DATASET_PRESETS[args.data]
+
+
+def _dclm_prefix_from_path(path: Path) -> Path:
+    """Normalize a DCLM .bin/.idx file or prefix to the indexed-data prefix."""
+    if path.suffix in {".bin", ".idx"}:
+        return path.with_suffix("")
+    return path
+
+
+def _discover_dclm_prefixes(args: argparse.Namespace) -> list[str]:
+    """Resolve and validate preprocessed DCLM prefixes without falling back to mock data."""
+    raw_paths = list(args.dataset_paths)
+    data_prefix = os.environ.get("DCLM_DATA_PREFIX")
+    data_dir = os.environ.get("DCLM_DATA_DIR")
+    if not raw_paths and data_prefix:
+        raw_paths.append(data_prefix)
+    if not raw_paths and data_dir:
+        raw_paths.append(data_dir)
+
+    prefixes: list[Path] = []
+    for raw_path in raw_paths:
+        path = Path(raw_path).expanduser()
+        if path.is_dir():
+            prefixes.extend(_dclm_prefix_from_path(bin_path) for bin_path in sorted(path.glob("*.bin")))
+        else:
+            prefixes.append(_dclm_prefix_from_path(path))
+
+    valid_prefixes: list[str] = []
+    invalid_prefixes: list[str] = []
+    for prefix in dict.fromkeys(prefixes):
+        bin_path = Path(f"{prefix}.bin")
+        idx_path = Path(f"{prefix}.idx")
+        if bin_path.is_file() and idx_path.is_file():
+            valid_prefixes.append(str(prefix))
+        else:
+            invalid_prefixes.append(str(prefix))
+
+    if invalid_prefixes:
+        formatted = ", ".join(invalid_prefixes)
+        raise ValueError(f"DCLM prefix(es) must have matching .bin and .idx files: {formatted}")
+    if not valid_prefixes:
+        raise ValueError(
+            "Dataset 'dclm' requires preprocessed Megatron .bin/.idx files. "
+            "Pass --dataset-path, set DCLM_DATA_PREFIX, or set DCLM_DATA_DIR."
+        )
+    return valid_prefixes
+
+
+def _apply_dataset_selection(
+    recipe: object,
+    selection: _DatasetSelection,
+    args: argparse.Namespace,
+    cli_overrides: list[str],
+) -> object:
+    """Apply the resolved dataset selection to a recipe."""
+    packed_sequence = args.packed_sequence or selection.packed_sequence
+    dclm_prefixes = (
+        _discover_dclm_prefixes(args) if args.dataset is not None and args.dataset.lower() == "dclm" else None
+    )
+    if selection.thinking_format:
+        seq_length = args.seq_length or getattr(getattr(recipe, "model", None), "seq_length", 4096)
+        context_parallel_size = args.context_parallel_size or getattr(
+            getattr(recipe, "model", None), "context_parallel_size", 1
+        )
+        recipe.dataset = default_openmathinstruct2_thinking_packed_config(
+            seq_length=seq_length,
+            packed_sequence=True,
+            pad_seq_to_mult=max(1, 2 * context_parallel_size) if context_parallel_size > 1 else 1,
+        )
+        return recipe
+
+    if selection.preset is not None and args.dataset_preset is None:
+        cli_overrides.append(f"dataset.hf_dataset.dataset_name={selection.preset}")
+
+    recipe = apply_dataset_override(
+        recipe,
+        dataset_type=selection.dataset_type,
+        packed_sequence=packed_sequence,
+        seq_length=args.seq_length,
+        cli_overrides=cli_overrides,
+    )
+    if dclm_prefixes is not None:
+        recipe.dataset.data_path = dclm_prefixes
+        dataset_cache = args.dataset_cache or os.environ.get("DCLM_CACHE")
+        if dataset_cache is not None:
+            recipe.dataset.path_to_cache = dataset_cache
+    return recipe
 
 
 def _load_named_recipe(args: argparse.Namespace) -> tuple[object, RecipeSource]:
@@ -368,7 +531,7 @@ def _require_selector_args(args: argparse.Namespace, *, include_family: bool) ->
 
 def _load_selected_recipe(args: argparse.Namespace) -> tuple[object, RecipeSource]:
     """Load a recipe through the shorthand selector path."""
-    task = _normalize_task(args.task)
+    task = _normalize_task(args.mode or args.task)
     source = args.source
     if source == "auto":
         source = "recipes" if args.model_family_name is not None else "perf_recipes"
@@ -404,19 +567,34 @@ def _load_selected_recipe(args: argparse.Namespace) -> tuple[object, RecipeSourc
     )
 
 
-def _infer_mode(args: argparse.Namespace, dataset: str | None) -> TrainMode:
+def _infer_mode(args: argparse.Namespace, dataset: _DatasetSelection | None) -> TrainMode:
     """Infer whether to call pretrain() or finetune()."""
-    if args.mode is not None:
-        return args.mode
+    requested_task = args.mode or args.task
+    if requested_task is not None:
+        normalized_task = _normalize_task(requested_task)
+        requested_mode = _mode_from_task(normalized_task)
+        if args.recipe is not None:
+            recipe_task = _task_from_recipe_name(args.recipe)
+            if recipe_task is not None and normalized_task != recipe_task:
+                raise ValueError(f"Mode '{requested_task}' is incompatible with recipe '{args.recipe}'.")
+            try:
+                recipe_mode = infer_train_mode(args.recipe)
+            except ValueError:
+                recipe_mode = requested_mode
+            if requested_mode != recipe_mode:
+                raise ValueError(f"Mode '{requested_task}' is incompatible with recipe '{args.recipe}'.")
+        if dataset is not None and requested_mode != infer_mode_from_dataset(dataset.dataset_type):
+            raise ValueError(f"Mode '{requested_task}' is incompatible with dataset '{args.dataset or args.data}'.")
+        return requested_mode
     if dataset is not None:
-        return infer_mode_from_dataset(dataset)
+        return infer_mode_from_dataset(dataset.dataset_type)
     if args.recipe is not None:
         try:
             return infer_train_mode(args.recipe)
         except ValueError:
-            if args.task is None:
+            if requested_task is None:
                 raise
-    return _mode_from_task(_normalize_task(args.task))
+    return _mode_from_task(_normalize_task(requested_task))
 
 
 def _default_step_name(args: argparse.Namespace) -> str:
@@ -434,6 +612,15 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     """Parse launcher arguments and trailing ConfigContainer overrides."""
     parser = _build_parser()
     args, unknown = parser.parse_known_args(argv)
+    if args.recipe is not None and args.model_recipe_name is not None:
+        parser.error("--recipe already identifies the model; do not also pass --model")
+    if args.mode is not None and args.task is not None and _normalize_task(args.mode) != _normalize_task(args.task):
+        parser.error("--mode and --task select different training modes")
+    requested_task = args.mode or args.task
+    if requested_task in {"lora", "dora"}:
+        if args.peft_scheme is not None and args.peft_scheme != requested_task:
+            parser.error(f"--mode {requested_task} conflicts with --peft-scheme {args.peft_scheme}")
+        args.peft_scheme = requested_task
     if args.use_recipes:
         if args.source == "perf_recipes":
             parser.error("--use_recipes cannot be combined with --source perf_recipes")
@@ -451,13 +638,7 @@ def main(argv: list[str] | None = None) -> None:
     mode = _infer_mode(args, dataset)
 
     if dataset is not None:
-        recipe = apply_dataset_override(
-            recipe,
-            dataset_type=dataset,
-            packed_sequence=args.packed_sequence,
-            seq_length=args.seq_length,
-            cli_overrides=cli_overrides,
-        )
+        recipe = _apply_dataset_selection(recipe, dataset, args, cli_overrides)
 
     recipe = apply_launcher_overrides(recipe, args, recipe_source=recipe_source)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)

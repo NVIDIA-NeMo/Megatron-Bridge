@@ -58,96 +58,84 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
     --trust-remote-code
 ```
 
-## Training Recipes
+## Training
 
-- See: [bridge.recipes.gpt_oss](../../../src/megatron/bridge/recipes/gpt_oss/gpt_oss.py)
-- Available recipes:
-  - `gpt_oss_20b_pretrain_config`: Pretraining configuration for 20B
-  - `gpt_oss_20b_pretrain_fp8_current_scaling_config`: Pretraining configuration for 20B with Hopper FP8 current scaling
-  - `gpt_oss_20b_sft_config`: Full SFT configuration for 20B
-  - `gpt_oss_20b_sft_fp8_current_scaling_config`: Full SFT configuration for 20B with Hopper FP8 current scaling
-  - `gpt_oss_20b_peft_config`: LoRA PEFT configuration for 20B
-  - `gpt_oss_20b_peft_fp8_current_scaling_config`: LoRA PEFT configuration for 20B with Hopper FP8 current scaling
-  - `gpt_oss_20b_pretrain_mxfp8_config`: Pretraining configuration for 20B with Blackwell MXFP8
-  - `gpt_oss_20b_sft_mxfp8_config`: Full SFT configuration for 20B with Blackwell MXFP8
-  - `gpt_oss_20b_peft_mxfp8_config`: LoRA PEFT configuration for 20B with Blackwell MXFP8
-  - `gpt_oss_120b_pretrain_config`: Pretraining configuration for 120B
-  - `gpt_oss_120b_sft_config`: Full SFT configuration for 120B
-  - `gpt_oss_120b_peft_config`: LoRA PEFT configuration for 120B
+All GPT-OSS training modes use [train.sh](train.sh). Without `--recipe`, it supplies the GPT-OSS 20B library model
+selector and forwards launch options, mode, dataset, and ConfigContainer overrides to the unified training entry
+point. A complete `--recipe` bypasses that selector because the recipe already identifies its model.
 
-Before training, ensure the following are configured:
-1. **Container Image**: Set `CONTAINER_IMAGE` in the SLURM scripts to your container path
-2. **Container Mounts**: (optional) Set `CONTAINER_MOUNTS` for data and workspace directories
-3. **Environment Variables**:
-   - `HF_TOKEN`: to download models from HF Hub (if required)
-   - `HF_HOME`: (optional) to avoid re-downloading models and datasets
-   - `NEMO_DATASETS_CACHE` or `NEMO_HOME`: for multi-node SFT/PEFT, point the default dataset root to shared storage mounted at the same path on every node
-   - `WANDB_API_KEY`: (optional) to enable WandB logging
-
-All training scripts use SLURM for containerized multi-node training.
-
-### FP8 Training (Hopper GPUs)
-
-The FP8 current scaling recipes enable mixed-precision training with FP8 on Hopper GPUs. To use an FP8 recipe, uncomment the FP8 `RECIPE_NAME` line in the corresponding SLURM script:
-
-- [slurm_pretrain.sh](slurm_pretrain.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_pretrain_fp8_current_scaling_config"`
-- [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_fp8_current_scaling_config"`
-- [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_fp8_current_scaling_config"`
-
-### MXFP8 Training (Blackwell GPUs)
-
-MXFP8 (`bf16_with_mxfp8_mixed`) enables mixed-precision training on Blackwell GPUs. To use an MXFP8 recipe, uncomment the MXFP8 `RECIPE_NAME` line in the corresponding SLURM script:
-
-- [slurm_pretrain.sh](slurm_pretrain.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_pretrain_mxfp8_config"`
-- [slurm_sft.sh](slurm_sft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_sft_mxfp8_config"`
-- [slurm_peft.sh](slurm_peft.sh): uncomment `RECIPE_NAME="${MODEL_NAME}_peft_mxfp8_config"`
-
-> **Note**: For GB200 nodes (4 GPUs/node), also update `--gpus-per-node` and `--ntasks-per-node` to 4 in the SBATCH directives.
-
-### Pretrain
-
-Pretrain uses the **DCLM** dataset by default when `DCLM_DATA_DIR` and `DCLM_CACHE` are set (see [slurm_pretrain.sh](slurm_pretrain.sh)). A single random DCLM shard was used for testing.
-
-To use your own preprocessed DCLM data, set the dataset config as follows (e.g. in the recipe or via overrides):
-
-```python
-cfg.dataset.blend = [
-    [f"/path/to/dclm/preprocessed/dclm_{i:02d}_text_document" for i in range(1, 11)],
-    None,
-]
-cfg.dataset.split = "9999,8,2"
-cfg.dataset.path_to_cache = "/path/to/cache"
-```
-
-Preprocess your data using the [DCLM data preprocessing tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data/dclm).
-
-### Supervised Fine-Tuning (SFT)
-
-See the [slurm_sft.sh](slurm_sft.sh) script for full parameter fine-tuning. Set `DATASET_NAME` to select a preset (`squad` or `openmathinstruct2_gsm8k`).
-
-For `openmathinstruct2_gsm8k`, pre-pack the dataset before submitting the training job:
+Set the deployment environment once:
 
 ```bash
-sbatch pack_data_job.sh   # pre-pack once; skipped automatically on subsequent runs
-sbatch slurm_sft.sh
+export MB_CONTAINER_IMAGE=/path/to/container.sqsh
+export HF_HOME=/shared/cache/huggingface
+export NEMO_HOME=/shared/cache/nemo
 ```
 
-Dataset preparation runs only on global rank 0. This is safe when the prepared
-JSONL and packed files are visible at the same paths on every rank. Packing and
-training must therefore use the same shared dataset cache (or an explicitly
-configured shared `dataset_root`). Set `NEMO_DATASETS_CACHE` directly, or set
-`NEMO_HOME` to its parent cache directory. The default
-`/root/.cache/nemo/datasets` is container-local, so it is not suitable for
-multi-node jobs unless that directory is backed by a shared mount.
+Add `--account`, `--partition`, `--nodes`, `--gpus-per-node`, and `--gpu-type` for the target Slurm allocation.
+Use `--mount host:container` only for paths that cannot be discovered from the dataset/checkpoint/cache flags or
+standard environment variables.
 
-Squad and other datasets that do not use packed sequences do not require the
-separate pre-pack job. Multi-node training still requires the JSONL prepared by
-global rank 0 to be visible at the same path on every rank.
+### Pretrain on DCLM
 
-### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
+DCLM must already be preprocessed into Megatron indexed `.bin/.idx` files. Missing data is an error and never falls
+back to mock data.
 
-See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default,
-so multi-node jobs require the same shared dataset-cache configuration described above.
+```bash
+./examples/models/gpt_oss/train.sh \
+    --nodes 2 --gpus-per-node 8 --gpu-type h100 \
+    --account ACCOUNT --partition PARTITION \
+    --mode pretrain --dataset dclm \
+    --dataset-path /data/dclm \
+    --dataset-cache /data/dclm-cache \
+    train.train_iters=1000 \
+    train.global_batch_size=128
+```
+
+Preprocess raw DCLM using the [DCLM tutorial](../../../tutorials/data/dclm/README.md).
+
+Use `--dataset mock` for a model/launcher smoke test.
+
+### SFT on OpenMathInstruct-2
+
+The thinking preset puts chain-of-thought tokens in the analysis channel, the final answer in the final channel, and
+enables offline packing. Packing is performed by the dataset builder on global rank 0; there is no separate packing
+job.
+
+```bash
+./examples/models/gpt_oss/train.sh \
+    --nodes 1 --gpus-per-node 8 --gpu-type h100 \
+    --account ACCOUNT --partition PARTITION \
+    --mode sft --dataset openmathinstruct2-thinking \
+    --from ${WORKSPACE}/models/gpt-oss-20b \
+    --cp 2 \
+    train.train_iters=1000 \
+    train.global_batch_size=128 \
+    optimizer.lr=5e-6 \
+    optimizer.min_lr=5e-7
+```
+
+With `--cp 2`, the launcher configures packed-sequence padding to a multiple of four for THD context parallelism.
+
+### LoRA on OpenMathInstruct-2
+
+```bash
+./examples/models/gpt_oss/train.sh \
+    --nodes 1 --gpus-per-node 1 --gpu-type h100 \
+    --account ACCOUNT --partition PARTITION \
+    --mode lora --dataset openmathinstruct2-thinking \
+    --from ${WORKSPACE}/models/gpt-oss-20b \
+    train.train_iters=1000 \
+    optimizer.lr=1e-4 \
+    peft.dim=16
+```
+
+Use `--dtype fp8_cs` for Hopper FP8 current-scaling recipes and `--dtype fp8_mx` for Blackwell MXFP8 recipes when
+the selected model/mode/topology has that recipe variant. A complete recipe can also be selected with `--recipe`;
+when a complete recipe is passed, `--model` is not required.
+
+Multi-node SFT and LoRA require `NEMO_DATASETS_CACHE` or `NEMO_HOME` on shared storage so every rank sees the
+materialized JSONL and packed artifacts.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/xs3rmk4t) for the expected loss curves and grad norms.
@@ -158,7 +146,7 @@ See [inference.sh](inference.sh) for text generation with:
 - Hugging Face checkpoint (`unsloth/gpt-oss-20b-BF16`)
 - Imported Megatron checkpoint (after [conversion.sh](conversion.sh) import)
 - Exported HF checkpoint (after conversion export)
-- **SFT (finetuned) checkpoint**: set `SFT_CHECKPOINT` to your [slurm_sft.sh](slurm_sft.sh) result dir and run:
+- **SFT (finetuned) checkpoint**: set `SFT_CHECKPOINT` to the result directory produced by [train.sh](train.sh) and run:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
@@ -207,7 +195,7 @@ Findings from hyperparameter tuning on GPT-OSS 20B × OpenMathInstruct-2:
 - **Analysis channel format**: Use `generated_solution` from OpenMathInstruct-2 as the `analysis` channel and put only the final answer in `final`, rather than mixing both in `final`. This should be better theoretically since it matches what the channel architecture is designed for — the model reasons freely in `analysis` and commits to the final answer in `final`.
   - Plain: `<|start|>assistant<|channel|>final<|message|>{CoT} #### N<|end|>`
   - Analysis: `<|start|>assistant<|channel|>analysis<|message|>{CoT}<|end|>` + `<|start|>assistant<|channel|>final<|message|>#### N<|end|>`
-- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `prepare_gpt_sft_packed_data.py`).
+- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. The dataset builder prepares and caches packed data automatically.
 - **Hyperparameters** — strict-match improved **86.05% → 93.6%** by:
   - `global_batch_size`: 8 → 128
   - `train_iters`: 1 full epoch

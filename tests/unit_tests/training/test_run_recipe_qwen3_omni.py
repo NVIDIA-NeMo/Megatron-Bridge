@@ -129,15 +129,14 @@ def _load_recipe_runner_module():
     common_utils_module = types.ModuleType("megatron.bridge.utils.common_utils")
     common_utils_module.get_rank_safe = lambda: 1
 
-    torch_module = types.ModuleType("torch")
-    torch_module.distributed = types.SimpleNamespace(
+    torch_stub = types.SimpleNamespace()
+    torch_stub.distributed = types.SimpleNamespace(
         barrier=Mock(name="barrier"),
         destroy_process_group=Mock(name="destroy_process_group"),
         is_initialized=lambda: False,
     )
 
     stub_modules = {
-        "torch": torch_module,
         "megatron": megatron_module,
         "megatron.bridge": bridge_module,
         "megatron.bridge.models": models_module,
@@ -180,6 +179,7 @@ def _load_recipe_runner_module():
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module.torch = torch_stub
     finally:
         for name, previous in previous_modules.items():
             if previous is None:
@@ -235,8 +235,8 @@ def _load_run_recipe_module():
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda cfg: cfg
     recipe_runner.infer_train_mode.return_value = "pretrain"
     recipe_runner.load_forward_step.return_value = object()
-    recipe_runner.resolve_recipe_source.side_effect = (
-        lambda _, source="auto": "recipes" if source == "auto" else source
+    recipe_runner.resolve_recipe_source.side_effect = lambda _, source="auto": (
+        "recipes" if source == "auto" else source
     )
 
     megatron_module = _package("megatron")
@@ -255,7 +255,14 @@ def _load_run_recipe_module():
     ]
     dataset_utils_module.apply_dataset_override = Mock(name="apply_dataset_override")
     dataset_utils_module.apply_dataset_override.side_effect = lambda cfg, **_: cfg
-    dataset_utils_module.infer_mode_from_dataset = Mock(return_value="finetune")
+    dataset_utils_module.infer_mode_from_dataset = Mock(
+        side_effect=lambda dataset_type: "pretrain" if dataset_type.startswith("llm-pretrain") else "finetune"
+    )
+    finetune_utils_module = types.ModuleType("megatron.bridge.recipes.utils.finetune_utils")
+    finetune_utils_module.default_openmathinstruct2_thinking_packed_config = Mock(
+        name="default_openmathinstruct2_thinking_packed_config",
+        return_value=object(),
+    )
 
     stub_modules = {
         "recipe_runner": recipe_runner,
@@ -264,6 +271,7 @@ def _load_run_recipe_module():
         "megatron.bridge.recipes": recipes_module,
         "megatron.bridge.recipes.utils": recipes_utils_module,
         "megatron.bridge.recipes.utils.dataset_utils": dataset_utils_module,
+        "megatron.bridge.recipes.utils.finetune_utils": finetune_utils_module,
     }
     previous_modules = {name: sys.modules.get(name) for name in stub_modules}
     sys.modules.update(stub_modules)
@@ -283,6 +291,7 @@ def _load_run_recipe_module():
     handles = {
         "apply_dataset_override": dataset_utils_module.apply_dataset_override,
         "infer_mode_from_dataset": dataset_utils_module.infer_mode_from_dataset,
+        "thinking_dataset": finetune_utils_module.default_openmathinstruct2_thinking_packed_config,
         "recipe_runner": recipe_runner,
     }
     return module, handles
@@ -466,8 +475,8 @@ class TestUnifiedRunRecipeRouting:
         events = []
         handles["recipe_runner"].load_recipe.return_value = recipe
         handles["recipe_runner"].apply_cli_overrides.side_effect = lambda cfg, _: events.append("cli") or cfg
-        handles["recipe_runner"].sync_model_dataset_sequence_length.side_effect = (
-            lambda cfg: events.append("sync") or cfg
+        handles["recipe_runner"].sync_model_dataset_sequence_length.side_effect = lambda cfg: (
+            events.append("sync") or cfg
         )
 
         module.main(["--recipe", "vanilla_gpt_pretrain_config", "--max-steps", "2"])
@@ -573,3 +582,195 @@ class TestUnifiedRunRecipeRouting:
         )
         assert handles["recipe_runner"].run_config.call_args.kwargs["dryrun"] is True
         assert handles["recipe_runner"].run_config.call_args.kwargs["dryrun_num_gpus"] == 8
+
+    def test_lora_mode_selects_peft_recipe_and_scheme(self):
+        module, handles = _load_run_recipe_module()
+        handles["recipe_runner"].load_library_recipe_by_family.return_value = object()
+
+        module.main(
+            [
+                "--source",
+                "recipes",
+                "--family",
+                "gpt_oss",
+                "--model",
+                "gpt_oss_20b",
+                "--mode",
+                "lora",
+                "--gpus",
+                "1",
+                "--gpu",
+                "h100",
+            ]
+        )
+
+        handles["recipe_runner"].load_library_recipe_by_family.assert_called_once_with(
+            model_family_name="gpt_oss",
+            model_recipe_name="gpt_oss_20b",
+            train_task="peft",
+            num_gpus=1,
+            gpu="h100",
+            precision="bf16",
+            config_variant=None,
+            wandb_experiment_name=None,
+            peft_scheme="lora",
+        )
+
+    def test_full_recipe_mode_needs_no_model_selector(self):
+        module, handles = _load_run_recipe_module()
+        handles["recipe_runner"].infer_train_mode.return_value = "finetune"
+        handles["recipe_runner"].load_recipe.return_value = object()
+
+        module.main(["--recipe", "gpt_oss_20b_peft_config", "--mode", "lora"])
+
+        handles["recipe_runner"].load_recipe.assert_called_once_with(
+            "gpt_oss_20b_peft_config",
+            "lora",
+            False,
+            None,
+            None,
+            source="recipes",
+        )
+        handles["recipe_runner"].load_library_recipe_by_family.assert_not_called()
+
+    def test_full_recipe_rejects_redundant_model_selector(self):
+        module, _ = _load_run_recipe_module()
+
+        with pytest.raises(SystemExit):
+            module.parse_args(
+                [
+                    "--recipe",
+                    "gpt_oss_20b_peft_config",
+                    "--model",
+                    "gpt_oss_20b",
+                    "--mode",
+                    "lora",
+                ]
+            )
+
+    @pytest.mark.parametrize(
+        ("recipe", "mode"),
+        [
+            ("gpt_oss_20b_sft_config", "lora"),
+            ("gpt_oss_20b_peft_config", "sft"),
+        ],
+    )
+    def test_full_recipe_requires_matching_finetune_task(self, recipe, mode):
+        module, handles = _load_run_recipe_module()
+        handles["recipe_runner"].infer_train_mode.return_value = "finetune"
+        handles["recipe_runner"].load_recipe.return_value = object()
+
+        with pytest.raises(ValueError, match="incompatible with recipe"):
+            module.main(["--recipe", recipe, "--mode", mode])
+
+    def test_public_openmath_dataset_resolves_backend_and_preset(self):
+        module, handles = _load_run_recipe_module()
+        recipe = object()
+        handles["recipe_runner"].load_recipe.return_value = recipe
+
+        module.main(
+            [
+                "--recipe",
+                "gpt_oss_20b_sft_config",
+                "--dataset",
+                "openmathinstruct2",
+                "optimizer.lr=0.0001",
+            ]
+        )
+
+        handles["apply_dataset_override"].assert_called_once_with(
+            recipe,
+            dataset_type="llm-finetune",
+            packed_sequence=False,
+            seq_length=None,
+            cli_overrides=["optimizer.lr=0.0001", "dataset.hf_dataset.dataset_name=openmathinstruct2"],
+        )
+
+    def test_openmath_thinking_dataset_enables_packing_and_cp_padding(self):
+        module, handles = _load_run_recipe_module()
+        recipe = SimpleNamespace(model=SimpleNamespace(seq_length=4096, context_parallel_size=1), dataset=object())
+        handles["recipe_runner"].load_recipe.return_value = recipe
+
+        module.main(
+            [
+                "--recipe",
+                "gpt_oss_20b_sft_config",
+                "--dataset",
+                "openmathinstruct2-thinking",
+                "--cp",
+                "2",
+            ]
+        )
+
+        handles["thinking_dataset"].assert_called_once_with(
+            seq_length=4096,
+            packed_sequence=True,
+            pad_seq_to_mult=4,
+        )
+        handles["apply_dataset_override"].assert_not_called()
+
+    def test_dclm_requires_preprocessed_indexed_data(self):
+        module, handles = _load_run_recipe_module()
+        handles["recipe_runner"].load_recipe.return_value = SimpleNamespace(dataset=SimpleNamespace())
+
+        with pytest.raises(ValueError, match="requires preprocessed Megatron"):
+            module.main(
+                [
+                    "--recipe",
+                    "gpt_oss_20b_pretrain_config",
+                    "--mode",
+                    "pretrain",
+                    "--dataset",
+                    "dclm",
+                ]
+            )
+
+    def test_dclm_directory_discovers_matching_bin_idx_prefixes(self, tmp_path):
+        module, handles = _load_run_recipe_module()
+        prefix = tmp_path / "dclm_01_01_text_document"
+        prefix.with_suffix(".bin").touch()
+        prefix.with_suffix(".idx").touch()
+        recipe = SimpleNamespace(dataset=SimpleNamespace())
+        handles["recipe_runner"].load_recipe.return_value = recipe
+
+        module.main(
+            [
+                "--recipe",
+                "gpt_oss_20b_pretrain_config",
+                "--dataset",
+                "dclm",
+                "--dataset-path",
+                str(tmp_path),
+            ]
+        )
+
+        assert recipe.dataset.data_path == [str(prefix)]
+
+    def test_dclm_name_is_case_insensitive(self, tmp_path):
+        module, handles = _load_run_recipe_module()
+        prefix = tmp_path / "dclm_text_document"
+        prefix.with_suffix(".bin").touch()
+        prefix.with_suffix(".idx").touch()
+        recipe = SimpleNamespace(dataset=SimpleNamespace())
+        handles["recipe_runner"].load_recipe.return_value = recipe
+
+        module.main(
+            [
+                "--recipe",
+                "gpt_oss_20b_pretrain_config",
+                "--dataset",
+                "DCLM",
+                "--dataset-path",
+                str(prefix),
+            ]
+        )
+
+        assert recipe.dataset.data_path == [str(prefix)]
+
+    def test_explicit_mode_must_match_full_recipe(self):
+        module, handles = _load_run_recipe_module()
+        handles["recipe_runner"].infer_train_mode.return_value = "pretrain"
+        handles["recipe_runner"].load_recipe.return_value = object()
+
+        with pytest.raises(ValueError, match="incompatible with recipe"):
+            module.main(["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "sft"])

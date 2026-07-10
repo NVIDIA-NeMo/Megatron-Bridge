@@ -1,328 +1,165 @@
-# Training Scripts
+# Training entry point
 
-Generic launcher and training scripts that work with any GPT-based model family (e.g. Deepseek, Llama, Gemma, Qwen, GPT, etc.).
-
-## Overview
-
-These scripts provide a generic interface for training models in Megatron Bridge:
-
-- `run_recipe.py` - Generic pretraining/finetuning for recipes from `megatron.bridge.recipes` and flat performance recipes from `megatron.bridge.perf_recipes`.
-- `launch_with_nemo_run.py` - NeMo-Run launcher (local or Slurm)
-- `launch_with_sbatch.sh` - Direct sbatch launcher
-
-All scripts dynamically import a recipe, apply user-provided overrides to the configuration, then begin training.
-
-## Getting Started
-
-For the end-to-end overview of how recipes are structured, overridden, and launched, see the official [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
-For preparing and selecting pretraining, text-only SFT, direct Hugging Face SFT, or Energon data, see the [data tutorial index](../../tutorials/data/README.md).
-
-### 1. Dry-run a library recipe
+Megatron Bridge training uses one public launcher:
 
 ```bash
-uv run python scripts/training/run_recipe.py \
+./scripts/training/train.sh [launch options] [training options] [KEY=VALUE overrides]
+```
+
+`train.sh` invokes `setup_experiment.py`, which launches `run_recipe.py` locally or through Slurm. The setup layer
+only owns resources, containers, environment variables, and mounts. Recipe selection, dataset construction, and
+ConfigContainer overrides are resolved inside the training environment.
+
+The former `launch_with_nemo_run.py` and `launch_with_sbatch.sh` entry points have been removed.
+
+## Selection rules
+
+Choose either a complete recipe or the shorthand model selector. `--recipe` and `--model` are mutually exclusive.
+
+### Complete recipe
+
+A complete recipe already identifies the model and default training configuration, so do not also pass `--model`:
+
+```bash
+./scripts/training/train.sh \
+    --local --gpus-per-node 1 \
     --recipe llama32_1b_pretrain_config \
-    --dry-run \
-    --save-config /tmp/llama32_1b.yaml \
-    --max-steps 10 \
-    --data mock
+    --mode pretrain --dataset mock
 ```
 
-`--recipe` first checks `megatron.bridge.recipes`, then falls back to
-`megatron.bridge.perf_recipes` when `--source auto` is used.
+### Model selector
 
-### 2. Run the same library recipe with torch distributed
+The selector resolves a hardware- and topology-specific recipe from the family, model, mode, GPU type, and total GPU
+count. `setup_experiment.py` derives the total GPU count from `--nodes * --gpus-per-node`.
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 \
-    scripts/training/run_recipe.py \
+./scripts/training/train.sh \
+    --nodes 2 --gpus-per-node 8 --gpu-type h100 \
+    --account ACCOUNT --partition PARTITION \
+    --container-image /path/to/container.sqsh \
+    --source recipes --family gpt_oss --model gpt_oss_20b \
+    --mode pretrain --dataset dclm
+```
+
+Public modes are `pretrain`, `sft`, `peft`, `lora`, and `dora`. `lora` and `dora` select a PEFT recipe and set the
+corresponding PEFT scheme. The legacy `--task` spelling remains a compatibility alias.
+
+## Dataset presets
+
+`--dataset` names the data users intend to train on rather than the internal dataset config class.
+
+| Dataset | Mode | Behavior |
+|---|---|---|
+| `mock` | pretrain | In-memory mock GPT data |
+| `dclm` | pretrain | Preprocessed Megatron `.bin/.idx` data; never falls back to mock |
+| `squad` | SFT/PEFT | Hugging Face SQuAD preset |
+| `squad-packed` | SFT/PEFT | SQuAD with offline sequence packing |
+| `openmathinstruct2` | SFT/PEFT | OpenMathInstruct-2 prompt/completion preset |
+| `openmathinstruct2-thinking` | SFT/PEFT | Analysis/final channel format with offline packing |
+| `gsm8k` | SFT/PEFT | GSM8K preset |
+
+The internal values `llm-pretrain`, `llm-pretrain-mock`, `llm-finetune`, and the VLM dataset types remain available
+for compatibility and advanced use.
+
+### DCLM
+
+DCLM must be preprocessed into indexed Megatron data. Select it with one of:
+
+```bash
+--dataset dclm --dataset-path /data/dclm/dclm_01_01_text_document
+--dataset dclm --dataset-path /data/dclm
+```
+
+or set `DCLM_DATA_PREFIX` or `DCLM_DATA_DIR`. Every selected prefix must have matching `.bin` and `.idx` files.
+`--dataset-cache` or `DCLM_CACHE` selects the index cache. Missing or incomplete data fails before distributed
+training starts.
+
+For preprocessing instructions, see [the DCLM tutorial](../../tutorials/data/dclm/README.md).
+
+### OpenMathInstruct-2
+
+The builder downloads/materializes the Hugging Face source and prepares packed data when
+`openmathinstruct2-thinking` is selected. A separate packing Slurm job is not required. Multi-node training must set
+`NEMO_DATASETS_CACHE` or `NEMO_HOME` to shared storage.
+
+## SFT and LoRA checkpoints
+
+Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face model directory:
+
+```bash
+./scripts/training/train.sh \
+    --nodes 1 --gpus-per-node 8 --gpu-type h100 \
+    --account ACCOUNT --partition PARTITION --container-image IMAGE \
+    --recipe gpt_oss_20b_sft_8gpu_h100_bf16_config \
+    --mode sft --dataset openmathinstruct2-thinking \
+    --from /checkpoints/gpt-oss-20b
+```
+
+```bash
+./scripts/training/train.sh \
+    --nodes 1 --gpus-per-node 1 --gpu-type h100 \
+    --account ACCOUNT --partition PARTITION --container-image IMAGE \
+    --recipe gpt_oss_20b_peft_1gpu_h100_bf16_config \
+    --mode lora --dataset openmathinstruct2-thinking \
+    --from /checkpoints/gpt-oss-20b
+```
+
+## Overrides
+
+Common values have flags and every ConfigContainer field can be overridden with trailing `KEY=VALUE` arguments:
+
+```bash
+./scripts/training/train.sh \
+    --local --gpus-per-node 1 \
     --recipe llama32_1b_pretrain_config \
-    --data mock \
-    --max-steps 20 \
-    --global-batch-size 8 \
-    --micro-batch-size 1 \
-    optimizer.lr=0.0003
-```
-
-### 3. Select a flat performance recipe
-
-```bash
-uv run python scripts/training/run_recipe.py \
-    --source perf_recipes \
-    --model llama3_8b \
-    --task pretrain \
-    --gpus 8 \
-    --gpu h100 \
-    --dtype bf16 \
-    --dry-run \
-    --save-config /tmp/llama3_perf.yaml
-```
-
-The selector resolves to
-`llama3_8b_pretrain_8gpu_h100_bf16_config`. You can also pass the full flat
-recipe name directly:
-
-```bash
-uv run python scripts/training/run_recipe.py \
-    --recipe llama3_8b_pretrain_8gpu_h100_bf16_config \
-    --source perf_recipes \
-    --dry-run
-```
-
-### 4. Override datasets and config fields
-
-Use easy flags for common changes and `key=value` for any `ConfigContainer`
-field:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 \
-    scripts/training/run_recipe.py \
-    --recipe llama32_1b_pretrain_config \
-    --dataset llm-pretrain-mock \
-    --seq-length 512 \
-    --tokenizer-type NullTokenizer \
-    --vocab-size 32000 \
-    --set train.train_iters=20 \
-    model.hidden_size=256 \
-    model.num_layers=2
-```
-
-## Usage with Different Models
-
-Same scripts work across all model families:
-
-```bash
-# Llama
-uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
-    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
-
-# Gemma
-uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
-    --recipe gemma3_1b_pretrain_1gpu_h100_bf16_config
-
-# Qwen
-uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
-    --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config
-
-# GPT
-uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
-    --recipe vanilla_gpt_pretrain_1gpu_h100_bf16_config
-```
-
-## Loading a HuggingFace Model Directly (`--hf_path`)
-
-Some recipes accept `--hf_path` to initialize from a HuggingFace model ID (or local
-path) without a separate offline checkpoint conversion step:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
-    --recipe vanilla_gpt_pretrain_1gpu_h100_bf16_config \
-    --hf_path meta-llama/Llama-3.1-8B
-```
-
-`--hf_path` is optional and model-specific: `run_recipe.py` only forwards it to recipes
-that accept an `hf_path` argument, and ignores it otherwise.
-
-## CLI Overrides
-
-Override any config field using dot notation:
-
-```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
-    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    train.train_iters=5000 \
+    --mode pretrain --dataset mock \
+    --max-steps 10 --global-batch-size 8 --micro-batch-size 1 \
     optimizer.lr=0.0002 \
-    model.tensor_model_parallel_size=2
+    scheduler.lr_warmup_iters=1 \
+    scheduler.lr_decay_iters=10
 ```
 
-The first part before the dot specifies which ConfigContainer subconfig to override (e.g., `train`, `model`, `optimizer`), and the part after specifies the field.
+Precedence is recipe defaults, dataset preset, common flags, then trailing ConfigContainer overrides.
 
-Configuration priority:
-1. CLI overrides (highest)
-2. Recipe defaults (lowest)
+## Slurm and containers
 
-Mode is inferred from the recipe name. If your recipe name doesn't include
-`pretrain`, `finetune`, `sft`, or `peft`, pass `--dataset` so the launcher can infer the mode from the dataset type.
+Required Slurm arguments are:
 
-## Step Function Selection
+```text
+--nodes
+--gpus-per-node
+--account
+--partition
+--container-image (or MB_CONTAINER_IMAGE)
+```
 
-Use `--step_func` to control the step function used during training. Available options:
+Use repeated `--mount host:container` and `--env KEY=VALUE` values for deployment-specific settings. The launcher
+automatically inherits the standard HF/NeMo/DCLM/uv cache variables and authentication variables without logging
+their values. Existing dataset, checkpoint, cache, and output paths passed through common flags are mounted at the
+same path automatically.
 
-- `gpt_step` - Text-only models (default)
-- `vlm_step` - Vision-language models
-- `llava_step` - LLaVA models
+Use `--dry-run` to render the NeMo-Run experiment without submitting it. For a rank-local ConfigContainer dry run,
+invoke `run_recipe.py` directly:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=2 scripts/training/run_recipe.py \
-    --recipe qwen25_vl_7b_sft_2gpu_h100_bf16_config \
-    --step_func vlm_step
+uv run python scripts/training/run_recipe.py \
+    --recipe llama32_1b_pretrain_config \
+    --mode pretrain --dataset mock \
+    --dry-run --save-config /tmp/config.yaml
 ```
 
-## Multi-Node and Distributed Training
+## Rank-local entry point
 
-### Option 1: NeMo-Run
-
-Prerequisites:
+`run_recipe.py` remains available for existing distributed environments that already own process launch:
 
 ```bash
-pip install nemo-run
+uv run python -m torch.distributed.run --nproc_per_node=2 \
+    scripts/training/run_recipe.py \
+    --recipe vanilla_gpt_pretrain_config \
+    --mode pretrain --dataset mock \
+    model.tensor_model_parallel_size=2 \
+    model.sequence_parallel=true
 ```
 
-#### Test Locally First
-
-Before launching on Slurm, test your configuration locally:
-
-```bash
-uv run python launch_with_nemo_run.py \
-    --local \
-    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    --gpus-per-node 1 \
-    --dry-run \
-    train.train_iters=10
-```
-
-This uses `LocalExecutor` with torchrun for single-node testing. Include `--dry-run` to confirm the composed nemo-run command before actually launching it.
-
-#### Launch on Slurm
-
-Once tested, scale to Slurm by removing `--local` and adding Slurm parameters:
-
-```bash
-# From the cluster (LocalTunnel)
-uv run python launch_with_nemo_run.py \
-    --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config \
-    --nodes 2 \
-    --gpus-per-node 8 \
-    --partition gpu \
-    --account my_account
-
-# From your local machine (SSHTunnel)
-uv run python launch_with_nemo_run.py \
-    --recipe llama3_8b_sft_2gpu_h100_bf16_config \
-    --nodes 1 \
-    --gpus-per-node 8 \
-    --partition gpu \
-    --account my_account \
-    --ssh-tunnel \
-    --host my-cluster.example.com \
-    --user myusername \
-    --remote-job-dir /home/myusername/nemo-runs
-```
-
-#### With Containers
-
-When using containers, scripts are automatically packaged using `PatternPackager`:
-
-```bash
-uv run python launch_with_nemo_run.py \
-    --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config \
-    --nodes 1 \
-    --gpus-per-node 4 \
-    --partition gpu \
-    --account my_account \
-    --container-image /path/to/container.sqsh \
-    --mount /data:/data
-```
-
-> **Note:** PatternPackager includes Python files under `scripts/`. Local changes in
-> `src/megatron/bridge/` stay on your workstation unless you mount the repo into
-> the container.
-
-```bash
-uv run python launch_with_nemo_run.py \
-    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    --nodes 2 \
-    --gpus-per-node 8 \
-    --partition gpu \
-    --account my_account \
-    --container-image /path/to/container.sqsh \
-    --mount /path/to/your/Megatron-Bridge:/opt/Megatron-Bridge \
-    train.train_iters=10
-```
-
-Mounting onto `/opt/Megatron-Bridge` shadows the container's built-in source so
-your edited `src/megatron/bridge/` files are used while packaged scripts still
-run from the container workspace.
-
-For git-based packaging:
-
-```bash
-uv run python launch_with_nemo_run.py \
-    --recipe llama3_8b_pretrain_8gpu_h100_bf16_config \
-    --source perf_recipes \
-    --nodes 1 \
-    --gpus-per-node 8 \
-    --partition gpu \
-    --account my_account \
-    --container-image /path/to/container.sqsh \
-    --packager git
-```
-
-#### Fault-Tolerant Training
-
-Use the fault-tolerant launcher for better resiliency:
-
-```bash
-uv run python launch_with_nemo_run.py \
-    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    --launcher ft \
-    --nodes 2 \
-    --gpus-per-node 8 \
-    --partition gpu \
-    --account my_account
-```
-
-### Option 2: Direct sbatch
-
-For traditional HPC workflows without NeMo-Run, use the `launch_with_sbatch.sh` script.
-
-Edit the configuration section in `launch_with_sbatch.sh`:
-
-```bash
-# Training script to run
-TRAINING_SCRIPT="run_recipe.py"
-
-# Full recipe function name
-RECIPE="llama32_1b_pretrain_config"
-SOURCE="auto"
-
-# Optional: CLI overrides
-CLI_OVERRIDES="train.train_iters=5000 optimizer.lr=0.0003"
-
-# Optional: Container settings
-CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS="/data:/data /model:/model"
-```
-
-Also configure the SBATCH directives at the top of the file:
-
-```bash
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --partition=gpu
-#SBATCH --account=my_account
-#SBATCH --time=04:00:00
-```
-
-Then submit:
-
-```bash
-sbatch launch_with_sbatch.sh
-```
-
-The script automatically:
-- Sets up multi-node torchrun with correct SLURM environment variables
-- Passes recipe and CLI override arguments to the training script
-- Handles container execution (if specified)
-- Applies container mounts
-
-## Recipe Arguments
-
-`run_recipe.py` calls recipes with no constructor arguments by default. It only
-forwards optional constructor shortcuts (`--hf-path`, `--seq-length`,
-`--packed-sequence`, `--peft-scheme`) when the selected recipe function accepts
-them.
-
-Most customization should happen after the config is built through easy flags
-or `ConfigContainer` overrides such as `model.tensor_model_parallel_size=2`.
+Performance recipes under `megatron.bridge.perf_recipes` remain throughput benchmark configurations, typically on
+mock data. Use library recipes for functional pretraining, SFT, and PEFT.

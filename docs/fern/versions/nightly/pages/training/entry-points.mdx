@@ -8,7 +8,7 @@ Use `pretrain()` for language-model pretraining jobs that use `GPTDatasetConfig`
 
 Use `finetune()` for full SFT and PEFT. The function validates that either `checkpoint.pretrained_checkpoint` or `checkpoint.load` is set, then calls the same underlying training loop used by `pretrain()`. PEFT does not use a separate entry point: set `cfg.peft` to a LoRA or DoRA config, use `GPTSFTDatasetConfig`, `DirectHFSFTDatasetConfig`, or a specialized dataset provider, and launch through `finetune()`.
 
-The generic recipe launcher, `scripts/training/run_recipe.py`, can load library recipes from `megatron.bridge.recipes` and flat performance recipes from `megatron.bridge.perf_recipes`. Pass a full recipe name with `--recipe`, or select a flat performance recipe with `--source perf_recipes --model <name> --task <task> --gpus <N> --gpu <type> --dtype <precision>`. Dataset types beginning with `llm-pretrain` run `pretrain()`. SFT, PEFT, VLM, and diffusion fine-tuning dataset types run `finetune()`.
+The public launcher is `scripts/training/train.sh`, backed by `setup_experiment.py` for local or Slurm execution and `run_recipe.py` inside the training environment. Pass a complete recipe with `--recipe`, or use `--family`, `--model`, `--mode`, and the launcher topology to select one. Public dataset names such as `dclm`, `openmathinstruct2`, and `mock` resolve to the corresponding dataset config. DCLM requires preprocessed `.bin/.idx` paths and never silently falls back to mock data. `pretrain` mode runs `pretrain()`; SFT, LoRA, DoRA, VLM, and diffusion fine-tuning run `finetune()`.
 
 ## Checkpoint Source by Workflow
 
