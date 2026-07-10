@@ -19,8 +19,8 @@ from typing import Any, Optional
 import yaml
 from torch import int_repr
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
 def _parse_val_blend_entries(metadataset_path: str) -> list[tuple[str, str]]:
@@ -64,6 +64,7 @@ class EnergonProvider(DatasetProvider):
     num_workers: int_repr
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
+<<<<<<< HEAD
     # Enable batch-level online sequence packing
     pack_sequences_in_batch: bool = False
     # Size of Energon's packing buffer. Required to enable Energon's sample-packing path: when
@@ -86,6 +87,35 @@ class EnergonProvider(DatasetProvider):
             self.task_encoder.pack_sequences = True
         return EnergonMultiModalDataModule(
             path=path,
+=======
+    # Enable in-batch sequence packing
+    enable_in_batch_packing: bool = False
+    # Active user: Qwen3-VL. Its step needs unpacked batch tensors and builds
+    # packed metadata after model-specific CP/SP padding, so task encoders must
+    # leave in-batch packing disabled when this flag is set.
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
+
+    def _sync_task_encoder_sequence_batching(self) -> None:
+        if self.task_encoder is None:
+            return
+        if hasattr(self.task_encoder, "seq_length"):
+            self.task_encoder.seq_length = self.seq_length
+        self.task_encoder.pad_to_max_length = self.pad_to_max_length
+        self.task_encoder.pad_to_multiple_of = self.pad_to_multiple_of
+        self.task_encoder.enable_in_batch_packing = (
+            self.enable_in_batch_packing and not self.defer_in_batch_packing_to_step
+        )
+        self.task_encoder.in_batch_packing_pad_to_multiple_of = self.in_batch_packing_pad_to_multiple_of
+
+    def build_datasets(self, context: DatasetBuildContext):
+        assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
+        self._sync_task_encoder_sequence_batching()
+        dataset = EnergonMultiModalDataModule(
+            path=self.path,
+>>>>>>> upstream/main
             tokenizer=context.tokenizer if context.tokenizer is not None else self.tokenizer,
             image_processor=self.image_processor,
             seq_length=self.seq_length,
@@ -96,6 +126,7 @@ class EnergonProvider(DatasetProvider):
             packing_buffer_size=self.packing_buffer_size,
             pg_collection=context.pg_collection,
         )
+<<<<<<< HEAD
 
     def build_datasets(self, context: DatasetBuildContext):
         assert self.path, "EnergonProvider.path must be set. Use CLI override: dataset.path=<path>"
@@ -120,3 +151,14 @@ class EnergonProvider(DatasetProvider):
             )
         # Train un-wrapped (not iter()) so RerunDataIterator keeps save_state/restore_state for resume.
         return dataset.train_dataloader(), valid, iter(dataset.val_dataloader())
+=======
+        # EnergonMultiModalDataModule.test_dataloader() returns None (no distinct test split);
+        # honor that instead of aliasing the validation loader as a fake test set, which would
+        # otherwise report validation metrics as test metrics whenever eval_iters > 0.
+        test_dataloader = dataset.test_dataloader()
+        return (
+            iter(dataset.train_dataloader()),
+            iter(dataset.val_dataloader()),
+            iter(test_dataloader) if test_dataloader is not None else None,
+        )
+>>>>>>> upstream/main

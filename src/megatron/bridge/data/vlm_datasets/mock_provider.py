@@ -28,9 +28,9 @@ from typing import Any, Dict, List, Literal, Optional, Tuple
 import numpy
 from PIL import Image
 
-from megatron.bridge.data.vlm_datasets.conversation_dataset import VLMConversationDataset
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
@@ -38,7 +38,7 @@ class MockVLMConversationProvider(DatasetProvider):
     """DatasetProvider for generic mock VLM conversation datasets.
 
     Builds train/valid/test datasets using a HF AutoProcessor and the
-    `MockVLMConversationDataset` implementation. Intended to work across
+    `DirectSFTDataset` implementation. Intended to work across
     different VLM models whose processors support the conversation schema.
     """
 
@@ -52,7 +52,6 @@ class MockVLMConversationProvider(DatasetProvider):
     prompt: str = "Describe this image."
     random_seed: int = 0
     image_size: Tuple[int, int] = (256, 256)
-    pad_to_max_length: bool = True
     create_attention_mask: bool = True
 
     # Keep parity with GPTDatasetConfig usage in batching utilities
@@ -67,8 +66,12 @@ class MockVLMConversationProvider(DatasetProvider):
     # HF AutoProcessor instance will be set during build
     _processor: Optional[Any] = None
 
-    # Enable batch-level online sequence packing
-    pack_sequences_in_batch: bool = False
+    # Enable in-batch sequence packing
+    enable_in_batch_packing: bool = False
+    defer_in_batch_packing_to_step: bool = False
+    pad_to_max_length: bool = False
+    pad_to_multiple_of: int = 128
+    in_batch_packing_pad_to_multiple_of: int = 1
 
     def _make_single_example(
         self, rng: numpy.random.Generator, prompt_text: str, response_text: str
@@ -110,7 +113,7 @@ class MockVLMConversationProvider(DatasetProvider):
 
         num_examples = 1000
 
-        if self.pack_sequences_in_batch:
+        if self.enable_in_batch_packing:
             # When packing is enabled, produce examples with varied response lengths
             # so that the packing logic concatenates sequences of different sizes.
             resp_len_range = (10, 100)
@@ -141,14 +144,20 @@ class MockVLMConversationProvider(DatasetProvider):
 
         base_examples = self._make_base_examples()
 
-        def _maybe_make(size: int) -> Optional[VLMConversationDataset]:
+        def _maybe_make(size: int) -> Optional[DirectSFTDataset]:
             if not size or size <= 0:
                 return None
-            return VLMConversationDataset(
+            return DirectSFTDataset(
                 base_examples=base_examples,
                 target_length=size,
                 processor=self._processor,
                 collate_impl=None,  # infer collate from processor type (qwen2_5_collate_fn)
+                sequence_length=self.seq_length,
+                pad_to_max_length=self.pad_to_max_length,
+                pad_to_multiple_of=self.pad_to_multiple_of,
+                enable_in_batch_packing=self.enable_in_batch_packing,
+                defer_in_batch_packing_to_step=self.defer_in_batch_packing_to_step,
+                in_batch_packing_pad_to_multiple_of=self.in_batch_packing_pad_to_multiple_of,
             )
 
         train_ds = _maybe_make(context.train_samples)

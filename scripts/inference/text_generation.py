@@ -17,11 +17,8 @@
 from __future__ import annotations
 
 import argparse
-import json
 import logging
-import os
 import sys
-from datetime import timedelta
 from pathlib import Path
 
 
@@ -32,184 +29,50 @@ for _path in (G_SRC_ROOT, G_MCORE_ROOT):
     if _path.exists() and str(_path) not in sys.path:
         sys.path.append(str(_path))
 
-import torch
 import torch.distributed as dist
 from megatron.core.inference.apis import MegatronLLM, SamplingParams
-from megatron.core.inference.config import InferenceConfig, MambaInferenceStateConfig
 from megatron.core.inference.contexts import StaticInferenceContext
 from megatron.core.inference.engines.static_engine import StaticInferenceEngine
 from megatron.core.inference.model_inference_wrappers.gpt.gpt_inference_wrapper import GPTInferenceWrapper
 from megatron.core.inference.text_generation_controllers.text_generation_controller import TextGenerationController
-from megatron.core.transformer.enums import AttnBackend
-from transformers import AutoConfig, AutoTokenizer, PreTrainedTokenizerBase
 
-from megatron.bridge import AutoBridge
-from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.utils.checkpoint_utils import get_hf_model_id_from_checkpoint
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_local_rank_preinit, print_rank_0
+from megatron.bridge.inference.text_generation import (
+    HFTokenizerAdapter,
+    add_distributed_args,
+    add_engine_args,
+    add_model_loading_args,
+    add_parallelism_args,
+    add_prompt_args,
+    add_sampling_args,
+    build_inference_config,
+    build_sampling_params,
+    build_tokenizer,
+    load_bridge_model,
+    load_prompts,
+    resolve_hf_model_path,
+    validate_sequence_length,
+)
+from megatron.bridge.utils.activation_map import str_to_dtype
+from megatron.bridge.utils.common_utils import maybe_initialize_distributed, print_rank_0
 
 
 logger = logging.getLogger(__name__)
 
 
-class HuggingFaceTextTokenizer:
-    """Adapter exposing the tokenizer methods expected by MCore text generation."""
-
-    def __init__(self, tokenizer: PreTrainedTokenizerBase) -> None:
-        self._tokenizer = tokenizer
-        if self._tokenizer.pad_token is None and self._tokenizer.eos_token is not None:
-            self._tokenizer.pad_token = self._tokenizer.eos_token
-
-    @property
-    def eod(self) -> int | None:
-        """End-of-document token id used for early termination."""
-        return self._tokenizer.eos_token_id
-
-    @property
-    def bos(self) -> int | None:
-        """Beginning-of-sequence token id."""
-        return self._tokenizer.bos_token_id
-
-    @property
-    def vocab_size(self) -> int:
-        """Tokenizer vocabulary size."""
-        return len(self._tokenizer)
-
-    def tokenize(self, text: str) -> list[int]:
-        """Tokenize text into token ids."""
-        return self._tokenizer.encode(text, add_special_tokens=False)
-
-    def detokenize(self, tokens: list[int], skip_special_tokens: bool = True) -> str:
-        """Convert token ids back to text."""
-        return self._tokenizer.decode(tokens, skip_special_tokens=skip_special_tokens)
-
-
 def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     """Add Bridge offline text generation arguments."""
-    model_group = parser.add_argument_group("Model loading")
-    model_group.add_argument(
-        "--hf_model_path",
-        "--hf-model-path",
-        dest="hf_model_path",
-        default=None,
-        help=(
-            "Hugging Face model id/path used for config and tokenizer. Required unless checkpoint metadata records it."
-        ),
-    )
-    model_group.add_argument(
-        "--megatron_model_path",
-        "--megatron-model-path",
-        dest="megatron_model_path",
-        default=None,
-        help="Optional Megatron Bridge checkpoint path. If omitted, load and convert HF weights in-process.",
-    )
-    model_group.add_argument(
-        "--trust-remote-code",
-        action="store_true",
-        default=None,
-        help="Allow custom Hugging Face model/tokenizer code for trusted repositories.",
-    )
-    model_group.add_argument(
-        "--dtype",
-        choices=("bf16", "fp16", "fp32"),
-        default="bf16",
-        help="Model parameter dtype for in-process HF conversion and provider setup.",
-    )
+    add_model_loading_args(parser)
+    add_parallelism_args(parser)
+    add_prompt_args(parser)
+    add_sampling_args(parser)
+    add_engine_args(parser)
+    add_distributed_args(parser)
 
-    parallel_group = parser.add_argument_group("Parallelism")
-    parallel_group.add_argument("--tp", type=int, default=1, help="Tensor model parallel size.")
-    parallel_group.add_argument("--pp", type=int, default=1, help="Pipeline model parallel size.")
-    parallel_group.add_argument("--ep", type=int, default=1, help="Expert model parallel size.")
-    parallel_group.add_argument("--etp", type=int, default=1, help="Expert tensor parallel size.")
-    parallel_group.add_argument("--sequence-parallel", action="store_true", help="Enable sequence parallelism.")
-    parallel_group.add_argument("--seed", type=int, default=0, help="Model-parallel RNG seed.")
-    parallel_group.add_argument(
-        "--cache-mla-latents",
-        action=argparse.BooleanOptionalAction,
-        default=None,
-        help="Cache MLA latents for dynamic inference. Defaults on for MLA models.",
-    )
-
-    prompt_group = parser.add_argument_group("Prompts")
-    prompt_group.add_argument(
-        "--prompt",
-        action="append",
-        default=[],
-        help="Prompt text. May be provided multiple times. Defaults to a short prompt if no prompt file is set.",
-    )
-    prompt_group.add_argument(
-        "--prompt_file",
-        "--prompt-file",
-        dest="prompt_file",
-        default=None,
-        help="Line-oriented prompt file. JSONL lines use the `text` or `prompt` field; other lines are raw prompts.",
-    )
-    prompt_group.add_argument(
-        "--prompt-file-num-truncate",
-        type=int,
-        default=None,
-        help="Read at most this many prompts from --prompt_file.",
-    )
-
-    sampling_group = parser.add_argument_group("Sampling")
-    sampling_group.add_argument("--max_new_tokens", type=int, default=30, help="Maximum generated tokens per prompt.")
-    sampling_group.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature.")
-    sampling_group.add_argument("--top_p", type=float, default=0.0, help="Top-p sampling.")
-    sampling_group.add_argument("--top_k", type=int, default=1, help="Top-k sampling.")
-    sampling_group.add_argument("--return-log-probs", action="store_true", help="Return token log probabilities.")
-    sampling_group.add_argument("--skip-prompt-log-probs", action="store_true", help="Skip prompt log probabilities.")
-    sampling_group.add_argument("--top-n-logprobs", type=int, default=0, help="Return top-n logprobs.")
-    sampling_group.add_argument("--termination-id", type=int, default=None, help="Override tokenizer EOD id.")
-    sampling_group.add_argument(
-        "--stop-words",
-        nargs="+",
-        default=None,
-        help="Stop words that terminate generation when produced.",
-    )
-
-    inference_group = parser.add_argument_group("Inference")
+    inference_group = parser.add_argument_group("Generation mode")
     inference_group.add_argument(
         "--use-legacy-generation",
         action="store_true",
         help="Use MCore legacy static-batching generation instead of the dynamic MegatronLLM engine.",
-    )
-    inference_group.add_argument(
-        "--attention-backend",
-        choices=("auto", "flash", "fused", "unfused", "local"),
-        default=None,
-        help="Override the provider attention backend before constructing the Megatron model.",
-    )
-    inference_group.add_argument(
-        "--max_seq_length",
-        type=int,
-        default=4096,
-        help="Prompt plus generation length limit.",
-    )
-    inference_group.add_argument(
-        "--max_batch_size",
-        type=int,
-        default=None,
-        help="Maximum active requests. Defaults to the number of prompts.",
-    )
-    inference_group.add_argument("--max_tokens", type=int, default=None, help="Maximum active tokens.")
-    inference_group.add_argument(
-        "--block_size_tokens",
-        type=int,
-        default=256,
-        help="KV-cache block size in tokens.",
-    )
-    inference_group.add_argument(
-        "--kv_cache_buffer_size_gb",
-        type=float,
-        default=20.0,
-        help="GPU buffer size reserved for KV cache.",
-    )
-    inference_group.add_argument("--enable-chunked-prefill", action="store_true", help="Enable chunked prefill.")
-    inference_group.add_argument(
-        "--inference-moe-token-dispatcher-type",
-        choices=("nccl", "nvls"),
-        default=None,
-        help="Override the MCore MoE token dispatcher used during inference.",
     )
 
     coordinator_group = parser.add_argument_group("Coordinator")
@@ -220,25 +83,7 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
     )
     coordinator_group.add_argument("--coordinator-host", default=None, help="Coordinator ZMQ host.")
     coordinator_group.add_argument("--coordinator-port", type=int, default=None, help="Coordinator ZMQ port.")
-
-    distributed_group = parser.add_argument_group("Distributed")
-    distributed_group.add_argument(
-        "--distributed-timeout-minutes",
-        type=int,
-        default=60,
-        help="Process-group timeout in minutes for slow multi-node model setup.",
-    )
     return parser
-
-
-def _dtype_from_name(name: str) -> torch.dtype:
-    if name == "bf16":
-        return torch.bfloat16
-    if name == "fp16":
-        return torch.float16
-    if name == "fp32":
-        return torch.float32
-    raise ValueError(f"Unsupported dtype: {name}")
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -254,6 +99,7 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--distributed-timeout-minutes must be positive.")
 
 
+<<<<<<< HEAD
 def _maybe_initialize_distributed(timeout_minutes: int) -> None:
     if not dist.is_available() or dist.is_initialized():
         return
@@ -476,6 +322,8 @@ def _build_inference_config(
     )
 
 
+=======
+>>>>>>> upstream/main
 def _print_results(prompts: list[str], outputs: list[object]) -> None:
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     for idx, output in enumerate(outputs):
@@ -486,14 +334,34 @@ def _print_results(prompts: list[str], outputs: list[object]) -> None:
     print_rank_0("=======================================")
 
 
+def _longest_prompt_tokens(tokenizer: HFTokenizerAdapter, prompts: list[str]) -> int:
+    return max(len(tokenizer.tokenize(prompt)) for prompt in prompts)
+
+
 def _generate_with_dynamic_engine(
     args: argparse.Namespace,
-    model: torch.nn.Module,
-    tokenizer: HuggingFaceTextTokenizer,
+    model: object,
+    tokenizer: HFTokenizerAdapter,
     prompts: list[str],
     sampling_params: SamplingParams,
 ) -> None:
-    inference_config = _build_inference_config(args, model, tokenizer, prompts)
+    validate_sequence_length(
+        longest_prompt_tokens=_longest_prompt_tokens(tokenizer, prompts),
+        num_new_tokens=args.max_new_tokens,
+        max_seq_length=args.max_seq_length,
+    )
+    inference_config = build_inference_config(
+        model=model,
+        max_sequence_length=args.max_seq_length,
+        max_batch_size=args.max_batch_size,
+        num_prompts=len(prompts),
+        tp=args.tp,
+        block_size_tokens=args.block_size_tokens,
+        kv_cache_buffer_size_gb=args.kv_cache_buffer_size_gb,
+        max_tokens=args.max_tokens,
+        return_log_probs=args.return_log_probs,
+        enable_chunked_prefill=args.enable_chunked_prefill,
+    )
     with MegatronLLM(
         model=model,
         tokenizer=tokenizer,
@@ -509,12 +377,16 @@ def _generate_with_dynamic_engine(
 
 def _generate_with_legacy_static_engine(
     args: argparse.Namespace,
-    model: torch.nn.Module,
-    tokenizer: HuggingFaceTextTokenizer,
+    model: object,
+    tokenizer: HFTokenizerAdapter,
     prompts: list[str],
     sampling_params: SamplingParams,
 ) -> None:
-    _validate_sequence_length(args, tokenizer, prompts)
+    validate_sequence_length(
+        longest_prompt_tokens=_longest_prompt_tokens(tokenizer, prompts),
+        num_new_tokens=args.max_new_tokens,
+        max_seq_length=args.max_seq_length,
+    )
     max_batch_size = args.max_batch_size or len(prompts)
     inference_context = StaticInferenceContext(
         max_batch_size=max_batch_size,
@@ -539,15 +411,41 @@ def main() -> None:
 
     logging.basicConfig(level=logging.INFO)
     _validate_args(args)
-    _maybe_initialize_distributed(args.distributed_timeout_minutes)
-    dtype = _dtype_from_name(args.dtype)
-    hf_model_path = _resolve_hf_model_path(args)
-    prompts = _load_prompts(args)
+    maybe_initialize_distributed(args.distributed_timeout_minutes)
+    dtype = str_to_dtype(args.dtype)
+    hf_model_path = resolve_hf_model_path(args.hf_model_path, args.megatron_model_path)
+    prompts = load_prompts(
+        args.prompt, args.prompt_file, args.prompt_file_num_truncate, ["Megatron Bridge inference is"]
+    )
 
     print_rank_0(f"Loading model config/tokenizer from: {hf_model_path}")
-    tokenizer = _build_tokenizer(hf_model_path, args.trust_remote_code)
-    model = _load_model(args, hf_model_path, dtype)
-    sampling_params = _build_sampling_params(args, tokenizer)
+    tokenizer = build_tokenizer(hf_model_path, args.trust_remote_code)
+    model = load_bridge_model(
+        hf_model_path=hf_model_path,
+        megatron_model_path=args.megatron_model_path,
+        tp=args.tp,
+        pp=args.pp,
+        ep=args.ep,
+        etp=args.etp,
+        sequence_parallel=args.sequence_parallel,
+        dtype=dtype,
+        seed=args.seed,
+        trust_remote_code=args.trust_remote_code,
+        attention_backend=args.attention_backend,
+        cache_mla_latents=args.cache_mla_latents,
+        inference_moe_token_dispatcher_type=args.inference_moe_token_dispatcher_type,
+    )
+    sampling_params = build_sampling_params(
+        temperature=args.temperature,
+        top_k=args.top_k,
+        top_p=args.top_p,
+        return_log_probs=args.return_log_probs,
+        skip_prompt_log_probs=args.skip_prompt_log_probs,
+        num_tokens_to_generate=args.max_new_tokens,
+        termination_id=args.termination_id if args.termination_id is not None else tokenizer.eod,
+        top_n_logprobs=args.top_n_logprobs,
+        stop_words=args.stop_words,
+    )
 
     if args.use_legacy_generation:
         _generate_with_legacy_static_engine(args, model, tokenizer, prompts, sampling_params)

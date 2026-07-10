@@ -33,7 +33,7 @@ Below are performance benchmarks for various large language models organized by 
 
 The performance data includes:
 
-- **Pre-training Performance**: Throughput metrics for various model sizes and architectures
+- **Pre-training Performance**: Throughput metrics for various model sizes and architectures[^moe-training-note]
 - **System Configurations**: Results across different GPU systems (DGX-GB300, DGX-GB200, DGX-B300, DGX-B200, DGX-H100)
 - **Precision Options**: Performance comparisons between different precision modes (BF16, FP8, MXFP8, NVFP4)
 

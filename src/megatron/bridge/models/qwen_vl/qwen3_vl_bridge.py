@@ -27,7 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
 
@@ -59,7 +59,7 @@ class Qwen3VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLModelProvider:
         """
         Create a Qwen3VLModelProvider from a HuggingFace pretrained model.
 
@@ -227,7 +227,7 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3VLMoEModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLMoEModelProvider:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -377,6 +377,16 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
                     megatron_param="language_model.decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="model.language_model.layers.*.mlp.experts.down_proj",
                     transpose_on_export=True,
+                ),
+                # Sequential (non-grouped) experts <-> per-expert unfused HF (e.g. ModelOpt pruning).
+                GatedMLPMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                    gate="model.language_model.layers.*.mlp.experts.*.gate_proj.weight",
+                    up="model.language_model.layers.*.mlp.experts.*.up_proj.weight",
+                ),
+                AutoMapping(
+                    megatron_param="language_model.decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                    hf_param="model.language_model.layers.*.mlp.experts.*.down_proj.weight",
                 ),
                 # QKV mapping for vision model
                 ConcatenatedQKVMapping(

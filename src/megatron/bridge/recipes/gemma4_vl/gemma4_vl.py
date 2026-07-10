@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,22 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# ruff: noqa: F401
+"""Compatibility aliases for legacy recipe names."""
 
-"""Gemma 4 VL finetuning recipes.
+from __future__ import annotations
 
-This module provides SFT and PEFT configurations for Gemma 4 VL 26B-A4B (MoE VLM).
-"""
+from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
+    _HF_PATH,
+    _apply_gemma4_vl_common,
+)
+from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
+    gemma4_vl_26b_peft_4gpu_h100_bf16_config as gemma4_vl_26b_peft_config,
+)
+from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
+    gemma4_vl_26b_sft_8gpu_h100_bf16_config as gemma4_vl_26b_sft_config,
+)
 
-import torch
 
-from megatron.bridge import AutoBridge
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.training.config import ConfigContainer
-
-
+<<<<<<< HEAD
 _HF_PATH = "google/gemma-4-26B-A4B-it"
 
 
@@ -211,3 +213,9 @@ def gemma4_vl_26b_peft_config(
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
     return cfg
+=======
+__all__ = [
+    "gemma4_vl_26b_peft_config",
+    "gemma4_vl_26b_sft_config",
+]
+>>>>>>> upstream/main

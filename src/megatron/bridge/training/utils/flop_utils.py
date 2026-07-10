@@ -12,16 +12,255 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
 from pathlib import Path
 
-from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
+import torch
+from megatron.core.models.hybrid.hybrid_layer_allocation import (
+    Symbols,
+    get_hybrid_layer_counts,
+    parse_hybrid_pattern,
+)
+from megatron.core.utils import get_attr_wrapped_model
+
+from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+def get_model_chunk_vp_stage(model: torch.nn.Module) -> int | None:
+    """Return the virtual-pipeline stage assigned to a model chunk, if any.
+
+    Args:
+        model: Model chunk, possibly wrapped by mixed precision or DDP.
+
+    Returns:
+        The integer virtual-pipeline stage, or ``None`` for an unchunked model
+        or a model that does not expose the stage.
+    """
+    try:
+        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
+    except RuntimeError:
+        return None
+    return vp_stage if isinstance(vp_stage, int) else None
+
+
+def _accumulator_to_int(value) -> int:
+    """Coerce a FLOPs accumulator (``int`` or scalar ``Tensor``) to ``int``."""
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return value
+    if isinstance(value, torch.Tensor):
+        if value.numel() == 0:
+            return 0
+        return int(value.detach().cpu().item())
+    return 0
+
+
+def resolve_global_flops_seqlen_stats(
+    state,
+    *,
+    data_parallel_size: int,
+    vp_size: int | None = None,
+    dp_group=None,
+) -> tuple[int | None, int | None, int]:
+    """Resolve data-parallel-global FLOPS sequence stats from per-rank accumulators.
+
+    Reads the three accumulators populated by the forward step
+    (``_flops_seqlen_sum`` = Σ padded tokens, ``_flops_seqlen_sq_sum`` = Σᵢ sᵢ²
+    over real sub-sequences, ``_flops_vision_patches``) and reduces them to
+    global totals across the data-parallel group.
+
+    Under variable-length (THD packed) training the per-rank ``Σᵢ sᵢ²`` can
+    differ across DP ranks, so a single SUM all-reduce over ``dp_group`` is used
+    to get the exact global sum. Dense BSHD training never requests this reduce:
+    every DP rank contributes the same fixed sequence statistics, so
+    extrapolating ``local * data_parallel_size`` is exact and avoids an
+    unnecessary collective.
+
+    Args:
+        state: Object carrying the ``_flops_*`` accumulators (``GlobalState``).
+        data_parallel_size: Size of the data-parallel group (used for the
+            extrapolation fallback).
+        vp_size: Virtual pipeline size. Kept for call-site compatibility; VPP
+            does not rescale these accumulators because they already represent
+            the executed training step consumed by the full-model FLOPS formula.
+        dp_group: Data-parallel process group to SUM-reduce over. Must be the
+            pure DP group (excluding CP) matching ``data_parallel_size`` — CP
+            ranks share the same ``cu_seqlens`` and would double-count.
+
+    Returns:
+        ``(seqlen_sum, seqlen_squared_sum, num_vision_patches)``. The first two
+        are ``None`` when no accumulation happened, signalling the caller to fall
+        back to a fixed-length estimate. ``num_vision_patches`` is ``0`` when no
+        vision tokens were seen.
+    """
+    local_seqlen_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sum", 0))
+    local_seqlen_sq_sum = _accumulator_to_int(getattr(state, "_flops_seqlen_sq_sum", 0))
+    local_vision_patches = _accumulator_to_int(getattr(state, "_flops_vision_patches", 0))
+    _ = vp_size
+
+    use_all_reduce = (
+        bool(getattr(state, "_flops_requires_global_reduce", False))
+        and dp_group is not None
+        and data_parallel_size > 1
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    )
+    if use_all_reduce:
+        device = torch.cuda.current_device() if torch.cuda.is_available() else None
+        stats = torch.tensor(
+            [local_seqlen_sum, local_seqlen_sq_sum, local_vision_patches],
+            dtype=torch.long,
+            device=device,
+        )
+        torch.distributed.all_reduce(stats, op=torch.distributed.ReduceOp.SUM, group=dp_group)
+        seqlen_sum, seqlen_squared_sum, num_vision_patches = (int(x) for x in stats.tolist())
+    else:
+        # No process group: extrapolate from the local rank (approximation).
+        seqlen_sum = local_seqlen_sum * data_parallel_size
+        seqlen_squared_sum = local_seqlen_sq_sum * data_parallel_size
+        num_vision_patches = local_vision_patches * data_parallel_size
+
+    if seqlen_sum <= 0:
+        return None, None, max(num_vision_patches, 0)
+    return seqlen_sum, seqlen_squared_sum, max(num_vision_patches, 0)
+
+
+def _add_flops_accumulator(state, name: str, delta) -> None:
+    """Add an int or scalar tensor to a state accumulator."""
+    current = getattr(state, name, 0)
+    if not isinstance(current, (int, torch.Tensor)):
+        current = 0
+    setattr(state, name, current + delta)
+
+
+def _scalar_sum_for_accumulator(value: torch.Tensor) -> int | torch.Tensor:
+    """Return a scalar sum without forcing a CUDA host sync inside forward_step."""
+    total = value.sum()
+    if total.device.type == "cuda":
+        return total
+    return int(total.item())
+
+
+def _real_subseq_lengths(
+    cu_seqlens: torch.Tensor | None,
+    cu_seqlens_argmin: torch.Tensor | None = None,
+    cu_seqlens_unpadded: torch.Tensor | None = None,
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+) -> torch.Tensor | None:
+    """Extract sub-sequence lengths from cu_seqlens metadata.
+
+    Prefers ``cu_seqlens_unpadded`` (true sub-sequence boundaries when
+    ``pad_seq_to_mult > 1``) over the padded ``cu_seqlens``. Truncates by the
+    corresponding ``*_argmin`` when provided. Returns ``None`` when no
+    cu_seqlens info is available.
+
+    Runs once per micro-batch, so it must stay free of GPU→CPU syncs:
+    ``cu_seqlens`` is a (monotonic non-decreasing) cumulative sum, so the diffs
+    are always ``>= 0`` and we do **not** filter them — a boolean mask like
+    ``sub_seq_lens[sub_seq_lens > 0]`` would force a data-dependent-size device
+    sync every micro-batch (the cause of a ~7% throughput regression). Zero-length
+    entries (padding) contribute ``0`` to ``Σᵢ sᵢ²`` so dropping them is
+    unnecessary; the result is identical.
+    """
+    if cu_seqlens_unpadded is not None:
+        cu = cu_seqlens_unpadded.squeeze()
+        argmin = cu_seqlens_unpadded_argmin
+    elif cu_seqlens is not None:
+        cu = cu_seqlens.squeeze()
+        argmin = cu_seqlens_argmin
+    else:
+        return None
+
+    if argmin is not None:
+        cu = cu[: int(argmin.item())]
+
+    if cu.numel() < 2:
+        return cu.new_empty(0, dtype=torch.long)
+
+    # No boolean mask here on purpose (see docstring): keep this sync-free.
+    return (cu[1:] - cu[:-1]).long()
+
+
+def accumulate_flops_metadata(
+    state,
+    tokens: torch.Tensor | None,
+    *,
+    vp_stage: int | None = None,
+    config_seq_len: int | None = None,
+    cu_seqlens: torch.Tensor | None = None,
+    cu_seqlens_argmin: torch.Tensor | None = None,
+    cu_seqlens_unpadded: torch.Tensor | None = None,
+    cu_seqlens_unpadded_argmin: torch.Tensor | None = None,
+    num_vision_patches: int | torch.Tensor | None = None,
+) -> None:
+    """Accumulate per-microbatch FLOPS metadata onto ``state``.
+
+    Under interleaved pipeline parallelism, the forward step runs once per
+    virtual model chunk for the same logical data microbatch. Only virtual stage
+    0 contributes metadata so model chunking does not multiply the full-model
+    FLOPS estimate. ``None`` and ``0`` both represent the primary/only chunk.
+
+    Writes three accumulators consumed by ``train.py`` at end of step:
+
+    - ``_flops_seqlen_sum``: ``mbs * tokens.shape[1]`` (padded total tokens
+      this microbatch contributes), or ``mbs * config_seq_len`` for dense
+      non-packed batches whose tensors were already context-parallel sliced.
+      Drives the linear MLP/proj/logit terms.
+    - ``_flops_seqlen_sq_sum``: the THD attention term Σᵢ sᵢ², computed inline from
+      ``cu_seqlens`` (preferring ``cu_seqlens_unpadded``). The per-pack sub-sequence
+      lengths are reduced via :func:`_scalar_sum_for_accumulator`, which keeps the
+      result **on-device** (no ``.item()``) — so the per-microbatch path stays
+      sync-free and the single host sync happens once per step in
+      :func:`resolve_global_flops_seqlen_stats`. When ``cu_seqlens`` is absent
+      (dense / non-packed) or degenerate, the host-int BSHD fallback
+      ``mbs * dense_seq_len²`` is accumulated instead (bit-exact with the
+      pre-fix value). ``dense_seq_len`` is ``config_seq_len`` when provided,
+      otherwise ``tokens.shape[1]``.
+    - ``_flops_vision_patches``: running total of ``num_vision_patches``.
+
+    ``num_vision_patches`` is the precomputed number of vision patches in this
+    microbatch (drives the ViT term). It is kept model-agnostic on purpose: the
+    caller — which knows its own encoder's layout — computes the count and passes
+    a scalar (e.g. Qwen-VL sums ``grid_thw.prod(-1)`` over images and videos). May
+    be an ``int`` or a scalar ``Tensor`` (a device tensor avoids a host sync here).
+
+    For THD packed training (offline packed LLM SFT or VLM in-batch packing),
+    treating the whole pack as one length-``seq_len`` sequence over-counts
+    attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
+    not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
+    """
+    if vp_stage not in (None, 0) or tokens is None:
+        return
+
+    mbs = tokens.shape[0]
+    tensor_seq_len = tokens.shape[1]
+    dense_seq_len = config_seq_len if isinstance(config_seq_len, int) and config_seq_len > 0 else tensor_seq_len
+
+    # THD attention term Σᵢ sᵢ², computed inline from cu_seqlens. The squared
+    # sub-sequence lengths stay on-device (``_scalar_sum_for_accumulator`` returns a
+    # device tensor, no host sync) so the launch-bound forward path is not stalled; the
+    # single sync is deferred to the per-step reduce. cu_seqlens is monotonic, so the
+    # diffs are >= 0 and zero-length padding entries contribute 0 — no boolean mask
+    # (which would force a data-dependent-size sync) is needed.
+    sub_seq_lens = _real_subseq_lengths(cu_seqlens, cu_seqlens_argmin, cu_seqlens_unpadded, cu_seqlens_unpadded_argmin)
+    if sub_seq_lens is not None and sub_seq_lens.numel() > 0:
+        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * tensor_seq_len)
+        setattr(state, "_flops_requires_global_reduce", True)
+        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", _scalar_sum_for_accumulator(sub_seq_lens.long() ** 2))
+    else:
+        # No cu_seqlens (dense / non-packed) or a degenerate pack with no real
+        # sub-sequences → BSHD fallback (single pack-length sequence).
+        _add_flops_accumulator(state, "_flops_seqlen_sum", mbs * dense_seq_len)
+        _add_flops_accumulator(state, "_flops_seqlen_sq_sum", mbs * dense_seq_len**2)
+
+    if num_vision_patches is not None:
+        _add_flops_accumulator(state, "_flops_vision_patches", num_vision_patches)
 
 
 def vit_flops(
@@ -140,33 +379,23 @@ def num_floating_point_operations(
 
     def calculate_layer_counts():
         """Calculate the number of attention, Mamba, MLP, MoE, and GDN layers."""
-        if hasattr(cfg.model, "hybrid_layer_pattern") and cfg.model.hybrid_layer_pattern:
-            counts = {"M": 0, "G": 0, "*": 0, "-": 0, "E": 0}
-            try:
-                parse_hybrid_pattern = importlib.import_module(
-                    "megatron.core.ssm.mamba_hybrid_layer_allocation"
-                ).parse_hybrid_pattern
-                parsed = parse_hybrid_pattern(cfg.model.hybrid_layer_pattern)
-                if parsed.main_pattern:
-                    for layer_type in parsed.main_pattern:
-                        if layer_type in counts:
-                            counts[layer_type] += 1
-                if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
-                    for layer_type in parsed.mtp_pattern:
-                        if layer_type in counts:
-                            counts[layer_type] += parsed.mtp_num_depths
-            except (ImportError, ModuleNotFoundError):
-                for layer_type in cfg.model.hybrid_layer_pattern:
-                    if layer_type in counts:
-                        counts[layer_type] += 1
-            return counts["*"], counts["M"], counts["-"], counts["E"], counts["G"]
-        else:
-            num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
-            num_mlp_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_mlp_ratio", 0))
-            num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
-            num_moe_layers = 0
-            num_gdn_layers = 0
-            return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
+        hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+        if hybrid_pattern:
+            layer_counts = get_hybrid_layer_counts(hybrid_pattern)
+            return (
+                layer_counts[Symbols.ATTENTION],
+                layer_counts[Symbols.MAMBA],
+                layer_counts[Symbols.MLP],
+                layer_counts[Symbols.MOE],
+                layer_counts[Symbols.GDN],
+            )
+
+        num_attn_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_attention_ratio", 0))
+        num_mlp_layers = round(cfg.model.num_layers * getattr(cfg.model, "hybrid_mlp_ratio", 0))
+        num_mamba_layers = cfg.model.num_layers - num_attn_layers - num_mlp_layers
+        num_moe_layers = 0
+        num_gdn_layers = 0
+        return num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers
 
     def mlp_layer_flops(batch_size, seq_len, hidden_size, expansion=4.0, swiglu=False):
         """Calculate FLOPs for an MLP layer."""
@@ -206,18 +435,65 @@ def num_floating_point_operations(
         num_heads,
         gqa_groups=8,
         kv_channels=None,
+        core_attn_seq_factor=None,
     ):
         """Calculate FLOPs for an attention layer."""
         p = (kv_channels * num_heads / hidden_size) if kv_channels else 1
         g = gqa_groups
+        core_seq = seq_len if core_attn_seq_factor is None else core_attn_seq_factor
         return (
-            4
-            * batch_size
-            * seq_len
-            * hidden_size
-            * p
-            * (hidden_size + (hidden_size * (g / num_heads)) + (seq_len / 2))
+            4 * batch_size * seq_len * hidden_size * p * (hidden_size + (hidden_size * (g / num_heads)))
+            + 2 * batch_size * seq_len * hidden_size * p * core_seq
         )
+
+    def calculate_swa_context():
+        """Calculate the average causal sliding-window context length."""
+        window_size = getattr(cfg.model, "window_size", None)
+        if window_size is None:
+            return None
+        if isinstance(window_size, (list, tuple)):
+            effective_window = window_size[0] + window_size[1] + 1
+        else:
+            effective_window = window_size
+
+        if effective_window < effective_seq_length:
+            return effective_window - effective_window * (effective_window - 1) / (2 * effective_seq_length)
+        return core_attn_seq_factor / 2
+
+    def is_swa_layer(layer_number: int) -> bool:
+        """Return whether the 1-indexed physical layer uses sliding-window attention."""
+        window_size = getattr(cfg.model, "window_size", None)
+        if window_size is None:
+            return False
+        window_attn_skip_freq = getattr(cfg.model, "window_attn_skip_freq", None)
+        if window_attn_skip_freq is None:
+            return True
+        if isinstance(window_attn_skip_freq, int):
+            return layer_number % window_attn_skip_freq != 0
+        if isinstance(window_attn_skip_freq, list):
+            return layer_number <= len(window_attn_skip_freq) and bool(window_attn_skip_freq[layer_number - 1])
+        return False
+
+    def count_hybrid_swa_attention_layers(num_attn_layers: int) -> int:
+        """Count SWA attention symbols in the main physical hybrid pattern."""
+        hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
+        if not hybrid_pattern or getattr(cfg.model, "window_size", None) is None:
+            return 0
+        parsed = parse_hybrid_pattern(hybrid_pattern)
+        main_pattern = parsed.main_pattern or ""
+
+        num_swa_layers = 0
+        num_main_attn_layers = 0
+        for layer_number, layer_type in enumerate(main_pattern.replace(Symbols.PIPE, ""), start=1):
+            if layer_type != Symbols.ATTENTION:
+                continue
+            num_main_attn_layers += 1
+            if is_swa_layer(layer_number):
+                num_swa_layers += 1
+
+        # MTP attention layers are counted in num_attn_layers, but they do not
+        # correspond to main-pattern layer numbers for window_attn_skip_freq.
+        return min(num_swa_layers, num_attn_layers, num_main_attn_layers)
 
     def mamba_layer_flops(
         batch_size,
@@ -296,18 +572,38 @@ def num_floating_point_operations(
         gdn_conv_kernel_dim=4,
         vocab_size=256000,
         mtp_num_layers=0,
+        num_swa_attn_layers=0,
+        swa_context=None,
+        core_attn_seq_factor=None,
     ):
         """Calculate total FLOPs for the hybrid model."""
-        flops_fwd = (
-            num_attn_layers
-            * attn_layer_flops(
+        num_full_attn_layers = num_attn_layers - num_swa_attn_layers
+        full_attn_flops = num_full_attn_layers * attn_layer_flops(
+            batch_size,
+            seq_len,
+            hidden_size,
+            num_attn_heads,
+            gqa_groups,
+            kv_channels,
+            core_attn_seq_factor=core_attn_seq_factor,
+        )
+        swa_attn_flops = 0
+        if num_swa_attn_layers > 0:
+            if swa_context is None:
+                raise ValueError("swa_context must be set when num_swa_attn_layers > 0")
+            swa_attn_flops = num_swa_attn_layers * attn_layer_flops(
                 batch_size,
                 seq_len,
                 hidden_size,
                 num_attn_heads,
                 gqa_groups,
                 kv_channels,
+                core_attn_seq_factor=2 * swa_context,
             )
+
+        flops_fwd = (
+            full_attn_flops
+            + swa_attn_flops
             + num_mlp_layers * mlp_layer_flops(batch_size, seq_len, hidden_size, mlp_expansion, swiglu)
             + num_mamba_layers
             * mamba_layer_flops(
@@ -355,15 +651,28 @@ def num_floating_point_operations(
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
+<<<<<<< HEAD
         is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("squad", "rajpurkar/squad")
+=======
+        dataset_cfg = getattr(cfg, "dataset", None)
+        hf_dataset_cfg = getattr(dataset_cfg, "hf_dataset", None)
+        hf_dataset_name = getattr(hf_dataset_cfg, "dataset_name", None) or getattr(
+            hf_dataset_cfg, "path_or_dataset", None
+        )
+        is_squad = getattr(dataset_cfg, "dataset_name", hf_dataset_name) in ("squad", "rajpurkar/squad")
+>>>>>>> upstream/main
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
-        packed_specs = getattr(getattr(cfg, "dataset", None), "packed_sequence_specs", None)
+        packed_specs = (
+            getattr(dataset_cfg, "offline_packing_specs", None)
+            if getattr(dataset_cfg, "enable_offline_packing", False)
+            else None
+        )
         packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
-        # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
+        # If not explicitly set, try to find the file via dataset_root (the GPTSFTDatasetBuilder
         # computes this path dynamically, but dataset_root is available from the config).
         if packed_data_path is None and packed_specs is not None:
-            dataset_root = getattr(cfg.dataset, "dataset_root", None)
+            dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(dataset_cfg, "hf_output_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
                 matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
@@ -776,8 +1085,9 @@ def num_floating_point_operations(
         patches_per_image = num_vision_patches / batch_size if batch_size > 0 else num_vision_patches
         return vit_flops(cfg, batch_size, patches_per_image)
 
-    # Main entrypoint for FLOPs calculation.
-    if getattr(cfg.model, "is_hybrid_model", False):
+    # Main entrypoint for FLOPs calculation. Mirror MCore's hybrid detection:
+    # a physical hybrid pattern is sufficient to select hybrid accounting.
+    if getattr(cfg.model, "is_hybrid_model", False) or getattr(cfg.model, "hybrid_layer_pattern", None):
         # Calculate the number of each type of layer.
         num_attn_layers, num_mamba_layers, num_mlp_layers, num_moe_layers, num_gdn_layers = calculate_layer_counts()
         mtp_num_layers = getattr(cfg.model, "mtp_num_layers", None)
@@ -785,14 +1095,8 @@ def num_floating_point_operations(
             # When using unified hybrid patterns, infer MTP depth count from the pattern.
             hybrid_pattern = getattr(cfg.model, "hybrid_layer_pattern", None)
             if hybrid_pattern:
-                try:
-                    parse_hybrid_pattern = importlib.import_module(
-                        "megatron.core.ssm.mamba_hybrid_layer_allocation"
-                    ).parse_hybrid_pattern
-                    parsed = parse_hybrid_pattern(hybrid_pattern)
-                    mtp_num_layers = parsed.mtp_num_depths if parsed.mtp_pattern else 0
-                except (ImportError, ModuleNotFoundError):
-                    mtp_num_layers = 0
+                parsed = parse_hybrid_pattern(hybrid_pattern)
+                mtp_num_layers = parsed.mtp_num_depths if parsed.mtp_pattern else 0
             else:
                 mtp_num_layers = 0
         padded_vocab_size = calculate_padded_vocab_size(
@@ -804,6 +1108,8 @@ def num_floating_point_operations(
         num_query_groups = (
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
+        num_swa_attn_layers = count_hybrid_swa_attention_layers(num_attn_layers)
+        swa_context = calculate_swa_context() if num_swa_attn_layers > 0 else None
 
         # Compute hybrid model FLOPs.
         llm_flops = hybrid_flops(
@@ -843,6 +1149,9 @@ def num_floating_point_operations(
             gdn_conv_kernel_dim=getattr(cfg.model, "linear_conv_kernel_dim", None) or 4,
             vocab_size=padded_vocab_size,
             mtp_num_layers=mtp_num_layers,
+            num_swa_attn_layers=num_swa_attn_layers,
+            swa_context=swa_context,
+            core_attn_seq_factor=core_attn_seq_factor,
         )
         return llm_flops + _compute_vit_flops()
     else:

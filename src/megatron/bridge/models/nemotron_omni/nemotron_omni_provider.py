@@ -21,18 +21,18 @@ from typing import Callable, Optional
 import torch
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu, squared_relu
-from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
+from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.multimodal_projector import MultimodalProjector
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import get_language_mlp_submodules
 
 
 @dataclass
-class NemotronVLModelProvider(MambaModelProvider, ABC):
+class NemotronVLModelProvider(HybridModelProvider, ABC):
     """Abstract base provider for Nemotron VL model variants.
 
     Provides common VL fields, RADIO ViT-H vision config building methods, and
@@ -230,7 +230,7 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         vision_cfg = self._build_vision_config(language_cfg)
         vision_proj_cfg = self._build_vision_projection_config(language_cfg)
 
-        language_spec = mamba_stack_spec
+        language_spec = hybrid_stack_spec
         vision_spec = get_vit_layer_with_transformer_engine_spec()
         vision_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
 

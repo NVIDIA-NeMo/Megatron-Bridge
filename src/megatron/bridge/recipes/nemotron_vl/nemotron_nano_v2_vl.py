@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,7 +11,10 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# ruff: noqa: F401
+"""Compatibility aliases for legacy recipe names."""
 
+<<<<<<< HEAD
 """Nemotron Nano V2 VL finetuning recipes with parameterless defaults.
 
 This module provides SFT and PEFT configurations for Nemotron Nano V2 VL 12B.
@@ -363,3 +366,24 @@ def nemotron_nano_v2_vl_12b_peft_config(
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     return cfg
+=======
+from __future__ import annotations
+
+from megatron.bridge.recipes.nemotron_vl.h100.nemotron_nano_v2_vl import (
+    _ALL_COMPONENT_LORA_TARGET_MODULES,
+    _DEFAULT_HF_MODEL_PATH,
+    _nemotron_vl_target_modules,
+)
+from megatron.bridge.recipes.nemotron_vl.h100.nemotron_nano_v2_vl import (
+    nemotron_nano_v2_vl_12b_peft_2gpu_h100_bf16_config as nemotron_nano_v2_vl_12b_peft_config,
+)
+from megatron.bridge.recipes.nemotron_vl.h100.nemotron_nano_v2_vl import (
+    nemotron_nano_v2_vl_12b_sft_4gpu_h100_bf16_config as nemotron_nano_v2_vl_12b_sft_config,
+)
+
+
+__all__ = [
+    "nemotron_nano_v2_vl_12b_peft_config",
+    "nemotron_nano_v2_vl_12b_sft_config",
+]
+>>>>>>> upstream/main

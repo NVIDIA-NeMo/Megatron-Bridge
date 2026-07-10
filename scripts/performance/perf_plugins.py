@@ -37,9 +37,9 @@ from nemo_run import Plugin, Script, SlurmExecutor
 
 
 try:
-    from utils.utils import WorkloadBaseConfig, get_workload_base_config
+    from utils.utils import WorkloadBaseConfig
 except (ImportError, ModuleNotFoundError):
-    from .utils.utils import WorkloadBaseConfig, get_workload_base_config
+    from .utils.utils import WorkloadBaseConfig
 
 logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
@@ -237,7 +237,7 @@ class PerfEnvPlugin(Plugin):
     gpu: str
     compute_dtype: str
     train_task: str
-    config_variant: str = "v1"
+    config_variant: str | None = None
     deterministic: bool = False
 
     def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
@@ -349,6 +349,9 @@ class PerfEnvPlugin(Plugin):
                 executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
             if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
                 executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
+
+        if gpu == "b300":
+            executor.env_vars["NCCL_IGNORE_CPU_AFFINITY"] = "1"
 
     def _set_layernorm_sm_margin(
         self,
@@ -492,20 +495,20 @@ class PerfEnvPlugin(Plugin):
                 else lock_freq_cmd
             )
 
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
-        """Enable the performance environment settings"""
-        workload_base_config = get_workload_base_config(
-            self.model_family_name,
-            self.model_recipe_name,
-            self.gpu,
-            self.compute_dtype,
-            self.train_task,
-            self.config_variant,
-        )
+    def setup_recipe_environment(
+        self,
+        task: Union["run.Partial", "run.Script", None],
+        executor: "run.Executor",
+        workload_base_config: WorkloadBaseConfig,
+    ) -> None:
+        """Apply recipe-dependent environment settings inside the training container."""
         tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
         pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
         cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
         ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
+
+        if getattr(workload_base_config, "fine_grained_activation_offloading", False):
+            executor.env_vars["NVTE_CPU_OFFLOAD_V1"] = "1"
 
         # Force program order kernel launch for TP, CP overlap
         moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
@@ -548,15 +551,6 @@ class PerfEnvPlugin(Plugin):
             nccl_pp_comm_chunksize = None
         self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
 
-        # Configure manual garbage collection
-        self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
-
-        # Improve perf by steering power to tensor cores, may not work on all systems
-        self._set_vboost(task, executor, self.enable_vboost)
-
-        # Lock GPU graphics clock frequency for stable performance measurements
-        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
-
         # Set model-specific environment variables
         self._set_model_specific_environment_variables(
             task,
@@ -575,6 +569,14 @@ class PerfEnvPlugin(Plugin):
 
         if self.deterministic:
             self._set_determinism_env_vars(executor)
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        """Apply launcher-only settings without importing Megatron-Bridge on the login node."""
+        # Recipe-dependent environment variables are applied by run_script.py inside
+        # the training container, where the flat recipe can be imported safely.
+        self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
+        self._set_vboost(task, executor, self.enable_vboost)
+        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
 
 
 @dataclass

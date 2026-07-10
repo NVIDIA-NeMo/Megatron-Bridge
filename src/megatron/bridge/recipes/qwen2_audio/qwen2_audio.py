@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -11,31 +11,23 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# ruff: noqa: F401
+"""Compatibility aliases for legacy recipe names."""
 
-import os
-from typing import Optional, Union
+from __future__ import annotations
 
-import torch
-
-from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets import HFDatasetConversationProvider
-from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
-from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
-from megatron.bridge.training.config import (
-    CheckpointConfig,
-    ConfigContainer,
-    DistributedDataParallelConfig,
-    LoggerConfig,
-    RNGConfig,
-    TokenizerConfig,
-    TrainingConfig,
-    ValidationConfig,
+from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
+    _qwen2_audio_common,
 )
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
+    qwen2_audio_7b_peft_1gpu_h100_bf16_config as qwen2_audio_7b_peft_config,
+)
+from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
+    qwen2_audio_7b_sft_1gpu_h100_bf16_config as qwen2_audio_7b_sft_config,
+)
 
 
+<<<<<<< HEAD
 def qwen2_audio_7b_finetune_config(**user_kwargs) -> ConfigContainer:
     """Return a fine-tuning config for Qwen2-Audio 7B Instruct.
 
@@ -206,3 +198,9 @@ def _qwen2_audio_common(
     )
 
     return cfg
+=======
+__all__ = [
+    "qwen2_audio_7b_sft_config",
+    "qwen2_audio_7b_peft_config",
+]
+>>>>>>> upstream/main

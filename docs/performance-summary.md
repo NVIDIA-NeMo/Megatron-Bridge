@@ -29,7 +29,11 @@ Below are performance benchmarks for various large language models. These result
 The performance data includes:
 
 - **Pre-training, SFT, and LoRA Performance**: Throughput metrics for various model sizes and architectures[^moe-training-note]
+<<<<<<< HEAD
 - **System Configurations**: Results across different GPU systems (DGX-GB300, DGX-GB200, DGX-H100)
+=======
+- **System Configurations**: Results across different GPU systems (DGX-GB300, DGX-GB200, DGX-B300, DGX-H100)
+>>>>>>> upstream/main
 - **Precision Options**: Performance comparisons between different precision modes (BF16, FP8, MXFP8, NVFP4)
 
 ---
@@ -57,14 +61,24 @@ The performance data includes:
 | DGX-GB300 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6338 | 1648 |
 | DGX-GB300 | 256 | MXFP8 | 15360 | 1 | 4096 | 1 | 2 | 1 | 8 | 32 | 6422 | 1670 |
 | DGX-GB200 | 256 | MXFP8 | 4096 | 1 | 4096 | 1 | 4 | 1 | 4 | 64 | 4969 | 1292 |
+<<<<<<< HEAD
+=======
+| DGX-B300 | 256 | MXFP8 | 4096 | 2 | 4096 | 1 | 8 | 1 | n/a | 8 | 3541 | 920 |
+>>>>>>> upstream/main
 
 #### Model: GPT OSS 120B
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
+<<<<<<< HEAD
 | DGX-GB300 | 64 | BF16 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 64 | 20635 | 673 |
 | DGX-GB200 | 64 | BF16 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 64 | 17770 | 580 |
 | DGX-H100 | 64 | BF16 | 1280 | 1 | 4096 | 1 | 4 | 1 | n/a | 8 | 5860 | 191 |
+=======
+| DGX-GB300 | 64 | MXFP8 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 16 | 33166 | 1081 |
+| DGX-GB200 | 64 | MXFP8 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 64 | 28947 | 943 |
+| DGX-B300 | 64 | MXFP8 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 8 | 18534 | 604 |
+>>>>>>> upstream/main
 
 #### Model: Qwen3_30B_a3B
 
@@ -72,20 +86,33 @@ The performance data includes:
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 8 | MXFP8 | 512 | 8 | 4096 | 1 | 1 | 1 | n/a | 8 | 45275 | 1041 |
 | DGX-GB200 | 8 | MXFP8 | 512 | 4 | 4096 | 1 | 1 | 1 | n/a | 8 | 40706 | 936 |
+<<<<<<< HEAD
 | DGX-H100 | 16 | FP8 | 1024 | 1 | 4096 | 1 | 1 | 1 | n/a | 16 | 8467 | 195 |
+=======
+| DGX-B300 | 8 | MXFP8 | 512 | 8 | 4096 | 1 | 1 | 1 | n/a | 8 | 40769 | 938 |
+| DGX-H100 | 16 | FP8 | 1024 | 1 | 4096 | 1 | 1 | 1 | n/a | 16 | 8826 | 203 |
+>>>>>>> upstream/main
 
 #### Model: Qwen3_235B_a22B
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
+<<<<<<< HEAD
 | DGX-GB300 | 256 | MXFP8 | 8192 | 2 | 4096 | 1 | 4 | 1 | 12 | 32 | 9033 | 1337 |
+=======
+| DGX-GB300 | 256 | MXFP8 | 8192 | 2 | 4096 | 1 | 4 | 1 | 12 | 32 | 9015 | 1335 |
+>>>>>>> upstream/main
 | DGX-GB200 | 256 | MXFP8 | 8192 | 1 | 4096 | 1 | 8 | 1 | 3 | 32 | 7376 | 1092 |
 
 #### Model: Kimi_K2
 
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
+<<<<<<< HEAD
 | DGX-GB300 | 256 | MXFP8 | 4096 | 2 | 4096 | 1 | 4 | 1 | 4 | 64 | 5367 | 1097 |
+=======
+| DGX-GB300 | 256 | MXFP8 | 4096 | 2 | 4096 | 1 | 4 | 1 | 4 | 64 | 5372 | 1099 |
+>>>>>>> upstream/main
 
 -  Muon optimizer was used for pre-training Kimi-K2.
 
@@ -95,6 +122,10 @@ The performance data includes:
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 8 | MXFP8 | 512 | 4 | 8192 | 1 | 1 | 1 | n/a | 8 | 39749 | 885 |
 | DGX-GB200 | 8 | MXFP8 | 512 | 2 | 8192 | 1 | 1 | 1 | n/a | 8 | 33522 | 747 |
+<<<<<<< HEAD
+=======
+| DGX-B300 | 8 | MXFP8 | 512 | 4 | 8192 | 1 | 1 | 1 | n/a | 8 | 37316 | 831 |
+>>>>>>> upstream/main
 | DGX-H100 | 16 | FP8 | 1024 | 1 | 8192 | 1 | 1 | 1 | n/a | 8 | 14719 | 328 |
 
 #### Model: Nemotron_3_Super
@@ -105,6 +136,11 @@ The performance data includes:
 | DGX-GB300 | 64 | NVFP4 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 64 | 9900 | 839 |
 | DGX-GB200 | 64 | MXFP8 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 6742 | 571 |
 | DGX-GB200 | 64 | NVFP4 | 512 | 1 | 8192 | 2 | 1 | 1 | n/a | 64 | 6928 | 587 |
+<<<<<<< HEAD
+=======
+| DGX-B300 | 64 | MXFP8 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 8 | 7867 | 667 |
+| DGX-B300 | 64 | NVFP4 | 512 | 1 | 8192 | 1 | 1 | 1 | n/a | 8 | 8131 | 689 |
+>>>>>>> upstream/main
 
 ### SFT Performance
 

@@ -154,6 +154,7 @@ class TestCreateModel:
         assert isinstance(result, list)
         assert len(result) == 2
         assert all(model.model_type == ModelType.encoder_or_decoder for model in result)
+        assert [model.vp_stage for model in result] == [0, 1]
         assert model_provider.provide.call_count == 2
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")

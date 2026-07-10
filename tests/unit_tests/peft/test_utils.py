@@ -20,12 +20,13 @@ and the ParallelLinearAdapter class for distributed PEFT scenarios.
 """
 
 import math
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
 import torch
 import torch.nn as nn
-from megatron.core.dist_checkpointing.mapping import ShardedTensorFactory
+from megatron.core.dist_checkpointing.mapping import ShardedTensor, ShardedTensorFactory
 from megatron.core.tensor_parallel import ColumnParallelLinear, RowParallelLinear
 
 from megatron.bridge.peft import utils as peft_utils
@@ -33,6 +34,7 @@ from megatron.bridge.peft.utils import (
     GroupedExpertLinearAdapter,
     ParallelLinearAdapter,
     all2all_hp2sp,
+    enable_legacy_shared_expert_adapter_loading,
     get_adapter_attributes_from_linear,
     init_method_const,
     init_method_kaiming_uniform,
@@ -66,6 +68,42 @@ class MockModelParallelConfig:
         self.perform_initialization = True
         self.use_cpu_initialization = False
         self.gradient_accumulation_fusion = False
+
+
+class MockProcessGroup:
+    """Small process-group stand-in with MCore-style size/rank methods."""
+
+    def __init__(self, size: int = 1, rank: int = 0):
+        self._size = size
+        self._rank = rank
+
+    def size(self) -> int:
+        return self._size
+
+    def rank(self) -> int:
+        return self._rank
+
+
+def make_mock_pg_collection(
+    *,
+    tp_size: int = 1,
+    tp_rank: int = 0,
+    ep_size: int = 1,
+    ep_rank: int = 0,
+    etp_size: int = 1,
+    etp_rank: int = 0,
+    edp_size: int = 1,
+    edp_rank: int = 0,
+) -> SimpleNamespace:
+    """Build the subset of ProcessGroupCollection used by PEFT tests."""
+
+    return SimpleNamespace(
+        tp=MockProcessGroup(tp_size, tp_rank),
+        ep=MockProcessGroup(ep_size, ep_rank),
+        expt_tp=MockProcessGroup(etp_size, etp_rank),
+        expt_dp=MockProcessGroup(edp_size, edp_rank),
+        dp_cp=MockProcessGroup(),
+    )
 
 
 class MockColumnParallelLinear(ColumnParallelLinear):
@@ -249,15 +287,12 @@ class TestUtilityFunctions:
         assert torch.equal(unpadded, original)
 
 
-@patch("megatron.bridge.peft.utils.parallel_state")
 class TestAll2AllCommunication:
     """Test All2All communication functions."""
 
-    def test_all2all_hp2sp_mock(self, mock_parallel_state):
-        """Test all2all_hp2sp with mocked parallel state."""
-        # Mock parallel state
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 2
-        mock_parallel_state.get_tensor_model_parallel_group.return_value = None
+    def test_all2all_hp2sp_mock(self):
+        """Test all2all_hp2sp with an explicit tensor-parallel process group."""
+        tp_group = MockProcessGroup(size=2)
 
         # Mock torch.distributed.all_to_all
         with patch("torch.distributed.all_to_all") as mock_all_to_all:
@@ -270,7 +305,7 @@ class TestAll2AllCommunication:
             mock_all_to_all.side_effect = side_effect
 
             x = torch.randn(4, 8)  # Input tensor
-            result = all2all_hp2sp(x)
+            result = all2all_hp2sp(x, tp_group)
 
             assert result.shape == (2, 16)  # Should reshape appropriately
 
@@ -278,10 +313,8 @@ class TestAll2AllCommunication:
 class TestGetAdapterAttributes:
     """Test get_adapter_attributes_from_linear function."""
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_column_parallel(self, mock_parallel_state):
+    def test_get_adapter_attributes_column_parallel(self):
         """Test with ColumnParallelLinear."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
 
         attrs = get_adapter_attributes_from_linear(linear)
@@ -293,10 +326,8 @@ class TestGetAdapterAttributes:
         assert attrs.disable_sequence_parallel_comm  # Should be True when sequence_parallel is False
         assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_row_parallel(self, mock_parallel_state):
+    def test_get_adapter_attributes_row_parallel(self):
         """Test with RowParallelLinear."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockRowParallelLinear(input_size=100, output_size=50)
 
         attrs = get_adapter_attributes_from_linear(linear)
@@ -308,10 +339,8 @@ class TestGetAdapterAttributes:
         assert attrs.disable_sequence_parallel_comm
         assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_sequence_parallel(self, mock_parallel_state):
+    def test_get_adapter_attributes_sequence_parallel(self):
         """Test with sequence parallel enabled."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = MockColumnParallelLinear(input_size=100, output_size=50)
         linear.config.sequence_parallel = True
 
@@ -321,20 +350,68 @@ class TestGetAdapterAttributes:
         assert not attrs.disable_sequence_parallel_comm  # Should be False when sequence_parallel is True
         assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_unsupported_module(self, mock_parallel_state):
+    def test_get_adapter_attributes_te_sequence_parallel_input_regather(self):
+        """Test that input re-gather uses the local TE LayerNorm shard, including with UB overlap."""
+
+        class FakeTELayerNormColumnParallelLinear(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(
+                    sequence_parallel=True,
+                    tensor_model_parallel_size=2,
+                    tp_comm_overlap=False,
+                    tp_comm_overlap_disable_qkv=False,
+                )
+                self.in_features = 16
+                self.out_features = 12
+                self.parallel_mode = "column"
+                self.return_layernorm_output = False
+                self.return_layernorm_output_gathered = False
+                self.ub_overlap_ag = False
+                self._tp_group = MockProcessGroup(size=2)
+
+        with (
+            patch.object(peft_utils, "HAVE_TE", True),
+            patch.object(peft_utils, "TECL", (FakeTELayerNormColumnParallelLinear,)),
+            patch.object(
+                peft_utils,
+                "TELayerNormColumnParallelLinear",
+                FakeTELayerNormColumnParallelLinear,
+            ),
+            patch.object(peft_utils, "version", return_value="1.10.0"),
+        ):
+            baseline = FakeTELayerNormColumnParallelLinear()
+            baseline_attrs = get_adapter_attributes_from_linear(baseline)
+            assert baseline.return_layernorm_output
+            assert baseline.return_layernorm_output_gathered
+            assert baseline_attrs.disable_sequence_parallel_comm
+
+            regather = FakeTELayerNormColumnParallelLinear()
+            regather_attrs = get_adapter_attributes_from_linear(regather, sequence_parallel_input_regather=True)
+            assert regather.return_layernorm_output
+            assert not regather.return_layernorm_output_gathered
+            assert not regather_attrs.disable_sequence_parallel_comm
+
+            overlap_regather = FakeTELayerNormColumnParallelLinear()
+            overlap_regather.ub_overlap_ag = True
+            overlap_regather.config.tp_comm_overlap = True
+            overlap_regather_attrs = get_adapter_attributes_from_linear(
+                overlap_regather, sequence_parallel_input_regather=True
+            )
+            assert overlap_regather.return_layernorm_output
+            assert not overlap_regather.return_layernorm_output_gathered
+            assert not overlap_regather_attrs.disable_sequence_parallel_comm
+
+    def test_get_adapter_attributes_unsupported_module(self):
         """Test with unsupported module type."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         linear = nn.Conv2d(3, 3, 3)
         linear.config = MockModelParallelConfig()
 
         with pytest.raises(NotImplementedError):
             get_adapter_attributes_from_linear(linear)
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
-    def test_get_adapter_attributes_base_linear_is_parallel_flag(self, mock_parallel_state):
+    def test_get_adapter_attributes_base_linear_is_parallel_flag(self):
         """Test that base_linear_is_parallel flag is correctly returned."""
-        mock_parallel_state.get_tensor_model_parallel_world_size.return_value = 1
         # Test with ColumnParallelLinear - should return True for base_linear_is_parallel
         column_linear = MockColumnParallelLinear(input_size=100, output_size=50)
         assert get_adapter_attributes_from_linear(
@@ -573,16 +650,177 @@ class TestParallelLinearAdapter:
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
 
-    @patch("megatron.bridge.peft.utils.parallel_state")
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
-    def test_parallel_linear_adapter_expert_mode(
-        self, mock_row_linear, mock_col_linear, mock_parallel_state, mock_config
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_uses_mcore_sp_linear(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
     ):
-        """Test adapter in expert mode (MoE)."""
-        # Mock parallel state for expert mode
-        mock_parallel_state.get_expert_tensor_parallel_world_size.return_value = 4
+        """Eligible adapters should let MCore's linear own the SP gather."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_in.side_effect = lambda x: (torch.cat((x[..., :4], x[..., :4]), dim=0), None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
 
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (6, 2)
+        mock_gather.assert_not_called()
+        mock_linear_in.assert_called_once_with(local_input)
+        assert mock_linear_in.sequence_parallel is True
+        mock_linear_out.assert_called_once()
+
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_fallback_uses_external_gather(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
+    ):
+        """A static fallback should retain the existing external gather path."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8), requires_grad=False)
+        mock_linear_in.side_effect = lambda x: (x[..., :4], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_gather.side_effect = lambda x, group: torch.cat((x, x), dim=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (6, 2)
+        mock_gather.assert_called_once_with(local_input, group=adapter.tp_group)
+        assert mock_linear_in.sequence_parallel is False
+
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_tp1_fallback(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
+    ):
+        """TP=1 should keep the existing path instead of re-enabling MCore SP."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_in.side_effect = lambda x: (x[..., :4], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_gather.side_effect = lambda x, group: x
+
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=1),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (3, 2)
+        mock_gather.assert_called_once_with(local_input, group=adapter.tp_group)
+        assert mock_linear_in.sequence_parallel is False
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_eligibility_gates(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Only qkv/fc1 SP LoRA without overlapping recompute should be eligible."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_out = Mock()
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
+        )
+        x = torch.randn(3, 8, requires_grad=True)
+
+        assert adapter._sequence_parallel_input_regather_eligibility(x) == (True, None)
+
+        mock_linear_in.weight.requires_grad_(False)
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+        mock_linear_in.weight.requires_grad_(True)
+
+        adapter.base_linear_name = "decoder.layers.0.self_attention.linear_proj"
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+        adapter.base_linear_name = "decoder.layers.0.mlp.linear_fc1"
+
+        adapter.input_is_parallel = True
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+        adapter.input_is_parallel = False
+
+        mock_config.recompute_granularity = "selective"
+        mock_config.recompute_modules = ["mlp"]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+
+        adapter.base_linear_name = "decoder.layers.0.self_attention.linear_qkv"
+        assert adapter._sequence_parallel_input_regather_eligibility(x) == (True, None)
+
+        mock_config.recompute_granularity = "full"
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_expert_mode(self, mock_row_linear, mock_col_linear, mock_config):
+        """Test adapter in expert mode (MoE)."""
         # Set tensor_model_parallel_size to 4 so that sequence length 7 gets padded to 8
         mock_config.tensor_model_parallel_size = 4
         mock_config.expert_tensor_parallel_size = 4
@@ -656,6 +894,7 @@ class TestParallelLinearAdapter:
 
         # Mock the swiglu factory
         mock_swiglu_factory.return_value = "swiglu_processed_tensor"
+        mock_config.gated_linear_unit = True
 
         adapter = ParallelLinearAdapter(
             in_features=20, out_features=10, dim=16, base_linear_name="linear_fc1", model_parallel_config=mock_config
@@ -666,6 +905,392 @@ class TestParallelLinearAdapter:
         # Should call swiglu factory for fc1 weights
         mock_swiglu_factory.assert_called()
         assert result["adapter.linear_out.weight"] == "swiglu_processed_tensor"
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_sharded_state_dict_uses_expert_axis(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Shared grouped-expert adapters should add a stable checkpoint expert axis."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", linear_in_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_in._extra_state": torch.tensor([1.0]),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", linear_out_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_out._extra_state": torch.tensor([2.0]),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=1, etp_rank=0, edp_rank=3)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        assert "adapter.linear_in._extra_state" not in result
+        assert "adapter.linear_out._extra_state" not in result
+        factory = result["adapter.linear_in.weight"]
+        assert isinstance(factory, ShardedTensorFactory)
+        assert factory.replica_id == (0, 0, 3)
+
+        built = factory.build()
+        assert len(built) == 2
+        assert built[0].global_shape == (4, 2, 2)
+        assert built[0].global_offset == (2, 0, 0)
+        assert built[1].global_offset == (3, 0, 0)
+
+        merged = factory.merge_fn([torch.ones(2, 2), torch.full((2, 2), 3.0)])
+        torch.testing.assert_close(merged, torch.full((2, 2), 2.0))
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_shared_adapter_syncs_grad_across_ep(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Shared grouped-expert adapters must not drift across EP ranks.
+
+        A shared expert adapter is one logical weight used by every EP rank, but
+        MCore's expert DDP sync only covers expert-DP replicas. The EP grad hook
+        keeps EP>1 ranks from updating that shared adapter from different local
+        token subsets.
+        """
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(2, 2))
+        mock_linear_out.weight = nn.Parameter(torch.ones(2, 2))
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2)
+
+        ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+
+        ep_group = mock_config._pg_collection.ep
+
+        with (
+            patch("torch.distributed.is_available", return_value=True),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.all_reduce") as mock_all_reduce,
+        ):
+            (mock_linear_in.weight.sum() + mock_linear_out.weight.sum()).backward()
+
+        assert mock_all_reduce.call_count == 2
+        for call in mock_all_reduce.call_args_list:
+            grad = call.args[0]
+            torch.testing.assert_close(grad, torch.ones_like(grad))
+            assert call.kwargs["group"] is ep_group
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_swiglu_sharded_state_dict_uses_expert_axis(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Shared grouped-expert SwiGLU adapters should split gate/up shards inside the expert axis."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(8, dtype=torch.float32).reshape(4, 2)
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", linear_in_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_in._extra_state": torch.tensor([1.0]),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", linear_out_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_out._extra_state": torch.tensor([2.0]),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config.gated_linear_unit = True
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=1, etp_rank=0, edp_rank=2)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=4,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        assert "adapter.linear_in._extra_state" not in result
+        assert "adapter.linear_out._extra_state" not in result
+        factory = result["adapter.linear_out.weight"]
+        assert isinstance(factory, ShardedTensorFactory)
+        assert factory.replica_id == (0, 0, 2)
+
+        built = factory.build()
+        assert len(built) == 4
+        assert built[0].global_shape == (4, 4, 2)
+        assert [shard.global_offset for shard in built] == [
+            (2, 0, 0),
+            (2, 2, 0),
+            (3, 0, 0),
+            (3, 2, 0),
+        ]
+
+        merged = factory.merge_fn(
+            [
+                torch.full((2, 2), 1.0),
+                torch.full((2, 2), 2.0),
+                torch.full((2, 2), 3.0),
+                torch.full((2, 2), 5.0),
+            ]
+        )
+        expected = torch.cat([torch.full((2, 2), 2.0), torch.full((2, 2), 3.5)], dim=0)
+        torch.testing.assert_close(merged, expected)
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_grouped_expert_sharded_state_dict_keeps_extra_state_on_main_expert_rank(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Shared grouped-expert adapter extra state should be kept only on EP0/ETP0."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        linear_in_extra_state = torch.tensor([1.0])
+        linear_out_extra_state = torch.tensor([2.0])
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", linear_in_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_in._extra_state": linear_in_extra_state,
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", linear_out_weight, replica_id=(0, 0, 0)
+            ),
+            "adapter.linear_out._extra_state": linear_out_extra_state,
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0, etp_rank=0, edp_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        assert result["adapter.linear_in._extra_state"] is linear_in_extra_state
+        assert result["adapter.linear_out._extra_state"] is linear_out_extra_state
+        built = result["adapter.linear_in.weight"].build()
+        assert [shard.global_offset for shard in built] == [(0, 0, 0), (1, 0, 0)]
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_legacy_shared_expert_state_dict_uses_2d_shape(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Legacy shared grouped-expert adapter checkpoints should load as 2D tensors."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", linear_in_weight, replica_id=(0, 0, 0)
+            ),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", linear_out_weight, replica_id=(0, 0, 0)
+            ),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=1, etp_rank=0, edp_rank=3)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        adapter.use_legacy_shared_expert_adapter_checkpoint = True
+
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        sharded_weight = result["adapter.linear_in.weight"]
+        assert isinstance(sharded_weight, ShardedTensor)
+        assert sharded_weight.global_shape == (2, 2)
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_enable_legacy_shared_expert_adapter_loading_detects_2d_checkpoint_metadata(
+        self, mock_row_linear, mock_col_linear, mock_config, monkeypatch
+    ):
+        """A 2D checkpoint tensor should opt only its shared expert adapter into legacy loading."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        mock_linear_in.sharded_state_dict.return_value = {
+            "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_in.weight",
+                linear_in_weight,
+                replica_id=(0, 0, 0),
+            ),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_out.weight",
+                linear_out_weight,
+                replica_id=(0, 0, 0),
+            ),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0, etp_rank=0, edp_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        sharded_state_dict = {
+            "model": adapter.sharded_state_dict(prefix="decoder.layers.0.mlp.experts.linear_fc2.adapter.")
+        }
+        metadata = {
+            "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "decoder.layers.0.mlp.experts.linear_fc2.adapter.linear_in.weight",
+                torch.empty(2, 2),
+            ).without_data()
+        }
+        monkeypatch.setattr(peft_utils.dist_checkpointing, "load_tensors_metadata", lambda _: metadata)
+
+        enabled = enable_legacy_shared_expert_adapter_loading(
+            [SimpleNamespace(named_modules=lambda: [("decoder.layers.0.mlp.experts.linear_fc2.adapter", adapter)])],
+            sharded_state_dict,
+            "/checkpoint",
+        )
+
+        assert enabled is True
+        assert adapter.use_legacy_shared_expert_adapter_checkpoint is True
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_enable_legacy_shared_expert_adapter_loading_tolerates_key_name_mismatch(
+        self, mock_row_linear, mock_col_linear, mock_config, monkeypatch
+    ):
+        """Legacy loading should still work when checkpoint keys and module names differ."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        global_key = "decoder.layers.8.mlp.experts.linear_fc2.adapter.linear_in.weight"
+        mock_linear_in.sharded_state_dict.return_value = {
+            global_key: ShardedTensor.from_rank_offsets(global_key, linear_in_weight, replica_id=(0, 0, 0)),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "decoder.layers.8.mlp.experts.linear_fc2.adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "decoder.layers.8.mlp.experts.linear_fc2.adapter.linear_out.weight",
+                linear_out_weight,
+                replica_id=(0, 0, 0),
+            ),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config.num_moe_experts = 4
+        mock_config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=0, etp_rank=0, edp_rank=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        sharded_state_dict = {
+            "model": adapter.sharded_state_dict(prefix="decoder.layers.8.mlp.experts.linear_fc2.adapter.")
+        }
+        metadata = {global_key: ShardedTensor.from_rank_offsets(global_key, torch.empty(2, 2)).without_data()}
+        monkeypatch.setattr(peft_utils.dist_checkpointing, "load_tensors_metadata", lambda _: metadata)
+
+        enabled = enable_legacy_shared_expert_adapter_loading(
+            [SimpleNamespace(named_modules=lambda: [("decoder.layers.0.mlp.experts.linear_fc2.adapter", adapter)])],
+            sharded_state_dict,
+            "/checkpoint",
+        )
+
+        assert enabled is True
+        assert adapter.use_legacy_shared_expert_adapter_checkpoint is True
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_non_grouped_expert_sharded_state_dict_uses_expert_dp_replica_id(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Sequential local expert adapters should keep base sharding and use expert-DP replica ids."""
+        mock_linear_in = Mock()
+        mock_linear_out = Mock()
+        linear_in_weight = torch.arange(4, dtype=torch.float32).reshape(2, 2)
+        linear_out_weight = torch.arange(4, 8, dtype=torch.float32).reshape(2, 2)
+        mock_linear_in.sharded_state_dict.return_value = {
+            "adapter.linear_in.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_in.weight", linear_in_weight, replica_id=(0, 1, 99)
+            ),
+            "adapter.linear_in._extra_state": torch.tensor([1.0]),
+        }
+        mock_linear_out.sharded_state_dict.return_value = {
+            "adapter.linear_out.weight": ShardedTensor.from_rank_offsets(
+                "adapter.linear_out.weight", linear_out_weight, replica_id=(0, 1, 99)
+            ),
+            "adapter.linear_out._extra_state": torch.tensor([2.0]),
+        }
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_config._pg_collection = make_mock_pg_collection(etp_rank=0, edp_rank=3)
+
+        adapter = ParallelLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            base_linear_name="decoder.layers.0.mlp.experts.local_experts.0.linear_fc2",
+            is_expert=True,
+            model_parallel_config=mock_config,
+        )
+        result = adapter.sharded_state_dict(prefix="adapter.")
+
+        sharded_weight = result["adapter.linear_in.weight"]
+        assert isinstance(sharded_weight, ShardedTensor)
+        assert sharded_weight.global_shape == (2, 2)
+        assert sharded_weight.replica_id == (0, 1, 3)
+        assert "adapter.linear_in._extra_state" in result
 
 
 class TestGroupedExpertLinearAdapter:
@@ -745,6 +1370,109 @@ class TestGroupedExpertLinearAdapter:
             ]
         )
         torch.testing.assert_close(output, expected)
+
+    def test_grouped_expert_linear_adapter_keeps_checkpoint_keys_after_weight_module_wrap(self):
+        """Calling weight containers should not change existing adapter checkpoint keys."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        state_dict = adapter.state_dict()
+
+        assert sorted(state_dict) == ["linear_in.weight", "linear_out.weight"]
+        old_style_state_dict = {
+            "linear_in.weight": torch.ones_like(adapter.linear_in.weight),
+            "linear_out.weight": torch.full_like(adapter.linear_out.weight, 2.0),
+        }
+        missing, unexpected = adapter.load_state_dict(old_style_state_dict, strict=True)
+        assert missing == []
+        assert unexpected == []
+        torch.testing.assert_close(adapter.linear_in.weight, old_style_state_dict["linear_in.weight"])
+        torch.testing.assert_close(adapter.linear_out.weight, old_style_state_dict["linear_out.weight"])
+
+    def test_grouped_expert_linear_adapter_forward_calls_weight_modules_for_param_sync_hooks(self):
+        """Grouped per-expert adapters must participate in training-time param gather.
+
+        With EP plus expert-DP, distributed optimizer param gather is driven by
+        DDP forward pre-hooks. The weight containers need to be called so live
+        training weights refresh during normal forwards, not only at forced
+        eval/checkpoint sync boundaries.
+        """
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        calls = []
+        adapter.linear_in.register_forward_pre_hook(lambda module, inputs: calls.append("linear_in"))
+        adapter.linear_out.register_forward_pre_hook(lambda module, inputs: calls.append("linear_out"))
+
+        def fake_grouped_mm(inputs, weights, *, offs):
+            chunks = []
+            start = 0
+            for weight_idx, end in enumerate(offs.tolist()):
+                chunks.append(inputs[start:end] @ weights[weight_idx])
+                start = end
+            return torch.cat(chunks, dim=0)
+
+        x = torch.tensor(
+            [
+                [1.0, 2.0],
+                [3.0, 4.0],
+                [5.0, 6.0],
+            ]
+        )
+        with (
+            patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=fake_grouped_mm,
+                create=True,
+            ),
+        ):
+            adapter(x, [1, 0, 2])
+
+        assert calls == ["linear_in", "linear_out"]
+
+    def test_grouped_expert_linear_adapter_zero_token_batch_keeps_weight_grad_dependency(self):
+        """Empty local expert batches should still produce zero grads for DDP hooks.
+
+        EP routing can leave a local grouped adapter with no tokens on a step.
+        The zero-sized output still needs a zero-valued dependency on the LoRA
+        weights so DDP sees ready gradients instead of leaving replicas stale.
+        """
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+
+        output = adapter(torch.empty(0, 2), [0, 0])
+
+        assert output.shape == (0, 2)
+        output.sum().backward()
+        assert adapter.linear_in.weight.grad is not None
+        assert adapter.linear_out.weight.grad is not None
+        torch.testing.assert_close(adapter.linear_in.weight.grad, torch.zeros_like(adapter.linear_in.weight))
+        torch.testing.assert_close(adapter.linear_out.weight.grad, torch.zeros_like(adapter.linear_out.weight))
 
     def test_grouped_expert_linear_adapter_grouped_mm_falls_back_on_cpu(self):
         """CPU inputs should not enter the grouped_mm fast path."""
@@ -935,17 +1663,7 @@ class TestGroupedExpertLinearAdapter:
             model_parallel_config=config,
         )
 
-        with (
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=None,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_group",
-                return_value=None,
-            ),
-            patch("megatron.bridge.peft.utils.torch.distributed.all_gather") as mock_all_gather,
-        ):
+        with patch("megatron.bridge.peft.utils.torch.distributed.all_gather") as mock_all_gather:
             with pytest.raises(
                 ValueError,
                 match="requires initialized expert tensor parallel state when expert_tensor_parallel_size=2",
@@ -956,36 +1674,21 @@ class TestGroupedExpertLinearAdapter:
 
     def test_grouped_expert_linear_fc1_sharded_state_dict_preserves_expert_axis(self):
         """Grouped expert fc1 checkpoints should split SwiGLU on the hidden axis, not the expert axis."""
-        with (
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
-                return_value=2,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
-                return_value=1,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
-                return_value=0,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=1,
-            ),
-        ):
-            adapter = GroupedExpertLinearAdapter(
-                in_features=2,
-                out_features=4,
-                dim=2,
-                num_local_experts=2,
-                base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
-                activation="identity",
-                input_is_parallel=False,
-                model_parallel_config=MockModelParallelConfig(),
-            )
+        config = MockModelParallelConfig()
+        config.gated_linear_unit = True
+        config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=1, edp_rank=0, etp_size=1)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=4,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=config,
+        )
 
-            result = adapter.sharded_state_dict("adapter.")
+        result = adapter.sharded_state_dict("adapter.")
 
         factory = result["adapter.linear_out.weight"]
         assert isinstance(factory, ShardedTensorFactory)
@@ -1001,40 +1704,21 @@ class TestGroupedExpertLinearAdapter:
 
     def test_grouped_expert_linear_fc1_factory_merge_restores_gate_up_order(self):
         """Grouped expert fc1 checkpoint reload should de-interleave gate/up expert-TP shards."""
-        with (
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
-                return_value=1,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
-                return_value=0,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
-                return_value=0,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=2,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_rank",
-                return_value=0,
-            ),
-        ):
-            adapter = GroupedExpertLinearAdapter(
-                in_features=2,
-                out_features=8,
-                dim=2,
-                num_local_experts=1,
-                base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
-                activation="identity",
-                input_is_parallel=False,
-                model_parallel_config=MockModelParallelConfig(),
-            )
+        config = MockModelParallelConfig()
+        config.gated_linear_unit = True
+        config._pg_collection = make_mock_pg_collection(ep_size=1, ep_rank=0, edp_rank=0, etp_size=2, etp_rank=0)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=8,
+            dim=2,
+            num_local_experts=1,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc1",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=config,
+        )
 
-            factory = adapter.sharded_state_dict("adapter.")["adapter.linear_out.weight"]
+        factory = adapter.sharded_state_dict("adapter.")["adapter.linear_out.weight"]
 
         fused_tp0 = torch.tensor([[[1.0, 1.0], [1.0, 1.0], [2.0, 2.0], [2.0, 2.0]]])
         fused_tp1 = torch.tensor([[[3.0, 3.0], [3.0, 3.0], [4.0, 4.0], [4.0, 4.0]]])
@@ -1045,41 +1729,79 @@ class TestGroupedExpertLinearAdapter:
         )
         torch.testing.assert_close(merged, expected)
 
+    @pytest.mark.parametrize(("ep_size", "expected_allreduce"), [(1, True), (2, False)])
+    def test_grouped_expert_linear_adapter_allreduce_flag_tracks_expert_parallelism(self, ep_size, expected_allreduce):
+        """Per-expert grouped adapters should use expert-DP grad sync only when EP is enabled."""
+        config = MockModelParallelConfig()
+        config._pg_collection = make_mock_pg_collection(ep_size=ep_size, etp_size=1)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=config,
+        )
+
+        assert adapter.linear_in.weight.allreduce is expected_allreduce
+        assert adapter.linear_out.weight.allreduce is expected_allreduce
+        assert adapter.linear_in.weight.tensor_model_parallel is True
+        assert adapter.linear_out.weight.tensor_model_parallel is True
+        assert adapter.linear_in.weight.partition_dim == 1
+        assert adapter.linear_out.weight.partition_dim == 1
+
+    def test_grouped_expert_linear_adapter_groups_as_expert_ddp_buffer_when_ep_enabled(self):
+        """Per-expert adapter params must sync on expert-DP, not dense DP.
+
+        EP plus DP replicates each local expert across expert-DP ranks. Marking
+        these params as expert-parallel keeps replicas for the same expert in
+        sync without mixing different EP-owned experts.
+        """
+        from megatron.core.distributed.param_and_grad_buffer import group_params_for_buffers
+
+        config = MockModelParallelConfig()
+        config._pg_collection = make_mock_pg_collection(ep_size=8, etp_size=1)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=config,
+        )
+
+        buffer_groups = group_params_for_buffers(
+            [adapter.linear_in.weight, adapter.linear_out.weight],
+            grad_reduce_in_fp32=False,
+        )
+
+        assert len(buffer_groups) == 1
+        buffer_key, (params, _param_indices) = next(iter(buffer_groups.items()))
+        assert buffer_key.is_expert_parallel
+        assert [id(param) for param in params] == [
+            id(adapter.linear_in.weight),
+            id(adapter.linear_out.weight),
+        ]
+
     def test_grouped_expert_linear_sharded_state_dict_uses_expert_parallel_offsets(self):
         """Grouped-expert weights should shard only across expert EP/ETP and use expert-DP replica ids."""
-        with (
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_world_size",
-                return_value=2,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_model_parallel_rank",
-                return_value=1,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_data_parallel_rank",
-                return_value=4,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_world_size",
-                return_value=1,
-            ),
-            patch(
-                "megatron.bridge.peft.utils.parallel_state.get_expert_tensor_parallel_rank",
-                return_value=0,
-            ),
-        ):
-            adapter = GroupedExpertLinearAdapter(
-                in_features=2,
-                out_features=2,
-                dim=2,
-                num_local_experts=2,
-                base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
-                activation="identity",
-                input_is_parallel=False,
-                model_parallel_config=MockModelParallelConfig(),
-            )
-            result = adapter.sharded_state_dict("adapter.")
+        config = MockModelParallelConfig()
+        config._pg_collection = make_mock_pg_collection(ep_size=2, ep_rank=1, edp_rank=4, etp_size=1, etp_rank=0)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=config,
+        )
+        result = adapter.sharded_state_dict("adapter.")
 
         sharded_weight = result["adapter.linear_in.weight"]
         assert sharded_weight.local_shape == (2, 2, 2)

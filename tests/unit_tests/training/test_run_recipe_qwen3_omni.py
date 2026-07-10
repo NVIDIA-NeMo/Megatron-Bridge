@@ -35,6 +35,7 @@ def _load_run_recipe_module():
     models_module = types.ModuleType("megatron.bridge.models")
     qwen_omni_models_module = types.ModuleType("megatron.bridge.models.qwen_omni")
     qwen_vl_models_module = types.ModuleType("megatron.bridge.models.qwen_vl")
+    stepfun_models_module = types.ModuleType("megatron.bridge.models.stepfun")
     diffusion_module = types.ModuleType("megatron.bridge.diffusion")
     diffusion_models_module = types.ModuleType("megatron.bridge.diffusion.models")
     flux_models_module = types.ModuleType("megatron.bridge.diffusion.models.flux")
@@ -51,6 +52,9 @@ def _load_run_recipe_module():
 
     qwen3_vl_step = types.ModuleType("megatron.bridge.models.qwen_vl.qwen3_vl_step")
     qwen3_vl_step.forward_step = object()
+
+    step37_flickr8k_step = types.ModuleType("megatron.bridge.models.stepfun.step37_flickr8k_step")
+    step37_flickr8k_step.forward_step = object()
 
     gpt_step = types.ModuleType("megatron.bridge.training.gpt_step")
     gpt_step.forward_step = object()
@@ -107,6 +111,7 @@ def _load_run_recipe_module():
         "megatron.bridge.models": models_module,
         "megatron.bridge.models.qwen_omni": qwen_omni_models_module,
         "megatron.bridge.models.qwen_vl": qwen_vl_models_module,
+        "megatron.bridge.models.stepfun": stepfun_models_module,
         "megatron.bridge.diffusion": diffusion_module,
         "megatron.bridge.diffusion.models": diffusion_models_module,
         "megatron.bridge.diffusion.models.flux": flux_models_module,
@@ -120,6 +125,7 @@ def _load_run_recipe_module():
         "megatron.bridge.diffusion.models.wan.wan_step": wan_step,
         "megatron.bridge.models.qwen_omni.qwen3_omni_step": qwen3_omni_step,
         "megatron.bridge.models.qwen_vl.qwen3_vl_step": qwen3_vl_step,
+        "megatron.bridge.models.stepfun.step37_flickr8k_step": step37_flickr8k_step,
         "megatron.bridge.training.audio_lm_step": audio_lm_step,
         "megatron.bridge.training.gpt_step": gpt_step,
         "megatron.bridge.training.vlm_step": vlm_step,
@@ -179,6 +185,40 @@ class TestRunRecipeQwen3Omni:
 
         assert "qwen3_omni_step" in module.STEP_FUNCTIONS
         assert args.step_func == "gpt_step"
+
+    def test_load_recipe_passes_explicit_peft_scheme(self):
+        """The generic runner should pass the current PEFT recipe argument name."""
+
+        module, handles = _load_run_recipe_module()
+        recipe_calls = []
+
+        def unit_peft_config(*, peft_scheme="lora"):
+            recipe_calls.append({"peft_scheme": peft_scheme})
+            return handles["recipe_config"]
+
+        module.recipes.unit_peft_config = unit_peft_config
+
+        cfg = module.load_recipe("unit_peft_config", peft_scheme="dora")
+
+        assert cfg is handles["recipe_config"]
+        assert recipe_calls == [{"peft_scheme": "dora"}]
+
+    def test_load_recipe_omits_default_peft_scheme(self):
+        """Omitting --peft_scheme should leave the recipe's default in control."""
+
+        module, handles = _load_run_recipe_module()
+        recipe_calls = []
+
+        def unit_peft_config(*, peft_scheme="lora"):
+            recipe_calls.append({"peft_scheme": peft_scheme})
+            return handles["recipe_config"]
+
+        module.recipes.unit_peft_config = unit_peft_config
+
+        cfg = module.load_recipe("unit_peft_config", peft_scheme=None)
+
+        assert cfg is handles["recipe_config"]
+        assert recipe_calls == [{"peft_scheme": "lora"}]
 
     def test_main_routes_qwen3_omni_step_to_finetune(self):
         """The generic training entry should pass the Omni step function into finetune."""

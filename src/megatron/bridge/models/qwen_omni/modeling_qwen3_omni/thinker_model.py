@@ -399,6 +399,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
             if not has_multimodal_inputs:
                 position_ids = _build_text_only_mrope_position_ids(input_ids)
             else:
+                rope_attention_mask = None if cp_size > 1 and packed_seq_params is None else attention_mask
                 position_ids, _ = get_rope_index(
                     self.config.spatial_merge_size,
                     self.image_token_id,
@@ -411,7 +412,7 @@ class Qwen3OmniThinkerModel(MegatronModule):
                     image_grid_thw=image_grid_thw,
                     video_grid_thw=video_grid_thw,
                     second_per_grids=video_second_per_grid,
-                    attention_mask=attention_mask,
+                    attention_mask=rope_attention_mask,
                     audio_seqlens=audio_feature_lengths,
                 )
 

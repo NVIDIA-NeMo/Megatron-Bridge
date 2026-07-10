@@ -23,7 +23,9 @@ import torch
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    ConcatenatedQKVMapping,
     GatedMLPMapping,
+    QKVGMapping,
     QKVMapping,
     ReplicatedMapping,
 )
@@ -31,6 +33,7 @@ from megatron.bridge.models.conversion.quant_mapping import (
     AmaxFanoutMapping,
     AmaxMapping,
     MoeAmaxFanoutMapping,
+    derive_kv_bmm_amax_map,
 )
 
 
@@ -91,6 +94,150 @@ class TestAmaxFanoutMapping:
         assert set(resolved.hf_targets) == expected
 
 
+class TestDeriveKvBmmAmaxMap:
+    def test_derives_kv_bmm_amax_mappings_from_qkv_mapping(self):
+        mapping = QKVMapping(
+            megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+            q="model.layers.*.self_attn.q_proj.weight",
+            k="model.layers.*.self_attn.k_proj.weight",
+            v="model.layers.*.self_attn.v_proj.weight",
+        )
+
+        result = derive_kv_bmm_amax_map([mapping])
+
+        assert [(m.megatron_param, m.hf_param) for m in result] == [
+            (
+                "decoder.layers.*.self_attention.core_attention.k_bmm_quantizer._amax",
+                "model.layers.*.self_attn.k_bmm_quantizer._amax",
+            ),
+            (
+                "decoder.layers.*.self_attention.core_attention.v_bmm_quantizer._amax",
+                "model.layers.*.self_attn.v_bmm_quantizer._amax",
+            ),
+        ]
+        assert all(isinstance(mapping, AmaxMapping) for mapping in result)
+
+    def test_derives_kv_bmm_amax_mappings_from_step_qkvg_mapping(self):
+        mapping = QKVGMapping(
+            megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+            q="model.layers.*.self_attn.q_proj.weight",
+            k="model.layers.*.self_attn.k_proj.weight",
+            v="model.layers.*.self_attn.v_proj.weight",
+            g="model.layers.*.self_attn.g_proj.weight",
+        )
+
+        result = derive_kv_bmm_amax_map([mapping])
+
+        assert [(m.megatron_param, m.hf_param) for m in result] == [
+            (
+                "decoder.layers.*.self_attention.core_attention.k_bmm_quantizer._amax",
+                "model.layers.*.self_attn.k_bmm_quantizer._amax",
+            ),
+            (
+                "decoder.layers.*.self_attention.core_attention.v_bmm_quantizer._amax",
+                "model.layers.*.self_attn.v_bmm_quantizer._amax",
+            ),
+        ]
+
+    def test_preserves_wildcards_and_language_model_prefixes(self):
+        mapping = QKVMapping(
+            megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+            q="language_model.model.layers.*.self_attn.q_proj.weight",
+            k="language_model.model.layers.*.self_attn.k_proj.weight",
+            v="language_model.model.layers.*.self_attn.v_proj.weight",
+        )
+
+        result = derive_kv_bmm_amax_map([mapping])
+
+        assert [(m.megatron_param, m.hf_param) for m in result] == [
+            (
+                "language_model.decoder.layers.*.self_attention.core_attention.k_bmm_quantizer._amax",
+                "language_model.model.layers.*.self_attn.k_bmm_quantizer._amax",
+            ),
+            (
+                "language_model.decoder.layers.*.self_attention.core_attention.v_bmm_quantizer._amax",
+                "language_model.model.layers.*.self_attn.v_bmm_quantizer._amax",
+            ),
+        ]
+
+    @pytest.mark.parametrize(
+        ("mapping", "reason"),
+        [
+            pytest.param(
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.bias",
+                    q="model.layers.*.self_attn.q_proj.bias",
+                    k="model.layers.*.self_attn.k_proj.bias",
+                    v="model.layers.*.self_attn.v_proj.bias",
+                ),
+                "bias",
+                id="bias-mapping",
+            ),
+            pytest.param(
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.layers.*.self_attn.q_proj.weight",
+                    k="language_model.model.layers.*.self_attn.k_proj.weight",
+                    v="model.layers.*.self_attn.v_proj.weight",
+                ),
+                "non-common-parent",
+                id="non-common-parent",
+            ),
+            pytest.param(
+                QKVMapping(
+                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+                    q="model.layers.*.self_attn.q_proj.weight",
+                    k="model.layers.*.self_attn.k_proj.kernel",
+                    v="model.layers.*.self_attn.v_proj.weight",
+                ),
+                "malformed-projection",
+                id="malformed-projection",
+            ),
+            pytest.param(
+                QKVMapping(
+                    megatron_param="mtp.layers.*.self_attention.linear_qkv.weight",
+                    q="model.mtp_layers.*.self_attn.q_proj.weight",
+                    k="model.mtp_layers.*.self_attn.k_proj.weight",
+                    v="model.mtp_layers.*.self_attn.v_proj.weight",
+                ),
+                "mtp-path",
+                id="mtp-path",
+            ),
+            pytest.param(
+                QKVMapping(
+                    megatron_param="draft.layers.*.self_attention.linear_qkv.weight",
+                    q="model.draft_layers.*.self_attn.q_proj.weight",
+                    k="model.draft_layers.*.self_attn.k_proj.weight",
+                    v="model.draft_layers.*.self_attn.v_proj.weight",
+                ),
+                "draft-path",
+                id="draft-path",
+            ),
+            pytest.param(
+                ConcatenatedQKVMapping(
+                    megatron_param="vision.blocks.*.self_attention.linear_qkv.weight",
+                    hf_param="vision_model.layers.*.self_attn.qkv.weight",
+                ),
+                "vision-concatenated-qkv",
+                id="vision-concatenated-qkv",
+            ),
+        ],
+    )
+    def test_skips_disallowed_qkv_shapes(self, mapping, reason):
+        assert derive_kv_bmm_amax_map([mapping]) == [], reason
+
+    def test_skips_mappings_that_allow_missing_hf_projections(self):
+        mapping = QKVMapping(
+            megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+            q="model.layers.*.self_attn.q_proj.weight",
+            k="model.layers.*.self_attn.k_proj.weight",
+            v="model.layers.*.self_attn.v_proj.weight",
+        )
+        mapping.allow_hf_name_mismatch = True
+
+        assert derive_kv_bmm_amax_map([mapping]) == []
+
+
 class TestQuantMappingRegistryIntegration:
     """Test quantization mappings inside MegatronMappingRegistry with a Llama-like bridge."""
 
@@ -138,6 +285,10 @@ class TestQuantMappingRegistryIntegration:
         with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "0"}, clear=False):
             registry = MegatronMappingRegistry(*llama_like_mappings)
         assert not any(isinstance(m, AmaxMapping) for m in registry.get_all_mappings())
+        assert (
+            registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.core_attention.k_bmm_quantizer._amax")
+            is None
+        )
 
     def test_quant_mappings_count(self, registry):
         """weight_quantizer and input_quantizer amax mappings are added in equal numbers."""
@@ -251,6 +402,88 @@ class TestQuantMappingRegistryIntegration:
             assert isinstance(m, AmaxFanoutMapping)
             for proj in ["q", "k", "v"]:
                 assert f"model.layers.{layer_idx}.self_attn.{proj}_proj.weight_quantizer._amax" in m.hf_targets
+
+    @pytest.mark.parametrize(
+        "megatron_amax, expected_hf_amax",
+        [
+            (
+                "decoder.layers.0.self_attention.core_attention.k_bmm_quantizer._amax",
+                "model.layers.0.self_attn.k_bmm_quantizer._amax",
+            ),
+            (
+                "decoder.layers.0.self_attention.core_attention.v_bmm_quantizer._amax",
+                "model.layers.0.self_attn.v_bmm_quantizer._amax",
+            ),
+        ],
+    )
+    def test_kv_bmm_amax_forward_lookup(self, registry, megatron_amax, expected_hf_amax):
+        mapping = registry.megatron_to_hf_lookup(megatron_amax)
+
+        assert mapping is not None
+        assert isinstance(mapping, AmaxMapping)
+        assert mapping.megatron_param == megatron_amax
+        assert mapping.hf_param == expected_hf_amax
+
+    @pytest.mark.parametrize(
+        "hf_amax, expected_megatron_amax",
+        [
+            (
+                "model.layers.7.self_attn.k_bmm_quantizer._amax",
+                "decoder.layers.7.self_attention.core_attention.k_bmm_quantizer._amax",
+            ),
+            (
+                "model.layers.7.self_attn.v_bmm_quantizer._amax",
+                "decoder.layers.7.self_attention.core_attention.v_bmm_quantizer._amax",
+            ),
+        ],
+    )
+    def test_kv_bmm_amax_reverse_lookup(self, registry, hf_amax, expected_megatron_amax):
+        mapping = registry.hf_to_megatron_lookup(hf_amax)
+
+        assert mapping is not None
+        assert isinstance(mapping, AmaxMapping)
+        assert mapping.megatron_param == expected_megatron_amax
+        assert mapping.hf_param == hf_amax
+
+    def test_kv_bmm_amax_coexists_with_weight_and_input_quantizer_mappings(self, registry):
+        assert (
+            registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.core_attention.k_bmm_quantizer._amax")
+            is not None
+        )
+        assert (
+            registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_qkv.weight_quantizer._amax")
+            is not None
+        )
+        assert (
+            registry.megatron_to_hf_lookup("decoder.layers.0.self_attention.linear_qkv.input_quantizer._amax")
+            is not None
+        )
+
+
+class TestKvBmmQuantMappingPrefixes:
+    def test_registry_preserves_prefixes_and_wildcards(self):
+        mappings = [
+            QKVMapping(
+                megatron_param="language_model.decoder.layers.*.self_attention.linear_qkv.weight",
+                q="language_model.model.layers.*.self_attn.q_proj.weight",
+                k="language_model.model.layers.*.self_attn.k_proj.weight",
+                v="language_model.model.layers.*.self_attn.v_proj.weight",
+            )
+        ]
+
+        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}, clear=False):
+            registry = MegatronMappingRegistry(*mappings)
+
+        mapping = registry.megatron_to_hf_lookup(
+            "language_model.decoder.layers.9.self_attention.core_attention.k_bmm_quantizer._amax"
+        )
+
+        assert mapping is not None
+        assert (
+            mapping.megatron_param
+            == "language_model.decoder.layers.9.self_attention.core_attention.k_bmm_quantizer._amax"
+        )
+        assert mapping.hf_param == "language_model.model.layers.9.self_attn.k_bmm_quantizer._amax"
 
 
 class TestMoeAmaxFanoutMapping:

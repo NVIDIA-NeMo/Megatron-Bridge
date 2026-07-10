@@ -105,12 +105,30 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
 def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
     """Return whether DSv4 Blackwell-only fused kernels should default on."""
     if not torch.cuda.is_available():
+<<<<<<< HEAD
         return True
+=======
+        return False
+>>>>>>> upstream/main
 
     major, _minor = torch.cuda.get_device_capability()
     return major >= 10
 
 
+<<<<<<< HEAD
+=======
+def deepseek_v4_supports_fused_dsa_kernels() -> bool:
+    """Return whether DSv4 fused DSA kernels can be enabled."""
+    try:
+        from cudnn import DSA  # noqa: F401
+        from flash_mla import flash_mla_sparse_fwd  # noqa: F401
+    except ImportError:
+        return False
+
+    return True
+
+
+>>>>>>> upstream/main
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
     """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
 
@@ -380,6 +398,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
+<<<<<<< HEAD
+=======
+        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
+>>>>>>> upstream/main
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -457,7 +479,11 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
+<<<<<<< HEAD
         provider.apply_dsa_kernel_fusion = use_blackwell_fused_kernels
+=======
+        provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
+>>>>>>> upstream/main
 
         # ---- Hyper-Connections (mHC) ----
         provider.enable_hyper_connections = True
@@ -707,6 +733,16 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "decoder.layers.*.mlp.experts.linear_fc2.weight*",
                 "layers.*.ffn.experts.*.w2.weight",
             ),
+            # Sequential (non-grouped) experts <-> per-expert HF (e.g. ModelOpt pruning).
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                gate="layers.*.ffn.experts.*.w1.weight",
+                up="layers.*.ffn.experts.*.w3.weight",
+            ),
+            AutoMapping(
+                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                "layers.*.ffn.experts.*.w2.weight",
+            ),
             # Shared expert MLP
             GatedMLPMapping(
                 megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
@@ -911,8 +947,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index."""
-        del task
+        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
+
+        When ``task.weight_dtype`` is set, skip requantization and return the weights
+        unchanged — the generic export path casts the dtype.
+        """
+        if task.weight_dtype is not None:
+            return converted_weights_dict
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,

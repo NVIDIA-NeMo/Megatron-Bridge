@@ -17,9 +17,15 @@
 import logging
 from typing import Callable, List, Optional, Tuple
 
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
@@ -28,7 +34,6 @@ from megatron.bridge.recipes.utils.finetune_utils import (
 )
 from megatron.bridge.training.config import (
     ConfigContainer,
-    FinetuningDatasetConfig,
     GPTDatasetConfig,
     MockGPTDatasetConfig,
 )
@@ -164,7 +169,7 @@ def apply_dataset_override(
         packed_sequence: Whether to enable packed sequences.
         seq_length: Explicit sequence length (None = use model's or default 4096).
         cli_overrides: Mutable list of Hydra-style CLI overrides. For ``llm-finetune``,
-            ``dataset.dataset_name`` is extracted and consumed here to select the preset.
+            ``dataset.hf_dataset.dataset_name`` is extracted and consumed here to select the preset.
 
     Returns:
         The modified ConfigContainer.
@@ -204,7 +209,7 @@ def apply_dataset_override(
         )
 
     elif dataset_type == "llm-finetune":
-        preset_name = extract_and_remove_override(cli_overrides, "dataset.dataset_name", default="squad")
+        preset_name = extract_and_remove_override(cli_overrides, "dataset.hf_dataset.dataset_name", default="squad")
         if preset_name not in LLM_FINETUNE_PRESETS:
             raise ValueError(
                 f"Unknown finetune dataset preset: '{preset_name}'. "
@@ -216,9 +221,19 @@ def apply_dataset_override(
         config.dataset = factory(**kwargs)
 
     elif dataset_type == "llm-finetune-preloaded":
-        config.dataset = FinetuningDatasetConfig(
+        dataset_root = extract_and_remove_override(cli_overrides, "dataset.dataset_root")
+        if not dataset_root:
+            raise ValueError(
+                "llm-finetune-preloaded requires dataset.dataset_root=<path> to select the local JSONL source."
+            )
+        config.dataset = GPTSFTDatasetConfig(
             seq_length=resolved_seq_length,
-            dataset_root=None,
+            dataset_root=dataset_root,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(
+                prompt_column="input",
+                completion_column="output",
+                separator=" ",
+            ),
             dataloader_type="batch",
             seed=5678,
         )
@@ -240,16 +255,17 @@ def apply_dataset_override(
             )
 
     elif dataset_type == "vlm-hf":
-        config.dataset = HFDatasetConversationProvider(
+        config.dataset = DirectHFSFTDatasetConfig(
             seq_length=resolved_seq_length,
+            preprocessing=ChatSFTPreprocessingConfig(),
             hf_processor_path=None,
-            maker_name="make_cord_v2_dataset",
+            source=HFDatasetSourceConfig(dataset_name="cord_v2"),
             num_workers=2,
             dataloader_type="single",
             data_sharding=True,
             pin_memory=True,
             persistent_workers=False,
-            pack_sequences_in_batch=False,
+            enable_in_batch_packing=False,
         )
 
     elif dataset_type == "vlm-preloaded":

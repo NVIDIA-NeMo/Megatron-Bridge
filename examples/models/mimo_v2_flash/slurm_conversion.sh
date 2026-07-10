@@ -17,11 +17,12 @@
 # MiMo-V2-Flash Conversion Round-Trip Verification (Multi-Node via Slurm)
 #
 # MiMo-V2-Flash (Hybrid attention + MoE: 256 experts, top-8, FP8 ~310GB).
-# The full model OOMs on a single 8-GPU node — minimum 2 nodes (16 GPUs)
-# with EP >= 8. Context parallelism is not supported. TP must be
-# <= min(num_key_value_heads, swa_num_key_value_heads).
+# The FP8 source weights are dequantized to BF16 during conversion. The full
+# model therefore OOMs on a single 8-GPU node — use at least 2 nodes (16 GPUs)
+# and shard expert weights with EP and ETP. Context parallelism is not
+# supported. TP must be <= min(num_key_value_heads, swa_num_key_value_heads).
 #
-# Sweeps multiple parallelism configs (TP,PP,EP) to verify HF <-> Megatron
+# Sweeps multiple parallelism configs (TP,PP,EP,ETP) to verify HF <-> Megatron
 # round-trip conversion. Each config runs sequentially.
 #
 # Usage:
@@ -52,12 +53,14 @@ WORKDIR="/opt/Megatron-Bridge"
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# ── Parallelism configs: "TP,PP,EP" per entry ────────────────────────────
-# TP*PP*EP must equal total GPUs (NODES * GPUS_PER_NODE).
+# ── Parallelism configs: "TP,PP,EP,ETP" per entry ────────────────────────
+# TP*PP and ETP*EP*PP must each divide total GPUs (NODES * GPUS_PER_NODE).
 # EP must divide 256 (number of experts).
+# Dense TP does not shard expert weights; ETP does. Keep ETP=TP for TP>1 in
+# this sweep so each rank holds about 38 GB of dequantized expert weights.
 # TP must be <= min(num_key_value_heads, swa_num_key_value_heads) = 4.
 # Context parallelism is not supported.
-PARALLELISM_CONFIGS=("2,1,8" "1,2,8" "2,2,4")
+PARALLELISM_CONFIGS=("2,1,8,2" "1,2,8,1" "2,2,4,2")
 
 # ── Model ─────────────────────────────────────────────────────────────────
 MODEL_NAME=MiMo-V2-Flash
@@ -91,19 +94,19 @@ fi
 
 CONFIG_INDEX=0
 for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP <<< "$CONFIG"
+    IFS=',' read -r TP PP EP ETP <<< "$CONFIG"
     CONFIG_INDEX=$((CONFIG_INDEX + 1))
 
     echo ""
     echo "======================================"
-    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP"
+    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP, ETP=$ETP"
     echo "======================================"
 
     # Sync dependencies once per node, then run the roundtrip
     CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
     CMD="${CMD}uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
     CMD="$CMD --hf-model-id $HF_MODEL_ID"
-    CMD="$CMD --tp $TP --pp $PP --ep $EP"
+    CMD="$CMD --tp $TP --pp $PP --ep $EP --etp $ETP"
     CMD="$CMD --trust-remote-code"
 
     echo "Executing: $CMD"
@@ -111,10 +114,10 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     $SRUN_CMD bash -c "cd $WORKDIR && $CMD"
     RUN_EXIT=$?
     if [ $RUN_EXIT -ne 0 ]; then
-        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP failed (exit $RUN_EXIT)"
+        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP, ETP=$ETP failed (exit $RUN_EXIT)"
         exit $RUN_EXIT
     fi
-    echo "[OK] Config $CONFIG_INDEX: TP=$TP, PP=$PP, EP=$EP passed"
+    echo "[OK] Config $CONFIG_INDEX: TP=$TP, PP=$PP, EP=$EP, ETP=$ETP passed"
 done
 
 echo ""

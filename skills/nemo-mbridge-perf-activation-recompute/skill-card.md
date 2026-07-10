@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers reducing GPU memory pressure during LLM training by configuring activation recompute strategies in Megatron Bridge, or diagnosing OOM failures and performance regressions related to recompute settings. <br>
+Developers and engineers reducing GPU memory pressure via activation recompute in Megatron Bridge training workloads, or investigating commits that changed recompute settings and caused OOM errors or performance regressions. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -19,19 +19,24 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline code blocks] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
+## Evaluation Agents Used: <br>
+- Claude Code (`claude-code`) <br>
+- Codex (`codex`) <br>
+
+
+
 ## Evaluation Tasks: <br>
-3-Tier NVSkills-Eval evaluation covering static validation, deduplication, and live agent testing for safety, correctness, discoverability, effectiveness, and efficiency. <br>
+Evaluated against 1 internal skill-activation task in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -41,10 +46,28 @@ Reported benchmark dimensions: <br>
 - Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
 - Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
 
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
+- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
+- `accuracy`: Grades final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
+- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
+- `token_efficiency`: Compares token usage with and without the skill. <br>
 
+
+
+## Evaluation Results: <br>
+| Dimension | Num | `claude-code` | `codex` |
+|---|---:|---:|---:|
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+100%) | 87% (+40%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+0%) |
+| Effectiveness | 1 | 96% (+80%) | 80% (+54%) |
+| Efficiency | 1 | 94% (+67%) | 96% (-0%) |
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1469-g6fe590a5 (source: git tag) <br>
+v0.2.0rc6-1622-g853062e4 (source: git describe) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

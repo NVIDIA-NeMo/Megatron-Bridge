@@ -12,145 +12,336 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-Gemma 4 Model Provider for Megatron-Core.
+"""Gemma 4 text-only model providers.
 
-Gemma 4 is a Mixture-of-Experts (MoE) model with hybrid sliding/global attention.
-Key differences from Gemma 3:
-- MoE: 128 experts, top-k=8, plus a dense MLP path (mapped to shared experts)
-- Heterogeneous attention: sliding layers use head_dim=256 / 8 KV heads,
-  global layers use global_head_dim=512 / 2 KV heads with partial rotary (0.25)
-- K=V sharing on global attention layers (V projection may be omitted)
-- Per-layer scaling via ``layer_scalar`` buffer
-- Dual pre/post layernorms for dense MLP vs MoE paths
+Gemma4DenseProvider: Dense (E2B, E4B, and 31B) — builds GPTModel with local spec,
+    dual RoPE, PLE, and shared KV.
+Gemma4ModelProvider: MoE (26B-A4B and similar) — extends GPTModelProvider
+    with TE-based layer spec, dual RoPE, and softcapped output layer.
 """
 
-import copy
 from dataclasses import dataclass, field
-from functools import lru_cache, partial
-from typing import TYPE_CHECKING, Callable, Optional, Tuple, Union
+from functools import partial
+from typing import Callable, List, Optional, Tuple, Union
 
 import torch
 from megatron.core.activations import fast_gelu
-from megatron.core.inference.contexts import BaseInferenceContext
-from megatron.core.models.common.embeddings.rotary_pos_embedding import RotaryEmbedding
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from megatron.core.packed_seq_params import PackedSeqParams
-from megatron.core.transformer import TransformerConfig
-from megatron.core.transformer.attention import SelfAttention
-from megatron.core.transformer.enums import AttnBackend, AttnMaskType
-from megatron.core.transformer.moe.moe_layer import MoELayer
-from megatron.core.transformer.moe.router import TopKRouter
-from megatron.core.transformer.transformer_layer import TransformerLayer
-from torch import Tensor
+from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+from megatron.core.transformer.enums import AttnBackend
 
-from megatron.bridge.models.gemma.gemma3_provider import (
-    Gemma3LanguageModelEmbedding,
-    TERowParallelLinearLayerNorm,
-    _is_local_attn_layer,
+from megatron.bridge.models.gemma.gemma3_provider import Gemma3LanguageModelEmbedding
+from megatron.bridge.models.gemma.modeling_gemma4 import (
+    HAVE_TE,
+    Gemma4DenseRotaryEmbedding,
+    Gemma4OutputLayer,
+    Gemma4RotaryEmbedding,
+    _attach_ple_modules,
+    _gemma4_block_spec,
+    _install_ple_forward,
+    _install_tied_kv,
+    get_gemma4_layer_spec,
+    wire_gemma4_kv_sharing,
 )
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.utils.import_utils import safe_import_from
 
 
-if TYPE_CHECKING:
-    from megatron.core.models.gpt import GPTModel as MCoreGPTModel
+def _validate_gemma4_moe_orchestration(provider: GPTModelProvider) -> None:
+    """Reject MCore execution modes bypassed by Gemma 4's custom MoE forward."""
+    unsupported = []
+    if provider.transformer_impl == "inference_optimized":
+        unsupported.append("transformer_impl='inference_optimized'")
+    if provider.cuda_graph_impl != "none":
+        unsupported.append(f"cuda_graph_impl={provider.cuda_graph_impl!r}")
+    if provider.moe_shared_expert_overlap:
+        unsupported.append("moe_shared_expert_overlap=True")
+    if provider.mlp_chunks_for_prefill > 1:
+        unsupported.append("mlp_chunks_for_prefill > 1")
+    if provider.mlp_chunks_for_training > 1:
+        unsupported.append("mlp_chunks_for_training > 1")
+    if provider.inference_fuse_tp_communication:
+        unsupported.append("inference_fuse_tp_communication=True")
+    recompute_modules = set(provider.recompute_modules or [])
+    if provider.recompute_granularity == "selective" and "layernorm" in recompute_modules:
+        unsupported.append("selective layernorm recompute")
+    offload_modules = set(provider.offload_modules or [])
+    if provider.fine_grained_activation_offloading and "mlp_norm" in offload_modules:
+        unsupported.append("MLP norm activation offloading")
+    if unsupported:
+        raise ValueError(
+            "Gemma 4 MoE's separate router/shared/routed inputs do not yet support: " + ", ".join(unsupported)
+        )
 
 
-HAVE_TE = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")[1]
-TENorm, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TENorm")
-TEDotProductAttention, _ = safe_import_from("megatron.core.extensions.transformer_engine", "TEDotProductAttention")
+def _install_gemma4_dense_load_state_aliases(model: torch.nn.Module) -> None:
+    """Translate Gemma4 Dense checkpoint attention aliases before load_state_dict.
+
+    Gemma4 Dense saves sliding/global attention tensors under separate names in
+    dist-checkpoints because the two layer types have different sharded shapes.
+    After dist-checkpoint load materializes a regular state_dict, PyTorch module
+    loading expects the real module attribute name, ``self_attention``.
+    """
+
+    if getattr(model, "_gemma4_dense_load_state_aliases_installed", False):
+        return
+
+    def _load_state_dict_pre_hook(
+        state_dict,
+        prefix,
+        local_metadata,
+        strict,
+        missing_keys,
+        unexpected_keys,
+        error_msgs,
+    ):
+        del local_metadata, strict, missing_keys, unexpected_keys, error_msgs
+
+        for key in list(state_dict.keys()):
+            if prefix and not key.startswith(prefix):
+                continue
+
+            canonical_key = None
+            if ".self_attention_sliding." in key:
+                canonical_key = key.replace(".self_attention_sliding.", ".self_attention.")
+            elif ".self_attention_global." in key:
+                canonical_key = key.replace(".self_attention_global.", ".self_attention.")
+
+            if canonical_key is None:
+                continue
+
+            state_dict.setdefault(canonical_key, state_dict[key])
+            state_dict.pop(key)
+
+    model._register_load_state_dict_pre_hook(_load_state_dict_pre_hook)
+    model._gemma4_dense_load_state_aliases_installed = True
+
+
+# ---------------------------------------------------------------------------
+# Dense provider
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Gemma4DenseProvider(GPTModelProvider):
+    """Gemma 4 dense E2B, E4B, and 31B provider for clean Megatron-Core.
+
+    All Gemma4-specific settings are encoded here as dataclass fields so that
+    no Gemma4-specific CLI arguments are required.
+    """
+
+    num_layers: int = 42
+    hidden_size: int = 2560
+    ffn_hidden_size: int = 10240
+    num_attention_heads: int = 8
+    num_query_groups: int = 2
+    kv_channels: int = 256
+    seq_length: int = 131072
+    vocab_size: int = 262143
+    make_vocab_size_divisible_by: int = 128
+
+    normalization: str = "RMSNorm"
+    layernorm_epsilon: float = 1e-6
+    gated_linear_unit: bool = True
+    add_bias_linear: bool = False
+    # fast_gelu == gelu(x, approximate='tanh'), already registered in ACTIVATION_FUNC_MAP
+    # as "gelu_pytorch_tanh" — required for HF export to recognise the activation.
+    activation_func: Callable = field(default_factory=lambda: fast_gelu)
+
+    scale_embeddings_by_hidden_size: bool = True
+    share_embeddings_and_output_weights: bool = True
+    position_embedding_type: str = "rope"
+    rotary_percent: float = 1.0
+
+    attention_dropout: float = 0.0
+    hidden_dropout: float = 0.0
+
+    window_size: Optional[Tuple[int, int]] = (511, 0)
+    window_attn_skip_freq: Union[int, List[int]] = 6
+
+    bf16: bool = True
+    fp16: bool = False
+    params_dtype: torch.dtype = torch.bfloat16
+    autocast_dtype: torch.dtype = torch.bfloat16
+    use_cpu_initialization: bool = False
+
+    global_kv_channels: int = 512
+    num_global_query_groups: int = 2
+    attention_k_eq_v: bool = False
+    sliding_window_rope_base: float = 10000.0
+    full_attention_rope_base: float = 1000000.0
+    full_attention_rope_partial_factor: float = 0.25
+    num_kv_shared_layers: int = 18
+    use_double_wide_mlp: bool = False
+    per_layer_embed_vocab_size: int = 262144
+    per_layer_embed_dim: int = 256
+    final_logit_softcapping: float | None = 30.0
+
+    num_moe_experts: Optional[int] = None
+    moe_router_topk: Optional[int] = None
+    moe_ffn_hidden_size: Optional[int] = None
+
+    def finalize(self) -> None:
+        if self.use_double_wide_mlp:
+            self.hetereogenous_dist_checkpoint = True
+        super().finalize()
+        self._gemma4_dense_finalized = True
+
+    def _ensure_finalized(self) -> None:
+        if not getattr(self, "_gemma4_dense_finalized", False):
+            self.finalize()
+
+    def provide(
+        self,
+        pre_process: Optional[bool] = None,
+        post_process: Optional[bool] = None,
+        vp_stage: Optional[int] = None,
+    ) -> "torch.nn.Module":
+        if vp_stage is not None or getattr(self, "pipeline_model_parallel_size", 1) != 1:
+            raise NotImplementedError("Gemma4DenseProvider currently supports PP=1 only.")
+
+        return self.build(
+            pre_process=True if pre_process is None else pre_process,
+            post_process=True if post_process is None else post_process,
+        )
+
+    def build(
+        self,
+        pre_process: bool = True,
+        post_process: bool = True,
+    ) -> "torch.nn.Module":
+        """Build a Gemma-4 Dense GPTModel and attach Bridge-specific components."""
+        from megatron.core.models.gpt import GPTModel
+
+        self._ensure_finalized()
+        config = self
+
+        padded_vocab = (
+            (self.vocab_size + self.make_vocab_size_divisible_by - 1)
+            // self.make_vocab_size_divisible_by
+            * self.make_vocab_size_divisible_by
+        )
+
+        dual_rope_attrs = {
+            "sliding_window_rope_base": self.sliding_window_rope_base,
+            "full_attention_rope_base": self.full_attention_rope_base,
+            "full_attention_rope_partial_factor": self.full_attention_rope_partial_factor,
+        }
+        for attr in dual_rope_attrs:
+            setattr(config, attr, None)
+        try:
+            model = GPTModel(
+                config=config,
+                transformer_layer_spec=get_gemma4_layer_spec(config),
+                vocab_size=padded_vocab,
+                max_sequence_length=self.seq_length,
+                position_embedding_type=self.position_embedding_type,
+                rotary_percent=self.rotary_percent,
+                share_embeddings_and_output_weights=self.share_embeddings_and_output_weights,
+                pre_process=pre_process,
+                post_process=post_process,
+                pg_collection=getattr(self, "_pg_collection", None),
+            )
+        finally:
+            for attr, value in dual_rope_attrs.items():
+                setattr(config, attr, value)
+
+        model.rotary_pos_emb = Gemma4DenseRotaryEmbedding(config)
+
+        if pre_process:
+            _attach_ple_modules(model, config, self)
+        wire_gemma4_kv_sharing(model)
+        _install_ple_forward(model)
+        _install_gemma4_dense_load_state_aliases(model)
+
+        if (
+            hasattr(model, "output_layer")
+            and self.final_logit_softcapping is not None
+            and not isinstance(model.output_layer, Gemma4OutputLayer)
+        ):
+            extend_instance(model.output_layer, Gemma4OutputLayer)
+
+        return model
+
+
+# ---------------------------------------------------------------------------
+# MoE provider
+# ---------------------------------------------------------------------------
 
 
 @dataclass
 class Gemma4ModelProvider(GPTModelProvider):
-    """Configuration and provider for Megatron Core Gemma 4 models.
-
-    Gemma 4 is a MoE model with hybrid sliding/global attention. The dense MLP
-    path is mapped to Megatron-Core's shared expert mechanism.
-    """
+    """Configuration and provider for Megatron Core Gemma 4 MoE models."""
 
     seq_length: int = 262_144
 
-    # Embedding
     position_embedding_type: str = "rope"
-    rotary_base: tuple = (10_000, 1_000_000)  # (local/sliding, global/full)
+    rotary_base: tuple = (10_000, 1_000_000)
     share_embeddings_and_output_weights: bool = True
 
-    # Norm — Gemma 4 uses STANDARD RMSNorm (x * w / rms(x)), NOT zero-centered gamma.
-    # This differs from Gemma 1/2/3 which use zero-centered gamma (x * (1+w) / rms(x)).
     normalization: str = "RMSNorm"
     layernorm_zero_centered_gamma: bool = False
     layernorm_epsilon: float = 1e-6
 
-    # Attention — base values are for sliding layers (majority)
-    kv_channels: int = 256  # head_dim for sliding layers
-    num_query_groups: int = 8  # num_kv_heads for sliding layers
+    kv_channels: int = 256
+    num_query_groups: int = 8
     window_size: int = 1024
-    interleaved_attn_pattern: tuple = (5, 1)  # (sliding, global)
+    interleaved_attn_pattern: tuple = (5, 1)
     attention_dropout: float = 0.0
     hidden_dropout: float = 0.0
     attention_backend: AttnBackend = AttnBackend.auto
-    softmax_scale: float = 1.0  # Gemma 4 uses QK norm; no 1/sqrt(d) scaling
+    softmax_scale: float = 1.0
     qk_layernorm: bool = True
     attention_k_eq_v: bool = False
 
-    # Global attention overrides (applied per-layer in custom SelfAttention)
     global_head_dim: int = 512
     num_global_key_value_heads: int = 2
     global_rotary_percent: float = 0.25
 
-    # MLP / Activation
     gated_linear_unit: bool = True
     add_bias_linear: bool = False
     activation_func: Callable = fast_gelu
 
-    # MoE — dense MLP maps to shared experts (None for dense/non-MoE models)
     num_moe_experts: Optional[int] = 128
     moe_router_topk: int = 8
     moe_ffn_hidden_size: int = 704
-    moe_shared_expert_intermediate_size: int = 2112  # dense MLP intermediate
-    moe_shared_expert_overlap: bool = False  # Must be False: Gemma4 uses separate pre/post norms
-    moe_shared_expert_gate: bool = False  # no gate on shared expert, just sum
+    moe_shared_expert_intermediate_size: int = 2112
+    moe_shared_expert_overlap: bool = False
+    moe_shared_expert_gate: bool = False
     moe_grouped_gemm: bool = True
     moe_token_dispatcher_type: str = "alltoall"
     moe_router_load_balancing_type: str = "aux_loss"
-    moe_router_pre_softmax: bool = True  # HF does softmax before topk
+    moe_router_pre_softmax: bool = True
     moe_router_dtype: str = "fp32"
     moe_aux_loss_coeff: float = 0.001
     moe_permute_fusion: bool = True
-    moe_layer_freq: int = 1  # all layers are MoE (dense path via shared expert)
+    moe_layer_freq: int = 1
 
-    # Logit softcapping
-    final_logit_softcapping: float = 30.0
+    final_logit_softcapping: float | None = 30.0
 
-    # Do not change
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
         default_factory=lambda: partial(_gemma4_block_spec, use_transformer_engine=HAVE_TE)
     )
     scatter_embedding_sequence_parallel: bool = True
 
-    # Data type settings
     bf16: bool = True
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
     autocast_dtype: torch.dtype = torch.bfloat16
 
+    def finalize(self) -> None:
+        _validate_gemma4_moe_orchestration(self)
+        super().finalize()
+
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
-        """Configure and instantiate a Megatron Core Gemma 4 model.
-
-        Replaces the model's embedding and RoPE with customized Gemma 4 variants
-        that handle embedding scaling and dual local/global RoPE.
-        """
+        """Configure and instantiate a Megatron Core Gemma 4 MoE model."""
         rotary_base_local, rotary_base_global = self.rotary_base
-        # Trick megatron's RotaryEmbedding to initialize the model successfully
         self.rotary_base = rotary_base_local
-        model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
-        self.rotary_base = (rotary_base_local, rotary_base_global)
+        try:
+            model = super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        finally:
+            self.rotary_base = (rotary_base_local, rotary_base_global)
 
-        # Replace embedding with Gemma-style scaling (sqrt(hidden_size))
         if hasattr(model, "embedding"):
             model.embedding = Gemma3LanguageModelEmbedding(
                 config=self,
@@ -160,7 +351,6 @@ class Gemma4ModelProvider(GPTModelProvider):
                 scatter_to_sequence_parallel=self.scatter_embedding_sequence_parallel,
             )
 
-        # Replace RoPE with dual local/global variant
         model.rotary_pos_emb = Gemma4RotaryEmbedding(
             kv_channels=self.kv_channels,
             rotary_percent=1.0,
@@ -174,18 +364,20 @@ class Gemma4ModelProvider(GPTModelProvider):
             global_rotary_percent=self.global_rotary_percent,
         )
 
-        # Apply final_logit_softcapping to output layer
-        if hasattr(model, "output_layer") and self.final_logit_softcapping:
+        if (
+            hasattr(model, "output_layer")
+            and self.final_logit_softcapping is not None
+            and not isinstance(model.output_layer, Gemma4OutputLayer)
+        ):
             extend_instance(model.output_layer, Gemma4OutputLayer)
 
         if hasattr(model, "embedding") or hasattr(model, "output_layer"):
             model.setup_embeddings_and_output_layer()
 
-        # Tie K=V in global attention layers so fine-tuning preserves the
-        # K=V constraint that the HF checkpoint relies on.
         _install_tied_kv(model, self)
 
         return model
+<<<<<<< HEAD
 
 
 class Gemma4TransformerLayer(TransformerLayer):
@@ -712,3 +904,5 @@ class Gemma4RotaryEmbedding(RotaryEmbedding):
         rope_global = super().forward(max_seq_len, offset, packed_seq, None)
         rope_local = self.rope_local.forward(max_seq_len, offset, packed_seq, None)
         return (rope_local, rope_global)
+=======
+>>>>>>> upstream/main

@@ -9,10 +9,16 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to enable, validate, and troubleshoot CUDA graph capture in Megatron Bridge training workloads, reducing host-driver overhead for improved GPU throughput on static-shape pretraining runs. <br>
+Developers and engineers reducing host-driver overhead via CUDA graphs in Megatron Bridge GPU training workloads, or tracing crashes and regressions to CUDA graph configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
@@ -20,18 +26,24 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [CUDA Graphs Training Documentation](docs/training/cuda-graphs.md) <br>
-- [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Activation Recomputation Documentation](docs/training/activation-recomputation.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands, Analysis] <br>
-**Output Format:** [Markdown with inline code blocks] <br>
+**Output Type(s):** [Configuration instructions, Analysis, Shell commands] <br>
+**Output Format:** [Markdown with inline Python and bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
+## Evaluation Agents Used: <br>
+- `claude-code` <br>
+- `codex` <br>
+
+
+
 ## Evaluation Tasks: <br>
-Evaluated through NVSkills-Eval 3-Tier validation (external profile, 2026-05-29). Tier 1 static validation and Tier 2 deduplication completed; Tier 3 live agent evaluation not available. <br>
+Evaluated against 1 task in the NVSkills-Eval external profile (astra-sandbox environment, 1 attempt per task, 50% pass threshold). Overall verdict: PASS. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -41,17 +53,28 @@ Reported benchmark dimensions: <br>
 - Effectiveness: Checks whether the agent performs measurably better with the skill than without it. <br>
 - Efficiency: Checks whether the agent uses fewer tokens and avoids redundant work. <br>
 
+Underlying evaluation signals used in this run: <br>
+- `security`: Checks for unsafe operations, secret leakage, and unauthorized access. <br>
+- `skill_execution`: Verifies that the agent loaded the expected skill and workflow. <br>
+- `skill_efficiency`: Checks routing quality, decoy avoidance, and redundant tool usage. <br>
+- `accuracy`: Grades final-answer correctness against the reference answer. <br>
+- `goal_accuracy`: Checks whether the overall user task completed successfully. <br>
+- `behavior_check`: Verifies expected behavior steps, including safety expectations. <br>
+- `token_efficiency`: Compares token usage with and without the skill. <br>
+
 
 
 ## Evaluation Results: <br>
-| Tier | Checks | Findings | Status |
-|---|---:|---:|---|
-| Tier 1 (Static Validation) | 9 | 13 | FAIL |
-| Tier 2 (Deduplication) | 2 | 0 | PASS |
-| Tier 3 (Live Agent) | — | — | Not available |
+| Dimension | Num | `claude-code` | `codex` |
+|---|---:|---:|---:|
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+90%) | 97% (+25%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+60%) |
+| Effectiveness | 1 | 98% (+88%) | 92% (+2%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+53%) |
 
 ## Skill Version(s): <br>
-67b6ae5d (source: git SHA, committed 2026-05-28) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

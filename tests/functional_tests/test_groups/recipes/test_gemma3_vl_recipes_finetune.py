@@ -37,7 +37,7 @@ GEMMA3_VL_FINETUNE_PACKED_RECIPES = [
         gemma3_vl_4b_sft_config,
         "gemma3_vl_4b_sft_packed",
         {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1, "num_layers": 2},
-        {"pack_sequences_in_batch": True},
+        {"enable_in_batch_packing": True},
     ),
 ]
 

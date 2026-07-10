@@ -11,10 +11,12 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# ruff: noqa: F401
+"""Compatibility aliases for legacy recipe names."""
 
-import torch
-from megatron.core.quantization.quant_config import RecipeConfig
+from __future__ import annotations
 
+<<<<<<< HEAD
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     deepseek_v4_supports_blackwell_fused_kernels,
@@ -25,12 +27,33 @@ from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
+=======
+from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
+    set_deepseek_v4_pipeline_model_parallel_layout,
 )
-from megatron.bridge.training.comm_overlap import CommOverlapConfig
-from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import bf16_mixed, bf16_with_mxfp8_mixed
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    DEEPSEEK_V4_FLASH_HF_PATH,
+    _deepseek_v4_mxfp8_quant_recipe,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config as deepseek_v4_flash_no_mtp_sft_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_32gpu_h100_bf16_config as deepseek_v4_flash_pretrain_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config as deepseek_v4_flash_pretrain_muon_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config as deepseek_v4_flash_pretrain_mxfp8_config,
+)
+from megatron.bridge.recipes.deepseek.h100.deepseek_v4 import (
+    deepseek_v4_flash_sft_32gpu_h100_bf16_config as deepseek_v4_flash_sft_config,
+>>>>>>> upstream/main
+)
 
 
+<<<<<<< HEAD
 def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
     """Use MXFP8 for training and BF16 for DSv4 validation/evaluation paths."""
     return RecipeConfig.from_config_dict(
@@ -433,3 +456,14 @@ def deepseek_v4_flash_no_mtp_sft_config(hf_path: str = DEEPSEEK_V4_FLASH_HF_PATH
 # (fp8 x hash-MoE / ClampedSwiGLU numerics) and Muon hits an iter-2 assertion (Muon + expert
 # parallelism not yet supported upstream). Both are upstream blockers tracked in README Blockers;
 # the pretrain MXFP8/Muon recipes remain. SFT ships Adam/bf16 (validated).
+=======
+__all__ = [
+    "deepseek_v4_flash_no_mtp_sft_config",
+    "deepseek_v4_flash_pretrain_config",
+    "deepseek_v4_flash_pretrain_muon_config",
+    "deepseek_v4_flash_pretrain_mxfp8_config",
+    "deepseek_v4_flash_sft_config",
+    "DEEPSEEK_V4_FLASH_HF_PATH",
+    "set_deepseek_v4_pipeline_model_parallel_layout",
+]
+>>>>>>> upstream/main

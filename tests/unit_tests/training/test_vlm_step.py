@@ -15,12 +15,11 @@
 import pytest
 import torch
 
-from megatron.bridge.training.utils.visual_inputs import Qwen2_5_VLVisualInputs
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 from megatron.bridge.training.vlm_step import (
     forward_step,
     get_batch,
     get_batch_from_iterator,
-    pack_batch_sequences,
 )
 
 
@@ -39,6 +38,15 @@ class _Iterator:
         return self.batch
 
 
+class _NoCudaTensor(torch.Tensor):
+    def cuda(self, non_blocking=False):  # type: ignore[override]
+        return self
+
+
+def _as_nocuda(tensor):
+    return tensor.as_subclass(_NoCudaTensor)
+
+
 def _make_batch(device="cpu"):
     # Minimal text tensors
     tokens = torch.tensor([[1, 2, 3]], device=device)
@@ -51,7 +59,7 @@ def _make_batch(device="cpu"):
     # Visual inputs container
     pixel_values = torch.randn(1, 2, 3, 4, 4, device=device)
     image_grid_thw = torch.tensor([[[1, 2, 2], [1, 2, 2]]], device=device)
-    vi = Qwen2_5_VLVisualInputs(pixel_values=pixel_values, image_grid_thw=image_grid_thw)
+    vi = GenericVisualInputs(pixel_values=pixel_values, image_grid_thw=image_grid_thw)
 
     batch = {
         "tokens": tokens,
@@ -63,6 +71,64 @@ def _make_batch(device="cpu"):
         "visual_inputs": vi,
     }
     return batch
+
+
+def _make_forward_step_state():
+    class _Timer:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def start(self):
+            return self
+
+        def stop(self):
+            return self
+
+    class _StragglerTimer:
+        def __call__(self, *args, **kwargs):  # noqa: ARG002
+            return self
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):  # noqa: ARG002
+            return False
+
+    cfg = type(
+        "Cfg",
+        (),
+        {
+            "model": type("M", (), {"seq_length": 16, "pipeline_model_parallel_size": 1})(),
+            "dataset": type("D", (), {"skip_getting_attention_mask_from_dataset": True})(),
+            "rerun_state_machine": type("R", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False})(),
+        },
+    )()
+    return type("State", (), {"cfg": cfg, "timers": _Timer(), "straggler_timer": _StragglerTimer()})()
+
+
+def _patch_forward_step_deps(monkeypatch, model):
+    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, non_blocking=False: self)
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.get_model_config", lambda _: model.config, raising=True)
+    monkeypatch.setattr(
+        "megatron.bridge.training.vlm_step.get_pg_collection", lambda _: model.pg_collection, raising=True
+    )
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.is_pp_first_stage", lambda _: True, raising=True)
+    monkeypatch.setattr("megatron.bridge.training.vlm_step.is_pp_last_stage", lambda _: True, raising=True)
+
+
+def _make_visual_forward_batch():
+    return {
+        "input_ids": torch.tensor([[1, 2, 3, 4]]),
+        "labels": torch.tensor([[2, 3, 4, -100]]),
+        "loss_mask": torch.ones(1, 4),
+        "position_ids": torch.arange(4).unsqueeze(0),
+        "attention_mask": torch.ones(1, 4, dtype=torch.bool),
+        "visual_inputs": GenericVisualInputs(
+            pixel_values=torch.randn(1, 3, 4, 4),
+            image_position_ids=torch.zeros(1, 4, 2, dtype=torch.long),
+            mm_token_type_ids=torch.ones(1, 4, dtype=torch.long),
+        ),
+    }
 
 
 def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
@@ -93,9 +159,60 @@ def test_get_batch_from_iterator_moves_visual_inputs_to_cuda(monkeypatch):
 
     assert "visual_inputs" in out
     out_vi = out["visual_inputs"]
-    assert isinstance(out_vi, Qwen2_5_VLVisualInputs)
+    assert isinstance(out_vi, GenericVisualInputs)
     # Verify fields are preserved
     assert out_vi.pixel_values is not None and out_vi.image_grid_thw is not None
+
+
+def test_get_batch_from_iterator_projects_visual_payload_on_middle_pp_stage():
+    batch = _make_batch()
+    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
+        batch[key] = _as_nocuda(batch[key])
+    vi = batch["visual_inputs"]
+    original_pixel_values = vi.pixel_values
+    vi.pixel_values = _as_nocuda(vi.pixel_values)
+    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=False,
+        is_last_pp_stage=False,
+    )
+
+    out_vi = out["visual_inputs"]
+    assert isinstance(out_vi, GenericVisualInputs)
+    assert out_vi.pixel_values is None
+    assert out_vi.image_grid_thw is not None
+    assert vi.pixel_values is not None
+    assert vi.pixel_values.shape == original_pixel_values.shape
+    # Token and position IDs stay available to every PP stage.
+    assert out["input_ids"] is not None
+
+
+def test_get_batch_from_iterator_keeps_input_ids_with_multiaxis_position_ids():
+    batch = _make_batch()
+    batch["position_ids"] = torch.arange(3).view(1, 1, 3).expand(3, 1, -1).clone()
+    for key in ["tokens", "input_ids", "position_ids", "labels", "loss_mask", "attention_mask"]:
+        batch[key] = _as_nocuda(batch[key])
+    vi = batch["visual_inputs"]
+    vi.pixel_values = _as_nocuda(vi.pixel_values)
+    vi.image_grid_thw = _as_nocuda(vi.image_grid_thw)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=False,
+        is_last_pp_stage=False,
+    )
+
+    assert out["tokens"] is not None
+    assert out["input_ids"] is not None
+    assert out["position_ids"].shape == (3, 1, 3)
+    assert out["visual_inputs"].pixel_values is None
+    assert out["visual_inputs"].image_grid_thw is not None
 
 
 class _MockProcessGroup:
@@ -123,7 +240,133 @@ class _MockPGCollection:
         return pg
 
 
-def test_get_batch_padding_paths(monkeypatch):
+class _ForwardModelBase(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.config = type("C", (), {"mtp_num_layers": 0, "overlap_moe_expert_parallel_comm": False})()
+        self.pg_collection = _MockPGCollection()
+        self.received_kwargs = None
+
+
+class _ForwardWrapper(torch.nn.Module):
+    def __init__(self, module):
+        super().__init__()
+        self.module = module
+        self.config = module.config
+        self.pg_collection = module.pg_collection
+
+    def forward(self, *args, **kwargs):
+        return self.module(*args, **kwargs)
+
+
+class _Gemma4LikeForwardModel(_ForwardModelBase):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        attention_mask=None,
+        labels=None,
+        loss_mask=None,
+        pixel_values=None,
+        image_position_ids=None,
+    ):
+        self.received_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "pixel_values": pixel_values,
+            "image_position_ids": image_position_ids,
+        }
+        return torch.tensor(0.0)
+
+
+class _MmTokenTypeForwardModel(_ForwardModelBase):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        attention_mask=None,
+        labels=None,
+        loss_mask=None,
+        pixel_values=None,
+        image_position_ids=None,
+        mm_token_type_ids=None,
+    ):
+        self.received_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "pixel_values": pixel_values,
+            "image_position_ids": image_position_ids,
+            "mm_token_type_ids": mm_token_type_ids,
+        }
+        return torch.tensor(0.0)
+
+
+class _PackedForwardModel(_ForwardModelBase):
+    def forward(
+        self,
+        input_ids=None,
+        position_ids=None,
+        attention_mask=None,
+        labels=None,
+        loss_mask=None,
+        packed_seq_params=None,
+    ):
+        self.received_kwargs = {
+            "input_ids": input_ids,
+            "position_ids": position_ids,
+            "attention_mask": attention_mask,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "packed_seq_params": packed_seq_params,
+        }
+        return torch.tensor(0.0)
+
+
+def test_forward_step_filters_unsupported_visual_kwargs(monkeypatch):
+    inner_model = _Gemma4LikeForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+
+    output, _ = forward_step(_make_forward_step_state(), _Iterator(_make_visual_forward_batch()), model)
+
+    assert output.item() == 0.0
+    assert inner_model.received_kwargs is not None
+    assert inner_model.received_kwargs["pixel_values"] is not None
+    assert inner_model.received_kwargs["image_position_ids"] is not None
+    assert "mm_token_type_ids" not in inner_model.received_kwargs
+
+
+def test_forward_step_preserves_supported_mm_token_type_ids(monkeypatch):
+    inner_model = _MmTokenTypeForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+
+    output, _ = forward_step(_make_forward_step_state(), _Iterator(_make_visual_forward_batch()), model)
+
+    assert output.item() == 0.0
+    assert inner_model.received_kwargs is not None
+    assert inner_model.received_kwargs["mm_token_type_ids"] is not None
+
+
+def test_forward_step_rejects_deferred_in_batch_packing(monkeypatch):
+    inner_model = _PackedForwardModel()
+    model = _ForwardWrapper(inner_model)
+    _patch_forward_step_deps(monkeypatch, model)
+    state = _make_forward_step_state()
+    state.cfg.dataset.enable_in_batch_packing = True
+    state.cfg.dataset.defer_in_batch_packing_to_step = True
+
+    with pytest.raises(ValueError, match="requires collate-time in-batch packing"):
+        forward_step(state, _Iterator(_make_visual_forward_batch()), model)
+
+
+def test_get_batch_consumes_collated_sequence_shape(monkeypatch):
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
@@ -151,9 +394,10 @@ def test_get_batch_padding_paths(monkeypatch):
     )()  # noqa: E501
     cfg.dataset = type("D", (), {"skip_getting_attention_mask_from_dataset": True})()
 
-    # Make batch shorter than 128 to trigger ceil-to-128 padding path
+    # The collate layer is now responsible for padding/truncation, so get_batch
+    # should preserve the incoming sequence length.
     short_tokens = torch.tensor([[1, 2, 3, 4]])
-    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
         "input_ids": short_tokens,
         "labels": torch.tensor([[2, 3, 4, -100]]),
@@ -169,15 +413,14 @@ def test_get_batch_padding_paths(monkeypatch):
     tokens, labels, loss_mask, attention_mask, position_ids, *_ = get_batch(
         it, cfg, use_mtp=False, pg_collection=_MockPGCollection()
     )
-    # Length padded up to min(seq_cap, ceil_to_128(4)) == 32
-    assert tokens.shape[1] == 32
-    assert labels.shape[1] == 32
-    assert loss_mask.shape[1] == 32
-    assert position_ids.shape[1] == 32
+    assert tokens.shape[1] == 4
+    assert labels.shape[1] == 4
+    assert loss_mask.shape[1] == 4
+    assert position_ids.shape[1] == 4
 
 
-def test_get_batch_enable_packing_path(monkeypatch):
-    """Test get_batch with pack_sequences_in_batch=True (enable_packing path)."""
+def test_get_batch_consumes_collated_packed_metadata(monkeypatch):
+    """Test get_batch with collate-provided packed-sequence metadata."""
     # Simulate both first and last pipeline stages so tensors are returned
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
@@ -189,7 +432,6 @@ def test_get_batch_enable_packing_path(monkeypatch):
         raising=True,
     )
 
-    # Config with packing enabled
     cfg = type("Cfg", (), {})()
     cfg.model = type(
         "M",
@@ -204,40 +446,26 @@ def test_get_batch_enable_packing_path(monkeypatch):
         (),
         {
             "skip_getting_attention_mask_from_dataset": True,
-            "pack_sequences_in_batch": True,  # Enable packing
+            "enable_in_batch_packing": True,
         },
     )()
 
-    # Batch with 2 sequences of different lengths (with padding)
-    # Seq 1: [1, 2, 3, 0, 0, 0, 0, 0] - length 3
-    # Seq 2: [4, 5, 6, 7, 8, 0, 0, 0] - length 5
-    tokens = torch.tensor(
-        [
-            [1, 2, 3, 0, 0, 0, 0, 0],
-            [4, 5, 6, 7, 8, 0, 0, 0],
-        ]
-    )
-    labels = torch.tensor(
-        [
-            [2, 3, -100, -100, -100, -100, -100, -100],
-            [5, 6, 7, 8, -100, -100, -100, -100],
-        ]
-    )
-    loss_mask = torch.tensor(
-        [
-            [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            [1.0, 1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0],
-        ]
-    )
-    position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
+    labels = torch.tensor([[2, 3, -100, 5, 6, 7, 8, -100]])
+    loss_mask = torch.tensor([[1.0, 1.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]])
+    position_ids = torch.tensor([[0, 1, 2, 0, 1, 2, 3, 4]])
 
-    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
         "input_ids": tokens,
         "labels": labels,
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "attention_mask": None,
+        "cu_seqlens_q": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "cu_seqlens_kv": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "max_seqlen_q": torch.tensor(5, dtype=torch.int32),
+        "max_seqlen_kv": torch.tensor(5, dtype=torch.int32),
         "visual_inputs": vi,
     }
 
@@ -249,39 +477,27 @@ def test_get_batch_enable_packing_path(monkeypatch):
         out_loss_mask,
         out_attention_mask,
         out_position_ids,
-        cu_seqlens,
-        max_seqlen,
+        packed_seq_params,
         visual_inputs,
     ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection())
 
-    # Verify packing occurred
-    # With pad_to_multiple_of=1 (cp_size=1), total packed length = 3 + 5 = 8
-    assert out_tokens.shape == (1, 8), f"Expected packed shape (1, 8), got {out_tokens.shape}"
+    assert out_tokens.shape == (1, 8)
     assert out_labels.shape == (1, 8)
     assert out_loss_mask.shape == (1, 8)
     assert out_position_ids.shape == (1, 8)
-
-    # Verify cu_seqlens is populated (not None)
-    assert cu_seqlens is not None, "cu_seqlens should be set when packing is enabled"
-    assert cu_seqlens.tolist() == [0, 3, 8], f"Expected cu_seqlens [0, 3, 8], got {cu_seqlens.tolist()}"
-
-    # Verify max_seqlen
-    assert max_seqlen is not None, "max_seqlen should be set when packing is enabled"
-    assert max_seqlen.item() == 5, f"Expected max_seqlen 5, got {max_seqlen.item()}"
-
-    # Verify attention_mask is None for packed sequences
-    assert out_attention_mask is None, "attention_mask should be None for packed sequences"
-
-    # Verify packed tokens content
-    expected_tokens = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8]])
-    assert torch.equal(out_tokens.cpu(), expected_tokens), f"Expected {expected_tokens}, got {out_tokens}"
-
-    # Verify visual_inputs passed through
+    assert packed_seq_params["cu_seqlens_q"].tolist() == [0, 3, 8]
+    assert packed_seq_params["cu_seqlens_kv"].tolist() == [0, 3, 8]
+    assert packed_seq_params["max_seqlen_q"].item() == 5
+    assert packed_seq_params["max_seqlen_kv"].item() == 5
+    assert "cu_seqlens_argmin" not in packed_seq_params
+    assert "cu_seqlens_unpadded" not in packed_seq_params
+    assert out_attention_mask is None
+    assert torch.equal(out_tokens.cpu(), tokens)
     assert visual_inputs is not None
 
 
-def test_get_batch_enable_packing_with_cp(monkeypatch):
-    """Test get_batch packing with context parallelism (pad_to_multiple_of > 1)."""
+def test_get_batch_consumes_current_padded_cu_seqlens(monkeypatch):
+    """Test get_batch forwards collate-provided current padded cu-seqlens fields."""
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_first_stage", lambda pg: True, raising=True)
     monkeypatch.setattr("megatron.core.pipeline_parallel.utils.is_pp_last_stage", lambda pg: True, raising=True)
     monkeypatch.setattr(
@@ -297,29 +513,14 @@ def test_get_batch_enable_packing_with_cp(monkeypatch):
         (),
         {
             "skip_getting_attention_mask_from_dataset": True,
-            "pack_sequences_in_batch": True,
+            "enable_in_batch_packing": True,
         },
     )()
 
-    # Sequences: length 3 and length 5
-    # With CP=2, pad_to_multiple_of = 2*2 = 4
-    # Seq 1: 3 -> padded to 4
-    # Seq 2: 5 -> padded to 6
-    # Total: 4 + 6 = 10
-    tokens = torch.tensor(
-        [
-            [1, 2, 3, 0, 0, 0, 0, 0],
-            [4, 5, 6, 7, 8, 0, 0, 0],
-        ]
-    )
-    labels = torch.tensor(
-        [
-            [2, 3, -100, -100, -100, -100, -100, -100],
-            [5, 6, 7, 8, -100, -100, -100, -100],
-        ]
-    )
-    loss_mask = torch.ones_like(tokens, dtype=torch.float)
-    position_ids = torch.arange(8).unsqueeze(0).expand(2, -1).clone()
+    tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 7, 8, 0, 0, 0]])
+    labels = torch.full_like(tokens, -100)
+    loss_mask = torch.zeros_like(tokens, dtype=torch.float)
+    position_ids = torch.arange(12).unsqueeze(0)
 
     batch = {
         "input_ids": tokens,
@@ -327,22 +528,37 @@ def test_get_batch_enable_packing_with_cp(monkeypatch):
         "loss_mask": loss_mask,
         "position_ids": position_ids,
         "attention_mask": None,
+        "cu_seqlens_q": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "cu_seqlens_kv": torch.tensor([0, 3, 8], dtype=torch.int32),
+        "cu_seqlens_q_padded": torch.tensor([0, 4, 12], dtype=torch.int32),
+        "cu_seqlens_kv_padded": torch.tensor([0, 4, 12], dtype=torch.int32),
+        "max_seqlen_q": torch.tensor(8, dtype=torch.int32),
+        "max_seqlen_kv": torch.tensor(8, dtype=torch.int32),
         "visual_inputs": None,
     }
 
     it = _Iterator(batch)
 
-    # Use CP size of 2
-    out_tokens, out_labels, out_loss_mask, _, out_position_ids, cu_seqlens, max_seqlen, _ = get_batch(
-        it, cfg, use_mtp=False, pg_collection=_MockPGCollection(cp_size=2)
-    )
+    (
+        out_tokens,
+        out_labels,
+        out_loss_mask,
+        _,
+        out_position_ids,
+        packed_seq_params,
+        _,
+    ) = get_batch(it, cfg, use_mtp=False, pg_collection=_MockPGCollection(cp_size=2))
 
-    # With CP=2, pad_to_multiple_of = 4
-    # Seq 1: 3 -> 4, Seq 2: 5 -> 8 (next multiple of 4)
-    # Total: 4 + 8 = 12
-    assert out_tokens.shape[1] == 12, f"Expected packed length 12, got {out_tokens.shape[1]}"
-    assert cu_seqlens.tolist() == [0, 4, 12], f"Expected cu_seqlens [0, 4, 12], got {cu_seqlens.tolist()}"
-    assert max_seqlen.item() == 8, f"Expected max_seqlen 8, got {max_seqlen.item()}"
+    assert out_tokens.shape[1] == 12
+    assert out_labels.shape[1] == 12
+    assert out_loss_mask.shape[1] == 12
+    assert out_position_ids.shape[1] == 12
+    assert packed_seq_params["cu_seqlens_q"].tolist() == [0, 3, 8]
+    assert packed_seq_params["cu_seqlens_kv"].tolist() == [0, 3, 8]
+    assert packed_seq_params["cu_seqlens_q_padded"].tolist() == [0, 4, 12]
+    assert packed_seq_params["cu_seqlens_kv_padded"].tolist() == [0, 4, 12]
+    assert packed_seq_params["max_seqlen_q"].item() == 8
+    assert packed_seq_params["max_seqlen_kv"].item() == 8
 
 
 def test_forward_step_schedule_plan(monkeypatch):
@@ -423,7 +639,7 @@ def test_forward_step_schedule_plan(monkeypatch):
             self.straggler_timer = _Strag()
 
     # Reuse small iterator producing already-sized batch
-    vi = Qwen2_5_VLVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
+    vi = GenericVisualInputs(pixel_values=torch.randn(1, 1, 3, 4, 4), image_grid_thw=torch.tensor([[[1, 2, 2]]]))
     batch = {
         "input_ids": torch.tensor([[1, 2, 3, 4]]),
         "labels": torch.tensor([[2, 3, 4, -100]]),
@@ -452,467 +668,3 @@ def test_forward_step_schedule_plan(monkeypatch):
     # Execute schedule plan path
     plan, loss_fn = forward_step(state, it, model, return_schedule_plan=True)
     assert isinstance(plan, torch.Tensor)
-
-
-class TestPackBatchSequences:
-    """Tests for the pack_batch_sequences function."""
-
-    def test_basic_packing(self):
-        """Test basic sequence packing functionality."""
-        batch_size, seq_len = 2, 8
-        # Tokens with padding at the end (pad_token_id=0)
-        tokens = torch.tensor(
-            [
-                [1, 2, 3, 0, 0, 0, 0, 0],  # length 3
-                [4, 5, 6, 7, 0, 0, 0, 0],  # length 4
-            ]
-        )
-        labels = torch.tensor(
-            [
-                [2, 3, -100, -100, -100, -100, -100, -100],
-                [5, 6, 7, -100, -100, -100, -100, -100],
-            ]
-        )
-        loss_mask = torch.tensor(
-            [
-                [1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-                [1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0],
-            ]
-        )
-        position_ids = torch.arange(seq_len).unsqueeze(0).expand(batch_size, -1)
-        attention_mask = None
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=attention_mask,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        # Packed output should have shape [1, total_valid_len]
-        assert packed_tokens.shape[0] == 1
-        total_len = packed_tokens.shape[1]
-        assert total_len == 7  # 3 + 4
-
-        # cu_seqlens should have num_sequences + 1 elements
-        assert len(cu_seqlens) == 3  # [0, 3, 7]
-        assert cu_seqlens[0] == 0
-        assert cu_seqlens[1] == 3  # first sequence length
-        assert cu_seqlens[2] == 7  # total length
-
-        # max_seqlen should be max of sequence lengths
-        assert max_seqlen.item() == 4
-
-        # Attention mask should be None for packed sequences
-        assert packed_attn is None
-
-    def test_packing_with_pad_to_multiple_of(self):
-        """Test packing with padding to a multiple (for CP compatibility)."""
-        batch_size = 2
-        tokens = torch.tensor(
-            [
-                [1, 2, 3, 0, 0, 0, 0, 0, 0, 0],  # length 3 -> padded to 4 (mult of 2)
-                [4, 5, 6, 7, 8, 0, 0, 0, 0, 0],  # length 5 -> padded to 6 (mult of 2)
-            ]
-        )
-        labels = torch.tensor(
-            [
-                [2, 3, -100, -100, -100, -100, -100, -100, -100, -100],
-                [5, 6, 7, 8, -100, -100, -100, -100, -100, -100],
-            ]
-        )
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.arange(10).unsqueeze(0).expand(batch_size, -1)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=2,  # Pad each sequence to multiple of 2
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        # Total length should be 4 + 6 = 10 (padded lengths)
-        assert packed_tokens.shape[1] == 10
-
-        # cu_seqlens should use padded lengths
-        assert cu_seqlens[0] == 0
-        assert cu_seqlens[1] == 4  # 3 -> 4 (padded)
-        assert cu_seqlens[2] == 10  # 5 -> 6, total = 4 + 6
-
-        # max_seqlen should be 6 (longest padded sequence)
-        assert max_seqlen.item() == 6
-
-    def test_packing_with_larger_multiple(self):
-        """Test packing with larger pad_to_multiple_of (e.g., for CP=4)."""
-        tokens = torch.tensor(
-            [
-                [1, 2, 0, 0, 0, 0, 0, 0],  # length 2 -> padded to 4
-                [3, 4, 5, 0, 0, 0, 0, 0],  # length 3 -> padded to 4
-            ]
-        )
-        labels = torch.tensor(
-            [
-                [2, -100, -100, -100, -100, -100, -100, -100],
-                [4, 5, -100, -100, -100, -100, -100, -100],
-            ]
-        )
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=4,
-        )
-
-        packed_tokens, *_, cu_seqlens, max_seqlen = result
-
-        # Both sequences padded to 4, total = 8
-        assert packed_tokens.shape[1] == 8
-        assert cu_seqlens.tolist() == [0, 4, 8]
-        assert max_seqlen.item() == 4
-
-    def test_packing_single_sequence(self):
-        """Test packing a single sequence."""
-        tokens = torch.tensor([[1, 2, 3, 4, 5, 0, 0, 0]])  # length 5
-        labels = torch.tensor([[2, 3, 4, 5, -100, -100, -100, -100]])
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.arange(8).unsqueeze(0)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, *_, cu_seqlens, max_seqlen = result
-
-        assert packed_tokens.shape[1] == 5
-        assert cu_seqlens.tolist() == [0, 5]
-        assert max_seqlen.item() == 5
-
-    def test_packing_no_padding_sequences(self):
-        """Test packing sequences with no padding."""
-        tokens = torch.tensor(
-            [
-                [1, 2, 3, 4],
-                [5, 6, 7, 8],
-            ]
-        )
-        labels = torch.tensor(
-            [
-                [2, 3, 4, -100],
-                [6, 7, 8, -100],
-            ]
-        )
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.arange(4).unsqueeze(0).expand(2, -1)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, *_, cu_seqlens, max_seqlen = result
-
-        # Both sequences full length
-        assert packed_tokens.shape[1] == 8
-        assert cu_seqlens.tolist() == [0, 4, 8]
-
-    def test_packing_preserves_loss_mask_zeros(self):
-        """Test that loss_mask zeros are preserved during packing."""
-        tokens = torch.tensor([[1, 2, 3, 0, 0]])
-        labels = torch.tensor([[2, 3, -100, -100, -100]])
-        loss_mask = torch.tensor([[1.0, 0.0, 1.0, 0.0, 0.0]])  # Second token masked
-        position_ids = torch.arange(5).unsqueeze(0)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, *_ = result
-
-        # Only first 3 tokens should be kept
-        assert packed_loss_mask.shape[1] == 3
-        assert packed_loss_mask[0, 0].item() == 1.0
-        assert packed_loss_mask[0, 1].item() == 0.0  # Preserved
-        assert packed_loss_mask[0, 2].item() == 1.0
-
-    def test_packing_position_ids_reset(self):
-        """Test that position_ids are correctly packed."""
-        tokens = torch.tensor(
-            [
-                [1, 2, 0, 0],
-                [3, 4, 5, 0],
-            ]
-        )
-        labels = torch.zeros_like(tokens)
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.tensor(
-            [
-                [0, 1, 2, 3],
-                [0, 1, 2, 3],
-            ]
-        )
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        _, _, _, _, packed_pos, *_ = result
-
-        # Position IDs should be extracted from original sequences
-        assert packed_pos.shape[1] == 5  # 2 + 3
-        assert packed_pos[0, 0].item() == 0  # First seq, pos 0
-        assert packed_pos[0, 1].item() == 1  # First seq, pos 1
-        assert packed_pos[0, 2].item() == 0  # Second seq, pos 0
-        assert packed_pos[0, 3].item() == 1  # Second seq, pos 1
-        assert packed_pos[0, 4].item() == 2  # Second seq, pos 2
-
-    def test_packing_empty_batch_warning(self, caplog):
-        """Test that all-padding batch returns empty tensors with warning."""
-        tokens = torch.tensor([[0, 0, 0, 0]])  # All padding
-        labels = torch.tensor([[-100, -100, -100, -100]])
-        loss_mask = torch.zeros(1, 4)
-        position_ids = torch.arange(4).unsqueeze(0)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        # No valid sequences found, should return empty tensors
-        assert packed_tokens.shape == (1, 0)
-        assert packed_labels.shape == (1, 0)
-        assert packed_loss_mask.shape == (1, 0)
-        assert packed_pos.shape == (1, 0)
-        # cu_seqlens should have just [0] for empty batch
-        assert len(cu_seqlens) == 1
-        assert cu_seqlens[0].item() == 0
-        assert max_seqlen.item() == 0
-
-    def test_packing_different_dtypes(self):
-        """Test packing with different tensor dtypes."""
-        tokens = torch.tensor([[1, 2, 3, 0]], dtype=torch.long)
-        labels = torch.tensor([[2, 3, -100, -100]], dtype=torch.long)
-        loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0]], dtype=torch.float32)
-        position_ids = torch.tensor([[0, 1, 2, 3]], dtype=torch.long)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, _, packed_pos, cu_seqlens, _ = result
-
-        # Dtypes should be preserved
-        assert packed_tokens.dtype == torch.long
-        assert packed_labels.dtype == torch.long
-        assert packed_loss_mask.dtype == torch.float32
-        assert packed_pos.dtype == torch.long
-        assert cu_seqlens.dtype == torch.int32
-
-    def test_packing_padding_extends_position_ids(self):
-        """Test that padding extends position_ids correctly."""
-        tokens = torch.tensor([[1, 2, 3, 0]])  # length 3
-        labels = torch.zeros_like(tokens)
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.tensor([[0, 1, 2, 3]])
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=4,  # Pad to 4
-        )
-
-        _, _, _, _, packed_pos, cu_seqlens, _ = result
-
-        # Length should be 4 (padded)
-        assert packed_pos.shape[1] == 4
-
-        # Original positions should be preserved
-        assert packed_pos[0, 0].item() == 0
-        assert packed_pos[0, 1].item() == 1
-        assert packed_pos[0, 2].item() == 2
-        # Padding position should be extended
-        assert packed_pos[0, 3].item() == 3
-
-    def test_packing_cu_seqlens_dtype(self):
-        """Test that cu_seqlens is int32 as expected by attention kernels."""
-        tokens = torch.tensor([[1, 2, 0]])
-        labels = torch.zeros_like(tokens)
-        loss_mask = torch.ones_like(tokens, dtype=torch.float)
-        position_ids = torch.arange(3).unsqueeze(0)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-        )
-
-        _, _, _, _, _, cu_seqlens, _ = result
-
-        assert cu_seqlens.dtype == torch.int32
-
-    def test_packing_none_labels_loss_mask(self):
-        """Test packing with labels=None and loss_mask=None (non-last PP stage)."""
-        tokens = torch.tensor(
-            [
-                [1, 2, 3, 0, 0, 0, 0, 0],  # length 3
-                [4, 5, 6, 7, 0, 0, 0, 0],  # length 4
-            ]
-        )
-        position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=None,
-            loss_mask=None,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        assert packed_tokens.shape == (1, 7)
-        assert torch.equal(packed_tokens, torch.tensor([[1, 2, 3, 4, 5, 6, 7]]))
-        assert packed_labels is None
-        assert packed_loss_mask is None
-        assert packed_attn is None
-        assert packed_pos.shape == (1, 7)
-        assert torch.equal(packed_pos, torch.tensor([[0, 1, 2, 0, 1, 2, 3]]))
-        assert cu_seqlens.tolist() == [0, 3, 7]
-        assert max_seqlen.item() == 4
-
-    def test_packing_none_labels_loss_mask_with_padding(self):
-        """Test packing with None labels/loss_mask and pad_to_multiple_of > 1."""
-        tokens = torch.tensor(
-            [
-                [1, 2, 3, 0, 0, 0, 0, 0],  # length 3 -> padded to 4
-                [4, 5, 6, 7, 8, 0, 0, 0],  # length 5 -> padded to 8
-            ]
-        )
-        position_ids = torch.arange(8).unsqueeze(0).expand(2, -1)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=None,
-            loss_mask=None,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=4,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        assert packed_tokens.shape == (1, 12)
-        assert packed_labels is None
-        assert packed_loss_mask is None
-        assert packed_attn is None
-        assert cu_seqlens.tolist() == [0, 4, 12]
-        assert max_seqlen.item() == 8
-
-    def test_packing_none_labels_empty_batch(self, caplog):
-        """Test empty batch with None labels/loss_mask returns None for those fields."""
-        tokens = torch.tensor([[0, 0, 0, 0]])
-        position_ids = torch.arange(4).unsqueeze(0)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=None,
-            loss_mask=None,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-            pad_to_multiple_of=1,
-        )
-
-        packed_tokens, packed_labels, packed_loss_mask, packed_attn, packed_pos, cu_seqlens, max_seqlen = result
-
-        assert packed_tokens.shape == (1, 0)
-        assert packed_labels is None
-        assert packed_loss_mask is None
-        assert packed_pos.shape == (1, 0)
-        assert cu_seqlens.tolist() == [0]
-        assert max_seqlen.item() == 0
-
-    def test_packing_gpu_tensor(self):
-        """Test packing works on GPU if available."""
-        if not torch.cuda.is_available():
-            pytest.skip("CUDA not available")
-
-        tokens = torch.tensor([[1, 2, 3, 0, 0]], device="cuda")
-        labels = torch.tensor([[2, 3, -100, -100, -100]], device="cuda")
-        loss_mask = torch.ones_like(tokens, dtype=torch.float, device="cuda")
-        position_ids = torch.arange(5, device="cuda").unsqueeze(0)
-
-        result = pack_batch_sequences(
-            tokens=tokens,
-            labels=labels,
-            loss_mask=loss_mask,
-            attention_mask=None,
-            position_ids=position_ids,
-            pad_token_id=0,
-        )
-
-        packed_tokens, _, _, _, _, cu_seqlens, _ = result
-
-        assert packed_tokens.device.type == "cuda"
-        assert cu_seqlens.device.type == "cuda"

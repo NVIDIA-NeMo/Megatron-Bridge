@@ -4,8 +4,13 @@
 import pytest
 import torch
 
+<<<<<<< HEAD
 from megatron.bridge.data.megatron_mimo.mock_provider import MockMegatronMIMOProvider
 from megatron.bridge.training.config import DatasetBuildContext
+=======
+from megatron.bridge.data.base import DatasetBuildContext
+from megatron.bridge.data.megatron_mimo.mock_provider import MockMegatronMIMOProvider
+>>>>>>> upstream/main
 
 
 class DummyProcessor:

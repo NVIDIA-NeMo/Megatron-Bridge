@@ -18,6 +18,26 @@ config, adjust parallelism, and avoid common pitfalls.
 3. Recommend the recipe function name + entry-point command.
 4. Provide adjustment advice (parallelism resizing, batch tuning, pitfalls).
 
+## First Answer Checklist
+
+When recommending recipes, always include these distinctions before the long
+index details:
+
+1. **Library recipes** under `src/megatron/bridge/recipes/` are for functional
+   training and use `scripts/training/run_recipe.py`.
+2. **Performance recipes** under `scripts/performance/` are for upper-bound
+   throughput benchmarks. They use mock data and should not be presented as
+   production training recipes.
+3. For a first-time Bridge smoke test, recommend `llama3_8b_sft_config` with
+   mock data via `--dataset llm-pretrain-mock`. Do not use `llm-finetune` for
+   the setup-only tryout unless the user specifically asks for an SFT data path.
+4. For normal SFT recommendations, use `--dataset llm-finetune`; for pretrain
+   and mock validation recommendations, use `--dataset llm-pretrain-mock`.
+5. After the recipe and dataset, give the required resizing rules: TP must
+   divide `num_key_value_heads`, keep TP within one node unless using
+   NVL72-class interconnect, enable SP when TP > 1, configure CP for long
+   context, DP is implicit, and reduce `micro_batch_size` first on OOM.
+
 ---
 
 ## Entry Points
@@ -53,22 +73,19 @@ python scripts/performance/run_script.py \
     --data mock
 ```
 
-> **Perf recipes are NOT fully validated for correctness.** Most conversations
-> and testing were on mock data. They are designed for **upper-bound throughput
-> measurement**, not production training. Always validate loss curves and
-> convergence independently.
+See the Performance Recipe Index for important caveats before using these for anything beyond throughput benchmarking.
 
 ---
 
-## Recipe Unification (Coming Soon — PR #2803)
+## Perf Recipe Layout
 
-PR [#2803](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/2803) is
-unifying performance recipes into the same **Python function** format used by
-library recipes. Key changes:
+Performance recipes use the same **Python function** format as library recipes,
+but live in a dedicated namespace for throughput benchmarking:
 
-- Perf recipes move from `scripts/performance/configs/` → `src/megatron/bridge/recipes/<family>/<model>_perf.py`
-- Each perf recipe becomes a **self-contained Python function** (e.g. `llama3_8b_h100_bf16_pretrain_config()`)
-- The old `WorkloadBaseConfig` → `set_workload_base_configs` → `get_perf_optimized_recipe` pipeline is removed
+- Perf recipes live in `src/megatron/bridge/perf_recipes/<family>/<hardware>/<model>.py`
+- Each perf recipe is a **self-contained Python function** (e.g. `llama3_8b_pretrain_8gpu_h100_bf16_config()`)
+- Recipe names encode model, task, GPU count, hardware, precision, and optional variant
+- `scripts/performance/utils/utils.py` derives compatibility `WorkloadBaseConfig` views from the flat recipe itself
 - Shared helpers: `_benchmark_common()` (50 iters, timing, TE RNG), `_perf_precision()` (bf16 / fp8_cs / fp8_mx / nvfp4)
 
 **Why Python, not YAML?** Previous YAML-based approaches had problems:
@@ -76,8 +93,8 @@ recipe logic was split across multiple indirection layers, configs were not
 self-contained, and the two-level pipeline made maintenance and debugging
 difficult. Python functions are explicit, greppable, and composable.
 
-After #2803 lands, both library and perf recipes will be invocable through the
-same `run_recipe.py` entry point.
+The training launcher can invoke both library recipes and perf recipes without
+the removed legacy config package.
 
 ---
 
@@ -213,8 +230,10 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 ## Performance Recipe Index
 
-All perf recipes live under `scripts/performance/`. They are invoked via
-`run_script.py` and use `WorkloadBaseConfig` presets per GPU type.
+Perf recipe source lives under `src/megatron/bridge/perf_recipes/`. The
+performance launcher in `scripts/performance/` resolves those flat recipe names
+and derives compatibility workload views from the selected flat recipe when
+legacy helper paths still need them.
 
 > **Important:** Perf recipes are designed for **upper-bound throughput
 > benchmarks**, not production training. They run **50 iterations** on **mock
@@ -411,7 +430,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Recipe `__init__.py` (all exports) | `src/megatron/bridge/recipes/__init__.py` |
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
-| Perf recipes root | `scripts/performance/` |
+| Perf recipes root | `src/megatron/bridge/perf_recipes/` |
 | Perf entry point | `scripts/performance/run_script.py` |
-| Perf workload configs | `scripts/performance/configs/<family>/` |
+| Perf recipe helpers | `scripts/performance/utils/utils.py` |
 | Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |

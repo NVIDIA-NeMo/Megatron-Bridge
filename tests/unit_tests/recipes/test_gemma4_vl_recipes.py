@@ -18,6 +18,11 @@ import importlib
 
 import pytest
 
+<<<<<<< HEAD
+=======
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
+>>>>>>> upstream/main
 
 _gemma4_vl_module = importlib.import_module("megatron.bridge.recipes.gemma4_vl.gemma4_vl")
 
@@ -42,7 +47,11 @@ class _FakeAutoBridge:
 
 def test_gemma4_vl_sft_uses_long_distributed_timeout(monkeypatch: pytest.MonkeyPatch):
     """Full Gemma 4 VL SFT should allow long checkpoint-save finalization."""
+<<<<<<< HEAD
     monkeypatch.setattr(_gemma4_vl_module, "AutoBridge", _FakeAutoBridge)
+=======
+    patch_recipe_module_global(monkeypatch, _gemma4_vl_module, "AutoBridge", _FakeAutoBridge)
+>>>>>>> upstream/main
 
     cfg = _gemma4_vl_module.gemma4_vl_26b_sft_config()
 
