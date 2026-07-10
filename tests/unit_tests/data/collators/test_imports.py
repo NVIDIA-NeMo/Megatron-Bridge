@@ -30,6 +30,7 @@ MODEL_COLLATE_MODULES = [
     "megatron.bridge.models.nemotron_omni.data.collate_fn",
     "megatron.bridge.models.nemotron_vl.data.collate_fn",
     "megatron.bridge.models.qwen_audio.data.collate_fn",
+    "megatron.bridge.models.qwen_omni.data.collate_fn",
     "megatron.bridge.models.qwen_vl.data.collate_fn",
 ]
 

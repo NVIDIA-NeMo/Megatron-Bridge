@@ -23,6 +23,10 @@ from typing import Any
 _MODEL_COLLATE_SPECS = {
     "Qwen2_5_VLProcessor": ("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen2_5_collate_fn"),
     "Qwen3VLProcessor": ("megatron.bridge.models.qwen_vl.data.collate_fn", "qwen2_5_collate_fn"),
+    "Qwen3OmniMoeProcessor": (
+        "megatron.bridge.models.qwen_omni.data.collate_fn",
+        "qwen3_omni_collate_fn",
+    ),
     "NemotronNanoVLV2Processor": (
         "megatron.bridge.models.nemotron_vl.data.collate_fn",
         "nemotron_nano_v2_vl_collate_fn",

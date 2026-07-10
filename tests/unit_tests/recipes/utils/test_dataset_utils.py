@@ -24,6 +24,7 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     get_blend_fields_from_data_paths,
     infer_mode_from_dataset,
 )
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 @pytest.mark.unit
@@ -437,6 +438,25 @@ class TestApplyDatasetOverride:
         assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
         assert result.dataset.seq_length == 4096
         assert result.dataset.source.dataset_name == "cord_v2"
+
+    def test_vlm_hf_accepts_tutorial_json_source_overrides(self):
+        config = _make_mock_config()
+        result = apply_dataset_override(config, "vlm-hf", seq_length=1024)
+
+        process_config_with_overrides(
+            result.dataset,
+            cli_overrides=[
+                "source.dataset_name=null",
+                "source.path_or_dataset=json",
+                "source.split=train",
+                "source.load_kwargs={data_files:{train:/tmp/training.jsonl}}",
+            ],
+        )
+
+        assert result.dataset.seq_length == 1024
+        assert result.model.seq_length == 1024
+        assert result.dataset.source.path_or_dataset == "json"
+        assert result.dataset.source.load_kwargs == {"data_files": {"train": "/tmp/training.jsonl"}}
 
     # -- Unknown type ---------------------------------------------------------
 

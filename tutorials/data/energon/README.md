@@ -134,7 +134,8 @@ Common field mappings are:
 | --- | --- | --- |
 | one decoded image | one `{"type": "image"}` | `imgs: image.jpg` or `image.png` |
 | pickled list of image bytes | matching image parts/placeholders | `imgs: jpgs` |
-| decoded video frames | one `{"type": "video"}` | `videos: video.mp4` or the dataset's video field |
+| Qwen/generic video frames, pickled as a list of videos containing encoded JPEG frames | one `{"type": "video"}` per video | `videos: videos` or `videos: mp4s`; Bridge's `videohandler` decodes the frames |
+| raw MP4 bytes for `NemotronOmniTaskEncoder` | one `{"type": "video"}` | `videos: video.mp4`; the model-specific encoder decodes the MP4 |
 | audio bytes | model-specific audio content | `audio: audio.wav` |
 
 For a real multi-image converter, see `examples/models/qwen/qwen3_vl/prepare_mantis_energon.py`. For a production audio-video example with explicit train/val/test shard construction, see [VALOR32K-AVQA](../valor32k-avqa/data-preparation.md).

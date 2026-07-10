@@ -62,6 +62,7 @@ export OUTPUT_DIR="$WORKSPACE/results/qwen3-vl-direct-smoke"
 uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_config \
+  --dataset vlm-hf \
   --step_func qwen3_vl_step \
   --peft_scheme lora \
   --seq_length 1024 \
@@ -75,7 +76,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   dataset.source.dataset_name=null \
   dataset.source.path_or_dataset=json \
   dataset.source.split=train \
-  dataset.source.load_kwargs.data_files.train="$DATA_DIR/training.jsonl" \
+  "dataset.source.load_kwargs={data_files:{train:${DATA_DIR}/training.jsonl}}" \
   dataset.hf_processor_path="$MODEL_ID" \
   dataset.do_validation=False \
   dataset.do_test=False \
@@ -87,7 +88,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
 
 Success means the launcher loads the native checkpoint, the Qwen processor opens the local PNGs, and iteration 1 reports a finite loss before writing the adapter checkpoint.
 
-The recipe already owns `DirectHFSFTDatasetConfig`, so the command overrides only its `HFDatasetSourceConfig`. `--dataset vlm-hf` is useful when converting a different recipe to the generic Direct-HF path, but is not needed here.
+`--dataset vlm-hf` selects the generic `DirectHFSFTDatasetConfig`; the remaining overrides select Qwen's processor and the local JSON source. Passing the selector also makes `--seq_length` update both model and dataset lengths.
 
 ## 4. Configure explicit validation and test files
 

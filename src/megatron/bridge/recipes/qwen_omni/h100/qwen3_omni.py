@@ -79,6 +79,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config() -> "ConfigContainer":
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _QWEN3_OMNI_HF_PATH
     cfg.dataset.enable_in_batch_packing = False
+    cfg.dataset.skip_getting_attention_mask_from_dataset = False
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -118,6 +119,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
         dataloader_type="single",
         num_workers=2,
         enable_in_batch_packing=False,
+        skip_getting_attention_mask_from_dataset=False,
     )
     return cfg
 

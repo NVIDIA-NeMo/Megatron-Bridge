@@ -21,6 +21,9 @@ def _load_jsonl(path: Path) -> list[dict]:
 
 
 def test_multimodal_direct_preparation_writes_resolvable_qwen_rows(tmp_path: Path):
+    from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig
+    from megatron.bridge.data.builders.direct_hf_sft import load_direct_hf_sft_examples
+
     module = runpy.run_path(str(DIRECT_TUTORIAL / "prepare_example_data.py"))
 
     module["prepare_example_data"](tmp_path)
@@ -46,6 +49,16 @@ def test_multimodal_direct_preparation_writes_resolvable_qwen_rows(tmp_path: Pat
         png = image_path.read_bytes()
         assert png.startswith(b"\x89PNG\r\n\x1a\n")
         assert struct.unpack(">II", png[16:24]) == (448, 448)
+
+    source = HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="train",
+        load_kwargs={"data_files": {"train": str(tmp_path / "training.jsonl")}},
+    )
+    loaded = load_direct_hf_sft_examples(source, ChatSFTPreprocessingConfig())
+    assert len(loaded) == 4
+    assert loaded[0]["conversation"][0]["content"][0]["type"] == "image"
+    assert Path(loaded[0]["conversation"][0]["content"][0]["image"]).is_file()
 
 
 def test_energon_preparation_writes_matching_tar_members_and_loader(tmp_path: Path):
@@ -106,7 +119,9 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
 
     assert "qwen3_vl_8b_peft_config" in direct
     assert "--nproc_per_node=1" in direct
+    assert "--dataset vlm-hf" in direct
     assert "dataset.source.path_or_dataset=json" in direct
+    assert "dataset.source.load_kwargs={data_files:{train:" in direct
     assert "dataset.defer_in_batch_packing_to_step=True" in direct
     assert "qwen3_vl_8b_peft_energon_config" in energon
     assert "--dataset vlm-energon" in energon

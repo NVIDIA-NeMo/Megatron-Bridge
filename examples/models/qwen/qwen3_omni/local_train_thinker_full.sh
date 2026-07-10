@@ -293,19 +293,19 @@ CMD=(
     logger.wandb_exp_name="${RUN_NAME}"
     dataset.seq_length="${SEQ_LENGTH}"
     dataset.hf_processor_path="${EFFECTIVE_HF_MODEL_PATH}"
-    dataset.source.load_kwargs.data_files.train="${TRAIN_JSONL}"
+    "dataset.source.load_kwargs={data_files:{train:${TRAIN_JSONL}}}"
     dataset.num_workers="${DATASET_NUM_WORKERS}"
     dataset.persistent_workers="${DATASET_PERSISTENT_WORKERS}"
     dataset.enable_in_batch_packing=False
 )
 
 if [[ -n "${VALID_JSONL}" ]]; then
-    CMD+=(dataset.validation_source.load_kwargs.data_files.validation="${VALID_JSONL}")
+    CMD+=("dataset.validation_source.load_kwargs={data_files:{validation:${VALID_JSONL}}}")
 else
     CMD+=(dataset.do_validation=False dataset.validation_source=null)
 fi
 if [[ -n "${TEST_JSONL}" ]]; then
-    CMD+=(dataset.test_source.load_kwargs.data_files.test="${TEST_JSONL}")
+    CMD+=("dataset.test_source.load_kwargs={data_files:{test:${TEST_JSONL}}}")
 else
     CMD+=(dataset.do_test=False dataset.test_source=null)
 fi

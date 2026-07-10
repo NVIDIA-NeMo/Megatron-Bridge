@@ -126,7 +126,11 @@ def test_vlm_json_script_uses_hf_loader_without_local_provider():
     assert "DirectHFSFTDatasetConfig" in _read(QWEN_OMNI_RECIPE)
     assert "HFDatasetSourceConfig" in _read(QWEN_OMNI_RECIPE)
     assert 'path_or_dataset="json"' in _read(QWEN_OMNI_RECIPE)
-    assert "dataset.source.load_kwargs.data_files.train" in _read(QWEN_OMNI_TRAINING_SCRIPT)
+    training_script = _read(QWEN_OMNI_TRAINING_SCRIPT)
+    assert "dataset.source.load_kwargs={data_files:{train:" in training_script
+    assert "dataset.validation_source.load_kwargs={data_files:{validation:" in training_script
+    assert "dataset.test_source.load_kwargs={data_files:{test:" in training_script
+    assert ".load_kwargs.data_files." not in training_script
 
 
 def test_direct_hf_local_media_docs_use_processor_native_content():
