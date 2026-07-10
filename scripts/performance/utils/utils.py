@@ -143,32 +143,81 @@ def explicit_environment_override_names(
     for override in cli_overrides:
         key = override.split("=", 1)[0].lstrip("+~")
         if key == "env_vars":
-            # Preserve keys that were explicitly supplied even when their
-            # values happen to equal the baked recipe defaults.
             from hydra.core.override_parser.overrides_parser import OverridesParser
 
             override_value = OverridesParser.create().parse_override(override).value()
             if isinstance(override_value, Mapping):
                 names.update(override_value)
-            changed_names = {
+            names.update(
                 name
                 for name in base_env_vars.keys() | effective_env_vars.keys()
                 if name not in base_env_vars
                 or name not in effective_env_vars
                 or base_env_vars[name] != effective_env_vars[name]
-            }
-            names.update(changed_names)
+            )
         elif key.startswith("env_vars."):
             names.add(key.removeprefix("env_vars.").split(".", 1)[0])
     return names
 
 
-def apply_library_environment_overrides(config: Any, args: Any) -> Any:
-    """Apply argparse values that affect library recipe environment composition.
+def apply_library_target_topology_environment(
+    config: Any,
+    *,
+    gpu: str,
+    protected_env_names: set[str] | None = None,
+) -> None:
+    """Adapt only HybridEP topology for the launch target.
+
+    Hardware library exports currently reuse H100 recipe builders on every
+    target. Their model-specific environment remains static and explicit; this
+    compatibility step only translates the final HybridEP EP size to the
+    target GPU's NVLink domain. Explicit ``env_vars`` overrides remain final.
+    """
+    topology_names = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    protected = protected_env_names or set()
+    if getattr(config.model, "moe_flex_dispatcher_backend", None) != "hybridep":
+        for name in topology_names - protected:
+            config.env_vars.pop(name, None)
+        return
+
+    expert_model_parallel_size = getattr(config.model, "expert_model_parallel_size", 1)
+    if expert_model_parallel_size is None:
+        expert_model_parallel_size = 1
+    if expert_model_parallel_size <= 0:
+        raise ValueError("HybridEP expert parallel size must be positive.")
+
+    normalized_gpu = gpu.lower()
+    if normalized_gpu in {"h100", "b200", "b300"}:
+        topology = {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": min(expert_model_parallel_size, 8),
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        }
+    elif normalized_gpu in {"gb200", "gb300", "vr200", "r100"}:
+        if expert_model_parallel_size > 72:
+            raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
+        topology = {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": expert_model_parallel_size,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        }
+    else:
+        raise ValueError(f"Unsupported GPU type for HybridEP topology: {gpu!r}.")
+
+    for name, value in topology.items():
+        if name not in protected:
+            config.env_vars[name] = value
+
+
+def apply_library_argparse_overrides(config: Any, args: Any) -> Any:
+    """Apply argparse values that affect library recipe configuration.
 
     Both the worker pre-exec wrapper and the final library runner call this
-    helper before Hydra overrides. Keeping that order shared prevents the
-    exported process environment from diverging from the training config.
+    helper before Hydra overrides so their effective training configs match.
     """
     if getattr(args, "nccl_ub", False):
         config.ddp.nccl_ub = True
@@ -189,7 +238,7 @@ def apply_library_environment_overrides(config: Any, args: Any) -> Any:
     return config
 
 
-def finalize_library_environment_overrides(config: Any) -> Any:
+def finalize_library_config_overrides(config: Any) -> Any:
     """Reconcile config invariants after argparse and Hydra overrides.
 
     Hydra has final precedence over primary fields such as ``ddp.nccl_ub`` and
@@ -664,25 +713,17 @@ def add_library_recipe_environment_variables(
     *,
     custom_env_vars: MutableMapping[str, str],
     config: Any,
-    gpu: str,
-    protected_env_names: set[str] | None = None,
 ) -> None:
-    """Finalize a library recipe and copy its process defaults into the worker environment.
+    """Copy a library recipe's explicit process defaults into the worker environment.
 
     Args:
         custom_env_vars: Existing user or cluster environment values to preserve.
         config: Resolved library recipe configuration.
-        gpu: Target GPU architecture name.
-        protected_env_names: Recipe environment names explicitly overridden by the user.
 
     Raises:
         TypeError: If a recipe environment value is not a supported scalar.
-        ValueError: If an environment name is invalid or HybridEP exceeds the NVLink domain.
+        ValueError: If an environment name is invalid.
     """
-    from megatron.bridge.recipes.utils.environment_utils import apply_library_recipe_environment
-
-    apply_library_recipe_environment(config, gpu=gpu, protected_env_names=protected_env_names)
-
     for name, value in config.env_vars.items():
         if not isinstance(name, str) or not name:
             raise ValueError("Environment variable names must be non-empty strings.")

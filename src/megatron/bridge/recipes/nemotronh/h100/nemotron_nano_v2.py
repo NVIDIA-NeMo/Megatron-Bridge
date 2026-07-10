@@ -20,14 +20,13 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron Nano 9B v2.
 
@@ -158,10 +157,13 @@ def nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron Nano 12B v2.
 
@@ -291,6 +293,10 @@ def nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -299,7 +305,6 @@ def nemotron_nano_12b_v2_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_nano_9b_v2_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron Nano 9B v2.
 
@@ -423,10 +428,13 @@ def nemotron_nano_9b_v2_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron Nano 12B v2.
 
@@ -549,6 +557,10 @@ def nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -557,7 +569,6 @@ def nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_nano_9b_v2_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -702,10 +713,13 @@ def nemotron_nano_9b_v2_peft_1gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -850,6 +864,10 @@ def nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

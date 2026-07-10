@@ -28,9 +28,10 @@ from perf_plugins import PerfEnvPlugin
 from utils.utils import (
     _workload_base_config_from_recipe,
     add_library_recipe_environment_variables,
-    apply_library_environment_overrides,
+    apply_library_argparse_overrides,
+    apply_library_target_topology_environment,
     explicit_environment_override_names,
-    finalize_library_environment_overrides,
+    finalize_library_config_overrides,
     get_library_recipe,
     get_perf_recipe_by_name,
 )
@@ -52,10 +53,10 @@ def _process_library_hydra_overrides(recipe, cli_overrides: list[str]):
 
 def _apply_library_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Mirror env-relevant user overrides before applying Hydra overrides."""
-    recipe = apply_library_environment_overrides(recipe, args)
+    recipe = apply_library_argparse_overrides(recipe, args)
     if cli_overrides:
         recipe = _process_library_hydra_overrides(recipe, cli_overrides)
-    return finalize_library_environment_overrides(recipe)
+    return finalize_library_config_overrides(recipe)
 
 
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
@@ -81,11 +82,14 @@ def main() -> None:
         base_env_vars = dict(recipe.env_vars)
         recipe = _apply_library_recipe_overrides(recipe, cli_overrides, args)
         protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+        apply_library_target_topology_environment(
+            recipe,
+            gpu=args.gpu,
+            protected_env_names=protected_env_names,
+        )
         add_library_recipe_environment_variables(
             custom_env_vars=os.environ,
             config=recipe,
-            gpu=args.gpu,
-            protected_env_names=protected_env_names,
         )
         runner_name = "run_recipe.py"
     else:

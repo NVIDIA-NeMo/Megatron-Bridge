@@ -19,7 +19,7 @@ from megatron.bridge.models.olmoe import OlMoEModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -46,7 +46,6 @@ def _get_olmoe_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
-@library_recipe_environment(model_family_name="olmoe")
 def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for OLMoE-7B (7B total, ~1B active).
 
@@ -177,6 +176,10 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -185,7 +188,6 @@ def olmoe_7b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="olmoe")
 def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for OLMoE-7B (7B total, ~1B active).
 
@@ -324,6 +326,10 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -332,7 +338,6 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="olmoe")
 def olmoe_7b_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -492,6 +497,10 @@ def olmoe_7b_peft_1gpu_h100_bf16_config(
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

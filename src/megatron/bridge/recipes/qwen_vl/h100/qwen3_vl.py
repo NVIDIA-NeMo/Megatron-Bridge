@@ -31,7 +31,7 @@ from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
 from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -44,7 +44,6 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 8B Instruct."""
     cfg = _pretrain_common()
@@ -88,10 +87,13 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 30B-A3B (MoE)."""
     cfg = _pretrain_common()
@@ -136,10 +138,13 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-VL 235B-A22B (MoE)."""
     cfg = _pretrain_common()
@@ -184,6 +189,10 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -239,7 +248,6 @@ def _make_energon_dataset(
 # =============================================================================
 # Qwen3-VL 8B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-VL 8B (dense model).
 
@@ -370,13 +378,16 @@ def qwen3_vl_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen3-VL 30B-A3B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-VL 30B-A3B (MoE model).
 
@@ -508,13 +519,16 @@ def qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen3-VL 235B-A22B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-VL 235B-A22B (MoE model).
 
@@ -646,13 +660,16 @@ def qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen3-VL 8B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3-VL 8B (dense model).
 
@@ -792,13 +809,16 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen3-VL 30B-A3B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3-VL 30B-A3B (MoE model).
 
@@ -939,13 +959,16 @@ def qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen3-VL 235B-A22B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen3-VL 235B-A22B (MoE model).
 
@@ -1086,13 +1109,16 @@ def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lo
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen3-VL 8B PEFT with Energon Dataset
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT (LoRA/DoRA) config for Qwen3-VL 8B with Energon dataset.
 
@@ -1104,6 +1130,10 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme: str | PEFT = "lo
     cfg.dataset = _make_energon_dataset(
         hf_path, cfg.model.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
     )
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
