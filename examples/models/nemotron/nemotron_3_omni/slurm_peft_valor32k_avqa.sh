@@ -84,7 +84,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Container image (required) — use the NeMo 26.04 container or a local .sqsh copy
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-${MB_CONTAINER_IMAGE:-}}"
+CONTAINER_IMAGE=""
 # CONTAINER_IMAGE="nvcr.io/nvidia/nemo:26.04"
 # CONTAINER_IMAGE="/path/to/nemo_26.04.sqsh"
 
