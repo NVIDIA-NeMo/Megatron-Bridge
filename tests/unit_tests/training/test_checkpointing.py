@@ -2946,6 +2946,21 @@ class TestGetTrainStateFromStateDict:
 class TestCheckpointIterationResolution:
     """Test checkpoint iteration resolution logic."""
 
+    def test_inprocess_restart_refreshes_mutable_bridge_tracker(self, tmp_path):
+        """Restart teardown must invalidate a cached tracker overwritten by a later save."""
+        from megatron.bridge.training.checkpointing import _resolve_checkpoint_iteration
+
+        tracker = get_checkpoint_train_state_filename(str(tmp_path), prefix="latest")
+        first_state = TrainState(step=5)
+        torch.save(first_state.state_dict(), tracker)
+        assert _resolve_checkpoint_iteration(str(tmp_path), None) == (5, False)
+
+        latest_state = TrainState(step=10)
+        torch.save(latest_state.state_dict(), tracker)
+        GlobalState().reset_for_restart()
+
+        assert _resolve_checkpoint_iteration(str(tmp_path), None) == (10, False)
+
     @patch("megatron.bridge.training.checkpointing.file_exists")
     @patch("megatron.bridge.training.checkpointing.read_train_state")
     def test_loads_from_bridge_tracker(self, mock_read_train_state, mock_file_exists):

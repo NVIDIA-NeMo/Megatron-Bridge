@@ -18,6 +18,7 @@ from dataclasses import is_dataclass
 from typing import Any, Mapping
 
 from megatron.core.quantization.quant_config import GlobMatcher, Matcher, RecipeConfig
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.training.config.container import ConfigContainerBase as _MCoreConfigContainerBase
 from megatron.training.config.utils import (
     _get_init_false_fields,  # noqa: F401
@@ -42,6 +43,8 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
 
     @classmethod
     def _convert_value_to_dict(cls, value: Any) -> Any:
+        if isinstance(value, PipelineParallelLayerLayout):
+            return cls._convert_value_to_dict(value.input_data)
         if isinstance(value, RecipeConfig) and not hasattr(value, "to_cfg_dict"):
             if type(value) is not RecipeConfig:
                 recipe_type = f"{type(value).__module__}.{type(value).__qualname__}"

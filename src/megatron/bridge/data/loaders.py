@@ -20,8 +20,9 @@ from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig, GPTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
 from megatron.bridge.training.state import TrainState
 from megatron.bridge.training.utils.sig_utils import DistributedSignalHandler
 from megatron.bridge.utils.common_utils import print_rank_0
@@ -167,16 +168,16 @@ def build_train_valid_test_datasets(
 def build_train_valid_test_datasets_for_num_epochs(
     cfg: ConfigContainer, build_train_valid_test_datasets_provider: Callable
 ) -> tuple[Any, Any, Any]:
-    """Build a finite finetuning dataset and resolve epoch-based training iterations.
+    """Build a finite GPT SFT dataset and resolve epoch-based training iterations.
 
     This cannot use :func:`build_train_valid_test_datasets` because that function
-    requires ``train_iters`` to already be resolved. Finetuning dataset providers
+    requires ``train_iters`` to already be resolved. GPT SFT dataset builders
     determine dataset sizes from the data source or ``max_train_samples`` and ignore
     the requested target sample counts, so zero placeholders are sufficient here.
     """
-    if not isinstance(cfg.dataset, FinetuningDatasetConfig):
+    if not isinstance(cfg.dataset, GPTSFTDatasetConfig):
         raise ValueError(
-            "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+            "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
             "providers may build a requested number of samples instead of exposing their true dataset size."
         )
     if cfg.dataset.dataloader_type != "batch":

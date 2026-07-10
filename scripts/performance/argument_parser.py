@@ -441,6 +441,19 @@ def parse_cli_args():
         default="00:30:00",
     )
     slurm_args.add_argument(
+        "--preempt_time",
+        type=int,
+        help=" ".join(
+            [
+                "For long-convergence runs only: seconds before the Slurm time limit at which to send",
+                "SIGTERM so the training loop can save a checkpoint and exit gracefully before the hard",
+                "walltime kill, letting the next slice resume from it. Must exceed the checkpoint flush",
+                "time. Defaults to 60.",
+            ]
+        ),
+        default=60,
+    )
+    slurm_args.add_argument(
         "-gn",
         "--gpus_per_node",
         type=int,

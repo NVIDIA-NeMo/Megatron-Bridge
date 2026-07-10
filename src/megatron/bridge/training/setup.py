@@ -236,7 +236,8 @@ def setup(
         tokenizer_vocab_size=tokenizer.vocab_size,
     )
 
-    cfg.dataset.tokenizer = tokenizer
+    if hasattr(cfg.dataset, "tokenizer"):
+        cfg.dataset.tokenizer = tokenizer
 
     # Compute token_dtype_code for sequences_per_dataset support.
     # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
