@@ -1,6 +1,6 @@
 # Direct SFT Dataset Tutorial
 
-Choose this path when you want to train directly from a Hugging Face dataset, including JSON/JSONL files loaded by the Hugging Face `json` dataset builder, without first materializing text-only SFT data. All inputs use `HFDatasetSourceConfig`, `DirectHFSFTDatasetConfig`, and `DirectHFSFTDatasetBuilder`. The path supports text, vision, video, audio, and omni examples, as well as collate-time in-batch packing. See the [data tutorial overview](../README.md#which-sft-path-should-i-use) for a comparison with transitional materialized text-only SFT and Energon.
+Choose this path when you want to train directly from a Hugging Face dataset, including JSON/JSONL files loaded by the Hugging Face `json` dataset builder, without first materializing text-only SFT data. All inputs use `HFDatasetSourceConfig`, `DirectHFSFTDatasetConfig`, and `DirectHFSFTDatasetBuilder`. The path supports text, vision, video, audio, and omni examples, as well as collate-time in-batch packing. See the [multimodal Direct-HF tutorial](../multimodal-direct/README.md) for a complete local-image Qwen3-VL preparation and training run, and the [data tutorial overview](../README.md#which-sft-path-should-i-use) for workflow selection.
 
 ## Start with a hosted chat dataset
 
@@ -164,7 +164,7 @@ cfg.dataset.enable_in_batch_packing = True
 cfg.train.micro_batch_size = 4
 ```
 
-In-batch packing requires micro batch size greater than 1. `in_batch_packing_pad_to_multiple_of` is finalized from CP/SP constraints. Some model steps set `defer_in_batch_packing_to_step=True` because they need original tensors before generating packed metadata. Pipeline or expert parallel training automatically enables fixed-length padding through `pad_to_max_length`.
+In-batch packing requires micro batch size greater than 1. `in_batch_packing_pad_to_multiple_of` is finalized from CP/SP constraints. Qwen3-VL sets `defer_in_batch_packing_to_step=True` because its step needs original visual tensors before generating packed metadata. Qwen3.5-VL opts out of this packing path, and Qwen3-Omni does not currently emit packed-sequence metadata. Pipeline or expert parallel training automatically enables fixed-length padding through `pad_to_max_length`. With CP, enable per-token loss and disable collective loss averaging.
 
 ## Available knobs
 

@@ -3,6 +3,8 @@
 This document describes the steps to prepare the VALOR32K-AVQA v2.0 dataset for Nemotron Omni
 training, from raw video tar file to Energon WebDataset format.
 
+For the generic tar-member contract, a tiny image dataset, and Qwen3-VL launch commands, start with the [multimodal Energon tutorial](../energon/README.md). This page is the larger model-specific audio-video example.
+
 ## Source
 
 - **Videos tar**: Pre-downloaded VALOR-32K video clips (~41 GB)
@@ -169,8 +171,8 @@ Import the pretrained checkpoint (if not already done):
 
 ```shell
 uv run python examples/conversion/convert_checkpoints.py import \
-  --hf_path <HF_MODEL_PATH> \
-  --output_dir /checkpoints/nemotron_omni \
+  --hf-model <HF_MODEL_PATH> \
+  --megatron-path /checkpoints/nemotron_omni \
   --trust-remote-code
 ```
 

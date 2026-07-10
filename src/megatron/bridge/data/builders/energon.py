@@ -33,7 +33,12 @@ def _validate_hf_path(path: str, *, field_name: str) -> None:
 
 @dataclass(kw_only=True)
 class HFEnergonTaskEncoderConfig:
-    """Serializable settings for the generic Hugging Face Energon task encoder."""
+    """Serializable settings for the generic Hugging Face Energon task encoder.
+
+    ``visual_keys`` names processor output tensors retained in the model batch.
+    ``min_pixels`` and ``max_pixels`` are independent processor preprocessing
+    bounds controlling visual resolution and token cost; they are not output keys.
+    """
 
     hf_processor_path: str
     visual_keys: tuple[str, ...] = ("pixel_values",)
@@ -50,7 +55,11 @@ class HFEnergonTaskEncoderConfig:
 
 @dataclass(kw_only=True)
 class QwenVLEnergonTaskEncoderConfig:
-    """Serializable settings for the Qwen-VL Energon task encoder."""
+    """Serializable settings for the Qwen-VL Energon task encoder.
+
+    Qwen's visual output keys are model-owned. ``min_pixels`` and
+    ``max_pixels`` instead bound processor preprocessing and visual-token cost.
+    """
 
     hf_processor_path: str
     temporal_patch_size: int = 2

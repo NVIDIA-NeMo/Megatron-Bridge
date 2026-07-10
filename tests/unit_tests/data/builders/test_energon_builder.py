@@ -158,6 +158,8 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
     assert encoder_cls.call_args.kwargs["in_batch_packing_pad_to_multiple_of"] == 4
     assert encoder_cls.call_args.kwargs["visual_keys"] == ("pixel_values", "image_sizes")
+    assert encoder_cls.call_args.kwargs["min_pixels"] == 100
+    assert encoder_cls.call_args.kwargs["max_pixels"] == 200
 
 
 def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatch):

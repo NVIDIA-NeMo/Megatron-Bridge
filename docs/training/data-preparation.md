@@ -10,8 +10,8 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Text SFT or PEFT, processed at runtime | Recommended | Hosted Hugging Face rows | `DirectHFSFTDatasetConfig` + `HFDatasetSourceConfig` |
 | Text SFT or PEFT, prepared data | Planned; not available yet | Pretokenized `.bin`/`.idx` | Future Issue #4664 prepared-SFT builder |
 | Text SFT or PEFT, transitional prepared data | Supported until `.bin`/`.idx` replacement | Local/materialized JSONL and optional packed Parquet | `GPTSFTDatasetConfig` |
-| Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | One `DirectHFSFTDatasetConfig` + `DirectHFSFTDatasetBuilder` path |
-| Large sharded multimodal training | Recommended | WebDataset/Energon | `EnergonDatasetConfig` + `EnergonDatasetBuilder` |
+| Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Multimodal Direct-HF](../../tutorials/data/multimodal-direct/README.md) through `DirectHFSFTDatasetConfig` + builder |
+| Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](../../tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
 
@@ -224,7 +224,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Qwen-VL, generic HF, and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig`, `HFEnergonTaskEncoderConfig`, and `NemotronOmniEnergonTaskEncoderConfig`, respectively. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
+`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Shipped Qwen-VL and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig` and `NemotronOmniEnergonTaskEncoderConfig`; custom model integrations can use `HFEnergonTaskEncoderConfig`. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
 
 For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations`. Multimodal content must follow the selected model processor's schema; for example, Qwen-VL accepts an inline typed image with a worker-resolvable path:
 
@@ -248,7 +248,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 The `vlm-preloaded` selector and `PreloadedVLMConversationProvider` were removed without a replacement local selector. Use `vlm-hf` plus `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` for files supported by Hugging Face datasets, or convert the data to Energon. File-based validation and test data require explicit `validation_source` and `test_source` configs in Python; otherwise disable those stages. There is no `image_folder` compatibility field and the old placeholder plus top-level media-list schema is not rewritten: encode media using the selected processor's supported conversation schema, use an adapter-owned root where available, or use Energon.
 
-For a complete WebDataset/Energon preparation example, see [VALOR32K-AVQA Dataset Preparation Guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md).
+For complete preparation and Qwen3-VL launch commands, see the [multimodal Energon tutorial](../../tutorials/data/energon/README.md). [VALOR32K-AVQA](../../tutorials/data/valor32k-avqa/data-preparation.md) is the larger audio-video example.
 
 ## Checkpoint Conversion Reminder
 

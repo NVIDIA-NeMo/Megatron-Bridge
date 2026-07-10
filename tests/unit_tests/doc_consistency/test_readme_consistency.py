@@ -42,6 +42,12 @@ DATA_PREPARATION_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
 )
+QWEN3_VL_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+QWEN25_VL_DOCS = (
+    REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
+)
+VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-preparation.md"
 
 
 def _read(p: Path) -> str:
@@ -131,6 +137,31 @@ def test_direct_hf_local_media_docs_use_processor_native_content():
         assert '"content": "<image>Describe' not in text
         assert '"images": ["receipt' not in text
         assert "top-level media-list schema is not" in text
+
+
+def test_multimodal_model_docs_use_current_launchers_and_conversion_flags():
+    """Model examples should point at current recipes and canonical tutorials."""
+    qwen3 = _read(QWEN3_VL_README)
+    assert "qwen3_vl_8b_peft_config" in qwen3
+    assert "qwen3_vl_8b_finetune_config" not in qwen3
+    assert "--source-dir/path" not in qwen3
+    assert "multimodal-direct/README.md" in qwen3
+    assert "data/energon/README.md" in qwen3
+
+    for path in QWEN25_VL_DOCS:
+        text = _read(path)
+        assert "scripts/training/run_recipe.py" in text
+        assert "qwen25_vl_3b_sft_config" in text
+        assert "qwen25_vl_3b_peft_config" in text
+        assert "finetune_qwen25_vl.py" not in text
+        assert "qwen25_vl_3b_finetune_config" not in text
+        assert "--dataset-type" not in text
+
+    valor = _read(VALOR_TUTORIAL)
+    assert "--hf-model <HF_MODEL_PATH>" in valor
+    assert "--megatron-path /checkpoints/nemotron_omni" in valor
+    assert "--hf_path" not in valor
+    assert "--output_dir /checkpoints/nemotron_omni" not in valor
 
 
 if __name__ == "__main__":

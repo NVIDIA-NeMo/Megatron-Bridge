@@ -61,27 +61,23 @@ Before training, ensure the following environment variables are set.
 
 ### Full Finetuning
 
-Example usage for full parameter finetuning:
+Example usage for 3B full-parameter finetuning on one H100:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---recipe qwen25_vl_3b_finetune_config \
---dataset-type hf \
-dataset.source.dataset_name=cord_v2 \
-train.global_batch_size=<batch size> \
-train.train_iters=<number of iterations> \
-logger.wandb_project=<optional wandb project name> \
-logger.wandb_save_dir=$SAVE_DIR \
-checkpoint.save=$SAVE_DIR/<experiment name>
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_sft_config \
+  --dataset vlm-hf \
+  --step_func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-sft \
+  dataset.source.dataset_name=cord_v2 \
+  train.global_batch_size=2 \
+  train.train_iters=<number of iterations>
 ```
 
 Note:
-- The `--recipe` parameter selects the model size configuration. Available options:
-  - `qwen25_vl_3b_finetune_config` - for 3B model
-  - `qwen25_vl_7b_finetune_config` - for 7B model
-  - `qwen25_vl_32b_finetune_config` - for 32B model
-  - `qwen25_vl_72b_finetune_config` - for 72B model
+- Full-SFT recipes are `qwen25_vl_{3b,7b,32b,72b}_sft_config`; their defaults require 1, 2, 16, and 32 GPUs respectively.
 - The config file `examples/models/qwen/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments
   that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command.
 - The dataset format should be JSONL with conversation format (see dataset section below).
@@ -92,14 +88,15 @@ Note:
 Parameter-efficient finetuning (PEFT) using LoRA or DoRA is supported. You can use the `--peft_scheme` argument to enable PEFT training:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---recipe qwen25_vl_3b_finetune_config \
---peft_scheme lora \
---dataset-type hf \
-dataset.source.dataset_name=cord_v2 \
-train.global_batch_size=<batch size> \
-checkpoint.save=$SAVE_DIR/<experiment name>
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_peft_config \
+  --dataset vlm-hf \
+  --step_func vlm_step \
+  --peft_scheme lora \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora \
+  dataset.source.dataset_name=cord_v2
 ```
 
 PEFT options:
@@ -112,15 +109,20 @@ You can also combine PEFT with freeze options to control which components are tr
 
 Example with LoRA and freeze options:
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---recipe qwen25_vl_3b_finetune_config \
---peft_scheme lora \
-model.freeze_language_model=True \
-model.freeze_vision_model=False \
-model.freeze_vision_projection=False \
-checkpoint.save=$SAVE_DIR/<experiment name>
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_peft_config \
+  --dataset vlm-hf \
+  --step_func vlm_step \
+  --peft_scheme lora \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  model.freeze_language_model=True \
+  model.freeze_vision_model=False \
+  model.freeze_vision_projection=False \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora
 ```
+
+For local processor-native image JSONL and sharded Energon preparation patterns, see the [multimodal data tutorials](../../../tutorials/data/README.md).
 
 
 ## Example Datasets
