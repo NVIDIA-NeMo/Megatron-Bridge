@@ -378,6 +378,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.tokenizer = TokenizerConfig(
             tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
         )
+
+    if args.seq_length is not None:
+        recipe.model.seq_length = args.seq_length
+
     # Create dataset configuration based on type
     if args.data == "mock":
         if args.domain == "llm":
@@ -385,7 +389,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
             recipe.dataset = create_mock_dataset_config(
-                seq_length=args.seq_length or recipe.model.seq_length,
+                seq_length=recipe.model.seq_length,
                 num_workers=recipe.dataset.num_workers,
                 pin_memory=recipe.dataset.pin_memory,
                 persistent_workers=recipe.dataset.persistent_workers,
@@ -395,7 +399,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
-            seq_length=recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
@@ -405,7 +409,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if not args.c4_root:
             raise ValueError("--c4_root is required for c4 dataset")
         recipe.dataset = create_c4_dataset_config(
-            seq_length=recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
             c4_root=args.c4_root,
             train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
@@ -420,7 +424,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root,
-            seq_length=args.seq_length or recipe.model.seq_length,
+            seq_length=recipe.model.seq_length,
             packed=False,
             pad_seq_to_mult=pad_seq_to_mult,
             num_workers=recipe.dataset.num_workers,
@@ -434,7 +438,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root,
-            seq_length=args.seq_length or recipe.model.seq_length,
+            seq_length=recipe.model.seq_length,
             packed=True,
             pad_seq_to_mult=pad_seq_to_mult,
             num_workers=recipe.dataset.num_workers,
