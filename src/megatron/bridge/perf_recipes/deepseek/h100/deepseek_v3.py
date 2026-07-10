@@ -70,9 +70,6 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -122,9 +119,6 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -162,9 +156,6 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -194,9 +185,6 @@ def deepseek_v3_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -247,9 +235,6 @@ def deepseek_v3_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -279,8 +264,5 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config() -> ConfigContai
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg

@@ -243,11 +243,9 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_LIBRARY_ENV_VARS,
-        # Model-specific compilation and Transformer Engine tuning.
+        # Model-specific Transformer Engine tuning.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
         # HybridEP topology for this recipe.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NVLINK_DOMAIN_SIZE": 8,
@@ -398,11 +396,9 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_LIBRARY_ENV_VARS,
-        # Model-specific compilation and Transformer Engine tuning.
+        # Model-specific Transformer Engine tuning.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
         # HybridEP topology for this recipe.
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NVLINK_DOMAIN_SIZE": 8,

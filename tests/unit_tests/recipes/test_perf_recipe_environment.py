@@ -40,6 +40,14 @@ _HYBRID_EP_ENV_NAMES = {
     "NVLINK_DOMAIN_SIZE",
     "USE_MNNVL",
 }
+_DEEPSEEK_NON_BASELINE_ENV_NAMES = {
+    "QUANTIZATION_TYPE_DEBUG",
+    "TORCHINDUCTOR_WORKER_START",
+}
+_DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES = {
+    ("b200", "deepseek_v3_pretrain_256gpu_b200_fp8mx_config"),
+    ("b200", "deepseek_v3_pretrain_256gpu_b200_nvfp4_config"),
+}
 
 
 def _function(path: Path, function_name: str) -> ast.FunctionDef:
@@ -116,6 +124,8 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
 def test_explicit_environment_invariants_across_all_flat_recipes():
     """Keep duplicated inline settings complete without deriving them at runtime."""
     recipes = list(_explicit_environments())
+    deepseek_recipe_count = 0
+    deepseek_hybrid_ep_count = 0
 
     for path, function_name, environment in recipes:
         assert environment.keys() >= _INLINE_CORE_ENV_NAMES
@@ -135,9 +145,22 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
         if "_nvfp4" in function_name:
             assert environment["NVTE_USE_FAST_MATH"] == 1
         if path.parts[-3] == "deepseek":
+            deepseek_recipe_count += 1
+            assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
+            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
             assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
 
+            recipe_id = (path.parent.name, function_name)
+            if recipe_id in _DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES:
+                assert not hybrid_ep_names
+            else:
+                assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+                deepseek_hybrid_ep_count += 1
+
     assert len(recipes) == 396
+    assert deepseek_recipe_count == 36
+    assert deepseek_hybrid_ep_count == 34
 
 
 @pytest.mark.parametrize(
