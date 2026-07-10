@@ -87,8 +87,11 @@ export NCCL_NVLS_ENABLE=0
 # Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# HuggingFace cache directory (recommended for shared filesystem)
+# HuggingFace / NeMo cache directories. Multi-node PEFT requires a shared
+# dataset cache so every node can read data prepared by global rank 0.
 # export HF_HOME="/path/to/shared/HF_HOME"
+# export NEMO_HOME="/path/to/shared/NEMO_HOME"
+# export NEMO_DATASETS_CACHE="/path/to/shared/NEMO_DATASETS_CACHE"
 
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
@@ -117,6 +120,12 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     echo "ERROR: CONTAINER_IMAGE must be set. Please specify a valid container image."
     exit 1
 fi
+
+EFFECTIVE_NEMO_DATASETS_CACHE="${NEMO_DATASETS_CACHE:-${NEMO_HOME:+${NEMO_HOME}/datasets}}"
+if [ "${SLURM_JOB_NUM_NODES:-1}" -gt 1 ] && [ -z "$EFFECTIVE_NEMO_DATASETS_CACHE" ]; then
+    echo "WARNING: Multi-node PEFT requires shared dataset paths. Set NEMO_DATASETS_CACHE or NEMO_HOME unless the recipe uses an explicit shared dataset_root or packed path."
+fi
+echo "NeMo datasets cache: ${EFFECTIVE_NEMO_DATASETS_CACHE:-/root/.cache/nemo/datasets}"
 
 # Build srun command (shared across configs)
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
@@ -163,7 +172,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.seq_length=$SEQ_LENGTH
     "
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
-    CMD="$CMD --mode finetune"
     CMD="$CMD --recipe ${RECIPE_NAME}"
 
     # Collapse newlines so bash -c receives a single command

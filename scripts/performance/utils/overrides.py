@@ -514,7 +514,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.moe_token_dispatcher_type = "alltoall"
 
     pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
-    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+    if args.task == "peft" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
         recipe.dist.use_tp_pp_dp_mapping = True
 
     if args.deterministic:
@@ -532,11 +532,16 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
-    config_variant: str = "v1",
+    config_variant: str | None = None,
 ) -> ConfigContainer:
     """Set the post overrides."""
     workload_base_config = get_workload_base_config(
-        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+        model_family_name,
+        model_recipe_name,
+        gpu,
+        compute_dtype,
+        task,
+        config_variant,
     )
 
     if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
@@ -549,7 +554,7 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    # NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
         # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
         if recipe.optimizer.optimizer != "dist_muon":

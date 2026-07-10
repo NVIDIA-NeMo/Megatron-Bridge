@@ -91,7 +91,9 @@ def _find_perf_recipe(name: str) -> Callable[[], ConfigContainer] | None:
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
-    return f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2", "v3"} else ""
+    if config_variant is None:
+        return ""
+    return f"_{config_variant.lower()}"
 
 
 def get_perf_recipe_by_name(
@@ -149,7 +151,7 @@ def main():
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
 
-    # Preserve legacy BF16 Adam precision-aware behavior. Parallelism-dependent
+    # Preserve BF16 Adam precision-aware behavior from the previous script path. Parallelism-dependent
     # optimizer-step overlap is encoded directly in the flat perf recipes.
     if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True

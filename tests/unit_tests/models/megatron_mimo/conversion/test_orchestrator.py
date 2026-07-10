@@ -198,12 +198,31 @@ class _PgCollection:
         self.dp = object()
         self.dp_cp = object()
         self.pp = object()
+        self.ep = object()
+        self.expt_tp = object()
+        self.tp_ep = object()
+        self.tp_ep_pp = object()
 
     def __repr__(self):
         return f"_PgCollection({self.label!r})"
 
 
 class TestComponentPgContext:
+    def test_bridges_expert_tensor_group_from_mcore_pgc_field(self, monkeypatch):
+        from megatron.core import parallel_state as mpu
+
+        pg = _PgCollection("language")
+        previous_expt_tp = object()
+        monkeypatch.setattr(mpu, "_EXPERT_TENSOR_PARALLEL_GROUP", previous_expt_tp)
+
+        with orchestrator_module._bridged_parallel_state(pg):
+            assert mpu._EXPERT_MODEL_PARALLEL_GROUP is pg.ep
+            assert mpu._EXPERT_TENSOR_PARALLEL_GROUP is pg.expt_tp
+            assert mpu._EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP is pg.tp_ep
+            assert mpu._EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP is pg.tp_ep_pp
+
+        assert mpu._EXPERT_TENSOR_PARALLEL_GROUP is previous_expt_tp
+
     def test_restores_on_exception(self):
         module = nn.Linear(4, 4)
         pg = _PgCollection("language")

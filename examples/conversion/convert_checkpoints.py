@@ -53,6 +53,7 @@ Usage examples:
 """
 
 import argparse
+import shutil
 import sys
 from pathlib import Path
 from typing import Optional
@@ -183,12 +184,24 @@ def export_megatron_to_hf(
 
     # Export using the convenience method
     print("📤 Exporting to HuggingFace format...")
-    bridge.export_ckpt(
-        megatron_path=megatron_path,
-        hf_path=hf_path,
-        show_progress=show_progress,
-        strict=strict,
-    )
+    try:
+        bridge.export_ckpt(
+            megatron_path=megatron_path,
+            hf_path=hf_path,
+            show_progress=show_progress,
+            strict=strict,
+        )
+    except Exception as exc:
+        if strict:
+            export_dir = Path(hf_path)
+            if export_dir.exists():
+                shutil.rmtree(export_dir, ignore_errors=True)
+            raise RuntimeError(
+                f"Strict Megatron -> HF export failed: {exc}. "
+                f"Partial checkpoint at {hf_path} has been deleted. "
+                "Re-run with --not-strict (strict=False) to save the partial checkpoint instead."
+            ) from exc
+        raise
 
     print(f"✅ Successfully exported model to: {hf_path}")
 

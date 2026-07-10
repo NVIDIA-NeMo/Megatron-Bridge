@@ -268,7 +268,7 @@ def parse_cli_args():
     training_args = parser.add_argument_group("Training arguments")
     training_args.add_argument(
         "--task",
-        choices=["pretrain", "sft", "lora"],
+        choices=["pretrain", "sft", "peft"],
         help="Task to run. Defaults to 'pretrain'",
         default="pretrain",
     )
@@ -439,6 +439,19 @@ def parse_cli_args():
         type=str,
         help="Maximum time limit to run experiment for. Defaults to 30 minutes (format- 'HH:MM:SS')",
         default="00:30:00",
+    )
+    slurm_args.add_argument(
+        "--preempt_time",
+        type=int,
+        help=" ".join(
+            [
+                "For long-convergence runs only: seconds before the Slurm time limit at which to send",
+                "SIGTERM so the training loop can save a checkpoint and exit gracefully before the hard",
+                "walltime kill, letting the next slice resume from it. Must exceed the checkpoint flush",
+                "time. Defaults to 60.",
+            ]
+        ),
+        default=60,
     )
     slurm_args.add_argument(
         "-gn",
@@ -909,8 +922,10 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant for workload base configs (used by setup_experiment.py only). Use --list_config_variants to see available options.",
-        default="v2",
+        help=(
+            "Flat perf recipe variant for setup_experiment.py. Omit to use the suffix-less canonical recipe. "
+            "Named variants such as large_scale are supported when a matching recipe exists."
+        ),
     )
     config_variant_args.add_argument(
         "--list_config_variants",

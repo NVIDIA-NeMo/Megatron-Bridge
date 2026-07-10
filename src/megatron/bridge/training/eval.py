@@ -28,7 +28,7 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_model_config
 from modelopt.torch.distill.plugins.megatron import get_tensor_shapes_adjust_fn_for_distillation
 
-from megatron.bridge.data.finetuning import prepare_finetuning_batch
+from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 from megatron.bridge.data.iterator_utils import make_data_iterator_list
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -93,6 +93,8 @@ def evaluate(
             - timelimit_hit: Boolean indicating if the time limit was reached.
     """
     # Determine callback event names based on whether this is test or eval
+    start_event = "on_test_start" if is_test else "on_eval_start"
+    end_event = "on_test_end" if is_test else "on_eval_end"
     step_start_event = "on_test_step_start" if is_test else "on_eval_step_start"
     step_end_event = "on_test_step_end" if is_test else "on_eval_step_end"
     # Prepare forward_step_func (check signature and inject state if needed)
@@ -105,6 +107,16 @@ def evaluate(
     # Turn on evaluation mode which disables dropout.
     for model_module in model:
         model_module.eval()
+
+    if should_fire(callback_manager, start_event):
+        callback_manager.fire(
+            start_event,
+            CallbackContext(
+                state=state,
+                model=model,
+                user_state=callback_manager.user_state,
+            ),
+        )
 
     # Retrieve process group collection and model config from the model
     # Use injected pg_collection if provided, otherwise extract from model
@@ -343,10 +355,6 @@ def evaluate(
                 pg_collection=pg_collection,
             )
 
-    # Move model back to the train mode.
-    for model_module in model:
-        model_module.train()
-
     for key in total_loss_dict:
         numerator, denominator = total_loss_dict[key]
         total_loss_dict[key] = numerator / denominator
@@ -355,6 +363,21 @@ def evaluate(
     timers.log(["evaluate"])
 
     rerun_state_machine.set_mode(rerun_mode)
+
+    if should_fire(callback_manager, end_event):
+        callback_manager.fire(
+            end_event,
+            CallbackContext(
+                state=state,
+                model=model,
+                user_state=callback_manager.user_state,
+                total_loss_dict=total_loss_dict,
+            ),
+        )
+
+    # Move model back to the train mode.
+    for model_module in model:
+        model_module.train()
 
     return total_loss_dict, collected_non_loss_data, False
 
@@ -400,10 +423,6 @@ def evaluate_and_print_results(
         Optional[dict[str, torch.Tensor]]: The averaged evaluation loss dictionary, or
         None if evaluation exited early due to a configured time limit.
     """
-    # Determine callback event names based on whether this is test or eval
-    start_event = "on_test_start" if is_test else "on_eval_start"
-    end_event = "on_test_end" if is_test else "on_eval_end"
-
     if write_to_tensorboard:
         writer = state.tensorboard_logger
     else:
@@ -412,16 +431,6 @@ def evaluate_and_print_results(
     wandb_writer = state.wandb_logger
     mlflow_writer = state.mlflow_logger
     comet_logger = state.comet_logger
-
-    if should_fire(callback_manager, start_event):
-        callback_manager.fire(
-            start_event,
-            CallbackContext(
-                state=state,
-                model=model,
-                user_state=callback_manager.user_state,
-            ),
-        )
 
     total_loss_dict, collected_non_loss_data, timelimit = evaluate(
         state,
@@ -489,16 +498,5 @@ def evaluate_and_print_results(
     print_rank_last("-" * length)
     print_rank_last(string)
     print_rank_last("-" * length)
-
-    if should_fire(callback_manager, end_event):
-        callback_manager.fire(
-            end_event,
-            CallbackContext(
-                state=state,
-                model=model,
-                user_state=callback_manager.user_state,
-                total_loss_dict=total_loss_dict,
-            ),
-        )
 
     return total_loss_dict

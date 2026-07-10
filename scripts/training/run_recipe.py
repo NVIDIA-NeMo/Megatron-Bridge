@@ -42,7 +42,7 @@ Usage:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
             --recipe llama32_1b_sft_config \\
             --dataset llm-finetune \\
-            dataset.dataset_name=gsm8k
+            dataset.hf_dataset.dataset_name=gsm8k
 
     Finetune (user-supplied JSONL):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
@@ -67,7 +67,7 @@ Usage:
             --recipe qwen3_vl_8b_peft_config \\
             --dataset vlm-hf \\
             --step_func qwen3_vl_step \\
-            dataset.maker_name=cord_v2 \\
+            dataset.source.dataset_name=cord_v2 \\
             dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
@@ -152,8 +152,8 @@ TRAIN_FUNCTIONS = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode. "
-    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
-    "(or 'sft'/'peft') in the recipe name."
+    "Pass --dataset to specify the dataset type, or include 'pretrain', 'sft', or 'peft' "
+    "in the recipe name."
 )
 
 
@@ -179,11 +179,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "LLM datasets:\n"
             "  llm-pretrain           GPT pretrain data (set dataset.blend=<path>)\n"
             "  llm-pretrain-mock      Mock pretrain data for testing\n"
-            "  llm-finetune           HF finetune dataset (set dataset.dataset_name=squad|gsm8k|openmathinstruct2)\n"
+            "  llm-finetune           HF finetune dataset (set dataset.hf_dataset.dataset_name=<preset>)\n"
             "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
             "VLM datasets:\n"
             "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
-            "  vlm-hf                 HF VLM dataset (set dataset.maker_name=<name>)\n"
+            "  vlm-hf                 Direct HF SFT (set dataset.source.dataset_name=<preset>)\n"
             "  vlm-preloaded          User-supplied VLM JSON (set dataset.train_data_path=<path>)"
         ),
     )
@@ -193,7 +193,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
         help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
-        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by --mode/recipe name)",
+        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by recipe name)",
     )
     parser.add_argument(
         "--peft_scheme",
@@ -213,13 +213,6 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default=None,
         help="Sequence length for training",
     )
-    parser.add_argument(
-        "--hf_path",
-        type=str,
-        default=None,
-        help="HuggingFace model ID or local path to model directory. "
-        "Use a local path for more stable multinode training.",
-    )
     args, cli_overrides = parser.parse_known_args()
     return args, cli_overrides
 
@@ -227,19 +220,14 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
 def load_recipe(
     recipe_name: str,
     peft_scheme: str | None,
-    packed_sequence: bool = False,
-    seq_length: int | None = None,
-    hf_path: str | None = None,
 ) -> ConfigContainer:
     """
     Load recipe by name from megatron.bridge.recipes.
 
     Args:
         recipe_name: Full recipe function name (e.g., 'llama32_1b_pretrain_config')
-        peft_scheme: PEFT scheme to use ('lora', 'dora', or None)
-        packed_sequence: Enable packed sequence training (default: False)
-        seq_length: Sequence length for training (optional)
-        hf_path: HuggingFace model ID or local path to model directory (optional)
+        peft_scheme: PEFT scheme to use ('lora', 'dora', or None). When None,
+            the recipe default is used.
 
     Returns:
         ConfigContainer from calling the recipe
@@ -260,29 +248,15 @@ def load_recipe(
     try:
         sig = inspect.signature(config_builder)
         params = sig.parameters
-        has_var_keyword = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in params.values())
-
-        accepts_peft = "peft" in params or has_var_keyword
-        accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
-        accepts_seq_length = "seq_length" in params or has_var_keyword
-        accepts_hf_path = "hf_path" in params or has_var_keyword
+        accepts_peft_scheme = "peft_scheme" in params
     except (ValueError, TypeError):
         # If signature inspection fails, fallback conservatively
-        accepts_peft = True  # peft is widely supported, try passing it
-        accepts_packed_sequence = False  # new parameter, don't pass if unsure
-        accepts_seq_length = False  # new parameter, don't pass if unsure
-        accepts_hf_path = False  # model-specific, don't pass if unsure
+        accepts_peft_scheme = True  # peft_scheme is the current recipe PEFT argument
 
     # Build kwargs dynamically based on what the recipe accepts
     kwargs = {}
-    if accepts_peft:
-        kwargs["peft"] = peft_scheme
-    if accepts_packed_sequence and packed_sequence:
-        kwargs["packed_sequence"] = packed_sequence
-    if accepts_seq_length and seq_length is not None:
-        kwargs["seq_length"] = seq_length
-    if accepts_hf_path and hf_path is not None:
-        kwargs["hf_path"] = hf_path
+    if accepts_peft_scheme and peft_scheme is not None:
+        kwargs["peft_scheme"] = peft_scheme
 
     try:
         return config_builder(**kwargs)
@@ -308,8 +282,8 @@ def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name (fallback when --dataset is not passed)."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
-    if has_pretrain ^ has_finetune:
+    has_sft_or_peft = "sft" in lowered or "peft" in lowered
+    if has_pretrain ^ has_sft_or_peft:
         return "pretrain" if has_pretrain else "finetune"
     raise ValueError(ERR_INFER_MODE_FAILED)
 
@@ -321,9 +295,6 @@ def main() -> None:
     config: ConfigContainer = load_recipe(
         args.recipe,
         args.peft_scheme,
-        args.packed_sequence,
-        args.seq_length,
-        args.hf_path,
     )
 
     if args.dataset is not None:

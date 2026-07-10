@@ -673,6 +673,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    *,
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
     loaded_iteration: int = 0,

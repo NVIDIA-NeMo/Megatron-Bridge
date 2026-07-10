@@ -4,11 +4,14 @@
 
 - Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
 
-## Configuration files
+## Performance recipe configs
 
-There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
+Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The performance
+launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
+and config variant.
 
-- You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
+- Prefer command-line overrides for one-off changes.
+- Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
 ## Setup Instructions
 
@@ -96,7 +99,7 @@ uv run python scripts/performance/setup_experiment.py \
 
 ##### Training arguments
 
-- `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
+- `--task`: Workflow to run (`pretrain`, `sft`, `peft`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
@@ -255,7 +258,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use (e.g., `"v1"`, `"v2"`). Defaults to `"v2"` (`"v1"` if `"v2"` doens't exist). Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments
@@ -318,15 +321,15 @@ python scripts/performance/setup_experiment.py \
 `apply_determinism_overrides` is also importable for use outside the performance script layer:
 
 ```python
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_deterministic_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config
 
-cfg = llama3_70b_pretrain_deterministic_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config()
 
 # Or, apply overrides to any existing recipe:
 from megatron.bridge.recipes.utils import apply_determinism_overrides
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_config
 
-cfg = llama3_70b_pretrain_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 

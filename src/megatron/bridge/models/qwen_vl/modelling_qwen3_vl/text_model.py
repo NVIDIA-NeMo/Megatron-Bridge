@@ -18,10 +18,12 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 3e5a40f2ee42a2c74/mbridge/models/qwen3_vl/gpt_model.py
 """
 
+from dataclasses import replace
 from typing import Literal, Optional
 
 import torch
 from megatron.core import tensor_parallel
+from megatron.core.dist_checkpointing.mapping import ShardedStateDict
 from megatron.core.inference.contexts import BaseInferenceContext
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -33,6 +35,23 @@ from torch import Tensor
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultimodalRotaryEmbedding
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_block import Qwen3VLTransformerBlock
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_q_cu_seqlens
+
+
+def _get_mtp_packed_seq_params(packed_seq_params: PackedSeqParams | None) -> PackedSeqParams | None:
+    """Use physical padded offsets for MTP token rolling without changing attention metadata."""
+    if packed_seq_params is None or packed_seq_params.cu_seqlens_q_padded is None:
+        return packed_seq_params
+
+    _, cu_seqlens_q = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    cu_seqlens_kv = packed_seq_params.cu_seqlens_kv_padded
+    if cu_seqlens_kv is None:
+        cu_seqlens_kv = cu_seqlens_q
+    return replace(
+        packed_seq_params,
+        cu_seqlens_q=cu_seqlens_q,
+        cu_seqlens_kv=cu_seqlens_kv,
+    )
 
 
 class Qwen3VLGPTModel(GPTModel):
@@ -104,6 +123,25 @@ class Qwen3VLGPTModel(GPTModel):
             post_process=self.post_process,
             vp_stage=vp_stage,
             pg_collection=pg_collection,
+        )
+
+    def tie_embeddings_and_output_weights_state_dict(
+        self,
+        sharded_state_dict: ShardedStateDict,
+        output_layer_weight_key: str,
+        first_stage_word_emb_key: str,
+        metadata: dict | None = None,
+    ) -> None:
+        """Tie embedding/output checkpoint entries for Qwen3-VL MTP pipeline stages."""
+        if getattr(self, "mtp_process", False) and not self.pre_process:
+            sharded_state_dict.pop(output_layer_weight_key, None)
+            return
+
+        super().tie_embeddings_and_output_weights_state_dict(
+            sharded_state_dict,
+            output_layer_weight_key,
+            first_stage_word_emb_key,
+            metadata if metadata is not None else {},
         )
 
     def forward(
@@ -192,6 +230,9 @@ class Qwen3VLGPTModel(GPTModel):
             self.__dict__["embedding"] = _sp_scatter_embedding
             _shadow_embedding = True
 
+        postprocess_packed_seq_params = (
+            _get_mtp_packed_seq_params(packed_seq_params) if self.mtp_process else packed_seq_params
+        )
         result = self._postprocess(
             hidden_states=hidden_states,
             input_ids=input_ids,
@@ -205,7 +246,7 @@ class Qwen3VLGPTModel(GPTModel):
             decoder_input=decoder_input,
             attention_mask=attention_mask,
             inference_params=inference_params,
-            packed_seq_params=packed_seq_params,
+            packed_seq_params=postprocess_packed_seq_params,
             sequence_len_offset=sequence_len_offset,
             runtime_gather_output=runtime_gather_output,
             extra_block_kwargs=extra_block_kwargs,

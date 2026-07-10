@@ -853,10 +853,3 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["LlamaModel"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) is False
-
-    def test_list_supported_models(self):
-        """Test list_supported_models includes LlamaForCausalLM."""
-        # This test requires the dispatch system to be set up
-        # Since we're testing in isolation, we'll skip this test
-        # In a real environment, this would work if the bridges are registered
-        pass  # Skip for now as it requires full dispatch setup

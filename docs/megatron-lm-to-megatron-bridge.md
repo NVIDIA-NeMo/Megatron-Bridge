@@ -30,11 +30,11 @@ uv run python scripts/translate_mlm_to_bridge.py \
 ```bash
 # From a Bridge recipe name (defaults exported as MLM args)
 uv run python scripts/translate_mlm_to_bridge.py --reverse \
-    --recipe llama32_1b_pretrain_config
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
 
 # From a recipe plus inline overrides
 uv run python scripts/translate_mlm_to_bridge.py --reverse \
-    --recipe llama32_1b_pretrain_config \
+    --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
 
 # From Bridge overrides only (no recipe)
@@ -99,7 +99,7 @@ Run the generic recipe launcher and override config keys directly:
 
 ```bash
 uv run python scripts/training/run_recipe.py \
-  --recipe llama3_8b_pretrain_config \
+  --recipe llama3_8b_pretrain_2gpu_h100_bf16_config \
   --dataset llm-pretrain \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \

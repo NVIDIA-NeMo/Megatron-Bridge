@@ -16,13 +16,16 @@
 Unit tests for DeepSeek bridges.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
 from transformers import GenerationConfig
 
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
+from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
 from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge, _dequant_fp8_blockwise
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -471,3 +474,31 @@ class TestDeepSeekV3MaybeModifyLoadedHFWeight:
         assert torch.all(result["gate"] == 2.0)
         # Non-FP8 entries pass through unchanged.
         assert result["up"] is w2
+
+
+class TestCommonMappingExpertBias:
+    """Router expert_bias coverage in the shared DeepSeek-family mapping list (issue #4199)."""
+
+    def test_decoder_expert_bias_in_common_list(self):
+        """The common list must map router expert_bias for the main decoder layers."""
+        registry = MegatronMappingRegistry(*get_common_mapping_list())
+        mapping = registry.megatron_to_hf_lookup("decoder.layers.5.mlp.router.expert_bias")
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.5.mlp.gate.e_score_correction_bias"
+
+    def test_mtp_expert_bias_still_generated(self):
+        """The MTP loop must still emit the expert_bias mapping for MTP layers."""
+        hf_config = SimpleNamespace(num_nextn_predict_layers=1, num_hidden_layers=61)
+        registry = MegatronMappingRegistry(*get_common_mapping_list(hf_config=hf_config))
+        mapping = registry.megatron_to_hf_lookup("mtp.layers.0.mtp_model_layer.mlp.router.expert_bias")
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.61.mlp.gate.e_score_correction_bias"
+
+    def test_v3_bridge_resolves_expert_bias(self):
+        """DeepSeekV3Bridge must keep resolving expert_bias via the common list."""
+        bridge = DeepSeekV3Bridge()
+        bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=0)
+        registry = bridge.mapping_registry()
+        mapping = registry.megatron_to_hf_lookup("decoder.layers.0.mlp.router.expert_bias")
+        assert mapping is not None
+        assert mapping.hf_param == "model.layers.0.mlp.gate.e_score_correction_bias"
