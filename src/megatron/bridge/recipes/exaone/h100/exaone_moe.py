@@ -47,7 +47,7 @@ def _apply_exaone_moe_common(cfg: ConfigContainer) -> None:
     cfg.model.sequence_parallel = True
     cfg.model.seq_length = 4096
 
-    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_hybridep_num_sms = 16
     cfg.model.moe_router_fusion = False
