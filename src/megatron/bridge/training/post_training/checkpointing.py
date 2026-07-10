@@ -60,10 +60,31 @@ def restore_sharded_modelopt_state(model: list[MegatronModule], checkpoint_path:
     _load_extra_state_from_sharded_checkpoint(model[0], checkpoint_path, prefix="")
 
 
-def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
-    """Get the path to use for ModelOpt operations (handles iteration directories)."""
+def _validate_modelopt_checkpointing(non_persistent_ckpt_type: str | None) -> None:
+    """Reject checkpoint sources whose ModelOpt state cannot be selected consistently."""
+    if non_persistent_ckpt_type is not None:
+        raise ValueError(
+            "ModelOpt checkpoint restoration is not supported with non-persistent checkpoint loading. "
+            "Set checkpoint.non_persistent_ckpt_type=None."
+        )
+
+
+def _get_modelopt_checkpoint_path(checkpoint_path: str, ckpt_step: int | None = None) -> str:
+    """Get the checkpoint iteration path to use for ModelOpt operations."""
     if not checkpoint_path or not os.path.isdir(checkpoint_path):
         return checkpoint_path
+
+    from megatron.bridge.training.checkpointing import (
+        _DIRECT_ITERATION_DIR_SENTINEL,
+        _resolve_checkpoint_iteration,
+    )
+    from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
+
+    iteration, release = _resolve_checkpoint_iteration(checkpoint_path, ckpt_step)
+    if iteration == _DIRECT_ITERATION_DIR_SENTINEL:
+        return checkpoint_path
+    if iteration >= 0 or release:
+        return get_checkpoint_name(checkpoint_path, iteration, release)
 
     # Check for iter_* folders
     try:
@@ -100,19 +121,20 @@ def _get_modelopt_checkpoint_path(checkpoint_path: str) -> str:
     return checkpoint_path  # No iteration dirs, use root
 
 
-def has_modelopt_state(checkpoint_path: str) -> bool:
+def has_modelopt_state(checkpoint_path: str, ckpt_step: int | None = None) -> bool:
     """Check if ModelOpt state exists inside the checkpoint path.
 
     Checks for modelopt_state in iteration directories (iter_*) or root directory.
     NOTE: Ignores distillation state which is deprecated and unused.
 
     Args:
-        checkpoint_path: Path to the checkpoint directory
+        checkpoint_path: Path to the checkpoint directory.
+        ckpt_step: Specific checkpoint iteration selected for native loading.
 
     Returns:
         True if modelopt_state folder exists and contains nontrivial state, else False.
     """
-    modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path)
+    modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path, ckpt_step)
     modelopt_state_path = os.path.join(modelopt_checkpoint_path, "modelopt_state")
     if not os.path.isdir(modelopt_state_path):
         return False
@@ -122,12 +144,17 @@ def has_modelopt_state(checkpoint_path: str) -> bool:
     return any(mode[0] != "kd_loss" for mode in modes)
 
 
-def load_modelopt_state(model: list[MegatronModule], checkpoint_path: str) -> None:
+def load_modelopt_state(
+    model: list[MegatronModule],
+    checkpoint_path: str,
+    ckpt_step: int | None = None,
+) -> None:
     """Load modelopt_state from a checkpoint.
     Args:
         model: The model to load the modelopt_state into
-        checkpoint_path: Path to the checkpoint directory
+        checkpoint_path: Path to the checkpoint directory.
+        ckpt_step: Specific checkpoint iteration selected for native loading.
     """
-    modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path)
+    modelopt_checkpoint_path = _get_modelopt_checkpoint_path(checkpoint_path, ckpt_step)
     unwrapped_model = unwrap_model(model)
     restore_sharded_modelopt_state(unwrapped_model, modelopt_checkpoint_path)

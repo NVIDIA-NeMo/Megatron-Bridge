@@ -27,6 +27,7 @@ import numpy as np
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
@@ -37,7 +38,6 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     find_pattern_indices,
     get_ltor_masks_and_position_ids,
 )
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -588,7 +588,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             }
-            prepare_padded_or_packed_sequence_batch(
+            prepare_sequence_batch(
                 text_batch,
                 sequence_length=self.seq_length,
                 pad_to_max_length=self.pad_to_max_length,

@@ -41,6 +41,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
+from megatron.bridge.utils.cuda_graph import validate_cuda_graph_configuration
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -225,6 +226,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
 
+        validate_cuda_graph_configuration(self)
         if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "

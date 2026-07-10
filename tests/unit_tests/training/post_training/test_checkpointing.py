@@ -25,9 +25,11 @@ from megatron.core.dist_checkpointing.strategies.common import COMMON_STATE_FNAM
 
 from megatron.bridge.training.post_training.checkpointing import (
     _get_modelopt_checkpoint_path,
+    _validate_modelopt_checkpointing,
     has_modelopt_state,
     load_modelopt_state,
 )
+from megatron.bridge.training.state import TrainState
 
 
 @pytest.fixture
@@ -142,6 +144,36 @@ class TestGetModeloptCheckpointPath:
                 result = _get_modelopt_checkpoint_path(str(checkpoint_path))
                 assert result == str(iter_folder_200)
                 assert mock_load.call_count == 3
+
+    def test_returns_tracked_iter_folder_before_higher_iter(self):
+        """Test that ModelOpt state follows the checkpoint selected by the native tracker."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_path = Path(temp_dir)
+            iter_folder_100 = checkpoint_path / "iter_0000100"
+            iter_folder_200 = checkpoint_path / "iter_0000200"
+            iter_folder_100.mkdir()
+            iter_folder_200.mkdir()
+            (checkpoint_path / "latest_checkpointed_iteration.txt").write_text("100", encoding="utf-8")
+
+            with patch("megatron.core.dist_checkpointing.load_common_state_dict") as mock_load:
+                mock_load.side_effect = lambda path: {"iteration": 100 if path == str(iter_folder_100) else 200}
+
+                result = _get_modelopt_checkpoint_path(str(checkpoint_path))
+
+            assert result == str(iter_folder_100)
+
+    def test_explicit_step_overrides_higher_iter(self):
+        """Test that ModelOpt state follows the explicit native checkpoint step."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            checkpoint_path = Path(temp_dir)
+            iter_folder_100 = checkpoint_path / "iter_0000100"
+            iter_folder_200 = checkpoint_path / "iter_0000200"
+            iter_folder_100.mkdir()
+            iter_folder_200.mkdir()
+
+            result = _get_modelopt_checkpoint_path(str(checkpoint_path), ckpt_step=100)
+
+            assert result == str(iter_folder_100)
 
     def test_handles_exception_during_state_dict_load(self):
         """Test that it skips checkpoints that fail to load and continues."""
@@ -299,6 +331,19 @@ class TestGetModeloptCheckpointPath:
 class TestPostTrainingCheckpointUtilities:
     """Test utility functions for post-training checkpoint management."""
 
+    @pytest.mark.parametrize("non_persistent_ckpt_type", ["global", "local"])
+    def test_rejects_non_persistent_modelopt_restore(self, non_persistent_ckpt_type):
+        """Test that ModelOpt restoration rejects ambiguous non-persistent checkpoint loading."""
+        with pytest.raises(
+            ValueError,
+            match="ModelOpt checkpoint restoration is not supported with non-persistent checkpoint loading",
+        ):
+            _validate_modelopt_checkpointing(non_persistent_ckpt_type)
+
+    def test_allows_persistent_modelopt_restore(self):
+        """Test that persistent ModelOpt restoration remains supported."""
+        _validate_modelopt_checkpointing(None)
+
     @pytest.mark.parametrize(
         "checkpoint_path,modelopt_exists,expected",
         [
@@ -347,13 +392,16 @@ class TestPostTrainingCheckpointUtilities:
     ):
         """Detect and route restoration for ModelOpt state saved in the current MCore layout."""
         checkpoint_path = tmp_path / "checkpoint"
-        iteration_path = checkpoint_path / "iter_0000000"
+        iteration_path = checkpoint_path / "iter_0000100"
+        newer_iteration_path = checkpoint_path / "iter_0000200"
         modelopt_state_path = iteration_path / "modelopt_state"
         iteration_path.mkdir(parents=True)
+        newer_iteration_path.mkdir()
+        torch.save(TrainState(step=100).state_dict(), checkpoint_path / "latest_train_state.pt")
 
         # The torch_dist strategy synchronizes CUDA even though this fixture only stores objects.
         with patch("torch.cuda.synchronize"), patch("torch.cuda.current_device", return_value=torch.device("cpu")):
-            dist_checkpointing.save({"iteration": 0}, str(iteration_path), ("torch_dist", 1))
+            dist_checkpointing.save({"iteration": 100}, str(iteration_path), ("torch_dist", 1))
             modelopt_state_path.mkdir()
             dist_checkpointing.save(
                 {
@@ -365,6 +413,7 @@ class TestPostTrainingCheckpointUtilities:
             )
 
         assert not (modelopt_state_path / COMMON_STATE_FNAME).exists()
+        assert not (newer_iteration_path / "modelopt_state").exists()
         assert has_modelopt_state(str(checkpoint_path)) is True
 
         original_model = Mock()
