@@ -43,7 +43,7 @@ run_generation() {
         --prompt "$PROMPT" \
         --max_new_tokens "$MAX_NEW_TOKENS" \
         --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP" \
-        --dtype bfloat16 \
+        --dtype bf16 \
         --seed 0 \
         --top_k 1 \
         --use-legacy-generation \
