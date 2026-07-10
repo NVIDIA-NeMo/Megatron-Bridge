@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers configuring sequence packing or long-context training in Megatron-Bridge for LLM and VLM finetuning workloads. <br>
+Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge, including configuring offline packed SFT for LLMs, in-batch packing for VLMs, and context-parallel constraints. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -31,7 +31,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Shell commands] <br>
+**Output Type(s):** [Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -43,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 positive skill-activation task via NVSkills-Eval 3-Tier Evaluation (external profile). <br>
+Evaluated against 1 skill-activation task covering offline packed SFT, VLM in-batch packing, CP padding formulas, CUDA-graphs metadata requirements, and finetuning CP settings. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -68,15 +68,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 88% (+16%) |
-| Discoverability | 1 | 100% (+100%) | 80% (+42%) |
-| Effectiveness | 1 | 95% (+95%) | 83% (-0%) |
-| Efficiency | 1 | 94% (+67%) | 78% (+31%) |
-
-## Testing Completed: <br>
-**[x] Agent Red-Teaming** <br>
-**[ ] Network Security** <br>
-**[ ] Product Security** <br>
+| Correctness | 1 | 100% (+100%) | 91% (+39%) |
+| Discoverability | 1 | 100% (+100%) | 91% (+66%) |
+| Effectiveness | 1 | 95% (+95%) | 89% (+53%) |
+| Efficiency | 1 | 94% (+67%) | 93% (+71%) |
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>
