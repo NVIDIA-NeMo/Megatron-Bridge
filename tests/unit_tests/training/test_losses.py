@@ -67,8 +67,8 @@ class TestMaskedNextTokenLoss:
         )
 
     def test_tuple_output_tensor_shape_transformation(self):
-        """Test that tuple tensors are correctly flattened with .view(-1)."""
-        # Create 3D tensors to test view transformation
+        """Test that tuple tensors are correctly flattened."""
+        # Create 3D tensors to test shape transformation
         losses_tensor = torch.randn(2, 4, 8)  # [batch, seq, hidden]
         mask_tensor = torch.ones(2, 4, 8)
 
@@ -89,6 +89,24 @@ class TestMaskedNextTokenLoss:
         assert loss.ndim == 0, f"Loss should be scalar, got shape {loss.shape}"
         assert num_tokens.ndim == 0, f"num_tokens should be scalar, got shape {num_tokens.shape}"
         assert num_tokens.item() == 2 * 4 * 8, "All tokens should be counted"
+
+    def test_tuple_output_accepts_noncontiguous_multimodal_loss_mask(self):
+        """LLaVA can return an expanded batch loss mask with non-contiguous strides."""
+        losses_tensor = torch.arange(12, dtype=torch.float32).reshape(3, 4).transpose(0, 1)
+        mask_tensor = torch.tensor([[1.0, 0.0, 1.0, 0.0], [0.0, 1.0, 0.0, 1.0], [1.0, 1.0, 0.0, 0.0]]).transpose(0, 1)
+        assert not losses_tensor.is_contiguous()
+        assert not mask_tensor.is_contiguous()
+
+        with patch("megatron.bridge.training.losses.get_rerun_state_machine") as mock_rsm:
+            mock_rsm.return_value = MagicMock()
+            loss, num_tokens, _ = masked_next_token_loss(
+                loss_mask=torch.empty(0),
+                output_tensor=(losses_tensor, mask_tensor),
+                check_for_nan_in_loss=False,
+            )
+
+        assert torch.isclose(loss, torch.sum(losses_tensor * mask_tensor))
+        assert num_tokens.item() == int(mask_tensor.sum().item())
 
     def test_tuple_output_tensor_dtype_conversion(self):
         """Test that tuple tensors are converted to float regardless of input dtype."""

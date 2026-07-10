@@ -207,7 +207,7 @@ def test_encode_sample_keeps_shifted_labels_aligned_after_image_token_adjustment
     assert encoded.loss_mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
 
 
-def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
+def test_batch_packs_text_sequences_then_encode_batch():
     processor = _Processor(input_ids=[1, 2])
     encoder = NemotronOmniTaskEncoder(
         processor=processor,
@@ -221,12 +221,6 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
         input_ids=torch.tensor([1, 2]),
         labels=torch.tensor([2, IGNORE_INDEX]),
         loss_mask=torch.tensor([1.0, 0.0]),
-        visual_tensors={"pixel_values": torch.ones(1, 2, 3)},
-        sound_clips=torch.ones(2, 4),
-        sound_length=torch.tensor(2),
-        imgs_sizes=torch.tensor([[16, 16]]),
-        num_frames=torch.tensor([1]),
-        num_image_tiles=torch.tensor([1], dtype=torch.int),
     )
     s2 = NemotronOmniTaskSample(
         __key__="b",
@@ -234,10 +228,6 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
         input_ids=torch.tensor([3, 4, 5]),
         labels=torch.tensor([4, 5, IGNORE_INDEX]),
         loss_mask=torch.tensor([1.0, 1.0, 0.0]),
-        visual_tensors={"pixel_values": torch.full((1, 3, 3), 2.0)},
-        imgs_sizes=torch.tensor([[32, 16], [16, 16]]),
-        num_frames=torch.tensor([2]),
-        num_image_tiles=torch.tensor([2, 1], dtype=torch.int),
     )
 
     batch = encoder.batch([s1, s2])
@@ -254,16 +244,9 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     assert batch.cu_seqlens_kv_padded.tolist() == [0, 4, 8]
     assert batch.max_seqlen_q.item() == 4
     assert batch.max_seqlen_kv.item() == 4
-    assert batch.visual_tensors["pixel_values"].shape == (1, 5, 3)
-    assert batch.sound_clips.shape == (2, 2, 4)
-    assert batch.sound_length.tolist() == [2, 1]
-    assert batch.imgs_sizes.tolist() == [[16, 16], [32, 16], [16, 16]]
-    assert batch.num_frames.tolist() == [1, 2]
-    assert batch.num_image_tiles.tolist() == [1, 2, 1]
-
     encoded = encoder.encode_batch(batch)
     assert encoded["tokens"] is batch.input_ids
-    assert encoded["sound_clips"] is batch.sound_clips
+    assert encoded["sound_clips"] is None
     assert encoded["cu_seqlens_q"] is batch.cu_seqlens_q
     assert encoded["cu_seqlens_kv"] is batch.cu_seqlens_kv
     assert encoded["cu_seqlens_q_padded"] is batch.cu_seqlens_q_padded
@@ -274,7 +257,69 @@ def test_batch_packs_sequences_and_pads_audio_then_encode_batch():
     assert "cu_seqlens_unpadded" not in encoded
     assert "cu_seqlens_argmin" not in encoded
     assert isinstance(encoded["visual_inputs"], GenericVisualInputs)
-    assert encoded["visual_inputs"].pixel_values.shape == (1, 5, 3)
+    assert encoded["visual_inputs"].pixel_values is None
+
+
+def test_batch_rejects_multimodal_in_batch_packing():
+    encoder = NemotronOmniTaskEncoder(
+        processor=_Processor(input_ids=[1, 2]),
+        enable_in_batch_packing=True,
+    )
+    sample = NemotronOmniTaskSample(
+        __key__="image",
+        __subflavors__={},
+        input_ids=torch.tensor([1, IMG_START_ID, 95, IMG_END_ID, 2]),
+        labels=torch.tensor([IGNORE_INDEX, IGNORE_INDEX, IGNORE_INDEX, 2, IGNORE_INDEX]),
+        loss_mask=torch.tensor([0.0, 0.0, 0.0, 1.0, 0.0]),
+        visual_tensors={"pixel_values": torch.ones(1, 4, 3)},
+        num_patches=torch.tensor([1]),
+    )
+
+    with pytest.raises(ValueError, match="does not support image, video, or audio samples"):
+        encoder.batch([sample])
+
+
+def test_batch_rejects_audio_in_batch_packing():
+    encoder = NemotronOmniTaskEncoder(
+        processor=_Processor(input_ids=[1, 2]),
+        num_mel_bins=4,
+        enable_in_batch_packing=True,
+    )
+    sample = NemotronOmniTaskSample(
+        __key__="audio",
+        __subflavors__={},
+        input_ids=torch.tensor([1, SO_START_ID, SO_EMBEDDING_ID, SO_END_ID, 2]),
+        labels=torch.tensor([IGNORE_INDEX, IGNORE_INDEX, IGNORE_INDEX, 2, IGNORE_INDEX]),
+        loss_mask=torch.tensor([0.0, 0.0, 0.0, 1.0, 0.0]),
+        sound_clips=torch.ones(8, 4),
+        sound_length=torch.tensor(8),
+    )
+
+    with pytest.raises(ValueError, match="does not support image, video, or audio samples"):
+        encoder.batch([sample])
+
+
+def test_batch_rejects_mixed_audio_and_no_audio_samples():
+    encoder = NemotronOmniTaskEncoder(processor=_Processor(input_ids=[1, 2]), num_mel_bins=4)
+    audio_sample = NemotronOmniTaskSample(
+        __key__="audio",
+        __subflavors__={},
+        input_ids=torch.tensor([1, SO_EMBEDDING_ID, 2]),
+        labels=torch.tensor([IGNORE_INDEX, 2, IGNORE_INDEX]),
+        loss_mask=torch.tensor([0.0, 1.0, 0.0]),
+        sound_clips=torch.ones(8, 4),
+        sound_length=torch.tensor(8),
+    )
+    text_sample = NemotronOmniTaskSample(
+        __key__="text",
+        __subflavors__={},
+        input_ids=torch.tensor([1, 2]),
+        labels=torch.tensor([2, IGNORE_INDEX]),
+        loss_mask=torch.tensor([1.0, 0.0]),
+    )
+
+    with pytest.raises(ValueError, match="does not support mixing audio and no-audio samples"):
+        encoder.batch([audio_sample, text_sample])
 
 
 def test_batch_emits_padded_metadata_for_aligned_cp_multiple():

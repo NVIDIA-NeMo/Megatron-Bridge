@@ -1615,7 +1615,7 @@ def test_ministral3_nonpacked_collate_supervises_each_rows_last_real_token(monke
 def test_nemotron_vl_video_collate_rejects_in_batch_packing():
     examples = [{"conversation": [{"role": "user", "content": [{"type": "video", "path": "video.mp4"}]}]}]
 
-    with pytest.raises(ValueError, match="video collation does not support in-batch packing"):
+    with pytest.raises(ValueError, match="does not support in-batch packing"):
         collate.nemotron_nano_v2_vl_collate_fn(examples, object(), enable_in_batch_packing=True)
 
 
@@ -1841,6 +1841,20 @@ def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_co
     assert batch["visual_inputs"] is None
 
 
+def test_nemotron_omni_collate_rejects_mixed_audio_and_no_audio_samples():
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6], [7, 8, 9]])
+    examples = [
+        {
+            "conversation": [{"role": "user", "content": "audio"}],
+            "audio": ([0.0, 0.1], 16000),
+        },
+        {"conversation": [{"role": "user", "content": "text"}]},
+    ]
+
+    with pytest.raises(ValueError, match="does not support mixing audio and no-audio samples"):
+        collate.nemotron_omni_collate_fn(examples, proc)
+
+
 def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
@@ -1904,6 +1918,28 @@ def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
     assert batch["input_ids"].tolist() == [[1, NEMO_IMAGE_TOKEN_ID, 7, 8]]
     assert batch["visual_inputs"].pixel_values.dtype == torch.bfloat16
     assert batch["visual_inputs"].pixel_values.shape == (1, 3, 16, 16)
+
+
+def test_nemotron_omni_dynamic_video_collate_fails_safely():
+    proc = _NemotronOmniProcessor()
+    proc.image_processor = type("DynamicImageProcessor", (), {"max_num_patches": 64})()
+    examples = [
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Watch this."},
+                        {"type": "video", "path": "/tmp/video.mp4"},
+                    ],
+                },
+                {"role": "assistant", "content": [{"type": "text", "text": "an event"}]},
+            ]
+        }
+    ]
+
+    with pytest.raises(ValueError, match="dynamic-resolution.*does not support HF video collation"):
+        collate.nemotron_omni_collate_fn(examples, proc)
 
 
 def _heterogeneous_nemotron_examples():
@@ -1972,6 +2008,50 @@ def test_nemotron_omni_collate_preserves_heterogeneous_sample_rows(monkeypatch):
     assert batch["labels"][2, 7].item() == 31
     assert 20 not in batch["input_ids"][0]
     assert 30 not in batch["input_ids"][1]
+
+
+class _DynamicNemotronOmniProcessor:
+    def __init__(self):
+        self.tokenizer = _NemotronOmniTokenizer()
+        self.image_processor = type("DynamicImageProcessor", (), {"max_num_patches": 64})()
+        self.calls = []
+        self.rows = [
+            [10, 11, 2],
+            [20, 93, 92, 92, 92, 94, 21, 2],
+            [30, 93, 92, 92, 94, 32, 93, 92, 92, 92, 92, 94, 31, 2],
+        ]
+
+    def __call__(self, **kwargs):
+        row_index = len(self.calls)
+        self.calls.append(kwargs)
+        assert kwargs["return_tensors"] is None
+        output = {"input_ids": [self.rows[row_index]]}
+        if kwargs.get("images") is not None:
+            if row_index == 1:
+                output["pixel_values"] = torch.ones(1, 3, 32, 32)
+            else:
+                output["pixel_values"] = [torch.ones(3, 32, 64), torch.ones(3, 64, 32)]
+        return output
+
+
+def test_nemotron_omni_dynamic_collate_handles_mixed_shapes_within_one_sample(monkeypatch):
+    processor = _DynamicNemotronOmniProcessor()
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    batch = collate.nemotron_omni_collate_fn(_heterogeneous_nemotron_examples(), processor)
+
+    assert batch["input_ids"].shape[0] == 3
+    assert [(row == NEMO_IMAGE_TOKEN_ID).sum().item() for row in batch["input_ids"]] == [0, 1, 2]
+    assert [(row == NEMO_IMG_START_TOKEN_ID).sum().item() for row in batch["input_ids"]] == [0, 1, 2]
+    assert [(row == NEMO_IMG_END_TOKEN_ID).sum().item() for row in batch["input_ids"]] == [0, 1, 2]
+    assert batch["imgs_sizes"].tolist() == [[32, 32], [32, 64], [64, 32]]
+    assert batch["num_image_tiles"].tolist() == [1, 2, 2]
+    assert batch["visual_inputs"].pixel_values.shape == (1, 20, 768)
+    assert batch["attention_mask"].shape == batch["input_ids"].shape
+    assert batch["labels"].shape == batch["input_ids"].shape
+    assert batch["loss_mask"].shape == batch["input_ids"].shape
+    assert torch.all(batch["loss_mask"][batch["attention_mask"] == 0] == 0)
+    assert torch.all(batch["labels"][batch["attention_mask"] == 0] == IGNORE_INDEX)
 
 
 class _NemotronVLProcessor:

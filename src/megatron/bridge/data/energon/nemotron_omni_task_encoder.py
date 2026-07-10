@@ -507,6 +507,12 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         """
         pad_id = self._pad_token_id
         batch_size = len(samples)
+        for sample in samples:
+            if (sample.sound_clips is None) != (sample.sound_length is None):
+                raise ValueError("sound_clips and sound_length must either both be set or both be absent.")
+        audio_presence = [sample.sound_clips is not None for sample in samples]
+        if any(audio_presence) and not all(audio_presence):
+            raise ValueError("Nemotron Omni batching does not support mixing audio and no-audio samples.")
 
         cu_seqlens_q_t: Optional[torch.Tensor] = None
         cu_seqlens_kv_t: Optional[torch.Tensor] = None
@@ -516,6 +522,19 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
         max_seqlen_kv_t: Optional[torch.Tensor] = None
 
         if self.enable_in_batch_packing:
+            if any(
+                sample.visual_tensors
+                or sample.num_patches is not None
+                or sample.imgs_sizes is not None
+                or sample.num_image_tiles is not None
+                or sample.sound_clips is not None
+                or sample.sound_length is not None
+                for sample in samples
+            ):
+                raise ValueError(
+                    "Nemotron Omni in-batch packing does not support image, video, or audio samples because "
+                    "modality embeddings are merged after packed-sequence boundaries are built."
+                )
             # Concatenate samples along the seq dim into a single [1, total_len]
             # microbatch. TE attention kernels use cu_seqlens for per-sample
             # masking; no attention_mask needed.
@@ -622,7 +641,7 @@ class NemotronOmniTaskEncoder(DefaultTaskEncoder[ChatMLSample, NemotronOmniTaskS
                 batched_visual[key] = torch.cat(tensors, dim=0)
 
         # Aggregate audio: pad mel spectrograms to max length in batch
-        has_audio = any(s.sound_clips is not None for s in samples)
+        has_audio = any(audio_presence)
         sound_clips_batch: Optional[torch.Tensor] = None
         sound_length_batch: Optional[torch.Tensor] = None
 

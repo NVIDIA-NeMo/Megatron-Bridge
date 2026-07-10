@@ -60,11 +60,11 @@ def masked_next_token_loss(
           the data parallel ranks
     """
     if isinstance(output_tensor, tuple):
-        losses = output_tensor[0].view(-1).float()
-        loss_mask = output_tensor[1].view(-1).float()
+        losses = output_tensor[0].reshape(-1).float()
+        loss_mask = output_tensor[1].reshape(-1).float()
     else:
-        losses = output_tensor.view(-1).float()
-    loss_mask = loss_mask.view(-1).float()
+        losses = output_tensor.reshape(-1).float()
+    loss_mask = loss_mask.reshape(-1).float()
     loss = torch.sum(losses * loss_mask)
 
     # Check individual rank losses are not NaN prior to DP all-reduce.

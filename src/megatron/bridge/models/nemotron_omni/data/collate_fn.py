@@ -83,8 +83,27 @@ def nemotron_omni_collate_fn(
         assistant_end_fallbacks=("<|im_end|>",),
         role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
-    first_content = examples[0]["conversation"][0]["content"]
-    is_video = isinstance(first_content, list) and first_content[0].get("type") == "video"
+    video_items = [
+        item
+        for example in examples
+        for turn in example["conversation"]
+        if isinstance(turn.get("content"), list)
+        for item in turn["content"]
+        if isinstance(item, dict) and item.get("type") == "video"
+    ]
+    is_video = bool(video_items)
+    is_dynamic_res_processor = not hasattr(processor.image_processor, "max_num_tiles")
+
+    if is_video and is_dynamic_res_processor:
+        raise ValueError(
+            "The dynamic-resolution Nemotron Omni processor does not support HF video collation; "
+            "use the temporal-video Energon task encoder."
+        )
+    audio_presence = [
+        example.get("audio_path") is not None or example.get("audio") is not None for example in examples
+    ]
+    if any(audio_presence) and not all(audio_presence):
+        raise ValueError("Nemotron Omni collation does not support mixing audio and no-audio samples.")
 
     # --- Vision path ---
     # The Nemotron Omni chat template does not expand {"type": "image"} content
@@ -100,15 +119,16 @@ def nemotron_omni_collate_fn(
         frames = []
         video_nframe = 10
 
-        for example in examples:
-            video_path = example["conversation"][0]["content"][0]["path"]
-            image_urls, metadata = maybe_path_or_url_to_data_urls(
-                video_path,
-                fps=0,
-                nframe=max(0, int(video_nframe)),
-                nframe_max=-1,
-            )
-            frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
+        if len(video_items) != 1:
+            raise ValueError("Nemotron Omni HF collation supports exactly one video per batch.")
+        video_path = video_items[0]["path"]
+        image_urls, metadata = maybe_path_or_url_to_data_urls(
+            video_path,
+            fps=0,
+            nframe=max(0, int(video_nframe)),
+            nframe_max=-1,
+        )
+        frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
 
         prompt = processor.apply_chat_template(
             [ex["conversation"] for ex in examples],
@@ -166,7 +186,6 @@ def nemotron_omni_collate_fn(
             # `max_num_tiles`; the newer Nemotron-3 Omni Reasoning processor uses
             # dynamic-resolution patches (no `max_num_tiles` attr, has
             # `max_num_patches` instead). Detect which path we're on.
-            is_dynamic_res_processor = not hasattr(processor.image_processor, "max_num_tiles")
             if is_dynamic_res_processor:
                 # Variable per-image (H, W) makes ``return_tensors="pt"`` fail to
                 # stack pixel_values across examples. Process each example
@@ -180,14 +199,19 @@ def nemotron_omni_collate_fn(
                             images=imgs if imgs else None,
                             padding=False,
                             truncation=True,
-                            return_tensors="pt",
+                            # A single sample may contain dynamic-resolution images with
+                            # different shapes.  The remote Omni processor preserves those
+                            # image tensors as a list, which cannot be converted to one
+                            # BatchFeature tensor here.  Tensorize the text rows explicitly
+                            # after processing instead.
+                            return_tensors=None,
                         )
                         for prompt, imgs in zip(prompts, images_per_ex)
                     ]
                 pad_id = processor.tokenizer.pad_token_id
                 if pad_id is None:
                     pad_id = processor.tokenizer.eos_token_id or 0
-                ids_list = [b["input_ids"][0] for b in per_ex_batches]
+                ids_list = [torch.as_tensor(b["input_ids"][0], dtype=torch.long) for b in per_ex_batches]
                 max_len = max(t.shape[0] for t in ids_list)
                 padded_ids = torch.full((len(per_ex_batches), max_len), pad_id, dtype=ids_list[0].dtype)
                 attention_mask = torch.zeros((len(per_ex_batches), max_len), dtype=torch.long)
@@ -198,7 +222,9 @@ def nemotron_omni_collate_fn(
                 for b in per_ex_batches:
                     if "pixel_values" in b and b["pixel_values"] is not None:
                         pv_b = b["pixel_values"]
-                        if pv_b.dim() == 4:
+                        if isinstance(pv_b, list):
+                            pv_list.extend(pv_b)
+                        elif pv_b.dim() == 4:
                             for img in pv_b:
                                 pv_list.append(img)
                         elif pv_b.dim() == 3:
@@ -220,7 +246,6 @@ def nemotron_omni_collate_fn(
                     )
                 processor.image_processor.max_num_tiles = orig_tiles
         else:
-            is_dynamic_res_processor = False
             with use_processor_right_padding(processor):
                 batch = processor.tokenizer(
                     prompts,
@@ -231,7 +256,7 @@ def nemotron_omni_collate_fn(
 
     # --- Audio path ---
     # Support both audio_path (file path) and audio (raw waveform tuple from CV17-style datasets)
-    has_audio = any(ex.get("audio_path") or ex.get("audio") for ex in examples)
+    has_audio = any(audio_presence)
     if has_audio:
         import numpy as np
 

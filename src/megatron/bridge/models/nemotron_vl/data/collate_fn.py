@@ -52,8 +52,11 @@ def nemotron_nano_v2_vl_collate_fn(
     # The video processor only accepts one example, while in-batch packing
     # requires a multi-example microbatch.
     is_video = examples[0]["conversation"][0]["content"][0]["type"] == "video"
-    if is_video and enable_in_batch_packing:
-        raise ValueError("Nemotron-VL video collation does not support in-batch packing.")
+    if enable_in_batch_packing:
+        raise ValueError(
+            "Nemotron-VL collation does not support in-batch packing because image embeddings expand "
+            "after packed-sequence boundaries are built."
+        )
 
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = infer_assistant_mask_boundary_config(processor)
