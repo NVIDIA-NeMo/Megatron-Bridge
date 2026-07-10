@@ -16,7 +16,6 @@
 
 import io
 import json
-import random
 import re
 from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
@@ -164,7 +163,9 @@ def _cord_v2_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) -> d
         gt_jsons = ground_truth["gt_parses"]
     else:
         gt_jsons = [ground_truth["gt_parse"]]
-    text = json2token(random.choice(gt_jsons), sort_json_key=True)
+    # Dataset adaptation runs independently on pipeline stages and after RNG
+    # restoration, so target selection must not depend on process-global state.
+    text = json2token(gt_jsons[0], sort_json_key=True)
     prompt = str(kwargs.get("prompt", "Describe this image."))
     return {
         "conversation": [
