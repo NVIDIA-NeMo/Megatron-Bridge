@@ -190,8 +190,10 @@ def nemotron_omni_collate_fn(
                 ids_list = [b["input_ids"][0] for b in per_ex_batches]
                 max_len = max(t.shape[0] for t in ids_list)
                 padded_ids = torch.full((len(per_ex_batches), max_len), pad_id, dtype=ids_list[0].dtype)
+                attention_mask = torch.zeros((len(per_ex_batches), max_len), dtype=torch.long)
                 for i, ids in enumerate(ids_list):
                     padded_ids[i, : ids.shape[0]] = ids
+                    attention_mask[i, : ids.shape[0]] = 1
                 pv_list: list[torch.Tensor] = []
                 for b in per_ex_batches:
                     if "pixel_values" in b and b["pixel_values"] is not None:
@@ -201,7 +203,7 @@ def nemotron_omni_collate_fn(
                                 pv_list.append(img)
                         elif pv_b.dim() == 3:
                             pv_list.append(pv_b)
-                batch = {"input_ids": padded_ids}
+                batch = {"input_ids": padded_ids, "attention_mask": attention_mask}
                 if pv_list:
                     batch["pixel_values"] = pv_list  # list[Tensor[3, H_i, W_i]]
             else:
@@ -281,8 +283,11 @@ def nemotron_omni_collate_fn(
         sound_token_id = processor.tokenizer.convert_tokens_to_ids("<so_embedding>")
 
         new_input_ids_list = []
+        current_attention_mask = batch.get("attention_mask")
+        new_attention_mask_list = []
         for i, ex in enumerate(examples):
             ids = batch["input_ids"][i]
+            row_attention_mask = current_attention_mask[i] if current_attention_mask is not None else None
             n_tokens = n_audio_tokens_list[i]
             if n_tokens > 0:
                 # Find existing <so_embedding> token(s) and replace with correct count
@@ -295,11 +300,27 @@ def nemotron_omni_collate_fn(
                     ids_after = ids[first_pos + existing_count :]
                     sound_tokens = torch.full((n_tokens,), sound_token_id, dtype=ids.dtype)
                     ids = torch.cat([ids_before, sound_tokens, ids_after])
+                    if row_attention_mask is not None:
+                        sound_attention = torch.ones(n_tokens, dtype=row_attention_mask.dtype)
+                        row_attention_mask = torch.cat(
+                            [
+                                row_attention_mask[:first_pos],
+                                sound_attention,
+                                row_attention_mask[first_pos + existing_count :],
+                            ]
+                        )
                 else:
                     # No existing sound token, insert at position 1
                     sound_tokens = torch.full((n_tokens,), sound_token_id, dtype=ids.dtype)
                     ids = torch.cat([ids[:1], sound_tokens, ids[1:]])
+                    if row_attention_mask is not None:
+                        sound_attention = torch.ones(n_tokens, dtype=row_attention_mask.dtype)
+                        row_attention_mask = torch.cat(
+                            [row_attention_mask[:1], sound_attention, row_attention_mask[1:]]
+                        )
             new_input_ids_list.append(ids)
+            if row_attention_mask is not None:
+                new_attention_mask_list.append(row_attention_mask)
 
         max_len = max(ids.shape[0] for ids in new_input_ids_list)
         pad_id = getattr(processor.tokenizer, "pad_token_id", 0) or 0
@@ -307,6 +328,11 @@ def nemotron_omni_collate_fn(
         for i, ids in enumerate(new_input_ids_list):
             padded_ids[i, : ids.shape[0]] = ids
         batch["input_ids"] = padded_ids
+        if new_attention_mask_list:
+            padded_attention_mask = torch.zeros((len(examples), max_len), dtype=new_attention_mask_list[0].dtype)
+            for i, row_attention_mask in enumerate(new_attention_mask_list):
+                padded_attention_mask[i, : row_attention_mask.shape[0]] = row_attention_mask
+            batch["attention_mask"] = padded_attention_mask
         batch["sound_clips"] = padded_mels
         batch["sound_length"] = mel_lengths_t
 
@@ -328,6 +354,9 @@ def nemotron_omni_collate_fn(
     img_start_token_id = processor.tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = processor.tokenizer.convert_tokens_to_ids("</img>")
     has_img_tokens = (batch["input_ids"] == img_start_token_id).any()
+    aligned_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
+    if "attention_mask" in batch:
+        aligned_batch["attention_mask"] = batch["attention_mask"]
     if has_img_tokens:
         # Dynamic-res: one <image> token per image; LM-side expansion is driven
         # by per-image ``num_image_tiles`` (set below to shuffled_count_i) with
@@ -343,15 +372,22 @@ def nemotron_omni_collate_fn(
                 n_imgs = int(pv_ref.shape[0])
             num_tiles_for_adjust = torch.ones(n_imgs, dtype=torch.long)
         else:
-            num_tiles_for_adjust = batch.get("num_patches", torch.zeros(len(examples), dtype=torch.long))
+            if "num_patches" not in batch:
+                raise ValueError("The static Nemotron image processor must provide one num_patches entry per image.")
+            num_tiles_for_adjust = batch["num_patches"]
         adjusted_batch = adjust_image_tokens(
-            {"input_ids": batch["input_ids"], "loss_mask": loss_mask},
+            aligned_batch,
             num_tiles_for_adjust,
             img_start_token_id,
             img_end_token_id,
+            padding_values={
+                "input_ids": int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
+                "loss_mask": 0,
+                "attention_mask": 0,
+            },
         )
     else:
-        adjusted_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
+        adjusted_batch = aligned_batch
 
     if is_video:
         video_token_id = processor.tokenizer.convert_tokens_to_ids("<video>")
@@ -362,12 +398,11 @@ def nemotron_omni_collate_fn(
 
     batch["input_ids"] = adjusted_batch["input_ids"]
     loss_mask = adjusted_batch["loss_mask"]
+    if "attention_mask" in adjusted_batch:
+        batch["attention_mask"] = adjusted_batch["attention_mask"]
 
-    if "position_ids" not in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
-        )
+    batch_size, seq_len = batch["input_ids"].shape
+    batch["position_ids"] = torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
 
     key = "pixel_values_videos" if is_video else "pixel_values"
     if key in batch:
@@ -434,6 +469,7 @@ def nemotron_omni_collate_fn(
         pad_to_multiple_of=pad_to_multiple_of,
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        pad_token_id=int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
         ignore_index=IGNORE_INDEX,
     )
 

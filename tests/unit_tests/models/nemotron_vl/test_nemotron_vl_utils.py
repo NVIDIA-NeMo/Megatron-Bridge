@@ -23,8 +23,15 @@ import socket
 from unittest import mock
 
 import pytest
+import torch
 
 from megatron.bridge.models.nemotron_vl import nemotron_vl_utils as vlu
+
+
+IMG_START_ID = 93
+IMG_TOKEN_ID = 92
+IMG_END_ID = 94
+PAD_ID = 0
 
 
 def _fake_getaddrinfo(ip: str):
@@ -130,3 +137,123 @@ class TestMaybePathOrUrlSsrfIntegration:
             out, _ = vlu.maybe_path_or_url_to_data_urls("http://example.com/page.html")
         mocked_open.assert_not_called()
         assert out == ["http://example.com/page.html"]
+
+
+class TestAdjustImageTokens:
+    def test_preserves_batch_rows_when_removing_image_tokens(self):
+        input_ids = torch.tensor(
+            [
+                [10, IMG_START_ID, IMG_TOKEN_ID, IMG_TOKEN_ID, IMG_TOKEN_ID, IMG_END_ID, 11, PAD_ID, PAD_ID],
+                [20, IMG_START_ID, IMG_TOKEN_ID, IMG_END_ID, 21, 22, PAD_ID, PAD_ID, PAD_ID],
+            ]
+        )
+        loss_mask = torch.tensor(
+            [
+                [0, 0, 0, 0, 0, 0, 1, 0, 0],
+                [0, 0, 0, 0, 1, 1, 0, 0, 0],
+            ]
+        )
+        attention_mask = torch.tensor(
+            [
+                [1, 1, 1, 1, 1, 1, 1, 0, 0],
+                [1, 1, 1, 1, 1, 1, 0, 0, 0],
+            ]
+        )
+
+        adjusted = vlu.adjust_image_tokens(
+            {"input_ids": input_ids, "loss_mask": loss_mask, "attention_mask": attention_mask},
+            torch.tensor([1, 1]),
+            IMG_START_ID,
+            IMG_END_ID,
+            padding_values={"input_ids": PAD_ID, "loss_mask": 0, "attention_mask": 0},
+        )
+
+        assert adjusted["input_ids"].shape == (2, 9)
+        assert adjusted["input_ids"].tolist() == [
+            [10, IMG_START_ID, IMG_TOKEN_ID, IMG_END_ID, 11, PAD_ID, PAD_ID, PAD_ID, PAD_ID],
+            [20, IMG_START_ID, IMG_TOKEN_ID, IMG_END_ID, 21, 22, PAD_ID, PAD_ID, PAD_ID],
+        ]
+        assert adjusted["loss_mask"].tolist() == [
+            [0, 0, 0, 0, 1, 0, 0, 0, 0],
+            [0, 0, 0, 0, 1, 1, 0, 0, 0],
+        ]
+        assert adjusted["attention_mask"].tolist() == [
+            [1, 1, 1, 1, 1, 0, 0, 0, 0],
+            [1, 1, 1, 1, 1, 1, 0, 0, 0],
+        ]
+        assert 20 not in adjusted["input_ids"][0]
+        assert 10 not in adjusted["input_ids"][1]
+
+    def test_maps_flat_tile_counts_across_zero_and_multiple_image_rows(self):
+        input_ids = torch.tensor(
+            [
+                [10, 11, 12, PAD_ID, PAD_ID, PAD_ID, PAD_ID, PAD_ID, PAD_ID, PAD_ID, PAD_ID, PAD_ID, PAD_ID],
+                [
+                    20,
+                    IMG_START_ID,
+                    IMG_TOKEN_ID,
+                    IMG_TOKEN_ID,
+                    IMG_TOKEN_ID,
+                    IMG_TOKEN_ID,
+                    IMG_END_ID,
+                    21,
+                    IMG_START_ID,
+                    IMG_TOKEN_ID,
+                    IMG_TOKEN_ID,
+                    IMG_TOKEN_ID,
+                    IMG_END_ID,
+                ],
+            ]
+        )
+        loss_mask = torch.tensor(
+            [
+                [0, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+                [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0],
+            ]
+        )
+
+        adjusted = vlu.adjust_image_tokens(
+            {"input_ids": input_ids, "loss_mask": loss_mask},
+            [2, 1],
+            IMG_START_ID,
+            IMG_END_ID,
+            padding_values={"input_ids": PAD_ID, "loss_mask": 0},
+        )
+
+        assert adjusted["input_ids"].shape == (2, 13)
+        assert adjusted["input_ids"][0].tolist() == input_ids[0].tolist()
+        assert adjusted["input_ids"][1].tolist() == [
+            20,
+            IMG_START_ID,
+            IMG_TOKEN_ID,
+            IMG_TOKEN_ID,
+            IMG_END_ID,
+            21,
+            IMG_START_ID,
+            IMG_TOKEN_ID,
+            IMG_END_ID,
+            PAD_ID,
+            PAD_ID,
+            PAD_ID,
+            PAD_ID,
+        ]
+        assert adjusted["loss_mask"][1].tolist() == [0, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 0, 0]
+
+    def test_expands_media_tokens_and_repeats_aligned_values(self):
+        adjusted = vlu.adjust_image_tokens(
+            {
+                "input_ids": torch.tensor([[10, IMG_START_ID, IMG_TOKEN_ID, IMG_END_ID, 11]]),
+                "loss_mask": torch.tensor([[0, 0, 0, 0, 1]]),
+                "attention_mask": torch.ones(1, 5, dtype=torch.long),
+            },
+            3,
+            IMG_START_ID,
+            IMG_END_ID,
+            padding_values={"input_ids": PAD_ID, "loss_mask": 0, "attention_mask": 0},
+        )
+
+        assert adjusted["input_ids"].tolist() == [
+            [10, IMG_START_ID, IMG_TOKEN_ID, IMG_TOKEN_ID, IMG_TOKEN_ID, IMG_END_ID, 11]
+        ]
+        assert adjusted["loss_mask"].tolist() == [[0, 0, 0, 0, 0, 0, 1]]
+        assert adjusted["attention_mask"].tolist() == [[1, 1, 1, 1, 1, 1, 1]]

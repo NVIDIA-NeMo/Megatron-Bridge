@@ -1748,9 +1748,15 @@ class _NemotronOmniTokenizer:
 
 
 class _NemotronOmniProcessor:
-    def __init__(self, tokenized_rows: list[list[int]] | None = None):
+    def __init__(
+        self,
+        tokenized_rows: list[list[int]] | None = None,
+        *,
+        num_patches: list[int] | None = None,
+    ):
         self.tokenizer = _NemotronOmniTokenizer(tokenized_rows)
         self.image_processor = type("ImageProcessor", (), {"max_num_tiles": 4})()
+        self.num_patches = num_patches
         self.calls = []
 
     def apply_chat_template(self, conversations, tokenize=False, **kwargs):
@@ -1764,7 +1770,16 @@ class _NemotronOmniProcessor:
                 "input_ids": torch.tensor([[1, NEMO_VIDEO_TOKEN_ID, 7, 8]], dtype=torch.long),
                 "pixel_values_videos": torch.ones(1, 3, 16, 16),
             }
-        return {"input_ids": torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)}
+        input_ids = torch.tensor(self.tokenizer.tokenized_rows, dtype=torch.long)
+        output = {
+            "input_ids": input_ids,
+            "attention_mask": (input_ids != self.tokenizer.pad_token_id).to(dtype=torch.long),
+        }
+        if kwargs.get("images") is not None:
+            num_patches = self.num_patches or [1] * len(kwargs["images"])
+            output["num_patches"] = torch.tensor(num_patches, dtype=torch.long)
+            output["pixel_values"] = torch.ones(sum(num_patches), 3, 16, 16)
+        return output
 
 
 def _zero_assistant_loss_mask(
@@ -1889,3 +1904,129 @@ def test_nemotron_omni_collate_video_path_wraps_visual_inputs(monkeypatch):
     assert batch["input_ids"].tolist() == [[1, NEMO_IMAGE_TOKEN_ID, 7, 8]]
     assert batch["visual_inputs"].pixel_values.dtype == torch.bfloat16
     assert batch["visual_inputs"].pixel_values.shape == (1, 3, 16, 16)
+
+
+def _heterogeneous_nemotron_examples():
+    return [
+        {
+            "conversation": [
+                {"role": "user", "content": [{"type": "text", "text": "text only"}]},
+                {"role": "assistant", "content": "row zero answer"},
+            ]
+        },
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [{"type": "image", "image": "image-1"}, {"type": "text", "text": "one image"}],
+                },
+                {"role": "assistant", "content": "row one answer"},
+            ]
+        },
+        {
+            "conversation": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": "image-2"},
+                        {"type": "image", "image": "image-3"},
+                        {"type": "text", "text": "two images"},
+                    ],
+                },
+                {"role": "assistant", "content": "row two answer"},
+            ]
+        },
+    ]
+
+
+def _sentinel_assistant_loss_mask(example, input_ids, processor, skipped_tokens, **kwargs):  # noqa: ARG001
+    return torch.isin(input_ids, torch.tensor([11, 21, 31], device=input_ids.device)).to(dtype=torch.float32)
+
+
+def test_nemotron_omni_collate_preserves_heterogeneous_sample_rows(monkeypatch):
+    raw_rows = [
+        [10, 11, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [20, 93, 92, 92, 92, 94, 21, 2, 0, 0, 0, 0, 0, 0, 0],
+        [30, 93, 92, 92, 94, 32, 93, 92, 92, 92, 94, 31, 2, 0, 0],
+    ]
+    processor = _NemotronOmniProcessor(raw_rows, num_patches=[1, 1, 1])
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    batch = collate.nemotron_omni_collate_fn(_heterogeneous_nemotron_examples(), processor)
+
+    assert batch["input_ids"].shape == (3, 15)
+    assert batch["input_ids"].tolist() == [
+        raw_rows[0],
+        [20, 93, 92, 94, 21, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [30, 93, 92, 94, 32, 93, 92, 94, 31, 2, 0, 0, 0, 0, 0],
+    ]
+    assert batch["attention_mask"].tolist() == [
+        [1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 0, 0, 0, 0, 0],
+    ]
+    assert batch["position_ids"].tolist() == [list(range(15))] * 3
+    assert batch["loss_mask"].nonzero(as_tuple=False).tolist() == [[0, 0], [1, 3], [2, 7]]
+    assert batch["labels"][0, 0].item() == 11
+    assert batch["labels"][1, 3].item() == 21
+    assert batch["labels"][2, 7].item() == 31
+    assert 20 not in batch["input_ids"][0]
+    assert 30 not in batch["input_ids"][1]
+
+
+class _NemotronVLProcessor:
+    def __init__(self, input_ids: torch.Tensor, num_patches: list[int]):
+        self.tokenizer = _NemotronOmniTokenizer()
+        self.input_ids = input_ids
+        self.num_patches = num_patches
+
+    def apply_chat_template(self, conversations, **kwargs):  # noqa: ARG002
+        return {
+            "input_ids": self.input_ids.clone(),
+            "attention_mask": (self.input_ids != self.tokenizer.pad_token_id).to(dtype=torch.long),
+            "num_patches": torch.tensor(self.num_patches, dtype=torch.long),
+            "pixel_values": torch.ones(sum(self.num_patches), 3, 16, 16),
+        }
+
+
+def test_nemotron_vl_collate_uses_each_rows_flat_image_tile_counts(monkeypatch):
+    vl_img_start_id = 131073
+    vl_img_end_id = 131074
+    raw_rows = torch.tensor(
+        [
+            [10, 11, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            [20, vl_img_start_id, 92, 92, 92, 92, vl_img_end_id, 21, 2, 0, 0, 0, 0, 0, 0],
+            [
+                30,
+                vl_img_start_id,
+                92,
+                92,
+                92,
+                vl_img_end_id,
+                32,
+                vl_img_start_id,
+                92,
+                92,
+                92,
+                92,
+                vl_img_end_id,
+                31,
+                2,
+            ],
+        ]
+    )
+    processor = _NemotronVLProcessor(raw_rows, [1, 2, 3])
+    monkeypatch.setattr(nemotron_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0))
+    monkeypatch.setattr(nemotron_vl_collate, "infer_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(nemotron_vl_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    batch = collate.nemotron_nano_v2_vl_collate_fn(_heterogeneous_nemotron_examples(), processor)
+
+    assert batch["input_ids"].shape == (3, 15)
+    assert batch["input_ids"].tolist() == [
+        raw_rows[0].tolist(),
+        [20, vl_img_start_id, 92, vl_img_end_id, 21, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+        [30, vl_img_start_id, 92, 92, vl_img_end_id, 32, vl_img_start_id, 92, 92, 92, vl_img_end_id, 31, 2, 0, 0],
+    ]
+    assert batch["attention_mask"].shape == batch["input_ids"].shape
+    assert batch["loss_mask"].nonzero(as_tuple=False).tolist() == [[0, 0], [1, 3], [2, 10]]

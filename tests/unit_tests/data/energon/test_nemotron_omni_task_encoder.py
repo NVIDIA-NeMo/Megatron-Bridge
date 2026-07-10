@@ -64,11 +64,18 @@ class _Tokenizer:
 
 
 class _Processor:
-    def __init__(self, *, input_ids: list[int], pixel_values: torch.Tensor | None = None):
+    def __init__(
+        self,
+        *,
+        input_ids: list[int],
+        pixel_values: torch.Tensor | None = None,
+        num_patches: list[int] | None = None,
+    ):
         self.tokenizer = _Tokenizer()
         self.image_processor = type("ImageProcessor", (), {"max_num_tiles": 4})()
         self.input_ids = torch.tensor([input_ids], dtype=torch.long)
         self.pixel_values = pixel_values
+        self.num_patches = num_patches
         self.calls = []
 
     def __call__(self, **kwargs):
@@ -76,6 +83,8 @@ class _Processor:
         out = {"input_ids": self.input_ids.clone()}
         if self.pixel_values is not None:
             out["pixel_values"] = self.pixel_values.clone()
+        if self.num_patches is not None:
+            out["num_patches"] = torch.tensor(self.num_patches, dtype=torch.long)
         return out
 
 
@@ -171,6 +180,31 @@ def test_encode_sample_uses_mock_video_frames_for_temporal_metadata(monkeypatch)
     assert encoded.imgs_sizes.tolist() == [[512, 512], [512, 512], [512, 512]]
     assert encoded.num_frames.tolist() == [3]
     assert encoded.num_image_tiles.tolist() == [256, 256, 256]
+
+
+def test_encode_sample_keeps_shifted_labels_aligned_after_image_token_adjustment():
+    processor = _Processor(
+        input_ids=[1, IMG_START_ID, 95, 95, 95, IMG_END_ID, *ANSWER_IDS, 2],
+        pixel_values=torch.ones(1, 3, 4, 4),
+        num_patches=[1],
+    )
+    encoder = NemotronOmniTaskEncoder(processor=processor, seq_length=32)
+    sample = _make_chatml_sample(
+        [
+            {
+                "role": "user",
+                "content": [{"type": "image"}, {"type": "text", "text": "Describe it."}],
+            },
+            {"role": "assistant", "content": "answer"},
+        ],
+        imgs=[torch.zeros(3, 4, 4)],
+    )
+
+    encoded = encoder.encode_sample(sample)
+
+    assert encoded.input_ids.tolist() == [1, IMG_START_ID, 95, IMG_END_ID, *ANSWER_IDS, 2]
+    assert encoded.labels.tolist() == [IGNORE_INDEX, IGNORE_INDEX, IGNORE_INDEX, 21, 22, IGNORE_INDEX, IGNORE_INDEX]
+    assert encoded.loss_mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]
 
 
 def test_batch_packs_sequences_and_pads_audio_then_encode_batch():

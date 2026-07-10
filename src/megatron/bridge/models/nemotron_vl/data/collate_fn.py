@@ -179,14 +179,19 @@ def nemotron_nano_v2_vl_collate_fn(
 
     img_start_token_id = 131073  # tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = 131074  # tokenizer.convert_tokens_to_ids("</img>")
+    aligned_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
+    if "attention_mask" in batch:
+        aligned_batch["attention_mask"] = batch["attention_mask"]
     adjusted_batch = adjust_image_tokens(
-        {
-            "input_ids": batch["input_ids"],
-            "loss_mask": loss_mask,
-        },
+        aligned_batch,
         batch["num_patches"],
         img_start_token_id,
         img_end_token_id,
+        padding_values={
+            "input_ids": int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
+            "loss_mask": 0,
+            "attention_mask": 0,
+        },
     )
 
     if is_video:
@@ -198,12 +203,11 @@ def nemotron_nano_v2_vl_collate_fn(
 
     batch["input_ids"] = adjusted_batch["input_ids"]
     loss_mask = adjusted_batch["loss_mask"]
+    if "attention_mask" in adjusted_batch:
+        batch["attention_mask"] = adjusted_batch["attention_mask"]
 
-    if "position_ids" not in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
-        )
+    batch_size, seq_len = batch["input_ids"].shape
+    batch["position_ids"] = torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
 
     key = "pixel_values_videos" if is_video else "pixel_values"
     pv = batch[key].to(torch.bfloat16)
@@ -227,6 +231,7 @@ def nemotron_nano_v2_vl_collate_fn(
         pad_to_multiple_of=pad_to_multiple_of,
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        pad_token_id=int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
         ignore_index=IGNORE_INDEX,
     )
     return batch
