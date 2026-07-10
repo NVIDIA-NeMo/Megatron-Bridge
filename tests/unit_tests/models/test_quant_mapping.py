@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ConcatenatedQKVMapping,
     GatedMLPMapping,
+    QKVGMapping,
     QKVMapping,
     ReplicatedMapping,
 )
@@ -115,6 +116,28 @@ class TestDeriveKvBmmAmaxMap:
             ),
         ]
         assert all(isinstance(mapping, AmaxMapping) for mapping in result)
+
+    def test_derives_kv_bmm_amax_mappings_from_step_qkvg_mapping(self):
+        mapping = QKVGMapping(
+            megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
+            q="model.layers.*.self_attn.q_proj.weight",
+            k="model.layers.*.self_attn.k_proj.weight",
+            v="model.layers.*.self_attn.v_proj.weight",
+            g="model.layers.*.self_attn.g_proj.weight",
+        )
+
+        result = derive_kv_bmm_amax_map([mapping])
+
+        assert [(m.megatron_param, m.hf_param) for m in result] == [
+            (
+                "decoder.layers.*.self_attention.core_attention.k_bmm_quantizer._amax",
+                "model.layers.*.self_attn.k_bmm_quantizer._amax",
+            ),
+            (
+                "decoder.layers.*.self_attention.core_attention.v_bmm_quantizer._amax",
+                "model.layers.*.self_attn.v_bmm_quantizer._amax",
+            ),
+        ]
 
     def test_preserves_wildcards_and_language_model_prefixes(self):
         mapping = QKVMapping(
