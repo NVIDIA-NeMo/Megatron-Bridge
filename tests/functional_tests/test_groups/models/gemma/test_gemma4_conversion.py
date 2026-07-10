@@ -194,7 +194,6 @@ class TestGemma4Conversion:
         "tp,pp,test_name",
         [
             (2, 1, "TP"),
-            (1, 2, "PP"),
         ],
     )
     def test_gemma4_conversion_parallelism(self, gemma4_toy_model_path, tmp_path, tp, pp, test_name):

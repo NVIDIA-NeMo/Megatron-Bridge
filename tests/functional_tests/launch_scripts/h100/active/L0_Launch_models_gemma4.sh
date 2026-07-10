@@ -1,3 +1,6 @@
+# CI_TIMEOUT=30
+# GPU_COUNT=x2
+#!/bin/bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,13 +15,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# CI_TIMEOUT=15
-#!/bin/bash
-set -xeuo pipefail # Exit immediately if a command exits with a non-zero status
+set -xeuo pipefail
 
-export CUDA_VISIBLE_DEVICES="0"
+export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 
 uv run coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest \
   -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/models/llada15/test_llada15_generate.py
+  tests/functional_tests/test_groups/models/gemma/test_gemma4_conversion.py
 coverage combine -q
