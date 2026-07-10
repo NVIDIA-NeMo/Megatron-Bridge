@@ -1704,6 +1704,8 @@ NEMO_VIDEO_TOKEN_ID = 91
 NEMO_IMAGE_TOKEN_ID = 92
 NEMO_IMG_START_TOKEN_ID = 93
 NEMO_IMG_END_TOKEN_ID = 94
+NEMO_SO_START_TOKEN_ID = 95
+NEMO_SO_END_TOKEN_ID = 96
 
 
 class _NemotronOmniTokenizer:
@@ -1734,7 +1736,10 @@ class _NemotronOmniTokenizer:
         out = torch.full((len(self.tokenized_rows), max_len), self.pad_token_id, dtype=torch.long)
         for i, row in enumerate(self.tokenized_rows):
             out[i, : len(row)] = torch.tensor(row, dtype=torch.long)
-        return {"input_ids": out}
+        attention_mask = torch.zeros_like(out)
+        for i, row in enumerate(self.tokenized_rows):
+            attention_mask[i, : len(row)] = 1
+        return {"input_ids": out, "attention_mask": attention_mask}
 
     def convert_tokens_to_ids(self, token):
         mapping = {
@@ -1743,6 +1748,8 @@ class _NemotronOmniTokenizer:
             "<image>": NEMO_IMAGE_TOKEN_ID,
             "<img>": NEMO_IMG_START_TOKEN_ID,
             "</img>": NEMO_IMG_END_TOKEN_ID,
+            "<so_start>": NEMO_SO_START_TOKEN_ID,
+            "<so_end>": NEMO_SO_END_TOKEN_ID,
         }
         return mapping[token]
 
@@ -1810,16 +1817,38 @@ def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
     assert batch["labels"].tolist() == [[-100, -100, -100, -100, 21, 22, 102, 103, -100]]
 
 
-def test_nemotron_omni_hf_collate_rejects_in_batch_packing():
-    with pytest.raises(ValueError, match="use the Energon task encoder"):
-        collate.nemotron_omni_collate_fn([], object(), enable_in_batch_packing=True)
+def test_nemotron_omni_hf_collate_uses_shared_text_packing(monkeypatch):
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6], [7, 8, 9]])
+    examples = [
+        {"conversation": [{"role": "user", "content": "row one"}]},
+        {"conversation": [{"role": "user", "content": "row two"}]},
+    ]
+
+    batch = collate.nemotron_omni_collate_fn(
+        examples,
+        proc,
+        enable_in_batch_packing=True,
+        sequence_length=16,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].tolist() == [[5, 6, 0, 0, 7, 8, 9, 0]]
+    assert batch["attention_mask"] is None
+    assert batch["cu_seqlens_q"].tolist() == [0, 2, 5]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+    assert batch["total_tokens"] == 8
 
 
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
-    monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(9, 128))
+    monkeypatch.setattr(
+        omni_utils,
+        "compute_mel_features",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(9, num_mel_bins),
+    )
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, 7]])
     examples = [
@@ -1839,6 +1868,27 @@ def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_co
     assert batch["sound_clips"].shape == (1, 9, 128)
     assert batch["sound_length"].tolist() == [9]
     assert batch["visual_inputs"] is None
+
+
+def test_nemotron_omni_collate_rejects_disjoint_audio_placeholder_runs(monkeypatch):
+    import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
+
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+    monkeypatch.setattr(
+        omni_utils,
+        "compute_mel_features",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(9, num_mel_bins),
+    )
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, NEMO_SO_TOKEN_ID, 6, NEMO_SO_TOKEN_ID, 7]])
+    examples = [
+        {
+            "conversation": [{"role": "user", "content": "two audio placeholders"}],
+            "audio": ([0.0, 0.1, -0.1], 16000),
+        }
+    ]
+
+    with pytest.raises(ValueError, match="one contiguous audio placeholder block"):
+        collate.nemotron_omni_collate_fn(examples, proc)
 
 
 def test_nemotron_omni_collate_rejects_mixed_audio_and_no_audio_samples():
@@ -1865,7 +1915,11 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
         "load_audio",
         lambda path, target_sr=16000: loaded_paths.append((path, target_sr)) or [0.0, 0.1],
     )
-    monkeypatch.setattr(omni_utils, "compute_mel_features", lambda waveform, sampling_rate=16000: torch.ones(1, 128))
+    monkeypatch.setattr(
+        omni_utils,
+        "compute_mel_features",
+        lambda waveform, sampling_rate=16000, num_mel_bins=128: torch.ones(1, num_mel_bins),
+    )
 
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6, 7]])
     examples = [
@@ -1882,7 +1936,7 @@ def test_nemotron_omni_collate_loads_audio_path_when_no_placeholder_exists(monke
     batch = collate.nemotron_omni_collate_fn(examples, proc)
 
     assert loaded_paths == [("/tmp/audio.wav", 16000)]
-    assert batch["input_ids"].tolist() == [[5, NEMO_SO_TOKEN_ID, 6, 7]]
+    assert batch["input_ids"].tolist() == [[5, NEMO_SO_START_TOKEN_ID, NEMO_SO_TOKEN_ID, NEMO_SO_END_TOKEN_ID, 6, 7]]
     assert batch["sound_clips"].shape == (1, 1, 128)
     assert batch["sound_length"].tolist() == [1]
 
@@ -2052,6 +2106,22 @@ def test_nemotron_omni_dynamic_collate_handles_mixed_shapes_within_one_sample(mo
     assert batch["loss_mask"].shape == batch["input_ids"].shape
     assert torch.all(batch["loss_mask"][batch["attention_mask"] == 0] == 0)
     assert torch.all(batch["labels"][batch["attention_mask"] == 0] == IGNORE_INDEX)
+
+
+def test_nemotron_omni_collate_refuses_to_truncate_image_rows(monkeypatch):
+    processor = _NemotronOmniProcessor(
+        [[10, NEMO_IMG_START_TOKEN_ID, NEMO_IMAGE_TOKEN_ID, NEMO_IMG_END_TOKEN_ID, 21, 2]],
+        num_patches=[1],
+    )
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    with pytest.raises(ValueError, match="cannot truncate image, video, or audio rows"):
+        collate.nemotron_omni_collate_fn(
+            [_heterogeneous_nemotron_examples()[1]],
+            processor,
+            sequence_length=4,
+            pad_to_multiple_of=1,
+        )
 
 
 class _NemotronVLProcessor:

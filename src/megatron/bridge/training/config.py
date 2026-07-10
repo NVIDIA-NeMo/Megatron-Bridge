@@ -1019,6 +1019,21 @@ class ConfigContainer(Container):
         if self.comm_overlap is not None:
             self.comm_overlap.data_parallel_size = self.data_parallel_size
 
+    def _sync_dataset_training_batch_sizes(self) -> None:
+        """Apply finalized training batch sizes to external dataset providers."""
+        sync_batch_sizes = getattr(self.dataset, "sync_training_batch_sizes", None)
+        if sync_batch_sizes is not None:
+            sync_batch_sizes(
+                micro_batch_size=self.train.micro_batch_size,
+                global_batch_size=self.train.global_batch_size,
+            )
+
+    def _sync_dataset_model_config(self) -> None:
+        """Apply model-owned shape settings to compatible dataset providers."""
+        sync_model_config = getattr(self.dataset, "sync_model_config", None)
+        if sync_model_config is not None:
+            sync_model_config(self.model)
+
     def _validate_and_apply_deterministic_mode(self) -> None:
         """Apply and validate deterministic mode requirements.
 
@@ -1118,6 +1133,9 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
+        self._sync_dataset_training_batch_sizes()
+        self._sync_dataset_model_config()
+
         if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
                 "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "

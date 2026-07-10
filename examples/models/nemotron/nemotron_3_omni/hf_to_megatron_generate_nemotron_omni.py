@@ -31,7 +31,7 @@ Vision backbone config is modality-dependent:
   * Video (and video+audio): dynamic_resolution=True, temporal_patch_dim=2,
     separate_video_embedder=True, temporal_ckpt_compat=True so RADIO ViT
     exercises the trained `video_embedder`. The video preprocessing mirrors
-    the SFT data pipeline (see `NemotronOmniTaskEncoder` with
+    the shared SFT collator (used by `NemotronOmniTaskEncoder` with
     `use_temporal_video_embedder=True`): frames are grouped in pairs, all frames
     are pre-patchified into [1, total_patches, 3*P*P], and `imgs_sizes`
     / `num_frames` / `vision_packed_seq_params` are plumbed through to LLaVAModel.
@@ -94,7 +94,7 @@ _VISION_PATCH_DIM = 16
 _VIDEO_FPS = 1
 _VIDEO_NFRAMES = 8
 
-# CLIP / RADIO normalization constants (mirrors NemotronOmniTaskEncoder._patchify_frame)
+# CLIP / RADIO normalization constants (mirrors nemotron_omni_collate_fn)
 _CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 _CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
@@ -104,7 +104,7 @@ def _patchify_frame(
 ) -> torch.Tensor:
     """Resize + normalize a PIL frame and pack into [num_patches, 3*P*P] patches.
 
-    Mirrors ``NemotronOmniTaskEncoder._patchify_frame`` exactly so inference-time
+    Mirrors the shared ``nemotron_omni_collate_fn`` patchification exactly so inference-time
     tensors have the same shape/distribution as SFT training tensors.
     """
     from torchvision import transforms
@@ -384,7 +384,7 @@ def process_video_inputs(
 ):
     """Process video inputs for the temporal video embedder inference path.
 
-    Mirrors ``NemotronOmniTaskEncoder.encode_sample`` (SFT data pipeline) so the
+    Mirrors the shared ``nemotron_omni_collate_fn`` SFT data pipeline so the
     model sees the same tensor shapes it was trained on:
 
     - Frames are grouped by ``temporal_patch_size`` (pair of consecutive frames

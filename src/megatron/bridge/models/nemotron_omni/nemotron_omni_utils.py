@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import math
-from typing import Union
+from functools import lru_cache
+from typing import Any, Union
 
 import numpy as np
 import torch
@@ -52,6 +53,17 @@ def load_audio(path: str, target_sr: int = 16000) -> np.ndarray:
     return waveform.astype(np.float32)
 
 
+@lru_cache(maxsize=None)
+def _parakeet_feature_extractor(num_mel_bins: int, sampling_rate: int) -> Any:
+    """Construct one reusable feature extractor per audio configuration."""
+    from transformers import ParakeetFeatureExtractor
+
+    return ParakeetFeatureExtractor(
+        feature_size=num_mel_bins,
+        sampling_rate=sampling_rate,
+    )
+
+
 def compute_mel_features(
     waveform: Union[np.ndarray, list],
     sampling_rate: int = 16000,
@@ -71,12 +83,7 @@ def compute_mel_features(
         Float tensor of shape ``(frames, num_mel_bins)`` -- a single clip
         ready to be batched and passed as ``sound_clips`` to the model.
     """
-    from transformers import ParakeetFeatureExtractor
-
-    extractor = ParakeetFeatureExtractor(
-        feature_size=num_mel_bins,
-        sampling_rate=sampling_rate,
-    )
+    extractor = _parakeet_feature_extractor(num_mel_bins, sampling_rate)
     features = extractor(
         waveform,
         sampling_rate=sampling_rate,

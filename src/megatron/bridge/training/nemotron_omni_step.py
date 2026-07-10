@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 
 _PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
 _PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
-_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS)
+_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS, "total_tokens")
 
 
 def get_batch_from_iterator(
@@ -107,6 +107,8 @@ def get_batch_from_iterator(
                 _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
         elif key in required_host_keys:
             _batch_required_keys[key] = val.cpu() if val is not None else None
+        elif key == "total_tokens" and "cu_seqlens_q" in batch:
+            _batch_required_keys[key] = int(val) if val is not None else None
         else:
             _batch_required_keys[key] = None
 

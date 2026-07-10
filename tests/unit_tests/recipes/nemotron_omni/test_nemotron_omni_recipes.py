@@ -199,3 +199,48 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.checkpoint.load is None
     assert cfg.model.freeze_vision_projection is True
     assert cfg.model.freeze_sound_projection is True
+
+
+def test_valor32k_provider_follows_training_batch_size_overrides(fake_processor):
+    cfg = _build_config(_recipe_module.nemotron_omni_valor32k_sft_config, fake_processor)
+    cfg.train.micro_batch_size = 2
+    cfg.train.global_batch_size = 32
+
+    cfg._sync_dataset_training_batch_sizes()
+
+    assert cfg.dataset.micro_batch_size == 2
+    assert cfg.dataset.global_batch_size == 32
+
+
+def test_valor32k_provider_derives_shape_settings_from_model(fake_processor):
+    cfg = _build_config(_recipe_module.nemotron_omni_valor32k_sft_config, fake_processor)
+    cfg.model.seq_length = 2048
+    cfg.model.temporal_patch_dim = 4
+    cfg.model.separate_video_embedder = False
+    cfg.model.has_sound = True
+    cfg.model.sound_config = {"num_mel_bins": 96}
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.temporal_patch_size = 1
+    cfg.dataset.use_temporal_video_embedder = True
+    cfg.dataset.patch_dim = 32
+    cfg.dataset.num_mel_bins = 64
+    # The provider sync runs at the beginning of public validation, before
+    # this deliberately invalid finite-epoch/provider combination is checked.
+    cfg.train.num_epochs = 1
+
+    with pytest.raises(ValueError, match="num_epochs is only supported"):
+        cfg.validate()
+
+    assert cfg.dataset.seq_length == 2048
+    assert cfg.dataset.temporal_patch_size == 4
+    assert cfg.dataset.use_temporal_video_embedder is True
+    assert cfg.dataset.patch_dim == 16
+    assert cfg.dataset.num_mel_bins == 96
+
+
+def test_valor32k_provider_rejects_invalid_temporal_patch_dim(fake_processor):
+    cfg = _build_config(_recipe_module.nemotron_omni_valor32k_sft_config, fake_processor)
+    cfg.model.temporal_patch_dim = 0
+
+    with pytest.raises(ValueError, match="temporal_patch_dim must be at least 1"):
+        cfg._sync_dataset_model_config()

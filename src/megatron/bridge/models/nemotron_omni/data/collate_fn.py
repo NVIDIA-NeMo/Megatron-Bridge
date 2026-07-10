@@ -12,8 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nemotron Omni collator implementations."""
+"""Shared Nemotron Omni collation for Direct-HF and Energon datasets."""
 
+from __future__ import annotations
+
+import contextlib
+import copy
+import tempfile
+from collections.abc import Iterator, Mapping, Sequence
+from typing import Any
+
+import numpy as np
 import torch
 
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
@@ -22,7 +31,6 @@ from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
-    shared_chat_template_kwargs_from_examples,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
@@ -34,10 +42,572 @@ CHATML_ASSISTANT_END = "<|im_end|>\n"
 CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
 
 
+def _pad_text_rows(
+    rows: Sequence[torch.Tensor],
+    *,
+    pad_token_id: int,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Right-pad unbatched token rows without deriving padding from token values."""
+    if not rows:
+        raise ValueError("Nemotron Omni collation requires at least one example.")
+    max_length = max(int(row.numel()) for row in rows)
+    input_ids = torch.full((len(rows), max_length), pad_token_id, dtype=torch.long)
+    attention_mask = torch.zeros((len(rows), max_length), dtype=torch.long)
+    for row_index, row in enumerate(rows):
+        row = row.to(dtype=torch.long).flatten()
+        input_ids[row_index, : row.numel()] = row
+        attention_mask[row_index, : row.numel()] = 1
+    return input_ids, attention_mask
+
+
+@contextlib.contextmanager
+def _single_tile_processor(processor: Any) -> Iterator[None]:
+    """Temporarily force one processor tile per placeholder and always restore it."""
+    image_processor = processor.image_processor
+    tile_attr = None
+    for candidate in ("max_num_tiles", "max_num_patches"):
+        if hasattr(image_processor, candidate):
+            tile_attr = candidate
+            break
+    if tile_attr is None:
+        yield
+        return
+    original = getattr(image_processor, tile_attr)
+    setattr(image_processor, tile_attr, 1)
+    try:
+        yield
+    finally:
+        setattr(image_processor, tile_attr, original)
+
+
+def _pil_images(payload: Any) -> list[Any]:
+    """Normalize one image/frame payload to a flat list of PIL images."""
+    from megatron.bridge.data.energon.task_encoder_utils import _images_to_pil
+
+    if payload is None:
+        return []
+    if isinstance(payload, torch.Tensor):
+        converted = _images_to_pil(payload)
+        return converted if isinstance(converted, list) else [converted]
+    if isinstance(payload, (list, tuple)):
+        result: list[Any] = []
+        for item in payload:
+            result.extend(_pil_images(item))
+        return result
+    return [payload]
+
+
+def _decode_video_path(path: str, *, video_fps: float, video_nframes: int) -> tuple[list[Any], float]:
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
+        maybe_path_or_url_to_data_urls,
+        pil_image_from_base64,
+    )
+
+    image_urls, metadata = maybe_path_or_url_to_data_urls(
+        path,
+        fps=max(0, int(video_fps)),
+        nframe=max(0, int(video_nframes)),
+        nframe_max=-1,
+    )
+    frames = [pil_image_from_base64(image_url) for image_url in image_urls]
+    sampled_fps = float(getattr(metadata, "fps", 0) or video_fps)
+    return frames, sampled_fps
+
+
+def _video_frames(payload: Any, *, video_fps: float, video_nframes: int) -> tuple[list[Any], float]:
+    """Decode raw/path video payloads or flatten already-decoded frame payloads."""
+    if isinstance(payload, (bytes, bytearray)):
+        with tempfile.NamedTemporaryFile(suffix=".mp4") as temporary_video:
+            temporary_video.write(payload)
+            temporary_video.flush()
+            return _decode_video_path(
+                temporary_video.name,
+                video_fps=video_fps,
+                video_nframes=video_nframes,
+            )
+    if isinstance(payload, str):
+        return _decode_video_path(payload, video_fps=video_fps, video_nframes=video_nframes)
+    return _pil_images(payload), video_fps
+
+
+def _patchify_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> torch.Tensor:
+    """Match the RADIO/CLIP frame normalization used by Omni inference."""
+    from torchvision import transforms
+
+    image = frame.resize((width, height))
+    tensor = transforms.ToTensor()(image)
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+    tensor = (tensor - mean) / std
+    patch_rows, patch_cols = height // patch_dim, width // patch_dim
+    return (
+        tensor.reshape(3, patch_rows, patch_dim, patch_cols, patch_dim)
+        .permute(1, 3, 0, 2, 4)
+        .reshape(patch_rows * patch_cols, 3 * patch_dim * patch_dim)
+    )
+
+
+def _render_text_conversation(example: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[Any]]:
+    """Replace structured image parts with literal placeholders in source order."""
+    conversation: list[dict[str, Any]] = []
+    images: list[Any] = []
+    for turn in example["conversation"]:
+        turn_copy = copy.deepcopy(turn)
+        content = turn_copy.get("content")
+        if isinstance(content, list):
+            text_parts: list[str] = []
+            for item in content:
+                if isinstance(item, Mapping) and item.get("type") == "image":
+                    image = item.get("image", item.get("path"))
+                    if image is None:
+                        raise ValueError("Nemotron Omni image content must provide 'image' or 'path'.")
+                    text_parts.append("<image>")
+                    images.extend(_pil_images(image))
+                elif isinstance(item, Mapping) and item.get("type") == "text":
+                    text_parts.append(str(item.get("text", "")))
+                elif isinstance(item, str):
+                    text_parts.append(item)
+            turn_copy["content"] = "\n".join(text_parts)
+        elif content is not None and not isinstance(content, str):
+            turn_copy["content"] = str(content)
+        conversation.append(turn_copy)
+    return conversation, images
+
+
+def _prepare_temporal_rows(
+    examples: Sequence[Mapping[str, Any]],
+    processor: Any,
+    *,
+    temporal_patch_size: int,
+    video_fps: float,
+    video_nframes: int,
+    patch_dim: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]], torch.Tensor]:
+    """Build row-local temporal prompts and one packed all-frame vision tensor."""
+    if temporal_patch_size < 1:
+        raise ValueError("temporal_patch_size must be at least 1.")
+    frame_height = frame_width = 512
+    token_rows: list[torch.Tensor] = []
+    mask_examples: list[dict[str, Any]] = []
+    all_patches: list[torch.Tensor] = []
+    all_sizes: list[list[int]] = []
+    all_num_frames: list[int] = []
+    all_num_image_tiles: list[int] = []
+    placeholder_counts: list[int] = []
+
+    for example in examples:
+        conversation: list[dict[str, Any]] = []
+        representative_images: list[Any] = []
+        row_placeholder_count = 0
+        for turn in example["conversation"]:
+            turn_copy = copy.deepcopy(turn)
+            content = turn_copy.get("content")
+            if isinstance(content, list):
+                text_parts: list[str] = []
+                for item in content:
+                    if isinstance(item, Mapping) and item.get("type") == "image":
+                        image = item.get("image", item.get("path"))
+                        images = _pil_images(image)
+                        if len(images) != 1:
+                            raise ValueError(
+                                "Each Nemotron Omni image content part must resolve to exactly one image."
+                            )
+                        image = images[0]
+                        text_parts.append("<image>")
+                        representative_images.append(image)
+                        all_patches.append(
+                            _patchify_frame(image, height=frame_height, width=frame_width, patch_dim=patch_dim)
+                        )
+                        all_sizes.append([frame_height, frame_width])
+                        all_num_frames.append(1)
+                        all_num_image_tiles.append((frame_height // patch_dim) * (frame_width // patch_dim) // 4)
+                        row_placeholder_count += 1
+                    elif isinstance(item, Mapping) and item.get("type") == "video":
+                        payload = item.get("video", item.get("path"))
+                        frames, sampled_fps = _video_frames(
+                            payload,
+                            video_fps=video_fps,
+                            video_nframes=video_nframes,
+                        )
+                        if not frames:
+                            raise ValueError("Nemotron Omni temporal video content decoded to zero frames.")
+                        video_lines = ["This is a video:"]
+                        for frame_start in range(0, len(frames), temporal_patch_size):
+                            group = frames[frame_start : frame_start + temporal_patch_size]
+                            timestamps = [
+                                f"frame {frame_start + offset + 1} sampled at "
+                                f"{(frame_start + offset) / sampled_fps:.2f} seconds"
+                                for offset in range(len(group))
+                            ]
+                            video_lines.append(" and ".join(timestamps) + ": <image>")
+                            representative_images.append(group[0])
+                            row_placeholder_count += 1
+                        text_parts.append("\n".join(video_lines))
+                        all_patches.extend(
+                            _patchify_frame(frame, height=frame_height, width=frame_width, patch_dim=patch_dim)
+                            for frame in frames
+                        )
+                        all_sizes.extend([[frame_height, frame_width]] * len(frames))
+                        all_num_frames.append(len(frames))
+                        tiles_per_frame = (frame_height // patch_dim) * (frame_width // patch_dim) // 4
+                        all_num_image_tiles.extend([tiles_per_frame] * len(frames))
+                    elif isinstance(item, Mapping) and item.get("type") == "text":
+                        text_parts.append(str(item.get("text", "")))
+                    elif isinstance(item, str):
+                        text_parts.append(item)
+                turn_copy["content"] = "\n".join(text_parts)
+            elif content is not None and not isinstance(content, str):
+                turn_copy["content"] = str(content)
+            conversation.append(turn_copy)
+
+        prompt = processor.tokenizer.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=False,
+            **chat_template_kwargs_from_example(example),
+        )
+        audio_token = getattr(processor.tokenizer, "audio_token", "<so_embedding>")
+        prompt = prompt.replace("<|audio_1|>", audio_token)
+        with _single_tile_processor(processor), use_processor_right_padding(processor):
+            output = processor(
+                text=[prompt],
+                images=representative_images or None,
+                padding=False,
+                truncation=False,
+                return_tensors="pt",
+            )
+        token_rows.append(torch.as_tensor(output["input_ids"][0], dtype=torch.long))
+        mask_example = dict(example)
+        mask_example["conversation"] = conversation
+        mask_examples.append(mask_example)
+        placeholder_counts.append(row_placeholder_count)
+
+    pad_token_id = processor.tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = processor.tokenizer.eos_token_id or 0
+    input_ids, attention_mask = _pad_text_rows(token_rows, pad_token_id=int(pad_token_id))
+    batch: dict[str, Any] = {"input_ids": input_ids, "attention_mask": attention_mask}
+    if all_patches:
+        batch["visual_inputs"] = GenericVisualInputs(
+            pixel_values=torch.cat(all_patches, dim=0).unsqueeze(0).to(torch.bfloat16).contiguous()
+        )
+        batch["imgs_sizes"] = torch.tensor(all_sizes, dtype=torch.long)
+        batch["num_frames"] = torch.tensor(all_num_frames, dtype=torch.long)
+        batch["num_image_tiles"] = torch.tensor(all_num_image_tiles, dtype=torch.int)
+    else:
+        batch["visual_inputs"] = None
+    return (
+        batch,
+        mask_examples,
+        torch.tensor([1 for count in placeholder_counts for _ in range(count)], dtype=torch.long),
+    )
+
+
+def _prepare_standard_rows(
+    examples: Sequence[Mapping[str, Any]],
+    processor: Any,
+) -> tuple[dict[str, Any], list[dict[str, Any]], torch.Tensor | None, bool]:
+    """Use the HF processor for text/images while preserving row ownership."""
+    text_conversations: list[list[dict[str, Any]]] = []
+    images_per_example: list[list[Any]] = []
+    mask_examples: list[dict[str, Any]] = []
+    for example in examples:
+        conversation, images = _render_text_conversation(example)
+        text_conversations.append(conversation)
+        images_per_example.append(images)
+        mask_example = dict(example)
+        mask_example["conversation"] = conversation
+        mask_examples.append(mask_example)
+
+    prompts = [
+        processor.tokenizer.apply_chat_template(
+            conversation,
+            tokenize=False,
+            add_generation_prompt=False,
+            **chat_template_kwargs_from_example(example),
+        )
+        for example, conversation in zip(examples, text_conversations, strict=True)
+    ]
+    audio_token = getattr(processor.tokenizer, "audio_token", "<so_embedding>")
+    prompts = [prompt.replace("<|audio_1|>", audio_token) for prompt in prompts]
+    all_images = [image for images in images_per_example for image in images]
+    is_dynamic_resolution = not hasattr(processor.image_processor, "max_num_tiles")
+
+    if not all_images:
+        with use_processor_right_padding(processor):
+            batch = processor.tokenizer(
+                prompts,
+                padding=processor.tokenizer.pad_token is not None,
+                truncation=False,
+                return_tensors="pt",
+            )
+        batch = dict(batch)
+        batch.setdefault("attention_mask", torch.ones_like(batch["input_ids"], dtype=torch.long))
+        return batch, mask_examples, None, is_dynamic_resolution
+
+    if is_dynamic_resolution:
+        with use_processor_right_padding(processor):
+            per_example = [
+                processor(
+                    text=[prompt],
+                    images=images or None,
+                    padding=False,
+                    truncation=False,
+                    return_tensors=None,
+                )
+                for prompt, images in zip(prompts, images_per_example, strict=True)
+            ]
+        token_rows = [torch.as_tensor(output["input_ids"][0], dtype=torch.long) for output in per_example]
+        pad_token_id = processor.tokenizer.pad_token_id
+        if pad_token_id is None:
+            pad_token_id = processor.tokenizer.eos_token_id or 0
+        input_ids, attention_mask = _pad_text_rows(token_rows, pad_token_id=int(pad_token_id))
+        pixel_values: list[torch.Tensor] = []
+        for output in per_example:
+            values = output.get("pixel_values")
+            if isinstance(values, list):
+                pixel_values.extend(torch.as_tensor(value) for value in values)
+            elif torch.is_tensor(values) and values.dim() == 4:
+                pixel_values.extend(values.unbind(0))
+            elif torch.is_tensor(values) and values.dim() == 3:
+                pixel_values.append(values)
+        batch = {"input_ids": input_ids, "attention_mask": attention_mask, "pixel_values": pixel_values}
+        num_tiles = torch.ones(len(pixel_values), dtype=torch.long)
+        return batch, mask_examples, num_tiles, is_dynamic_resolution
+
+    with _single_tile_processor(processor), use_processor_right_padding(processor):
+        batch = processor(
+            text=prompts,
+            images=all_images,
+            padding=processor.tokenizer.pad_token is not None,
+            truncation=False,
+            return_tensors="pt",
+        )
+    num_tiles = batch.get("num_patches")
+    if num_tiles is None:
+        raise ValueError("The static Nemotron Omni image processor must provide num_patches.")
+    return dict(batch), mask_examples, torch.as_tensor(num_tiles), is_dynamic_resolution
+
+
+def _prepare_static_video_row(
+    examples: Sequence[Mapping[str, Any]],
+    processor: Any,
+    video_part: Mapping[str, Any],
+    *,
+    video_fps: float,
+    video_nframes: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]], torch.Tensor | None]:
+    """Preserve the legacy single-row static-video processor path."""
+    if len(examples) != 1:
+        raise ValueError("Static Nemotron Omni video collation supports batch size 1 only.")
+    if not hasattr(processor.image_processor, "max_num_tiles"):
+        raise ValueError(
+            "The dynamic-resolution Nemotron Omni processor does not support HF video collation; "
+            "use the temporal-video recipe."
+        )
+    payload = video_part.get("video", video_part.get("path"))
+    if not isinstance(payload, str):
+        raise ValueError("Static Nemotron Omni video collation requires a video path.")
+
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
+        maybe_path_or_url_to_data_urls,
+        pil_image_from_base64,
+    )
+
+    image_urls, metadata = maybe_path_or_url_to_data_urls(
+        payload,
+        fps=max(0, int(video_fps)),
+        nframe=max(0, int(video_nframes)),
+        nframe_max=-1,
+    )
+    frames = [[pil_image_from_base64(image_url) for image_url in image_urls]]
+    prompt = processor.apply_chat_template(
+        [examples[0]["conversation"]],
+        tokenize=False,
+        **chat_template_kwargs_from_example(examples[0]),
+    )
+    with use_processor_right_padding(processor):
+        batch = dict(
+            processor(
+                text=prompt,
+                videos=frames,
+                videos_kwargs={"video_metadata": metadata},
+                return_tensors="pt",
+            )
+        )
+    batch.setdefault("attention_mask", torch.ones_like(batch["input_ids"], dtype=torch.long))
+    pixel_values = batch.pop("pixel_values_videos", None)
+    if pixel_values is not None:
+        batch["pixel_values"] = pixel_values
+    video_token_id = processor.tokenizer.convert_tokens_to_ids("<video>")
+    image_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
+    batch["input_ids"] = torch.where(batch["input_ids"] == video_token_id, image_token_id, batch["input_ids"])
+    num_tiles = batch.get("num_patches")
+    return batch, [dict(examples[0])], torch.as_tensor(num_tiles) if num_tiles is not None else None
+
+
+def _audio_waveform(example: Mapping[str, Any], *, target_sampling_rate: int = 16000) -> np.ndarray | None:
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import load_audio
+
+    if example.get("audio_path") is not None:
+        return load_audio(str(example["audio_path"]), target_sr=target_sampling_rate)
+    audio = example.get("audio")
+    if audio is None:
+        return None
+    sampling_rate = target_sampling_rate
+    if isinstance(audio, Mapping):
+        sampling_rate = int(audio.get("sampling_rate", target_sampling_rate))
+        audio = audio.get("array")
+    elif isinstance(audio, tuple) and len(audio) == 2:
+        audio, sampling_rate = audio
+    if isinstance(audio, torch.Tensor):
+        audio = audio.detach().cpu().numpy()
+    waveform = np.asarray(audio, dtype=np.float32)
+    if waveform.ndim > 1:
+        waveform = waveform.mean(axis=-1)
+    if sampling_rate != target_sampling_rate:
+        import librosa
+
+        waveform = librosa.resample(waveform, orig_sr=sampling_rate, target_sr=target_sampling_rate)
+    return waveform.astype(np.float32)
+
+
+def _add_audio_inputs(
+    batch: dict[str, Any],
+    examples: Sequence[Mapping[str, Any]],
+    processor: Any,
+    *,
+    max_audio_duration: float,
+    num_mel_bins: int,
+) -> None:
+    """Extract audio features and align each row's sound placeholder count."""
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import compute_mel_features
+
+    waveforms = [_audio_waveform(example) for example in examples]
+    if not any(waveform is not None for waveform in waveforms):
+        return
+    if not all(waveform is not None for waveform in waveforms):
+        raise ValueError("Nemotron Omni collation does not support mixing audio and no-audio samples.")
+
+    mel_features: list[torch.Tensor] = []
+    token_counts: list[int] = []
+    for example, waveform in zip(examples, waveforms, strict=True):
+        assert waveform is not None
+        duration = float(example.get("max_audio_duration", max_audio_duration))
+        waveform = waveform[: int(duration * 16000)]
+        mel = compute_mel_features(waveform, sampling_rate=16000, num_mel_bins=num_mel_bins)
+        mel_features.append(mel)
+        token_length = int(mel.shape[0])
+        for _ in range(3):
+            token_length = (token_length + 1) // 2
+        token_counts.append(max(1, token_length))
+
+    sound_token_id = processor.tokenizer.convert_tokens_to_ids("<so_embedding>")
+    sound_start_id = processor.tokenizer.convert_tokens_to_ids("<so_start>")
+    sound_end_id = processor.tokenizer.convert_tokens_to_ids("<so_end>")
+    image_end_id = processor.tokenizer.convert_tokens_to_ids("</img>")
+    rows: list[torch.Tensor] = []
+    for row_index, token_count in enumerate(token_counts):
+        row_length = int(batch["attention_mask"][row_index].sum().item())
+        row = batch["input_ids"][row_index, :row_length]
+        sound_positions = torch.where(row == sound_token_id)[0]
+        if sound_positions.numel() > 0:
+            if sound_positions.numel() > 1 and not bool(torch.all(sound_positions[1:] == sound_positions[:-1] + 1)):
+                raise ValueError(
+                    "Nemotron Omni supports one contiguous audio placeholder block per sample; "
+                    f"row {row_index} contains disjoint <so_embedding> runs."
+                )
+            first_position = int(sound_positions[0].item())
+            last_position = int(sound_positions[-1].item()) + 1
+            sound_tokens = torch.full((token_count,), sound_token_id, dtype=row.dtype)
+            row = torch.cat((row[:first_position], sound_tokens, row[last_position:]))
+        else:
+            image_end_positions = torch.where(row == image_end_id)[0]
+            insertion = int(image_end_positions[-1].item()) + 1 if image_end_positions.numel() else min(1, row.numel())
+            sound_block = torch.tensor(
+                [sound_start_id, *([sound_token_id] * token_count), sound_end_id],
+                dtype=row.dtype,
+            )
+            row = torch.cat((row[:insertion], sound_block, row[insertion:]))
+        rows.append(row)
+
+    pad_token_id = processor.tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = processor.tokenizer.eos_token_id or 0
+    batch["input_ids"], batch["attention_mask"] = _pad_text_rows(rows, pad_token_id=int(pad_token_id))
+    max_mel_length = max(int(mel.shape[0]) for mel in mel_features)
+    sound_clips = torch.zeros(len(mel_features), max_mel_length, num_mel_bins)
+    for row_index, mel in enumerate(mel_features):
+        sound_clips[row_index, : mel.shape[0]] = mel
+    batch["sound_clips"] = sound_clips
+    batch["sound_length"] = torch.tensor([mel.shape[0] for mel in mel_features], dtype=torch.long)
+
+
+def _adjust_image_placeholders(
+    batch: dict[str, Any],
+    loss_mask: torch.Tensor,
+    processor: Any,
+    num_tiles: torch.Tensor | None,
+) -> tuple[dict[str, torch.Tensor], torch.Tensor]:
+    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
+
+    image_start_id = processor.tokenizer.convert_tokens_to_ids("<img>")
+    image_end_id = processor.tokenizer.convert_tokens_to_ids("</img>")
+    attention_mask = batch.get("attention_mask")
+    if attention_mask is None:
+        attention_mask = torch.ones_like(batch["input_ids"], dtype=torch.long)
+    aligned = {"input_ids": batch["input_ids"], "loss_mask": loss_mask, "attention_mask": attention_mask}
+    if not bool((batch["input_ids"] == image_start_id).any()):
+        return aligned, loss_mask
+    if num_tiles is None:
+        raise ValueError("Image-bearing Nemotron Omni batches require one tile count per image placeholder.")
+    pad_token_id = processor.tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = processor.tokenizer.eos_token_id or 0
+    adjusted = adjust_image_tokens(
+        aligned,
+        num_tiles,
+        image_start_id,
+        image_end_id,
+        padding_values={"input_ids": int(pad_token_id), "loss_mask": 0, "attention_mask": 0},
+    )
+    return adjusted, adjusted["loss_mask"]
+
+
+def _pack_dynamic_images(batch: dict[str, Any], *, patch_dim: int) -> None:
+    pixel_values = batch.pop("pixel_values", None)
+    if not pixel_values:
+        batch["visual_inputs"] = None
+        return
+    images = [torch.as_tensor(image).to(torch.bfloat16) for image in pixel_values]
+    patches: list[torch.Tensor] = []
+    sizes: list[list[int]] = []
+    tile_counts: list[int] = []
+    for image in images:
+        if image.dim() != 3:
+            raise ValueError(f"Expected one [3,H,W] image, got {tuple(image.shape)}.")
+        channels, height, width = image.shape
+        if height % patch_dim or width % patch_dim:
+            raise ValueError(f"Image {height}x{width} is not divisible by patch_dim={patch_dim}.")
+        patch_rows, patch_cols = height // patch_dim, width // patch_dim
+        patches.append(
+            image.reshape(channels, patch_rows, patch_dim, patch_cols, patch_dim)
+            .permute(1, 3, 0, 2, 4)
+            .reshape(patch_rows * patch_cols, channels * patch_dim * patch_dim)
+            .contiguous()
+        )
+        sizes.append([height, width])
+        tile_counts.append((patch_rows * patch_cols) // 4)
+    batch["visual_inputs"] = GenericVisualInputs(pixel_values=torch.cat(patches).unsqueeze(0).contiguous())
+    batch["imgs_sizes"] = torch.tensor(sizes, dtype=torch.long)
+    batch["num_frames"] = torch.ones(len(images), dtype=torch.long)
+    batch["num_image_tiles"] = torch.tensor(tile_counts, dtype=torch.int)
+
+
 def nemotron_omni_collate_fn(
-    examples: list,
-    processor,
-    start_of_response_token=None,
+    examples: list[Mapping[str, Any]],
+    processor: Any,
+    start_of_response_token: Any = None,
     *,
     visual_keys: object = None,
     min_pixels: int | None = None,
@@ -47,33 +617,64 @@ def nemotron_omni_collate_fn(
     pad_to_max_length: bool = False,
     pad_to_multiple_of: int = 128,
     in_batch_packing_pad_to_multiple_of: int = 1,
-) -> dict[str, torch.Tensor]:
-    """Collate function for Nemotron Omni model (vision + audio + language).
-
-    Extends nemotron_nano_v2_vl_collate_fn with audio support. Each example
-    may carry an ``audio_path`` field pointing to a 16 kHz mono WAV file.
-    Audio is converted to mel spectrograms and added to the batch as
-    ``sound_clips`` / ``sound_length`` tensors consumed by LLaVAModel.forward().
-
-    HF-style Nemotron Omni collation does not support in-batch packing. Use the
-    Energon task encoder for direct packed collation.
-    """
-    del visual_keys, min_pixels, max_pixels
-
-    if enable_in_batch_packing:
-        raise ValueError("Nemotron Omni HF collation does not support in-batch packing; use the Energon task encoder.")
-
-    from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
-        compute_mel_features,
-        load_audio,
-    )
-    from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
-
-    # Ensure the tokenizer has a pad_token: the processor pads only when one is set,
-    # and mbs>1 needs padding to collate sequences of different lengths. Safe no-op
-    # when pad_token is already set.
-    if processor.tokenizer.pad_token is None and processor.tokenizer.eos_token is not None:
+    max_audio_duration: float = 30.0,
+    num_mel_bins: int = 128,
+    temporal_patch_size: int = 2,
+    video_fps: float = 1.0,
+    video_nframes: int = 8,
+    use_temporal_video_embedder: bool = False,
+    patch_dim: int = 16,
+) -> dict[str, Any]:
+    """Build one model-ready Omni batch from either HF or Energon examples."""
+    del start_of_response_token, visual_keys, min_pixels, max_pixels
+    if not examples:
+        raise ValueError("Nemotron Omni collation requires at least one example.")
+    if (
+        getattr(processor.tokenizer, "pad_token", None) is None
+        and getattr(processor.tokenizer, "eos_token", None) is not None
+    ):
         processor.tokenizer.pad_token = processor.tokenizer.eos_token
+
+    if use_temporal_video_embedder:
+        batch, mask_examples, num_tiles = _prepare_temporal_rows(
+            examples,
+            processor,
+            temporal_patch_size=temporal_patch_size,
+            video_fps=video_fps,
+            video_nframes=video_nframes,
+            patch_dim=patch_dim,
+        )
+        is_dynamic_resolution = False
+    else:
+        video_parts = [
+            item
+            for example in examples
+            for turn in example["conversation"]
+            if isinstance(turn.get("content"), list)
+            for item in turn["content"]
+            if isinstance(item, Mapping) and item.get("type") == "video"
+        ]
+        if len(video_parts) > 1:
+            raise ValueError("Static Nemotron Omni video collation supports exactly one video per batch.")
+        if video_parts:
+            batch, mask_examples, num_tiles = _prepare_static_video_row(
+                examples,
+                processor,
+                video_parts[0],
+                video_fps=video_fps,
+                video_nframes=video_nframes,
+            )
+            is_dynamic_resolution = False
+        else:
+            batch, mask_examples, num_tiles, is_dynamic_resolution = _prepare_standard_rows(examples, processor)
+
+    _add_audio_inputs(
+        batch,
+        examples,
+        processor,
+        max_audio_duration=max_audio_duration,
+        num_mel_bins=num_mel_bins,
+    )
 
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = assistant_mask_boundary_config_from_markers(
@@ -83,285 +684,6 @@ def nemotron_omni_collate_fn(
         assistant_end_fallbacks=("<|im_end|>",),
         role_start_markers=CHATML_OTHER_ROLE_STARTS,
     )
-    video_items = [
-        item
-        for example in examples
-        for turn in example["conversation"]
-        if isinstance(turn.get("content"), list)
-        for item in turn["content"]
-        if isinstance(item, dict) and item.get("type") == "video"
-    ]
-    is_video = bool(video_items)
-    is_dynamic_res_processor = not hasattr(processor.image_processor, "max_num_tiles")
-
-    if is_video and is_dynamic_res_processor:
-        raise ValueError(
-            "The dynamic-resolution Nemotron Omni processor does not support HF video collation; "
-            "use the temporal-video Energon task encoder."
-        )
-    audio_presence = [
-        example.get("audio_path") is not None or example.get("audio") is not None for example in examples
-    ]
-    if any(audio_presence) and not all(audio_presence):
-        raise ValueError("Nemotron Omni collation does not support mixing audio and no-audio samples.")
-
-    # --- Vision path ---
-    # The Nemotron Omni chat template does not expand {"type": "image"} content
-    # into <image> tokens — it stringifies the list. We must convert conversations
-    # to use explicit <image> text and pass PIL images via processor(images=...).
-    if is_video:
-        from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
-            maybe_path_or_url_to_data_urls,
-            pil_image_from_base64,
-        )
-
-        assert len(examples) == 1, "Nemotron Omni processor only supports batch size == 1 for video"
-        frames = []
-        video_nframe = 10
-
-        if len(video_items) != 1:
-            raise ValueError("Nemotron Omni HF collation supports exactly one video per batch.")
-        video_path = video_items[0]["path"]
-        image_urls, metadata = maybe_path_or_url_to_data_urls(
-            video_path,
-            fps=0,
-            nframe=max(0, int(video_nframe)),
-            nframe_max=-1,
-        )
-        frames.append([pil_image_from_base64(image_url) for image_url in image_urls])
-
-        prompt = processor.apply_chat_template(
-            [ex["conversation"] for ex in examples],
-            tokenize=False,
-            **shared_chat_template_kwargs_from_examples(examples),
-        )
-        with use_processor_right_padding(processor):
-            batch = processor(
-                text=prompt,
-                videos=frames,
-                videos_kwargs={"video_metadata": metadata},
-                return_tensors="pt",
-            )
-    else:
-        # Convert structured {"type": "image"} content to explicit <image> text
-        all_images = []
-        images_per_ex: list[list] = []
-        text_conversations = []
-        for example in examples:
-            images_for_example = []
-            text_conv = []
-            for turn in example["conversation"]:
-                turn_copy = dict(turn)
-                content = turn_copy.get("content")
-                if isinstance(content, list):
-                    text_parts = []
-                    for item in content:
-                        if item["type"] == "image":
-                            text_parts.append("<image>")
-                            images_for_example.append(item["image"])
-                        elif item["type"] == "text":
-                            text_parts.append(item["text"])
-                    turn_copy["content"] = "\n".join(text_parts)
-                elif content is not None and not isinstance(content, str):
-                    turn_copy["content"] = str(content)
-                text_conv.append(turn_copy)
-            all_images.extend(images_for_example)
-            images_per_ex.append(images_for_example)
-            text_conversations.append(text_conv)
-
-        prompts = [
-            processor.tokenizer.apply_chat_template(
-                conv,
-                tokenize=False,
-                add_generation_prompt=False,
-                **chat_template_kwargs_from_example(example),
-            )
-            for example, conv in zip(examples, text_conversations, strict=True)
-        ]
-        # Normalize audio tokens: replace model-agnostic <|audio_1|> with Nemotron Omni's <so_embedding>
-        audio_token = getattr(processor.tokenizer, "audio_token", "<so_embedding>")
-        prompts = [p.replace("<|audio_1|>", audio_token) for p in prompts]
-        if all_images:
-            # Older Nemotron-VL image processors use fixed 512x512 tiles and expose
-            # `max_num_tiles`; the newer Nemotron-3 Omni Reasoning processor uses
-            # dynamic-resolution patches (no `max_num_tiles` attr, has
-            # `max_num_patches` instead). Detect which path we're on.
-            if is_dynamic_res_processor:
-                # Variable per-image (H, W) makes ``return_tensors="pt"`` fail to
-                # stack pixel_values across examples. Process each example
-                # separately and re-combine: right-pad input_ids across examples,
-                # keep pixel_values as a flat list of per-image ``[3, H_i, W_i]``
-                # tensors (patchified below with per-image (py, px)).
-                with use_processor_right_padding(processor):
-                    per_ex_batches = [
-                        processor(
-                            text=[prompt],
-                            images=imgs if imgs else None,
-                            padding=False,
-                            truncation=True,
-                            # A single sample may contain dynamic-resolution images with
-                            # different shapes.  The remote Omni processor preserves those
-                            # image tensors as a list, which cannot be converted to one
-                            # BatchFeature tensor here.  Tensorize the text rows explicitly
-                            # after processing instead.
-                            return_tensors=None,
-                        )
-                        for prompt, imgs in zip(prompts, images_per_ex)
-                    ]
-                pad_id = processor.tokenizer.pad_token_id
-                if pad_id is None:
-                    pad_id = processor.tokenizer.eos_token_id or 0
-                ids_list = [torch.as_tensor(b["input_ids"][0], dtype=torch.long) for b in per_ex_batches]
-                max_len = max(t.shape[0] for t in ids_list)
-                padded_ids = torch.full((len(per_ex_batches), max_len), pad_id, dtype=ids_list[0].dtype)
-                attention_mask = torch.zeros((len(per_ex_batches), max_len), dtype=torch.long)
-                for i, ids in enumerate(ids_list):
-                    padded_ids[i, : ids.shape[0]] = ids
-                    attention_mask[i, : ids.shape[0]] = 1
-                pv_list: list[torch.Tensor] = []
-                for b in per_ex_batches:
-                    if "pixel_values" in b and b["pixel_values"] is not None:
-                        pv_b = b["pixel_values"]
-                        if isinstance(pv_b, list):
-                            pv_list.extend(pv_b)
-                        elif pv_b.dim() == 4:
-                            for img in pv_b:
-                                pv_list.append(img)
-                        elif pv_b.dim() == 3:
-                            pv_list.append(pv_b)
-                batch = {"input_ids": padded_ids, "attention_mask": attention_mask}
-                if pv_list:
-                    batch["pixel_values"] = pv_list  # list[Tensor[3, H_i, W_i]]
-            else:
-                # Static-tile path: single-tile per image to match RADIO seq_length.
-                orig_tiles = processor.image_processor.max_num_tiles
-                processor.image_processor.max_num_tiles = 1
-                with use_processor_right_padding(processor):
-                    batch = processor(
-                        text=prompts,
-                        images=all_images,
-                        padding=processor.tokenizer.pad_token is not None,
-                        truncation=True,
-                        return_tensors="pt",
-                    )
-                processor.image_processor.max_num_tiles = orig_tiles
-        else:
-            with use_processor_right_padding(processor):
-                batch = processor.tokenizer(
-                    prompts,
-                    padding=processor.tokenizer.pad_token is not None,
-                    truncation=True,
-                    return_tensors="pt",
-                )
-
-    # --- Audio path ---
-    # Support both audio_path (file path) and audio (raw waveform tuple from CV17-style datasets)
-    has_audio = any(audio_presence)
-    if has_audio:
-        import numpy as np
-
-        max_dur = examples[0].get("max_audio_duration", 30.0)
-        max_samples = int(max_dur * 16000)
-
-        mel_list = []
-        mel_lengths = []
-        n_audio_tokens_list = []
-        for ex in examples:
-            audio_path = ex.get("audio_path")
-            audio_tuple = ex.get("audio")  # (array, sr) from CV17-style datasets
-            if audio_path:
-                waveform = load_audio(audio_path, target_sr=16000)
-            elif audio_tuple is not None:
-                array, sr = audio_tuple
-                waveform = np.asarray(array, dtype=np.float32)
-                if sr != 16000:
-                    import librosa
-
-                    waveform = librosa.resample(waveform, orig_sr=sr, target_sr=16000)
-            else:
-                mel_list.append(torch.zeros(1, 128))
-                mel_lengths.append(1)
-                n_audio_tokens_list.append(0)
-                continue
-            waveform = waveform[:max_samples]
-            mel = compute_mel_features(waveform, sampling_rate=16000)
-            mel_list.append(mel)
-            mel_len = mel.shape[0]
-            mel_lengths.append(mel_len)
-            # Compute encoder output length from mel frame count using
-            # BridgeSoundEncoder._compute_output_lengths formula:
-            # Conv2D subsampling: floor((L + 2*padding - kernel_size) / stride + 1)
-            # applied log2(subsampling_factor)=3 times, kernel=3, stride=2, padding=1
-            import math as _math
-
-            token_len = float(mel_len)
-            for _ in range(3):
-                token_len = _math.floor((token_len + 2 * 1 - 3) / 2 + 1)
-            n_audio_tokens_list.append(max(1, int(token_len)))
-
-        max_mel_len = max(mel_lengths)
-        padded_mels = torch.zeros(len(examples), max_mel_len, mel_list[0].shape[-1])
-        for i, mel in enumerate(mel_list):
-            padded_mels[i, : mel.shape[0]] = mel
-        mel_lengths_t = torch.tensor(mel_lengths, dtype=torch.long)
-
-        sound_token_id = processor.tokenizer.convert_tokens_to_ids("<so_embedding>")
-
-        new_input_ids_list = []
-        current_attention_mask = batch.get("attention_mask")
-        new_attention_mask_list = []
-        for i, ex in enumerate(examples):
-            ids = batch["input_ids"][i]
-            row_attention_mask = current_attention_mask[i] if current_attention_mask is not None else None
-            n_tokens = n_audio_tokens_list[i]
-            if n_tokens > 0:
-                # Find existing <so_embedding> token(s) and replace with correct count
-                sound_mask = ids == sound_token_id
-                existing_count = sound_mask.sum().item()
-                if existing_count > 0:
-                    # Remove existing sound tokens and insert correct count at same position
-                    first_pos = sound_mask.nonzero(as_tuple=True)[0][0].item()
-                    ids_before = ids[:first_pos]
-                    ids_after = ids[first_pos + existing_count :]
-                    sound_tokens = torch.full((n_tokens,), sound_token_id, dtype=ids.dtype)
-                    ids = torch.cat([ids_before, sound_tokens, ids_after])
-                    if row_attention_mask is not None:
-                        sound_attention = torch.ones(n_tokens, dtype=row_attention_mask.dtype)
-                        row_attention_mask = torch.cat(
-                            [
-                                row_attention_mask[:first_pos],
-                                sound_attention,
-                                row_attention_mask[first_pos + existing_count :],
-                            ]
-                        )
-                else:
-                    # No existing sound token, insert at position 1
-                    sound_tokens = torch.full((n_tokens,), sound_token_id, dtype=ids.dtype)
-                    ids = torch.cat([ids[:1], sound_tokens, ids[1:]])
-                    if row_attention_mask is not None:
-                        sound_attention = torch.ones(n_tokens, dtype=row_attention_mask.dtype)
-                        row_attention_mask = torch.cat(
-                            [row_attention_mask[:1], sound_attention, row_attention_mask[1:]]
-                        )
-            new_input_ids_list.append(ids)
-            if row_attention_mask is not None:
-                new_attention_mask_list.append(row_attention_mask)
-
-        max_len = max(ids.shape[0] for ids in new_input_ids_list)
-        pad_id = getattr(processor.tokenizer, "pad_token_id", 0) or 0
-        padded_ids = torch.full((len(examples), max_len), pad_id, dtype=new_input_ids_list[0].dtype)
-        for i, ids in enumerate(new_input_ids_list):
-            padded_ids[i, : ids.shape[0]] = ids
-        batch["input_ids"] = padded_ids
-        if new_attention_mask_list:
-            padded_attention_mask = torch.zeros((len(examples), max_len), dtype=new_attention_mask_list[0].dtype)
-            for i, row_attention_mask in enumerate(new_attention_mask_list):
-                padded_attention_mask[i, : row_attention_mask.shape[0]] = row_attention_mask
-            batch["attention_mask"] = padded_attention_mask
-        batch["sound_clips"] = padded_mels
-        batch["sound_length"] = mel_lengths_t
-
-    # --- Loss mask (same pattern as nemotron_vl) ---
     loss_mask = torch.stack(
         [
             build_assistant_loss_mask(
@@ -371,122 +693,51 @@ def nemotron_omni_collate_fn(
                 skipped_tokens,
                 boundary_config=boundary_config,
             ).to(dtype=torch.int)
-            for example, input_ids in zip(examples, batch["input_ids"])
+            for example, input_ids in zip(mask_examples, batch["input_ids"], strict=True)
         ]
     )
+    adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
+    batch["input_ids"] = adjusted["input_ids"]
+    batch["attention_mask"] = adjusted["attention_mask"]
 
-    # --- Image token adjustment (only when images are present) ---
-    img_start_token_id = processor.tokenizer.convert_tokens_to_ids("<img>")
-    img_end_token_id = processor.tokenizer.convert_tokens_to_ids("</img>")
-    has_img_tokens = (batch["input_ids"] == img_start_token_id).any()
-    aligned_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
-    if "attention_mask" in batch:
-        aligned_batch["attention_mask"] = batch["attention_mask"]
-    if has_img_tokens:
-        # Dynamic-res: one <image> token per image; LM-side expansion is driven
-        # by per-image ``num_image_tiles`` (set below to shuffled_count_i) with
-        # ``img_seq_len=1``. Static-tile path keeps the HF processor's num_patches.
-        if is_dynamic_res_processor:
-            key_pv = "pixel_values_videos" if is_video else "pixel_values"
-            pv_ref = batch.get(key_pv)
-            if pv_ref is None:
-                n_imgs = 0
-            elif isinstance(pv_ref, list):
-                n_imgs = len(pv_ref)
-            else:
-                n_imgs = int(pv_ref.shape[0])
-            num_tiles_for_adjust = torch.ones(n_imgs, dtype=torch.long)
-        else:
-            if "num_patches" not in batch:
-                raise ValueError("The static Nemotron image processor must provide one num_patches entry per image.")
-            num_tiles_for_adjust = batch["num_patches"]
-        adjusted_batch = adjust_image_tokens(
-            aligned_batch,
-            num_tiles_for_adjust,
-            img_start_token_id,
-            img_end_token_id,
-            padding_values={
-                "input_ids": int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
-                "loss_mask": 0,
-                "attention_mask": 0,
-            },
-        )
-    else:
-        adjusted_batch = aligned_batch
-
-    if is_video:
-        video_token_id = processor.tokenizer.convert_tokens_to_ids("<video>")
-        image_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
-        adjusted_batch["input_ids"] = torch.where(
-            adjusted_batch["input_ids"] == video_token_id, image_token_id, adjusted_batch["input_ids"]
+    if is_dynamic_resolution:
+        _pack_dynamic_images(batch, patch_dim=patch_dim)
+    elif "visual_inputs" not in batch:
+        pixel_values = batch.pop("pixel_values", None)
+        batch["visual_inputs"] = (
+            GenericVisualInputs(pixel_values=pixel_values.to(torch.bfloat16)) if pixel_values is not None else None
         )
 
-    batch["input_ids"] = adjusted_batch["input_ids"]
-    loss_mask = adjusted_batch["loss_mask"]
-    if "attention_mask" in adjusted_batch:
-        batch["attention_mask"] = adjusted_batch["attention_mask"]
+    if enable_in_batch_packing and (batch.get("visual_inputs") is not None or batch.get("sound_clips") is not None):
+        raise ValueError(
+            "Nemotron Omni in-batch packing does not support image, video, or audio samples because "
+            "modality embeddings are merged after packed-sequence boundaries are built."
+        )
 
-    batch_size, seq_len = batch["input_ids"].shape
-    batch["position_ids"] = torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
+    has_modalities = batch.get("visual_inputs") is not None or batch.get("sound_clips") is not None
+    if sequence_length is not None and has_modalities:
+        row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
+        if bool((row_lengths > sequence_length).any()):
+            raise ValueError(
+                "Nemotron Omni cannot truncate image, video, or audio rows because modality metadata would no "
+                f"longer align with text placeholders; got row lengths {row_lengths.tolist()} with "
+                f"sequence_length={sequence_length}."
+            )
 
-    key = "pixel_values_videos" if is_video else "pixel_values"
-    if key in batch:
-        pv_raw = batch[key]
-        del batch[key]
-        # Dynamic-resolution image path (newer Nemotron-3 Omni Reasoning):
-        # patchify per-image with its own (py, px) and concatenate into a
-        # single [1, total_patches, 3*P*P] sequence. Emit per-image (H, W) in
-        # ``imgs_sizes`` and per-image shuffled token counts in
-        # ``num_image_tiles`` so the LM merge (with img_seq_len=1) can fan
-        # out variable per-image token counts. Handles both the uniform-4D
-        # case (mbs=1 or all images same shape) and the list-of-tensors case
-        # (mbs>1 with mixed shapes).
-        if (
-            (not is_video)
-            and is_dynamic_res_processor
-            and (isinstance(pv_raw, list) or (torch.is_tensor(pv_raw) and pv_raw.dim() == 4 and pv_raw.shape[0] > 0))
-        ):
-            P = 16  # RADIO patch_dim
-            if isinstance(pv_raw, list):
-                imgs_iter = [t.to(torch.bfloat16) for t in pv_raw]
-            else:
-                pv_t = pv_raw.to(torch.bfloat16)
-                imgs_iter = [pv_t[i] for i in range(pv_t.shape[0])]
-            patch_seqs: list[torch.Tensor] = []
-            sizes: list[list[int]] = []
-            num_tiles: list[int] = []
-            for img in imgs_iter:
-                assert img.dim() == 3, f"expected [3,H,W], got {tuple(img.shape)}"
-                C, H, W = img.shape
-                assert H % P == 0 and W % P == 0, f"Image {H}x{W} not divisible by patch_dim {P}"
-                py, px = H // P, W // P
-                # [3, H, W] → [py, P, px, P, 3] → [py*px, 3*P*P]
-                patched = img.reshape(3, py, P, px, P).permute(1, 3, 0, 2, 4).reshape(py * px, 3 * P * P).contiguous()
-                patch_seqs.append(patched)
-                sizes.append([H, W])
-                num_tiles.append((py * px) // 4)
-            pv = torch.cat(patch_seqs, dim=0).unsqueeze(0).contiguous()
-            batch["imgs_sizes"] = torch.tensor(sizes, dtype=torch.long)
-            batch["num_frames"] = torch.tensor([1] * len(imgs_iter), dtype=torch.long)
-            # ``torch.int`` matches LLaVAModel._preprocess_data's expected dtype
-            # (``image_token_mask.int().clone()`` on the destination side).
-            batch["num_image_tiles"] = torch.tensor(num_tiles, dtype=torch.int)
-        else:
-            pv = pv_raw.to(torch.bfloat16) if torch.is_tensor(pv_raw) else pv_raw
-        batch["visual_inputs"] = GenericVisualInputs(pixel_values=pv)
-    else:
-        batch["visual_inputs"] = None
-
+    batch_size, sequence_width = batch["input_ids"].shape
+    batch["position_ids"] = torch.arange(sequence_width, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
     labels = batch["input_ids"].clone()[:, 1:]
-    labels = torch.cat([labels, IGNORE_INDEX * torch.ones_like(labels[:, :1])], dim=1)
+    labels = torch.cat((labels, torch.full_like(labels[:, :1], IGNORE_INDEX)), dim=1)
     labels[torch.isin(labels, skipped_tokens)] = IGNORE_INDEX
-    batch["labels"] = labels
+    shifted_loss_mask = torch.cat(
+        (loss_mask.to(dtype=torch.float32)[:, 1:], torch.zeros_like(loss_mask[:, :1], dtype=torch.float32)), dim=1
+    )
+    batch["labels"] = labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX)
+    batch["loss_mask"] = shifted_loss_mask
 
-    loss_mask_t = loss_mask.to(dtype=torch.float, device=batch["input_ids"].device)
-    loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
-    batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
-    batch["loss_mask"] = loss_mask_t
-
+    pad_token_id = processor.tokenizer.pad_token_id
+    if pad_token_id is None:
+        pad_token_id = processor.tokenizer.eos_token_id or 0
     prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
@@ -494,8 +745,7 @@ def nemotron_omni_collate_fn(
         pad_to_multiple_of=pad_to_multiple_of,
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-        pad_token_id=int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
+        pad_token_id=int(pad_token_id),
         ignore_index=IGNORE_INDEX,
     )
-
     return batch

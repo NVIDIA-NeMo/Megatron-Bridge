@@ -158,6 +158,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
         NemotronOmniTaskBatch,
         NemotronOmniTaskEncoder,
     )
+    from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
     tokens = torch.tensor([[1, 2, 3]])
     labels = torch.tensor([[2, 3, -100]])
@@ -174,7 +175,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
         loss_mask=loss_mask,
         attention_mask=None,
         position_ids=position_ids,
-        visual_tensors={"pixel_values": pixel_values},
+        visual_inputs=GenericVisualInputs(pixel_values=pixel_values),
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_kv=cu_seqlens_q,
         max_seqlen_q=max_seqlen_q,
@@ -183,7 +184,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
 
     raw = NemotronOmniTaskEncoder.__new__(NemotronOmniTaskEncoder).encode_batch(batch)
 
-    assert raw["tokens"] is tokens
+    assert raw["input_ids"] is tokens
     assert raw["cu_seqlens_q"] is cu_seqlens_q
     assert raw["cu_seqlens_kv"] is cu_seqlens_q
     assert raw["max_seqlen_q"] is max_seqlen_q

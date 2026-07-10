@@ -14,7 +14,7 @@ Megatron checkpoint. Outputs predictions and computes accuracy.
 
 Vision backbone uses the temporal video embedder path
 (dynamic_resolution=True, temporal_patch_dim=2, separate_video_embedder=True),
-matching the SFT data pipeline in NemotronOmniTaskEncoder with
+matching the shared SFT pipeline in ``nemotron_omni_collate_fn`` with
 use_temporal_video_embedder=True. Frames are pre-patchified into a packed
 [1, total_patches, 3*P*P] tensor with imgs_sizes / num_frames so RADIO ViT
 exercises the trained `video_embedder`.
@@ -61,7 +61,7 @@ _VIDEO_FRAME_H = 512
 _VIDEO_FRAME_W = 512
 _VISION_PATCH_DIM = 16
 
-# CLIP / RADIO normalization (mirrors NemotronOmniTaskEncoder._patchify_frame)
+# CLIP / RADIO normalization (mirrors nemotron_omni_collate_fn)
 _CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
 _CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
 
@@ -205,7 +205,7 @@ def process_sample(
 ):
     """Process a single VALOR32K-AVQA sample into model inputs.
 
-    Mirrors the SFT temporal data pipeline (NemotronOmniTaskEncoder with
+    Mirrors the shared SFT temporal collator (via NemotronOmniTaskEncoder with
     use_temporal_video_embedder=True): frames are grouped in pairs in the
     prompt, all frames are pre-patchified into [1, total_patches, 3*P*P],
     and imgs_sizes / num_frames are emitted so RADIO's temporal grouping +
