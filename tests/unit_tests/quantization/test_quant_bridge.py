@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import sys
+import types
 from unittest.mock import patch
 
 import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.conversion import quant_bridge as quant_bridge_module
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -27,6 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
     merge_qkv_weights,
 )
+from megatron.bridge.models.conversion.quant_bridge import MegatronQuantizationBridge
 
 
 def scaled_fp8_blockwise(
@@ -161,6 +165,42 @@ class MockModule(torch.nn.Module):
 
 def dummy_quantization_checker(param_name):
     return True
+
+
+def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
+    model_bridge_module = types.ModuleType("megatron.bridge.models.conversion.model_bridge")
+    model_bridge_module.HFWeightTuple = tuple
+    monkeypatch.setitem(
+        sys.modules,
+        "megatron.bridge.models.conversion.model_bridge",
+        model_bridge_module,
+    )
+
+    model_config = object()
+    model = types.SimpleNamespace(config=model_config)
+    seen_configs = []
+
+    bridge = MegatronQuantizationBridge()
+    monkeypatch.setattr(
+        bridge,
+        "_share_embeddings_and_output_weights",
+        lambda config: seen_configs.append(config) or False,
+        raising=False,
+    )
+    monkeypatch.setattr(bridge, "_with_progress_tracking", lambda tasks, *_args: tasks, raising=False)
+    monkeypatch.setattr(quant_bridge_module, "unwrap_model", lambda _models: [model])
+
+    exported = bridge.stream_weights_megatron_to_hf_quant(
+        model,
+        types.SimpleNamespace(),
+        quantization_checker=lambda _name: False,
+        quant_fn=lambda weight, _block_size: (weight, torch.ones(1)),
+        conversion_tasks=[],
+        show_progress=False,
+    )
+
+    assert list(exported) == []
+    assert seen_configs == [model_config]
 
 
 class TestColumnParallelMappingQuant:

@@ -28,8 +28,7 @@ Usage::
 """
 
 import os
-import re
-from typing import Mapping
+from dataclasses import asdict, is_dataclass
 
 import torch
 
@@ -57,7 +56,7 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4VLModelProvider,
 )
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 # ---------------------------------------------------------------------------
@@ -81,7 +80,7 @@ class Gemma4VLBridge(Gemma4Bridge):
     """
 
     def provider_bridge(
-        self, hf_pretrained: PreTrainedVLM
+        self, hf_pretrained: PreTrainedCausalLM
     ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
@@ -152,6 +151,47 @@ class Gemma4VLBridge(Gemma4Bridge):
 
         return provider
 
+    @classmethod
+    def megatron_to_hf_config(
+        cls,
+        provider: Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider,
+    ) -> dict:
+        """Convert a Gemma 4 VL provider config back to Hugging Face config."""
+        text_config = super().megatron_to_hf_config(provider)
+        text_config.pop("architectures", None)
+        text_config["model_type"] = "gemma4_text"
+
+        if not isinstance(provider, (Gemma4VLModelProvider, Gemma4DenseVLProvider)):
+            text_config["architectures"] = ["Gemma4ForCausalLM"]
+            return text_config
+
+        def config_to_dict(config) -> dict | None:
+            if config is None:
+                return None
+            if isinstance(config, dict):
+                return dict(config)
+            if hasattr(config, "to_dict"):
+                return config.to_dict()
+            if is_dataclass(config):
+                return asdict(config)
+            return {name: value for name, value in vars(config).items() if not name.startswith("_")}
+
+        return {
+            "architectures": ["Gemma4ForConditionalGeneration"],
+            "audio_config": config_to_dict(provider.audio_config),
+            "audio_token_id": provider.audio_token_id,
+            "bos_token_id": provider.bos_token_id,
+            "dtype": text_config["dtype"],
+            "eos_token_id": provider.eos_token_id,
+            "image_token_id": provider.image_token_id,
+            "model_type": "gemma4",
+            "text_config": text_config,
+            "tie_word_embeddings": provider.share_embeddings_and_output_weights,
+            "video_token_id": provider.video_token_id,
+            "vision_config": config_to_dict(provider.vision_config),
+            "vision_soft_tokens_per_image": provider.vision_soft_tokens_per_image,
+        }
+
     def _conversion_mode(self) -> str:
         mode = getattr(self, "gemma4_conversion_mode", None) or os.environ.get("GEMMA4_CONVERSION_MODE", "auto")
         mode = mode.lower()
@@ -187,50 +227,6 @@ class Gemma4VLBridge(Gemma4Bridge):
     def _hf_layer_prefix(self) -> str:
         """VLM text weights live under ``model.language_model.*``."""
         return "model.language_model."
-
-    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        """Fuse router preprocessing — VLM prefix-aware version."""
-        proj_weight = hf_state_dict[hf_param]
-        layer_match = re.search(r"layers\.(\d+)\.", hf_param)
-        if layer_match is None:
-            return proj_weight
-        layer_idx = layer_match.group(1)
-        prefix = hf_param.rsplit("layers.", 1)[0]
-        scale_key = f"{prefix}layers.{layer_idx}.router.scale"
-        ln2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-        if scale_key not in hf_state_dict or ln2_key not in hf_state_dict:
-            return proj_weight
-        router_scale = hf_state_dict[scale_key].float()
-        ln2_weight = hf_state_dict[ln2_key].float()
-        hidden_size = proj_weight.shape[-1]
-        scalar_root_size = hidden_size**-0.5
-        fusion_factor = router_scale * scalar_root_size / ln2_weight
-        fused_weight = proj_weight.float() * fusion_factor.unsqueeze(0)
-        return fused_weight.to(proj_weight.dtype)
-
-    def _fuse_shared_expert_prenorm(
-        self, hf_param: dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
-        """Fuse pre-norm correction — VLM prefix-aware version."""
-        gate_name = hf_param["gate"]
-        layer_match = re.search(r"layers\.(\d+)\.", gate_name)
-        if layer_match is None:
-            return {role: hf_state_dict[name] for role, name in hf_param.items()}
-        layer_idx = layer_match.group(1)
-        prefix = gate_name.rsplit("layers.", 1)[0]
-        pffl_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm.weight"
-        pffl2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-        if pffl_key not in hf_state_dict or pffl2_key not in hf_state_dict:
-            return {role: hf_state_dict[name] for role, name in hf_param.items()}
-        w_pffl = hf_state_dict[pffl_key].float()
-        w_pffl2 = hf_state_dict[pffl2_key].float()
-        correction = w_pffl / w_pffl2
-        hf_weights = {}
-        for role, name in hf_param.items():
-            weight = hf_state_dict[name]
-            fused = weight.float() * correction.unsqueeze(0)
-            hf_weights[role] = fused.to(weight.dtype)
-        return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Dispatch to Dense or MoE VLM mappings."""
@@ -334,7 +330,7 @@ class Gemma4VLBridge(Gemma4Bridge):
                     hf_param="model.language_model.layers.*.router.scale",
                 ),
                 ReplicatedMapping(
-                    megatron_param="language_model.decoder.layers.*.pffl_weight",
+                    megatron_param="language_model.decoder.layers.*.pre_shared_expert_layernorm.weight",
                     hf_param="model.language_model.layers.*.pre_feedforward_layernorm.weight",
                 ),
                 ReplicatedMapping(

@@ -14,7 +14,7 @@
 
 """Compatibility exports for VLM model-specific collators."""
 
-from megatron.bridge.data.vlm_processing import build_assistant_loss_mask
+from megatron.bridge.data.conversation_processing import build_assistant_loss_mask
 from megatron.bridge.models.gemma_vl.data.collate_fn import gemma3_vl_collate_fn, gemma4_vl_collate_fn
 from megatron.bridge.models.glm_vl.data.collate_fn import glm4v_collate_fn
 from megatron.bridge.models.kimi_vl.data.collate_fn import kimi_k25_vl_collate_fn

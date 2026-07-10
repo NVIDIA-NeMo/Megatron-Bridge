@@ -229,7 +229,7 @@ fi
 # Phase 2: full SFT
 #
 # No --dataset: the recipe ships an unpacked (SBHD) SQuAD config. To use your own
-# data, add 'dataset.dataset_name=gsm8k' (HF) or pass --dataset llm-finetune-preloaded
+# data, add 'dataset.hf_dataset.dataset_name=gsm8k' (HF) or pass --dataset llm-finetune-preloaded
 # 'dataset.dataset_root=<path>' -- but never --packed_sequence (DSv4 rejects packed).
 # ------------------------------------------------------------------------------
 

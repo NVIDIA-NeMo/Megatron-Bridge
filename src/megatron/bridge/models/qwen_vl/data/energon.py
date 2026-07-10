@@ -22,6 +22,10 @@ from typing import Any, Dict, List
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder, SkipSample
 
+from megatron.bridge.data.conversation_processing import (
+    normalize_energon_vlm_sample,
+    normalized_vlm_sample_to_hf_example,
+)
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     ChatMLSample,
@@ -34,7 +38,6 @@ from megatron.bridge.data.energon.task_encoder_utils import (
     get_ltor_masks_and_position_ids,  # noqa: F401  -- re-exported for backward compat
     videohandler,  # noqa: F401  -- re-exported for backward compat
 )
-from megatron.bridge.data.vlm_processing import normalize_energon_vlm_sample, normalized_vlm_sample_to_hf_example
 from megatron.bridge.models.qwen_vl.data.collate_fn import qwen2_5_collate_fn
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
