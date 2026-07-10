@@ -66,7 +66,6 @@ uv run python -m torch.distributed.run \
     --hf-model-path "$HF_MODEL_ID" \
     --prompt "$PROMPT" \
     --max_new_tokens "$MAX_NEW_TOKENS" \
-    --apply-chat-template \
     --tp "$TP" \
     --pp "$PP" \
     --ep "$EP" \
