@@ -60,9 +60,10 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
 
 ## Training
 
-All GPT-OSS training modes use [train.sh](train.sh). Without `--recipe`, it supplies the GPT-OSS 20B library model
-selector and forwards launch options, mode, dataset, and ConfigContainer overrides to the unified training entry
-point. A complete `--recipe` bypasses that selector because the recipe already identifies its model.
+All GPT-OSS training modes use the unified [training entry point](../../../scripts/training/README.md):
+`scripts/training/train.sh`. The examples below select the GPT-OSS 20B library recipe with
+`--source recipes --family gpt_oss --model gpt_oss_20b`. Alternatively, pass a complete `--recipe` and omit the
+family and model selector because the recipe already identifies its model.
 
 Set the deployment environment once:
 
@@ -82,9 +83,10 @@ DCLM must already be preprocessed into Megatron indexed `.bin/.idx` files. Missi
 back to mock data.
 
 ```bash
-./examples/models/gpt_oss/train.sh \
+./scripts/training/train.sh \
     --nodes 2 --gpus-per-node 8 --gpu-type h100 \
     --account ACCOUNT --partition PARTITION \
+    --source recipes --family gpt_oss --model gpt_oss_20b \
     --mode pretrain --dataset dclm \
     --dataset-path /data/dclm \
     --dataset-cache /data/dclm-cache \
@@ -103,9 +105,10 @@ enables offline packing. Packing is performed by the dataset builder on global r
 job.
 
 ```bash
-./examples/models/gpt_oss/train.sh \
+./scripts/training/train.sh \
     --nodes 1 --gpus-per-node 8 --gpu-type h100 \
     --account ACCOUNT --partition PARTITION \
+    --source recipes --family gpt_oss --model gpt_oss_20b \
     --mode sft --dataset openmathinstruct2-thinking \
     --from ${WORKSPACE}/models/gpt-oss-20b \
     --cp 2 \
@@ -120,9 +123,10 @@ With `--cp 2`, the launcher configures packed-sequence padding to a multiple of 
 ### LoRA on OpenMathInstruct-2
 
 ```bash
-./examples/models/gpt_oss/train.sh \
+./scripts/training/train.sh \
     --nodes 1 --gpus-per-node 1 --gpu-type h100 \
     --account ACCOUNT --partition PARTITION \
+    --source recipes --family gpt_oss --model gpt_oss_20b \
     --mode lora --dataset openmathinstruct2-thinking \
     --from ${WORKSPACE}/models/gpt-oss-20b \
     train.train_iters=1000 \
@@ -146,7 +150,8 @@ See [inference.sh](inference.sh) for text generation with:
 - Hugging Face checkpoint (`unsloth/gpt-oss-20b-BF16`)
 - Imported Megatron checkpoint (after [conversion.sh](conversion.sh) import)
 - Exported HF checkpoint (after conversion export)
-- **SFT (finetuned) checkpoint**: set `SFT_CHECKPOINT` to the result directory produced by [train.sh](train.sh) and run:
+- **SFT (finetuned) checkpoint**: set `SFT_CHECKPOINT` to the result directory produced by the
+  [training entry point](../../../scripts/training/README.md) and run:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text_generation.py \
