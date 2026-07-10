@@ -21,7 +21,7 @@ uv run python tutorials/data/energon/prepare_example_data.py \
 The script performs the complete preparation pipeline:
 
 1. Writes `train-shard-000000.tar` and `val-shard-000000.tar`.
-2. Runs non-interactive `energon prepare` with explicit train/val filename regexes.
+2. Calls Energon's preparation API with explicit train/val filename regexes.
 3. Writes `.nv-meta/dataset.yaml` for Bridge's `ChatMLWebdataset` loader.
 
 The result is directly consumable by `EnergonDatasetBuilder`:
@@ -35,7 +35,7 @@ The result is directly consumable by `EnergonDatasetBuilder`:
 └── .nv-meta/
     ├── dataset.yaml
     ├── split.yaml
-    ├── .info.json
+    ├── .info.json (Energon 7.4+) or .info.yaml (earlier 7.x)
     └── index.sqlite
 ```
 
@@ -148,19 +148,22 @@ The unpacked baseline uses `dataset.enable_in_batch_packing=False`. After it pas
 
 ## 5. Prepare production shards
 
-For your own dataset, write one or more media members plus one conversation member per sample key. Use split-prefixed tar names, then index them non-interactively:
+For your own dataset, write one or more media members plus one conversation member per sample key. Use
+split-prefixed tar names, then index them through Bridge's compatibility helper:
 
-```bash
-energon prepare /data/my_energon_dataset \
-  --non-interactive \
-  --num-workers 8 \
-  --split-parts 'train:train-shard-.*' \
-  --split-parts 'val:val-shard-.*' \
-  --skip-dataset-yaml \
-  --force-overwrite
+```python
+from megatron.bridge.data.energon import prepare_webdataset
+
+prepare_webdataset(
+    "/data/my_energon_dataset",
+    {"train": "train-shard-.*", "val": "val-shard-.*"},
+    num_workers=8,
+)
 ```
 
-`--split-parts` uses regular expressions, not shell globs. Write `.nv-meta/dataset.yaml` after indexing because `ChatMLWebdataset` is a Bridge class rather than a built-in Energon sample type.
+Split patterns are regular expressions, not shell globs. The helper avoids CLI differences across supported Energon
+7.x versions and rejects a split pattern that matches no shards. Write `.nv-meta/dataset.yaml` after indexing because
+`ChatMLWebdataset` is a Bridge class rather than a built-in Energon sample type.
 
 Common field mappings are:
 
@@ -206,5 +209,5 @@ With context parallelism, also use per-token loss and disable collective loss av
 - Empty split: check the regex in `.nv-meta/split.yaml`; use `.*`, not a glob `*`.
 - Dataset micro-batch mismatch: align train, validation, and Energon micro-batch settings.
 - Sample skipped: inspect image/frame count and `max_visual_tokens`; the task encoder logs the violated limit.
-- Worker hang during preparation: use Megatron-Energon 7 or newer and retry the non-interactive command.
+- Worker hang during preparation: reduce `num_workers`, remove incomplete metadata, and rerun the preparation helper.
 - OOM: reduce sequence length or visual pixel/token budgets before changing model parallelism.

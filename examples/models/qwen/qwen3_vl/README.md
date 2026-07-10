@@ -126,7 +126,7 @@ Three independent CLI-overridable controls bound a sample's GPU cost. They compo
 
 ## Finetuning with Energon Dataset
 
-The [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md) documents the tar-member contract, non-interactive `energon prepare`, canonical `ChatMLWebdataset` YAML, and a one-GPU launch. [peft_energon.sh](peft_energon.sh) provides a larger packing/CP experiment matrix after the baseline works.
+The [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md) documents the tar-member contract, version-compatible indexing, canonical `ChatMLWebdataset` YAML, and a one-GPU launch. [peft_energon.sh](peft_energon.sh) provides a larger packing/CP experiment matrix after the baseline works.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.
@@ -145,7 +145,7 @@ Below is an example for finetuning on a dataset containing multiple images in a 
         --local-dir /path/to/Mantis-Instruct-LLaVA    
     ```
 
-2. Convert and index the downloaded subsets. The helper writes deterministic train/validation shards, runs non-interactive `energon prepare`, and writes `.nv-meta/dataset.yaml`:
+2. Convert and index the downloaded subsets. The helper writes deterministic train/validation shards, calls Energon's preparation API, and writes `.nv-meta/dataset.yaml`:
 
     ```bash
     uv run python examples/models/qwen/qwen3_vl/prepare_mantis_energon.py \

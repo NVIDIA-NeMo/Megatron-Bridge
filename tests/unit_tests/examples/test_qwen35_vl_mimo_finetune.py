@@ -247,3 +247,21 @@ def test_qwen35_vl_mimo_metadata_collate_builds_batch():
         assert torch.equal(batch["visual_inputs"].image_grid_thw, image_grid_thw)
     finally:
         sys.modules.pop(name, None)
+
+
+def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
+    name = "qwen35_vl_mimo_visual_truncation_under_test"
+    try:
+        module = _load_example_module(name)
+        spec = module.Qwen35MIMOHFSpec()
+        batch = {
+            "input_ids": torch.tensor([[1, 2, 3, spec.image_token_id, spec.image_token_id]]),
+            "attention_mask": torch.ones(1, 5, dtype=torch.long),
+            "labels": torch.ones(1, 5, dtype=torch.long),
+            "loss_mask": torch.ones(1, 5),
+        }
+
+        with pytest.raises(ValueError, match="truncates Qwen visual tokens"):
+            module._adapt_qwen35_hf_batch(batch, spec, seq_length=4, pad_to_seq_length=True)
+    finally:
+        sys.modules.pop(name, None)

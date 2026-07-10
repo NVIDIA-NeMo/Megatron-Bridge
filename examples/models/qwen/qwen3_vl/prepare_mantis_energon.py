@@ -25,15 +25,14 @@ Usage::
 The converter extracts each subset's ``train_images.zip``, reads its parquet
 rows, and writes deterministic ``train-shard-*`` / ``val-shard-*`` WebDataset
 files. Each sample stores a pickled image-byte list in ``.jpgs`` and its ChatML
-conversation in ``.json``. By default the script then runs non-interactive
-``energon prepare`` and writes the Bridge ``ChatMLWebdataset`` sample loader.
+conversation in ``.json``. By default the script then indexes the shards through
+Energon's preparation API and writes the Bridge ``ChatMLWebdataset`` sample loader.
 """
 
 import hashlib
 import json
 import logging
 import pickle
-import subprocess
 import zipfile
 from argparse import ArgumentParser
 from contextlib import ExitStack
@@ -42,6 +41,8 @@ from pathlib import Path
 import pandas as pd
 import webdataset as wds
 from tqdm import tqdm
+
+from megatron.bridge.data.energon import prepare_webdataset
 
 
 logger = logging.getLogger(__name__)
@@ -185,6 +186,11 @@ def convert(
                     )
                     counts[split] += 1
 
+    for split, count in counts.items():
+        if count == 0:
+            for empty_shard in output_path.glob(f"{split}-shard-*.tar"):
+                empty_shard.unlink()
+
     if sum(counts.values()) == 0:
         raise RuntimeError("No samples were written; inspect the source layout and skipped-sample warnings.")
     logger.info("Wrote %s samples (%d skipped) to %s", counts, total_skipped, output_dir)
@@ -193,20 +199,11 @@ def convert(
 
 def prepare_energon_dataset(output_dir: str, *, counts: dict[str, int], num_workers: int) -> None:
     """Index non-empty splits and write the Bridge sample-loader YAML."""
-    command = [
-        "energon",
-        "prepare",
-        output_dir,
-        "--non-interactive",
-        "--num-workers",
-        str(num_workers),
-        "--skip-dataset-yaml",
-        "--force-overwrite",
-    ]
+    split_patterns = {}
     for split in ("train", "val"):
         if counts[split] > 0:
-            command += ["--split-parts", f"{split}:{split}-shard-.*"]
-    subprocess.run(command, check=True)
+            split_patterns[split] = f"{split}-shard-.*"
+    prepare_webdataset(output_dir, split_patterns, num_workers=num_workers)
 
     metadata_dir = Path(output_dir) / ".nv-meta"
     metadata_dir.mkdir(parents=True, exist_ok=True)
@@ -221,7 +218,7 @@ def main() -> None:
     parser.add_argument("--output-dir", required=True, help="Output directory for Energon shards")
     parser.add_argument("--max-samples-per-tar", type=int, default=1000, metavar="N")
     parser.add_argument("--validation-fraction", type=float, default=0.01)
-    parser.add_argument("--num-workers", type=int, default=8, help="Workers used by energon prepare")
+    parser.add_argument("--num-workers", type=int, default=8, help="Workers used by Energon indexing")
     parser.add_argument(
         "--skip-energon-prepare",
         action="store_true",

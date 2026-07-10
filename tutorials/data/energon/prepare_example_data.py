@@ -19,10 +19,11 @@ import io
 import json
 import logging
 import struct
-import subprocess
 import tarfile
 import zlib
 from pathlib import Path
+
+from megatron.bridge.data.energon import prepare_webdataset
 
 
 logger = logging.getLogger(__name__)
@@ -99,23 +100,11 @@ def build_shards(output_dir: Path) -> None:
 
 
 def run_energon_prepare(output_dir: Path, *, num_workers: int) -> None:
-    """Run non-interactive Energon indexing for the tutorial splits."""
-    subprocess.run(
-        [
-            "energon",
-            "prepare",
-            str(output_dir),
-            "--non-interactive",
-            "--num-workers",
-            str(num_workers),
-            "--split-parts",
-            "train:train-shard-.*",
-            "--split-parts",
-            "val:val-shard-.*",
-            "--skip-dataset-yaml",
-            "--force-overwrite",
-        ],
-        check=True,
+    """Index the tutorial splits through Energon's version-stable API."""
+    prepare_webdataset(
+        output_dir,
+        {"train": "train-shard-.*", "val": "val-shard-.*"},
+        num_workers=num_workers,
     )
 
 
@@ -143,7 +132,7 @@ def main() -> None:
     parser.add_argument(
         "--skip-prepare",
         action="store_true",
-        help="Write shards and dataset.yaml without running energon prepare (useful for inspecting raw output).",
+        help="Write shards and dataset.yaml without indexing the shards (useful for inspecting raw output).",
     )
     args = parser.parse_args()
     logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s")

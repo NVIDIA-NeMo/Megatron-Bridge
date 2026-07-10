@@ -85,30 +85,23 @@ def test_energon_preparation_writes_matching_tar_members_and_loader(tmp_path: Pa
     assert "conversation: conversation.json" in dataset_yaml
 
 
-def test_energon_preparation_uses_noninteractive_explicit_splits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+def test_energon_preparation_uses_api_with_explicit_splits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = runpy.run_path(str(ENERGON_TUTORIAL / "prepare_example_data.py"))
     calls = []
-    monkeypatch.setattr(module["subprocess"], "run", lambda command, check: calls.append((command, check)))
+    run_energon_prepare = module["run_energon_prepare"]
+    monkeypatch.setitem(
+        run_energon_prepare.__globals__,
+        "prepare_webdataset",
+        lambda path, patterns, *, num_workers: calls.append((path, patterns, num_workers)),
+    )
 
-    module["run_energon_prepare"](tmp_path, num_workers=3)
+    run_energon_prepare(tmp_path, num_workers=3)
 
     assert calls == [
         (
-            [
-                "energon",
-                "prepare",
-                str(tmp_path),
-                "--non-interactive",
-                "--num-workers",
-                "3",
-                "--split-parts",
-                "train:train-shard-.*",
-                "--split-parts",
-                "val:val-shard-.*",
-                "--skip-dataset-yaml",
-                "--force-overwrite",
-            ],
-            True,
+            tmp_path,
+            {"train": "train-shard-.*", "val": "val-shard-.*"},
+            3,
         )
     ]
 
@@ -200,7 +193,7 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     assert "dataset.defer_in_batch_packing_to_step=True" in hf_multimodal
     assert "qwen3_vl_8b_peft_energon_config" in energon
     assert "--dataset vlm-energon" in energon
-    assert "train:train-shard-.*" in energon
+    assert '"train": "train-shard-.*"' in energon
     assert "prepare_medpix_data.py" in energon
     assert "dataset.enable_in_batch_packing=True" in energon
     assert "min_pixels` and `max_pixels` are not visual keys" in energon

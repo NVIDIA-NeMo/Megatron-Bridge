@@ -131,6 +131,9 @@ def test_vlm_json_script_uses_hf_loader_without_local_provider():
     assert "dataset.validation_source.load_kwargs={data_files:{validation:" in training_script
     assert "dataset.test_source.load_kwargs={data_files:{test:" in training_script
     assert ".load_kwargs.data_files." not in training_script
+    assert "OPTIMIZER_CPU_OFFLOAD=${OPTIMIZER_CPU_OFFLOAD:-True}" in training_script
+    assert "OPTIMIZER_OFFLOAD_FRACTION=${OPTIMIZER_OFFLOAD_FRACTION:-1.0}" in training_script
+    assert 'optimizer.overlap_cpu_optimizer_d2h_h2d="${OVERLAP_CPU_OPTIMIZER_D2H_H2D}"' in training_script
 
 
 def test_hf_multimodal_local_media_docs_use_processor_native_content():

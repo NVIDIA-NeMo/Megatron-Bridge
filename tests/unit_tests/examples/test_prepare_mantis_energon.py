@@ -1,8 +1,10 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import runpy
+import tarfile
 from pathlib import Path
 
+import pandas as pd
 import pytest
 
 
@@ -24,22 +26,52 @@ def test_sample_split_is_stable_and_validates_fraction():
         module["convert"]("missing", "output", 1, validation_fraction=1.0)
 
 
+def test_convert_writes_mantis_images_and_conversation(tmp_path: Path):
+    module = _load_module()
+    subset = tmp_path / "source" / "subset-a"
+    subset.mkdir(parents=True)
+    (subset / "sample.jpg").write_bytes(b"test-jpeg-bytes")
+    pd.DataFrame(
+        [
+            {
+                "images": [{"path": "sample.jpg"}],
+                "conversation": [
+                    {"role": "user", "content": "<image>Describe this image."},
+                    {"role": "assistant", "content": "A test image."},
+                ],
+            }
+        ]
+    ).to_parquet(subset / "train-00000-of-00001.parquet")
+
+    output = tmp_path / "output"
+    counts = module["convert"](str(tmp_path / "source"), str(output), 10, validation_fraction=0.0)
+
+    assert counts == {"train": 1, "val": 0}
+    assert not (output / "val-shard-000000.tar").exists()
+    with tarfile.open(output / "train-shard-000000.tar") as archive:
+        assert archive.getnames() == [
+            "subset-a__train-00000-of-00001__000000.jpgs",
+            "subset-a__train-00000-of-00001__000000.json",
+        ]
+
+
 def test_prepare_energon_dataset_indexes_nonempty_splits(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     module = _load_module()
     calls = []
-    monkeypatch.setattr(module["subprocess"], "run", lambda command, check: calls.append((command, check)))
+    prepare_energon_dataset = module["prepare_energon_dataset"]
+    monkeypatch.setitem(
+        prepare_energon_dataset.__globals__,
+        "prepare_webdataset",
+        lambda path, patterns, *, num_workers: calls.append((path, patterns, num_workers)),
+    )
 
-    module["prepare_energon_dataset"](
+    prepare_energon_dataset(
         str(tmp_path),
         counts={"train": 10, "val": 0},
         num_workers=4,
     )
 
-    command, check = calls[0]
-    assert check is True
-    assert command[:3] == ["energon", "prepare", str(tmp_path)]
-    assert "train:train-shard-.*" in command
-    assert "val:val-shard-.*" not in command
+    assert calls == [(str(tmp_path), {"train": "train-shard-.*"}, 4)]
     dataset_yaml = (tmp_path / ".nv-meta" / "dataset.yaml").read_text(encoding="utf-8")
     assert "megatron.bridge.data.energon.task_encoder_utils" in dataset_yaml
     assert "imgs: jpgs" in dataset_yaml

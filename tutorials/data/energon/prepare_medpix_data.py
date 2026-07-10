@@ -18,12 +18,13 @@ import argparse
 import io
 import json
 import logging
-import subprocess
 import tarfile
 from pathlib import Path
 
 from datasets import load_dataset
 from PIL import Image
+
+from megatron.bridge.data.energon import prepare_webdataset
 
 
 logger = logging.getLogger(__name__)
@@ -82,22 +83,10 @@ def _write_split(output_dir: Path, split: str, rows: list[dict]) -> None:
 
 
 def _run_energon_prepare(output_dir: Path, *, num_workers: int) -> None:
-    subprocess.run(
-        [
-            "energon",
-            "prepare",
-            str(output_dir),
-            "--non-interactive",
-            "--num-workers",
-            str(num_workers),
-            "--split-parts",
-            "train:train-shard-.*",
-            "--split-parts",
-            "val:val-shard-.*",
-            "--skip-dataset-yaml",
-            "--force-overwrite",
-        ],
-        check=True,
+    prepare_webdataset(
+        output_dir,
+        {"train": "train-shard-.*", "val": "val-shard-.*"},
+        num_workers=num_workers,
     )
 
 
@@ -115,8 +104,8 @@ def prepare_medpix_data(
         output_dir: Directory that will contain the tar shards and Energon metadata.
         train_rows: Number of rows selected from the beginning of the training split.
         validation_rows: Number of rows selected from the beginning of the validation split.
-        run_prepare: Whether to invoke ``energon prepare`` after writing the shards.
-        num_workers: Worker count passed to ``energon prepare``.
+        run_prepare: Whether to index the shards after writing them.
+        num_workers: Worker count passed to Energon's preparation API.
 
     Raises:
         ValueError: If either requested row count is not positive.
