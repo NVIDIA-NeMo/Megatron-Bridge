@@ -55,7 +55,7 @@ EP=${EP:-8}   # Max EP with 16 GPUs, TP=2, PP=1: DP=8, EP=8 (EP must divide DP)
 SAVE_DIR=${SAVE_DIR:-${WORKSPACE}/results/gemma4_vl_sft_tp${TP}_pp${PP}_ep${EP}_${SLURM_JOB_ID}}
 
 # Container image (required)
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-${MB_CONTAINER_IMAGE:-}}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional)

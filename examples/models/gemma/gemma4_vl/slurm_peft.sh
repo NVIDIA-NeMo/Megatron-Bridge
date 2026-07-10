@@ -55,7 +55,7 @@ EP=${EP:-4}   # TP=2, PP=1, 8 GPUs: DP=4=EP → experts split across EP ranks (f
 SAVE_DIR=${SAVE_DIR:-${WORKSPACE}/results/gemma4_vl_lora_tp${TP}_pp${PP}_ep${EP}_${SLURM_JOB_ID}}
 
 # Container image (required)
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-${MB_CONTAINER_IMAGE:-}}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional)

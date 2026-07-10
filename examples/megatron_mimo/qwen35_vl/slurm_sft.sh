@@ -67,7 +67,7 @@ set -euo pipefail
 # ==============================================================================
 
 # --- Container (REQUIRED) -----------------------------------------------------
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-${MB_CONTAINER_IMAGE:-}}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 CONTAINER_MOUNTS="${CONTAINER_MOUNTS:-}"
 # CONTAINER_MOUNTS="/data:/data /workspace:/workspace"

@@ -59,7 +59,7 @@ LOG_INTERVAL=1
 WANDB_PROJECT=megatron-bridge-${DATASET_NAME}
 
 # Container image (required)
-CONTAINER_IMAGE=""
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-${MB_CONTAINER_IMAGE:-}}"
 # CONTAINER_IMAGE="/path/to/container.sqsh"
 
 # Container mounts (optional, space-separated)
