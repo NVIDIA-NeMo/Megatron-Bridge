@@ -17,9 +17,11 @@
 import ast
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
@@ -94,6 +96,31 @@ def _explicit_environments():
 
 def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
+
+
+def test_benchmark_common_preserves_legacy_manual_gc_defaults():
+    cfg = SimpleNamespace(
+        train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        checkpoint=SimpleNamespace(save="checkpoint"),
+        logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
+        ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True, grad_reduce_in_fp32=True),
+        rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
+        scheduler=SimpleNamespace(lr_decay_iters=0, lr_warmup_iters=0),
+        model=SimpleNamespace(
+            use_transformer_engine_op_fuser=False,
+            apply_rope_fusion=False,
+            cross_entropy_fusion_impl="native",
+            cuda_graph_impl=None,
+            cuda_graph_scope=[],
+            moe_flex_dispatcher_backend=None,
+        ),
+        mixed_precision=SimpleNamespace(grad_reduce_in_fp32=True),
+    )
+
+    _benchmark_common(cfg)
+
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 100
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():

@@ -90,7 +90,7 @@ def _find_perf_recipe(name: str) -> Callable[[], object] | None:
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
-    if config_variant is None:
+    if config_variant is None or config_variant.lower() in {"v1", "v2"}:
         return ""
     return f"_{config_variant.lower()}"
 
@@ -129,10 +129,25 @@ def get_perf_recipe_by_name(
 
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply the same CLI and argparse overrides in both self-exec passes."""
-    from utils.overrides import set_cli_overrides, set_user_overrides
+    from utils.overrides import apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
+    from utils.utils import explicit_environment_override_names
 
+    base_env_vars = dict(recipe.env_vars)
+    base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
+    comm_overlap = getattr(recipe, "comm_overlap", None)
+    base_moe_a2a_overlap = bool(
+        comm_overlap is not None and getattr(comm_overlap, "overlap_moe_expert_parallel_comm", False)
+    )
     recipe = set_cli_overrides(recipe, cli_overrides)
-    return set_user_overrides(recipe, args)
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    recipe = set_user_overrides(recipe, args)
+    return apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=base_dispatcher_backend,
+        base_moe_a2a_overlap=base_moe_a2a_overlap,
+        protected_env_names=protected_env_names,
+    )
 
 
 def _apply_recipe_environment(recipe: "ConfigContainer") -> None:

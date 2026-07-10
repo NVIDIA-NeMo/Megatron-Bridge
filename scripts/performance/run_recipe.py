@@ -239,12 +239,21 @@ def _apply_library_recipe_overrides(recipe, cli_overrides: list[str], args):
 
 def _apply_target_environment(recipe, base_env_vars: dict, cli_overrides: list[str], args) -> None:
     """Finalize target-dependent recipe environment defaults."""
-    from utils.utils import apply_library_target_topology_environment, explicit_environment_override_names
+    from utils.utils import (
+        apply_library_feature_environment,
+        apply_library_target_topology_environment,
+        explicit_environment_override_names,
+    )
 
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
     apply_library_target_topology_environment(
         recipe,
         gpu=args.gpu,
+        protected_env_names=protected_env_names,
+    )
+    apply_library_feature_environment(
+        recipe,
+        nccl_ub_override=args.nccl_ub,
         protected_env_names=protected_env_names,
     )
 

@@ -26,6 +26,19 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
 
 import run_script
 import setup_experiment
+from utils import utils
+
+
+def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
+    assert run_script._flat_recipe_variant_suffix(None) == ""
+    assert run_script._flat_recipe_variant_suffix("v1") == ""
+    assert run_script._flat_recipe_variant_suffix("V1") == ""
+    assert run_script._flat_recipe_variant_suffix("v2") == ""
+    assert utils._recipe_variant_suffix("v1") == ""
+    assert utils._recipe_variant_name("v1") is None
+    assert utils._recipe_variant_suffix("v2") == ""
+    assert utils._recipe_variant_name("v2") is None
+    assert run_script._flat_recipe_variant_suffix("large_scale") == "_large_scale"
 
 
 def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
@@ -101,6 +114,29 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
     assert calls[1] == ("environment", recipe)
     assert calls[2][2][1].endswith("run_script.py")
     assert calls[2][3][run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
+
+
+def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
+    from utils.overrides import _set_common_perf_overrides
+
+    recipe = SimpleNamespace(
+        train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        checkpoint=SimpleNamespace(save="checkpoint"),
+        logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
+        ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True),
+        rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
+        scheduler=SimpleNamespace(lr_decay_iters=0, lr_warmup_iters=0),
+        model=SimpleNamespace(
+            apply_rope_fusion=False,
+            cross_entropy_fusion_impl="native",
+            moe_flex_dispatcher_backend=None,
+        ),
+    )
+
+    _set_common_perf_overrides(recipe)
+
+    assert recipe.train.manual_gc is True
+    assert recipe.train.manual_gc_interval == 100
 
 
 def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():

@@ -120,6 +120,28 @@ def _minimal_cuda_graph_recipe():
     )
 
 
+def test_default_dispatcher_sentinel_preserves_recipe_backend():
+    recipe = _fresh_recipe()
+    expected_backend = recipe.model.moe_flex_dispatcher_backend
+    expected_dispatcher = recipe.model.moe_token_dispatcher_type
+
+    recipe = _apply(recipe, run_post=False)
+
+    assert recipe.model.moe_flex_dispatcher_backend == expected_backend
+    assert recipe.model.moe_token_dispatcher_type == expected_dispatcher
+
+
+def test_explicit_none_disables_flat_recipe_flex_dispatcher():
+    recipe = _apply(
+        _fresh_recipe(),
+        args_overrides={"moe_flex_dispatcher_backend": None},
+        run_post=False,
+    )
+
+    assert recipe.model.moe_flex_dispatcher_backend is None
+    assert recipe.model.moe_token_dispatcher_type == "alltoall"
+
+
 # ---------------------------------------------------------------------------
 # Recompute precedence
 # ---------------------------------------------------------------------------
