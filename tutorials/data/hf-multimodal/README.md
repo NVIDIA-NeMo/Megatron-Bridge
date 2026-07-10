@@ -24,13 +24,16 @@ cfg = qwen3_vl_8b_peft_config()
 cfg.dataset.source = HFDatasetSourceConfig(dataset_name="medpix")
 cfg.dataset.do_validation = True
 cfg.dataset.do_test = False
+cfg.dataset.enable_in_batch_packing = False
+cfg.dataset.defer_in_batch_packing_to_step = False
 ```
 
-The recipe already selects `DirectHFSFTDatasetConfig`, Qwen's processor, assistant-only loss, and deferred
-in-batch packing. Replace only the source for another compatible preset or hosted dataset. When hosted rows are
-already named `messages`, `conversation`, or `conversations`, set `path_or_dataset` and `split` directly; otherwise
-select a registered `schema_adapter`. `load_kwargs` belongs to dataset loading, while `adapter_kwargs` belongs only
-to row conversion.
+The recipe already selects `DirectHFSFTDatasetConfig`, Qwen's processor, and assistant-only loss. Start without
+in-batch packing; when packing is useful, use the normal collate-time path described below rather than deferred
+packing. Replace only the source for another compatible preset or hosted dataset. When hosted rows are already named
+`messages`, `conversation`, or `conversations`, set `path_or_dataset` and `split` directly; otherwise select a
+registered `schema_adapter`. `load_kwargs` belongs to dataset loading, while `adapter_kwargs` belongs only to row
+conversion.
 
 See [Run the hosted MedPix preset with W&B](#run-the-hosted-medpix-preset-with-wb) for a complete launch.
 
@@ -97,7 +100,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_config \
   --dataset vlm-hf \
-  --step_func qwen3_vl_step \
+  --step_func vlm_step \
   --peft_scheme lora \
   --seq_length 1024 \
   checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
@@ -117,6 +120,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   dataset.num_workers=0 \
   dataset.persistent_workers=False \
   dataset.enable_in_batch_packing=False \
+  dataset.defer_in_batch_packing_to_step=False \
   logger.log_interval=1
 ```
 
@@ -139,7 +143,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_config \
   --dataset vlm-hf \
-  --step_func qwen3_vl_step \
+  --step_func vlm_step \
   --peft_scheme lora \
   --seq_length 1024 \
   checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
@@ -159,6 +163,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   dataset.num_workers=0 \
   dataset.persistent_workers=False \
   dataset.enable_in_batch_packing=False \
+  dataset.defer_in_batch_packing_to_step=False \
   scheduler.lr_warmup_iters=0 \
   scheduler.lr_decay_iters=3 \
   logger.log_interval=1 \
@@ -214,18 +219,21 @@ cfg.dataset = DirectHFSFTDatasetConfig(
 
 Disable `do_validation` or `do_test` when that split is intentionally absent.
 
-## Enable Qwen in-batch packing
+## Enable collate-time in-batch packing
 
-Qwen3-VL defers packing until its model step has consumed the original visual tensors. Packing requires a configured micro batch greater than one:
+The unified multimodal path normally packs samples in the model collator and uses the generic `vlm_step`. Packing
+requires a configured micro batch greater than one:
 
 ```bash
 train.micro_batch_size=2 \
 train.global_batch_size=2 \
 dataset.enable_in_batch_packing=True \
-dataset.defer_in_batch_packing_to_step=True
+dataset.defer_in_batch_packing_to_step=False
 ```
 
 Do not apply text-only offline packed-SFT settings to this path. With context parallelism, keep `model.calculate_per_token_loss=True` and `ddp.average_in_collective=False`; `ConfigContainer` derives the required CP/SP packing multiple.
+Deferred packing is a model-specific compatibility mode for specialized steps such as `qwen3_vl_step`; it is not
+needed for the recommended Qwen3-VL Direct-HF workflow.
 
 ## Migrate from `vlm-preloaded`
 
@@ -261,7 +269,8 @@ The old placeholder plus top-level media-list schema is not rewritten automatica
 - `No VLM collate function is registered`: `hf_processor_path` resolved to a processor type without a registered model collator.
 - Image cannot be opened: use absolute paths, shared paths, or URLs reachable from every worker.
 - All tokens are masked: verify the conversation has an assistant turn accepted by the processor chat template.
-- Packing validation fails: use micro batch size greater than one and retain Qwen's deferred-packing setting.
+- Packing validation fails: use micro batch size greater than one, keep `defer_in_batch_packing_to_step=False`, and
+  launch with `--step_func vlm_step`.
 - OOM on one GPU: reduce sequence length first; this tutorial uses LoRA because full Qwen3-VL 8B SFT is a two-GPU recipe.
 
 For hosted text/chat sources and prompt-completion preprocessing, see the

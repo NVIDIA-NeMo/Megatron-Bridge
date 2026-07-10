@@ -89,7 +89,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_energon_config \
   --dataset vlm-energon \
-  --step_func qwen3_vl_step \
+  --step_func vlm_step \
   --peft_scheme lora \
   --seq_length 1024 \
   checkpoint.pretrained_checkpoint="$PRETRAINED_CHECKPOINT" \
@@ -104,15 +104,18 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   validation.eval_micro_batch_size=2 \
   dataset.path="$ENERGON_PATH" \
   dataset.micro_batch_size=2 \
-  dataset.num_workers=0 \
-  dataset.num_val_workers=0 \
+  dataset.num_workers=2 \
+  dataset.num_val_workers=2 \
   dataset.enable_in_batch_packing=False \
+  dataset.defer_in_batch_packing_to_step=False \
   logger.log_interval=1
 ```
 
 Success means Energon restores both split loaders, the Qwen task encoder decodes and normalizes the PNGs, iteration 1 and validation report finite loss, and the adapter checkpoint is written.
 
 Energon owns its loader micro batch, so `dataset.micro_batch_size`, `train.micro_batch_size`, and `validation.eval_micro_batch_size` must match. Energon currently exposes train and validation iterators, not a test iterator.
+The two data workers per split are a realistic starting point for this tiny smoke; tune the counts for storage and
+CPU capacity. Set them to zero only while debugging worker-process behavior.
 
 ## 4. Convert a MedPix smoke set
 
@@ -144,7 +147,7 @@ logger.wandb_save_dir="$OUTPUT_DIR/wandb"
 ```
 
 The unpacked baseline uses `dataset.enable_in_batch_packing=False`. After it passes, repeat with
-`dataset.enable_in_batch_packing=True` to exercise Qwen's deferred packing path on the same shards.
+`dataset.enable_in_batch_packing=True` to exercise collate-time packing on the same shards.
 
 ## 5. Prepare production shards
 
@@ -190,18 +193,21 @@ These similarly named task-encoder settings have different roles:
 
 `min_pixels` and `max_pixels` are not visual keys. Qwen has fixed model-owned output keys and exposes the pixel bounds independently.
 
-## 7. Enable in-batch packing
+## 7. Enable collate-time in-batch packing
 
-Qwen3-VL's Energon recipe defers packing to the model step. Keep configured micro batch greater than one:
+The recommended Energon path packs in the task encoder's collator and continues to use the generic `vlm_step`.
+Keep configured micro batch greater than one:
 
 ```bash
 dataset.enable_in_batch_packing=True \
-dataset.defer_in_batch_packing_to_step=True \
+dataset.defer_in_batch_packing_to_step=False \
 dataset.micro_batch_size=2 \
 train.micro_batch_size=2
 ```
 
 With context parallelism, also use per-token loss and disable collective loss averaging. Do not use text-only offline packed-SFT artifacts with Energon VLM data.
+Deferred packing is reserved for explicitly selected model-specific compatibility steps; it is not the normal
+Qwen3-VL Energon workflow.
 
 ## Troubleshooting
 

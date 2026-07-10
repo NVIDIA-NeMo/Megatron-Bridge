@@ -190,9 +190,16 @@ def test_multimodal_tutorials_document_runnable_qwen_paths():
     assert "dataset.source.dataset_name=medpix" in hf_multimodal
     assert 'dataset.source.split="train[:16]"' in hf_multimodal
     assert "logger.wandb_project=bridge-qwen3-vl-medpix" in hf_multimodal
-    assert "dataset.defer_in_batch_packing_to_step=True" in hf_multimodal
+    assert "--step_func vlm_step" in hf_multimodal
+    assert "dataset.defer_in_batch_packing_to_step=False" in hf_multimodal
+    assert "dataset.defer_in_batch_packing_to_step=True" not in hf_multimodal
     assert "qwen3_vl_8b_peft_energon_config" in energon
     assert "--dataset vlm-energon" in energon
+    assert "--step_func vlm_step" in energon
+    assert "dataset.num_workers=2" in energon
+    assert "dataset.num_val_workers=2" in energon
+    assert "dataset.defer_in_batch_packing_to_step=False" in energon
+    assert "dataset.defer_in_batch_packing_to_step=True" not in energon
     assert '"train": "train-shard-.*"' in energon
     assert "prepare_medpix_data.py" in energon
     assert "dataset.enable_in_batch_packing=True" in energon

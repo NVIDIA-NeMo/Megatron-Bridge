@@ -221,8 +221,9 @@ For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config \
     --dataset vlm-energon \
-    --step_func qwen3_vl_step \
+    --step_func vlm_step \
     dataset.path=/data/vlm_energon \
+    dataset.defer_in_batch_packing_to_step=False \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
@@ -238,13 +239,14 @@ For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_config \
     --dataset vlm-hf \
-    --step_func qwen3_vl_step \
+    --step_func vlm_step \
     dataset.source.dataset_name=null \
     dataset.source.path_or_dataset=json \
     'dataset.source.load_kwargs={data_files:{train:/data/vlm/train.jsonl}}' \
     dataset.do_validation=False \
     dataset.do_test=False \
     dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
+    dataset.defer_in_batch_packing_to_step=False \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
