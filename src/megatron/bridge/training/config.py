@@ -38,10 +38,11 @@ from megatron.training.config import DistributedInitConfig as MTrainDistributedI
 from megatron.training.config import LoggerConfig as MTrainLoggerConfig
 from megatron.training.config import ProfilingConfig as MTrainProfilingConfig
 from megatron.training.config import RerunStateMachineConfig as MTrainRerunStateMachineConfig
-from megatron.training.config import RNGConfig, ValidationConfig
+from megatron.training.config import RNGConfig
 from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
+from megatron.training.config import ValidationConfig as MTrainValidationConfig
 
 from megatron.bridge.data.base import (
     DataloaderConfig,
@@ -409,6 +410,16 @@ class SchedulerConfig(MTrainSchedulerConfig):
                 f"Cannot specify lr_warmup_fraction={self.lr_warmup_fraction} with lr_warmup_iters={self.lr_warmup_iters} or lr_warmup_samples={self.lr_warmup_samples}. "
                 f"Use either lr_warmup_fraction OR lr_warmup_iters OR lr_warmup_samples."
             )
+
+
+@dataclass(kw_only=True)
+class ValidationConfig(MTrainValidationConfig):
+    """Bridge validation settings, extending the MCore training ValidationConfig."""
+
+    eval_at_start: bool = False
+    """Run one validation pass before the first training step (step-0 eval). Provides the
+    baseline metric that anchors training curves. Skipped when resuming from a checkpoint
+    (step > 0) or when validation is disabled."""
 
 
 @dataclass(kw_only=True)

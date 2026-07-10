@@ -3814,3 +3814,30 @@ class TestTokenizerConfig:
                 metadata_path=metadata_path,
                 random_arg=True,
             )
+
+
+class TestValidationConfigEvalAtStart:
+    """Bridge ValidationConfig adds eval_at_start for a step-0 baseline eval (#3996)."""
+
+    def test_default_disabled(self):
+        cfg = ValidationConfig()
+        assert cfg.eval_at_start is False
+
+    def test_enable(self):
+        cfg = ValidationConfig(eval_at_start=True)
+        assert cfg.eval_at_start is True
+
+    def test_inherits_mcore_fields(self):
+        cfg = ValidationConfig(eval_iters=10, eval_interval=50, eval_at_start=True)
+        assert cfg.eval_iters == 10
+        assert cfg.eval_interval == 50
+
+    def test_deprecated_sync_ignores_eval_at_start(self, recwarn):
+        """The TrainingConfig->ValidationConfig deprecation sync must not warn for eval_at_start."""
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+        assert not any("eval_at_start" in str(w.message) for w in recwarn.list)

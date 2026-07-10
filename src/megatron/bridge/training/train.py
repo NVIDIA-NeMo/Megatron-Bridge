@@ -351,6 +351,35 @@ def train(
         model_config.param_sync_func = None
         pre_hook_enabled = False
 
+    # Optional step-0 validation pass: establishes the baseline metric before any
+    # optimizer step (#3996). Skipped on resume/in-process restart (step > 0).
+    if (
+        getattr(val_config, "eval_at_start", False)
+        and global_state.train_state.do_valid
+        and global_state.train_state.step == 0
+    ):
+        timers("interval-time").stop()
+        if train_config.manual_gc and train_config.manual_gc_eval:
+            gc.collect()
+        timers("eval-time", log_level=0).start(barrier=True)
+        evaluate_and_print_results(
+            global_state,
+            f"iteration {global_state.train_state.step}",
+            forward_step_func,
+            valid_data_iterator,
+            model,
+            model_config,
+            verbose=False,
+            write_to_tensorboard=True,
+            process_non_loss_data_func=process_non_loss_data_func,
+            non_loss_data_func=non_loss_data_func,
+            callback_manager=callback_manager,
+        )
+        timers("eval-time").stop()
+        if train_config.manual_gc and train_config.manual_gc_eval:
+            gc.collect(generation=0)
+        timers("interval-time", log_level=0).start(barrier=True)
+
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
         # Handle profiling for this step
