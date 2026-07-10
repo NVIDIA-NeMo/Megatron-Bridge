@@ -2040,6 +2040,26 @@ class TestEvalBatchSizeConfig:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_eval_batch_size_divisibility_uses_eval_data_parallel_size(self, monkeypatch):
+        """Eval-time CP changes the DP degree that owns validation batches."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=8, micro_batch_size=1)
+        val_cfg = ValidationConfig(eval_global_batch_size=2, eval_micro_batch_size=1)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        container.dist.use_decentralized_pg = True
+        container.dist.use_gloo_process_groups = False
+        container.dist.eval_context_parallel_size = 2
+
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_eval_default_divisibility_check_fails(self, monkeypatch):
         """Even with defaults from training, the divisibility check should catch mismatches."""
         gpt_model_cfg = create_test_gpt_config()

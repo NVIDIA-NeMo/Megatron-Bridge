@@ -396,6 +396,7 @@ def setup(
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=pg_collection.dp,
+        eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
