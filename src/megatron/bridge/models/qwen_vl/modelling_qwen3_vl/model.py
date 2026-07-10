@@ -528,16 +528,24 @@ class Qwen3VLModel(MegatronModule):
                             )
                         )
                 if cp_size > 1 and self.config.vision_dp_when_cp:
+                    # Every tensor entering the all_gather must require grad so each CP rank
+                    # runs AllGatherVisionEmbeddings.backward and joins its cp_group all_reduce.
+                    # Otherwise ranks whose tensors carry no grad (0-image placeholders, or a
+                    # fully frozen vision tower) skip the collective and the others hang.
+                    if torch.is_grad_enabled():
+                        for _t in (vision_embeds, *deepstack_feature_lists):
+                            if not _t.requires_grad:
+                                _t.requires_grad_(True)
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,
-                        cp_group=self.pg_collection.cp,
+                        self.pg_collection.cp,
                     )
                     for i in range(len(deepstack_feature_lists)):
                         deepstack_feature_lists[i] = AllGatherVisionEmbeddings.apply(
                             deepstack_feature_lists[i],
                             seqlen_on_cp_ranks,
-                            cp_group=self.pg_collection.cp,
+                            self.pg_collection.cp,
                         )
 
             combined_embeddings = self.language_model.embedding(
