@@ -172,7 +172,7 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "  llm-finetune           HF finetune dataset (set dataset.hf_dataset.dataset_name=<preset>)\n"
             "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
             "VLM datasets:\n"
-            "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
+            "  vlm-energon            Energon multimodal; requires an Energon-configured recipe\n"
             "  vlm-hf                 Direct HF SFT (set dataset.source.dataset_name=<preset>)"
         ),
     )

@@ -183,6 +183,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
@@ -214,6 +215,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
 
     return cfg
 
@@ -229,6 +231,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
@@ -260,6 +263,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
 
     return cfg
 

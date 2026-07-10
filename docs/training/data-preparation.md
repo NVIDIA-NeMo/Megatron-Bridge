@@ -224,7 +224,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Qwen-VL, generic HF, and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig`, `HFEnergonTaskEncoderConfig`, and `NemotronOmniEnergonTaskEncoderConfig`, respectively. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`; `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
+`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Qwen-VL, generic HF, and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig`, `HFEnergonTaskEncoderConfig`, and `NemotronOmniEnergonTaskEncoderConfig`, respectively. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
 
 For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations` plus worker-resolvable media paths:
 

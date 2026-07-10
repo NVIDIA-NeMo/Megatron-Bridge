@@ -190,7 +190,9 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
     effective_packing = config.enable_in_batch_packing and not config.defer_in_batch_packing_to_step
 
     trust_remote_code = is_safe_repo(
-        trust_remote_code=task_config.trust_remote_code,
+        trust_remote_code=(
+            task_config.trust_remote_code if task_config.trust_remote_code is not None else config.trust_remote_code
+        ),
         hf_path=task_config.hf_processor_path,
     )
     if isinstance(task_config, HFEnergonTaskEncoderConfig):

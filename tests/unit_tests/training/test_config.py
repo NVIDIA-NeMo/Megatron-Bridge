@@ -342,6 +342,8 @@ def create_test_cp_config_container(cp_size, calc_per_token_loss, avg_in_collect
         dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
     elif dataset_type == "energon":
         dataset_cfg = create_test_energon_dataset_config(sequence_length=512)
+    elif dataset_type == "mock_vlm":
+        dataset_cfg = create_test_mock_vlm_dataset_config(sequence_length=512)
     else:
         dataset_cfg = create_test_gpt_dataset_config(sequence_length=512)
 
@@ -1178,13 +1180,13 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_mock_vlm_padding_includes_cp_sp_without_sft_loss_assertions(self, monkeypatch):
-        """Mock pretraining data gets safe shapes without being classified as SFT."""
+    def test_mock_vlm_padding_includes_cp_sp_with_sft_loss_safeguards(self, monkeypatch):
+        """Mock conversation data gets safe shapes and valid CP loss reduction."""
         model_cfg = create_test_gpt_config(
             context_parallel_size=2,
             tensor_model_parallel_size=4,
             sequence_parallel=True,
-            calculate_per_token_loss=False,
+            calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
         dataset_cfg = create_test_mock_vlm_dataset_config(sequence_length=512)
@@ -1195,6 +1197,7 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             dataset_config_override=dataset_cfg,
         )
+        container.ddp.average_in_collective = False
 
         try:
             container.validate()
@@ -1206,7 +1209,7 @@ class TestConfigContainerValidation:
             context_parallel_size=2,
             tensor_model_parallel_size=4,
             sequence_parallel=True,
-            calculate_per_token_loss=False,
+            calculate_per_token_loss=True,
         )
         train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
         dataset_cfg = create_test_mock_vlm_dataset_config(sequence_length=512)
@@ -1217,6 +1220,7 @@ class TestConfigContainerValidation:
             train_config=train_cfg,
             dataset_config_override=dataset_cfg,
         )
+        container.ddp.average_in_collective = False
 
         try:
             container.validate()
@@ -1414,6 +1418,10 @@ class TestConfigContainerValidation:
             ("energon", 2, False, False, True, "calculate_per_token_loss must be True"),
             ("energon", 2, True, True, True, "average_in_collective must be False"),
             ("energon", 2, True, False, False, None),
+            # Synthetic VLM conversations have the same masked SFT loss semantics.
+            ("mock_vlm", 2, False, False, True, "calculate_per_token_loss must be True"),
+            ("mock_vlm", 2, True, True, True, "average_in_collective must be False"),
+            ("mock_vlm", 2, True, False, False, None),
             # GPTDatasetConfig with CP > 1 - checks should be skipped
             ("gpt", 2, False, True, False, None),
             # CP = 1 - checks should be skipped regardless of dataset type
@@ -2047,6 +2055,22 @@ class TestEvalBatchSizeConfig:
         try:
             with pytest.raises(ValueError, match="must match train.micro_batch_size"):
                 container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        dataset_cfg = create_test_energon_dataset_config(sequence_length=512, micro_batch_size=1)
+        dataset_cfg.do_validation = False
+        train_cfg = create_test_training_config(global_batch_size=8, micro_batch_size=1)
+        validation_cfg = ValidationConfig(eval_global_batch_size=8, eval_micro_batch_size=2)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+            validation_config=validation_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+        try:
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

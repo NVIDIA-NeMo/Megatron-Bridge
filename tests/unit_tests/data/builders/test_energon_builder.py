@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Focused coverage for declarative Energon config and runtime construction."""
+
 from unittest.mock import MagicMock
 
 import pytest
@@ -76,6 +78,7 @@ def test_config_rejects_builder_owned_dataset_kwargs(reserved_key: str):
 
 def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.MonkeyPatch):
     config = _qwen_config(
+        trust_remote_code=True,
         enable_in_batch_packing=True,
         pad_to_max_length=True,
         pad_to_multiple_of=64,
@@ -93,7 +96,8 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
     processor = object()
     encoder = object()
     encoder_cls = MagicMock(return_value=encoder)
-    monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)
+    safe_repo = MagicMock(return_value=False)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", safe_repo)
     monkeypatch.setattr(
         "megatron.bridge.data.builders.energon.AutoTokenizer.from_pretrained",
         lambda *_, **__: tokenizer,
@@ -106,6 +110,7 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
 
     assert build_energon_task_encoder(config) is encoder
 
+    safe_repo.assert_called_once_with(trust_remote_code=True, hf_path="Qwen/model")
     encoder_cls.assert_called_once_with(
         tokenizer=tokenizer,
         image_processor=processor,

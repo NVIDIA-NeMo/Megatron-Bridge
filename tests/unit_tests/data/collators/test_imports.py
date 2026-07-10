@@ -55,6 +55,7 @@ def test_direct_collate_module_imports_do_not_load_registry():
         f"    assert {COLLATE_REGISTRY_MODULE!r} not in sys.modules\n"
     )
 
+
 def test_registry_import_is_lazy_until_a_processor_is_resolved():
     module_assertions = "; ".join(f"assert {module!r} not in sys.modules" for module in MODEL_COLLATE_MODULES)
     _assert_subprocess_succeeds(

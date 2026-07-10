@@ -1233,8 +1233,10 @@ class ConfigContainer(Container):
                 "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
             )
             self.validation.eval_micro_batch_size = self.train.micro_batch_size
-        if isinstance(self.dataset, EnergonDatasetConfig) and (
-            self.dataset.micro_batch_size != self.validation.eval_micro_batch_size
+        if (
+            isinstance(self.dataset, EnergonDatasetConfig)
+            and self.dataset.do_validation
+            and self.dataset.micro_batch_size != self.validation.eval_micro_batch_size
         ):
             raise ValueError(
                 "EnergonDatasetConfig.micro_batch_size must match validation.eval_micro_batch_size "
@@ -1345,7 +1347,15 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig)):
+            if isinstance(
+                self.dataset,
+                (
+                    GPTSFTDatasetConfig,
+                    DirectHFSFTDatasetConfig,
+                    EnergonDatasetConfig,
+                    MockVLMSFTDatasetConfig,
+                ),
+            ):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
