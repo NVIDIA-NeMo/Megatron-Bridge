@@ -27,7 +27,7 @@ import os
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets.step37_flickr8k import Step37Flickr8kSFTDataProvider
+from megatron.bridge.models.stepfun.data.flickr8k import Step37Flickr8kSFTDataProvider
 from megatron.bridge.recipes.common import _sft_common
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE

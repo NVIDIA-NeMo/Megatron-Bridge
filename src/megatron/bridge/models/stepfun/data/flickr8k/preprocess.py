@@ -37,7 +37,7 @@ import numpy as np
 import torch
 from PIL import Image
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.multimodal_utils import (
+from megatron.bridge.models.stepfun.data.flickr8k.multimodal_utils import (
     PATCH_ITEM_TYPE,
     build_image_for_insert,
     compute_rope_args,

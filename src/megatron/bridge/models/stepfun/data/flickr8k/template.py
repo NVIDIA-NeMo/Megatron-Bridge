@@ -34,7 +34,7 @@ from typing import Any, Optional
 import numpy as np
 import torch
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.multimodal_utils import (
+from megatron.bridge.models.stepfun.data.flickr8k.multimodal_utils import (
     IMAGE_ITEM_TYPE,
 )
 

@@ -33,8 +33,8 @@ from typing import Any, Literal, Optional, Union
 import torch
 from tqdm import tqdm
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.packing import PackingResult, pack
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.samplers import (
+from megatron.bridge.models.stepfun.data.flickr8k.packing import PackingResult, pack
+from megatron.bridge.models.stepfun.data.flickr8k.samplers import (
     LoopedSequentialSampler,
     LoopedShuffleSampler,
     WeightedRandomSampler,

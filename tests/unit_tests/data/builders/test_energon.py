@@ -147,7 +147,7 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
         "megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained",
         lambda *_, **__: processor,
     )
-    monkeypatch.setattr("megatron.bridge.data.builders.energon.HFTaskEncoder", encoder_cls)
+    monkeypatch.setattr("megatron.bridge.data.energon.hf_task_encoder.HFTaskEncoder", encoder_cls)
 
     assert build_energon_task_encoder(config) is encoder
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True

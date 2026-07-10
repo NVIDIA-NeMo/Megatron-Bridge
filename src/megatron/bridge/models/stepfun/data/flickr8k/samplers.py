@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Looped sequential / shuffle / weighted-random samplers.
+"""Model-owned looped sequential / shuffle / weighted-random samplers.
 
 These drive :class:`MixedPackedDataloader._schedule_all`. The seeds and the
 exact ``torch.randperm`` / ``heapq``-based selection order define the

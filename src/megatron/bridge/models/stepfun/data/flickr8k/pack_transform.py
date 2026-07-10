@@ -36,7 +36,7 @@ from typing import Any
 
 import torch
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.template import MultimodalSFTSample
+from megatron.bridge.models.stepfun.data.flickr8k.template import MultimodalSFTSample
 
 
 def get_position_id_from_cu_seqlens(cu_seqlens: torch.Tensor) -> torch.Tensor:

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,16 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""
-VLM dataset utilities.
+"""Shared visual tensor key groups for model-owned collators."""
 
-Public API re-exports:
-- Providers: VLM-specific mock and Energon dataset providers
-"""
+THW_GRID_VISUAL_KEYS = ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw")
 
-from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
-
-
-__all__ = [
-    "MockVLMConversationProvider",
-]
+PASSTHROUGH_VISUAL_KEYS = (
+    "pixel_values",
+    "pixel_values_videos",
+    "image_grid_thw",
+    "video_grid_thw",
+    "image_sizes",
+    "image_position_ids",
+    "mm_token_type_ids",
+)

@@ -35,7 +35,7 @@ RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
 QWEN_OMNI_RECIPE = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "qwen_omni" / "h100" / "qwen3_omni.py"
 QWEN_OMNI_TRAINING_SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_omni" / "local_train_thinker_full.sh"
-PRELOADED_VLM_PROVIDER = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "vlm_datasets" / "preloaded_provider.py"
+LEGACY_VLM_DATASETS = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "vlm_datasets"
 LOCAL_CONVERSATION_SOURCE = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "sources" / "local_conversation.py"
 
 
@@ -104,7 +104,7 @@ def test_dclm_readme_megatron_lm_tool_path():
 
 def test_vlm_json_script_uses_hf_loader_without_local_provider():
     """JSON VLM entrypoints should use Direct HF rather than a local provider."""
-    assert not PRELOADED_VLM_PROVIDER.exists()
+    assert not LEGACY_VLM_DATASETS.exists()
     assert not LOCAL_CONVERSATION_SOURCE.exists()
     for path in (RUN_RECIPE, QWEN_OMNI_RECIPE, QWEN_OMNI_TRAINING_SCRIPT):
         text = _read(path)

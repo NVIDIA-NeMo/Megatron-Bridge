@@ -28,7 +28,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.template import IMAGE_PLACEHOLDER
+from megatron.bridge.models.stepfun.data.flickr8k.template import IMAGE_PLACEHOLDER
 
 
 @dataclass(frozen=True)

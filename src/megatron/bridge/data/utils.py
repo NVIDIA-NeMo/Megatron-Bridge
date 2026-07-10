@@ -30,6 +30,10 @@ from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
     gpt_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.mock_vlm_sft import (
+    MockVLMSFTDatasetConfig,
+    mock_vlm_sft_train_valid_test_datasets_provider,
+)
 from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
 from megatron.bridge.training.config import GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
@@ -92,6 +96,7 @@ _REGISTRY: dict[type[Any], Callable[..., Any]] = {
     GPTSFTDatasetConfig: gpt_sft_train_valid_test_datasets_provider,
     DirectHFSFTDatasetConfig: direct_hf_sft_train_valid_test_datasets_provider,
     EnergonDatasetConfig: energon_train_valid_test_datasets_provider,
+    MockVLMSFTDatasetConfig: mock_vlm_sft_train_valid_test_datasets_provider,
 }
 
 
@@ -101,6 +106,7 @@ def get_dataset_provider(
         | GPTSFTDatasetConfig
         | DirectHFSFTDatasetConfig
         | EnergonDatasetConfig
+        | MockVLMSFTDatasetConfig
         | DatasetProvider
     ),
 ) -> Callable[..., Any]:
@@ -120,6 +126,8 @@ def get_dataset_provider(
         return direct_hf_sft_train_valid_test_datasets_provider
     if isinstance(dataset_config, EnergonDatasetConfig):
         return energon_train_valid_test_datasets_provider
+    if isinstance(dataset_config, MockVLMSFTDatasetConfig):
+        return mock_vlm_sft_train_valid_test_datasets_provider
 
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):

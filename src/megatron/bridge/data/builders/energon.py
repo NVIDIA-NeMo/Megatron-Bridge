@@ -23,7 +23,6 @@ from transformers import AutoProcessor, AutoTokenizer, Qwen3VLProcessor
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
-from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
@@ -195,6 +194,8 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
         hf_path=task_config.hf_processor_path,
     )
     if isinstance(task_config, HFEnergonTaskEncoderConfig):
+        from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
+
         processor = AutoProcessor.from_pretrained(
             task_config.hf_processor_path,
             trust_remote_code=trust_remote_code,

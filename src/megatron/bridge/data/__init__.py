@@ -11,6 +11,8 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     HFEnergonTaskEncoderConfig,
+    MockVLMSFTDatasetBuilder,
+    MockVLMSFTDatasetConfig,
     NemotronOmniEnergonTaskEncoderConfig,
     PromptCompletionSFTPreprocessingConfig,
     QwenVLEnergonTaskEncoderConfig,
@@ -18,6 +20,7 @@ from megatron.bridge.data.builders import (
     direct_hf_sft_train_valid_test_datasets_provider,
     energon_train_valid_test_datasets_provider,
     gpt_sft_train_valid_test_datasets_provider,
+    mock_vlm_sft_train_valid_test_datasets_provider,
 )
 
 
@@ -36,9 +39,12 @@ __all__ = [
     "HFEnergonTaskEncoderConfig",
     "QwenVLEnergonTaskEncoderConfig",
     "NemotronOmniEnergonTaskEncoderConfig",
+    "MockVLMSFTDatasetBuilder",
+    "MockVLMSFTDatasetConfig",
     "PromptCompletionSFTPreprocessingConfig",
     "SFTPreprocessingConfig",
     "gpt_sft_train_valid_test_datasets_provider",
     "direct_hf_sft_train_valid_test_datasets_provider",
     "energon_train_valid_test_datasets_provider",
+    "mock_vlm_sft_train_valid_test_datasets_provider",
 ]

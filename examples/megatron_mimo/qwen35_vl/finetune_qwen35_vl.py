@@ -568,8 +568,7 @@ def _build_qwen_metadata_batch(
         attention_mask = attention_mask.contiguous()
 
     skipped_tokens = extract_skipped_token_ids(processor)
-    # Imported lazily: importing collate_fn at module load trips a vlm_datasets<->collate_fn
-    # circular import. By call time the package graph is fully initialized.
+    # Imported lazily so text-only ranks do not load the Qwen visual collator.
     from megatron.bridge.models.qwen_vl.data.collate_fn import CHATML_ASSISTANT_END, CHATML_ASSISTANT_START
 
     boundary_config = assistant_mask_boundary_config_from_markers(
@@ -745,8 +744,7 @@ class _Qwen35HFMetadataMimoCollateAdapter:
         seq_length: int,
         pad_to_seq_length: bool,
         batch_spec: MIMOBatchSpec,
-        # Defaults resolved lazily from collate_fn to keep parity with qwen2_5_collate_fn on
-        # visual ranks while avoiding the module-load vlm_datasets<->collate_fn circular import.
+        # Defaults resolve lazily from the model collator only on visual ranks.
         min_pixels: int | None = None,
         max_pixels: int | None = None,
     ) -> None:

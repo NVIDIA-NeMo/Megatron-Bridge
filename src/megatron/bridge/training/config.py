@@ -61,6 +61,7 @@ from megatron.bridge.data.builders.gpt_sft import (
 from megatron.bridge.data.builders.gpt_sft import (
     GPTSFTDatasetConfig,
 )
+from megatron.bridge.data.builders.mock_vlm_sft import MockVLMSFTDatasetConfig
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
@@ -954,7 +955,14 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | EnergonDatasetConfig | DatasetProvider
+    dataset: (
+        GPTDatasetConfig
+        | GPTSFTDatasetConfig
+        | DirectHFSFTDatasetConfig
+        | EnergonDatasetConfig
+        | MockVLMSFTDatasetConfig
+        | DatasetProvider
+    )
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1120,7 +1128,10 @@ class ConfigContainer(Container):
 
         # Validate declarative SFT values before deriving runtime padding
         # multiples so normalization cannot hide an invalid user value.
-        if isinstance(self.dataset, (DirectHFSFTDatasetConfig, EnergonDatasetConfig)):
+        if isinstance(
+            self.dataset,
+            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+        ):
             self.dataset.validate()
 
         if isinstance(self.dataset, EnergonDatasetConfig) and (
@@ -1147,7 +1158,10 @@ class ConfigContainer(Container):
         sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
         collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
         if (
-            isinstance(self.dataset, (DirectHFSFTDatasetConfig, EnergonDatasetConfig))
+            isinstance(
+                self.dataset,
+                (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+            )
             and self.dataset.seq_length % collate_padding_multiple != 0
         ):
             raise ValueError(
@@ -1161,7 +1175,10 @@ class ConfigContainer(Container):
             self.model._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
-        elif isinstance(self.dataset, (DirectHFSFTDatasetConfig, EnergonDatasetConfig)):
+        elif isinstance(
+            self.dataset,
+            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+        ):
             self.dataset.pad_to_multiple_of = math.lcm(
                 self.dataset.pad_to_multiple_of,
                 collate_padding_multiple,
@@ -1376,7 +1393,13 @@ class ConfigContainer(Container):
             # DatasetProvider instances may not have sequence_length attributes
             if isinstance(
                 self.dataset,
-                (GPTDatasetConfig, GPTSFTDatasetConfig, DirectHFSFTDatasetConfig, EnergonDatasetConfig),
+                (
+                    GPTDatasetConfig,
+                    GPTSFTDatasetConfig,
+                    DirectHFSFTDatasetConfig,
+                    EnergonDatasetConfig,
+                    MockVLMSFTDatasetConfig,
+                ),
             ):
                 data_seq_length = self.dataset.seq_length
 

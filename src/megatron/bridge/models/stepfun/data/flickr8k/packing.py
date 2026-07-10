@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Greedy non-truncation packing.
+"""Model-owned greedy non-truncation packing.
 
 Walks the sample sizes in order and greedily fills each pack up to
 ``max_len`` without ever truncating a sample. Do NOT modify the loop

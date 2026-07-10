@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,32 +12,45 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import pytest
 import torch
 
-import megatron.bridge.data.vlm_datasets.collate as collate
 import megatron.bridge.models.gemma_vl.data.collate_fn as gemma_vl_collate
 import megatron.bridge.models.glm_vl.data.collate_fn as glm_vl_collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
 import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
+import megatron.bridge.models.nemotron_vl.data.collate_fn as nemotron_vl_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
-from megatron.bridge.data.conversation_processing import (
-    build_assistant_loss_mask as canonical_build_assistant_loss_mask,
-)
+from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 
 
 pytestmark = pytest.mark.unit
 
+collate = SimpleNamespace(
+    gemma3_vl_collate_fn=gemma_vl_collate.gemma3_vl_collate_fn,
+    gemma4_vl_collate_fn=gemma_vl_collate.gemma4_vl_collate_fn,
+    glm4v_collate_fn=glm_vl_collate.glm4v_collate_fn,
+    kimi_k25_vl_collate_fn=kimi_collate.kimi_k25_vl_collate_fn,
+    ministral3_collate_fn=ministral3_collate.ministral3_collate_fn,
+    nemotron_nano_v2_vl_collate_fn=nemotron_vl_collate.nemotron_nano_v2_vl_collate_fn,
+    nemotron_omni_collate_fn=nemotron_omni_collate.nemotron_omni_collate_fn,
+    qwen2_5_collate_fn=qwen_vl_collate.qwen2_5_collate_fn,
+    qwen2_audio_collate_fn=qwen_audio_collate.qwen2_audio_collate_fn,
+)
 
-def test_vlm_collate_reexports_assistant_loss_mask_for_compatibility():
-    assert collate.build_assistant_loss_mask is canonical_build_assistant_loss_mask
+
+def test_model_collate_registry_rejects_unknown_processor():
+    with pytest.raises(ValueError, match="No VLM collate function"):
+        resolve_model_collate("UnknownProcessor")
 
 
 def test_vlm_collate_keeps_qwen_vl_registration():
-    assert collate.COLLATE_FNS["Qwen2_5_VLProcessor"] is collate.qwen2_5_collate_fn
+    assert resolve_model_collate("Qwen2_5_VLProcessor") is collate.qwen2_5_collate_fn
 
 
 class _DummyProcessor:
@@ -1393,18 +1406,18 @@ def test_kimi_k25_vl_collate_fn_refuses_to_truncate_oversized_records():
 
 
 def test_gemma3_processor_registered_in_collate_fns():
-    """Gemma3Processor must be registered in COLLATE_FNS."""
-    assert "Gemma3Processor" in collate.COLLATE_FNS
+    """Gemma3Processor must resolve to its model-owned collator."""
+    assert resolve_model_collate("Gemma3Processor") is collate.gemma3_vl_collate_fn
 
 
 def test_gemma3_registered_fn_matches_collate_fn():
     """The registered function for Gemma3Processor is Gemma3-VL specific."""
-    assert collate.COLLATE_FNS["Gemma3Processor"] is collate.gemma3_vl_collate_fn
+    assert resolve_model_collate("Gemma3Processor") is collate.gemma3_vl_collate_fn
 
 
 def test_gemma4_processor_registered_in_collate_fns():
-    """Gemma4Processor must be registered in COLLATE_FNS."""
-    assert "Gemma4Processor" in collate.COLLATE_FNS
+    """Gemma4Processor must resolve to its model-owned collator."""
+    assert resolve_model_collate("Gemma4Processor") is collate.gemma4_vl_collate_fn
 
 
 def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
@@ -1457,7 +1470,7 @@ def test_gemma4_vl_collate_fn_declares_gemma4_boundaries(monkeypatch):
 
 def test_gemma4_registered_fn_matches_alias():
     """The registered function for Gemma4Processor equals the alias."""
-    assert collate.COLLATE_FNS["Gemma4Processor"] is collate.gemma4_vl_collate_fn
+    assert resolve_model_collate("Gemma4Processor") is collate.gemma4_vl_collate_fn
 
 
 class _Ministral3InstructionProcessor:

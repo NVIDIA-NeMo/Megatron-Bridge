@@ -47,13 +47,13 @@ from typing import Any, Literal, Optional, Tuple
 import torch
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.flickr8k_loader import (
+from megatron.bridge.models.stepfun.data.flickr8k.flickr8k_loader import (
     Step37Flickr8kDataset,
     prepare_flickr8k_samples,
 )
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.pack_transform import pack_samples
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.packed_dataloader import MixedPackedDataloader
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.template import (
+from megatron.bridge.models.stepfun.data.flickr8k.pack_transform import pack_samples
+from megatron.bridge.models.stepfun.data.flickr8k.packed_dataloader import MixedPackedDataloader
+from megatron.bridge.models.stepfun.data.flickr8k.template import (
     IMAGE_END_TOKEN,
     IMAGE_START_TOKEN,
     IMAGE_TOKEN,

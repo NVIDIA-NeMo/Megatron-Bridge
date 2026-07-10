@@ -22,14 +22,14 @@ See :class:`Step37Flickr8kSFTDataProvider` for the mbridge integration
 entry-point.
 """
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.multimodal_utils import (
+from megatron.bridge.models.stepfun.data.flickr8k.multimodal_utils import (
     IMAGE_ITEM_TYPE,
     PATCH_ITEM_TYPE,
     ImageForInsert,
     build_image_for_insert,
     compute_rope_args,
 )
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.provider import (
+from megatron.bridge.models.stepfun.data.flickr8k.provider import (
     Step37Flickr8kSFTDataProvider,
 )
 

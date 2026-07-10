@@ -25,6 +25,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     HFEnergonTaskEncoderConfig,
+    MockVLMSFTDatasetConfig,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -180,6 +181,11 @@ def create_test_energon_dataset_config(sequence_length: int, micro_batch_size: i
         micro_batch_size=micro_batch_size,
         task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
     )
+
+
+def create_test_mock_vlm_dataset_config(sequence_length: int) -> MockVLMSFTDatasetConfig:
+    """Create a synthetic VLM config with no runtime processor."""
+    return MockVLMSFTDatasetConfig(seq_length=sequence_length, hf_processor_path="org/model", num_images=0)
 
 
 def create_test_logger_config(**kwargs: Any) -> LoggerConfig:
@@ -1165,6 +1171,52 @@ class TestConfigContainerValidation:
             dataset_config_override=dataset_cfg,
         )
         container.ddp.average_in_collective = False
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_multiple_of == 24
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_mock_vlm_padding_includes_cp_sp_without_sft_loss_assertions(self, monkeypatch):
+        """Mock pretraining data gets safe shapes without being classified as SFT."""
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            calculate_per_token_loss=False,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=2, global_batch_size=8)
+        dataset_cfg = create_test_mock_vlm_dataset_config(sequence_length=512)
+        dataset_cfg.enable_in_batch_packing = True
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert dataset_cfg.in_batch_packing_pad_to_multiple_of == 8
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        model_cfg = create_test_gpt_config(
+            context_parallel_size=2,
+            tensor_model_parallel_size=4,
+            sequence_parallel=True,
+            calculate_per_token_loss=False,
+        )
+        train_cfg = create_test_training_config(micro_batch_size=1, global_batch_size=8)
+        dataset_cfg = create_test_mock_vlm_dataset_config(sequence_length=512)
+        dataset_cfg.pad_to_multiple_of = 3
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=8,
+            model_config=model_cfg,
+            train_config=train_cfg,
+            dataset_config_override=dataset_cfg,
+        )
 
         try:
             container.validate()

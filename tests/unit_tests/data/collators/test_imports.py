@@ -21,9 +21,8 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
-COLLATE_REGISTRY_MODULE = "megatron.bridge.data.vlm_datasets.collate"
-LIGHTWEIGHT_COLLATE_MODULES = [
-    "megatron.bridge.data.vlm_datasets.collate_utils",
+COLLATE_REGISTRY_MODULE = "megatron.bridge.data.collators.registry"
+MODEL_COLLATE_MODULES = [
     "megatron.bridge.models.gemma_vl.data.collate_fn",
     "megatron.bridge.models.glm_vl.data.collate_fn",
     "megatron.bridge.models.kimi_vl.data.collate_fn",
@@ -43,30 +42,27 @@ def _assert_subprocess_succeeds(code: str) -> None:
         timeout=180,
         check=False,
     )
-
     assert result.returncode == 0, result.stderr or result.stdout
 
 
-@pytest.mark.parametrize("module_name", LIGHTWEIGHT_COLLATE_MODULES)
-def test_direct_collate_module_import_does_not_load_registry(module_name):
+def test_direct_collate_module_imports_do_not_load_registry():
+    modules = ["megatron.bridge.data.collators.visual", *MODEL_COLLATE_MODULES]
     _assert_subprocess_succeeds(
-        "import importlib; "
-        "import sys; "
-        f"importlib.import_module({module_name!r}); "
-        f"assert {COLLATE_REGISTRY_MODULE!r} not in sys.modules"
+        "import importlib\n"
+        "import sys\n"
+        f"for module_name in {modules!r}:\n"
+        "    importlib.import_module(module_name)\n"
+        f"    assert {COLLATE_REGISTRY_MODULE!r} not in sys.modules\n"
     )
 
-
-def test_vlm_datasets_package_import_does_not_load_collate_registry():
+def test_registry_import_is_lazy_until_a_processor_is_resolved():
+    module_assertions = "; ".join(f"assert {module!r} not in sys.modules" for module in MODEL_COLLATE_MODULES)
     _assert_subprocess_succeeds(
         "import sys; "
-        "import megatron.bridge.data.vlm_datasets; "
-        "assert 'megatron.bridge.data.vlm_datasets.collate' not in sys.modules"
-    )
-
-
-def test_vlm_datasets_collate_registry_remains_available_from_explicit_module():
-    _assert_subprocess_succeeds(
-        "from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS, qwen2_5_collate_fn; "
-        "assert COLLATE_FNS['Qwen2_5_VLProcessor'] is qwen2_5_collate_fn"
+        "from megatron.bridge.data.collators.registry import resolve_model_collate; "
+        f"{module_assertions}; "
+        "collate = resolve_model_collate('Qwen2_5_VLProcessor'); "
+        "assert collate.__name__ == 'qwen2_5_collate_fn'; "
+        "assert 'megatron.bridge.models.qwen_vl.data.collate_fn' in sys.modules; "
+        "assert 'megatron.bridge.models.gemma_vl.data.collate_fn' not in sys.modules"
     )

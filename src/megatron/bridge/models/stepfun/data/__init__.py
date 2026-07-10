@@ -12,18 +12,4 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Shared helpers for VLM model collators."""
-
-# HF processors for Qwen/GLM-style grid models share these raw THW grid output names.
-THW_GRID_VISUAL_KEYS = ("pixel_values", "pixel_values_videos", "image_grid_thw", "video_grid_thw")
-
-# Visual kwargs that can be forwarded without Qwen-specific shape normalization.
-PASSTHROUGH_VISUAL_KEYS = (
-    "pixel_values",
-    "pixel_values_videos",
-    "image_grid_thw",
-    "video_grid_thw",
-    "image_sizes",
-    "image_position_ids",
-    "mm_token_type_ids",
-)
+"""StepFun model-owned data pipelines."""

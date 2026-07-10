@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Multimodal helpers for the SFT preprocess path.
+"""Model-owned multimodal helpers for the SFT preprocess path.
 
-Re-exports :class:`ImageForInsert` (defined on the model side) and provides
+Imports :class:`ImageForInsert` from the model contract and provides
 the ``build_image_for_insert`` packer used by SFT preprocess plus
 ``compute_rope_args`` for per-image patch cu_seqlens.
 

@@ -26,6 +26,7 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
+from megatron.bridge.data.collators.registry import resolve_model_collate
 from megatron.bridge.data.conversation_processing import (
     normalize_energon_vlm_sample,
     normalized_vlm_sample_to_hf_example,
@@ -34,7 +35,6 @@ from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     ChatMLSample,
 )
-from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -120,12 +120,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         if collate_fn is not None:
             self._collate_impl = collate_fn
         else:
-            if collate_key not in COLLATE_FNS:
-                raise ValueError(
-                    f"No VLM collate function registered for processor type '{collate_key}'. "
-                    "Add it to COLLATE_FNS or pass collate_fn explicitly."
-                )
-            self._collate_impl = COLLATE_FNS[collate_key]
+            self._collate_impl = resolve_model_collate(collate_key)
 
     def encode_sample(self, sample: ChatMLSample) -> HFEnergonSample:
         """Normalize a single ChatML sample into a HF-style collate example.

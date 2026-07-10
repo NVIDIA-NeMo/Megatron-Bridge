@@ -22,8 +22,11 @@ from __future__ import annotations
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
-from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
+from megatron.bridge.data.builders import (
+    EnergonDatasetConfig,
+    MockVLMSFTDatasetConfig,
+    QwenVLEnergonTaskEncoderConfig,
+)
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
@@ -62,7 +65,7 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -71,7 +74,6 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -109,7 +111,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -118,7 +120,6 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -156,7 +157,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -165,7 +166,6 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

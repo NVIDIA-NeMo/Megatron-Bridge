@@ -50,8 +50,7 @@ def test_qwen35_vl_mimo_finetune_example_imports():
 
     Executing the module top-to-bottom exercises every top-level import, the dataclass
     definitions, and module-level constants. This catches regressions such as data-API
-    renames across ``datasets``, ``sources``, and ``collators``, plus the ``collate_fn`` <-> ``vlm_datasets``
-    circular import that only triggers when the example imports ``collate_fn`` first.
+    renames across ``datasets``, ``sources``, and ``collators``, plus model-collator import cycles.
     """
     name = "qwen35_vl_mimo_finetune_import_under_test"
     try:
