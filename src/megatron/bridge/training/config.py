@@ -1208,12 +1208,31 @@ class ConfigContainer(Container):
             )
             self.validation.eval_micro_batch_size = self.train.micro_batch_size
 
-        # Eval batch size divisibility check
-        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+        # Eval batch size divisibility check. Eval-time CP changes the DP degree,
+        # so validation batch semantics must use the eval layout rather than the
+        # training layout stored in ``self.data_parallel_size``.
+        eval_data_parallel_size = self.data_parallel_size
+        if self.dist.eval_context_parallel_size is not None:
+            model_cfg = self.model
+            eval_world_size = get_world_size_safe()
+            if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
+                eval_world_size = model_cfg.dist_train.language_world_size
+            eval_model_parallel_size = (
+                model_cfg.tensor_model_parallel_size
+                * model_cfg.pipeline_model_parallel_size
+                * self.dist.eval_context_parallel_size
+            )
+            assert eval_world_size % eval_model_parallel_size == 0, (
+                f"world size ({eval_world_size}) is not divisible by eval model parallel size "
+                f"({eval_model_parallel_size})"
+            )
+            eval_data_parallel_size = eval_world_size // eval_model_parallel_size
+
+        eval_dp_product = self.validation.eval_micro_batch_size * eval_data_parallel_size
         assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
             f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
-            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
-            f"{self.data_parallel_size} = {eval_dp_product})"
+            f"eval_micro_batch_size * eval_data_parallel_size ({self.validation.eval_micro_batch_size} * "
+            f"{eval_data_parallel_size} = {eval_dp_product})"
         )
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
