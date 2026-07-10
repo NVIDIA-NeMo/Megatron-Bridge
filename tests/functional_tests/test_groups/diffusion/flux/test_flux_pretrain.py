@@ -58,6 +58,8 @@ class TestMcoreFluxPretrain:
             "scripts/training/run_recipe.py",
             "--recipe",
             "flux_12b_pretrain_config",
+            "--mode",
+            "pretrain",
             "--step_func",
             "flux_step",
             "model.tensor_model_parallel_size=1",

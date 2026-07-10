@@ -58,6 +58,8 @@ class TestMcoreWanPretrain:
             "scripts/training/run_recipe.py",
             "--recipe",
             "wan_1_3b_pretrain_config",
+            "--mode",
+            "pretrain",
             "--step_func",
             "wan_step",
             "model.tensor_model_parallel_size=1",

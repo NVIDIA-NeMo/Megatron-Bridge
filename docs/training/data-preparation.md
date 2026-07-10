@@ -44,8 +44,8 @@ The CLI-friendly `data_path` field is converted to Megatron Core's `blend` field
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    --dataset llm-pretrain \
-    dataset.data_path=/data/dclm/preprocessed_text_document \
+    --mode pretrain --dataset dclm \
+    --dataset-path /data/dclm/preprocessed_text_document \
     dataset.seq_length=8192
 ```
 
@@ -85,12 +85,14 @@ dataset = GPTSFTDatasetConfig(
 )
 ```
 
-Launch the generic recipe runner with the preloaded local JSONL dataset type:
+To use local JSONL, select the public `local-jsonl` dataset. This replaces the recipe's dataset object with a
+`GPTSFTDatasetConfig` configured for prompt-completion JSONL:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_sft_1gpu_h100_bf16_config \
-    --dataset llm-finetune-preloaded \
+    --mode sft \
+    --dataset local-jsonl \
     dataset.dataset_root=/data/sft_jsonl \
     dataset.seq_length=4096 \
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
@@ -130,13 +132,12 @@ If `hf_output_root` is omitted, the generated JSONL is cached under the NeMo dat
 
 > **Deprecated compatibility APIs:** `FinetuningDatasetConfig` and `FinetuningDatasetBuilder` remain only for existing callers. New code must use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
 
-The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
+The generic launcher accepts public Hugging Face dataset names directly:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_peft_1gpu_h100_bf16_config \
-    --dataset llm-finetune \
-    dataset.hf_dataset.dataset_name=gsm8k \
+    --mode lora --dataset gsm8k \
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
@@ -212,8 +213,7 @@ For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config \
-    --dataset vlm-energon \
-    --step_func qwen3_vl_step \
+    --mode lora --step-func qwen3_vl_step \
     dataset.path=/data/vlm_energon \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
@@ -227,8 +227,8 @@ For preloaded VLM JSON or JSONL, use records with `messages` or `conversations` 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_config \
-    --dataset vlm-preloaded \
-    --step_func qwen3_vl_step \
+    --mode lora --step-func qwen3_vl_step \
+    --dataset preloaded-vlm \
     dataset.train_data_path=/data/vlm/train.jsonl \
     dataset.valid_data_path=/data/vlm/validation.jsonl \
     dataset.image_folder=/data/vlm/images \

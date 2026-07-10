@@ -26,34 +26,6 @@ from nemo_run.config import get_nemorun_home
 logger = logging.getLogger(__name__)
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
-INHERITED_ENV_VARS = (
-    "DCLM_CACHE",
-    "DCLM_DATA_DIR",
-    "DCLM_DATA_PREFIX",
-    "HF_HOME",
-    "HF_TOKEN",
-    "NEMO_DATASETS_CACHE",
-    "NEMO_HOME",
-    "UV_CACHE_DIR",
-    "WANDB_API_KEY",
-)
-PATH_ENV_VARS = (
-    "DCLM_CACHE",
-    "DCLM_DATA_DIR",
-    "DCLM_DATA_PREFIX",
-    "HF_HOME",
-    "NEMO_DATASETS_CACHE",
-    "NEMO_HOME",
-    "UV_CACHE_DIR",
-)
-PATH_OPTIONS = (
-    "--dataset-cache",
-    "--dataset-path",
-    "--from",
-    "--load-dir",
-    "--pretrained-checkpoint",
-    "--save-dir",
-)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -64,46 +36,43 @@ def _build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         epilog="""
 Training examples:
-  ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 \\
+  ./scripts/training/train.sh --nodes 1 --gpus-per-node 8 \\
       --account ACCOUNT --partition PARTITION --container-image IMAGE \\
-      --recipe gpt_oss_20b_pretrain_16gpu_h100_bf16_config \\
-      --mode pretrain --dataset dclm --dataset-path /data/dclm
+      --env HF_TOKEN --mount /shared/data \\
+      --recipe gpt_oss_20b_sft_config --mode sft
 
-Full recipe mode needs no --model. Selector mode uses --family, --model,
---mode, --gpu-type, and the topology from --nodes/--gpus-per-node.
-Trailing KEY=VALUE arguments override the resolved ConfigContainer.
+Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
 """,
     )
     execution = parser.add_argument_group("Execution")
     execution.add_argument("--nodes", type=int, default=1, help="Number of nodes.")
     execution.add_argument(
         "--gpus-per-node",
-        "--devices",
+        "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
         help="GPUs per node.",
     )
-    execution.add_argument("--gpu-type", help="Recipe hardware selector, e.g. h100 or gb200.")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
         "--container-image",
-        default=os.environ.get("MB_CONTAINER_IMAGE") or os.environ.get("CONTAINER_IMAGE"),
-        help="Slurm container image; defaults to MB_CONTAINER_IMAGE.",
+        default=os.environ.get("CONTAINER_IMAGE"),
+        help="Slurm container image; defaults to CONTAINER_IMAGE.",
     )
     execution.add_argument(
         "--mount",
         action="append",
         default=[],
-        help="Container mount in host:container form. May be repeated.",
+        help="Container mount as HOST or HOST:CONTAINER. HOST uses the same path in the container. May be repeated.",
     )
     execution.add_argument(
         "--env",
         action="append",
         default=[],
-        help="Environment override in KEY=VALUE form. May be repeated.",
+        help="Environment variable as NAME or NAME=VALUE. NAME inherits its launcher value. May be repeated.",
     )
     execution.add_argument(
         "--packager",
@@ -112,136 +81,58 @@ Trailing KEY=VALUE arguments override the resolved ConfigContainer.
         help="Code packaging method for Slurm.",
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
-    execution.add_argument("--dry-run", action="store_true", help="Render the launch without submitting it.")
+    execution.add_argument(
+        "--submission-dry-run",
+        action="store_true",
+        help="Render the Slurm submission without submitting it.",
+    )
     return parser
 
 
 def _parse_env(values: list[str]) -> dict[str, str]:
-    """Parse explicit environment values and inherit standard cache/auth variables."""
-    env_vars = {name: os.environ[name] for name in INHERITED_ENV_VARS if os.environ.get(name)}
+    """Resolve explicit environment values for the training container."""
+    env_vars: dict[str, str] = {}
     for value in values:
-        if "=" not in value:
-            raise ValueError(f"Invalid --env value '{value}'; expected KEY=VALUE.")
-        name, env_value = value.split("=", 1)
+        if "=" in value:
+            name, env_value = value.split("=", 1)
+        else:
+            name = value
+            if name not in os.environ:
+                raise ValueError(f"Environment variable '{name}' is not set; pass --env {name}=VALUE instead.")
+            env_value = os.environ[name]
         if not name:
             raise ValueError("Environment variable names cannot be empty.")
         env_vars[name] = env_value
     return env_vars
 
 
-def _option_values(arguments: list[str], option_names: tuple[str, ...]) -> list[str]:
-    """Return values passed through a selected set of command-line options."""
-    values: list[str] = []
-    index = 0
-    while index < len(arguments):
-        argument = arguments[index]
-        matched = False
-        for option in option_names:
-            if argument == option and index + 1 < len(arguments):
-                values.append(arguments[index + 1])
-                index += 2
-                matched = True
-                break
-            if argument.startswith(f"{option}="):
-                values.append(argument.split("=", 1)[1])
-                index += 1
-                matched = True
-                break
-        if not matched:
-            index += 1
-    return values
-
-
-def _mount_source(path_value: str) -> Path | None:
-    """Return the existing host path that should be mounted for a path-like value."""
-    path = Path(path_value).expanduser()
-    if path.exists():
-        return path if path.is_dir() else path.parent
-    if Path(f"{path}.bin").exists() or Path(f"{path}.idx").exists():
-        return path.parent
-    if path.is_absolute():
-        for parent in path.parents:
-            if parent.exists():
-                return parent
-    return None
-
-
-def _discover_mounts(training_args: list[str], explicit_mounts: list[str]) -> list[str]:
-    """Add same-path mounts for dataset, cache, checkpoint, and output paths."""
-    mounts = list(explicit_mounts)
-    path_values = _option_values(training_args, PATH_OPTIONS)
-    path_values.extend(os.environ[name] for name in PATH_ENV_VARS if os.environ.get(name))
-    for value in path_values:
-        source = _mount_source(value)
-        if source is None:
-            continue
-        mount = f"{source}:{source}"
+def _parse_mounts(values: list[str]) -> list[str]:
+    """Normalize explicit same-path and host-to-container mounts."""
+    mounts: list[str] = []
+    for value in values:
+        if ":" in value:
+            host_path, container_path = value.split(":", 1)
+        else:
+            host_path = value
+            container_path = value
+        if not host_path or not container_path:
+            raise ValueError(f"Invalid --mount value '{value}'; expected HOST or HOST:CONTAINER.")
+        mount = f"{host_path}:{container_path}"
         if mount not in mounts:
             mounts.append(mount)
     return mounts
 
 
-def _has_option(arguments: list[str], names: tuple[str, ...]) -> bool:
-    """Return whether any option is present in a forwarded argument list."""
-    return any(argument in names or any(argument.startswith(f"{name}=") for name in names) for argument in arguments)
-
-
-def _inject_selector_topology(
-    training_args: list[str],
-    *,
-    nodes: int,
-    gpus_per_node: int,
-    gpu_type: str | None,
-) -> list[str]:
-    """Supply selector topology while leaving full recipe invocations untouched."""
-    forwarded = list(training_args)
-    uses_recipe = _has_option(forwarded, ("--recipe",))
-    uses_model = _has_option(forwarded, ("--model", "--model-recipe-name", "--model_recipe_name", "-mr"))
-    if uses_recipe or not uses_model:
-        return forwarded
-    if not _has_option(forwarded, ("--gpus", "--num-gpus", "--num_gpus", "-ng")):
-        forwarded.extend(["--gpus", str(nodes * gpus_per_node)])
-    if not _has_option(forwarded, ("--gpu", "-g")):
-        if gpu_type is None:
-            raise ValueError("Selector mode requires --gpu-type; full --recipe mode does not.")
-        forwarded.extend(["--gpu", gpu_type])
-    return forwarded
-
-
-def _training_value(arguments: list[str], option: str, default: str) -> str:
-    """Read one training option for experiment naming."""
-    values = _option_values(arguments, (option,))
-    return values[-1] if values else default
-
-
-def _experiment_name(arguments: list[str], explicit_name: str | None) -> str:
-    """Build a stable experiment name from the public training selection."""
-    if explicit_name:
-        return explicit_name
-    recipe = _training_value(arguments, "--recipe", "")
-    model = _training_value(arguments, "--model", "training")
-    mode = _training_value(arguments, "--mode", _training_value(arguments, "--task", "auto"))
-    dataset = _training_value(arguments, "--dataset", "recipe-data")
-    selection = recipe.removesuffix("_config") if recipe else model
-    return f"{selection}-{mode}-{dataset}".replace("_", "-")
-
-
-def _validate_args(args: argparse.Namespace, training_args: list[str]) -> None:
+def _validate_args(args: argparse.Namespace) -> None:
     """Validate launcher requirements before creating an executor."""
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.gpus_per_node is None or args.gpus_per_node < 1:
         raise ValueError("--gpus-per-node is required and must be at least 1.")
-    uses_recipe = _has_option(training_args, ("--recipe",))
-    uses_model = _has_option(training_args, ("--model", "--model-recipe-name", "--model_recipe_name", "-mr"))
-    if uses_recipe and uses_model:
-        raise ValueError("--recipe already identifies the model; do not also pass --model.")
-    if not uses_recipe and not uses_model:
-        raise ValueError("Pass --recipe, or pass --family/--model/--mode to select a training recipe.")
     if not args.account or not args.partition:
         raise ValueError("Slurm execution requires --account and --partition.")
     if not args.container_image:
-        raise ValueError("Slurm execution requires --container-image or MB_CONTAINER_IMAGE.")
+        raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
 
 
 def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: list[str]) -> object:
@@ -275,31 +166,28 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
-    _validate_args(args, training_args)
-    training_args = _inject_selector_topology(
-        training_args,
-        nodes=args.nodes,
-        gpus_per_node=args.gpus_per_node,
-        gpu_type=args.gpu_type,
-    )
+    _validate_args(args)
 
     env_vars = _parse_env(args.env)
-    mounts = _discover_mounts(training_args, args.mount)
+    mounts = _parse_mounts(args.mount)
     executor = _build_executor(args, env_vars, mounts)
 
     task = run.Script(
-        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.sh"),
-        entrypoint="bash",
+        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
+        entrypoint="python",
+        env={
+            "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
+        },
         args=training_args,
     )
-    experiment_name = _experiment_name(training_args, args.experiment_name)
+    experiment_name = args.experiment_name or "training"
     logger.info("Training command: %s", " ".join(task.to_command()))
-    logger.info("Inherited environment variables: %s", ", ".join(sorted(env_vars)) or "none")
+    logger.info("Forwarded environment variables: %s", ", ".join(sorted(env_vars)) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
     with run.Experiment(experiment_name) as experiment:
         experiment.add(task, executor=executor, name="training")
-        if args.dry_run:
+        if args.submission_dry_run:
             experiment.dryrun()
             return
         experiment.run(detach=True)

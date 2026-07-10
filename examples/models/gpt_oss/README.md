@@ -62,20 +62,20 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
 
 All GPT-OSS training modes use the unified [training entry point](../../../scripts/training/README.md):
 `scripts/training/train.sh`. The examples below select the GPT-OSS 20B library recipe with
-`--source recipes --family gpt_oss --model gpt_oss_20b`. Alternatively, pass a complete `--recipe` and omit the
-family and model selector because the recipe already identifies its model.
+`--model gpt_oss_20b`. Alternatively, pass a complete `--recipe`; `--model` and `--recipe` are mutually exclusive.
 
 Set the deployment environment once:
 
 ```bash
-export MB_CONTAINER_IMAGE=/path/to/container.sqsh
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export HF_TOKEN=your_huggingface_token
 export HF_HOME=/shared/cache/huggingface
 export NEMO_HOME=/shared/cache/nemo
 ```
 
-Add `--account`, `--partition`, `--nodes`, `--gpus-per-node`, and `--gpu-type` for the target Slurm allocation.
-Use `--mount host:container` only for paths that cannot be discovered from the dataset/checkpoint/cache flags or
-standard environment variables.
+Add `--account`, `--partition`, `--nodes`, and `--gpus-per-node` for the target Slurm allocation. Environment variables
+and paths are not forwarded automatically: use `--env NAME` for each exported value the job needs and `--mount HOST`
+for a same-path mount, or `--mount HOST:CONTAINER` when the paths differ.
 
 ### Pretrain on DCLM
 
@@ -84,9 +84,11 @@ back to mock data.
 
 ```bash
 ./scripts/training/train.sh \
-    --nodes 2 --gpus-per-node 8 --gpu-type h100 \
+    --nodes 2 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION \
-    --source recipes --family gpt_oss --model gpt_oss_20b \
+    --env HF_TOKEN --env HF_HOME --mount "${HF_HOME}" \
+    --mount /data/dclm --mount /data/dclm-cache \
+    --model gpt_oss_20b \
     --mode pretrain --dataset dclm \
     --dataset-path /data/dclm \
     --dataset-cache /data/dclm-cache \
@@ -106,9 +108,11 @@ job.
 
 ```bash
 ./scripts/training/train.sh \
-    --nodes 1 --gpus-per-node 8 --gpu-type h100 \
+    --nodes 1 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION \
-    --source recipes --family gpt_oss --model gpt_oss_20b \
+    --env HF_TOKEN --env HF_HOME --env NEMO_HOME \
+    --mount "${HF_HOME}" --mount "${NEMO_HOME}" --mount "${WORKSPACE}" \
+    --model gpt_oss_20b \
     --mode sft --dataset openmathinstruct2-thinking \
     --from ${WORKSPACE}/models/gpt-oss-20b \
     --cp 2 \
@@ -124,9 +128,11 @@ With `--cp 2`, the launcher configures packed-sequence padding to a multiple of 
 
 ```bash
 ./scripts/training/train.sh \
-    --nodes 1 --gpus-per-node 1 --gpu-type h100 \
+    --nodes 1 --gpus-per-node 1 \
     --account ACCOUNT --partition PARTITION \
-    --source recipes --family gpt_oss --model gpt_oss_20b \
+    --env HF_TOKEN --env HF_HOME --env NEMO_HOME \
+    --mount "${HF_HOME}" --mount "${NEMO_HOME}" --mount "${WORKSPACE}" \
+    --model gpt_oss_20b \
     --mode lora --dataset openmathinstruct2-thinking \
     --from ${WORKSPACE}/models/gpt-oss-20b \
     train.train_iters=1000 \
@@ -134,12 +140,11 @@ With `--cp 2`, the launcher configures packed-sequence padding to a multiple of 
     peft.dim=16
 ```
 
-Use `--dtype fp8_cs` for Hopper FP8 current-scaling recipes and `--dtype fp8_mx` for Blackwell MXFP8 recipes when
-the selected model/mode/topology has that recipe variant. A complete recipe can also be selected with `--recipe`;
-when a complete recipe is passed, `--model` is not required.
+Use a complete `--recipe` when you need a hardware- or topology-specific library recipe instead of the model's default
+recipe. Do not pass `--model` with `--recipe`.
 
-Multi-node SFT and LoRA require `NEMO_DATASETS_CACHE` or `NEMO_HOME` on shared storage so every rank sees the
-materialized JSONL and packed artifacts.
+Multi-node SFT and LoRA require a dataset cache on shared storage so every rank sees the materialized JSONL and packed
+artifacts. Forward the cache environment variable with `--env NAME` and mount its directory explicitly.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/xs3rmk4t) for the expected loss curves and grad norms.

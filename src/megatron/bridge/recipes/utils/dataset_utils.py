@@ -269,12 +269,23 @@ def apply_dataset_override(
         )
 
     elif dataset_type == "vlm-preloaded":
+        train_data_path = extract_and_remove_override(cli_overrides, "dataset.train_data_path")
+        valid_data_path = extract_and_remove_override(cli_overrides, "dataset.valid_data_path")
+        test_data_path = extract_and_remove_override(cli_overrides, "dataset.test_data_path")
+        image_folder = extract_and_remove_override(cli_overrides, "dataset.image_folder")
+        hf_processor_path = extract_and_remove_override(cli_overrides, "dataset.hf_processor_path")
+        if not train_data_path or not hf_processor_path:
+            raise ValueError(
+                "Preloaded VLM datasets require dataset.train_data_path=<path> and "
+                "dataset.hf_processor_path=<model-or-path>."
+            )
         config.dataset = PreloadedVLMConversationProvider(
             seq_length=resolved_seq_length,
-            hf_processor_path=None,
-            train_data_path=None,
-            valid_data_path=None,
-            test_data_path=None,
+            hf_processor_path=hf_processor_path,
+            train_data_path=train_data_path,
+            valid_data_path=valid_data_path,
+            test_data_path=test_data_path,
+            image_folder=image_folder,
             dataloader_type="single",
             num_workers=2,
         )

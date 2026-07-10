@@ -20,6 +20,9 @@ from pathlib import Path
 import pytest
 
 
+pytestmark = pytest.mark.unit
+
+
 def _load_setup_experiment_module():
     script = Path(__file__).resolve().parents[4] / "scripts" / "training" / "setup_experiment.py"
     nemo_run = types.ModuleType("nemo_run")
@@ -76,90 +79,71 @@ def test_parser_forwards_training_selection_and_overrides():
     ]
 
 
-def test_selector_injects_topology_but_full_recipe_does_not():
+@pytest.mark.parametrize("training_option", ["--dry-run", "--dry_run"])
+def test_training_dry_run_is_forwarded_and_submission_dry_run_is_consumed(training_option):
     module = _load_setup_experiment_module()
 
-    selector = module._inject_selector_topology(
-        ["--family", "gpt_oss", "--model", "gpt_oss_20b", "--mode", "pretrain"],
-        nodes=2,
-        gpus_per_node=8,
-        gpu_type="h100",
-    )
-    full_recipe = module._inject_selector_topology(
-        ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"],
-        nodes=2,
-        gpus_per_node=8,
-        gpu_type=None,
-    )
+    args, training_args = module.parse_args(["--submission-dry-run", training_option])
 
-    assert selector[-4:] == ["--gpus", "16", "--gpu", "h100"]
-    assert full_recipe == ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"]
+    assert args.submission_dry_run is True
+    assert training_args == [training_option]
 
 
-def test_selector_requires_gpu_type():
+def test_setup_import_does_not_load_training_stack(monkeypatch):
+    monkeypatch.delitem(sys.modules, "recipe_runner", raising=False)
+    monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
+
+    _load_setup_experiment_module()
+
+    assert "recipe_runner" not in sys.modules
+    assert "megatron.bridge" not in sys.modules
+
+
+def test_parse_env_inherits_names_and_accepts_explicit_values(monkeypatch):
     module = _load_setup_experiment_module()
+    monkeypatch.setenv("INHERITED_VALUE", "from-launcher")
 
-    with pytest.raises(ValueError, match="requires --gpu-type"):
-        module._inject_selector_topology(
-            ["--family", "gpt_oss", "--model", "gpt_oss_20b", "--mode", "pretrain"],
-            nodes=1,
-            gpus_per_node=8,
-            gpu_type=None,
-        )
+    env_vars = module._parse_env(["INHERITED_VALUE", "EXPLICIT_VALUE=provided", "EMPTY_VALUE="])
+
+    assert env_vars == {
+        "INHERITED_VALUE": "from-launcher",
+        "EXPLICIT_VALUE": "provided",
+        "EMPTY_VALUE": "",
+    }
 
 
-def test_recipe_and_model_are_mutually_exclusive():
+def test_parse_env_rejects_missing_inherited_name(monkeypatch):
     module = _load_setup_experiment_module()
-    args, training_args = module.parse_args(
-        [
-            "--gpus-per-node",
-            "1",
-            "--account",
-            "account",
-            "--partition",
-            "partition",
-            "--container-image",
-            "image.sqsh",
-            "--recipe",
-            "gpt_oss_20b_pretrain_config",
-            "--model",
-            "gpt_oss_20b",
-        ]
-    )
+    monkeypatch.delenv("MISSING_VALUE", raising=False)
 
-    with pytest.raises(ValueError, match="already identifies the model"):
-        module._validate_args(args, training_args)
-
-
-def test_dataset_prefix_and_cache_are_mounted_automatically(tmp_path, monkeypatch):
-    module = _load_setup_experiment_module()
-    prefix = tmp_path / "dclm_text_document"
-    prefix.with_suffix(".bin").touch()
-    prefix.with_suffix(".idx").touch()
-    cache = tmp_path / "cache"
-    cache.mkdir()
-    monkeypatch.setenv("DCLM_CACHE", str(cache))
-
-    mounts = module._discover_mounts(["--dataset-path", str(prefix)], [])
-
-    assert f"{tmp_path}:{tmp_path}" in mounts
-    assert f"{cache}:{cache}" in mounts
-
-
-def test_nonexistent_output_mounts_nearest_existing_parent(tmp_path):
-    module = _load_setup_experiment_module()
-    output = tmp_path / "new" / "checkpoints"
-
-    mounts = module._discover_mounts(["--save-dir", str(output)], [])
-
-    assert f"{tmp_path}:{tmp_path}" in mounts
-
-
-def test_invalid_env_syntax_is_rejected():
-    module = _load_setup_experiment_module()
-
-    with pytest.raises(ValueError, match="expected KEY=VALUE"):
+    with pytest.raises(ValueError, match="is not set"):
         module._parse_env(["MISSING_VALUE"])
+
+
+def test_parse_mounts_supports_same_path_and_explicit_destination():
+    module = _load_setup_experiment_module()
+
+    mounts = module._parse_mounts(["/shared/data", "/host/cache:/container/cache", "/shared/data"])
+
+    assert mounts == ["/shared/data:/shared/data", "/host/cache:/container/cache"]
+
+
+@pytest.mark.parametrize("value", ["", ":/container", "/host:"])
+def test_parse_mounts_rejects_empty_paths(value):
+    module = _load_setup_experiment_module()
+
+    with pytest.raises(ValueError, match="expected HOST or HOST:CONTAINER"):
+        module._parse_mounts([value])
+
+
+def test_container_image_defaults_only_from_public_environment(monkeypatch):
+    module = _load_setup_experiment_module()
+    monkeypatch.setenv("CONTAINER_IMAGE", "public.sqsh")
+    monkeypatch.setenv("MB_CONTAINER_IMAGE", "private.sqsh")
+
+    args, _ = module.parse_args([])
+
+    assert args.container_image == "public.sqsh"
 
 
 def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
@@ -185,25 +169,47 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
             "image.sqsh",
             "--recipe",
             "gpt_oss_20b_pretrain_config",
+            "--mode",
+            "pretrain",
         ]
     )
 
-    executor = module._build_executor(args, {}, [])
+    executor = module._build_executor(args, {"HF_TOKEN": "token"}, ["/host:/container"])
 
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert "gpus_per_node" not in executor.kwargs
+    assert executor.env_vars == {"HF_TOKEN": "token"}
+    assert executor.container_env == ["HF_TOKEN"]
+    assert executor.container_mounts == ["/host:/container"]
 
 
-def test_main_submits_experiment_in_detached_mode(monkeypatch):
+@pytest.mark.parametrize(
+    ("extra_options", "expected_run", "expected_dryrun"),
+    [
+        ([], [{"detach": True}], 0),
+        (["--dry-run"], [{"detach": True}], 0),
+        (["--submission-dry-run", "--dry-run"], [], 1),
+    ],
+)
+def test_main_keeps_submission_and_training_dry_runs_separate(
+    monkeypatch,
+    extra_options,
+    expected_run,
+    expected_dryrun,
+):
     module = _load_setup_experiment_module()
     run_kwargs = []
+    dryrun_calls = []
+    scripts = []
 
     class _Script:
-        def __init__(self, *, path, entrypoint, args):
+        def __init__(self, *, path, entrypoint, env, args):
             self.path = path
             self.entrypoint = entrypoint
+            self.env = env
             self.args = args
+            scripts.append(self)
 
         def to_command(self):
             return [self.entrypoint, self.path, *self.args]
@@ -225,11 +231,15 @@ def test_main_submits_experiment_in_detached_mode(monkeypatch):
         def run(self, **kwargs):
             run_kwargs.append(kwargs)
 
+        def dryrun(self):
+            dryrun_calls.append(True)
+
     sentinel_executor = object()
     module.run.Script = _Script
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
 
+    training_args = ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"]
     module.main(
         [
             "--gpus-per-node",
@@ -240,9 +250,18 @@ def test_main_submits_experiment_in_detached_mode(monkeypatch):
             "partition",
             "--container-image",
             "image.sqsh",
-            "--recipe",
-            "gpt_oss_20b_pretrain_config",
+            *training_args,
+            *extra_options,
         ]
     )
 
-    assert run_kwargs == [{"detach": True}]
+    assert run_kwargs == expected_run
+    assert len(dryrun_calls) == expected_dryrun
+    assert len(scripts) == 1
+    assert scripts[0].path == "/opt/Megatron-Bridge/scripts/training/run_recipe.py"
+    assert scripts[0].entrypoint == "python"
+    assert scripts[0].env == {
+        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
+    }
+    expected_training_options = [option for option in extra_options if option != "--submission-dry-run"]
+    assert scripts[0].args == [*training_args, *expected_training_options]

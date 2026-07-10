@@ -427,9 +427,36 @@ class TestApplyDatasetOverride:
         from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 
         config = _make_mock_config()
-        result = apply_dataset_override(config, "vlm-preloaded", seq_length=2048)
+        overrides = [
+            "dataset.train_data_path=/data/train.jsonl",
+            "dataset.valid_data_path=/data/valid.jsonl",
+            "dataset.image_folder=/data/images",
+            "dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct",
+            "train.train_iters=10",
+        ]
+        result = apply_dataset_override(config, "vlm-preloaded", seq_length=2048, cli_overrides=overrides)
         assert isinstance(result.dataset, PreloadedVLMConversationProvider)
         assert result.dataset.seq_length == 2048
+        assert result.dataset.train_data_path == "/data/train.jsonl"
+        assert result.dataset.valid_data_path == "/data/valid.jsonl"
+        assert result.dataset.test_data_path is None
+        assert result.dataset.image_folder == "/data/images"
+        assert result.dataset.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
+        assert overrides == ["train.train_iters=10"]
+
+    @pytest.mark.parametrize(
+        "overrides",
+        [
+            ["dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct"],
+            ["dataset.train_data_path=/data/train.jsonl"],
+            [],
+        ],
+    )
+    def test_vlm_preloaded_requires_training_data_and_processor(self, overrides):
+        config = _make_mock_config()
+
+        with pytest.raises(ValueError, match="require dataset.train_data_path"):
+            apply_dataset_override(config, "vlm-preloaded", seq_length=2048, cli_overrides=overrides)
 
     # -- Unknown type ---------------------------------------------------------
 

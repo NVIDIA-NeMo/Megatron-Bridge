@@ -6,15 +6,16 @@ Megatron Bridge training uses one public launcher:
 ./scripts/training/train.sh [launch options] [training options] [KEY=VALUE overrides]
 ```
 
-`train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` through Slurm. The setup layer
-only owns resources, containers, environment variables, and mounts. Recipe selection, dataset construction, and
-ConfigContainer overrides are resolved inside the training environment.
+`train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` directly through Slurm. The
+setup layer only owns resources, the container, explicitly forwarded environment variables, and explicit mounts.
+Recipe selection, dataset construction, and ConfigContainer overrides are resolved inside the training environment.
 
 The former `launch_with_nemo_run.py` and `launch_with_sbatch.sh` entry points have been removed.
 
 ## Selection rules
 
-Choose either a complete recipe or the shorthand model selector. `--recipe` and `--model` are mutually exclusive.
+Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. Every
+invocation requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or `--mode dora`.
 
 ### Complete recipe
 
@@ -31,20 +32,24 @@ A complete recipe already identifies the model and default training configuratio
 
 ### Model selector
 
-The selector resolves a hardware- and topology-specific recipe from the family, model, mode, GPU type, and total GPU
-count. `setup_experiment.py` derives the total GPU count from `--nodes * --gpus-per-node`.
+The model selector combines the model stem and mode to load the corresponding library recipe. For example,
+`--model gpt_oss_20b --mode sft` loads `gpt_oss_20b_sft_config`; LoRA and DoRA load the model's PEFT recipe and set the
+requested adapter scheme.
 
 ```bash
 ./scripts/training/train.sh \
-    --nodes 2 --gpus-per-node 8 --gpu-type h100 \
+    --nodes 2 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION \
     --container-image /path/to/container.sqsh \
-    --source recipes --family gpt_oss --model gpt_oss_20b \
-    --mode pretrain --dataset dclm
+    --model gpt_oss_20b \
+    --mode pretrain --dataset mock
 ```
 
-Public modes are `pretrain`, `sft`, `peft`, `lora`, and `dora`. `lora` and `dora` select a PEFT recipe and set the
-corresponding PEFT scheme. The legacy `--task` spelling remains a compatibility alias.
+The default forward step is `llm_step`. Pass `--step-func NAME` explicitly for a recipe that needs another registered
+forward step.
+
+Pass `--hf-path` (or `--hf_path`) when the selected recipe factory accepts an alternate Hugging Face model path, and
+`--seq-length` (or `--seq_length`) when it accepts a sequence-length argument.
 
 ## Dataset presets
 
@@ -54,14 +59,15 @@ corresponding PEFT scheme. The legacy `--task` spelling remains a compatibility 
 |---|---|---|
 | `mock` | pretrain | In-memory mock GPT data |
 | `dclm` | pretrain | Preprocessed Megatron `.bin/.idx` data; never falls back to mock |
-| `squad` | SFT/PEFT | Hugging Face SQuAD preset |
-| `squad-packed` | SFT/PEFT | SQuAD with offline sequence packing |
-| `openmathinstruct2` | SFT/PEFT | OpenMathInstruct-2 prompt/completion preset |
-| `openmathinstruct2-thinking` | SFT/PEFT | Analysis/final channel format with offline packing |
-| `gsm8k` | SFT/PEFT | GSM8K preset |
-
-The internal values `llm-pretrain`, `llm-pretrain-mock`, `llm-finetune`, and the VLM dataset types remain available
-for compatibility and advanced use.
+| `rp2` | pretrain | Preprocessed Megatron `.bin/.idx` data |
+| `c4` | pretrain | Preprocessed Megatron `.bin/.idx` data |
+| `squad` | sft/lora/dora | Hugging Face SQuAD preset |
+| `squad-packed` | sft/lora/dora | SQuAD with offline sequence packing |
+| `openmathinstruct2` | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
+| `openmathinstruct2-thinking` | sft/lora/dora | Analysis/final channel format with offline packing |
+| `gsm8k` | sft/lora/dora | GSM8K preset |
+| `local-jsonl` | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
+| `preloaded-vlm` | sft/lora/dora | Local VLM JSON/JSONL selected by dataset path overrides |
 
 ### DCLM
 
@@ -72,17 +78,17 @@ DCLM must be preprocessed into indexed Megatron data. Select it with one of:
 --dataset dclm --dataset-path /data/dclm
 ```
 
-or set `DCLM_DATA_PREFIX` or `DCLM_DATA_DIR`. Every selected prefix must have matching `.bin` and `.idx` files.
-`--dataset-cache` or `DCLM_CACHE` selects the index cache. Missing or incomplete data fails before distributed
-training starts.
+Every selected prefix must have matching `.bin` and `.idx` files. `--dataset-cache` selects the index cache. Missing or
+incomplete data fails before distributed training starts.
 
 For preprocessing instructions, see [the DCLM tutorial](../../tutorials/data/dclm/README.md).
 
 ### OpenMathInstruct-2
 
 The builder downloads/materializes the Hugging Face source and prepares packed data when
-`openmathinstruct2-thinking` is selected. A separate packing Slurm job is not required. Multi-node training must set
-`NEMO_DATASETS_CACHE` or `NEMO_HOME` to shared storage.
+`openmathinstruct2-thinking` is selected. A separate packing Slurm job is not required. For multi-node training, put
+the recipe's dataset cache on shared storage, forward its environment variable with `--env NAME`, and mount the shared
+path explicitly.
 
 ## SFT and LoRA checkpoints
 
@@ -90,8 +96,9 @@ Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face
 
 ```bash
 ./scripts/training/train.sh \
-    --nodes 1 --gpus-per-node 8 --gpu-type h100 \
+    --nodes 1 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
+    --mount /checkpoints \
     --recipe gpt_oss_20b_sft_8gpu_h100_bf16_config \
     --mode sft --dataset openmathinstruct2-thinking \
     --from /checkpoints/gpt-oss-20b
@@ -99,8 +106,9 @@ Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face
 
 ```bash
 ./scripts/training/train.sh \
-    --nodes 1 --gpus-per-node 1 --gpu-type h100 \
+    --nodes 1 --gpus-per-node 1 \
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
+    --mount /checkpoints \
     --recipe gpt_oss_20b_peft_1gpu_h100_bf16_config \
     --mode lora --dataset openmathinstruct2-thinking \
     --from /checkpoints/gpt-oss-20b
@@ -134,19 +142,19 @@ Required Slurm arguments are:
 --gpus-per-node
 --account
 --partition
---container-image (or MB_CONTAINER_IMAGE)
+--container-image (or CONTAINER_IMAGE)
 ```
 
-Use repeated `--mount host:container` and `--env KEY=VALUE` values for deployment-specific settings. The launcher
-automatically inherits the standard HF/NeMo/DCLM/uv cache variables and authentication variables without logging
-their values. Existing dataset, checkpoint, cache, and output paths passed through common flags are mounted at the
-same path automatically.
+Set `CONTAINER_IMAGE` to avoid repeating `--container-image`. Environment variables and filesystem paths are never
+forwarded implicitly. Repeat `--env NAME` to forward a variable from the login-node environment, or use
+`--env NAME=VALUE`. Repeat `--mount HOST` for the same host and container path, or use
+`--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.
 
-Use `--dry-run` to render the NeMo-Run experiment without submitting it. For a rank-local ConfigContainer dry run,
-invoke `run_recipe.py` directly:
+Use `--submission-dry-run` to render the NeMo-Run experiment without submitting it. For a rank-local
+ConfigContainer dry run, invoke `run_recipe.py` directly:
 
 ```bash
 uv run python scripts/training/run_recipe.py \
@@ -168,5 +176,4 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
     model.sequence_parallel=true
 ```
 
-Performance recipes under `megatron.bridge.perf_recipes` remain throughput benchmark configurations, typically on
-mock data. Use library recipes for functional pretraining, SFT, and PEFT.
+This entry point loads library recipes for functional pretraining, SFT, LoRA, and DoRA.

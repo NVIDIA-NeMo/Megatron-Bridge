@@ -70,6 +70,7 @@ PRECISION_ALIASES = {
 STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "audio_lm_step": ("megatron.bridge.training.audio_lm_step", "forward_step"),
     "gpt_step": ("megatron.bridge.training.gpt_step", "forward_step"),
+    "llm_step": ("megatron.bridge.training.gpt_step", "forward_step"),
     "vlm_step": ("megatron.bridge.training.vlm_step", "forward_step"),
     "qwen3_omni_step": ("megatron.bridge.models.qwen_omni.qwen3_omni_step", "forward_step"),
     "qwen3_vl_step": ("megatron.bridge.models.qwen_vl.qwen3_vl_step", "forward_step"),
