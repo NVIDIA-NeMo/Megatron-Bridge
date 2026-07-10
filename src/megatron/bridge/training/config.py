@@ -1243,6 +1243,7 @@ class ConfigContainer(Container):
         _validate_and_sync_distributed_optimizer_settings(self)
         _validate_mixed_precision_consistency(self)
         _validate_fine_grained_activation_offloading(self)
+        _validate_cpu_offloading(self)
 
         # CUDA graph scope validation: check_for_nan_in_loss must be disabled with full_iteration graph
         if is_full_iteration_cuda_graph(self.model):
@@ -1840,6 +1841,33 @@ def _validate_mixed_precision_consistency(config: ConfigContainer) -> None:
                 "model is using fp32 precision (model.bf16=False, model.fp16=False) and "
                 "use_precision_aware_optimizer=True."
             )
+
+
+def _validate_cpu_offloading(config: ConfigContainer) -> None:
+    """Fail fast when CPU offloading is enabled but nothing is selected to offload.
+
+    Without this, the misconfiguration only surfaces deep inside model construction as
+    Transformer Engine's "CPU Offloading is enabled while it is not mentioned what to
+    offload" ValueError, with no hint about which config knobs control it (#2684).
+
+    Args:
+        config: The configuration container to validate.
+
+    Raises:
+        ValueError: If cpu_offloading is enabled with both activation and weight
+            offloading disabled.
+    """
+    model_cfg = config.model
+    if not getattr(model_cfg, "cpu_offloading", False):
+        return
+    if not (
+        getattr(model_cfg, "cpu_offloading_activations", False) or getattr(model_cfg, "cpu_offloading_weights", False)
+    ):
+        raise ValueError(
+            "model.cpu_offloading is enabled but both model.cpu_offloading_activations and "
+            "model.cpu_offloading_weights are False, so there is nothing to offload. "
+            "Enable at least one of them, or set model.cpu_offloading=False to disable CPU offloading."
+        )
 
 
 def _validate_fine_grained_activation_offloading(config: ConfigContainer) -> None:

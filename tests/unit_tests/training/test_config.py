@@ -3814,3 +3814,44 @@ class TestTokenizerConfig:
                 metadata_path=metadata_path,
                 random_arg=True,
             )
+
+
+class TestCpuOffloadingValidation:
+    """cpu_offloading with nothing selected to offload must fail fast with a clear error (#2684)."""
+
+    def _validate(self, **model_kwargs):
+        gpt_model_cfg = create_test_gpt_config(**model_kwargs)
+        container, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_model_cfg)
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_offloading_with_nothing_to_offload_raises(self):
+        with pytest.raises(ValueError, match="nothing to offload"):
+            self._validate(
+                cpu_offloading=True,
+                cpu_offloading_activations=False,
+                cpu_offloading_weights=False,
+            )
+
+    def test_offloading_activations_only_passes(self):
+        self._validate(
+            cpu_offloading=True,
+            cpu_offloading_activations=True,
+            cpu_offloading_weights=False,
+        )
+
+    def test_offloading_weights_only_passes(self):
+        self._validate(
+            cpu_offloading=True,
+            cpu_offloading_activations=False,
+            cpu_offloading_weights=True,
+        )
+
+    def test_offloading_disabled_ignores_flags(self):
+        self._validate(
+            cpu_offloading=False,
+            cpu_offloading_activations=False,
+            cpu_offloading_weights=False,
+        )
