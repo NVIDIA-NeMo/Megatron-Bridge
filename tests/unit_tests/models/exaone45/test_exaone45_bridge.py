@@ -30,7 +30,7 @@ from megatron.bridge.models.exaone.exaone45.exaone45_provider import (
     exaone_45_mtp_block_spec,
 )
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.transformer_config import get_vision_model_config
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 pytestmark = pytest.mark.unit
@@ -88,7 +88,7 @@ def _make_pretrained(
         image_token_id=67,
         video_token_id=68,
     )
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = config
     return pretrained
 
