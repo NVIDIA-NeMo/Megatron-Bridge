@@ -26,6 +26,7 @@ from megatron.bridge.training.gpt_step import (
     _cu_seqlens_for_cp_partition,
     _forward_step_common,
     _partition_packed_batch_for_cp,
+    _slice_batch_on_this_cp_rank,
     get_batch,
     get_packed_seq_params,
 )
@@ -1126,3 +1127,52 @@ class TestCreateLossFunctionModelopt:
             assert torch.equal(loss_func.args[0], loss_mask)
             assert loss_func.keywords["check_for_nan_in_loss"] == False
             assert loss_func.keywords["check_for_spiky_loss"] == False
+
+
+class TestSliceBatchOnThisCpRank:
+    """Tests for _slice_batch_on_this_cp_rank kwarg compatibility across Megatron-LM branches (#3991)."""
+
+    def test_passes_kwargs_when_supported(self):
+        """Modern Megatron-LM main signature: is_hybrid_cp and cp_group are forwarded."""
+        received = {}
+
+        def modern(batch, is_hybrid_cp=True, cp_group=None):
+            received["is_hybrid_cp"] = is_hybrid_cp
+            received["cp_group"] = cp_group
+            return batch
+
+        sentinel_group = object()
+        batch = {"tokens": torch.zeros(1)}
+        with patch("megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank", modern):
+            out = _slice_batch_on_this_cp_rank(batch, cp_group=sentinel_group)
+
+        assert out is batch
+        assert received == {"is_hybrid_cp": False, "cp_group": sentinel_group}
+
+    def test_omits_kwargs_when_unsupported(self):
+        """Megatron-LM dev-branch signature (batch only) must not receive unknown kwargs."""
+
+        def legacy(batch):
+            return batch
+
+        batch = {"tokens": torch.zeros(1)}
+        with patch("megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank", legacy):
+            out = _slice_batch_on_this_cp_rank(batch, cp_group=object())
+
+        assert out is batch
+
+    def test_partial_signature_only_cp_group(self):
+        """A branch that accepts cp_group but not is_hybrid_cp gets only cp_group."""
+        received = {}
+
+        def partial_sig(batch, cp_group=None):
+            received["cp_group"] = cp_group
+            return batch
+
+        sentinel_group = object()
+        batch = {"tokens": torch.zeros(1)}
+        with patch("megatron.bridge.training.gpt_step.get_batch_on_this_cp_rank", partial_sig):
+            out = _slice_batch_on_this_cp_rank(batch, cp_group=sentinel_group)
+
+        assert out is batch
+        assert received == {"cp_group": sentinel_group}

@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
-from functools import partial
-from typing import Iterable
+from functools import lru_cache, partial
+from typing import Callable, Iterable
 
 import modelopt.torch.distill as mtd
 import torch
@@ -56,6 +57,27 @@ _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
 _LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
 _PackedMetadataValue = torch.Tensor | int | None
+
+
+@lru_cache(maxsize=None)
+def _supported_kwargs(func: Callable) -> frozenset[str]:
+    """Return the parameter names accepted by ``func``."""
+    return frozenset(inspect.signature(func).parameters)
+
+
+def _slice_batch_on_this_cp_rank(batch: dict[str, torch.Tensor], cp_group) -> dict[str, torch.Tensor]:
+    """Call ``get_batch_on_this_cp_rank`` passing only the kwargs the installed Megatron-LM supports.
+
+    The ``is_hybrid_cp`` and ``cp_group`` kwargs exist on Megatron-LM main but not on
+    all branches (e.g. the ``dev`` branch), so pass them only when accepted (#3991).
+    """
+    supported = _supported_kwargs(get_batch_on_this_cp_rank)
+    kwargs = {}
+    if "is_hybrid_cp" in supported:
+        kwargs["is_hybrid_cp"] = False
+    if "cp_group" in supported:
+        kwargs["cp_group"] = cp_group
+    return get_batch_on_this_cp_rank(batch, **kwargs)
 
 
 def _trim_padded_cu_seqlens_for_cp(cu_seqlens: torch.Tensor, cu_seqlens_argmin: torch.Tensor | None) -> torch.Tensor:
@@ -339,7 +361,7 @@ def get_batch(
         batch = _partition_packed_batch_for_cp(batch, cp_size)
     else:
         # slice batch along sequence dimension for context parallelism
-        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
+        batch = _slice_batch_on_this_cp_rank(batch, cp_group=pg_collection.cp)
 
     return (
         batch["tokens"],
