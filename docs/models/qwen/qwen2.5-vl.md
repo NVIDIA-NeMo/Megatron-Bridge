@@ -122,7 +122,7 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora
 ```
 
-For local processor-native image JSONL and sharded Energon preparation patterns, see the [multimodal data tutorials](../../../tutorials/data/README.md).
+For local processor-native image JSONL and sharded Energon preparation patterns, see the [multimodal data tutorials](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/README.md).
 
 
 ## Example Datasets

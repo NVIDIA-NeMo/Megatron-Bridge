@@ -48,6 +48,10 @@ QWEN25_VL_DOCS = (
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
 )
 VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-preparation.md"
+SPHINX_TUTORIAL_LINK_DOCS = (
+    REPO_ROOT / "docs" / "training" / "data-preparation.md",
+    REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
+)
 
 
 def _read(p: Path) -> str:
@@ -169,6 +173,13 @@ def test_multimodal_model_docs_use_current_launchers_and_conversion_flags():
     assert "--megatron-path /checkpoints/nemotron_omni" in valor
     assert "--hf_path" not in valor
     assert "--output_dir /checkpoints/nemotron_omni" not in valor
+
+
+def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
+    """Sphinx must not treat repository-root tutorials as source documents."""
+    for path in SPHINX_TUTORIAL_LINK_DOCS:
+        relative_tutorial_links = re.findall(r"\]\((?:\.\./)+tutorials/[^)]+\)", _read(path))
+        assert not relative_tutorial_links, f"{path} has out-of-tree Sphinx links: {relative_tutorial_links}"
 
 
 if __name__ == "__main__":
