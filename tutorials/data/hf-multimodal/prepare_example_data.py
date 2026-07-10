@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Create tiny local-image JSONL splits for the multimodal Direct-HF tutorial."""
+"""Create tiny local-image JSONL splits for the Hugging Face multimodal tutorial."""
 
 import argparse
 import json

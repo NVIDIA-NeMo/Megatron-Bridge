@@ -37,7 +37,7 @@ QWEN_OMNI_RECIPE = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "qwen
 QWEN_OMNI_TRAINING_SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_omni" / "local_train_thinker_full.sh"
 LEGACY_VLM_DATASETS = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "vlm_datasets"
 LOCAL_CONVERSATION_SOURCE = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "sources" / "local_conversation.py"
-DIRECT_HF_SFT_README = REPO_ROOT / "tutorials" / "data" / "direct-hf-sft" / "README.md"
+HF_MULTIMODAL_README = REPO_ROOT / "tutorials" / "data" / "hf-multimodal" / "README.md"
 DATA_PREPARATION_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
     REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
@@ -133,11 +133,11 @@ def test_vlm_json_script_uses_hf_loader_without_local_provider():
     assert ".load_kwargs.data_files." not in training_script
 
 
-def test_direct_hf_local_media_docs_use_processor_native_content():
+def test_hf_multimodal_local_media_docs_use_processor_native_content():
     """Local JSON examples must not promise removed preloaded media adaptation."""
-    for path in (DIRECT_HF_SFT_README, *DATA_PREPARATION_DOCS):
+    for path in (HF_MULTIMODAL_README, *DATA_PREPARATION_DOCS):
         text = _read(path)
-        assert '"content": [{"type": "image", "image": "/data/vlm/' in text
+        assert '"content": [{"type": "image", "image": "' in text
         assert '"content": "<image>Describe' not in text
         assert '"images": ["receipt' not in text
         assert "top-level media-list schema is not" in text
@@ -149,7 +149,7 @@ def test_multimodal_model_docs_use_current_launchers_and_conversion_flags():
     assert "qwen3_vl_8b_peft_config" in qwen3
     assert "qwen3_vl_8b_finetune_config" not in qwen3
     assert "--source-dir/path" not in qwen3
-    assert "multimodal-direct/README.md" in qwen3
+    assert "hf-multimodal/README.md" in qwen3
     assert "data/energon/README.md" in qwen3
 
     for path in QWEN25_VL_DOCS:

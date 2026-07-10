@@ -11,7 +11,7 @@ pytestmark = pytest.mark.unit
 
 REPO_ROOT = Path(__file__).parents[3]
 TEXT_ONLY_SFT_TUTORIAL = REPO_ROOT / "tutorials/data/text-only-sft"
-DIRECT_HF_SFT_TUTORIAL = REPO_ROOT / "tutorials/data/direct-hf-sft"
+HF_TEXT_ONLY_TUTORIAL = REPO_ROOT / "tutorials/data/hf-text-only"
 
 
 def _load_rows(path: Path) -> list[dict]:
@@ -31,8 +31,8 @@ def test_text_only_sft_prepare_example_data(tmp_path):
     assert all(set(row) == {"input", "output"} for row in _load_rows(tmp_path / "training.jsonl"))
 
 
-def test_direct_hf_sft_prepare_example_data(tmp_path):
-    module = runpy.run_path(str(DIRECT_HF_SFT_TUTORIAL / "prepare_example_data.py"))
+def test_hf_text_only_prepare_example_data(tmp_path):
+    module = runpy.run_path(str(HF_TEXT_ONLY_TUTORIAL / "prepare_example_data.py"))
     module["prepare_example_data"](tmp_path)
 
     rows = _load_rows(tmp_path / "training.jsonl")
@@ -44,7 +44,7 @@ def test_direct_hf_sft_prepare_example_data(tmp_path):
     ("tutorial", "config_name", "builder_name"),
     [
         (TEXT_ONLY_SFT_TUTORIAL, "GPTSFTDatasetConfig", "GPTSFTDatasetBuilder"),
-        (DIRECT_HF_SFT_TUTORIAL, "DirectHFSFTDatasetConfig", "DirectHFSFTDatasetBuilder"),
+        (HF_TEXT_ONLY_TUTORIAL, "DirectHFSFTDatasetConfig", "DirectHFSFTDatasetBuilder"),
     ],
 )
 def test_text_dataset_tutorial_uses_config_builder_primary_path(tutorial, config_name, builder_name):
@@ -63,18 +63,25 @@ def test_text_only_sft_tutorial_uses_standard_distributed_launcher():
     assert "uv run python -m torch.distributed.run" in readme
 
 
-def test_direct_hf_sft_tutorial_documents_hosted_native_messages_source():
-    readme = (DIRECT_HF_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+def test_hf_text_only_tutorial_documents_hosted_native_messages_source():
+    readme = (HF_TEXT_ONLY_TUTORIAL / "README.md").read_text(encoding="utf-8")
     assert "HuggingFaceH4/ultrachat_200k" in readme
     assert 'split="train_sft"' in readme
     assert "schema_adapter" in readme
 
 
-def test_direct_hf_sft_tutorial_routes_json_through_hf_loader():
-    readme = (DIRECT_HF_SFT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+def test_hf_text_only_tutorial_routes_json_through_hf_loader():
+    readme = (HF_TEXT_ONLY_TUTORIAL / "README.md").read_text(encoding="utf-8")
 
     assert 'path_or_dataset="json"' in readme
     assert 'load_kwargs={"data_files"' in readme
     assert "LocalConversationDatasetSourceConfig" not in readme
     assert "vlm-local" not in readme
-    assert "vlm-preloaded" in readme  # Migration guidance names the removed selector.
+    assert "vlm-preloaded" not in readme  # VLM migration guidance belongs to the multimodal tutorial.
+
+
+def test_hf_tutorials_are_split_by_modality():
+    assert HF_TEXT_ONLY_TUTORIAL.is_dir()
+    assert (REPO_ROOT / "tutorials/data/hf-multimodal").is_dir()
+    assert not (REPO_ROOT / "tutorials/data/direct-hf-sft").exists()
+    assert not (REPO_ROOT / "tutorials/data/multimodal-direct").exists()

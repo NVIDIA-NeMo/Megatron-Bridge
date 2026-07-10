@@ -111,7 +111,9 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
-For a complete local-image preparation and one-GPU Qwen3-VL run, start with the [multimodal Direct-HF tutorial](../../../../tutorials/data/multimodal-direct/README.md). For sharded WebDataset data, use the [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md).
+For hosted or local Hugging Face data and a complete one-GPU Qwen3-VL run, start with the
+[Hugging Face multimodal tutorial](../../../../tutorials/data/hf-multimodal/README.md). For sharded WebDataset data,
+use the [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md).
 
 ## Controlling Energon visual-token computation budget
 

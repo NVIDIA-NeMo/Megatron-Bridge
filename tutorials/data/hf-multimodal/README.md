@@ -1,24 +1,54 @@
-# Multimodal Direct-HF Tutorial
+# Hugging Face Multimodal SFT Tutorial
 
-Use this path when image, video, audio, or omni conversations fit naturally in a Hugging Face dataset or local JSON/JSONL files. Hugging Face datasets owns source loading; `DirectHFSFTDatasetBuilder` constructs the runtime processor, model collator, and repeating training datasets. No preloaded or local-file provider is involved.
+Use this path when image, video, audio, or omni conversations fit naturally in a hosted Hugging Face dataset or in
+JSON/JSONL files supported by the Hugging Face `json` loader. `HFDatasetSourceConfig` and
+`DirectHFSFTDatasetConfig` remain serializable; `DirectHFSFTDatasetBuilder` owns runtime processor, model collator,
+and repeating dataset construction. No preloaded or separate local-file provider is involved.
 
-This tutorial runs Qwen3-VL 8B LoRA on one H100 with local images. For large sharded media collections, use the [Energon tutorial](../energon/README.md) instead.
+The examples use Qwen3-VL 8B LoRA on one H100. For text-only rows, use the
+[Hugging Face text-only tutorial](../hf-text-only/README.md). For large sharded media collections, use the
+[Energon tutorial](../energon/README.md).
 
-## 1. Prepare processor-native JSONL
+## Start with a hosted chat dataset
+
+A hosted multimodal dataset can expose processor-ready conversations directly or use a registered source preset
+whose schema adapter produces canonical chat rows. For example, the `medpix` preset owns the physical
+[`mmoukouba/MedPix-VQA`](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) Hub path, its train/validation split
+names, and its image-question-answer adapter:
+
+```python
+from megatron.bridge.data.builders import HFDatasetSourceConfig
+from megatron.bridge.recipes.qwen_vl import qwen3_vl_8b_peft_config
+
+cfg = qwen3_vl_8b_peft_config()
+cfg.dataset.source = HFDatasetSourceConfig(dataset_name="medpix")
+cfg.dataset.do_validation = True
+cfg.dataset.do_test = False
+```
+
+The recipe already selects `DirectHFSFTDatasetConfig`, Qwen's processor, assistant-only loss, and deferred
+in-batch packing. Replace only the source for another compatible preset or hosted dataset. When hosted rows are
+already named `messages`, `conversation`, or `conversations`, set `path_or_dataset` and `split` directly; otherwise
+select a registered `schema_adapter`. `load_kwargs` belongs to dataset loading, while `adapter_kwargs` belongs only
+to row conversion.
+
+See [Run the hosted MedPix preset with W&B](#run-the-hosted-medpix-preset-with-wb) for a complete launch.
+
+## Load local JSON or JSONL through Hugging Face datasets
 
 From the repository root:
 
 ```bash
-export DATA_DIR=/tmp/bridge-multimodal-direct
+export DATA_DIR=/tmp/bridge-hf-multimodal
 
-uv run python tutorials/data/multimodal-direct/prepare_example_data.py \
+uv run python tutorials/data/hf-multimodal/prepare_example_data.py \
   --output-dir "$DATA_DIR"
 ```
 
 The script creates six deterministic 448×448 PNGs plus train, validation, and test JSONL files:
 
 ```text
-/tmp/bridge-multimodal-direct/
+/tmp/bridge-hf-multimodal/
 ├── images/
 │   ├── red.png
 │   └── ...
@@ -35,7 +65,11 @@ Each row stores media inside the conversation using the selected processor's sch
 
 Paths and URLs are interpreted by the model processor and must be resolvable by every data worker. The removed preloaded `<image>` plus top-level `images` schema is not rewritten automatically.
 
-## 2. Import the model checkpoint
+Hosted and file-backed rows enter the same normalization, chat-template, loss-mask, processor, and collator path.
+For production files, provide explicit `validation_source` and `test_source` configs for enabled splits, as shown
+below.
+
+## Import the model checkpoint
 
 The training processor can come from the Hub, but model weights should be imported once into a native Megatron checkpoint:
 
@@ -51,13 +85,13 @@ uv run python examples/conversion/convert_checkpoints.py import \
 
 The import requires enough host/GPU memory for the 8B checkpoint and access to the model files through `HF_HOME`/`HF_TOKEN` when needed.
 
-## 3. Run a one-GPU LoRA smoke
+## Run a one-GPU local-data LoRA smoke
 
 The Qwen3-VL 8B PEFT recipe is a one-GPU recipe. Start unpacked with one iteration and no evaluation:
 
 ```bash
 export WANDB_MODE=disabled
-export OUTPUT_DIR="$WORKSPACE/results/qwen3-vl-direct-smoke"
+export OUTPUT_DIR="$WORKSPACE/results/qwen3-vl-hf-local-smoke"
 
 uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   scripts/training/run_recipe.py \
@@ -90,7 +124,7 @@ Success means the launcher loads the native checkpoint, the Qwen processor opens
 
 `--dataset vlm-hf` selects the generic `DirectHFSFTDatasetConfig`; the remaining overrides select Qwen's processor and the local JSON source. Passing the selector also makes `--seq_length` update both model and dataset lengths.
 
-## 4. Run the MedPix Hub preset with W&B
+## Run the hosted MedPix preset with W&B
 
 `medpix` is a built-in source preset for
 [`mmoukouba/MedPix-VQA`](https://huggingface.co/datasets/mmoukouba/MedPix-VQA). It owns the Hub path,
@@ -150,7 +184,7 @@ validation.eval_iters=0
 Use the normal preset-derived validation split for a real training run. A CLI mapping cannot construct an optional
 `validation_source` that started as `None`; define custom per-split sources in Python as shown next.
 
-## 5. Configure explicit validation and test files
+## Configure explicit validation and test files
 
 File-backed sources do not invent missing splits. For a production Python recipe, give every enabled split its own serializable source:
 
@@ -180,7 +214,7 @@ cfg.dataset = DirectHFSFTDatasetConfig(
 
 Disable `do_validation` or `do_test` when that split is intentionally absent.
 
-## 6. Enable Qwen in-batch packing
+## Enable Qwen in-batch packing
 
 Qwen3-VL defers packing until its model step has consumed the original visual tensors. Packing requires a configured micro batch greater than one:
 
@@ -192,6 +226,24 @@ dataset.defer_in_batch_packing_to_step=True
 ```
 
 Do not apply text-only offline packed-SFT settings to this path. With context parallelism, keep `model.calculate_per_token_loss=True` and `ddp.average_in_collective=False`; `ConfigContainer` derives the required CP/SP packing multiple.
+
+## Migrate from `vlm-preloaded`
+
+`PreloadedVLMConversationProvider` and the `vlm-preloaded` launcher selector have been removed. No deprecated
+provider or replacement local selector remains. Use `vlm-hf` for hosted datasets or files accepted by Hugging Face
+datasets, and use `vlm-energon` for Energon/WebDataset data.
+
+| Removed setting | Supported setting |
+| --- | --- |
+| `--dataset vlm-preloaded` | `--dataset vlm-hf` or `--dataset vlm-energon` |
+| `dataset.train_data_path` | `source=HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": {"train": ...}})` |
+| `dataset.valid_data_path` | An explicit HF `validation_source`, or an Energon split |
+| `dataset.test_data_path` | An explicit HF `test_source`, or an Energon split |
+| `dataset.image_folder` | Processor-supported, worker-resolvable media references in conversation content; an adapter-owned root; or Energon |
+
+The Hugging Face path keeps chat rendering, assistant loss masking, processor-selected VLM/omni collation, CP/SP
+padding, and supported in-batch packing in `DirectHFSFTDatasetBuilder`; Hugging Face datasets owns source loading.
+The old placeholder plus top-level media-list schema is not rewritten automatically.
 
 ## Config and runtime ownership
 
@@ -212,4 +264,5 @@ Do not apply text-only offline packed-SFT settings to this path. With context pa
 - Packing validation fails: use micro batch size greater than one and retain Qwen's deferred-packing setting.
 - OOM on one GPU: reduce sequence length first; this tutorial uses LoRA because full Qwen3-VL 8B SFT is a two-GPU recipe.
 
-For hosted text/chat sources and prompt-completion preprocessing, see the broader [Direct SFT tutorial](../direct-hf-sft/README.md).
+For hosted text/chat sources and prompt-completion preprocessing, see the
+[Hugging Face text-only tutorial](../hf-text-only/README.md).

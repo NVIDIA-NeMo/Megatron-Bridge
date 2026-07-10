@@ -7,10 +7,10 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Workflow | Status | Data format | Config or provider |
 |----------|--------|-------------|--------------------|
 | LLM pretraining | Recommended | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` |
-| Text SFT or PEFT, processed at runtime | Recommended | Hosted Hugging Face rows | `DirectHFSFTDatasetConfig` + `HFDatasetSourceConfig` |
+| Text SFT or PEFT, processed at runtime | Recommended | Hosted Hugging Face rows or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face text-only](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-text-only/README.md) through `DirectHFSFTDatasetConfig` + builder |
 | Text SFT or PEFT, prepared data | Planned; not available yet | Pretokenized `.bin`/`.idx` | Future Issue #4664 prepared-SFT builder |
 | Text SFT or PEFT, transitional prepared data | Supported until `.bin`/`.idx` replacement | Local/materialized JSONL and optional packed Parquet | `GPTSFTDatasetConfig` |
-| Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Multimodal Direct-HF](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/multimodal-direct/README.md) through `DirectHFSFTDatasetConfig` + builder |
+| Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Hugging Face multimodal](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) through `DirectHFSFTDatasetConfig` + builder |
 | Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
 
 Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
@@ -209,7 +209,7 @@ The package structure separates declarative construction, runtime storage, sourc
 
 The direct runtime dataset is named `DirectSFTDataset` because it receives normalized examples and has no Hugging Face loading responsibility. Source-specific work remains in the builder and source modules.
 
-For Hub and file-backed Hugging Face datasets, text and multimodal schemas, split sources, in-batch packing, processor selection, and all available knobs, see the [direct SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/direct-hf-sft/README.md).
+For focused walkthroughs, use the [Hugging Face text-only tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-text-only/README.md) for chat and prompt-completion rows, or the [Hugging Face multimodal tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) for hosted and local media conversations.
 
 ## VLM Fine-Tuning Data
 
@@ -250,7 +250,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 The `vlm-preloaded` selector and `PreloadedVLMConversationProvider` were removed without a replacement local selector. Use `vlm-hf` plus `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` for files supported by Hugging Face datasets, or convert the data to Energon. File-based validation and test data require explicit `validation_source` and `test_source` configs in Python; otherwise disable those stages. There is no `image_folder` compatibility field and the old placeholder plus top-level media-list schema is not rewritten: encode media using the selected processor's supported conversation schema, use an adapter-owned root where available, or use Energon.
 
-For complete preparation and Qwen3-VL launch commands, see the [multimodal Energon tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md). [VALOR32K-AVQA](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md) is the larger audio-video example.
+For complete Qwen3-VL preparation and launch commands, see the [Hugging Face multimodal tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) or the [multimodal Energon tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md). [VALOR32K-AVQA](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md) is the larger audio-video example.
 
 ## Checkpoint Conversion Reminder
 

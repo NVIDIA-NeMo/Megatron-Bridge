@@ -12,7 +12,7 @@ from PIL import Image
 
 pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).parents[3]
-DIRECT_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "multimodal-direct"
+HF_MULTIMODAL_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "hf-multimodal"
 ENERGON_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "energon"
 QWEN_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
 
@@ -21,11 +21,11 @@ def _load_jsonl(path: Path) -> list[dict]:
     return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines()]
 
 
-def test_multimodal_direct_preparation_writes_resolvable_qwen_rows(tmp_path: Path):
+def test_hf_multimodal_preparation_writes_resolvable_qwen_rows(tmp_path: Path):
     from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig
     from megatron.bridge.data.builders.direct_hf_sft import load_direct_hf_sft_examples
 
-    module = runpy.run_path(str(DIRECT_TUTORIAL / "prepare_example_data.py"))
+    module = runpy.run_path(str(HF_MULTIMODAL_TUTORIAL / "prepare_example_data.py"))
 
     module["prepare_example_data"](tmp_path)
 
@@ -183,26 +183,28 @@ def test_medpix_training_slice_override_preserves_hydra_brackets():
 
 
 def test_multimodal_tutorials_document_runnable_qwen_paths():
-    direct = (DIRECT_TUTORIAL / "README.md").read_text(encoding="utf-8")
+    hf_multimodal = (HF_MULTIMODAL_TUTORIAL / "README.md").read_text(encoding="utf-8")
     energon = (ENERGON_TUTORIAL / "README.md").read_text(encoding="utf-8")
     qwen = QWEN_README.read_text(encoding="utf-8")
 
-    assert "qwen3_vl_8b_peft_config" in direct
-    assert "--nproc_per_node=1" in direct
-    assert "--dataset vlm-hf" in direct
-    assert "dataset.source.path_or_dataset=json" in direct
-    assert "dataset.source.load_kwargs={data_files:{train:" in direct
-    assert "dataset.source.dataset_name=medpix" in direct
-    assert 'dataset.source.split="train[:16]"' in direct
-    assert "logger.wandb_project=bridge-qwen3-vl-medpix" in direct
-    assert "dataset.defer_in_batch_packing_to_step=True" in direct
+    assert "qwen3_vl_8b_peft_config" in hf_multimodal
+    assert "## Start with a hosted chat dataset" in hf_multimodal
+    assert 'HFDatasetSourceConfig(dataset_name="medpix")' in hf_multimodal
+    assert "--nproc_per_node=1" in hf_multimodal
+    assert "--dataset vlm-hf" in hf_multimodal
+    assert "dataset.source.path_or_dataset=json" in hf_multimodal
+    assert "dataset.source.load_kwargs={data_files:{train:" in hf_multimodal
+    assert "dataset.source.dataset_name=medpix" in hf_multimodal
+    assert 'dataset.source.split="train[:16]"' in hf_multimodal
+    assert "logger.wandb_project=bridge-qwen3-vl-medpix" in hf_multimodal
+    assert "dataset.defer_in_batch_packing_to_step=True" in hf_multimodal
     assert "qwen3_vl_8b_peft_energon_config" in energon
     assert "--dataset vlm-energon" in energon
     assert "train:train-shard-.*" in energon
     assert "prepare_medpix_data.py" in energon
     assert "dataset.enable_in_batch_packing=True" in energon
     assert "min_pixels` and `max_pixels` are not visual keys" in energon
-    assert "multimodal Direct-HF tutorial" in qwen
+    assert "Hugging Face multimodal tutorial" in qwen
     assert "multimodal Energon tutorial" in qwen
     assert "qwen3_vl_8b_finetune_config" not in qwen
     assert "megatron.bridge.models.qwen_vl.data.energon" not in qwen

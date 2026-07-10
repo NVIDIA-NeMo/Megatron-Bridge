@@ -2,7 +2,9 @@
 
 Use Energon when media should be packaged into sharded WebDataset tar files with resumable, distributed loading. `EnergonDatasetConfig` remains serializable; `EnergonDatasetBuilder` loads the processor and constructs the configured task encoder and dataloaders at runtime.
 
-This tutorial prepares a tiny image/chat dataset and runs the same one-GPU Qwen3-VL 8B LoRA baseline as the [multimodal Direct-HF tutorial](../multimodal-direct/README.md). The difference is the data source, not the model step.
+This tutorial prepares a tiny image/chat dataset and runs the same one-GPU Qwen3-VL 8B LoRA baseline as the
+[Hugging Face multimodal tutorial](../hf-multimodal/README.md). The difference is the data source, not the model
+step.
 
 ## 1. Build and index a tiny dataset
 
@@ -63,7 +65,7 @@ subflavors: {}
 
 ## 2. Import the Qwen3-VL checkpoint
 
-Reuse the native checkpoint from the Direct-HF tutorial, or import it once:
+Reuse the native checkpoint from the Hugging Face multimodal tutorial, or import it once:
 
 ```bash
 export MODEL_ID=Qwen/Qwen3-VL-8B-Instruct
@@ -114,7 +116,7 @@ Energon owns its loader micro batch, so `dataset.micro_batch_size`, `train.micro
 
 ## 4. Convert a MedPix smoke set
 
-To compare Energon against the Direct-HF `medpix` preset with real medical images, package fixed slices of the same
+To compare Energon against the Hugging Face `medpix` preset with real medical images, package fixed slices of the same
 [`mmoukouba/MedPix-VQA`](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) source:
 
 ```bash
