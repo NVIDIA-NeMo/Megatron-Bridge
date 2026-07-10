@@ -513,10 +513,15 @@ class Qwen3VLModel(MegatronModule):
                             grid_thw=vision_grid_thw,
                         )
                 else:
+                    # A rank may receive 0 images (num_images < cp_size). Its 0-length placeholders
+                    # (vision_embeds and each deepstack tensor) must be created with
+                    # requires_grad=True so that backward runs on every CP rank and the cp_group
+                    # collective in AllGatherVisionEmbeddings.backward stays symmetric.
                     vision_embeds = torch.zeros(
                         (0, self.config.hidden_size),
                         device=vision_data.device,
                         dtype=torch.bfloat16,
+                        requires_grad=True,
                     )
                     deepstack_feature_lists = []
                     for _ in self.vision_transformer_config.deepstack_visual_indexes:
@@ -525,19 +530,20 @@ class Qwen3VLModel(MegatronModule):
                                 (0, self.language_model.config.hidden_size),
                                 device=vision_data.device,
                                 dtype=torch.bfloat16,
+                                requires_grad=True,
                             )
                         )
                 if cp_size > 1 and self.config.vision_dp_when_cp:
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,
-                        cp_group=self.pg_collection.cp,
+                        self.pg_collection.cp,
                     )
                     for i in range(len(deepstack_feature_lists)):
                         deepstack_feature_lists[i] = AllGatherVisionEmbeddings.apply(
                             deepstack_feature_lists[i],
                             seqlen_on_cp_ranks,
-                            cp_group=self.pg_collection.cp,
+                            self.pg_collection.cp,
                         )
 
             combined_embeddings = self.language_model.embedding(

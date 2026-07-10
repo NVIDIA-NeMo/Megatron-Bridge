@@ -663,6 +663,7 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
             outputs.append(o)
         torch.distributed.all_gather(outputs, input, group=cp_group)
         ctx.cp_rank = torch.distributed.get_rank(group=cp_group)
+        ctx.cp_group = cp_group
         ctx.save_for_backward(*seqlens_on_cp_ranks)
 
         output = torch.cat(outputs, dim=0)
@@ -677,6 +678,8 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
         seqlens_on_cp_ranks = ctx.saved_tensors
         start_idx = torch.cat(seqlens_on_cp_ranks[:cp_rank]).sum() if cp_rank != 0 else 0
         end_idx = start_idx + seqlens_on_cp_ranks[cp_rank].sum()
+        grad_output = grad_output.contiguous()
+        torch.distributed.all_reduce(grad_output, group=ctx.cp_group)
         grad_output = grad_output[start_idx:end_idx]
         return grad_output, None, None
 
