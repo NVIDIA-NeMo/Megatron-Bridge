@@ -3814,3 +3814,71 @@ class TestTokenizerConfig:
                 metadata_path=metadata_path,
                 random_arg=True,
             )
+
+
+class TestSchedulerStepsWithRampupBatchSize:
+    """Scheduler sample counts must honor rampup_batch_size (#2609)."""
+
+    def _validated_container(self, train_cfg, sched_cfg):
+        gpt_model_cfg = create_test_gpt_config()
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+        return container
+
+    def test_consumed_samples_no_rampup_matches_product(self):
+        train_cfg = create_test_training_config(train_iters=100, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config()
+        container = self._validated_container(train_cfg, sched_cfg)
+        assert container._get_consumed_samples_for_iterations(100) == 100 * 16
+        assert container._get_consumed_samples_for_iterations(0) == 0
+
+    def test_consumed_samples_with_rampup(self):
+        # rampup [8, 8, 160]: 20 iterations at batch size 8, then batch size 16.
+        train_cfg = create_test_training_config(train_iters=100, global_batch_size=16, rampup_batch_size=[8, 8, 160])
+        sched_cfg = create_test_scheduler_config()
+        container = self._validated_container(train_cfg, sched_cfg)
+        assert container._get_consumed_samples_for_iterations(10) == 80
+        assert container._get_consumed_samples_for_iterations(20) == 160
+        assert container._get_consumed_samples_for_iterations(100) == 160 + 80 * 16
+
+    def test_consumed_samples_rampup_start_equals_global(self):
+        train_cfg = create_test_training_config(train_iters=50, global_batch_size=16, rampup_batch_size=[16, 8, 160])
+        sched_cfg = create_test_scheduler_config()
+        container = self._validated_container(train_cfg, sched_cfg)
+        assert container._get_consumed_samples_for_iterations(50) == 50 * 16
+
+    def test_wsd_schedule_with_rampup(self):
+        """Reproduces the #2609 example: warmup ends at iter 10 and WSD decay spans the last 20 iters."""
+        train_cfg = create_test_training_config(train_iters=100, global_batch_size=16, rampup_batch_size=[8, 8, 160])
+        sched_cfg = create_test_scheduler_config(
+            lr_decay_style="WSD",
+            lr_wsd_decay_style="linear",
+            lr_warmup_iters=10,
+            lr_wsd_decay_iters=20,
+        )
+        container = self._validated_container(train_cfg, sched_cfg)
+
+        # 20 ramp iterations at batch 8 consume 160 samples; the remaining 80 iterations consume 80*16.
+        assert container.scheduler.lr_warmup_steps == 80  # ends exactly at iteration 10
+        assert container.scheduler.lr_decay_steps == 1440
+        assert container.scheduler.wd_incr_steps == 1440
+        # Decay covers the last 20 iterations: consumed(100) - consumed(80) = 1440 - 1120.
+        assert container.scheduler.wsd_decay_steps == 320
+
+    def test_warmup_and_decay_without_rampup_unchanged(self):
+        train_cfg = create_test_training_config(train_iters=100, global_batch_size=16)
+        sched_cfg = create_test_scheduler_config(
+            lr_decay_style="WSD",
+            lr_wsd_decay_style="linear",
+            lr_warmup_iters=10,
+            lr_wsd_decay_iters=20,
+        )
+        container = self._validated_container(train_cfg, sched_cfg)
+        assert container.scheduler.lr_warmup_steps == 10 * 16
+        assert container.scheduler.lr_decay_steps == 100 * 16
+        assert container.scheduler.wsd_decay_steps == 20 * 16

@@ -1459,6 +1459,54 @@ class ConfigContainer(Container):
         )
         self._calculate_scheduler_steps()
 
+    def _get_consumed_samples_for_iterations(self, iterations: int) -> int:
+        """Return the number of samples consumed after ``iterations``, honoring batch-size ramp-up.
+
+        Mirrors the ramp-up behavior of
+        ``megatron.core.num_microbatches_calculator.RampupBatchsizeNumMicroBatchesCalculator`` so
+        scheduler sample counts line up with the iterations actually trained (#2609).
+        """
+        if iterations <= 0:
+            return 0
+
+        global_batch_size = self.train.global_batch_size
+        rampup_batch_size = self.train.rampup_batch_size
+        if rampup_batch_size is None:
+            return iterations * global_batch_size
+
+        assert len(rampup_batch_size) == 3, (
+            "expected rampup_batch_size format: [<start batch size>, <batch size increment>, <ramp-up samples>]"
+        )
+        start_batch_size = int(rampup_batch_size[0])
+        batch_size_increment = int(rampup_batch_size[1])
+        rampup_samples = int(rampup_batch_size[2])
+
+        diff_batch_size = global_batch_size - start_batch_size
+        assert diff_batch_size >= 0, (
+            "expected global batch size to be greater than or equal to start batch size, "
+            f"got {global_batch_size} and {start_batch_size}"
+        )
+        assert batch_size_increment > 0, f"expected a positive batch size increment, got {batch_size_increment}"
+        assert diff_batch_size % batch_size_increment == 0, (
+            f"expected global batch size interval ({diff_batch_size}) to be divisible by global batch "
+            f"size increment ({batch_size_increment})"
+        )
+
+        num_increments = diff_batch_size // batch_size_increment
+        if num_increments == 0:
+            return iterations * global_batch_size
+        rampup_samples_per_increment = rampup_samples / num_increments
+
+        consumed_samples = 0
+        iterations_done = 0
+        while iterations_done < iterations and consumed_samples < rampup_samples:
+            steps = int(consumed_samples / rampup_samples_per_increment)
+            current_batch_size = min(start_batch_size + steps * batch_size_increment, global_batch_size)
+            consumed_samples += current_batch_size
+            iterations_done += 1
+
+        return consumed_samples + (iterations - iterations_done) * global_batch_size
+
     def _calculate_scheduler_steps(self) -> None:
         """Calculate scheduler steps for both iteration-based and sample-based training."""
         is_sample_based = self.train.train_samples is not None
@@ -1483,16 +1531,24 @@ class ConfigContainer(Container):
                 self.scheduler.lr_decay_iters = self.train.train_iters
             if self.scheduler.lr_wsd_decay_iters is None and self.scheduler.lr_decay_style == "WSD":
                 self.scheduler.lr_wsd_decay_iters = self.scheduler.lr_decay_iters
-            self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
-            self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
+            self.scheduler.lr_decay_steps = self._get_consumed_samples_for_iterations(self.scheduler.lr_decay_iters)
+            self.scheduler.wd_incr_steps = self._get_consumed_samples_for_iterations(self.train.train_iters)
 
             if self.scheduler.lr_wsd_decay_iters is not None:
-                self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
+                # WSD decay covers the LAST lr_wsd_decay_iters iterations of the decay horizon,
+                # so measure the sample span between those two iteration marks (#2609).
+                self.scheduler.wsd_decay_steps = self.scheduler.lr_decay_steps - (
+                    self._get_consumed_samples_for_iterations(
+                        self.scheduler.lr_decay_iters - self.scheduler.lr_wsd_decay_iters
+                    )
+                )
 
             if self.scheduler.lr_warmup_fraction is not None:
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_fraction * self.scheduler.lr_decay_steps
             else:
-                self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_iters * self.train.global_batch_size
+                self.scheduler.lr_warmup_steps = self._get_consumed_samples_for_iterations(
+                    self.scheduler.lr_warmup_iters
+                )
 
         # Enforce the Megatron Core invariant: lr_warmup_steps must be < lr_decay_steps.
         # This can be violated when train_iters is small (e.g. smoke runs) while
