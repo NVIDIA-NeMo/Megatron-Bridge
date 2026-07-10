@@ -31,7 +31,13 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import (
+    cuda_graph_module_names,
+    is_full_iteration_cuda_graph,
+    set_cuda_graph_modules,
+    set_full_iteration_cuda_graph,
+    validate_cuda_graph_configuration,
+)
 from utils.datasets import (
     create_c4_dataset_config,
     create_mock_dataset_config,
@@ -101,7 +107,9 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
 
 
 def _set_cuda_graph_overrides(
-    recipe: ConfigContainer, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str | List[str]] = None
+    recipe: ConfigContainer,
+    cuda_graph_impl: Optional[str] = None,
+    cuda_graph_scope: Optional[str | List[str]] = None,
 ) -> ConfigContainer:
     """Set the CUDA graph overrides."""
     if isinstance(cuda_graph_scope, str):
@@ -111,20 +119,32 @@ def _set_cuda_graph_overrides(
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
 
+    if recipe.model.cuda_graph_impl == "none":
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+        # Normalize to MCore's current disabled representation: an empty
+        # cuda_graph_modules list and no deprecated cuda_graph_scope value.
+        validate_cuda_graph_configuration(recipe.model, config_name="model")
+        return recipe
+
     if cuda_graph_scope is not None:
-        recipe.model.cuda_graph_scope = cuda_graph_scope
+        if "full_iteration" in cuda_graph_scope:
+            if cuda_graph_scope != ["full_iteration"]:
+                raise ValueError("full_iteration CUDA graph scope cannot be combined with other scopes.")
+            if recipe.model.cuda_graph_impl == "transformer_engine":
+                raise ValueError("full_iteration CUDA graph scope cannot use cuda_graph_impl=transformer_engine.")
+            set_full_iteration_cuda_graph(recipe.model)
+        else:
+            set_cuda_graph_modules(recipe.model, cuda_graph_scope)
 
     # Validate post-override state so we check the effective recipe value,
     # not the raw CLI input (which may be None when the recipe default is used).
     if recipe.model.cuda_graph_impl == "transformer_engine":
         valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-        effective_scope = getattr(recipe.model, "cuda_graph_scope", None)
-        assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
+        effective_scope = cuda_graph_module_names(recipe.model)
+        assert all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
-    elif recipe.model.cuda_graph_impl == "none":
-        recipe.model.cuda_graph_scope = []
-        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+    validate_cuda_graph_configuration(recipe.model, config_name="model")
 
     if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False

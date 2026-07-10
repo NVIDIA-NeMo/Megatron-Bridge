@@ -77,7 +77,10 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
     warn_rank_0,
 )
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import (
+    is_full_iteration_cuda_graph,
+    validate_cuda_graph_configuration,
+)
 
 
 @dataclass
@@ -1164,6 +1167,10 @@ class ConfigContainer(Container):
             self.ddp.finalize()
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
+
+        # Guard post-construction CUDA graph overrides before MCore post-init can
+        # migrate deprecated scope fields into a different implementation.
+        validate_cuda_graph_configuration(self.model)
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
@@ -1250,8 +1257,7 @@ class ConfigContainer(Container):
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
-        if self.model.cuda_graph_impl == "none":
-            clear_cuda_graph_modules(self.model)
+        validate_cuda_graph_configuration(self.model)
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
