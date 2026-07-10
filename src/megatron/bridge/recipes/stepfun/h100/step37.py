@@ -29,7 +29,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets.step37_flickr8k import Step37Flickr8kSFTDataProvider
 from megatron.bridge.recipes.common import _sft_common
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
@@ -61,7 +61,6 @@ _STEP37_FLICKR8K_SMOKE_MAX_LR = 5e-3
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="stepfun")
 def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
     """Step3.7 SFT recipe — the only supported Step3.7 path.
 
@@ -213,6 +212,10 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
         data_sharding=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -221,7 +224,6 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="stepfun")
 def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     """Smoke variant of :func:`step37_flickr8k_sft_config` — the same packed
     sample on every DP rank, every step. Deterministic and tiny: it repeats
@@ -434,6 +436,10 @@ def step37_sft_4gpu_h100_bf16_flickr8k_smoke_config() -> ConfigContainer:
     cfg.validation.eval_iters = 0
     cfg.checkpoint.save_interval = _STEP37_FLICKR8K_SMOKE_TRAIN_ITERS + 1
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

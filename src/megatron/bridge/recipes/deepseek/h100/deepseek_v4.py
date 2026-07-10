@@ -21,7 +21,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
@@ -58,7 +58,6 @@ def _deepseek_v4_mxfp8_quant_recipe() -> RecipeConfig:
     )
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return the DeepSeek-V4-Flash Blackwell pre-training base config.
 
@@ -145,10 +144,13 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_megatron_fsdp = False
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     """Return the DeepSeek-V4-Flash Adam + MXFP8 pre-training config."""
     cfg = deepseek_v4_flash_pretrain_32gpu_h100_bf16_config()
@@ -214,10 +216,13 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = True
     cfg.model.mtp_eval_in_bf16 = True
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
     """Return the DeepSeek-V4-Flash BF16 Muon pre-training config."""
     cfg = deepseek_v4_flash_pretrain_32gpu_h100_bf16_config()
@@ -281,6 +286,10 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = True
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -289,7 +298,6 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
 # ---------------------------------------------------------------------------
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek-V4-Flash full SFT, MTP enabled, Hopper-safe.
 
@@ -354,10 +362,13 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_megatron_fsdp = False
     cfg.dist.enable_megatron_core_experimental = True
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """DeepSeek-V4-Flash full SFT with the MTP layer disabled, Hopper-safe.
 
@@ -428,6 +439,10 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_megatron_fsdp = False
     cfg.dist.enable_megatron_core_experimental = True
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

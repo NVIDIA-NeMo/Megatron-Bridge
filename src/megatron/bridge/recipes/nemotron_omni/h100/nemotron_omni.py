@@ -22,7 +22,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.common import _sft_common_vlm
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -30,7 +30,6 @@ from megatron.bridge.training.config import ConfigContainer
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 
 
-@library_recipe_environment(model_family_name="nemotron_omni")
 def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a VL SFT config for Nemotron Omni on CORD v2.
 
@@ -53,10 +52,13 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotron_omni")
 def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a LoRA PEFT config for Nemotron Omni on CORD v2.
 
@@ -103,6 +105,10 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -176,7 +182,6 @@ def _nemotron_omni_base() -> ConfigContainer:
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotron_omni")
 def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return an Energon SFT config with temporal video embedder enabled.
 
@@ -224,10 +229,13 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotron_omni")
 def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """LoRA PEFT recipe on temporal-video Energon path (temporal_patch_dim=2)."""
     from transformers import AutoProcessor
@@ -288,6 +296,10 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

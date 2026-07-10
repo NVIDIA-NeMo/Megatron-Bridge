@@ -22,7 +22,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
@@ -31,7 +31,6 @@ from megatron.bridge.training.config import ConfigContainer
 # =============================================================================
 # Qwen2.5-VL 3B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5-VL 3B Instruct.
 
@@ -134,13 +133,16 @@ def qwen25_vl_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 7B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5-VL 7B Instruct.
 
@@ -243,13 +245,16 @@ def qwen25_vl_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 32B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5-VL 32B Instruct.
 
@@ -352,13 +357,16 @@ def qwen25_vl_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 72B SFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5-VL 72B Instruct.
 
@@ -461,13 +469,16 @@ def qwen25_vl_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 3B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_3b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5-VL 3B Instruct.
 
@@ -579,13 +590,16 @@ def qwen25_vl_3b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 7B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5-VL 7B Instruct.
 
@@ -697,13 +711,16 @@ def qwen25_vl_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 32B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_32b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5-VL 32B Instruct.
 
@@ -815,13 +832,16 @@ def qwen25_vl_32b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 # =============================================================================
 # Qwen2.5-VL 72B PEFT Configuration
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen25_vl_72b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5-VL 72B Instruct.
 
@@ -933,6 +953,10 @@ def qwen25_vl_72b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Uncomment below to use a pretrained checkpoint
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

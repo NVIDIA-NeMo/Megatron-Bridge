@@ -18,7 +18,6 @@ from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.recipes.utils.environment_utils import LIBRARY_PROCESS_ENV_DEFAULTS
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -59,7 +58,6 @@ def _pretrain_common() -> ConfigContainer:
     )
 
     cfg = ConfigContainer(
-        env_vars=LIBRARY_PROCESS_ENV_DEFAULTS.copy(),
         # Model - MUST be set by each recipe before use
         model=None,  # type: ignore[arg-type]
         # Training config
@@ -176,7 +174,6 @@ def _sft_common() -> ConfigContainer:
     )
 
     cfg = ConfigContainer(
-        env_vars=LIBRARY_PROCESS_ENV_DEFAULTS.copy(),
         # Model - MUST be set by each recipe before use
         model=None,  # type: ignore[arg-type]
         # Training config - shorter training for SFT
@@ -274,7 +271,6 @@ def _peft_common() -> ConfigContainer:
     )
 
     cfg = ConfigContainer(
-        env_vars=LIBRARY_PROCESS_ENV_DEFAULTS.copy(),
         # Model - MUST be set by each recipe before use
         model=None,  # type: ignore[arg-type]
         # Training config - shorter training for PEFT
