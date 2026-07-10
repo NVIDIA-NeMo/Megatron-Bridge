@@ -22,7 +22,7 @@ overrides = [
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/denera/TransformerEngine.git?rev=0d1cb41bdea0e5f760e3e8e6eaf74dacd5f410b5" },
+    { name = "transformer-engine", git = "https://github.com/balasaajay/TransformerEngine.git?rev=c733abcf6138005a46432ca15286122a413307b5" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -4856,8 +4856,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.18.0.dev0+0d1cb41b"
-source = { git = "https://github.com/denera/TransformerEngine.git?rev=0d1cb41bdea0e5f760e3e8e6eaf74dacd5f410b5#0d1cb41bdea0e5f760e3e8e6eaf74dacd5f410b5" }
+version = "2.17.0+c733abc"
+source = { git = "https://github.com/balasaajay/TransformerEngine.git?rev=c733abcf6138005a46432ca15286122a413307b5#c733abcf6138005a46432ca15286122a413307b5" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
