@@ -49,7 +49,8 @@ WORKSPACE=${WORKSPACE:-/workspace}
 MODEL_NAME=nemotron_3_nano
 DATASET_NAME=mock
 SEQ_LENGTH=512
-TRAIN_ITERS=100_000
+#TRAIN_ITERS=100_000
+TRAIN_ITERS=10
 GLOBAL_BATCH_SIZE=32
 MICRO_BATCH_SIZE=1
 EVAL_ITERS=10
@@ -133,7 +134,13 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: use_megatron_fsdp=$use_megatron_fsdp, num_distributed_optimizer_instances=$num_distributed_optimizer_instances, TP=$TP, PP=$PP, EP=$EP, CP=$CP, SP=$SP"
     echo "======================================"
 
-    FSDP_OPTIONS="ddp.use_megatron_fsdp=${use_megatron_fsdp} checkpoint.ckpt_format=fsdp_dtensor"
+    if [ "$use_megatron_fsdp" = "True" ]; then
+        wand_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_FSDP_numdist_${num_distributed_optimizer_instances}_ep${EP}
+        FSDP_OPTIONS="ddp.use_megatron_fsdp=${use_megatron_fsdp} ddp.num_distributed_optimizer_instances=${num_distributed_optimizer_instances} checkpoint.ckpt_format=fsdp_dtensor"
+    else
+        wand_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP}
+        FSDP_OPTIONS=""
+    fi
 
     # Build CLI overrides for this config
     CLI_OVERRIDES="\
@@ -145,7 +152,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         scheduler.lr_warmup_iters=$LR_WARMUP_ITERS \
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
-        logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_FSDP_ep${EP} \
+        logger.wandb_exp_name=${wand_exp_name} \
         dataset.sequence_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
@@ -154,7 +161,6 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.context_parallel_size=$CP \
         model.moe_token_dispatcher_type=flex \
         model.moe_flex_dispatcher_backend=hybridep \
-        ddp.num_distributed_optimizer_instances=$num_distributed_optimizer_instances \
         model.fp8=e4m3 \
         model.fp8_recipe=mxfp8 \
         ddp.fp8_param_gather=true \
