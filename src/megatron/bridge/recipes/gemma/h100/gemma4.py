@@ -21,7 +21,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 
@@ -42,7 +42,6 @@ def _gemma4_text_conversion_mode():
             os.environ["GEMMA4_CONVERSION_MODE"] = previous_mode
 
 
-@library_recipe_environment(model_family_name="gemma")
 def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Gemma 4 E4B (Dense, ~3.8B parameters).
 
@@ -137,6 +136,10 @@ def gemma4_e4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

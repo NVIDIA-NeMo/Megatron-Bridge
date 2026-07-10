@@ -16,13 +16,12 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
-@library_recipe_environment(model_family_name="llama")
 def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Llama-2 7B.
 
@@ -119,6 +118,10 @@ def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

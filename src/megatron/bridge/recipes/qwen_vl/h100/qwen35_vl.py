@@ -28,7 +28,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
@@ -37,7 +37,6 @@ from megatron.bridge.training.config import ConfigContainer
 # =============================================================================
 # Qwen3.5-VL Pretrain Configurations (mock dataset)
 # =============================================================================
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 9B (dense)."""
     cfg = _pretrain_common()
@@ -80,10 +79,13 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 27B (dense)."""
     cfg = _pretrain_common()
@@ -126,10 +128,13 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE)."""
     cfg = _pretrain_common()
@@ -173,10 +178,13 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 122B-A10B (MoE)."""
     cfg = _pretrain_common()
@@ -222,10 +230,13 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3.5-VL 397B-A17B (MoE)."""
     cfg = _pretrain_common()
@@ -271,6 +282,10 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.average_in_collective = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -279,7 +294,6 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_800m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 800M (dense).
 
@@ -373,10 +387,13 @@ def qwen35_vl_800m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 2B (dense).
 
@@ -470,10 +487,13 @@ def qwen35_vl_2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 4B (dense).
 
@@ -567,10 +587,13 @@ def qwen35_vl_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 9B (dense).
 
@@ -664,10 +687,13 @@ def qwen35_vl_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 27B (dense).
 
@@ -759,6 +785,10 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -767,7 +797,6 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE).
 
@@ -873,10 +902,13 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Megatron FSDP.
 
@@ -993,10 +1025,13 @@ def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 122B-A10B (MoE).
 
@@ -1102,10 +1137,13 @@ def qwen35_vl_122b_a10b_sft_48gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5-VL 397B-A17B (MoE).
 
@@ -1211,6 +1249,10 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -1219,7 +1261,6 @@ def qwen35_vl_397b_a17b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_800m_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 800M (dense).
 
@@ -1312,10 +1353,13 @@ def qwen35_vl_800m_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_2b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 2B (dense).
 
@@ -1408,10 +1452,13 @@ def qwen35_vl_2b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_4b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 4B (dense).
 
@@ -1504,10 +1551,13 @@ def qwen35_vl_4b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_9b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 9B (dense).
 
@@ -1600,10 +1650,13 @@ def qwen35_vl_9b_peft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 27B (dense).
 
@@ -1696,6 +1749,10 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -1704,7 +1761,6 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 35B-A3B (MoE).
 
@@ -1811,10 +1867,13 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 122B-A10B (MoE).
 
@@ -1921,10 +1980,13 @@ def qwen35_vl_122b_a10b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen_vl")
 def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a PEFT config for Qwen3.5-VL 397B-A17B (MoE).
 
@@ -2031,6 +2093,10 @@ def qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

@@ -21,13 +21,12 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_4b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for NemotronH 4B.
 
@@ -159,10 +158,13 @@ def nemotronh_4b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for NemotronH 8B.
 
@@ -292,10 +294,13 @@ def nemotronh_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_47b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for NemotronH 47B.
 
@@ -429,10 +434,13 @@ def nemotronh_47b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for NemotronH 56B.
 
@@ -567,6 +575,10 @@ def nemotronh_56b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -575,7 +587,6 @@ def nemotronh_56b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for NemotronH 4B.
 
@@ -703,10 +714,13 @@ def nemotronh_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for NemotronH 8B.
 
@@ -830,10 +844,13 @@ def nemotronh_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_47b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for NemotronH 47B.
 
@@ -959,10 +976,13 @@ def nemotronh_47b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for NemotronH 56B.
 
@@ -1088,6 +1108,10 @@ def nemotronh_56b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -1096,7 +1120,6 @@ def nemotronh_56b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_4b_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -1242,10 +1265,13 @@ def nemotronh_4b_peft_1gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_8b_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -1389,10 +1415,13 @@ def nemotronh_8b_peft_1gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_47b_peft_4gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -1538,10 +1567,13 @@ def nemotronh_47b_peft_4gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="nemotronh")
 def nemotronh_56b_peft_4gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -1688,6 +1720,10 @@ def nemotronh_56b_peft_4gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

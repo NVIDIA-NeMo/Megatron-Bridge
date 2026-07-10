@@ -16,7 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _sft_common_vlm
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_muon_with_cosine_annealing,
 )
@@ -50,7 +50,6 @@ def _get_kimi_k25_vl_pipeline_layout(pp_size: int, vp_size: int):
     return layout
 
 
-@library_recipe_environment(model_family_name="kimi_vl")
 def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     """Return an SFT config for Kimi-K2.5-VL (1T).
 
@@ -186,6 +185,10 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

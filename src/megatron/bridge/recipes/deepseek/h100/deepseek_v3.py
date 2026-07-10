@@ -17,11 +17,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models import GPTModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.environment_utils import (
-    library_recipe_environment,
-    set_common_recipe_environment_defaults,
-    set_hybridep_environment_defaults,
-)
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -92,7 +88,6 @@ def set_deepseek_v3_pipeline_model_parallel_layout(
         model_cfg.pipeline_model_parallel_layout = layout_map[(pp_size, vp_size)]
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for DeepSeek-V3 (671B).
 
@@ -243,14 +238,24 @@ def deepseek_v3_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
 
-    set_common_recipe_environment_defaults(cfg)
-    set_hybridep_environment_defaults(cfg, ranks_per_nvlink_domain=8, use_mnnvl=False)
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+        # Model-specific compilation and Transformer Engine tuning.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+        # HybridEP topology for this recipe.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="deepseek")
 def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     """Return a pre-training config for DeepSeek-V3 (671B) with minimal nodes (32).
 
@@ -388,10 +393,21 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # mla rope fusion is experimental
 
-    set_common_recipe_environment_defaults(cfg)
-    set_hybridep_environment_defaults(cfg, ranks_per_nvlink_domain=8, use_mnnvl=False)
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+        # Model-specific compilation and Transformer Engine tuning.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "QUANTIZATION_TYPE_DEBUG": 1,
+        "TORCHINDUCTOR_WORKER_START": "fork",
+        # HybridEP topology for this recipe.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 

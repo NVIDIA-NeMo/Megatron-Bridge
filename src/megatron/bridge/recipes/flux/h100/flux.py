@@ -20,7 +20,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.bridge.diffusion.conversion.flux.flux_bridge import FluxBridge
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -32,7 +32,6 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-@library_recipe_environment(model_family_name="flux")
 def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a pre-training configuration for FLUX 12B model.
@@ -146,10 +145,13 @@ def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
         mixed_precision=precision_config,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="flux")
 def flux_12b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return an SFT (supervised fine-tuning) configuration for FLUX 12B model.
@@ -168,6 +170,10 @@ def flux_12b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

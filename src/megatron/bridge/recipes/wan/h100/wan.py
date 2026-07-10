@@ -19,7 +19,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -31,7 +31,6 @@ from megatron.bridge.training.config import (
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
-@library_recipe_environment(model_family_name="wan")
 def wan_1_3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 1.3B model.
@@ -135,10 +134,13 @@ def wan_1_3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         mixed_precision=precision_config,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="wan")
 def wan_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a pre-training configuration for WAN 14B model.
@@ -245,10 +247,13 @@ def wan_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         mixed_precision=precision_config,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="wan")
 def wan_1_3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 1.3B model.
@@ -267,10 +272,13 @@ def wan_1_3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="wan")
 def wan_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     Return a fine-tuning configuration for WAN 14B model.
@@ -289,10 +297,13 @@ def wan_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         ckpt_format="torch_dist",
         fully_parallel_save=True,
     )
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="wan")
 def wan_1_3b_text2image_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a Wan 1.3B pretraining configuration tuned for text-to-image data.
 
@@ -306,10 +317,13 @@ def wan_1_3b_text2image_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-4
     cfg.optimizer.weight_decay = 0.001
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="wan")
 def wan_1_3b_text2video_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a Wan 1.3B pretraining configuration tuned for text-to-video data.
 
@@ -324,6 +338,10 @@ def wan_1_3b_text2video_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.lr = 1e-4
     cfg.optimizer.min_lr = 1e-4
     cfg.optimizer.weight_decay = 0.001
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

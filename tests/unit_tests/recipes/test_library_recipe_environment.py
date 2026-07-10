@@ -12,117 +12,166 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for recipe-owned library process environment settings."""
+"""Tests for explicit hardware library recipe environment settings."""
 
 import ast
 import re
 from pathlib import Path
-from types import SimpleNamespace
 
-from megatron.bridge.recipes.utils.environment_utils import (
-    LIBRARY_PROCESS_ENV_DEFAULTS,
-    apply_library_recipe_environment,
-    library_recipe_environment,
-)
+import pytest
+
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
     r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
 )
+_RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "recipes"
+_HYBRID_EP_ENV_NAMES = {
+    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+    "NVLINK_DOMAIN_SIZE",
+    "USE_MNNVL",
+}
 
 
-def _config(*, backend=None, ep=1, nccl_ub=False, env_vars=None):
-    return SimpleNamespace(
-        env_vars=dict(env_vars or {}),
-        model=SimpleNamespace(
-            moe_flex_dispatcher_backend=backend,
-            expert_model_parallel_size=ep,
-        ),
-        ddp=SimpleNamespace(nccl_ub=nccl_ub),
-    )
+def _function(path: Path, function_name: str) -> ast.FunctionDef:
+    tree = ast.parse(path.read_text())
+    return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
 
 
-def test_library_recipe_environment_owns_executor_defaults():
-    config = _config()
+def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
+    function = _function(path, function_name)
+    assignments = [
+        node
+        for node in function.body
+        if isinstance(node, ast.Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], ast.Attribute)
+        and isinstance(node.targets[0].value, ast.Name)
+        and node.targets[0].value.id == "cfg"
+        and node.targets[0].attr == "env_vars"
+    ]
+    assert len(assignments) == 1
+    mapping = assignments[0].value
+    assert isinstance(mapping, ast.Dict)
 
-    apply_library_recipe_environment(config, gpu="h100")
-
-    assert config.env_vars.items() >= LIBRARY_PROCESS_ENV_DEFAULTS.items()
-    assert config.env_vars["TORCH_NCCL_HIGH_PRIORITY"] == 1
-
-
-def test_library_recipe_environment_recomputes_nccl_ub_and_topology():
-    config = _config(backend="hybridep", ep=32, nccl_ub=True)
-    apply_library_recipe_environment(config, gpu="gb200")
-
-    assert config.env_vars["NCCL_NVLS_ENABLE"] == 1
-    assert config.env_vars["NCCL_CTA_POLICY"] == 1
-    assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
-    assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
-
-    config.model.moe_flex_dispatcher_backend = None
-    config.ddp.nccl_ub = False
-    apply_library_recipe_environment(config, gpu="h100")
-
-    assert config.env_vars["NCCL_NVLS_ENABLE"] == 0
-    assert "NCCL_CTA_POLICY" not in config.env_vars
-    assert "NVLINK_DOMAIN_SIZE" not in config.env_vars
-
-
-def test_library_recipe_environment_preserves_explicit_override():
-    config = _config(env_vars={"NCCL_NVLS_ENABLE": 7})
-
-    apply_library_recipe_environment(config, gpu="h100", protected_env_names={"NCCL_NVLS_ENABLE"})
-
-    assert config.env_vars["NCCL_NVLS_ENABLE"] == 7
+    result = COMMON_LIBRARY_ENV_VARS.copy()
+    common_expansions = 0
+    for index, (key, value) in enumerate(zip(mapping.keys, mapping.values)):
+        if key is None:
+            assert index == 0
+            assert isinstance(value, ast.Name) and value.id == "COMMON_LIBRARY_ENV_VARS"
+            common_expansions += 1
+            continue
+        result[ast.literal_eval(key)] = ast.literal_eval(value)
+    assert common_expansions == 1
+    return result
 
 
-def test_library_recipe_decorator_finalizes_a_direct_builder():
-    @library_recipe_environment(model_family_name="qwen")
-    def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config(*, nccl_ub=False):
-        return _config(backend="hybridep", ep=8, nccl_ub=nccl_ub)
+def _explicit_environments():
+    for path in _RECIPE_ROOT.glob("*/h100/*.py"):
+        tree = ast.parse(path.read_text())
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef) and _CANONICAL_RECIPE_NAME.fullmatch(node.name) is not None:
+                returns = [statement for statement in node.body if isinstance(statement, ast.Return)]
+                if not returns:
+                    continue
+                yield path, node.name, _explicit_environment(path, node.name)
 
-    resolved = qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config(nccl_ub=True)
 
-    assert resolved.env_vars["NVLINK_DOMAIN_SIZE"] == 8
-    assert resolved.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
-    assert resolved.env_vars["NCCL_NVLS_ENABLE"] == 1
+def test_common_library_environment_is_small_and_universal():
+    assert COMMON_LIBRARY_ENV_VARS == {
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "TORCH_NCCL_HIGH_PRIORITY": 1,
+    }
 
 
-def test_every_hardware_library_recipe_builder_is_explicitly_decorated():
-    recipe_root = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "recipes"
-    undecorated = []
-    invalid_metadata = []
+def test_every_supported_hardware_library_recipe_declares_its_environment_inline():
+    supported = []
+    unsupported = []
 
-    for path in recipe_root.rglob("*.py"):
+    for path in _RECIPE_ROOT.glob("*/h100/*.py"):
         tree = ast.parse(path.read_text())
         for node in tree.body:
             if not isinstance(node, ast.FunctionDef) or _CANONICAL_RECIPE_NAME.fullmatch(node.name) is None:
                 continue
-            relative_parts = path.relative_to(recipe_root).parts
-            family = relative_parts[0]
-            hardware = relative_parts[-2]
-            decorators = [
-                decorator
-                for decorator in node.decorator_list
-                if isinstance(decorator, ast.Call)
-                and isinstance(decorator.func, ast.Name)
-                and decorator.func.id == "library_recipe_environment"
-            ]
-            if not decorators:
-                undecorated.append(f"{path.relative_to(recipe_root)}:{node.name}")
+            assert not node.decorator_list
+            returns = [statement for statement in node.body if isinstance(statement, ast.Return)]
+            if not returns:
+                unsupported.append(f"{path.relative_to(_RECIPE_ROOT)}:{node.name}")
                 continue
+            supported.append(f"{path.relative_to(_RECIPE_ROOT)}:{node.name}")
+            _explicit_environment(path, node.name)
 
-            family_keywords = [
-                keyword.value.value
-                for keyword in decorators[0].keywords
-                if keyword.arg == "model_family_name" and isinstance(keyword.value, ast.Constant)
-            ]
-            recipe_hardware = re.search(r"_\d+gpu_([a-z0-9]+)_", node.name).group(1)
-            if family_keywords != [family] or recipe_hardware != hardware:
-                invalid_metadata.append(
-                    f"{path.relative_to(recipe_root)}:{node.name}: family={family_keywords!r}, hardware={hardware!r}"
-                )
+            assignment_index = next(
+                index
+                for index, statement in enumerate(node.body)
+                if isinstance(statement, ast.Assign)
+                and isinstance(statement.targets[0], ast.Attribute)
+                and statement.targets[0].attr == "env_vars"
+            )
+            assert isinstance(node.body[assignment_index + 1], ast.Return)
 
-    assert not undecorated
-    assert not invalid_metadata
+    assert len(supported) == 245
+    assert unsupported == ["qwen/h100/qwen3_next.py:qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config"]
+
+
+def test_explicit_library_environment_invariants():
+    recipes = list(_explicit_environments())
+    hybrid_ep_count = 0
+
+    for path, _, environment in recipes:
+        hybrid_ep_names = environment.keys() & _HYBRID_EP_ENV_NAMES
+        assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+        if hybrid_ep_names:
+            hybrid_ep_count += 1
+            assert environment["NVLINK_DOMAIN_SIZE"] == 8
+            assert environment["USE_MNNVL"] == 0
+            assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] in {1, 8}
+
+        if path.parts[-3] == "deepseek" and "NVTE_FWD_LAYERNORM_SM_MARGIN" in environment:
+            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+
+    assert len(recipes) == 245
+    assert hybrid_ep_count == 8
+
+
+@pytest.mark.parametrize(
+    ("relative_path", "function_name", "expected"),
+    [
+        (
+            "deepseek/h100/deepseek_v3.py",
+            "deepseek_v3_pretrain_1024gpu_h100_bf16_config",
+            {
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+                "NVLINK_DOMAIN_SIZE": 8,
+                "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                "USE_MNNVL": 0,
+            },
+        ),
+        (
+            "nemotronh/h100/nemotron_3_super.py",
+            "nemotron_3_super_peft_1gpu_h100_bf16_config",
+            {
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 1,
+                "NVLINK_DOMAIN_SIZE": 8,
+                "USE_MNNVL": 0,
+            },
+        ),
+        (
+            "qwen/h100/qwen3.py",
+            "qwen3_600m_pretrain_1gpu_h100_bf16_config",
+            {},
+        ),
+    ],
+)
+def test_representative_library_recipe_environment_is_visible(relative_path, function_name, expected):
+    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+
+    assert environment.items() >= expected.items()

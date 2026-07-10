@@ -18,7 +18,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -29,7 +29,6 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2 0.5B.
 
@@ -114,10 +113,13 @@ def qwen2_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_1p5b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2 1.5B.
 
@@ -201,10 +203,13 @@ def qwen2_1p5b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2 7B.
 
@@ -287,10 +292,13 @@ def qwen2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2 72B.
 
@@ -374,6 +382,10 @@ def qwen2_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -382,7 +394,6 @@ def qwen2_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2.5 0.5B.
 
@@ -461,10 +472,13 @@ def qwen25_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_1p5b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2.5 1.5B.
 
@@ -543,10 +557,13 @@ def qwen25_1p5b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2.5 7B.
 
@@ -625,10 +642,13 @@ def qwen25_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_14b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2.5 14B.
 
@@ -712,10 +732,13 @@ def qwen25_14b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_32b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2.5 32B.
 
@@ -794,10 +817,13 @@ def qwen25_32b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen2.5 72B.
 
@@ -881,6 +907,10 @@ def qwen25_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -889,7 +919,6 @@ def qwen25_72b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_500m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2 500M.
 
@@ -985,10 +1014,13 @@ def qwen2_500m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_1p5b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2 1.5B.
 
@@ -1084,10 +1116,13 @@ def qwen2_1p5b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2 7B.
 
@@ -1183,10 +1218,13 @@ def qwen2_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2 72B.
 
@@ -1282,6 +1320,10 @@ def qwen2_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -1290,7 +1332,6 @@ def qwen2_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_500m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5 500M.
 
@@ -1386,10 +1427,13 @@ def qwen25_500m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_1p5b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5 1.5B.
 
@@ -1485,10 +1529,13 @@ def qwen25_1p5b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5 7B.
 
@@ -1584,10 +1631,13 @@ def qwen25_7b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5 14B.
 
@@ -1683,10 +1733,13 @@ def qwen25_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5 32B.
 
@@ -1782,10 +1835,13 @@ def qwen25_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen2.5 72B.
 
@@ -1881,6 +1937,10 @@ def qwen25_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -1889,7 +1949,6 @@ def qwen25_72b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_500m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2 500M.
 
@@ -1990,10 +2049,13 @@ def qwen2_500m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_1p5b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2 1.5B.
 
@@ -2094,10 +2156,13 @@ def qwen2_1p5b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2 7B.
 
@@ -2198,10 +2263,13 @@ def qwen2_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen2_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2 72B.
 
@@ -2302,6 +2370,10 @@ def qwen2_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -2310,7 +2382,6 @@ def qwen2_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_500m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5 500M.
 
@@ -2411,10 +2482,13 @@ def qwen25_500m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_1p5b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5 1.5B.
 
@@ -2515,10 +2589,13 @@ def qwen25_1p5b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5 7B.
 
@@ -2619,10 +2696,13 @@ def qwen25_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_14b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5 14B.
 
@@ -2723,10 +2803,13 @@ def qwen25_14b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_32b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5 32B.
 
@@ -2827,10 +2910,13 @@ def qwen25_32b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="qwen")
 def qwen25_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2.5 72B.
 
@@ -2931,6 +3017,10 @@ def qwen25_72b_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

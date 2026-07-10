@@ -19,9 +19,9 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import (
     default_openmathinstruct2_thinking_config,
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
     default_peft_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -34,7 +34,6 @@ def _enable_gpt_oss_hopper_fp8_current_scaling(cfg: ConfigContainer) -> ConfigCo
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for GPT-OSS 20B variant.
 
@@ -153,10 +152,13 @@ def gpt_oss_20b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for GPT-OSS 120B variant.
 
@@ -265,14 +267,23 @@ def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Return a pre-training config for GPT-OSS 20B with Hopper FP8 current scaling."""
     cfg = gpt_oss_20b_pretrain_16gpu_h100_bf16_config()
-    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+    cfg = _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
 # =============================================================================
@@ -280,7 +291,6 @@ def gpt_oss_20b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for GPT-OSS 20B.
 
@@ -404,10 +414,13 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for GPT-OSS 120B.
 
@@ -531,14 +544,23 @@ def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     """Return a full SFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
     cfg = gpt_oss_20b_sft_8gpu_h100_bf16_config()
-    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+    cfg = _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
 # =============================================================================
@@ -546,7 +568,6 @@ def gpt_oss_20b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -679,10 +700,13 @@ def gpt_oss_20b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_120b_peft_8gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -815,16 +839,25 @@ def gpt_oss_120b_peft_8gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_peft_1gpu_h100_fp8cs_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for GPT-OSS 20B with Hopper FP8 current scaling."""
     cfg = gpt_oss_20b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-    return _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+    cfg = _enable_gpt_oss_hopper_fp8_current_scaling(cfg)
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
 def _enable_gpt_oss_blackwell_mxfp8(cfg: ConfigContainer) -> ConfigContainer:
@@ -834,33 +867,45 @@ def _enable_gpt_oss_blackwell_mxfp8(cfg: ConfigContainer) -> ConfigContainer:
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_pretrain_16gpu_h100_fp8mx_config() -> ConfigContainer:
     """Return a pre-training config for GPT-OSS 20B with Blackwell MXFP8."""
     cfg = gpt_oss_20b_pretrain_16gpu_h100_bf16_config()
-    return _enable_gpt_oss_blackwell_mxfp8(cfg)
+    cfg = _enable_gpt_oss_blackwell_mxfp8(cfg)
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_sft_8gpu_h100_fp8mx_config() -> ConfigContainer:
     """Return a full SFT config for GPT-OSS 20B with Blackwell MXFP8."""
     cfg = gpt_oss_20b_sft_8gpu_h100_bf16_config()
     cfg = _enable_gpt_oss_blackwell_mxfp8(cfg)
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_peft_1gpu_h100_fp8mx_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
     """Return a PEFT config for GPT-OSS 20B with Blackwell MXFP8."""
     cfg = gpt_oss_20b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
-    return _enable_gpt_oss_blackwell_mxfp8(cfg)
+    cfg = _enable_gpt_oss_blackwell_mxfp8(cfg)
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
-@library_recipe_environment(model_family_name="gpt_oss")
 def gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config() -> ConfigContainer:
     """SFT config for GPT-OSS 20B with thinking channel + packed sequences on OpenMathInstruct-2.
 
@@ -873,6 +918,10 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config() ->
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset = default_openmathinstruct2_thinking_config(seq_length=seq_length, enable_offline_packing=True)
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

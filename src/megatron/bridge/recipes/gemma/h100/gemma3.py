@@ -20,7 +20,7 @@ from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
-from megatron.bridge.recipes.utils.environment_utils import library_recipe_environment
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -32,7 +32,6 @@ SEQUENCE_LENGTH_128K: int = 131072
 
 
 # Gemma3 models
-@library_recipe_environment(model_family_name="gemma")
 def gemma3_1b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Gemma3 1B.
 
@@ -133,6 +132,10 @@ def gemma3_1b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -155,7 +158,6 @@ def _adjust_gemma3_vocab_size(model_cfg, hf_path: str):
             model_cfg.vocab_size = len(tokenizer)
 
 
-@library_recipe_environment(model_family_name="gemma")
 def gemma3_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma3 1B.
 
@@ -267,6 +269,10 @@ def gemma3_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -275,7 +281,6 @@ def gemma3_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 # =============================================================================
 
 
-@library_recipe_environment(model_family_name="gemma")
 def gemma3_1b_peft_1gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
@@ -402,6 +407,10 @@ def gemma3_1b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
