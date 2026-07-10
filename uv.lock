@@ -22,7 +22,7 @@ overrides = [
     { name = "onnx", marker = "python_full_version < '3.13'", specifier = ">=1.21.0" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=2e559f062497bef768dfbe9d7e45548fadeca80a" },
+    { name = "transformer-engine", git = "https://github.com/denera/TransformerEngine.git?rev=0d1cb41bdea0e5f760e3e8e6eaf74dacd5f410b5" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -4854,8 +4854,8 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.17.0+2e559f06"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=2e559f062497bef768dfbe9d7e45548fadeca80a#2e559f062497bef768dfbe9d7e45548fadeca80a" }
+version = "2.18.0.dev0+0d1cb41b"
+source = { git = "https://github.com/denera/TransformerEngine.git?rev=0d1cb41bdea0e5f760e3e8e6eaf74dacd5f410b5#0d1cb41bdea0e5f760e3e8e6eaf74dacd5f410b5" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
