@@ -28,7 +28,6 @@ from megatron.core.transformer import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.exaone4_5.configuration_exaone4_5 import Exaone4_5_Config
 
-from megatron.bridge.models.exaone.exaone45.modelling_exaone45.attention import Exaone45SelfAttention
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.rope import get_rope_index
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.text_model import Exaone45GPTModel
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.transformer_config import (
@@ -129,7 +128,6 @@ class Exaone45Model(MegatronModule):
 
         if self.pre_process:
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
-            vision_transformer_layer_spec.submodules.self_attention.module = Exaone45SelfAttention
             vision_patch_merger_spec = PatchMergerSubmodules(
                 patch_norm=TENorm,
                 linear_fc1=TEColumnParallelLinear,
@@ -391,7 +389,7 @@ class Exaone45Model(MegatronModule):
 
             if combined_embeddings is not None and cp_size > 1:
                 # combined_embeddings shape: {seq_length, micro_batch_size, hidden_size}
-                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank, packed_seq_params)
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
                 if attention_mask is not None and cp_size > 1:
                     attention_mask = split_data_cp_rank(attention_mask, cp_size, 2, cp_rank)

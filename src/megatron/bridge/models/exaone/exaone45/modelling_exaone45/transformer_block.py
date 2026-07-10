@@ -42,22 +42,7 @@ te_checkpoint = None
 if HAVE_TE:
     from megatron.core.extensions.transformer_engine import te_checkpoint
 
-from megatron.bridge.models.exaone.exaone45.modelling_exaone45.attention import Exaone45SelfAttention
 from megatron.bridge.models.exaone.exaone45.modelling_exaone45.transformer_config import Exaone45TransformerConfig
-
-
-def _set_exaone45_self_attention(spec: Union[TransformerBlockSubmodules, ModuleSpec]) -> None:
-    """Use Exaone4.5 self-attention for all vision transformer layer specs."""
-    if isinstance(spec, TransformerBlockSubmodules):
-        layer_specs = spec.layer_specs or []
-    else:
-        layer_specs = [spec]
-
-    for layer_spec in layer_specs:
-        layer_submodules = layer_spec.submodules
-        self_attention = getattr(layer_submodules, "self_attention", None)
-        if self_attention is not None:
-            self_attention.module = Exaone45SelfAttention
 
 
 class Exaone45VisionTransformerBlock(TransformerBlock):
@@ -75,7 +60,6 @@ class Exaone45VisionTransformerBlock(TransformerBlock):
         vp_stage: Optional[int] = None,
         pg_collection: Optional[ProcessGroupCollection] = None,
     ):
-        _set_exaone45_self_attention(spec)
         super().__init__(
             config=config,
             spec=spec,
