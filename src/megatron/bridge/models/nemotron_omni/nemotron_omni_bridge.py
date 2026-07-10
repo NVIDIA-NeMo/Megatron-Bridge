@@ -42,7 +42,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni.model_config import NemotronOmniModelConfig
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
@@ -126,7 +126,7 @@ class NemotronOmniBridge(NemotronVLBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "NemotronOmniModelProvider":  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "NemotronOmniModelProvider":  # type: ignore[override]
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
         Always returns an Omni provider (MoE language model + RADIO ViT

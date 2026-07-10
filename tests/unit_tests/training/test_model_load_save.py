@@ -21,14 +21,17 @@ from unittest.mock import Mock, patch
 import pytest
 import torch
 from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
     load_megatron_model,
+    load_model_config,
     load_tokenizer,
     megatron_cpu_init_context,
     save_megatron_model,
@@ -190,6 +193,32 @@ class TestTemporaryDistributedContext:
 
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
+
+    def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
+        """Verify native checkpoints retain a finalized custom pipeline layout."""
+        provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        provider.pipeline_model_parallel_size = 2
+        provider.pipeline_model_parallel_layout = [["embedding", "decoder"], ["decoder", "loss"]]
+        provider.finalize()
+
+        assert isinstance(provider.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+        expected_layout = provider.pipeline_model_parallel_layout.input_data
+
+        config = ConfigContainer(
+            model=provider,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded_provider, _ = load_model_config(str(tmp_path))
+
+        assert loaded_provider.pipeline_model_parallel_layout == expected_layout
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")

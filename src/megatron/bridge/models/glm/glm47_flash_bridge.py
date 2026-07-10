@@ -32,7 +32,6 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.glm.layer_specs import glm_layer_spec
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -144,10 +143,4 @@ class GLM47FlashBridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         hf_config = getattr(self, "hf_config", None)
         mapping_list = get_common_mapping_list(hf_config=hf_config)
-        mapping_list.append(
-            AutoMapping(
-                megatron_param="decoder.layers.*.mlp.router.expert_bias",
-                hf_param="model.layers.*.mlp.gate.e_score_correction_bias",
-            )
-        )
         return MegatronMappingRegistry(*mapping_list)

@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_omni.model_config import Qwen25OmniModelConfig
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.model import Qwen25OmniModel
 
@@ -51,7 +51,7 @@ class Qwen25OmniBridge(MegatronModelBridge):
     - LLM layer norms use mlp.linear_fc1.layer_norm_weight (not pre_mlp_layernorm)
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen25OmniModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen25OmniModelProvider":
         """Create a Qwen25OmniModelProvider from a HuggingFace pretrained model."""
         from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniModelProvider
 

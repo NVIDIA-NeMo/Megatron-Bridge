@@ -15,7 +15,6 @@
 import fnmatch
 import json
 import logging
-import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
@@ -118,7 +117,7 @@ class StateDict(Mapping[str, torch.Tensor]):
         ['model.layer.0.weight', 'model.layer.1.weight']
         >>>
         >>> # 3. Access with a glob pattern
-        >>> sorted(list(state.glob("model.layer.*.bias").keys()))
+        >>> sorted(list(state["model.layer.*.bias"].keys()))
         ['model.layer.0.bias', 'model.layer.1.bias']
         >>>
         >>> # 4. Access with a compiled regex pattern
@@ -140,7 +139,7 @@ class StateDict(Mapping[str, torch.Tensor]):
 
         # You can query it just like the in-memory dictionary. Only the required
         # tensors (e.g., all weight tensors) will be loaded from disk.
-        weights = state_from_disk.glob("model.layer.*.weight")
+        weights = state_from_disk["model.layer.*.weight"]
     """
 
     source: "StateSource"
@@ -278,60 +277,6 @@ class StateDict(Mapping[str, torch.Tensor]):
         else:
             raise TypeError(f"Key must be str, list of str, or compiled regex, got {type(key)}")
 
-    def regex(self, pattern: str) -> Dict[str, torch.Tensor]:
-        """
-        Queries the state dict with a regular expression pattern.
-
-        This is a convenience method that compiles the pattern string and uses it
-        to retrieve all matching tensors.
-
-        Args:
-            pattern: The regular expression string to match against tensor keys.
-
-        Returns:
-            A dictionary mapping matching tensor names to their `torch.Tensor` objects.
-
-        Examples:
-            >>> d = {
-            ...     "model.layers.0.self_attn.weight": torch.randn(1, 1),
-            ...     "model.layers.1.self_attn.weight": torch.randn(1, 1),
-            ...     "model.layers.1.mlp.weight": torch.randn(1, 1)
-            ... }
-            >>> state = StateDict(d)
-            >>> # Get all attention-related weights
-            >>> attention_weights = state.regex(r"model\\.layers\\.\\d+\\.self_attn.*")
-            >>> sorted(attention_weights.keys())
-            ['model.layers.0.self_attn.weight', 'model.layers.1.self_attn.weight']
-        """
-        return self[re.compile(pattern)]
-
-    def glob(self, pattern: str) -> Dict[str, torch.Tensor]:
-        """
-        Queries the state dict with a glob pattern.
-
-        This is a convenience method for pattern matching using Unix shell-style
-        wildcards.
-
-        Args:
-            pattern: The glob pattern string to match against tensor keys.
-
-        Returns:
-            A dictionary mapping matching tensor names to their `torch.Tensor` objects.
-
-        Examples:
-            >>> d = {
-            ...     "model.layers.0.mlp.weight": torch.randn(1, 1),
-            ...     "model.layers.0.mlp.bias": torch.randn(1, 1),
-            ...     "model.layers.1.mlp.weight": torch.randn(1, 1)
-            ... }
-            >>> state = StateDict(d)
-            >>> # Get all mlp weights and biases from the first layer
-            >>> layer_0_mlp = state.glob("model.layers.0.mlp.*")
-            >>> sorted(layer_0_mlp.keys())
-            ['model.layers.0.mlp.bias', 'model.layers.0.mlp.weight']
-        """
-        return self[pattern]
-
     def __call__(self) -> Dict[str, torch.Tensor]:
         """
         Loads and returns the entire state dict as a dictionary.
@@ -352,10 +297,6 @@ class StateDict(Mapping[str, torch.Tensor]):
     def keys(self) -> List[str]:
         """Get all state dict keys."""
         return self._get_all_keys()
-
-    def items(self) -> List[tuple]:
-        """Get all state dict items."""
-        return list(self().items())
 
     def __contains__(self, key: str) -> bool:
         """Check if a key exists in the state dict."""
@@ -819,6 +760,7 @@ class SafeTensorsStateSource(StateSource):
             filename_to_keys_map[filename].add(key)
 
         files_to_save = dict(filename_to_keys_map)
+        remaining_keys_by_file = {filename: set(keys) for filename, keys in files_to_save.items()}
         buffered_tensors = {}
         all_yielded_keys = set()
         all_saved_keys = set()
@@ -837,24 +779,32 @@ class SafeTensorsStateSource(StateSource):
 
             buffered_tensors[name] = tensor
 
-            # Check if any file is complete and can be saved.
-            # Iterate over a copy of keys since we might modify the dict.
-            for filename in list(files_to_save.keys()):
+            # Update only the shard containing this tensor. Scanning every shard
+            # for every yielded tensor becomes prohibitively expensive for models
+            # with tens of thousands of tensors.
+            filename = key_to_filename_map[name]
+            remaining_keys = remaining_keys_by_file.get(filename)
+            if remaining_keys is None:
+                # The shard was already saved. Preserve the previous duplicate-key
+                # behavior by leaving the tensor buffered for final reporting.
+                continue
+
+            remaining_keys.discard(name)
+            if not remaining_keys:
                 keys_for_file = files_to_save[filename]
-                if keys_for_file.issubset(buffered_tensors.keys()):
-                    # This shard is complete, save it.
-                    tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
+                tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
 
-                    output_file_path = _resolve_output_shard_path(output_path, filename)
-                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                    save_file(tensors_to_save, output_file_path)
+                output_file_path = _resolve_output_shard_path(output_path, filename)
+                output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                save_file(tensors_to_save, output_file_path)
 
-                    # Free memory by removing saved tensors from the buffer.
-                    for key in keys_for_file:
-                        del buffered_tensors[key]
+                # Free memory by removing saved tensors from the buffer.
+                for key in keys_for_file:
+                    del buffered_tensors[key]
 
-                    all_saved_keys.update(keys_for_file)
-                    del files_to_save[filename]
+                all_saved_keys.update(keys_for_file)
+                del files_to_save[filename]
+                del remaining_keys_by_file[filename]
 
         # --- Final Reporting ---
         if files_to_save:
@@ -867,8 +817,8 @@ class SafeTensorsStateSource(StateSource):
                     "Warning: The following files are different from the source because the generator did not yield all "
                     "of their tensors. However they are still saved because strict=False."
                 )
-            for filename, keys_for_file in files_to_save.items():
-                missing_for_file = keys_for_file - all_yielded_keys
+            for filename in files_to_save:
+                missing_for_file = remaining_keys_by_file[filename]
                 if missing_for_file:
                     print(f"  - {filename}: missing {len(missing_for_file)} tensors:")
                     for key in sorted(list(missing_for_file)):
@@ -940,9 +890,6 @@ class SafeTensorsStateSource(StateSource):
             if new_weight_map:
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)
-
-    def _get_key_to_filename_map(self) -> Optional[Dict[str, str]]:
-        return self._cached_get_key_to_filename_map(self.path)
 
     @staticmethod
     @lru_cache(maxsize=None)

@@ -20,9 +20,7 @@ from megatron.core.transformer.transformer_block import TransformerBlockSubmodul
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
-def llama_nemotron_layer_spec(
-    config: BridgeGPTModelConfig, vp_stage: int | None = None
-) -> TransformerBlockSubmodules:
+def llama_nemotron_layer_spec(config: BridgeGPTModelConfig, vp_stage: int | None = None) -> TransformerBlockSubmodules:
     """Build the Transformer Engine heterogeneous layer specification."""
     return get_gpt_heterogeneous_layer_spec(config, use_te=True, vp_stage=vp_stage)
 

@@ -29,7 +29,8 @@ from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.dot_product_attention import DotProductAttention as MCoreDotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
-from megatron.training.models.gpt import GPTModelBuilder, default_layer_spec, mtp_block_spec as default_mtp_block_spec
+from megatron.training.models.gpt import GPTModelBuilder, default_layer_spec
+from megatron.training.models.gpt import mtp_block_spec as default_mtp_block_spec
 from megatron.training.vocab_utils import calculate_padded_vocab_size
 
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig

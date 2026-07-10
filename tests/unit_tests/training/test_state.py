@@ -409,6 +409,42 @@ class TestGlobalState:
             assert logger == mock_wandb
             assert state._wandb_logger == mock_wandb
 
+    def test_wandb_logger_uses_default_dir_without_checkpointing(self):
+        """Test wandb logger without an explicit local or checkpoint directory."""
+        state = GlobalState()
+        mock_config = MagicMock()
+        mock_config.logger.wandb_project = "test_project"
+        mock_config.logger.wandb_exp_name = "test_experiment"
+        mock_config.logger.wandb_save_dir = None
+        mock_config.logger.wandb_entity = "test_entity"
+        mock_config.checkpoint.save = None
+        mock_config.to_dict.return_value = {"config": "data"}
+        state._cfg = mock_config
+
+        mock_wandb = MagicMock()
+
+        with (
+            patch("megatron.bridge.training.state.get_rank_safe", return_value=3),
+            patch("megatron.bridge.training.state.get_world_size_safe", return_value=4),
+            patch(
+                "builtins.__import__",
+                side_effect=lambda name, *args, **kwargs: (
+                    mock_wandb if name == "wandb" else __import__(name, *args, **kwargs)
+                ),
+            ),
+        ):
+            logger = state.wandb_logger
+
+            mock_wandb.init.assert_called_once_with(
+                dir=None,
+                name="test_experiment",
+                project="test_project",
+                config={"config": "data"},
+                entity="test_entity",
+            )
+            assert logger == mock_wandb
+            assert state._wandb_logger == mock_wandb
+
     def test_wandb_logger_property_missing_experiment_name(self):
         """Test wandb logger raises error when experiment name is empty."""
         state = GlobalState()

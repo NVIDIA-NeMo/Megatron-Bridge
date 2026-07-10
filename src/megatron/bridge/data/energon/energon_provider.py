@@ -17,8 +17,8 @@ from typing import Any, Optional
 
 from torch import int_repr
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
@@ -33,7 +33,7 @@ class EnergonProvider(DatasetProvider):
     num_workers: int_repr
     dataloader_type: str = "external"
     task_encoder: Optional[Any] = None
-    # Enable batch-level online sequence packing
+    # Enable in-batch sequence packing
     enable_in_batch_packing: bool = False
     # Active user: Qwen3-VL. Its step needs unpacked batch tensors and builds
     # packed metadata after model-specific CP/SP padding, so task encoders must
@@ -69,8 +69,12 @@ class EnergonProvider(DatasetProvider):
             num_workers=self.num_workers,
             pg_collection=context.pg_collection,
         )
+        # EnergonMultiModalDataModule.test_dataloader() returns None (no distinct test split);
+        # honor that instead of aliasing the validation loader as a fake test set, which would
+        # otherwise report validation metrics as test metrics whenever eval_iters > 0.
+        test_dataloader = dataset.test_dataloader()
         return (
             iter(dataset.train_dataloader()),
             iter(dataset.val_dataloader()),
-            iter(dataset.val_dataloader()),
+            iter(test_dataloader) if test_dataloader is not None else None,
         )

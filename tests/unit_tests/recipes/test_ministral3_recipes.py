@@ -307,27 +307,27 @@ def test_ministral3_14b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_ministral3_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_ministral3_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _ministral3_module.ministral3_3b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_ministral3_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):

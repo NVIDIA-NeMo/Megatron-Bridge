@@ -31,7 +31,7 @@ from megatron.bridge.models.conversion.transformers_compat import rope_theta_fro
 from megatron.bridge.models.glm.layer_specs import glm_layer_spec
 from megatron.bridge.models.glm_vl.model_config import GLM45VModelConfig
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 if TYPE_CHECKING:
@@ -46,7 +46,7 @@ class GLM45VBridge(MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = GLM45VModelConfig
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "GLM45VModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "GLM45VModelProvider":
         from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 
         hf_config = hf_pretrained.config

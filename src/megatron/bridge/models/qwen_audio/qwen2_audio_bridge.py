@@ -37,7 +37,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_audio.model_config import Qwen2AudioModelConfig
 from megatron.bridge.models.qwen_audio.modeling_qwen2_audio import Qwen2AudioModel
 
@@ -69,7 +69,7 @@ class Qwen2AudioBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen2AudioModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen2AudioModelProvider":
         """
         Create a Qwen2AudioModelProvider from a HuggingFace pretrained model.
 

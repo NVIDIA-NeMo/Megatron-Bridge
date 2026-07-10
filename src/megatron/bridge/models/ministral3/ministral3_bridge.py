@@ -50,7 +50,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.quantization_utils import maybe_dequantize_fp8
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.ministral3.model_config import Ministral3ModelConfig
 
 
@@ -103,7 +103,7 @@ class Ministral3Bridge(MegatronModelBridge):
 
     MODEL_CONFIG_CLASS = Ministral3ModelConfig
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Ministral3ModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Ministral3ModelProvider":
         """
         Create a Ministral3ModelProvider from a HuggingFace pretrained VL model.
 

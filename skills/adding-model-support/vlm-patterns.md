@@ -51,11 +51,11 @@ Read these from the correct config level:
     source="MyModelForConditionalGeneration",   # HF class name (string if not importable)
     target=MyVLModel,                            # Megatron model class
     model_type="my_model",                       # HF model_type for export
-)
-class MyVLBridge(MegatronModelBridge):
-    MODEL_CONFIG_CLASS = MyVLModelConfig
+  )
+  class MyVLBridge(MegatronModelBridge):
+      MODEL_CONFIG_CLASS = MyVLModelConfig
 
-    def model_config_bridge(self, hf_pretrained: PreTrainedVLM) -> MyVLModelConfig:
+      def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MyVLModelConfig:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         flat = self.hf_config_to_model_config_kwargs(text_config)
@@ -95,8 +95,7 @@ class MyVLBridge(MegatronModelBridge):
 ### Import types
 
 ```python
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM      # VLM
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM  # LLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 ```
 
 ## VLM Model Class Patterns

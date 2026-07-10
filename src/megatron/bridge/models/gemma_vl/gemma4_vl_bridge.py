@@ -58,7 +58,7 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
 )
 from megatron.bridge.models.gemma_vl.model_config import Gemma4DenseVLModelConfig, Gemma4VLModelConfig
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 # ---------------------------------------------------------------------------
@@ -82,7 +82,7 @@ class Gemma4VLBridge(Gemma4Bridge):
     """
 
     def provider_bridge(
-        self, hf_pretrained: PreTrainedVLM
+        self, hf_pretrained: PreTrainedCausalLM
     ) -> "Gemma4VLModelProvider | Gemma4DenseVLProvider | Gemma4DenseProvider":
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
@@ -152,6 +152,14 @@ class Gemma4VLBridge(Gemma4Bridge):
         provider.audio_token_id = getattr(hf_config, "audio_token_id", 258_881)
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma4VLModelProvider | Gemma4DenseVLProvider) -> dict:
+        """Convert a Gemma 4 VL provider config back to Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        final_logit_softcapping = hf_config.pop("final_logit_softcapping")
+        hf_config.setdefault("text_config", {})["final_logit_softcapping"] = final_logit_softcapping
+        return hf_config
 
     def _conversion_mode(self) -> str:
         mode = getattr(self, "gemma4_conversion_mode", None) or os.environ.get("GEMMA4_CONVERSION_MODE", "auto")
@@ -366,7 +374,7 @@ class Gemma4VLBridge(Gemma4Bridge):
         )
         return MegatronMappingRegistry(*mapping_list)
 
-    def model_config_bridge(self, hf_pretrained: PreTrainedVLM):
+    def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM):
         """Build a pure Gemma4 VL config with serialized HF tower configs."""
         from megatron.core.transformer import TransformerConfig
 

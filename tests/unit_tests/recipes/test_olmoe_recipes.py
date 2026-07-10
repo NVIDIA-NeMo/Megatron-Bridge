@@ -125,7 +125,7 @@ def _assert_basic_config(cfg):
     if hasattr(cfg.dataset, "sequence_length"):
         assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
     elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / DatasetProvider
+        assert cfg.dataset.seq_length >= 1  # GPTSFTDatasetConfig / DatasetProvider
     else:
         # Some other dataset type
         assert cfg.dataset is not None

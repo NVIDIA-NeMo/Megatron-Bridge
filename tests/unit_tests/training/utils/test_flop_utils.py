@@ -2291,6 +2291,36 @@ class TestAccumulateFlopsMetadata:
         assert state._flops_seqlen_sum == 2 * 128
         assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
 
+    @pytest.mark.parametrize("vp_size", [1, 2, 10])
+    def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size):
+        # MCore's interleaved schedule calls forward_step once for every
+        # (logical microbatch, model chunk) pair. FLOPS metadata describes the
+        # data, not a model chunk, so only VP stage 0 may contribute it.
+        state = _State()
+        num_microbatches = 4
+        tokens = torch.zeros(1, 128)
+        cu_seqlens = torch.tensor([0, 32, 128])
+
+        for vp_stage in range(vp_size):
+            for _ in range(num_microbatches):
+                accumulate_flops_metadata(
+                    state,
+                    tokens,
+                    vp_stage=vp_stage,
+                    cu_seqlens=cu_seqlens,
+                    num_vision_patches=8,
+                )
+
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state,
+            data_parallel_size=1,
+            vp_size=vp_size,
+            dp_group=None,
+        )
+        assert seqlen_sum == num_microbatches * 128
+        assert seqlen_sq_sum == num_microbatches * (32**2 + 96**2)
+        assert vision == num_microbatches * 8
+
     def test_tokens_none_is_noop(self):
         state = _State()
         accumulate_flops_metadata(state, None)

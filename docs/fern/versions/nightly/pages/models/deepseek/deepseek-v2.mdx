@@ -109,15 +109,16 @@ See: [bridge.recipes.deepseek.deepseek_v2](../../apidocs/bridge/bridge.recipes.d
 ```python
 from megatron.bridge.recipes.deepseek import deepseek_v2_lite_pretrain_config
 
-config = deepseek_v2_lite_pretrain_config(
-    name="deepseek_v2_lite_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/deepseek_v2_lite",
-    train_iters=500_000,
-    global_batch_size=512,
-    seq_length=4096,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
-)
+config = deepseek_v2_lite_pretrain_config()
+config.dataset.blend = [["/path/to/dataset_text_document"], None]
+config.checkpoint.save = "/results/deepseek_v2_lite/checkpoints"
+config.checkpoint.load = "/results/deepseek_v2_lite/checkpoints"
+config.logger.tensorboard_dir = "/results/deepseek_v2_lite/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 512
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 ```
 
 #### DeepSeek-V2 (236B)
@@ -125,15 +126,16 @@ config = deepseek_v2_lite_pretrain_config(
 ```python
 from megatron.bridge.recipes.deepseek import deepseek_v2_pretrain_config
 
-config = deepseek_v2_pretrain_config(
-    name="deepseek_v2_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/deepseek_v2",
-    train_iters=500_000,
-    global_batch_size=512,
-    seq_length=4096,
-    # Uses TP=1, PP=4, EP=32 (128 GPUs) automatically
-)
+config = deepseek_v2_pretrain_config()
+config.dataset.blend = [["/path/to/dataset_text_document"], None]
+config.checkpoint.save = "/results/deepseek_v2/checkpoints"
+config.checkpoint.load = "/results/deepseek_v2/checkpoints"
+config.logger.tensorboard_dir = "/results/deepseek_v2/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 512
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=1, PP=4, EP=32 (128 GPUs) automatically
 ```
 
 ### Finetuning Recipes

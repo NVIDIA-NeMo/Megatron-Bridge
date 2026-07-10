@@ -41,7 +41,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35Bridge,
     Qwen35MoEBridge,
@@ -192,7 +192,7 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         )
         return kwargs
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen35VLMoEModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen35VLMoEModelProvider":
         """
         Create a Qwen35VLMoEModelProvider from a HuggingFace pretrained model.
 
@@ -358,7 +358,7 @@ class Qwen35VLBridge(MegatronModelBridge):
         )
         return kwargs
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen35VLModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen35VLModelProvider":
         """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
         from megatron.bridge.models.qwen_vl.qwen35_vl_provider import Qwen35VLModelProvider
 

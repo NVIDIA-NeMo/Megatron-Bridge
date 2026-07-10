@@ -70,7 +70,7 @@ def test_llama_readme_gptdataset_field_name():
     # Source anchor: the dataset config key is `sequence_length` (see training/config.py).
     assert '"sequence_length"' in _read(TRAINING_CONFIG), "sequence_length not found in config source"
     text = _read(LLAMA_README)
-    # Scope to the GPTDatasetConfig block only (the FinetuningDatasetConfig block
+    # Scope to the GPTDatasetConfig block only (the GPTSFTDatasetConfig block
     # legitimately uses `seq_length`).
     m = re.search(r"#\s*GPTDatasetConfig\b(.*?)(?:\n\s*\n)", text, re.DOTALL)
     assert m, "could not locate GPTDatasetConfig YAML block"

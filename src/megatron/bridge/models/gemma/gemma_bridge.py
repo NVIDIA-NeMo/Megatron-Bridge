@@ -15,6 +15,7 @@
 from typing import Any
 
 import torch
+from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.transformer.enums import AttnBackend
 from transformers import GemmaForCausalLM
@@ -68,7 +69,11 @@ class GemmaBridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
 
         provider.normalization = "RMSNorm"
-        provider.activation_func = self.hf_to_megatron_activation("gelu")
+        # Gemma uses tanh-approximate GELU (HF `gelu_pytorch_tanh`). The gemma-1 HF config
+        # carries the legacy `hidden_act="gelu"` field, but the model runs the tanh approximation
+        # (matching GemmaModelProvider's fast_gelu default and Gemma2Bridge). Mapping the literal
+        # "gelu" to exact GELU here would silently use the wrong activation.
+        provider.activation_func = fast_gelu
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
         provider.attention_dropout = 0.0
@@ -91,7 +96,7 @@ class GemmaBridge(MegatronModelBridge):
         config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
         config_kwargs.update(
             normalization="RMSNorm",
-            activation_func=self.hf_to_megatron_activation("gelu"),
+            activation_func=fast_gelu,
             gated_linear_unit=True,
             add_bias_linear=False,
             attention_dropout=0.0,

@@ -16,8 +16,13 @@
 
 from typing import Any
 
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_datasets.text_sft_provider import HFTextSFTDatasetProvider
+from megatron.bridge.data.builders import (
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
+)
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
@@ -51,13 +56,13 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def _text_hf_dataset_provider(
+def _text_hf_dataset_config(
     *,
     seq_length: int,
-    maker_name: str,
-    maker_kwargs: dict[str, Any],
-    val_maker_kwargs: dict[str, Any] | None = None,
-    test_maker_kwargs: dict[str, Any] | None = None,
+    source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
+    validation_source: HFDatasetSourceConfig | None = None,
+    test_source: HFDatasetSourceConfig | None = None,
     do_validation: bool = True,
     do_test: bool = False,
     enable_offline_packing: bool = False,
@@ -65,20 +70,21 @@ def _text_hf_dataset_provider(
     dataset_kwargs: dict[str, Any] | None = None,
     val_proportion: float | None = None,
     num_workers: int = 2,
-) -> HFTextSFTDatasetProvider:
-    """Create an HF-backed text SFT provider with optional offline packing."""
-    return HFTextSFTDatasetProvider(
+) -> GPTSFTDatasetConfig:
+    """Create an HF-backed text SFT config with optional offline packing."""
+    return GPTSFTDatasetConfig(
         seq_length=seq_length,
-        maker_name=maker_name,
-        maker_kwargs=maker_kwargs,
-        val_maker_kwargs=val_maker_kwargs,
-        test_maker_kwargs=test_maker_kwargs,
+        hf_dataset=source,
+        hf_validation_dataset=validation_source,
+        hf_test_dataset=test_source,
+        hf_validation_proportion=val_proportion,
         do_validation=do_validation,
         do_test=do_test,
+        preprocessing=preprocessing,
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
         dataset_kwargs=dataset_kwargs,
-        val_proportion=val_proportion,
+        seed=5678,
         dataloader_type="batch",
         num_workers=num_workers,
         data_sharding=True,
@@ -89,7 +95,7 @@ def _text_hf_dataset_provider(
 
 def default_squad_config(
     seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1
-) -> HFTextSFTDatasetProvider:
+) -> GPTSFTDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
@@ -99,7 +105,7 @@ def default_squad_config(
             (set to `2 * context_parallel_size` for THD CP runs).
 
     Returns:
-        HFTextSFTDatasetProvider configured for SQuAD finetuning
+        GPTSFTDatasetConfig configured for SQuAD finetuning
 
     Note:
         Uses consistent settings across all finetuning recipes:
@@ -107,18 +113,15 @@ def default_squad_config(
         - 10% validation slice
         - Seed 5678 (different from pretrain seed 1234)
     """
-    dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
+    dataset_kwargs = {}
     offline_packing_specs = None
     if packed_sequence:
         dataset_kwargs["pad_to_max_length"] = True
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return _text_hf_dataset_provider(
-        maker_name="squad",
-        maker_kwargs={
-            "path_or_dataset": "rajpurkar/squad",
-            "split": "train",
-        },
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
@@ -132,18 +135,15 @@ def default_openmathinstruct2_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFTextSFTDatasetProvider:
+) -> GPTSFTDatasetConfig:
     """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
     offline_packing_specs = None
     if packed_sequence:
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return _text_hf_dataset_provider(
-        maker_name="openmathinstruct2",
-        maker_kwargs={
-            "path_or_dataset": "nvidia/OpenMathInstruct-2",
-            "split": "train_1M",
-        },
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
@@ -156,7 +156,7 @@ def default_gsm8k_config(
     seq_length: int = 2048,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFTextSFTDatasetProvider:
+) -> GPTSFTDatasetConfig:
     """Create default GSM8K dataset configuration for finetuning recipes.
 
     GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse
@@ -168,7 +168,7 @@ def default_gsm8k_config(
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing.
 
     Returns:
-        HFTextSFTDatasetProvider configured for GSM8K finetuning
+        GPTSFTDatasetConfig configured for GSM8K finetuning
 
     Note:
         - GSM8K has 7,473 train and 1,319 test examples
@@ -178,14 +178,10 @@ def default_gsm8k_config(
     if packed_sequence:
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return _text_hf_dataset_provider(
-        maker_name="gsm8k",
-        maker_kwargs={
-            "path_or_dataset": "openai/gsm8k",
-            "subset": "main",
-            "split": "train",
-        },
-        test_maker_kwargs={"split": "test"},
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="gsm8k"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
         do_validation=False,
         do_test=True,
         seq_length=seq_length,
@@ -199,7 +195,7 @@ def default_openmathinstruct2_thinking_packed_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFTextSFTDatasetProvider:
+) -> GPTSFTDatasetConfig:
     """Create OpenMathInstruct-2 dataset config with CoT in analysis channel, answer in final channel.
 
     Puts generated_solution (minus the trailing \boxed{N}) into the assistant thinking field
@@ -216,5 +212,6 @@ def default_openmathinstruct2_thinking_packed_config(
         packed_sequence=packed_sequence,
         pad_seq_to_mult=pad_seq_to_mult,
     )
-    cfg.maker_name = "openmathinstruct2_thinking"
+    assert cfg.hf_dataset is not None
+    cfg.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
     return cfg

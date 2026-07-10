@@ -23,7 +23,7 @@ from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni.model_config import NemotronOmniModelBuilder, NemotronOmniModelConfig
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
@@ -115,7 +115,7 @@ def test_public_nemotron_omni_architecture_is_registered():
 
 def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     hf_config = _mock_omni_hf_config()
-    hf_pretrained = Mock(spec=PreTrainedVLM)
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = hf_config
 
     provider = NemotronOmniBridge().provider_bridge(hf_pretrained)
@@ -146,7 +146,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
 
 
 def test_nemotron_omni_builder_constructs_sound_and_video_paths(monkeypatch):
-    hf_pretrained = Mock(spec=PreTrainedVLM)
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = _mock_omni_hf_config()
     config = NemotronOmniBridge().model_config_bridge(hf_pretrained)
     assert isinstance(config, NemotronOmniModelConfig)
@@ -214,7 +214,7 @@ def test_nemotron_omni_config_defaults_to_omni_runtime_family():
 
 
 def test_nemotron_omni_bridge_config_roundtrips_exact_mcore_config():
-    hf_pretrained = Mock(spec=PreTrainedVLM)
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
     hf_pretrained.config = _mock_omni_hf_config()
     config = NemotronOmniBridge().model_config_bridge(hf_pretrained)
 

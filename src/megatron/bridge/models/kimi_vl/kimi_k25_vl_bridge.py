@@ -30,7 +30,7 @@ from megatron.bridge.models.conversion.quantization_utils import (
     quantize_to_int4,
 )
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi.kimi_bridge import KimiK2Bridge
 from megatron.bridge.models.kimi_vl.model_config import KimiK25VLModelConfig
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
@@ -65,7 +65,7 @@ class KimiK25VLBridge(MegatronModelBridge):
     MODEL_CONFIG_CLASS = KimiK25VLModelConfig
     TRANSFORMER_CONFIG_CLASS = KimiK2Bridge.TRANSFORMER_CONFIG_CLASS
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "KimiK25VLModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "KimiK25VLModelProvider":
         from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 
         hf_config = hf_pretrained.config
@@ -136,7 +136,7 @@ class KimiK25VLBridge(MegatronModelBridge):
 
         # VL-specific overrides
         provider.vision_config = vision_config
-        provider.hf_model_path = hf_pretrained._model_name_or_path
+        provider.hf_model_path = hf_pretrained.model_name_or_path
         provider.trust_remote_code = bool(getattr(hf_pretrained, "trust_remote_code", False))
         provider.generation_config = hf_pretrained.generation_config
 
@@ -176,12 +176,13 @@ class KimiK25VLBridge(MegatronModelBridge):
         )
         return config_kwargs
 
-    def model_config_bridge(self, hf_pretrained: PreTrainedVLM) -> KimiK25VLModelConfig:
+    def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK25VLModelConfig:
         """Create Kimi's serializable multimodal build config."""
         result = super().model_config_bridge(hf_pretrained)
         if not isinstance(result, KimiK25VLModelConfig):
             raise TypeError(f"Expected KimiK25VLModelConfig, got {type(result).__name__}.")
-        result.hf_model_id = hf_pretrained._model_name_or_path
+        hf_model_path = hf_pretrained.model_name_or_path
+        result.hf_model_id = str(hf_model_path) if hf_model_path is not None else ""
         result.trust_remote_code = bool(getattr(hf_pretrained, "trust_remote_code", False))
         generation_config = getattr(hf_pretrained, "generation_config", None)
         result.generation_config = generation_config.to_dict() if hasattr(generation_config, "to_dict") else None
@@ -280,12 +281,6 @@ class KimiK25VLBridge(MegatronModelBridge):
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = get_common_mapping_list()
-        param_mappings = {
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-        }
-
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
 
         # In HF Kimi K2.5 VL models, the language component is nested under
         # "language_model.model" instead of just "model", so we need to add the prefix.

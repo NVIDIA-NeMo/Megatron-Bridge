@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_vl.model_config import Qwen25VLModelConfig
 from megatron.bridge.models.qwen_vl.modeling_qwen25_vl import Qwen25VLModel
 
@@ -53,7 +53,7 @@ class Qwen25VLBridge(MegatronModelBridge):
         >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> "Qwen25VLModelProvider":
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen25VLModelProvider":
         from megatron.bridge.models.qwen_vl.qwen25_vl_provider import Qwen25VLModelProvider
 
         hf_config = hf_pretrained.config

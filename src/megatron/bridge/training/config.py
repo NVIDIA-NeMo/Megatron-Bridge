@@ -17,7 +17,6 @@ import logging
 import math
 import os
 import warnings
-from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple, Union
@@ -31,7 +30,6 @@ from megatron.core.optimizer import (
     ParamKey,
     get_standard_config_overrides,
 )
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -45,7 +43,24 @@ from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.base import (
+    DataloaderConfig,
+    DatasetProvider,
+)
+from megatron.bridge.data.base import (
+    DatasetBuildContext as DatasetBuildContext,
+)
+from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
+
+# Deprecated training.config import compatibility. New code imports dataset
+# Config + Builder APIs from megatron.bridge.data.builders.
+from megatron.bridge.data.builders.gpt_sft import (
+    FinetuningDatasetConfig as FinetuningDatasetConfig,
+)
+from megatron.bridge.data.builders.gpt_sft import (
+    GPTSFTDatasetConfig,
+)
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -57,7 +72,6 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
@@ -171,61 +185,6 @@ class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
     this multiple of the max observed loss over the sample window."""
 
 
-@dataclass(kw_only=True)
-class DataloaderConfig:
-    """Base configuration for data loading."""
-
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
-    """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
-    'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
-
-    num_workers: int = 2
-    """Dataloader number of workers."""
-
-    data_sharding: bool = True
-    """Disable data sharding."""
-
-    pin_memory: bool = True
-    """Whether to pin memory during data loading for faster GPU training."""
-
-    drop_last: bool = True
-    """Whether to drop the last incomplete batch."""
-
-    persistent_workers: bool = True
-    """Whether to keep data loading workers persistent across epochs.
-    Automatically set to False when num_workers is 0."""
-
-    trust_remote_code: Optional[bool] = None
-    """Whether remote code execution should be trusted for a given HF path."""
-
-    def finalize(self):
-        """Finalize dataloader config field constraints."""
-        if self.num_workers == 0 and self.persistent_workers:
-            self.persistent_workers = False
-
-
-@dataclass(frozen=True)
-class DatasetBuildContext:
-    """Interface that encapsulates framework internals.
-
-    This context provides metadata needed to build datasets
-    while hiding implementation details of the framework.
-
-    Attributes:
-        train_samples: Number of samples for training dataset
-        valid_samples: Number of samples for validation dataset
-        test_samples: Number of samples for test dataset
-        tokenizer: Optional tokenizer instance for text processing
-        pg_collection: Optional process group collection for distributed training
-    """
-
-    train_samples: int
-    valid_samples: int
-    test_samples: int
-    tokenizer: Optional[MegatronTokenizer] = None
-    pg_collection: Optional[ProcessGroupCollection] = None
-
-
 @dataclass(frozen=True)
 class OptimizerConfigOverrideProviderContext:
     """Context for providing config overrides."""
@@ -253,53 +212,6 @@ class OptimizerConfigOverrideProvider:
         """
         config_overrides = get_standard_config_overrides(config=context.optimizer_config)
         return config_overrides if config_overrides else None
-
-
-@dataclass
-class DatasetProvider(DataloaderConfig, ABC):
-    """Abstract base class for custom dataset configurations.
-
-    Provides an interface for users to implement their own dataset builders
-    while automatically inheriting all DataloaderConfig functionality.
-
-    Users must:
-    1. Inherit from this class
-    2. Implement the build_datasets() method
-
-    Example:
-        @dataclass
-        class S3DatasetConfig(DatasetProvider):
-            bucket_name: str
-            data_prefix: str
-            seq_length: int
-
-            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-                # Custom implementation to load data from S3
-                train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
-                valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
-                test_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/test", context.tokenizer)
-                return train_ds, valid_ds, test_ds
-    """
-
-    @abstractmethod
-    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-        """Build train, validation, and test datasets.
-
-        This method is called by the framework during dataset initialization.
-        Implementations should use the provided context to create appropriate
-        datasets for each split.
-
-        Args:
-            context: Build context with sample counts and tokenizer
-
-        Returns:
-            Tuple of (train_dataset, valid_dataset, test_dataset)
-            Any element can be None if that split shouldn't be created.
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        pass
 
 
 @dataclass
@@ -462,29 +374,6 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
         self.__dict__.pop("blend_per_split", None)
 
         return super().finalize()
-
-
-@dataclass(kw_only=True)
-class FinetuningDatasetConfig(DataloaderConfig):
-    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig.
-
-    Note: For fine-tuning, dataloader_type defaults to 'batch' which ensures sequences
-    within each global batch are padded to the same length.
-    """
-
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
-    """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
-
-    dataset_root: Optional[Union[str, Path]] = None
-    seq_length: int
-    seed: int = 1234
-    memmap_workers: int = 1
-    max_train_samples: Optional[int] = None
-    enable_offline_packing: bool = False
-    offline_packing_specs: Optional[PackedSequenceSpecs] = None
-    dataset_kwargs: Optional[dict[str, Any]] = None
-    do_validation: bool = True
-    do_test: bool = True
 
 
 @dataclass(kw_only=True)
@@ -1065,7 +954,7 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
+    dataset: GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | DatasetProvider
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1210,9 +1099,9 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
-        if self.train.num_epochs is not None and not isinstance(self.dataset, FinetuningDatasetConfig):
+        if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
-                "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+                "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
                 "providers may build a requested number of samples instead of exposing their true dataset size."
             )
         if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
@@ -1229,12 +1118,34 @@ class ConfigContainer(Container):
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
 
+        # Validate declarative Direct-HF values before deriving runtime padding
+        # multiples so normalization cannot hide an invalid user value.
+        if isinstance(self.dataset, DirectHFSFTDatasetConfig):
+            self.dataset.validate()
+
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
                 getattr(self.model, "pipeline_model_parallel_size", 1) > 1
                 or getattr(self.model, "expert_model_parallel_size", 1) > 1
             )
             self.dataset.pad_to_max_length = requires_fixed_seq_len
+
+        cp_size = getattr(self.model, "context_parallel_size", 1)
+        eval_cp_size = self.dist.eval_context_parallel_size
+        cp_sizes = {cp_size, eval_cp_size} if eval_cp_size is not None else {cp_size}
+        tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+        has_sp = getattr(self.model, "sequence_parallel", False)
+        cp_multiples = [2 * size if size > 1 else 1 for size in cp_sizes]
+        sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
+        collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
+        if (
+            isinstance(self.dataset, DirectHFSFTDatasetConfig)
+            and self.dataset.seq_length % collate_padding_multiple != 0
+        ):
+            raise ValueError(
+                "DirectHFSFTDatasetConfig.seq_length must be divisible by the CP/SP collate padding multiple "
+                f"({collate_padding_multiple})."
+            )
 
         # Propagate in-batch packing state to the transformer that owns pipeline
         # communication settings. Builder-backed configs keep an exact MCore
@@ -1246,12 +1157,12 @@ class ConfigContainer(Container):
             if getattr(transformer_config, "pipeline_model_parallel_size", 1) > 1:
                 transformer_config.variable_seq_lengths = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
-                cp_size = getattr(self.model, "context_parallel_size", 1)
-                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
-                has_sp = getattr(self.model, "sequence_parallel", False)
-                cp_multiple = 2 * cp_size if cp_size > 1 else 1
-                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
-                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
+                self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
+        elif isinstance(self.dataset, DirectHFSFTDatasetConfig):
+            self.dataset.pad_to_multiple_of = math.lcm(
+                self.dataset.pad_to_multiple_of,
+                collate_padding_multiple,
+            )
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1407,7 +1318,7 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, FinetuningDatasetConfig):
+            if isinstance(self.dataset, (GPTSFTDatasetConfig, DirectHFSFTDatasetConfig)):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1451,14 +1362,10 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            # Only validate sequence length for GPTDatasetConfig or FinetuningDatasetConfig
+            # Only validate sequence length for canonical dataset configs.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, FinetuningDatasetConfig)):
-                data_seq_length = (
-                    self.dataset.seq_length
-                    if isinstance(self.dataset, FinetuningDatasetConfig)
-                    else self.dataset.seq_length
-                )
+            if isinstance(self.dataset, (GPTDatasetConfig, GPTSFTDatasetConfig, DirectHFSFTDatasetConfig)):
+                data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (
                     f"Please ensure sequence length configuration in model config and "

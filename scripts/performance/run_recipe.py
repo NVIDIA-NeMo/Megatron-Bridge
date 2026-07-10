@@ -258,7 +258,7 @@ def main():
             from megatron.bridge.training.gpt_step import forward_step
 
         pretrain(config=recipe, forward_step_func=forward_step)
-    elif args.task in ["sft", "lora"]:
+    elif args.task in ["sft", "peft"]:
         logging.info("Starting finetuning")
         from megatron.bridge.training.finetune import finetune
 

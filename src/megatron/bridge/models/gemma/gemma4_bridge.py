@@ -253,6 +253,7 @@ class Gemma4Bridge(MegatronModelBridge):
             num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
             per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
+            final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", None),
             bf16=True,
         )
 
@@ -300,6 +301,13 @@ class Gemma4Bridge(MegatronModelBridge):
         provider.make_vocab_size_divisible_by = 128
 
         return provider
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict:
+        """Convert a Gemma 4 provider config back to Hugging Face config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+        return hf_config
 
     def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
         """Un-fuse fused weights and drop synthesized keys on export."""

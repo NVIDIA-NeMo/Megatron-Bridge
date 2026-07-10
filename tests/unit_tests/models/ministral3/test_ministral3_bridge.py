@@ -22,7 +22,7 @@ from transformers import Mistral3Config
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 from megatron.bridge.models.ministral3.model_config import Ministral3ModelBuilder, Ministral3ModelConfig
@@ -80,7 +80,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 
@@ -361,7 +361,7 @@ class TestMinistral3BridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, ministral3_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config
@@ -502,7 +502,7 @@ class TestMinistral3BridgeCompatibility:
     def test_provider_bridge_uses_composite_config_contract(self, ministral3_bridge):
         """Test the real composite config maps text dimensions and top-level fields."""
         hf_config = self._composite_config()
-        hf_pretrained = Mock(spec=PreTrainedVLM)
+        hf_pretrained = Mock(spec=PreTrainedCausalLM)
         hf_pretrained.config = hf_config
 
         provider = ministral3_bridge.provider_bridge(hf_pretrained)
@@ -525,7 +525,7 @@ class TestMinistral3BridgeCompatibility:
     def test_model_config_bridge_preserves_composite_dimensions_and_top_level_fields(self, ministral3_bridge):
         """Test the primary builder path carries the same composite-config contract."""
         hf_config = self._composite_config()
-        hf_pretrained = Mock(spec=PreTrainedVLM)
+        hf_pretrained = Mock(spec=PreTrainedCausalLM)
         hf_pretrained.config = hf_config
 
         model_config = ministral3_bridge.model_config_bridge(hf_pretrained)
@@ -584,7 +584,7 @@ class TestMinistral3BridgeCompatibility:
                 "image_size": 28,
             },
         )
-        checkpoint_pretrained = Mock(spec=PreTrainedVLM)
+        checkpoint_pretrained = Mock(spec=PreTrainedCausalLM)
         checkpoint_pretrained.config = checkpoint_config
         checkpoint_model_config = ministral3_bridge.model_config_bridge(checkpoint_pretrained)
 

@@ -4,6 +4,34 @@ This directory contains example scripts that demonstrate how to use the Megatron
 
 ## Available Scripts
 
+### `create_hf_toy_model.py` - Preserve Weights in a Shallow Test Checkpoint
+
+Creates a smaller checkpoint by retaining the first transformer layers from an
+existing Hugging Face safetensors checkpoint. Unlike a randomly initialized toy
+model, the retained tensors are byte-for-byte identical to the source, which is
+useful for conversion, checkpoint, and numerical-parity tests.
+
+The tool accepts either a local checkpoint directory or a Hugging Face model ID,
+supports sharded checkpoints, updates the safetensors index, and copies tokenizer
+and model metadata. It streams tensor bytes instead of loading the checkpoint into
+CPU or GPU memory.
+
+```bash
+# Qwen3 example: retain the first four layers
+uv run python examples/conversion/create_hf_toy_model.py \
+  Qwen/Qwen3-0.6B \
+  /tmp/qwen3-0.6b-4layers \
+  --num-hidden-layers 4
+
+# Verify that Megatron Bridge can import and export the result
+uv run python examples/conversion/hf_megatron_roundtrip.py \
+  --hf-model-id /tmp/qwen3-0.6b-4layers \
+  --output-dir /tmp/qwen3-roundtrip
+```
+
+This utility currently targets decoder-only checkpoints with a top-level
+`num_hidden_layers` config field and tensor names containing `layers.<index>`.
+
 ### 1. `hf_megatron_roundtrip.py` - Two-Way Model Conversion
 
 Demonstrates round-trip conversion between HuggingFace and Megatron-LM model formats.

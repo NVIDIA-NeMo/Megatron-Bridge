@@ -42,7 +42,7 @@ Usage:
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
             --recipe llama32_1b_sft_config \\
             --dataset llm-finetune \\
-            dataset.dataset_name=gsm8k
+            dataset.hf_dataset.dataset_name=gsm8k
 
     Finetune (user-supplied JSONL):
         uv run torchrun --nproc_per_node=8 run_recipe.py \\
@@ -67,7 +67,7 @@ Usage:
             --recipe qwen3_vl_8b_peft_config \\
             --dataset vlm-hf \\
             --step_func qwen3_vl_step \\
-            dataset.maker_name=cord_v2 \\
+            dataset.source.dataset_name=cord_v2 \\
             dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
             checkpoint.pretrained_checkpoint=/path/to/checkpoint
 
@@ -152,8 +152,8 @@ TRAIN_FUNCTIONS = {
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
 ERR_INFER_MODE_FAILED = (
     "Unable to infer training mode. "
-    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
-    "(or 'sft'/'peft') in the recipe name."
+    "Pass --dataset to specify the dataset type, or include 'pretrain', 'sft', or 'peft' "
+    "in the recipe name."
 )
 
 
@@ -179,11 +179,11 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
             "LLM datasets:\n"
             "  llm-pretrain           GPT pretrain data (set dataset.blend=<path>)\n"
             "  llm-pretrain-mock      Mock pretrain data for testing\n"
-            "  llm-finetune           HF finetune dataset (set dataset.dataset_name=squad|gsm8k|openmathinstruct2)\n"
+            "  llm-finetune           HF finetune dataset (set dataset.hf_dataset.dataset_name=<preset>)\n"
             "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
             "VLM datasets:\n"
             "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
-            "  vlm-hf                 HF VLM dataset (set dataset.maker_name=<name>)\n"
+            "  vlm-hf                 Direct HF SFT (set dataset.source.dataset_name=<preset>)\n"
             "  vlm-preloaded          User-supplied VLM JSON (set dataset.train_data_path=<path>)"
         ),
     )
@@ -282,8 +282,8 @@ def infer_train_mode(recipe_name: str) -> str:
     """Infer training mode from the recipe name (fallback when --dataset is not passed)."""
     lowered = recipe_name.lower()
     has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
-    if has_pretrain ^ has_finetune:
+    has_sft_or_peft = "sft" in lowered or "peft" in lowered
+    if has_pretrain ^ has_sft_or_peft:
         return "pretrain" if has_pretrain else "finetune"
     raise ValueError(ERR_INFER_MODE_FAILED)
 

@@ -23,7 +23,6 @@ from megatron.core.transformer.transformer_config import MLATransformerConfig
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
@@ -177,12 +176,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = get_common_mapping_list(hf_config=self.hf_config)
-        mapping_list.append(
-            AutoMapping(
-                megatron_param="decoder.layers.*.mlp.router.expert_bias",
-                hf_param="model.layers.*.mlp.gate.e_score_correction_bias",
-            )
-        )
         return MegatronMappingRegistry(*mapping_list)
 
     def maybe_modify_loaded_hf_weight(
