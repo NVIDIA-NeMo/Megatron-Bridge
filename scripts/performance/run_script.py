@@ -25,8 +25,6 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, cast
 
 from argument_parser import parse_cli_args
-from perf_plugins import PerfEnvPlugin
-from utils.utils import _workload_base_config_from_recipe
 from utils.utils import get_perf_recipe_by_name as get_perf_recipe_for_environment
 
 
@@ -129,19 +127,22 @@ def get_perf_recipe_by_name(
     return recipe_fn()
 
 
-class _EnvironmentExecutor:
-    """Minimal executor adapter for ``PerfEnvPlugin`` environment setup."""
-
-    def __init__(self) -> None:
-        self.env_vars = os.environ
-
-
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply the same CLI and argparse overrides in both self-exec passes."""
     from utils.overrides import set_cli_overrides, set_user_overrides
 
     recipe = set_cli_overrides(recipe, cli_overrides)
     return set_user_overrides(recipe, args)
+
+
+def _apply_recipe_environment(recipe: "ConfigContainer") -> None:
+    """Install recipe environment defaults without importing the training stack."""
+    for name, value in recipe.env_vars.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Environment variable names must be non-empty strings.")
+        if not isinstance(value, (str, int, float, bool)):
+            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        os.environ.setdefault(name, str(value))
 
 
 def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
@@ -155,11 +156,7 @@ def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
         config_variant=args.config_variant,
     )
     recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
-    workload_base_config = _workload_base_config_from_recipe(recipe, num_gpus=args.num_gpus)
-    plugin = PerfEnvPlugin(
-        deterministic=args.deterministic,
-    )
-    plugin.setup_recipe_environment(None, _EnvironmentExecutor(), workload_base_config)
+    _apply_recipe_environment(recipe)
 
     environment = dict(os.environ)
     # exec preserves the PID. Binding the marker to it prevents an inherited
@@ -174,7 +171,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
     from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
     from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-    from megatron.bridge.training.config import apply_environment_variables, runtime_config_update
+    from megatron.bridge.training.config import runtime_config_update
     from megatron.bridge.training.gpt_step import forward_step
     from megatron.bridge.training.pretrain import pretrain
     from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
@@ -189,7 +186,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
     )
 
     recipe = _apply_perf_recipe_overrides(recipe, cli_overrides, args)
-    apply_environment_variables(recipe)
+    _apply_recipe_environment(recipe)
 
     if args.dump_env:
         _dump_env_rank0()

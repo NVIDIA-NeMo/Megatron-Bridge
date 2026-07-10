@@ -25,6 +25,18 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 import run_script
+import setup_experiment
+
+
+def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
+    assert setup_experiment._filter_run_script_args(
+        [
+            "--enable_vboost",
+            "true",
+            "--lock_gpu_freq=1200",
+            "--deterministic",
+        ]
+    ) == ["--deterministic"]
 
 
 def test_setup_experiment_uses_run_script_for_every_perf_workload():
@@ -66,8 +78,7 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
         deterministic=False,
     )
     parser = SimpleNamespace(parse_known_args=lambda: (args, []))
-    recipe = SimpleNamespace()
-    workload = SimpleNamespace()
+    recipe = SimpleNamespace(env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 1})
     calls = []
 
     monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
@@ -76,33 +87,40 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
         calls.append(("recipe", kwargs))
         return recipe
 
-    def build_workload(config, *, num_gpus):
-        calls.append(("workload", config, num_gpus))
-        return workload
-
-    class FakePerfEnvPlugin:
-        def __init__(self, **kwargs):
-            calls.append(("plugin", kwargs))
-
-        def setup_recipe_environment(self, task, executor, config):
-            calls.append(("environment", task, executor, config))
-
     def exec_runner(executable, argv, env):
         calls.append(("exec", executable, argv, env))
 
     monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", get_recipe)
     monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda config, _overrides, _args: config)
-    monkeypatch.setattr(run_script, "_workload_base_config_from_recipe", build_workload)
-    monkeypatch.setattr(run_script, "PerfEnvPlugin", FakePerfEnvPlugin)
+    monkeypatch.setattr(run_script, "_apply_recipe_environment", lambda config: calls.append(("environment", config)))
     monkeypatch.setattr(run_script.os, "execvpe", exec_runner)
 
     run_script.main()
 
-    assert [call[0] for call in calls] == ["recipe", "workload", "plugin", "environment", "exec"]
-    assert calls[1] == ("workload", recipe, 8)
-    assert calls[3][3] is workload
-    assert calls[4][2][1].endswith("run_script.py")
-    assert calls[4][3][run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
+    assert [call[0] for call in calls] == ["recipe", "environment", "exec"]
+    assert calls[1] == ("environment", recipe)
+    assert calls[2][2][1].endswith("run_script.py")
+    assert calls[2][3][run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
+
+
+def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
+    executor = SimpleNamespace(
+        nodes=2,
+        tunnel=SimpleNamespace(job_dir="/job/dir"),
+        setup_lines="existing setup\n",
+    )
+
+    setup_experiment._configure_slurm_gpu_tuning(
+        executor,
+        enable_vboost=True,
+        lock_gpu_freq=1200,
+    )
+
+    assert executor.setup_lines.startswith("existing setup\n")
+    assert "sudo nvidia-smi boost-slider --vboost 1" in executor.setup_lines
+    assert "--ntasks=2" in executor.setup_lines
+    assert "sudo nvidia-smi -lgc 1200" in executor.setup_lines
+    assert "--ntasks-per-node=1" in executor.setup_lines
 
 
 def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):

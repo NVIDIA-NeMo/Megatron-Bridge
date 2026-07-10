@@ -813,14 +813,15 @@ def llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config() -> ConfigContaine
 
     Wraps :func:`llama3_70b_pretrain_config` and applies
     :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
-    Bit-exact reproducibility also requires the executor-side env vars set by
-    ``PerfEnvPlugin(deterministic=True)``.
     """
     cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
     apply_determinism_overrides(cfg)
-    # Keep the complete process environment visible on the recipe.
+    # Keep the complete deterministic process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_LIBRARY_ENV_VARS,
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 
@@ -1300,14 +1301,15 @@ def llama31_405b_pretrain_256gpu_h100_bf16_deterministic_config() -> ConfigConta
 
     Wraps :func:`llama31_405b_pretrain_config` and applies
     :func:`~megatron.bridge.recipes.utils.determinism_utils.apply_determinism_overrides`.
-    Bit-exact reproducibility also requires the executor-side env vars set by
-    ``PerfEnvPlugin(deterministic=True)``.
     """
     cfg = llama31_405b_pretrain_256gpu_h100_bf16_config()
     apply_determinism_overrides(cfg)
-    # Keep the complete process environment visible on the recipe.
+    # Keep the complete deterministic process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_LIBRARY_ENV_VARS,
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
     return cfg
 

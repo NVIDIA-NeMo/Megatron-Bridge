@@ -183,8 +183,25 @@ def test_workload_base_config_copies_recipe_environment():
     assert workload_config.env_vars is not recipe_env
 
 
+def test_perf_runner_environment_preserves_process_values(monkeypatch):
+    recipe = SimpleNamespace(env_vars={"RECIPE_DEFAULT": 1, "LAUNCHER_VALUE": "recipe"})
+    monkeypatch.delenv("RECIPE_DEFAULT", raising=False)
+    monkeypatch.setenv("LAUNCHER_VALUE", "launcher")
+
+    run_script._apply_recipe_environment(recipe)
+
+    assert run_script.os.environ["RECIPE_DEFAULT"] == "1"
+    assert run_script.os.environ["LAUNCHER_VALUE"] == "launcher"
+
+
+@pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
+def test_perf_runner_environment_rejects_invalid_values(env_vars):
+    with pytest.raises((TypeError, ValueError)):
+        run_script._apply_recipe_environment(SimpleNamespace(env_vars=env_vars))
+
+
 def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch):
-    """Hydra env overrides must be reflected in the pre-exec workload config."""
+    """Hydra env overrides must be reflected in the pre-exec process environment."""
     args = SimpleNamespace(
         model_family_name=None,
         model_recipe_name="deepseek_v3",
@@ -204,7 +221,6 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
     cli_overrides = ["++env_vars={TORCHINDUCTOR_WORKER_START:spawn}"]
     base_recipe = SimpleNamespace(env_vars={"TORCHINDUCTOR_WORKER_START": "fork"})
     effective_recipe = SimpleNamespace(env_vars={"TORCHINDUCTOR_WORKER_START": "spawn"})
-    workload_config = SimpleNamespace()
     calls = []
 
     monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", lambda **kwargs: base_recipe)
@@ -213,29 +229,16 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
         calls.append(("overrides", recipe, overrides, parsed_args))
         return effective_recipe
 
-    def build_workload(recipe, *, num_gpus):
-        calls.append(("workload", recipe, num_gpus))
-        return workload_config
-
-    class FakePerfEnvPlugin:
-        def __init__(self, **kwargs):
-            pass
-
-        def setup_recipe_environment(self, task, executor, config):
-            calls.append(("environment", config))
-
     monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_script, "_workload_base_config_from_recipe", build_workload)
-    monkeypatch.setattr(run_script, "PerfEnvPlugin", FakePerfEnvPlugin)
+    monkeypatch.setattr(run_script, "_apply_recipe_environment", lambda recipe: calls.append(("environment", recipe)))
     monkeypatch.setattr(run_script.os, "execvpe", lambda *args: None)
 
     run_script._bootstrap_recipe_environment(args, cli_overrides)
 
-    assert calls[:2] == [
+    assert calls == [
         ("overrides", base_recipe, cli_overrides, args),
-        ("workload", effective_recipe, 8),
+        ("environment", effective_recipe),
     ]
-    assert calls[2] == ("environment", workload_config)
 
 
 def test_library_runner_applies_known_ep_override_to_effective_recipe():
