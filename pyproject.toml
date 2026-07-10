@@ -206,7 +206,16 @@ dev = [
     "ruff>=0.9.9",
     "mypy>=1.8.0",
 ]
-build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "nvidia-mathdx"]
+build = [
+    "setuptools",
+    "torch",
+    "pybind11",
+    "Cython>=3.0.0",
+    "numpy",
+    "ninja",
+    "nvidia-mathdx",
+    "nvidia-cudnn-frontend",
+]
 # CVE-carrying WAN diffusion codecs, needed only by WAN video caching
 # (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed
 # in the default build by the [tool.uv] override-dependencies above (each marked
