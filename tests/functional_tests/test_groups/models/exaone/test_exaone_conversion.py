@@ -25,8 +25,6 @@ from tokenizers.models import WordLevel
 from tokenizers.pre_tokenizers import Whitespace
 from transformers import (
     Exaone4_5_ForConditionalGeneration,
-    Exaone4Config,
-    Exaone4ForCausalLM,
     ExaoneMoeConfig,
     ExaoneMoeForCausalLM,
     PreTrainedTokenizerFast,

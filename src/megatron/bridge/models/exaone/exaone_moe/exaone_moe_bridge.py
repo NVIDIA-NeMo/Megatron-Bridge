@@ -60,10 +60,17 @@ class ExaoneMoeBridge(MegatronModelBridge):
                 )
 
         window_attn_skip_freq, no_rope_freq = [], []
-        for layer_type in hf_config.layer_types:
+        layer_types = getattr(hf_config, "layer_types", None) or []
+        has_sliding_attention = False
+        for layer_idx in range(hf_config.num_hidden_layers):
+            layer_type = layer_types[layer_idx] if layer_idx < len(layer_types) else "sliding_attention"
             is_sliding = layer_type == "sliding_attention"
+            has_sliding_attention = has_sliding_attention or is_sliding
             no_rope_freq.append(0 if is_sliding else 1)
             window_attn_skip_freq.append(1 if is_sliding else 0)
+
+        sliding_window = getattr(hf_config, "sliding_window", None)
+        window_size = (sliding_window - 1, 0) if has_sliding_attention and sliding_window is not None else None
 
         model_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
 
@@ -99,7 +106,7 @@ class ExaoneMoeBridge(MegatronModelBridge):
             rope_scaling=rope_scaling,
             rope_scaling_factor=rope_scaling_factor,
             window_attn_skip_freq=window_attn_skip_freq,
-            window_size=(hf_config.sliding_window - 1, 0),
+            window_size=window_size,
             no_rope_freq=no_rope_freq,
             moe_layer_freq=moe_layer_freq,
             # MTP

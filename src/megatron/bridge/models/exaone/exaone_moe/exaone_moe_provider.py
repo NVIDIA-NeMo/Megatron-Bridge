@@ -18,7 +18,6 @@ from collections.abc import Callable
 from copy import copy
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
-from functools import partial
 
 import torch
 import torch.nn.functional as F

@@ -21,7 +21,10 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.exaone.exaone_moe.exaone_moe_bridge import ExaoneMoeBridge
-from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import ExaoneMoeModelProvider, _MTPDenseLayerSpecsList
+from megatron.bridge.models.exaone.exaone_moe.exaone_moe_provider import (
+    ExaoneMoeModelProvider,
+    _MTPDenseLayerSpecsList,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -122,6 +125,22 @@ class TestExaoneMoeBridge:
         provider = ExaoneMoeBridge().provider_bridge(_make_pretrained(_make_config(**config_overrides)))
 
         assert provider.moe_layer_freq == expected
+
+    @pytest.mark.parametrize(
+        ("config_overrides", "expected_no_rope_freq", "expected_window_attn_skip_freq"),
+        [
+            ({"layer_types": ["full_attention"] * 4, "sliding_window": None}, [1, 1, 1, 1], [0, 0, 0, 0]),
+            ({"layer_types": None, "sliding_window": None}, [0, 0, 0, 0], [1, 1, 1, 1]),
+        ],
+    )
+    def test_provider_bridge_handles_missing_sliding_window(
+        self, config_overrides, expected_no_rope_freq, expected_window_attn_skip_freq
+    ):
+        provider = ExaoneMoeBridge().provider_bridge(_make_pretrained(_make_config(**config_overrides)))
+
+        assert provider.no_rope_freq == expected_no_rope_freq
+        assert provider.window_attn_skip_freq == expected_window_attn_skip_freq
+        assert provider.window_size is None
 
     def test_provider_bridge_infers_head_dim_and_score_function(self):
         config = _make_config()
