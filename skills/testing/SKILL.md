@@ -38,12 +38,13 @@ H100 and GB200 each have independent L0/L1/L2/flaky jobs. Moving a script to
 
 ### Tier assignment criteria
 
-Reserve L0 for current first-tier model families, broadly representative
-coverage, and high-risk shared paths. Place redundant or niche model-family
-coverage in L1, and specialized or expensive coverage in L2. Popularity alone
-does not determine a test's tier; weigh risk, representativeness, cost, and
-overlap with existing coverage. Model-specific PRs can opt into L1 through the
-established `needs-more-tests` label.
+Reserve L0 for high-risk shared paths and the smallest current set of
+representative first-tier gates. L1 holds secondary but still broadly useful
+coverage that runs on main, on schedules, and for opt-in PRs through the
+established `needs-more-tests` label. Place legacy, redundant, niche,
+specialized, or expensive model-family coverage in L2. Popularity alone does
+not determine a test's tier; weigh risk, representativeness, cost, and overlap
+with existing coverage.
 
 **Prefer unit tests over functional tests.** CI GPU resources are limited;
 every functional test slot has a real cost.
