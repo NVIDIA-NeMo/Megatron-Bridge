@@ -20,6 +20,7 @@ import os
 from pathlib import Path
 
 import nemo_run as run
+from nemo_run.config import get_nemorun_home
 
 
 logger = logging.getLogger(__name__)
@@ -274,7 +275,7 @@ def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: 
         exclusive=True,
         time=args.time,
         gres=args.gres,
-        tunnel=run.LocalTunnel(),
+        tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
         packager=packager,
     )
     executor.container_image = args.container_image

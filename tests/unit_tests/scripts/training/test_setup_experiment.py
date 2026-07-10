@@ -23,8 +23,13 @@ import pytest
 def _load_setup_experiment_module():
     script = Path(__file__).resolve().parents[4] / "scripts" / "training" / "setup_experiment.py"
     nemo_run = types.ModuleType("nemo_run")
+    nemo_run_config = types.ModuleType("nemo_run.config")
+    nemo_run_config.get_nemorun_home = lambda: str(Path.home() / ".nemo_run")
+    nemo_run.config = nemo_run_config
     previous = sys.modules.get("nemo_run")
+    previous_config = sys.modules.get("nemo_run.config")
     sys.modules["nemo_run"] = nemo_run
+    sys.modules["nemo_run.config"] = nemo_run_config
     try:
         spec = importlib.util.spec_from_file_location("test_training_setup_experiment", script)
         assert spec is not None and spec.loader is not None
@@ -35,6 +40,10 @@ def _load_setup_experiment_module():
             sys.modules.pop("nemo_run", None)
         else:
             sys.modules["nemo_run"] = previous
+        if previous_config is None:
+            sys.modules.pop("nemo_run.config", None)
+        else:
+            sys.modules["nemo_run.config"] = previous_config
     return module
 
 
@@ -147,6 +156,37 @@ def test_invalid_env_syntax_is_rejected():
 
     with pytest.raises(ValueError, match="expected KEY=VALUE"):
         module._parse_env(["MISSING_VALUE"])
+
+
+def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
+    module = _load_setup_experiment_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.Packager = object
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(
+        [
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+        ]
+    )
+
+    executor = module._build_executor(args, {}, [])
+
+    assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
 
 
 @pytest.mark.parametrize("status", ["FAILED", "CANCELLED", "UNKNOWN"])
