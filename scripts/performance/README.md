@@ -103,7 +103,7 @@ uv run python scripts/performance/setup_experiment.py \
 - `-ms/--max_steps`: Maximum number of training steps.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
-- `-sl/--seq_length`: Sequence length.
+- `-sl/--seq_length`: Override model sequence length and the LLM dataset sequence length.
 
 ##### Optimizer arguments
 
@@ -258,7 +258,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. The legacy nemo-ci labels `v1` and `v2` also select that canonical recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments
@@ -282,7 +282,7 @@ Deterministic training guarantees that two runs with identical inputs produce id
 
 ### What `--deterministic` does
 
-**Environment variables** (set on the Slurm executor via `PerfEnvPlugin`):
+**Environment variables** (stored in `cfg.env_vars` and applied before the training process imports Torch):
 
 | Variable | Value | Reason |
 |---|---|---|
@@ -333,4 +333,5 @@ cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 
-Note: bit-exact reproducibility additionally requires the executor-side env vars listed above. The recipe-only path covers the model config, not the runtime environment.
+`apply_determinism_overrides(cfg)` adds both the model overrides and these runtime environment defaults to the recipe.
+Explicit shell or launcher environment values retain precedence when the recipe is launched.

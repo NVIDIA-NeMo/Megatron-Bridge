@@ -142,6 +142,58 @@ def test_library_target_topology_rejects_nonpositive_ep_size():
         utils.apply_library_target_topology_environment(config, gpu="h100")
 
 
+def test_library_nccl_ub_environment_matches_legacy_launcher_behavior():
+    config = SimpleNamespace(
+        env_vars={
+            "NCCL_GRAPH_REGISTER": 0,
+            "NCCL_NVLS_ENABLE": 0,
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        },
+        ddp=SimpleNamespace(nccl_ub=True),
+    )
+
+    utils.apply_library_feature_environment(config, nccl_ub_override=True)
+
+    assert config.env_vars["NCCL_NVLS_ENABLE"] == 1
+    assert config.env_vars["NCCL_CTA_POLICY"] == 1
+    assert config.env_vars["NCCL_GRAPH_REGISTER"] == 0
+    assert config.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+
+
+def test_library_recipe_nccl_ub_does_not_rewrite_inline_env_without_cli_override():
+    config = SimpleNamespace(
+        env_vars={"NCCL_NVLS_ENABLE": 0, "RECIPE_SPECIFIC": 7},
+        ddp=SimpleNamespace(nccl_ub=True),
+    )
+    original_env = config.env_vars.copy()
+
+    utils.apply_library_feature_environment(config, nccl_ub_override=None)
+
+    assert config.env_vars == original_env
+
+
+def test_library_nccl_ub_respects_explicit_environment_overrides():
+    config = SimpleNamespace(
+        env_vars={
+            "NCCL_GRAPH_REGISTER": 7,
+            "NCCL_NVLS_ENABLE": 7,
+            "PYTORCH_CUDA_ALLOC_CONF": "explicit",
+        },
+        ddp=SimpleNamespace(nccl_ub=True),
+    )
+
+    utils.apply_library_feature_environment(
+        config,
+        nccl_ub_override=True,
+        protected_env_names={"NCCL_GRAPH_REGISTER", "NCCL_NVLS_ENABLE", "PYTORCH_CUDA_ALLOC_CONF"},
+    )
+
+    assert config.env_vars["NCCL_GRAPH_REGISTER"] == 7
+    assert config.env_vars["NCCL_NVLS_ENABLE"] == 7
+    assert config.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "explicit"
+    assert config.env_vars["NCCL_CTA_POLICY"] == 1
+
+
 def test_explicit_environment_map_protects_target_topology_values():
     base_env = {"NVLINK_DOMAIN_SIZE": 8, "USE_MNNVL": 0}
     protected = utils.explicit_environment_override_names(
@@ -163,7 +215,7 @@ def test_explicit_environment_map_protects_target_topology_values():
 
 def test_workload_base_config_copies_recipe_environment():
     """The pre-exec perf bootstrap should receive an isolated copy of recipe env defaults."""
-    recipe_env = {"TORCHINDUCTOR_WORKER_START": "fork", "QUANTIZATION_TYPE_DEBUG": 1}
+    recipe_env = {"CUDA_DEVICE_MAX_CONNECTIONS": 32, "NCCL_NVLS_ENABLE": 0}
     config = SimpleNamespace(
         env_vars=recipe_env,
         model=SimpleNamespace(
@@ -183,8 +235,25 @@ def test_workload_base_config_copies_recipe_environment():
     assert workload_config.env_vars is not recipe_env
 
 
+def test_perf_runner_environment_preserves_process_values(monkeypatch):
+    recipe = SimpleNamespace(env_vars={"RECIPE_DEFAULT": 1, "LAUNCHER_VALUE": "recipe"})
+    monkeypatch.delenv("RECIPE_DEFAULT", raising=False)
+    monkeypatch.setenv("LAUNCHER_VALUE", "launcher")
+
+    run_script._apply_recipe_environment(recipe)
+
+    assert run_script.os.environ["RECIPE_DEFAULT"] == "1"
+    assert run_script.os.environ["LAUNCHER_VALUE"] == "launcher"
+
+
+@pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
+def test_perf_runner_environment_rejects_invalid_values(env_vars):
+    with pytest.raises((TypeError, ValueError)):
+        run_script._apply_recipe_environment(SimpleNamespace(env_vars=env_vars))
+
+
 def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch):
-    """Hydra env overrides must be reflected in the pre-exec workload config."""
+    """Hydra env overrides must be reflected in the pre-exec process environment."""
     args = SimpleNamespace(
         model_family_name=None,
         model_recipe_name="deepseek_v3",
@@ -201,10 +270,9 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
         deterministic=False,
         use_recipes=False,
     )
-    cli_overrides = ["++env_vars={TORCHINDUCTOR_WORKER_START:spawn}"]
-    base_recipe = SimpleNamespace(env_vars={"TORCHINDUCTOR_WORKER_START": "fork"})
-    effective_recipe = SimpleNamespace(env_vars={"TORCHINDUCTOR_WORKER_START": "spawn"})
-    workload_config = SimpleNamespace()
+    cli_overrides = ["++env_vars={CUDA_DEVICE_MAX_CONNECTIONS:1}"]
+    base_recipe = SimpleNamespace(env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 32})
+    effective_recipe = SimpleNamespace(env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 1})
     calls = []
 
     monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", lambda **kwargs: base_recipe)
@@ -213,29 +281,197 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
         calls.append(("overrides", recipe, overrides, parsed_args))
         return effective_recipe
 
-    def build_workload(recipe, *, num_gpus):
-        calls.append(("workload", recipe, num_gpus))
-        return workload_config
-
-    class FakePerfEnvPlugin:
-        def __init__(self, **kwargs):
-            pass
-
-        def setup_recipe_environment(self, task, executor, config):
-            calls.append(("environment", config))
-
     monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_script, "_workload_base_config_from_recipe", build_workload)
-    monkeypatch.setattr(run_script, "PerfEnvPlugin", FakePerfEnvPlugin)
+    monkeypatch.setattr(run_script, "_apply_recipe_environment", lambda recipe: calls.append(("environment", recipe)))
     monkeypatch.setattr(run_script.os, "execvpe", lambda *args: None)
 
     run_script._bootstrap_recipe_environment(args, cli_overrides)
 
-    assert calls[:2] == [
+    assert calls == [
         ("overrides", base_recipe, cli_overrides, args),
-        ("workload", effective_recipe, 8),
+        ("environment", effective_recipe),
     ]
-    assert calls[2] == ("environment", workload_config)
+
+
+def test_flat_environment_compatibility_preserves_explicit_hydra_values():
+    from utils.overrides import apply_flat_cli_environment_compatibility
+
+    base_env = {
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
+    effective_env = {**base_env, "CUDA_DEVICE_MAX_CONNECTIONS": 7, "NVLINK_DOMAIN_SIZE": 7}
+    cli_overrides = ["++env_vars={CUDA_DEVICE_MAX_CONNECTIONS:7,NVLINK_DOMAIN_SIZE:7}"]
+    protected = utils.explicit_environment_override_names(cli_overrides, base_env, effective_env)
+    recipe = SimpleNamespace(
+        env_vars=effective_env,
+        model=SimpleNamespace(
+            moe_flex_dispatcher_backend="hybridep",
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=32,
+            cuda_graph_impl="none",
+            cuda_graph_scope=[],
+            use_transformer_engine_op_fuser=False,
+            fine_grained_activation_offloading=False,
+        ),
+        comm_overlap=None,
+        ddp=SimpleNamespace(nccl_ub=False, use_megatron_fsdp=False),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=32,
+        nccl_ub=None,
+        model_family_name="qwen",
+        model_recipe_name="qwen3_30b_a3b",
+        task="pretrain",
+    )
+
+    apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=False,
+        protected_env_names=protected,
+    )
+
+    assert recipe.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 7
+    assert recipe.env_vars["NVLINK_DOMAIN_SIZE"] == 7
+    assert recipe.env_vars["USE_MNNVL"] == 0
+    assert recipe.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
+
+
+def test_flat_default_args_leave_inline_recipe_environment_unchanged():
+    from utils.overrides import apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={"FUTURE_RECIPE_SPECIFIC_SETTING": 7},
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=1,
+            expert_model_parallel_size=16,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="h100",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="future",
+        model_recipe_name="future_model",
+        task="pretrain",
+    )
+    original_env = recipe.env_vars.copy()
+
+    apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == original_env
+
+
+def test_flat_explicit_argparse_compatibility_changes_only_legacy_coupled_values():
+    from utils.overrides import apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={
+            "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+            "NCCL_GRAPH_REGISTER": 0,
+            "NCCL_NVLS_ENABLE": 0,
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "RECIPE_SPECIFIC": 7,
+        },
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=2,
+            context_parallel_size=1,
+            expert_model_parallel_size=32,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="gb200",
+        moe_a2a_overlap=True,
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=2,
+        context_parallel_size=None,
+        expert_model_parallel_size=32,
+        nccl_ub=True,
+        model_family_name="llama",
+        model_recipe_name="llama3_70b",
+        task="pretrain",
+    )
+
+    apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=False,
+    )
+
+    assert recipe.env_vars == {
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "NCCL_CTA_POLICY": 1,
+        "NCCL_NVLS_ENABLE": 1,
+        "NCCL_P2P_NET_CHUNKSIZE": 2097152,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "RECIPE_SPECIFIC": 7,
+    }
+
+
+def test_flat_explicit_false_a2a_preserves_legacy_config_and_env_behavior():
+    from utils.overrides import _set_moe_a2a_overlap_overrides, apply_flat_cli_environment_compatibility
+
+    recipe = SimpleNamespace(
+        env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 32},
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=8,
+        ),
+        comm_overlap=SimpleNamespace(
+            overlap_moe_expert_parallel_comm=True,
+            delay_wgrad_compute=True,
+        ),
+    )
+    args = SimpleNamespace(
+        gpu="h100",
+        moe_a2a_overlap=False,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="qwen",
+        model_recipe_name="qwen3_vl_235b_a22b",
+        task="pretrain",
+    )
+
+    _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=args.moe_a2a_overlap)
+    apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend="hybridep",
+        base_moe_a2a_overlap=True,
+    )
+
+    assert recipe.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert recipe.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
 
 
 def test_library_runner_applies_known_ep_override_to_effective_recipe():

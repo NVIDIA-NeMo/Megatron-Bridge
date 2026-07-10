@@ -75,9 +75,6 @@ def deepseek_v3_pretrain_256gpu_gb300_bf16_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -128,9 +125,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -186,9 +180,6 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -240,9 +231,6 @@ def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -274,9 +262,6 @@ def deepseek_v3_pretrain_64gpu_gb300_bf16_fsdp_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -317,9 +302,6 @@ def deepseek_v3_pretrain_64gpu_gb300_fp8mx_fsdp_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -356,8 +338,5 @@ def deepseek_v3_pretrain_256gpu_gb300_fp8mx_large_scale_config() -> ConfigContai
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg

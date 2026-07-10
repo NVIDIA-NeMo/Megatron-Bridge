@@ -1588,7 +1588,7 @@ class TestConfigContainerValidation:
     def test_cuda_graph_non_full_iteration_allows_check_for_nan(self, monkeypatch):
         """Test that non-full_iteration CUDA graph allows check_for_nan_in_loss=True."""
         gpt_model_cfg = create_test_gpt_config(
-            cuda_graph_impl="local",
+            cuda_graph_impl="transformer_engine",
             use_te_rng_tracker=True,
         )
         set_cuda_graph_modules(gpt_model_cfg, ["attn", "mlp"])
@@ -1602,6 +1602,80 @@ class TestConfigContainerValidation:
             # check_for_nan_in_loss=True should be allowed
             assert container.rerun_state_machine.check_for_nan_in_loss is True
             container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("graph_modules", [["mlp"], ["moe_router"]])
+    def test_cuda_graph_local_scoped_modules_raise_clear_error(self, graph_modules, monkeypatch):
+        """Test that Bridge rejects local scoped graphs before MCore layer construction."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="local",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(gpt_model_cfg, graph_modules)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                ValueError,
+                match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_local_deprecated_scope_raise_clear_error(self, monkeypatch):
+        """Test post-construction cuda_graph_scope overrides fail clearly for local scoped graphs."""
+        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True)
+        gpt_model_cfg.cuda_graph_impl = "local"
+        gpt_model_cfg.cuda_graph_scope = ["mlp"]
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            with pytest.raises(
+                ValueError,
+                match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+            ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_local_deprecated_scope_direct_provider_raise_clear_error(self):
+        """Test direct provider construction validates local scoped graphs before MCore build."""
+        gpt_model_cfg = create_test_gpt_config(use_te_rng_tracker=True, vocab_size=128)
+        gpt_model_cfg.cuda_graph_impl = "local"
+        gpt_model_cfg.cuda_graph_scope = ["mlp"]
+
+        with pytest.raises(
+            ValueError,
+            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+        ):
+            gpt_model_cfg.provide()
+
+    def test_cuda_graph_local_full_iteration_module_allows_validation(self, monkeypatch):
+        """Test local full_iteration compatibility input is not treated as scoped local graphs."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="local",
+            use_te_rng_tracker=True,
+        )
+        gpt_model_cfg.cuda_graph_modules = "full_iteration"
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.rerun_state_machine.check_for_nan_in_loss = False
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -1620,6 +1694,26 @@ class TestConfigContainerValidation:
 
         try:
             container.validate()
+            assert cuda_graph_module_names(container.model) == []
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_impl_none_clears_deprecated_full_iteration_scope(self, monkeypatch):
+        """Test cuda_graph_impl=none ignores deprecated full_iteration scope overrides."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="none",
+            use_te_rng_tracker=True,
+        )
+        gpt_model_cfg.cuda_graph_scope = ["full_iteration"]
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.validate()
+            assert container.model.cuda_graph_impl == "none"
             assert cuda_graph_module_names(container.model) == []
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
@@ -1945,6 +2039,26 @@ class TestEvalBatchSizeConfig:
         try:
             with pytest.raises(AssertionError, match="eval_global_batch_size.*must be divisible by"):
                 container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_eval_batch_size_divisibility_uses_eval_data_parallel_size(self, monkeypatch):
+        """Eval-time CP changes the DP degree that owns validation batches."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(global_batch_size=8, micro_batch_size=1)
+        val_cfg = ValidationConfig(eval_global_batch_size=2, eval_micro_batch_size=1)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=4,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            validation_config=val_cfg,
+        )
+        container.dist.use_decentralized_pg = True
+        container.dist.use_gloo_process_groups = False
+        container.dist.eval_context_parallel_size = 2
+
+        try:
+            container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 

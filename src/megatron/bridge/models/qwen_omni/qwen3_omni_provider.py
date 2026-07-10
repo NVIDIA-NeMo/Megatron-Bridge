@@ -16,14 +16,21 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import torch.nn.functional as F
+from megatron.core.extensions.transformer_engine import HAVE_TE
 from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_layer_local_spec,
+    get_gpt_layer_with_transformer_engine_spec,
+)
 from megatron.core.pipeline_parallel.utils import (
     is_pp_first_stage,
     is_pp_last_stage,
     is_vp_first_stage,
     is_vp_last_stage,
 )
+from megatron.core.transformer.attention import SelfAttention
+from megatron.core.transformer.enums import AttnBackend
+from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeCode2WavConfig,
     Qwen3OmniMoeTalkerConfig,
@@ -32,6 +39,38 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
+
+
+def _use_qwen3_vl_self_attention(layer_spec) -> None:
+    """Install the mRoPE-aware Qwen3-VL attention module on standard attention specs."""
+    if layer_spec is None:
+        return
+
+    if hasattr(layer_spec, "layer_specs"):
+        for sub_spec in layer_spec.layer_specs:
+            _use_qwen3_vl_self_attention(sub_spec)
+        return
+
+    if not isinstance(layer_spec, ModuleSpec):
+        return
+
+    submodules = getattr(layer_spec, "submodules", None)
+    if submodules is None:
+        return
+
+    if hasattr(submodules, "mtp_model_layer"):
+        _use_qwen3_vl_self_attention(submodules.mtp_model_layer)
+
+    attention_spec = getattr(submodules, "self_attention", None)
+    if attention_spec is None:
+        return
+
+    attention_module = getattr(attention_spec, "module", None)
+    if attention_module is SelfAttention or (
+        isinstance(attention_module, type) and issubclass(attention_module, SelfAttention)
+    ):
+        attention_spec.module = Qwen3VLSelfAttention
 
 
 @dataclass
@@ -61,6 +100,7 @@ class Qwen3OmniModelProvider(GPTModelProvider):
     moe_router_pre_softmax: bool = False
     moe_token_dispatcher_type: str = "alltoall"
     moe_permute_fusion: bool = True
+    masked_softmax_fusion: bool = False
 
     image_token_id: int = 151655
     video_token_id: int = 151656
@@ -74,6 +114,7 @@ class Qwen3OmniModelProvider(GPTModelProvider):
 
     language_max_sequence_length: int = 32768
     position_embedding_type: str = "mrope"
+    apply_rotary_pos_emb_in_fp32: bool = False
     position_id_per_seconds: int = 25
     seconds_per_chunk: int = 2
     patch_size: int = 16
@@ -104,12 +145,22 @@ class Qwen3OmniModelProvider(GPTModelProvider):
                 else True
             )
 
-        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-            num_experts=self.num_moe_experts,
-            moe_grouped_gemm=self.moe_grouped_gemm,
-            qk_layernorm=self.qk_layernorm,
-            fp8=False,
-        )
+        use_local_attention = self.attention_backend in {AttnBackend.local, "local"}
+        if HAVE_TE and not use_local_attention:
+            language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
+                num_experts=self.num_moe_experts,
+                moe_grouped_gemm=self.moe_grouped_gemm,
+                qk_layernorm=self.qk_layernorm,
+                fp8=False,
+            )
+        else:
+            language_transformer_layer_spec = get_gpt_layer_local_spec(
+                num_experts=self.num_moe_experts,
+                moe_grouped_gemm=self.moe_grouped_gemm,
+                qk_layernorm=self.qk_layernorm,
+                normalization=self.normalization,
+            )
+        _use_qwen3_vl_self_attention(language_transformer_layer_spec)
 
         model = Qwen3OmniModel(
             language_transformer_config=self,

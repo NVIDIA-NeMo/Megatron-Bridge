@@ -72,9 +72,6 @@ def deepseek_v3_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -126,9 +123,6 @@ def deepseek_v3_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -180,9 +174,6 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -220,9 +211,6 @@ def deepseek_v3_pretrain_256gpu_b300_nvfp4_config() -> ConfigContainer:
         "NCCL_IGNORE_CPU_AFFINITY": 1,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg
 
@@ -273,8 +261,5 @@ def deepseek_v3_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigContain
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
-        # Recipe-specific compiler and quantization defaults.
-        "QUANTIZATION_TYPE_DEBUG": 1,
-        "TORCHINDUCTOR_WORKER_START": "fork",
     }
     return cfg

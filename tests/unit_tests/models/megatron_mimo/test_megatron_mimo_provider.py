@@ -522,7 +522,8 @@ class TestMegatronMIMOProvider:
         mock_get_config.return_value = mock_config
 
         # No parallelism config means no DDP wrapping needed
-        provider.provide_distributed_model(wrap_with_ddp=False)
+        with patch("torch.cuda.current_device", return_value=0):
+            provider.provide_distributed_model(wrap_with_ddp=False)
 
         # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True

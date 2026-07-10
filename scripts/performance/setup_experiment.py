@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import sys
 import tempfile
 import time
@@ -50,9 +51,9 @@ from megatron.bridge.recipes.run_plugins import PreemptionPlugin
 
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from .perf_plugins import NsysPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PERFORMANCE = "run_script.py"
@@ -63,6 +64,55 @@ logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
 
 
+def _configure_slurm_gpu_tuning(executor, *, enable_vboost: bool, lock_gpu_freq: int | None) -> None:
+    """Add optional GPU tuning commands to a Slurm executor once before submission."""
+    commands = []
+    job_dir = executor.tunnel.job_dir
+
+    if enable_vboost:
+        commands.append(
+            " ".join(
+                [
+                    "\n# Enable VBoost\n",
+                    "srun",
+                    f"--ntasks={executor.nodes}",
+                    "--output",
+                    os.path.join(job_dir, "vboost.out"),
+                    "--error",
+                    os.path.join(job_dir, "vboost.err"),
+                    "bash -c",
+                    shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
+                ]
+            )
+        )
+
+    if lock_gpu_freq is not None:
+        commands.append(
+            "\n".join(
+                [
+                    "",
+                    "# Lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {lock_gpu_freq}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+        )
+
+    if commands:
+        executor.setup_lines = f"{executor.setup_lines or ''}{''.join(commands)}"
+
+
 def _filter_run_script_args(argv: List[str]) -> List[str]:
     """Drop launcher-only args before forwarding argv to the rank-local script.
 
@@ -71,6 +121,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
+      Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
@@ -83,7 +135,14 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     """
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag in ("--additional_slurm_params", "--csp") or flag.startswith("--kubeflow_")
+        return flag in (
+            "-lgc",
+            "-vb",
+            "--additional_slurm_params",
+            "--csp",
+            "--enable_vboost",
+            "--lock_gpu_freq",
+        ) or flag.startswith("--kubeflow_")
 
     filtered_args = []
     skip_next = False
@@ -480,7 +539,6 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
-    deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -604,6 +662,8 @@ def main(
     )
 
     if kubeflow_namespace:
+        if enable_vboost or lock_gpu_freq is not None:
+            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -658,6 +718,11 @@ def main(
             packager=packager,
             enable_pct_binding=enable_pct_binding,
         )
+        _configure_slurm_gpu_tuning(
+            executor,
+            enable_vboost=enable_vboost,
+            lock_gpu_freq=lock_gpu_freq,
+        )
 
     plugins = []
 
@@ -672,18 +737,9 @@ def main(
 
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
-    # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
+    # architecture and performance settings stay in the recipe.
     if csp is not None:
         plugins.append(_build_csp_plugin(csp))
-
-    if not use_recipes:
-        plugins.append(
-            PerfEnvPlugin(
-                enable_vboost=enable_vboost,
-                lock_gpu_freq=lock_gpu_freq,
-                deterministic=deterministic,
-            )
-        )
 
     if enable_nsys:
         if nsys_trace is None:
@@ -1045,7 +1101,6 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
-        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,

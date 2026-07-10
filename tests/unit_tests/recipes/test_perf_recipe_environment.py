@@ -17,9 +17,11 @@
 import ast
 import re
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.perf_recipes._common import _benchmark_common
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 
 
@@ -39,6 +41,14 @@ _HYBRID_EP_ENV_NAMES = {
     "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API",
     "NVLINK_DOMAIN_SIZE",
     "USE_MNNVL",
+}
+_DEEPSEEK_NON_BASELINE_ENV_NAMES = {
+    "QUANTIZATION_TYPE_DEBUG",
+    "TORCHINDUCTOR_WORKER_START",
+}
+_DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES = {
+    ("b200", "deepseek_v3_pretrain_256gpu_b200_fp8mx_config"),
+    ("b200", "deepseek_v3_pretrain_256gpu_b200_nvfp4_config"),
 }
 
 
@@ -88,6 +98,31 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
+def test_benchmark_common_preserves_legacy_manual_gc_defaults():
+    cfg = SimpleNamespace(
+        train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        checkpoint=SimpleNamespace(save="checkpoint"),
+        logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
+        ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True, grad_reduce_in_fp32=True),
+        rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
+        scheduler=SimpleNamespace(lr_decay_iters=0, lr_warmup_iters=0),
+        model=SimpleNamespace(
+            use_transformer_engine_op_fuser=False,
+            apply_rope_fusion=False,
+            cross_entropy_fusion_impl="native",
+            cuda_graph_impl=None,
+            cuda_graph_scope=[],
+            moe_flex_dispatcher_backend=None,
+        ),
+        mixed_precision=SimpleNamespace(grad_reduce_in_fp32=True),
+    )
+
+    _benchmark_common(cfg)
+
+    assert cfg.train.manual_gc is True
+    assert cfg.train.manual_gc_interval == 100
+
+
 def test_every_flat_recipe_builder_declares_its_environment_inline():
     builders = []
     invalid = []
@@ -116,6 +151,8 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
 def test_explicit_environment_invariants_across_all_flat_recipes():
     """Keep duplicated inline settings complete without deriving them at runtime."""
     recipes = list(_explicit_environments())
+    deepseek_recipe_count = 0
+    deepseek_hybrid_ep_count = 0
 
     for path, function_name, environment in recipes:
         assert environment.keys() >= _INLINE_CORE_ENV_NAMES
@@ -135,9 +172,22 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
         if "_nvfp4" in function_name:
             assert environment["NVTE_USE_FAST_MATH"] == 1
         if path.parts[-3] == "deepseek":
+            deepseek_recipe_count += 1
+            assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
+            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
             assert environment["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
 
+            recipe_id = (path.parent.name, function_name)
+            if recipe_id in _DEEPSEEK_WITHOUT_HYBRID_EP_RECIPES:
+                assert not hybrid_ep_names
+            else:
+                assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
+                deepseek_hybrid_ep_count += 1
+
     assert len(recipes) == 396
+    assert deepseek_recipe_count == 36
+    assert deepseek_hybrid_ep_count == 34
 
 
 @pytest.mark.parametrize(

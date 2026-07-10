@@ -32,6 +32,14 @@ _HYBRID_EP_ENV_NAMES = {
     "NVLINK_DOMAIN_SIZE",
     "USE_MNNVL",
 }
+_DEEPSEEK_NON_BASELINE_ENV_NAMES = {
+    "QUANTIZATION_TYPE_DEBUG",
+    "TORCHINDUCTOR_WORKER_START",
+}
+_DEEPSEEK_V3_ENVIRONMENT_RECIPE_NAMES = {
+    "deepseek_v3_pretrain_1024gpu_h100_bf16_config",
+    "deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config",
+}
 
 
 def _function(path: Path, function_name: str) -> ast.FunctionDef:
@@ -124,8 +132,9 @@ def test_every_supported_hardware_library_recipe_declares_its_environment_inline
 def test_explicit_library_environment_invariants():
     recipes = list(_explicit_environments())
     hybrid_ep_count = 0
+    deepseek_v3_environment_recipe_names = set()
 
-    for path, _, environment in recipes:
+    for path, function_name, environment in recipes:
         hybrid_ep_names = environment.keys() & _HYBRID_EP_ENV_NAMES
         assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
         if hybrid_ep_names:
@@ -134,12 +143,24 @@ def test_explicit_library_environment_invariants():
             assert environment["USE_MNNVL"] == 0
             assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] in {1, 8}
 
-        if path.parts[-3] == "deepseek" and "NVTE_FWD_LAYERNORM_SM_MARGIN" in environment:
-            assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
-            assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+        if path.parts[-3] == "deepseek":
+            assert environment.keys().isdisjoint(_DEEPSEEK_NON_BASELINE_ENV_NAMES)
+            layernorm_margin_names = {
+                "NVTE_BWD_LAYERNORM_SM_MARGIN",
+                "NVTE_FWD_LAYERNORM_SM_MARGIN",
+            }
+            configured_margin_names = environment.keys() & layernorm_margin_names
+            assert not configured_margin_names or configured_margin_names == layernorm_margin_names
+            if function_name in _DEEPSEEK_V3_ENVIRONMENT_RECIPE_NAMES:
+                assert configured_margin_names == layernorm_margin_names
+                deepseek_v3_environment_recipe_names.add(function_name)
+            if configured_margin_names:
+                assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+                assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
 
     assert len(recipes) == 245
     assert hybrid_ep_count == 8
+    assert deepseek_v3_environment_recipe_names == _DEEPSEEK_V3_ENVIRONMENT_RECIPE_NAMES
 
 
 @pytest.mark.parametrize(
