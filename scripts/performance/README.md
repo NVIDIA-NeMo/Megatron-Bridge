@@ -282,7 +282,7 @@ Deterministic training guarantees that two runs with identical inputs produce id
 
 ### What `--deterministic` does
 
-**Environment variables** (set on the Slurm executor via `PerfEnvPlugin`):
+**Environment variables** (stored in `cfg.env_vars` and applied before the training process imports Torch):
 
 | Variable | Value | Reason |
 |---|---|---|
@@ -333,4 +333,5 @@ cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 
-Note: bit-exact reproducibility additionally requires the executor-side env vars listed above. The recipe-only path covers the model config, not the runtime environment.
+`apply_determinism_overrides(cfg)` adds both the model overrides and these runtime environment defaults to the recipe.
+Explicit shell or launcher environment values retain precedence when the recipe is launched.
