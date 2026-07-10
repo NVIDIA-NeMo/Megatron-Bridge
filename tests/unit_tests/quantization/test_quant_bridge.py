@@ -12,15 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import sys
-import types
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
-from megatron.bridge.models.conversion import quant_bridge as quant_bridge_module
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -163,44 +161,45 @@ class MockModule(torch.nn.Module):
         self.config = config
 
 
+def test_quantized_export_reads_tied_embeddings_from_model() -> None:
+    """Quantized export reads tied-embedding state from the built model."""
+    tensor = torch.ones(2, 2)
+    mapping = Mock()
+    mapping.megatron_to_hf_quant.return_value = {"model.embed_tokens.weight": tensor}
+    task = SimpleNamespace(
+        mapping=mapping,
+        param_weight=tensor,
+        megatron_module=Mock(),
+        global_param_name="embedding.word_embeddings.weight",
+    )
+    model = SimpleNamespace(share_embeddings_and_output_weights=True, config=SimpleNamespace())
+    hf_pretrained = SimpleNamespace(
+        state=SimpleNamespace(source=SimpleNamespace(get_all_keys=lambda: {"lm_head.weight"}))
+    )
+    bridge = SimpleNamespace(
+        _model_shares_embeddings_and_output_weights=lambda candidate: candidate.share_embeddings_and_output_weights,
+        _with_progress_tracking=lambda tasks, *_args, **_kwargs: tasks,
+        maybe_modify_converted_hf_weight=lambda _task, weights, _state: weights,
+    )
+
+    with patch("megatron.bridge.models.conversion.quant_bridge.unwrap_model", return_value=[model]):
+        exported = list(
+            MegatronQuantizationBridge.stream_weights_megatron_to_hf_quant(
+                bridge,
+                [model],
+                hf_pretrained,
+                dummy_quantization_checker,
+                scaled_fp8_blockwise,
+                conversion_tasks=[task],
+            )
+        )
+
+    assert [item.param_name for item in exported] == ["model.embed_tokens.weight", "lm_head.weight"]
+    torch.testing.assert_close(exported[0].weight, exported[1].weight)
+
+
 def dummy_quantization_checker(param_name):
     return True
-
-
-def test_quantized_stream_uses_model_config_for_tied_embeddings(monkeypatch):
-    model_bridge_module = types.ModuleType("megatron.bridge.models.conversion.model_bridge")
-    model_bridge_module.HFWeightTuple = tuple
-    monkeypatch.setitem(
-        sys.modules,
-        "megatron.bridge.models.conversion.model_bridge",
-        model_bridge_module,
-    )
-
-    model_config = object()
-    model = types.SimpleNamespace(config=model_config)
-    seen_configs = []
-
-    bridge = MegatronQuantizationBridge()
-    monkeypatch.setattr(
-        bridge,
-        "_share_embeddings_and_output_weights",
-        lambda config: seen_configs.append(config) or False,
-        raising=False,
-    )
-    monkeypatch.setattr(bridge, "_with_progress_tracking", lambda tasks, *_args: tasks, raising=False)
-    monkeypatch.setattr(quant_bridge_module, "unwrap_model", lambda _models: [model])
-
-    exported = bridge.stream_weights_megatron_to_hf_quant(
-        model,
-        types.SimpleNamespace(),
-        quantization_checker=lambda _name: False,
-        quant_fn=lambda weight, _block_size: (weight, torch.ones(1)),
-        conversion_tasks=[],
-        show_progress=False,
-    )
-
-    assert list(exported) == []
-    assert seen_configs == [model_config]
 
 
 class TestColumnParallelMappingQuant:

@@ -28,9 +28,6 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
-from megatron.bridge.models.stepfun.modelling_step37.transformer_block import (
-    get_step37_text_layer_spec,
-)
 from megatron.bridge.models.stepfun.step35_provider import Step35ModelProvider
 
 
@@ -75,28 +72,17 @@ class Step37ModelProvider(Step35ModelProvider):
         vp_stage: Optional[int] = None,
     ) -> Step37Model:
         """Build a :class:`Step37Model` for the current PP/VP stage."""
-        # Reuse Step-3.5's hybrid layer spec — Step3.7 keeps that decoder
-        # verbatim. ``transformer_layer_spec`` is set on the provider by
-        # Step35Bridge.provider_bridge when moe_layers_enum is present, so
-        # we honour that override; otherwise we fall back to the helper.
-        layer_spec = self.transformer_layer_spec
-        if not callable(layer_spec) and layer_spec is None:
-            layer_spec = get_step37_text_layer_spec
-        if callable(layer_spec):
-            language_transformer_layer_spec = layer_spec(self, vp_stage=vp_stage)
-        else:
-            language_transformer_layer_spec = layer_spec
-
         model = Step37Model(
             language_transformer_config=self,
-            language_transformer_layer_spec=language_transformer_layer_spec,
+            language_model=self.provide_language_model(pre_process, post_process, vp_stage),
             vision_transformer_config=self.vision_config,
+            image_token_id=self.image_token_id,
+            projector_bias=self.projector_bias,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
             add_encoder=self.add_encoder,
             add_decoder=self.add_decoder,
-            vp_stage=vp_stage,
         )
 
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:

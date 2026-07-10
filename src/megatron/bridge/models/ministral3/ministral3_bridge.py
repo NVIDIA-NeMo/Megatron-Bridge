@@ -32,9 +32,14 @@ Supported models:
 Reference: https://huggingface.co/mistralai/Ministral-3-3B-Base-2512
 """
 
-from typing import Mapping, Union
+import copy
+from typing import TYPE_CHECKING, Any, Mapping, Union
 
 import torch
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -46,7 +51,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.quantization_utils import maybe_dequantize_fp8
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+from megatron.bridge.models.ministral3.model_config import Ministral3ModelConfig
 
 
 # Import HuggingFace model classes with fallback for older transformers versions
@@ -57,6 +62,24 @@ try:
 except ImportError:
     Mistral3ForConditionalGeneration = None
     HAS_MISTRAL3 = False
+
+
+def _plain_config_dict(config: object) -> dict[str, object]:
+    """Convert lightweight HF config-like objects to nested plain dictionaries."""
+    if hasattr(config, "to_dict"):
+        return config.to_dict()
+
+    result: dict[str, object] = {}
+    for name, value in vars(config).items():
+        if isinstance(value, dict):
+            result[name] = {
+                key: _plain_config_dict(item) if hasattr(item, "__dict__") else item for key, item in value.items()
+            }
+        elif hasattr(value, "__dict__"):
+            result[name] = _plain_config_dict(value)
+        else:
+            result[name] = value
+    return result
 
 
 class Ministral3Bridge(MegatronModelBridge):
@@ -75,10 +98,12 @@ class Ministral3Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Ministral-3-3B-Base-2512")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Ministral3ModelProvider:
+    MODEL_CONFIG_CLASS = Ministral3ModelConfig
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Ministral3ModelProvider":
         """
         Create a Ministral3ModelProvider from a HuggingFace pretrained VL model.
 
@@ -88,11 +113,14 @@ class Ministral3Bridge(MegatronModelBridge):
         Returns:
             Ministral3ModelProvider configured with the HF model's parameters
         """
+        from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
+
         hf_config = hf_pretrained.config
 
         # Ministral 3 has separate text_config and vision_config
         text_config = getattr(hf_config, "text_config", hf_config)
-        params_dtype = self.dtype_from_hf(hf_config, default=torch.float32)
+        dtype_config = hf_config if hasattr(hf_config, "torch_dtype") else text_config
+        params_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
         provider = Ministral3ModelProvider(
             hidden_size=text_config.hidden_size,
             ffn_hidden_size=text_config.intermediate_size,
@@ -113,10 +141,66 @@ class Ministral3Bridge(MegatronModelBridge):
 
         return provider
 
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Ministral 3 HF config to pure builder-backed config kwargs."""
+        text_config = getattr(hf_config, "text_config", hf_config)
+        # The base bridge rejects generic YaRN because GPTModelConfig cannot
+        # represent it. Ministral3ModelConfig does represent every YaRN field,
+        # so bypass only that generic guard and map the values below.
+        base_text_config = copy.copy(text_config)
+        base_text_config.rope_scaling = None
+        config_kwargs = super().hf_config_to_model_config_kwargs(base_text_config)
+        rope_parameters = (
+            getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", None) or {}
+        )
+        correction_range_round_to_int = rope_parameters.get(
+            "correction_range_round_to_int", rope_parameters.get("truncate", False)
+        )
+        dtype_config = hf_config if hasattr(hf_config, "torch_dtype") else text_config
+        params_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
+        hf_config_dict = _plain_config_dict(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            num_attention_heads=getattr(text_config, "num_attention_heads", 32),
+            num_query_groups=getattr(text_config, "num_key_value_heads", 8),
+            kv_channels=getattr(text_config, "head_dim", 128),
+            seq_length=getattr(text_config, "max_position_embeddings", 32768),
+            position_embedding_type="yarn",
+            rotary_base=rope_parameters.get("rope_theta", 1000000),
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            init_method_std=getattr(text_config, "initializer_range", 0.02),
+            layernorm_epsilon=getattr(text_config, "rms_norm_eps", 1e-5),
+            params_dtype=params_dtype,
+            bf16=params_dtype == torch.bfloat16,
+            fp16=params_dtype == torch.float16,
+            autocast_dtype=params_dtype,
+            scatter_embedding_sequence_parallel=False,
+            hf_config=hf_config_dict,
+            image_token_id=getattr(hf_config, "image_token_index", getattr(hf_config, "image_token_id", 10)),
+            spatial_merge_size=getattr(hf_config, "spatial_merge_size", 2),
+            vision_feature_layer=getattr(hf_config, "vision_feature_layer", -1),
+            yarn_rotary_scaling_factor=rope_parameters.get("factor", 16.0),
+            yarn_original_max_position_embeddings=rope_parameters.get("original_max_position_embeddings", 16384),
+            yarn_beta_fast=rope_parameters.get("beta_fast", 32.0),
+            yarn_beta_slow=rope_parameters.get("beta_slow", 1.0),
+            yarn_correction_range_round_to_int=correction_range_round_to_int,
+            yarn_mscale=rope_parameters.get("mscale", 1.0),
+            yarn_mscale_all_dim=rope_parameters.get("mscale_all_dim", 1.0),
+            llama_4_scaling_beta=rope_parameters.get("llama_4_scaling_beta", 0.0),
+            llama_4_original_max_position_embeddings=rope_parameters.get("original_max_position_embeddings", 16384),
+        )
+        return config_kwargs
+
     @classmethod
-    def megatron_to_hf_config(cls, provider: Ministral3ModelProvider) -> dict[str, object]:
-        """Convert a Ministral 3 provider to its nested HuggingFace config layout."""
-        text_config = super().megatron_to_hf_config(provider)
+    def megatron_to_hf_config(
+        cls, model_config: "Ministral3ModelProvider | Ministral3ModelConfig"
+    ) -> dict[str, object]:
+        """Convert a Ministral 3 model config to its nested HuggingFace layout."""
+        text_config = super().megatron_to_hf_config(model_config)
         top_level_keys = ("architectures", "model_type", "tie_word_embeddings")
         hf_config = {key: text_config.pop(key) for key in top_level_keys if key in text_config}
         if "torch_dtype" in text_config:

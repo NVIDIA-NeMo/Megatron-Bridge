@@ -38,7 +38,7 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (LatentMoE with MTP) — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).get_model_config()
 
     # Parallelism Settings
     cfg.model.tensor_model_parallel_size = 4
@@ -149,7 +149,7 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).get_model_config()
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -246,7 +246,7 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
     cfg = _peft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_SUPER_HF_MODEL_ID).get_model_config()
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1

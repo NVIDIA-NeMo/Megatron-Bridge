@@ -49,7 +49,6 @@ class _FakeModelCfg:
 class _FakeAutoBridge:
     hf_path = None
     kwargs = None
-    load_weights = None
 
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
@@ -57,8 +56,7 @@ class _FakeAutoBridge:
         _FakeAutoBridge.kwargs = kwargs
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
-        _FakeAutoBridge.load_weights = load_weights
+    def get_model_config(self):
         return _FakeModelCfg()
 
 
@@ -93,8 +91,6 @@ def _assert_common_config(cfg: ConfigContainer):
 
     assert _FakeAutoBridge.hf_path == _TEST_HF_ID
     assert _FakeAutoBridge.kwargs == {"trust_remote_code": True}
-    assert _FakeAutoBridge.load_weights is False
-
     assert cfg.model.seq_length == 4096
     assert cfg.model.dynamic_resolution is True
     assert cfg.model.tensor_model_parallel_size == 4

@@ -61,9 +61,7 @@ def nemotron_nano_v2_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common_vlm()
 
     # Model configuration
-    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_MODEL_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_MODEL_PATH, trust_remote_code=True).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -181,9 +179,7 @@ def nemotron_nano_v2_vl_12b_peft_2gpu_h100_bf16_config(
         cfg.peft = peft_scheme
 
     # Model configuration
-    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_MODEL_PATH, trust_remote_code=True).to_megatron_provider(
-        load_weights=False
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(_DEFAULT_HF_MODEL_PATH, trust_remote_code=True).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT

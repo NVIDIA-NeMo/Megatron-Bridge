@@ -20,6 +20,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
@@ -270,9 +271,19 @@ class TestLoadMegatronModel:
         mock_load_weights.assert_called_once_with(ckpt_path, [mock_model], return_state_dict=True)
         assert mock_model_cfg.params_dtype == torch.bfloat16
 
-        result = load_megatron_model(ckpt_path, return_state_dict=False, use_cpu_init=True)
+        result, result_config = load_megatron_model(
+            ckpt_path,
+            return_state_dict=False,
+            use_cpu_init=True,
+            return_model_config=True,
+        )
         assert result == [mock_model]
+        assert result_config is mock_model_cfg
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
+
+    def test_return_model_config_rejects_state_dict_mode(self):
+        with pytest.raises(ValueError, match="cannot be combined"):
+            load_megatron_model("/unused", return_state_dict=True, return_model_config=True)
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
@@ -281,7 +292,7 @@ class TestLoadMegatronModel:
     @patch("megatron.bridge.training.model_load_save.megatron_cpu_init_context")
     @patch("megatron.bridge.training.model_load_save.dist")
     @patch("megatron.bridge.training.model_load_save.ProcessGroupCollection")
-    @patch("megatron.bridge.training.model_load_save.ModelConfig.from_dict")
+    @patch("megatron.bridge.models.common.ModelConfig.from_dict")
     def test_load_mbridge_saved_model_config(
         self,
         mock_from_dict,
@@ -771,7 +782,6 @@ class TestSaveMegatronModel:
     """
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
-    @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
     @patch("megatron.bridge.training.model_load_save.ConfigContainer")
     @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
@@ -784,7 +794,6 @@ class TestSaveMegatronModel:
         mock_opt_config,
         mock_config_container,
         mock_global_state,
-        mock_get_model_config,
         mock_save_checkpoint,
     ):
         """Test saving megatron model."""
@@ -799,17 +808,20 @@ class TestSaveMegatronModel:
                 pass
 
         mock_model_config = MockModelConfig()
-        mock_get_model_config.return_value = mock_model_config
-
         mock_state = Mock()
         mock_global_state.return_value = mock_state
 
         # Test
         with tempfile.TemporaryDirectory() as temp_dir:
-            save_megatron_model([mock_model], temp_dir, ckpt_format="torch_dist", low_memory_save=False)
+            save_megatron_model(
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                low_memory_save=False,
+                model_config=mock_model_config,
+            )
 
         # Assertions
-        mock_get_model_config.assert_called_once_with(mock_model)
         mock_global_state.assert_called_once()
         mock_save_checkpoint.assert_called_once_with(
             state=mock_state,
@@ -820,11 +832,53 @@ class TestSaveMegatronModel:
             callback_manager=None,
         )
 
+    @patch("megatron.bridge.training.model_load_save.save_checkpoint")
+    @patch("megatron.bridge.training.model_load_save.GlobalState")
+    @patch("megatron.bridge.training.model_load_save.ConfigContainer")
+    @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
+    @patch("megatron.bridge.training.model_load_save.LoggerConfig")
+    @patch("megatron.bridge.training.model_load_save.CheckpointConfig")
+    def test_save_builder_model_uses_outer_serializable_config(
+        self,
+        mock_ckpt_config,
+        mock_logger_config,
+        mock_opt_config,
+        mock_config_container,
+        mock_global_state,
+        mock_save_checkpoint,
+    ):
+        """Builder models checkpoint the outer ModelConfig, not the nested MCore config."""
+        model_config = GPTModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            vocab_size=32,
+        )
+        model = SimpleNamespace()
+        state = Mock()
+        mock_global_state.return_value = state
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            save_megatron_model(
+                [model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                low_memory_save=False,
+                model_config=model_config,
+            )
+
+        assert mock_config_container.call_args.kwargs["model"] is model_config
+        mock_save_checkpoint.assert_called_once_with(
+            state=state,
+            model=[model],
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+            callback_manager=None,
+        )
+
     @patch("megatron.bridge.training.checkpointing.save_tokenizer_assets")
     @patch("megatron.bridge.training.checkpointing.get_checkpoint_name")
     @patch("megatron.bridge.training.model_load_save.build_tokenizer")
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
-    @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
     @patch("megatron.bridge.training.model_load_save.ConfigContainer")
     @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
@@ -837,7 +891,6 @@ class TestSaveMegatronModel:
         mock_opt_config,
         mock_config_container,
         mock_global_state,
-        mock_get_model_config,
         mock_save_checkpoint,
         mock_build_tokenizer,
         mock_get_checkpoint_name,
@@ -855,8 +908,6 @@ class TestSaveMegatronModel:
                 pass
 
         mock_model_config = MockModelConfig()
-        mock_get_model_config.return_value = mock_model_config
-
         mock_state = Mock()
         mock_global_state.return_value = mock_state
 
@@ -877,10 +928,10 @@ class TestSaveMegatronModel:
                 ckpt_format="torch_dist",
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
                 low_memory_save=False,
+                model_config=mock_model_config,
             )
 
         # Assertions
-        mock_get_model_config.assert_called_once_with(mock_model)
         mock_global_state.assert_called_once()
 
         # Check that ConfigContainer was called with a tokenizer config
@@ -909,7 +960,6 @@ class TestSaveMegatronModel:
         )
 
     @patch("megatron.bridge.training.model_load_save.save_checkpoint")
-    @patch("megatron.bridge.training.model_load_save.get_model_config")
     @patch("megatron.bridge.training.model_load_save.GlobalState")
     @patch("megatron.bridge.training.model_load_save.ConfigContainer")
     @patch("megatron.bridge.training.model_load_save.OptimizerConfig")
@@ -922,7 +972,6 @@ class TestSaveMegatronModel:
         mock_opt_config,
         mock_config_container,
         mock_global_state,
-        mock_get_model_config,
         mock_save_checkpoint,
     ):
         """Test saving megatron model without tokenizer configuration."""
@@ -937,8 +986,6 @@ class TestSaveMegatronModel:
                 pass
 
         mock_model_config = MockModelConfig()
-        mock_get_model_config.return_value = mock_model_config
-
         mock_state = Mock()
         mock_global_state.return_value = mock_state
 
@@ -949,11 +996,15 @@ class TestSaveMegatronModel:
         # Test without tokenizer path (should be None)
         with tempfile.TemporaryDirectory() as temp_dir:
             save_megatron_model(
-                [mock_model], temp_dir, ckpt_format="torch_dist", hf_tokenizer_path=None, low_memory_save=False
+                [mock_model],
+                temp_dir,
+                ckpt_format="torch_dist",
+                hf_tokenizer_path=None,
+                low_memory_save=False,
+                model_config=mock_model_config,
             )
 
         # Assertions
-        mock_get_model_config.assert_called_once_with(mock_model)
         mock_global_state.assert_called_once()
 
         # Check that ConfigContainer was called with tokenizer=None

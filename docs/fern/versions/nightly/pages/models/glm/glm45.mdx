@@ -68,17 +68,17 @@ from megatron.bridge import AutoBridge
 
 # Example: GLM 4.5 Air 106B
 bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5-Air")
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
 
 # Configure parallelism before instantiating the model
 # For Air 106B: TP=1, PP=4, EP=8 (32 GPUs)
-provider.tensor_model_parallel_size = 1
-provider.pipeline_model_parallel_size = 4
-provider.expert_model_parallel_size = 8
-provider.sequence_parallel = True
+model_config.tensor_model_parallel_size = 1
+model_config.pipeline_model_parallel_size = 4
+model_config.expert_model_parallel_size = 8
+model_config.sequence_parallel = True
 
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 ### Import HF → Megatron

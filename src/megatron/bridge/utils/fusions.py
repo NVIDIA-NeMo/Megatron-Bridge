@@ -68,6 +68,16 @@ def can_enable_gradient_accumulation_fusion() -> bool:
         return False
 
 
+def can_enable_rope_fusion() -> bool:
+    """Return whether Megatron Core has a fused RoPE implementation available."""
+    from megatron.core.models.common.embeddings.rope_utils import (
+        fused_apply_rotary_pos_emb,
+        fused_apply_rotary_pos_emb_thd,
+    )
+
+    return fused_apply_rotary_pos_emb is not None or fused_apply_rotary_pos_emb_thd is not None
+
+
 def validate_rope_fusion_compatibility(config: TransformerConfig) -> bool:
     """Validate if RoPE fusion is compatible with the current model configuration.
 

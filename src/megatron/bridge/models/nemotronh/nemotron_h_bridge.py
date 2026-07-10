@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-from typing import Dict, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, Optional, Tuple
 
 import torch
 from megatron.core.activations import squared_relu
@@ -31,10 +31,13 @@ from megatron.bridge.models.conversion.param_mapping import (
     RowParallelMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.nemotronh.model_config import NemotronHModelConfig
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 
 
 def _replace_wildcards(pattern: str, captures: Tuple[str, ...]) -> str:
@@ -215,7 +218,6 @@ class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 @MegatronModelBridge.register_bridge(
     source="NemotronHForCausalLM",
     target=HybridModel,
-    provider=HybridModelProvider,
     model_type="nemotron_h",
 )
 class NemotronHBridge(MegatronModelBridge):
@@ -229,7 +231,7 @@ class NemotronHBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("nvidia/Nemotron-H-8B-Base-8K", trust_remote_code=True)
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     # Extend CONFIG_MAPPING with Nemotron-H/Mamba-specific fields
@@ -251,6 +253,42 @@ class NemotronHBridge(MegatronModelBridge):
     # Additional files to copy during HF export (reasoning parser utilities)
     ADDITIONAL_FILE_PATTERNS = ["*reasoning_parser.py"]
 
+    MODEL_CONFIG_CLASS = NemotronHModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
+        """Map Nemotron-H fields before constructing the exact MCore config."""
+        kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        kv_channels = getattr(hf_config, "head_dim", None) or getattr(hf_config, "attention_head_dim", None)
+        kwargs.update(
+            normalization="RMSNorm",
+            position_embedding_type="none",
+            activation_func=squared_relu,
+            masked_softmax_fusion=True,
+            apply_query_key_layer_scaling=False,
+            persist_layer_norm=True,
+            attention_softmax_in_fp32=False,
+            first_last_layers_bf16=True,
+            is_hybrid_model=True,
+            moe_aux_loss_coeff=0.0001,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_router_dtype="fp32",
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_shared_expert_overlap=getattr(hf_config, "moe_shared_expert_overlap", True),
+            mtp_num_layers=getattr(hf_config, "num_nextn_predict_layers", 0),
+            mtp_hybrid_override_pattern=getattr(hf_config, "mtp_hybrid_override_pattern", None),
+        )
+        if kv_channels is not None:
+            kwargs["kv_channels"] = kv_channels
+        if hasattr(hf_config, "moe_latent_size"):
+            kwargs["moe_latent_size"] = hf_config.moe_latent_size
+        if hasattr(hf_config, "keep_mtp_spec_in_bf16"):
+            kwargs["keep_mtp_spec_in_bf16"] = hf_config.keep_mtp_spec_in_bf16
+        return kwargs
+
     def __init__(self):
         super().__init__()
         self._mtp_layers_per_block: Optional[int] = None
@@ -266,11 +304,12 @@ class NemotronHBridge(MegatronModelBridge):
 
         return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "HybridModelProvider":
         """Convert HuggingFace Nemotron-H config to HybridModelProvider."""
-        # Use base class for common config conversion
-        provider = super().provider_bridge(hf_pretrained)
+        from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
         hf_config = hf_pretrained.config
+        provider = HybridModelProvider(**self.hf_config_to_model_config_kwargs(hf_config))
 
         # Mamba doesn't use position embeddings; override the base class default of "rope"
         provider.position_embedding_type = "none"

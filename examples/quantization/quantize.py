@@ -127,27 +127,25 @@ def main(
         ),
     )
 
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.pipeline_dtype = torch.bfloat16
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.expert_tensor_parallel_size = etp
+    model_config.pipeline_dtype = torch.bfloat16
 
     # All models use TE spec (default) for quantization
-    # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    model_config.finalize()
+    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
     # Now we can check for rank
     is_rank_0 = torch.distributed.get_rank() == 0
 
     if is_rank_0:
-        console.print(f"[green]Tensor parallel size: {model_provider.tensor_model_parallel_size}[/green]")
-        console.print(f"[green]Pipeline parallel size: {model_provider.pipeline_model_parallel_size}[/green]")
-        console.print(f"[green]Expert parallel size: {model_provider.expert_model_parallel_size}[/green]")
-        console.print(f"[green]Expert tensor parallel size: {model_provider.expert_tensor_parallel_size}[/green]")
+        console.print(f"[green]Tensor parallel size: {model_config.tensor_model_parallel_size}[/green]")
+        console.print(f"[green]Pipeline parallel size: {model_config.pipeline_model_parallel_size}[/green]")
+        console.print(f"[green]Expert parallel size: {model_config.expert_model_parallel_size}[/green]")
+        console.print(f"[green]Expert tensor parallel size: {model_config.expert_tensor_parallel_size}[/green]")
 
     # Formatting
     if is_rank_0:

@@ -33,6 +33,7 @@ Supported models:
 
 import logging
 from functools import partial
+from typing import Any
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
@@ -47,6 +48,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     GatedMLPMapping,
 )
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -58,14 +60,20 @@ AutoConfig.register("bailing_moe_v2", BailingMoeV2Config, exist_ok=True)
 AutoModelForCausalLM.register(BailingMoeV2Config, BailingMoeV2ForCausalLM, exist_ok=True)
 
 
+logger = logging.getLogger(__name__)
+
 try:
-    import transformer_engine  # type: ignore  # noqa: F401
+    import transformer_engine  # noqa: F401
 
     HAVE_TE = True
 except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
-logger = logging.getLogger(__name__)
+
+# The deprecated provider path predates GPTModelBuilder's automatic MoE block
+# selection. Canonical model configs leave the spec unset so the stock builder
+# derives it from transformer_impl, normalization, and moe_layer_freq.
+bailing_moe2_provider_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
 
 
 @MegatronModelBridge.register_bridge(source="BailingMoeV2ForCausalLM", target=GPTModel, model_type="bailing_moe_v2")
@@ -76,14 +84,16 @@ class BailingMoeV2Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("inclusionAI/Ling-mini-2.0")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = bailing_moe2_provider_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
@@ -108,6 +118,39 @@ class BailingMoeV2Bridge(MegatronModelBridge):
         provider.moe_shared_expert_intermediate_size = hf_config.moe_intermediate_size
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Bailing MoE V2 config to Megatron model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face Bailing MoE V2 configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            transformer_impl="transformer_engine" if HAVE_TE else "local",
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            add_qkv_bias=getattr(hf_config, "use_qkv_bias", False),
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_router_load_balancing_type="none",
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            hidden_dropout=0.0,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         mapping_list = []

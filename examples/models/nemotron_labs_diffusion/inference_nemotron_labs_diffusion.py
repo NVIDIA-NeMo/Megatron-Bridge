@@ -163,6 +163,8 @@ def load_model(args):
     """
     hf_pretrained = PreTrainedCausalLM.from_pretrained(args.hf_model, trust_remote_code=True)
     bridge = NemotronLabsDiffusionBridge()
+    # TODO: Remove this compatibility fallback after NemotronLabsDiffusion has
+    # a standalone ModelConfig/ModelBuilder conversion path.
     model_provider = bridge.provider_bridge(hf_pretrained)
     model_provider.share_embeddings_and_output_weights = False
     model_provider.perform_initialization = False

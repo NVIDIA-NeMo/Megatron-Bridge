@@ -199,27 +199,25 @@ def _build_megatron_lora_model(
     lora = peft_class(**peft_cfg)
     print(f"  LoRA config: class={peft_class.__name__}, dim={lora.dim}, alpha={lora.alpha}")
 
-    provider = bridge.to_megatron_provider(load_weights=True)
-    provider.pipeline_dtype = torch.float32
-    provider.params_dtype = torch.float32
-    provider.tensor_model_parallel_size = tp
-    provider.pipeline_model_parallel_size = pp
-    provider.expert_model_parallel_size = ep
-    provider.finalize()
-    provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+    model_config = bridge.get_model_config()
+    model_config.pipeline_dtype = torch.float32
+    model_config.params_dtype = torch.float32
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.use_cpu_initialization = cpu
+    model_config.init_model_with_meta_device = False
+    model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
+    model_config.finalize()
 
     dist_ctx = None
     if not torch.distributed.is_initialized():
         backend = "gloo" if cpu else "nccl"
         dist_ctx = temporary_distributed_context(backend=backend)
         dist_ctx.__enter__()
-    else:
-        provider.initialize_model_parallel(seed=0)
-
-    model = provider.provide_distributed_model(
+    model = bridge.get_megatron_model(
+        model_config,
         wrap_with_ddp=False,
-        use_cpu_initialization=cpu,
-        init_model_with_meta_device=False,
     )
 
     sharded_sd = _generate_model_state_dict(model, {})

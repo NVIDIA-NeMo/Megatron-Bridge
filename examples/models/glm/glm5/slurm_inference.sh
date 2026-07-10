@@ -121,7 +121,7 @@ print(m.group(1) + m.group(2) if m else s.split(',')[0])
       --hf_model_path $HF_MODEL_PATH \
       --prompt '$PROMPT' \
       --max_new_tokens $MAX_NEW_TOKENS \
-      --tp $TP --ep $EP --pp $PP
+      --tp $TP --ep $EP --pp $PP --sequence-parallel
   "
 
 echo "======================================"

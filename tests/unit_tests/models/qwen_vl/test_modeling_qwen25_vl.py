@@ -17,8 +17,52 @@ from unittest.mock import Mock
 
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer import TransformerConfig
 
 import megatron.bridge.models.qwen_vl.modeling_qwen25_vl as qwen25_modeling
+from megatron.bridge.models.qwen_vl.model_config import Qwen25VLModelConfig
+
+
+def test_qwen25_model_constructs_vision_and_language_modules(monkeypatch):
+    transformer = TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2)
+    model_config = Qwen25VLModelConfig(
+        transformer=transformer,
+        vocab_size=32,
+        vision_config={"hidden_size": 16},
+    )
+    vision_config = SimpleNamespace()
+    vision_model = SimpleNamespace()
+    language_model = SimpleNamespace(shared_embedding_or_output_weight="shared")
+    captured = {}
+
+    def build_vision_model(config):
+        captured["vision_config"] = config
+        return vision_model
+
+    monkeypatch.setattr(qwen25_modeling.Qwen2_5_VisionTransformerPretrainedModel, "_from_config", build_vision_model)
+    monkeypatch.setattr(qwen25_modeling, "hook_hf_module_setattr_for_tp_grad_sync", lambda model: None)
+
+    def build_language_model(**kwargs):
+        captured["language_kwargs"] = kwargs
+        return language_model
+
+    monkeypatch.setattr(qwen25_modeling, "GPTModel", build_language_model)
+
+    model = qwen25_modeling.Qwen25VLModel(
+        language_transformer_config=transformer,
+        language_transformer_layer_spec=SimpleNamespace(),
+        vision_transformer_config=vision_config,
+        model_config=model_config,
+        language_vocab_size=32,
+        pg_collection=SimpleNamespace(tp=object()),
+    )
+
+    assert captured["vision_config"] is vision_config
+    assert model.visual is vision_model
+    assert model.language_model is language_model
+    assert captured["language_kwargs"]["config"] is transformer
+    assert captured["language_kwargs"]["pg_collection"] is model.pg_collection
+    assert model.shared_embedding_or_output_weight == "shared"
 
 
 def test_qwen25_packed_forward_resets_mrope_per_sequence(monkeypatch):

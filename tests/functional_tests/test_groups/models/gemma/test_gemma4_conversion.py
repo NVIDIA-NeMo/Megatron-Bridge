@@ -18,7 +18,9 @@ from pathlib import Path
 
 import pytest
 import torch
-from transformers import Gemma4ForCausalLM, Gemma4TextConfig, GemmaTokenizer
+from transformers import AutoTokenizer, Gemma4ForCausalLM, Gemma4TextConfig
+
+from tests.functional_tests.test_groups.models.gemma.tokenizer_utils import save_minimal_gemma_tokenizer
 
 
 HF_GEMMA4_TOY_MODEL_CONFIG = {
@@ -103,11 +105,7 @@ class TestGemma4Conversion:
             print(f"Before save - {name}: {param.dtype}")
             break  # Just check the first parameter
 
-        # Download and save tokenizer from a reference Gemma model
-        # We use the smallest available Gemma model for tokenizer artifacts.
-        # Download tokenizer directly from Hugging Face; caching is handled by transformers/HF.
-        tokenizer = GemmaTokenizer.from_pretrained("google/gemma-2b")
-        tokenizer.save_pretrained(model_dir)
+        save_minimal_gemma_tokenizer(model_dir)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)
@@ -171,12 +169,10 @@ class TestGemma4Conversion:
                 low_cpu_mem_usage=False,  # Ensure full loading
             )
 
-            # Try loading the tokenizer as well
-            try:
-                tokenizer = GemmaTokenizer.from_pretrained(gemma4_toy_model_path)
-                print(f"Tokenizer loaded successfully with vocab_size: {tokenizer.vocab_size}")
-            except Exception as e:
-                print(f"Warning: Could not load tokenizer (this might be OK for conversion testing): {e}")
+            tokenizer = AutoTokenizer.from_pretrained(gemma4_toy_model_path)
+            assert tokenizer.bos_token_id == 2
+            assert tokenizer.eos_token_id == 1
+            assert tokenizer.pad_token_id == 0
 
             # Verify model structure
             assert hasattr(model, "model")

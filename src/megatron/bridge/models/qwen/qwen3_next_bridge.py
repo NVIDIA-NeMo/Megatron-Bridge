@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
@@ -31,6 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
@@ -46,8 +49,10 @@ class Qwen3NextBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
 
     def provider_bridge(self, hf_pretrained):
         """Convert HuggingFace Qwen3-Next config to GPTModelProvider."""
@@ -94,6 +99,40 @@ class Qwen3NextBridge(MegatronModelBridge):
         provider.hetereogenous_dist_checkpoint = True
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert Qwen3-Next HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            add_qkv_bias=False,
+            hidden_dropout=0.0,
+            qk_layernorm=True,
+            autocast_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="global_aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_shared_expert_gate=True,
+            moe_router_dtype="fp32",
+            moe_shared_expert_intermediate_size=hf_config.shared_expert_intermediate_size,
+            layernorm_zero_centered_gamma=True,
+            attention_output_gate=True,
+            experimental_attention_variant="gated_delta_net",
+            linear_attention_freq=full_attention_interval_from_hf(hf_config),
+            linear_conv_kernel_dim=hf_config.linear_conv_kernel_dim,
+            linear_key_head_dim=hf_config.linear_key_head_dim,
+            linear_value_head_dim=hf_config.linear_value_head_dim,
+            linear_num_key_heads=hf_config.linear_num_key_heads,
+            linear_num_value_heads=hf_config.linear_num_value_heads,
+            hetereogenous_dist_checkpoint=True,
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

@@ -19,7 +19,7 @@ import torch
 
 from megatron.bridge.inference.vlm.base import generate, setup_inference_wrapper, setup_model_and_tokenizer
 from megatron.bridge.inference.vlm.qwenvl_inference_wrapper import QwenVLInferenceWrapper
-from megatron.bridge.models.qwen_vl import Qwen3VLModelProvider, Qwen25VLModelProvider
+from megatron.bridge.models.qwen_vl import Qwen3VLModel, Qwen25VLModel
 
 
 class TestSetupModelAndTokenizer:
@@ -47,12 +47,13 @@ class TestSetupModelAndTokenizer:
         mock_bridge = MagicMock()
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
 
-        mock_model_provider = MagicMock()
-        mock_bridge.to_megatron_provider.return_value = mock_model_provider
+        mock_model_config = MagicMock()
+        mock_model_config.transformer = MagicMock()
+        mock_bridge.get_model_config.return_value = mock_model_config
 
         # Create mock model that will be returned by load_megatron_model
         mock_model = MagicMock()
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
+        mock_model.config = MagicMock()
         # Make cuda() return the same mock so eval() is called on it
         mock_model.cuda.return_value = mock_model
         mock_bridge.load_megatron_model.return_value = [mock_model]
@@ -82,15 +83,15 @@ class TestSetupModelAndTokenizer:
         assert fb_args[0] == "Qwen/Qwen2.5-VL-3B"
         if "trust_remote_code" in fb_kwargs:
             assert fb_kwargs["trust_remote_code"] is False
-        mock_bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
+        mock_bridge.get_model_config.assert_called_once_with()
 
-        # Verify model provider configuration
-        assert mock_model_provider.tensor_model_parallel_size == 2
-        assert mock_model_provider.pipeline_model_parallel_size == 1
-        assert mock_model_provider.pipeline_dtype == torch.bfloat16
-        assert mock_model_provider.parallel_output is False
-        mock_model_provider.finalize.assert_called_once()
-        mock_model_provider.initialize_model_parallel.assert_called_once_with(seed=0)
+        # Verify model config and builder initialization.
+        assert mock_model_config.tensor_model_parallel_size == 2
+        assert mock_model_config.pipeline_model_parallel_size == 1
+        assert mock_model_config.pipeline_dtype == torch.bfloat16
+        assert mock_model_config.parallel_output is False
+        mock_model_config.finalize.assert_called_once()
+        mock_bridge._get_or_initialize_pg_collection.assert_called_once_with(mock_model_config.transformer, seed=0)
 
         # Verify load_megatron_model was called correctly
         mock_bridge.load_megatron_model.assert_called_once()
@@ -139,10 +140,10 @@ class TestSetupModelAndTokenizer:
 
         mock_bridge = MagicMock()
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
-        mock_bridge.to_megatron_provider.return_value = MagicMock()
+        mock_bridge.get_model_config.return_value = MagicMock()
 
         mock_model = MagicMock()
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
+        mock_model.config = MagicMock()
         mock_model.cuda.return_value = mock_model
         mock_bridge.load_megatron_model.return_value = [mock_model]
 
@@ -179,7 +180,7 @@ class TestSetupModelAndTokenizer:
 
         mock_bridge = MagicMock()
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
-        mock_bridge.to_megatron_provider.return_value = MagicMock()
+        mock_bridge.get_model_config.return_value = MagicMock()
 
         # Create mock model with config that has grad_scale_func
         mock_model = MagicMock()
@@ -222,11 +223,11 @@ class TestSetupModelAndTokenizer:
         mock_bridge = MagicMock()
         mock_auto_bridge.from_hf_pretrained.return_value = mock_bridge
 
-        mock_model_provider = MagicMock()
-        mock_bridge.to_megatron_provider.return_value = mock_model_provider
+        mock_model_config = MagicMock()
+        mock_bridge.get_model_config.return_value = mock_model_config
 
         mock_model = MagicMock()
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
+        mock_model.config = MagicMock()
         mock_model.cuda.return_value = mock_model
         mock_bridge.load_megatron_model.return_value = [mock_model]
 
@@ -240,8 +241,8 @@ class TestSetupModelAndTokenizer:
         setup_model_and_tokenizer(megatron_model_path="/path/to/checkpoint")
 
         # Verify default values are used
-        assert mock_model_provider.tensor_model_parallel_size == 1  # default tp
-        assert mock_model_provider.pipeline_model_parallel_size == 1  # default pp
+        assert mock_model_config.tensor_model_parallel_size == 1  # default tp
+        assert mock_model_config.pipeline_model_parallel_size == 1  # default pp
 
         # Verify load_megatron_model default mp_overrides
         call_args = mock_bridge.load_megatron_model.call_args
@@ -267,13 +268,11 @@ class TestSetupInferenceWrapper:
         mock_language_model.decoder = mock_decoder
         mock_language_model.vocab_size = 151936
 
-        mock_module = MockObject()
+        mock_module = MagicMock(spec=Qwen25VLModel)
         mock_module.language_model = mock_language_model
 
         mock_model = MockObject()
         mock_model.module = mock_module
-        mock_model.config = MagicMock(spec=Qwen25VLModelProvider)
-        mock_model.config.hidden_size = 1024
         mock_model.cuda = MagicMock(return_value=mock_model)
         mock_model.to = MagicMock(return_value=mock_model)
         mock_model.eval = MagicMock()
@@ -292,9 +291,7 @@ class TestSetupInferenceWrapper:
         class MockObject:
             pass
 
-        mock_model = MockObject()
-        mock_model.config = MagicMock(spec=Qwen3VLModelProvider)
-        mock_model.config.hidden_size = 2048
+        mock_model = MagicMock(spec=Qwen3VLModel)
         mock_model.cuda = MagicMock(return_value=mock_model)
         mock_model.to = MagicMock(return_value=mock_model)
         mock_model.eval = MagicMock()

@@ -94,19 +94,19 @@ def run_forward_backward(
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
     # Megatron requires sequence parallelism when MoE + TP > 1 during training
     if tp > 1 and backward:
-        model_provider.sequence_parallel = True
-    model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.params_dtype = torch.bfloat16
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=42)
+        model_config.sequence_parallel = True
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.params_dtype = torch.bfloat16
+    model_config.finalize()
+    pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=42)
 
-    megatron_models = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    megatron_models = bridge.get_megatron_model(model_config, pg_collection=pg_collection, wrap_with_ddp=False)
 
     # Disable deallocate_pipeline_outputs: the no-pipelining schedule does not
     # call deallocate_output_tensor(), so backward_step's custom_backward()
@@ -131,9 +131,9 @@ def run_forward_backward(
     print_rank_0(f"Step 2: Preparing {'text+vision' if with_vision else 'text-only'} input...")
 
     # Use vocab_size from model config to stay in valid range
-    vocab_size = getattr(model_provider, "padded_vocab_size", None)
+    vocab_size = getattr(model_config, "padded_vocab_size", None)
     if vocab_size is None:
-        vocab_size = getattr(model_provider, "vocab_size", None)
+        vocab_size = getattr(model_config, "vocab_size", None)
     if vocab_size is None:
         vocab_size = 2048  # toy model default
 

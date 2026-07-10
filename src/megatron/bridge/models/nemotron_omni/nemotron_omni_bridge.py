@@ -32,6 +32,8 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
   processing / audio files that need to be copied during HF export.
 """
 
+from typing import TYPE_CHECKING
+
 from megatron.core.activations import squared_relu
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -41,17 +43,18 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.nemotron_omni.model_config import NemotronOmniModelConfig
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
-from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
-    NemotronOmniModelProvider,
-)
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source="NemotronH_Nano_Omni_Reasoning_V3",
     target=NemotronOmniModel,
-    provider=NemotronOmniModelProvider,
     model_type="NemotronH_Nano_Omni_Reasoning_V3",
 )
 class NemotronOmniBridge(NemotronVLBridge):
@@ -83,11 +86,47 @@ class NemotronOmniBridge(NemotronVLBridge):
         "evs.py",
     ]
 
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict[str, object]:
+        """Map independent language, vision, and sound construction state."""
+        config = super().hf_config_to_model_config_kwargs(hf_config)
+        llm_config = hf_config.llm_config
+        config.update(
+            activation_func=squared_relu,
+            make_vocab_size_divisible_by=self.make_vocab_size_divisible_by(llm_config.vocab_size),
+            vision_proj_ffn_hidden_size=int(getattr(hf_config, "projector_hidden_size", 20480)),
+            image_token_index=int(getattr(hf_config, "img_context_token_id", 18)),
+            img_start_token_id=21,
+            img_end_token_id=22,
+            language_model_type="nemotron6-moe",
+            tokenizer_type="nemotron6-moe",
+            use_vision_backbone_fp8_arch=False,
+            dynamic_resolution=True,
+            vision_class_token_len=10,
+        )
+        sound_config = getattr(hf_config, "sound_config", None)
+        if sound_config is not None:
+            config.update(
+                has_sound=True,
+                sound_model_type=getattr(sound_config, "model_type", "parakeet"),
+                sound_hidden_size=int(sound_config.hidden_size),
+                sound_projection_hidden_size=int(sound_config.projection_hidden_size),
+                sound_context_token_id=int(hf_config.sound_context_token_id),
+                sound_config=(sound_config.to_dict() if hasattr(sound_config, "to_dict") else dict(sound_config)),
+            )
+        vision_config = getattr(hf_config, "vision_config", None)
+        if vision_config is not None and getattr(vision_config, "separate_video_embedder", False):
+            config.update(
+                separate_video_embedder=True,
+                temporal_patch_dim=int(getattr(vision_config, "video_temporal_patch_size", 2)),
+                temporal_ckpt_compat=True,
+            )
+        return config
+
     # ------------------------------------------------------------------
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "NemotronOmniModelProvider":  # type: ignore[override]
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
         Always returns an Omni provider (MoE language model + RADIO ViT
@@ -95,6 +134,8 @@ class NemotronOmniBridge(NemotronVLBridge):
         absent on the HF config, ``has_sound=False`` and the sound branch
         is skipped at construction time.
         """
+        from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
+
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
 
@@ -194,3 +235,5 @@ class NemotronOmniBridge(NemotronVLBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = NemotronOmniModelConfig

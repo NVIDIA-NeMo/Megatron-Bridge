@@ -56,7 +56,7 @@ class _FakeBridge:
     def from_hf_pretrained(*args, **kwargs) -> "_FakeBridge":
         return _FakeBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False) -> _FakeModelCfg:
+    def get_model_config(self) -> _FakeModelCfg:
         return _FakeModelCfg()
 
 

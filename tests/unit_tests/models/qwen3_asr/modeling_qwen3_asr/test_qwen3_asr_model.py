@@ -32,6 +32,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr import modeling_qwen3_asr as hf_modeling
 from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRAudioEncoderConfig,
     Qwen3ASRThinkerConfig,
@@ -41,6 +42,44 @@ from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.transformer_config impo
 
 
 HIDDEN_SIZE = 128
+
+
+def test_hf_rotary_embedding_falls_back_when_default_rope_is_unregistered():
+    config = SimpleNamespace(
+        rope_scaling={"rope_type": "default", "mrope_section": [4, 6, 6]},
+        max_position_embeddings=128,
+        head_dim=32,
+        hidden_size=128,
+        num_attention_heads=4,
+        rope_theta=10_000.0,
+    )
+
+    with patch.dict(hf_modeling.ROPE_INIT_FUNCTIONS, {}, clear=True):
+        rotary = hf_modeling.Qwen3ASRThinkerTextRotaryEmbedding(config)
+
+    assert rotary.inv_freq.shape == (16,)
+    assert rotary.attention_scaling == 1.0
+
+
+def test_hf_rotary_embedding_rejects_unknown_rope_type():
+    config = SimpleNamespace(
+        rope_scaling={"rope_type": "unsupported", "mrope_section": [4, 6, 6]},
+        max_position_embeddings=128,
+        head_dim=32,
+        hidden_size=128,
+        num_attention_heads=4,
+        rope_theta=10_000.0,
+    )
+
+    with patch.dict(hf_modeling.ROPE_INIT_FUNCTIONS, {}, clear=True):
+        with pytest.raises(KeyError, match="unsupported"):
+            hf_modeling.Qwen3ASRThinkerTextRotaryEmbedding(config)
+
+
+def test_hf_tied_weight_mapping_uses_transformers_5_format():
+    assert hf_modeling.Qwen3ASRThinkerForConditionalGeneration._tied_weights_keys == {
+        "lm_head.weight": "model.embed_tokens.weight"
+    }
 
 
 def _make_toy_thinker_config():

@@ -38,7 +38,9 @@ from megatron.core.models.common.embeddings.rotary_pos_embedding import (
     MultimodalRotaryEmbedding,
     get_pos_emb_on_this_cp_rank,
 )
+from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
@@ -54,8 +56,6 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_moe_layer import 
 )
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_layer_spec import get_ernie_vit_layer_spec
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_model import ErnieVLVisionModel
-from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import get_ernie_vision_config
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -264,7 +264,14 @@ class Ernie45VLModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config,
+        language_transformer_config,
+        vision_transformer_config,
+        language_model: GPTModel,
+        pg_collection: ProcessGroupCollection,
+        patch_size: int,
+        in_channels: int,
+        spatial_merge_size: int,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
@@ -274,6 +281,8 @@ class Ernie45VLModel(MegatronModule):
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
+        self.pg_collection = pg_collection
+        self.language_transformer_config = language_transformer_config
 
         # HF bound methods (get_image_features, get_video_features, etc.) access
         # self.config.return_dict via the @can_return_tuple decorator.
@@ -296,14 +305,13 @@ class Ernie45VLModel(MegatronModule):
             if self.use_mg_vit:
                 # Megatron-Core native ViT: TP-native attention and MLP via
                 # TransformerBlock with TE modules.
-                vision_transformer_config = get_ernie_vision_config(
-                    config.vision_config,
-                    megatron_config=config,
-                )
                 vision_layer_spec = get_ernie_vit_layer_spec()
                 self.vision_model = ErnieVLVisionModel(
                     transformer_config=vision_transformer_config,
                     transformer_layer_spec=vision_layer_spec,
+                    patch_size=patch_size,
+                    in_channels=in_channels,
+                    spatial_merge_size=spatial_merge_size,
                 )
                 # Wrap MG ViT with an adapter that matches the HF
                 # vision_tower interface (forward signature, spatial_merge_size
@@ -323,9 +331,7 @@ class Ernie45VLModel(MegatronModule):
             hook_hf_module_setattr_for_tp_grad_sync(self.resampler_model)
 
         # Build the Megatron-Core GPT language model
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        self.language_model = language_model
 
         # Replace the default MultimodalRotaryEmbedding with ERNIE's custom
         # interleaved variant.  GPTModel.__init__ creates rotary_pos_emb as a
@@ -371,7 +377,6 @@ class Ernie45VLModel(MegatronModule):
             #
             # OPENAI_CLIP_MEAN = [0.48145466, 0.4578275, 0.40821073]
             # OPENAI_CLIP_STD  = [0.26862954, 0.26130258, 0.27577711]
-            patch_size = getattr(config.vision_config, "patch_size", 14)
             pixels_per_patch = patch_size * patch_size  # 196 for patch_size=14
 
             clip_mean = torch.tensor([0.48145466, 0.4578275, 0.40821073], dtype=torch.float32)
@@ -495,7 +500,7 @@ class Ernie45VLModel(MegatronModule):
             inputs_embeds = inputs_embeds.transpose(1, 0)
 
             if self.config.sequence_parallel:
-                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                tp_group = self.pg_collection.tp
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         # Compute 3D MRoPE position IDs on ALL pipeline stages

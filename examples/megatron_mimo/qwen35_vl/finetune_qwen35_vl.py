@@ -334,6 +334,8 @@ def _build_mimo_provider(
     args: argparse.Namespace,
 ) -> MegatronMIMOProvider:
     bridge = AutoBridge.from_hf_config(hf_config)
+    # TODO: Remove this compatibility fallback when MegatronMIMOProvider can adapt
+    # directly from a builder-backed Qwen3.5-VL ModelConfig.
     standard_provider = bridge.to_megatron_provider(load_weights=False)
     standard_provider.seq_length = args.seq_length
     if hasattr(standard_provider, "language_max_sequence_length"):

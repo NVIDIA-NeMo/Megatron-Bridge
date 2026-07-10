@@ -16,10 +16,12 @@ from typing import Dict, List, Mapping
 
 import torch
 from diffusers import FluxTransformer2DModel
+from megatron.core.transformer.utils import openai_gelu
 
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.models.flux.flux_model import Flux
 from megatron.bridge.diffusion.models.flux.flux_provider import FluxProvider
+from megatron.bridge.diffusion.models.flux.model_config import FluxModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
@@ -30,7 +32,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 
 
 def _flux_axes_dims_rope(hf_config) -> List[int]:
-    """Normalize diffusers tuple/list config to ``List[int]`` for :class:`FluxProvider`."""
+    """Normalize the diffusers tuple/list RoPE axes configuration."""
     raw = getattr(hf_config, "axes_dims_rope", [16, 56, 56])
     if isinstance(raw, (list, tuple)):
         return [int(x) for x in raw]
@@ -56,33 +58,63 @@ class FluxBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("black-forest-labs/FLUX.1-dev")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = FluxModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict:
+        """Map a diffusers FLUX config to builder-backed model config fields."""
+        hidden_size = hf_config.num_attention_heads * hf_config.attention_head_dim
+        self.hidden_size = hidden_size
+        return {
+            "num_layers": 1,
+            "hidden_size": hidden_size,
+            "ffn_hidden_size": _flux_ffn_hidden_size(hf_config, hidden_size),
+            "num_attention_heads": hf_config.num_attention_heads,
+            "num_query_groups": hf_config.num_attention_heads,
+            "kv_channels": hf_config.attention_head_dim,
+            "layernorm_epsilon": 1e-6,
+            "hidden_dropout": 0.0,
+            "attention_dropout": 0.0,
+            "qk_layernorm": True,
+            "num_joint_layers": hf_config.num_layers,
+            "num_single_layers": hf_config.num_single_layers,
+            "in_channels": hf_config.in_channels,
+            "patch_size": hf_config.patch_size,
+            "context_dim": hf_config.joint_attention_dim,
+            "vec_in_dim": hf_config.pooled_projection_dim,
+            "guidance_embed": hf_config.guidance_embeds,
+            "axes_dims_rope": _flux_axes_dims_rope(hf_config),
+            "activation_func": openai_gelu,
+            "add_qkv_bias": True,
+            "rotary_interleaved": True,
+            "apply_rope_fusion": False,
+            "use_cpu_initialization": True,
+            "gradient_accumulation_fusion": False,
+            "enable_cuda_graph": False,
+            "cuda_graph_scope": None,
+            "use_te_rng_tracker": False,
+            "cuda_graph_warmup_steps": 2,
+            "fp16": False,
+            "bf16": False,
+            "params_dtype": torch.float32,
+            "seq_length": 1024,
+            "share_embeddings_and_output_weights": False,
+            "vocab_size": 25256 * 8,
+            "make_vocab_size_divisible_by": 128,
+            "position_embedding_type": "none",
+        }
 
     def provider_bridge(self, hf_pretrained: PreTrainedFlux) -> FluxProvider:
         hf_config = hf_pretrained.config
 
-        # Diffusers FLUX width is heads * per-head dim; defaults were wrong if we only set attention fields.
-        hidden_size = hf_config.num_attention_heads * hf_config.attention_head_dim
-        ffn_hidden_size = _flux_ffn_hidden_size(hf_config, hidden_size)
+        # Keep the deprecated provider path aligned with the primary config path.
+        config_kwargs = self.hf_config_to_model_config_kwargs(hf_config)
+        provider_fields = FluxProvider.__dataclass_fields__
+        provider_kwargs = {name: value for name, value in config_kwargs.items() if name in provider_fields}
 
-        provider = FluxProvider(
-            in_channels=hf_config.in_channels,
-            patch_size=hf_config.patch_size,
-            num_joint_layers=hf_config.num_layers,
-            num_single_layers=hf_config.num_single_layers,
-            num_attention_heads=hf_config.num_attention_heads,
-            hidden_size=hidden_size,
-            ffn_hidden_size=ffn_hidden_size,
-            context_dim=hf_config.joint_attention_dim,
-            kv_channels=hf_config.attention_head_dim,
-            num_query_groups=hf_config.num_attention_heads,
-            vec_in_dim=hf_config.pooled_projection_dim,
-            guidance_embed=hf_config.guidance_embeds,
-            axes_dims_rope=_flux_axes_dims_rope(hf_config),
-            bf16=False,
-            params_dtype=torch.float32,
-        )
+        provider = FluxProvider(**provider_kwargs)
         self.hidden_size = provider.hidden_size
         return provider
 

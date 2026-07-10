@@ -13,22 +13,26 @@
 # limitations under the License.
 
 import logging
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 import torch
 from megatron.core import parallel_state
+from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel import scatter_to_sequence_parallel_region
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 from transformers.dynamic_module_utils import get_class_from_dynamic_module
 from transformers.utils import is_flash_attn_2_available
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.kimi_vl.model_config import KimiK25VLModelConfig
 
 
 def _split_on_cp_rank(val: Optional[Tensor], cp_size: int, cp_rank: int, seq_dim: int) -> Optional[Tensor]:
@@ -131,19 +135,26 @@ class KimiK25VLModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config: "KimiK25VLModelConfig",
+        language_model: GPTModel | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=getattr(config, "transformer", config))
+        self.config = config
+        self.pg_collection = pg_collection
 
         self.pre_process = pre_process
         self.post_process = post_process
         self.vp_stage = vp_stage
 
-        if config.hf_model_path is None:
-            raise ValueError("hf_model_path must be set.")
+        hf_model_id = getattr(config, "hf_model_id", None)
+        if not isinstance(hf_model_id, str) or not hf_model_id:
+            hf_model_id = getattr(config, "hf_model_path", None)
+        if not hf_model_id:
+            raise ValueError("hf_model_id must be set.")
 
         if pre_process:
             trust_remote_code = bool(getattr(config, "trust_remote_code", False))
@@ -156,7 +167,7 @@ class KimiK25VLModel(MegatronModule):
             # Load vision tower and projector classes from the custom HuggingFace model code
             MoonViT3dPretrainedModel = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dPretrainedModel",
-                config.hf_model_path,
+                hf_model_id,
                 trust_remote_code=trust_remote_code,
             )
             # Patch MoonViT3dEncoder to add missing use_deterministic_attn attribute
@@ -176,17 +187,17 @@ class KimiK25VLModel(MegatronModule):
 
             PatchMergerMLP = get_class_from_dynamic_module(
                 "modeling_kimi_k25.PatchMergerMLP",
-                config.hf_model_path,
+                hf_model_id,
                 trust_remote_code=trust_remote_code,
             )
             ProjectorConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.ProjectorConfig",
-                config.hf_model_path,
+                hf_model_id,
                 trust_remote_code=trust_remote_code,
             )
             VisionTowerConfig = get_class_from_dynamic_module(
                 "modeling_kimi_k25.VisionTowerConfig",
-                config.hf_model_path,
+                hf_model_id,
                 trust_remote_code=trust_remote_code,
             )
 
@@ -194,7 +205,7 @@ class KimiK25VLModel(MegatronModule):
             from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 
             config.vision_config = safe_load_config_with_retry(
-                config.hf_model_path, trust_remote_code=trust_remote_code
+                hf_model_id, trust_remote_code=trust_remote_code
             ).vision_config
 
             self.vision_tower_config = VisionTowerConfig(config.vision_config)
@@ -205,7 +216,7 @@ class KimiK25VLModel(MegatronModule):
             # via the class so the attribute lookup succeeds.
             MoonViT3dEncoder = get_class_from_dynamic_module(
                 "modeling_kimi_k25.MoonViT3dEncoder",
-                config.hf_model_path,
+                hf_model_id,
                 trust_remote_code=trust_remote_code,
             )
             if not hasattr(MoonViT3dEncoder, "use_deterministic_attn"):
@@ -217,9 +228,11 @@ class KimiK25VLModel(MegatronModule):
             # Ensure HF visual tower params are marked for TP grad sync and future assignments are hooked.
             hook_hf_module_setattr_for_tp_grad_sync(self.vision_tower)
             hook_hf_module_setattr_for_tp_grad_sync(self.mm_projector)
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            language_model = config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         # Finalize grad requires these to be bound with module
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
@@ -472,7 +485,7 @@ class KimiK25VLModel(MegatronModule):
                 inputs_embeds = _split_on_cp_rank(inputs_embeds, cp_size, cp_rank, seq_dim=0)
 
             if self.config.sequence_parallel:
-                tp_group = self.config._pg_collection.tp if self.config._pg_collection is not None else None
+                tp_group = self.pg_collection.tp if self.pg_collection is not None else None
                 inputs_embeds = scatter_to_sequence_parallel_region(inputs_embeds, group=tp_group)
 
         if cp_size > 1:

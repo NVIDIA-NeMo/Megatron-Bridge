@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import LlamaForCausalLM
@@ -26,6 +27,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.utils import fusions
 
 
 logger = logging.getLogger(__name__)
@@ -41,7 +43,7 @@ class LlamaBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.1-8B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GPTModelProvider:
@@ -77,6 +79,35 @@ class LlamaBridge(MegatronModelBridge):
             provider.rope_scaling_factor = hf_rope_scaling.get("factor", 8.0)
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Llama config to flat Megatron config kwargs.
+
+        Args:
+            hf_config: Hugging Face Llama configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            hidden_dropout=0.0,
+            bias_activation_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            bias_dropout_fusion=True,
+            apply_rope_fusion=fusions.can_enable_rope_fusion(),
+            rotary_percent=1.0,
+        )
+
+        hf_rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if hf_rope_scaling is not None and hf_rope_scaling.get("rope_type") == "llama3":
+            config_kwargs["rope_scaling"] = True
+            config_kwargs["rope_scaling_factor"] = hf_rope_scaling.get("factor", 8.0)
+
+        return config_kwargs
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:

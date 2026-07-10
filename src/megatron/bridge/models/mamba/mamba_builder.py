@@ -17,6 +17,7 @@ from typing import Any, ClassVar
 
 from megatron.core.transformer import ModuleSpec
 
+from megatron.bridge.models.config_proxy import FlatTransformerConfigMixin
 from megatron.bridge.models.hybrid.hybrid_builder import (
     HybridModelBuilder,
     HybridModelConfig,
@@ -27,7 +28,7 @@ from megatron.bridge.models.hybrid.hybrid_builder import (
 
 
 @dataclass(kw_only=True)
-class MambaModelConfig(HybridModelConfig):
+class MambaModelConfig(FlatTransformerConfigMixin, HybridModelConfig):
     """Backward-compatible wrapper around :class:`HybridModelConfig`."""
 
     builder: ClassVar[str] = "megatron.bridge.models.mamba.MambaModelBuilder"

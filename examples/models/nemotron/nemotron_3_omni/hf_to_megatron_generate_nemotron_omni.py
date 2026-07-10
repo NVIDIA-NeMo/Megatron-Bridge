@@ -669,23 +669,24 @@ def main(args) -> None:
         bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
 
         # Initialize model parallel before loading
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.dynamic_resolution = dynamic_resolution
-        model_provider.temporal_patch_dim = temporal_patch_dim
-        model_provider.separate_video_embedder = separate_video_embedder
-        model_provider.temporal_ckpt_compat = temporal_ckpt_compat
-        model_provider.initialize_model_parallel(seed=0)
+        model_config = bridge.get_model_config()
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
+        model_config.pipeline_dtype = torch.bfloat16
+        model_config.dynamic_resolution = dynamic_resolution
+        model_config.temporal_patch_dim = temporal_patch_dim
+        model_config.separate_video_embedder = separate_video_embedder
+        model_config.temporal_ckpt_compat = temporal_ckpt_compat
+        model_config.finalize()
+        bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
 
         # Load the Megatron model directly. The mp_overrides values are applied to
         # the loaded model_cfg before the model is built (see model_load_save.py),
         # so the temporal/dynamic-resolution overrides must be passed here -- the
-        # `model_provider` mutations above only affect the throwaway provider used
-        # for parallel-state init, not the model that load_megatron_model builds.
+        # `model_config` above initializes parallel state, but load_megatron_model
+        # builds from the model config stored in the checkpoint.
         model = bridge.load_megatron_model(
             args.megatron_model_path,
             mp_overrides={
@@ -708,19 +709,18 @@ def main(args) -> None:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
         bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.dynamic_resolution = dynamic_resolution
-        model_provider.temporal_patch_dim = temporal_patch_dim
-        model_provider.separate_video_embedder = separate_video_embedder
-        model_provider.temporal_ckpt_compat = temporal_ckpt_compat
-        model_provider.initialize_model_parallel(seed=0)
-        model_provider.finalize()
-        model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+        model_config = bridge.get_model_config()
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
+        model_config.pipeline_dtype = torch.bfloat16
+        model_config.dynamic_resolution = dynamic_resolution
+        model_config.temporal_patch_dim = temporal_patch_dim
+        model_config.separate_video_embedder = separate_video_embedder
+        model_config.temporal_ckpt_compat = temporal_ckpt_compat
+        model_config.finalize()
+        model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
     for m in model:

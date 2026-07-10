@@ -62,11 +62,11 @@ import torch
 import torch.nn.functional as F
 from megatron.core.pipeline_parallel import get_forward_backward_func
 from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.training.models.base import ModelConfig
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.models.model_provider import get_model
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -97,13 +97,13 @@ class Args:
     trust_remote_code: bool = False
 
 
-def build_config(provider, args: Args) -> ConfigContainer:
+def build_config(model_config: ModelConfig, args: Args) -> ConfigContainer:
     """Build a config for the training."""
-    provider.tensor_model_parallel_size = 1
-    provider.pipeline_model_parallel_size = 1
-    provider.context_parallel_size = 1
-    provider.seq_length = args.seq_length
-    provider.finalize()
+    model_config.tensor_model_parallel_size = 1
+    model_config.pipeline_model_parallel_size = 1
+    model_config.context_parallel_size = 1
+    model_config.seq_length = args.seq_length
+    model_config.finalize()
 
     train = TrainingConfig(
         micro_batch_size=args.micro_batch_size,
@@ -150,7 +150,7 @@ def build_config(provider, args: Args) -> ConfigContainer:
     logger = LoggerConfig()
 
     cfg = ConfigContainer(
-        model=provider,
+        model=model_config,
         train=train,
         optimizer=optimizer,
         scheduler=scheduler,
@@ -282,7 +282,7 @@ def main() -> None:
         truncation=True,
     )
 
-    # Bridge: load HF, create Megatron provider and training stack
+    # Bridge: load HF, create a builder-backed config, and initialize the training stack.
     bridge = AutoBridge.from_hf_pretrained(
         hf_policy_model,
         trust_remote_code=is_safe_repo(
@@ -290,9 +290,7 @@ def main() -> None:
             hf_path=hf_policy_model,
         ),
     )
-    provider = bridge.to_megatron_provider(load_weights=True)
-
-    cfg = build_config(provider, args)
+    cfg = build_config(bridge.get_model_config(), args)
 
     # Initialize Megatron (requires CUDA for real training environments)
     initialize_megatron(cfg=cfg)
@@ -302,9 +300,9 @@ def main() -> None:
     pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
     # Build model + optimizer + scheduler
-    model_list = get_model(
+    model_list = bridge.get_megatron_model(
         cfg.model,
-        cfg.ddp,
+        ddp_config=cfg.ddp,
         overlap_param_gather_with_optimizer_step=False,
         use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
         data_parallel_random_init=cfg.rng.data_parallel_random_init,

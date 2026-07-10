@@ -97,17 +97,19 @@ def exported_adapter_dir(qwen3_toy_model_dir, tmp_path_factory):
     bridge = AutoBridge.from_hf_pretrained(qwen3_toy_model_dir)
     lora = LoRA(target_modules=LORA_TARGET_MODULES, dim=LORA_DIM, alpha=LORA_ALPHA, dropout=0.0)
 
-    provider = bridge.to_megatron_provider(load_weights=True)
-    provider.pipeline_dtype = torch.float32
-    provider.params_dtype = torch.float32
-    provider.finalize()
-    provider.register_pre_wrap_hook(lambda chunks: lora(chunks, training=False))
+    model_config = bridge.get_model_config()
+    model_config.transformer.pipeline_dtype = torch.float32
+    model_config.transformer.params_dtype = torch.float32
+    model_config.transformer.autocast_dtype = torch.float32
+    model_config.transformer.use_cpu_initialization = True
+    model_config.transformer.init_model_with_meta_device = False
+    model_config.pre_wrap_hooks.append(lambda chunks: lora(chunks, training=False))
+    model_config.finalize()
 
     with temporary_distributed_context(backend="gloo"):
-        model = provider.provide_distributed_model(
+        model = bridge.get_megatron_model(
+            model_config,
             wrap_with_ddp=False,
-            use_cpu_initialization=True,
-            init_model_with_meta_device=False,
         )
 
         # LoRA B is zero-initialized by default, so the adapter would have no

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -23,8 +25,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen3_asr.model_config import Qwen3ASRModelConfig
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
-from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
 
 
 # Use string-based registration because Qwen3ASRForConditionalGeneration is not in
@@ -45,8 +51,10 @@ class Qwen3ASRBridge(MegatronModelBridge):
     - QK layernorm weight mappings (q_layernorm, k_layernorm)
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3ASRModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen3ASRModelProvider":
         """Create a Qwen3ASRModelProvider from a HuggingFace pretrained model."""
+        from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
+
         hf_config = hf_pretrained.config
         thinker_config = hf_config.thinker_config
         text_config = thinker_config.text_config
@@ -130,3 +138,28 @@ class Qwen3ASRBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = Qwen3ASRModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map Qwen3-ASR HF settings to pure model-config fields."""
+        thinker = hf_config.thinker_config
+        text = thinker.text_config
+        kwargs = super().hf_config_to_model_config_kwargs(text)
+        kwargs.update(
+            thinker_config=thinker.to_dict(),
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=False,
+            add_bias_linear=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=True,
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            audio_token_id=getattr(thinker, "audio_token_id", 151646),
+            audio_start_token_id=getattr(thinker, "audio_start_token_id", 151647),
+            mrope_section=(getattr(text, "rope_scaling", None) or {}).get("mrope_section", [24, 20, 20]),
+            language_max_sequence_length=text.max_position_embeddings,
+        )
+        return kwargs

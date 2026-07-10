@@ -12,9 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 from functools import partial
+from typing import Any
 
 import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import MistralForCausalLM
 
@@ -28,6 +31,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
+from megatron.bridge.models.mistral.model_config import MistralModelConfig
 
 
 @MegatronModelBridge.register_bridge(source=MistralForCausalLM, target=GPTModel)
@@ -40,8 +44,10 @@ class MistralBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("mistralai/Mistral-7B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = MistralModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MistralModelProvider:
         hf_config = hf_pretrained.config
@@ -80,6 +86,52 @@ class MistralBridge(MegatronModelBridge):
         )
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Mistral config to builder-backed config kwargs."""
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        rope_type = (
+            rope_scaling.get("type") or rope_scaling.get("rope_type") if isinstance(rope_scaling, dict) else None
+        )
+
+        if rope_type == "yarn":
+            unscaled_config = copy.copy(hf_config)
+            unscaled_config.rope_scaling = None
+            config_kwargs = super().hf_config_to_model_config_kwargs(unscaled_config)
+            config_kwargs.update(
+                position_embedding_type="yarn",
+                yarn_rotary_scaling_factor=rope_scaling.get("factor", 1.0),
+                yarn_original_max_position_embeddings=rope_scaling.get(
+                    "original_max_position_embeddings", hf_config.max_position_embeddings
+                ),
+                yarn_beta_fast=rope_scaling.get("beta_fast", 32.0),
+                yarn_beta_slow=rope_scaling.get("beta_slow", 1.0),
+                yarn_mscale=rope_scaling.get("mscale", 1.0),
+                yarn_mscale_all_dim=rope_scaling.get("mscale_all_dim", 0.0),
+                yarn_correction_range_round_to_int=rope_scaling.get("truncate", True),
+            )
+        else:
+            config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+
+        window_size = None
+        cp_comm_type = None
+        sliding_window = getattr(hf_config, "sliding_window", None)
+        if sliding_window is not None:
+            window_size = [sliding_window - 1, 0]
+            cp_comm_type = "a2a"
+
+        config_kwargs.update(
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
+            window_size=window_size,
+            cp_comm_type=cp_comm_type,
+            kv_channels=getattr(hf_config, "head_dim", None),
+        )
+        return config_kwargs
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

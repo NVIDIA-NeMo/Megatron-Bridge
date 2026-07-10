@@ -6,7 +6,7 @@ Location: `tests/unit_tests/models/<model>/`
 
 ### Bridge Unit Test
 
-Mock the HF config and pretrained model, then verify `provider_bridge()` and `mapping_registry()`.
+Mock the HF config and pretrained model, then verify `model_config_bridge()` and `mapping_registry()`.
 
 ```python
 import pytest
@@ -36,7 +36,7 @@ def _make_mock_pretrained(config):
     pretrained.config = config
     return pretrained
 
-class TestMyModelBridgeProviderBridge:
+class TestMyModelBridgeModelConfig:
     @pytest.fixture
     def bridge(self):
         return MyModelBridge()
@@ -45,19 +45,25 @@ class TestMyModelBridgeProviderBridge:
     def mock_pretrained(self):
         return _make_mock_pretrained(_make_mock_config())
 
-    def test_provider_type(self, bridge, mock_pretrained):
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert isinstance(provider, GPTModelProvider)  # or custom provider class if one exists
+    def test_exact_transformer_type(self, bridge, mock_pretrained):
+        model_config = bridge.model_config_bridge(mock_pretrained)
+        assert type(model_config.transformer) is TransformerConfig
 
     def test_config_mapping(self, bridge, mock_pretrained):
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.num_layers == 4
-        assert provider.hidden_size == 256
-        assert provider.num_attention_heads == 4
+        model_config = bridge.model_config_bridge(mock_pretrained)
+        assert model_config.transformer.num_layers == 4
+        assert model_config.transformer.hidden_size == 256
+        assert model_config.transformer.num_attention_heads == 4
 
     def test_tie_word_embeddings(self, bridge, mock_pretrained):
-        provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.share_embeddings_and_output_weights == False
+        model_config = bridge.model_config_bridge(mock_pretrained)
+        assert model_config.share_embeddings_and_output_weights is False
+
+    def test_serialization_roundtrip(self, bridge, mock_pretrained):
+        model_config = bridge.model_config_bridge(mock_pretrained)
+        restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
+        assert type(restored.transformer) is TransformerConfig
+        assert restored.get_builder_cls() is model_config.get_builder_cls()
 
 class TestMyModelBridgeMappingRegistry:
     @pytest.fixture
@@ -75,27 +81,21 @@ class TestMyModelBridgeMappingRegistry:
         assert any("output_layer" in p for p in megatron_params)
 ```
 
-### Provider Unit Test (only if custom provider subclass exists)
+### Builder Unit Test (only if custom construction exists)
 
-Skip this if the bridge uses `GPTModelProvider` directly (most LLM bridges).
-Only needed for VLM providers or LLM providers with custom fields/`provide()` logic.
+Skip this if the bridge uses `GPTModelBuilder` directly. Test custom construction without requiring
+real distributed groups by mocking the parent builder or model constructor.
 
 ```python
-class TestMyModelProvider:
-    def test_defaults(self):
-        provider = MyModelProvider(
-            num_layers=32, hidden_size=4096,
-            num_attention_heads=32, num_query_groups=8,
+class TestMyModelBuilder:
+    def test_builder_receives_serialized_family_fields(self):
+        config = MyModelConfig(
+            transformer=TransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            family_option=7,
         )
-        assert provider.normalization == "RMSNorm"
-
-    def test_tp_validation(self):
-        with pytest.raises(ValueError):
-            provider = MyModelProvider(
-                num_query_groups=2,
-                tensor_model_parallel_size=4,
-            )
-            provider.validate_parallelism()
+        with patch.object(GPTModelBuilder, "build_model", return_value=Mock()) as parent_build:
+            MyModelBuilder(config).build_model(Mock())
+        parent_build.assert_called_once()
 ```
 
 ### Skip conditions
@@ -274,7 +274,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 
 ## Optional External NeMo-RL E2E
 
-After Bridge unit and conversion tests pass for a new model/provider, optionally run a small
+After bridge, model-config, builder, and conversion tests pass for a new model, optionally run a small
 external-loop smoke test through NeMo-RL when downstream RL compatibility matters or the PR claims
 NeMo-RL compatibility. This is not required for every model-support change. Start with the
 Megatron policy GRPO smoke (`tests/functional/grpo_megatron.sh`) to prove NeMo-RL can import the
@@ -291,7 +291,7 @@ failure triage, and reporting format.
 
 ## Optional External verl E2E
 
-After Bridge unit and conversion tests pass for a new model/provider, optionally run a small
+After bridge, model-config, builder, and conversion tests pass for a new model, optionally run a small
 external-loop smoke test through verl when downstream RL compatibility matters or the PR claims verl
 compatibility. This is not required for every model-support change. Start with the non-vanilla
 Bridge path, LoRA enabled, and Megatron DDP selected, then add save/resume, parallelism stress,

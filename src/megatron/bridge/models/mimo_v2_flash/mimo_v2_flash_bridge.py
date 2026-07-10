@@ -23,6 +23,7 @@ MiMo-V2-Flash from Xiaomi features:
 """
 
 import re
+from dataclasses import replace
 from typing import Dict, Mapping, Optional
 
 import torch
@@ -40,6 +41,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.conversion.utils import remove_non_pickleables
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider
+from megatron.bridge.models.mimo_v2_flash.model_config import MiMoV2FlashModelConfig
 
 
 # softmax_offset (attention sink bias) is shape [num_heads], sharded along dim 0 by TP
@@ -53,9 +55,16 @@ class MiMoV2FlashQKVMapping(QKVMapping):
 
     MiMo-V2-Flash uses head_dim=192 for Q/K but v_head_dim=128 for V.
     Standard merge_qkv_weights uses kv_channels (192) for all three,
-    causing a shape mismatch for V. We temporarily patch v_head_dim onto
-    the config before merging.
+    causing a shape mismatch for V. The V width is inferred from checkpoint
+    tensor shapes because it is not part of the nested TransformerConfig.
     """
+
+    @staticmethod
+    def _infer_v_head_dim(v_rows: int, num_query_groups: int) -> int:
+        v_head_dim, remainder = divmod(v_rows, num_query_groups)
+        if remainder or v_head_dim <= 0:
+            raise ValueError(f"Cannot infer MiMo V head dim from {v_rows} rows and {num_query_groups} query groups.")
+        return v_head_dim
 
     def hf_to_megatron(self, hf_weights: Dict[str, torch.Tensor], megatron_module: nn.Module):
         if self.tp_rank == 0:
@@ -66,7 +75,7 @@ class MiMoV2FlashQKVMapping(QKVMapping):
                 num_qg = config.num_query_groups
                 heads_per_group = num_heads // num_qg
                 qk_ch = config.kv_channels
-                v_ch = config.v_head_dim
+                v_ch = self._infer_v_head_dim(v.shape[0], num_qg)
 
                 merged_rows = []
                 for i in range(num_qg):
@@ -104,7 +113,8 @@ class MiMoV2FlashQKVMapping(QKVMapping):
         num_qg = config.num_query_groups
         heads_per_group = num_heads // num_qg
         qk_ch = config.kv_channels
-        v_ch = config.v_head_dim
+        known_rows = (num_heads + num_qg) * qk_ch
+        v_ch = self._infer_v_head_dim(packed_qkv.shape[0] - known_rows, num_qg)
         group_size = heads_per_group * qk_ch + qk_ch + v_ch
         qs, ks, vs = [], [], []
         for i in range(num_qg):
@@ -139,6 +149,51 @@ def _dequant_fp8_blockwise(weight: torch.Tensor, scale_inv: torch.Tensor) -> tor
 )
 class MiMoV2FlashBridge(MegatronModelBridge):
     """Megatron Bridge for MiMo-V2-Flash."""
+
+    MODEL_CONFIG_CLASS = MiMoV2FlashModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config) -> dict[str, object]:
+        """Map HF MiMo-V2-Flash state to pure builder config fields."""
+        config = super().hf_config_to_model_config_kwargs(hf_config)
+        config.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            position_embedding_type="rope",
+            rotary_base=float(hf_config.rope_theta),
+            rotary_base_local=float(hf_config.swa_rope_theta),
+            hybrid_attention_pattern=list(hf_config.hybrid_layer_pattern),
+            sliding_window_size=int(hf_config.sliding_window_size),
+            layernorm_epsilon=float(hf_config.layernorm_epsilon),
+            v_head_dim=int(hf_config.v_head_dim),
+            full_attn_num_query_groups=int(hf_config.num_key_value_heads),
+            swa_num_query_groups=int(hf_config.swa_num_key_value_heads),
+            num_query_groups=int(hf_config.num_key_value_heads),
+            moe_layer_freq=list(hf_config.moe_layer_freq),
+            moe_router_load_balancing_type="none",
+            moe_router_enable_expert_bias=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            attention_value_scale=hf_config.attention_value_scale,
+        )
+        return config
+
+    def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MiMoV2FlashModelConfig:
+        """Persist checkpoint-derived MTP depth on the exact transformer config."""
+        config = super().model_config_bridge(hf_pretrained)
+        assert isinstance(config, MiMoV2FlashModelConfig)
+        mtp_indices: set[int] = set()
+        state = getattr(hf_pretrained, "state", None)
+        source = getattr(state, "source", None)
+        if source is not None:
+            for key in source.get_all_keys():
+                match = re.match(r"model\.mtp\.layers\.(\d+)\.", key)
+                if match:
+                    mtp_indices.add(int(match.group(1)))
+        transformer = replace(config.transformer, mtp_num_layers=len(mtp_indices) or None)
+        return replace(config, transformer=transformer)
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MiMoV2FlashModelProvider:
         """Convert HuggingFace MiMo-V2-Flash config to MiMoV2FlashModelProvider."""
@@ -192,14 +247,17 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         return provider
 
     @classmethod
-    def megatron_to_hf_config(cls, provider: MiMoV2FlashModelProvider) -> dict:
-        """Convert Megatron provider config to HuggingFace config dict."""
+    def megatron_to_hf_config(cls, provider: MiMoV2FlashModelProvider | MiMoV2FlashModelConfig) -> dict:
+        """Convert a builder config or legacy provider to a HuggingFace config dict."""
         hf_cfg = super(MiMoV2FlashBridge, cls).megatron_to_hf_config(provider)
 
         if isinstance(provider.rotary_base, (tuple, list)):
             swa_theta, full_theta = provider.rotary_base
-            hf_cfg["rope_theta"] = full_theta
-            hf_cfg["swa_rope_theta"] = swa_theta
+        else:
+            full_theta = provider.rotary_base
+            swa_theta = getattr(provider, "rotary_base_local", full_theta)
+        hf_cfg["rope_theta"] = full_theta
+        hf_cfg["swa_rope_theta"] = swa_theta
 
         hf_cfg["auto_map"] = {
             "AutoConfig": "configuration_mimo_v2_flash.MiMoV2FlashConfig",
@@ -210,7 +268,9 @@ class MiMoV2FlashBridge(MegatronModelBridge):
         # Hybrid attention pattern
         hf_cfg["hybrid_layer_pattern"] = provider.hybrid_attention_pattern
 
-        window = provider.window_size
+        window = getattr(provider, "sliding_window_size", None)
+        if window is None:
+            window = provider.window_size
         if isinstance(window, (list, tuple)):
             window = window[0]
         hf_cfg["sliding_window_size"] = window

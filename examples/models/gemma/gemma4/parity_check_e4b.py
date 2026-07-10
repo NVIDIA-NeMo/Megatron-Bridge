@@ -19,17 +19,17 @@ Logit parity check: Megatron Gemma-4 E4B vs HF Gemma-4 E4B.
 Supports three modes (via --mode or GEMMA4_CONVERSION_MODE env var):
 
   text  : text-only checkpoint
-          Megatron: Gemma4DenseProvider → GPTModel
+          Megatron: Gemma4DenseModelConfig → GPTModel
           HF:       AutoModelForCausalLM (Gemma4ForCausalLM)
 
   vl    : VL checkpoint, full image encoder forward
-          Megatron: Gemma4DenseVLProvider → Gemma4VLModel forward with
+          Megatron: Gemma4DenseVLModelConfig → Gemma4VLModel forward with
                     pixel_values and image_token_id positions
           HF:       AutoModelForVision2Seq (Gemma4ForConditionalGeneration)
                     with pixel_values
 
   audio : VL+Audio checkpoint, full audio encoder forward
-          Megatron: Gemma4DenseVLProvider (with audio_config) → Gemma4VLModel
+          Megatron: Gemma4DenseVLModelConfig (with audio_config) → Gemma4VLModel
                     forward with input_features and audio_token_id positions
           HF:       AutoModelForVision2Seq with input_features
 
@@ -216,7 +216,7 @@ def _build_megatron_argv(ckpt, tp=2, bf16=False, seq=SEQ):
 
 
 # ---------------------------------------------------------------------------
-# Shared VL provider builder (used by both vl and audio modes)
+# Builder-backed model construction
 # ---------------------------------------------------------------------------
 
 
@@ -228,82 +228,30 @@ def _seq_len_for_mode(mode: str) -> int:
     return SEQ
 
 
-def _make_vl_provider(args, hf_cfg, seq_len: int = AUDIO_SEQ, include_audio: bool = False):
-    from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4DenseVLProvider
-
-    model_dtype = torch.bfloat16 if args.bf16 else torch.float32
-    return Gemma4DenseVLProvider(
-        num_layers=42,
-        hidden_size=2560,
-        ffn_hidden_size=10240,
-        num_attention_heads=8,
-        num_query_groups=2,
-        kv_channels=256,
-        global_kv_channels=512,
-        num_global_query_groups=2,
-        seq_length=seq_len,
-        vocab_size=262143,
-        make_vocab_size_divisible_by=128,
-        normalization="RMSNorm",
-        layernorm_epsilon=1e-6,
-        window_attn_skip_freq=6,
-        sliding_window_rope_base=10000.0,
-        full_attention_rope_base=1000000.0,
-        full_attention_rope_partial_factor=0.25,
-        num_kv_shared_layers=18,
-        per_layer_embed_vocab_size=262144,
-        per_layer_embed_dim=256,
-        vision_config=hf_cfg.vision_config,
-        text_config=hf_cfg.text_config,
-        audio_config=hf_cfg.audio_config if include_audio else None,
-        audio_token_id=getattr(hf_cfg, "audio_token_id", AUDIO_TOKEN_ID),
-        image_token_id=getattr(hf_cfg, "image_token_id", IMAGE_TOKEN_ID),
-        bf16=args.bf16,
-        params_dtype=model_dtype,
-        autocast_dtype=model_dtype,
-    )
-
-
-# ---------------------------------------------------------------------------
-# Model builders
-# ---------------------------------------------------------------------------
-
-
-def _build_text_models(args):
-    """Text mode: GPTModel via Gemma4DenseProvider."""
-    from megatron.core.enums import ModelType
-    from megatron.training import get_model
-
-    from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
-
-    model_dtype = torch.bfloat16 if args.bf16 else torch.float32
-    provider = Gemma4DenseProvider(
-        bf16=args.bf16,
-        params_dtype=model_dtype,
-        autocast_dtype=model_dtype,
-    )
-    return get_model(
-        lambda pre_process=True, post_process=True, config=None, pg_collection=None: provider.build(
-            pre_process=pre_process, post_process=post_process
-        ),
-        ModelType.encoder_or_decoder,
-    )
-
-
-def _build_vl_models(args, seq_len: int = AUDIO_SEQ, include_audio: bool = False):
-    """VL / Audio mode: Gemma4VLModel via Gemma4DenseVLProvider."""
-    from megatron.core.enums import ModelType
-    from megatron.training import get_model
+def _build_models(args, seq_len: int):
+    """Build the selected Gemma4 mode through its standalone ModelConfig."""
     from transformers import AutoConfig
 
-    hf_cfg = AutoConfig.from_pretrained(args.hf_dir)
-    provider = _make_vl_provider(args, hf_cfg, seq_len=seq_len, include_audio=include_audio)
-    return get_model(
-        lambda pre_process=True, post_process=True, config=None, pg_collection=None: provider.provide(
-            pre_process=pre_process, post_process=post_process
-        ),
-        ModelType.encoder_or_decoder,
-    )
+    from megatron.bridge import AutoBridge
+
+    os.environ["GEMMA4_CONVERSION_MODE"] = args.mode
+    hf_config = AutoConfig.from_pretrained(args.hf_dir)
+    bridge = AutoBridge.from_hf_config(hf_config)
+    model_config = bridge.get_model_config()
+    model_dtype = torch.bfloat16 if args.bf16 else torch.float32
+    model_config.seq_length = seq_len
+    model_config.transformer.tensor_model_parallel_size = args.tp
+    model_config.transformer.pipeline_model_parallel_size = 1
+    model_config.transformer.context_parallel_size = 1
+    model_config.transformer.bf16 = args.bf16
+    model_config.transformer.fp16 = False
+    model_config.transformer.params_dtype = model_dtype
+    model_config.transformer.pipeline_dtype = model_dtype
+    model_config.transformer.autocast_dtype = model_dtype
+    if args.mode == "vl":
+        model_config.audio_config = None
+    model_config.finalize()
+    return bridge.get_megatron_model(model_config, load_weights=False)
 
 
 # ---------------------------------------------------------------------------
@@ -602,12 +550,7 @@ def main():
     print_rank_0(f"Parity mode: {args.mode.upper()}", rank=rank)
 
     # Build model
-    if args.mode == "text":
-        models = _build_text_models(args)
-    elif args.mode == "vl":
-        models = _build_vl_models(args, seq_len=seq_len, include_audio=False)
-    else:  # audio
-        models = _build_vl_models(args, seq_len=seq_len, include_audio=True)
+    models = _build_models(args, seq_len)
 
     model = models[0]
     load_checkpoint(models, None, None)

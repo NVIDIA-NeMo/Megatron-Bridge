@@ -48,7 +48,7 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
@@ -94,7 +94,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -141,7 +141,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 16
     cfg.model.pipeline_dtype = torch.bfloat16
@@ -247,7 +247,7 @@ def qwen3_vl_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -383,7 +383,7 @@ def qwen3_vl_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -520,7 +520,7 @@ def qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -666,7 +666,7 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> 
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT
@@ -811,7 +811,7 @@ def qwen3_vl_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora"
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-30B-A3B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower EP for PEFT
@@ -957,7 +957,7 @@ def qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config(peft_scheme: str | PEFT = "lo
 
     # Model configuration
     hf_path = "Qwen/Qwen3-VL-235B-A22B-Instruct"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower EP for PEFT

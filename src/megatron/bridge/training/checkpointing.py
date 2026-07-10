@@ -61,6 +61,7 @@ from modelopt.torch.opt.plugins import (
 )
 from torch.distributed.tensor import DTensor
 
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -793,7 +794,7 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
 
     Resolution order (first non-empty wins):
       1. ``cfg.checkpoint.hf_source_path`` — explicit override.
-      2. ``cfg.model.hf_model_id`` — populated by ``AutoBridge.to_megatron_provider`` (preferred).
+      2. Model metadata populated by ``AutoBridge`` (preferred).
       3. ``cfg.tokenizer.tokenizer_model`` — may be a tokenizer file path; only used as fallback when
          the above are unset (recipes that point this at an HF model id still work).
 
@@ -806,7 +807,7 @@ def _resolve_hf_source(cfg: ConfigContainer) -> Optional[str]:
         return ckpt_cfg.hf_source_path
     model_cfg = getattr(cfg, "model", None)
     if model_cfg is not None:
-        hf_id = getattr(model_cfg, "hf_model_id", None)
+        hf_id = get_hf_model_id_from_model_config(model_cfg)
         if hf_id:
             return hf_id
     tokenizer_cfg = getattr(cfg, "tokenizer", None)
@@ -835,8 +836,8 @@ def _build_auto_bridge_for_save(cfg: ConfigContainer, hf_source: Optional[str] =
     if not source:
         raise ValueError(
             "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
-            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
+            "Set cfg.checkpoint.hf_source_path, model HF metadata "
+            "(via AutoBridge / recipes), or cfg.tokenizer.tokenizer_model when it points at "
             "an HF model id."
         )
     trust_remote_code = bool(getattr(cfg.checkpoint, "hf_trust_remote_code", False))
@@ -2440,6 +2441,16 @@ def _load_hf_pretrained_checkpoint(
     return 0, 0
 
 
+def _get_model_parallel_size_from_run_config(model_config: dict[str, Any], field_name: str) -> int:
+    """Read a parallelism field from legacy-flat or nested ModelConfig YAML."""
+    if field_name in model_config:
+        return model_config[field_name]
+    transformer_config = model_config.get("transformer")
+    if isinstance(transformer_config, dict) and field_name in transformer_config:
+        return transformer_config[field_name]
+    raise KeyError(field_name)
+
+
 def _load_checkpoint_from_path(
     load_dir: str,
     state: GlobalState,
@@ -2563,8 +2574,8 @@ def _load_checkpoint_from_path(
             mismatch_msg = ""
         else:
             ckpt_tp_pp = (
-                run_config["model"]["tensor_model_parallel_size"],
-                run_config["model"]["pipeline_model_parallel_size"],
+                _get_model_parallel_size_from_run_config(run_config["model"], "tensor_model_parallel_size"),
+                _get_model_parallel_size_from_run_config(run_config["model"], "pipeline_model_parallel_size"),
             )
             run_tp_pp = (
                 cfg.model.tensor_model_parallel_size,

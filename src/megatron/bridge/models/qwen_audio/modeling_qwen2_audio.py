@@ -30,7 +30,6 @@ import torch
 from megatron.core.transformer.module import MegatronModule
 from torch import Tensor
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_grad_sync
 
 
@@ -102,12 +101,14 @@ class Qwen2AudioModel(MegatronModule):
 
     def __init__(
         self,
-        config: GPTModelProvider,
+        config,
         pre_process: bool = True,
         post_process: bool = True,
         vp_stage: Optional[int] = None,
+        language_model=None,
+        hf_config=None,
     ) -> None:
-        super().__init__(config=config)
+        super().__init__(config=getattr(config, "transformer", config))
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -122,20 +123,24 @@ class Qwen2AudioModel(MegatronModule):
 
             # Initialize audio tower from HuggingFace config
             # The audio_tower is a Whisper-like encoder that processes mel spectrograms
-            self.audio_tower = Qwen2AudioEncoder(config.hf_config.audio_config)
+            if hf_config is None:
+                hf_config = config.hf_config
+            self.audio_tower = Qwen2AudioEncoder(hf_config.audio_config)
 
             # Initialize multimodal projector from HuggingFace config
             # Projects audio encoder output dimension to language model hidden size
-            self.multi_modal_projector = Qwen2AudioMultiModalProjector(config.hf_config)
+            self.multi_modal_projector = Qwen2AudioMultiModalProjector(hf_config)
 
             # Ensure HF audio tower params are marked for TP grad sync
             hook_hf_module_setattr_for_tp_grad_sync(self.audio_tower)
             hook_hf_module_setattr_for_tp_grad_sync(self.multi_modal_projector)
 
         # Initialize Megatron language model
-        self.language_model = self.config.provide_language_model(
-            pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
-        )
+        if language_model is None:
+            language_model = self.config.provide_language_model(
+                pre_process=pre_process, post_process=post_process, vp_stage=vp_stage
+            )
+        self.language_model = language_model
 
         # Finalize grad requires these to be bound with module
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights

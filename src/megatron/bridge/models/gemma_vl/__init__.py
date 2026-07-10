@@ -13,11 +13,22 @@
 # limitations under the License.
 
 from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
-from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.gemma4_vl_bridge import Gemma4VLBridge
-from megatron.bridge.models.gemma_vl.gemma4_vl_provider import Gemma4DenseVLProvider, Gemma4VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
+
+
+def __getattr__(name: str):
+    """Lazily resolve legacy Gemma-VL provider exports."""
+    if name == "Gemma3VLModelProvider":
+        from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
+
+        return Gemma3VLModelProvider
+    if name in {"Gemma4DenseVLProvider", "Gemma4VLModelProvider"}:
+        from megatron.bridge.models.gemma_vl import gemma4_vl_provider
+
+        return getattr(gemma4_vl_provider, name)
+    raise AttributeError(name)
 
 
 __all__ = [

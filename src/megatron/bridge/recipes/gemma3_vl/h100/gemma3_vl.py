@@ -42,7 +42,7 @@ def gemma3_vl_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "google/gemma-3-4b-it"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -148,7 +148,7 @@ def gemma3_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "google/gemma-3-12b-it"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -254,7 +254,7 @@ def gemma3_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model configuration
     hf_path = "google/gemma-3-27b-it"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -369,7 +369,7 @@ def gemma3_vl_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
 
     # Model configuration
     hf_path = "google/gemma-3-4b-it"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings
@@ -484,7 +484,7 @@ def gemma3_vl_12b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 
     # Model configuration
     hf_path = "google/gemma-3-12b-it"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP for PEFT
@@ -599,7 +599,7 @@ def gemma3_vl_27b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 
     # Model configuration
     hf_path = "google/gemma-3-27b-it"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # Parallel settings - lower TP and PP for PEFT

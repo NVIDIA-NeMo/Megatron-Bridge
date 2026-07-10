@@ -31,14 +31,15 @@ from megatron.bridge import AutoBridge
 
 # Example: DeepSeek-V2-Lite
 bridge = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2-Lite", trust_remote_code=True)
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
 
 # Optionally configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 1
-provider.pipeline_model_parallel_size = 1
-provider.expert_model_parallel_size = 8
+model_config.tensor_model_parallel_size = 1
+model_config.pipeline_model_parallel_size = 1
+model_config.expert_model_parallel_size = 8
+model_config.finalize()
 
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 ### Import Checkpoint from HF

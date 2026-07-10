@@ -259,20 +259,21 @@ def main():
     args = parser.parse_args()
 
     bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=True)
-    model_provider = bridge.to_megatron_provider(load_weights=(args.megatron_model_path is None))
-    model_provider.tensor_model_parallel_size = args.tp
-    model_provider.pipeline_model_parallel_size = args.pp
-    model_provider.expert_model_parallel_size = args.ep
-    model_provider.expert_tensor_parallel_size = args.etp
-    model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.dynamic_resolution = True
-    model_provider.temporal_patch_dim = 1
-    model_provider.separate_video_embedder = True
-    model_provider.temporal_ckpt_compat = True
-    model_provider.vision_class_token_len = 10
-    model_provider.initialize_model_parallel(seed=0)
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = args.tp
+    model_config.pipeline_model_parallel_size = args.pp
+    model_config.expert_model_parallel_size = args.ep
+    model_config.expert_tensor_parallel_size = args.etp
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.dynamic_resolution = True
+    model_config.temporal_patch_dim = 1
+    model_config.separate_video_embedder = True
+    model_config.temporal_ckpt_compat = True
+    model_config.vision_class_token_len = 10
+    model_config.finalize()
 
     if args.megatron_model_path:
+        bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
         print_rank_0(f"Loading Megatron checkpoint from {args.megatron_model_path}")
         model = bridge.load_megatron_model(
             args.megatron_model_path,
@@ -299,8 +300,7 @@ def main():
                 inner.llava_model.config.grad_scale_func = None
     else:
         print_rank_0(f"Converting HF from {args.hf_model_path} on the fly")
-        model_provider.finalize()
-        model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+        model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
         model = [m.cuda().bfloat16().eval() for m in model]
 
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)

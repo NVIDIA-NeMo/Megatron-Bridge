@@ -13,8 +13,16 @@
 # limitations under the License.
 
 from megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge import KimiK25VLBridge
-from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
 from megatron.bridge.models.kimi_vl.modeling_kimi_k25_vl import KimiK25VLModel
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "KimiK25VLModelProvider":
+        from megatron.bridge.models.kimi_vl.kimi_k25_vl_provider import KimiK25VLModelProvider
+
+        return KimiK25VLModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

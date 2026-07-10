@@ -73,21 +73,20 @@ def _sync_cuda() -> None:
         torch.cuda.synchronize()
 
 
-def _configure_model_provider(
-    model_provider,
+def _configure_model_config(
+    model_config,
     tp: int,
     pp: int,
     ep: int,
     etp: int,
 ) -> None:
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.params_dtype = torch.bfloat16
-    model_provider.expert_model_parallel_size = ep
-    model_provider.expert_tensor_parallel_size = etp
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.params_dtype = torch.bfloat16
+    model_config.expert_model_parallel_size = ep
+    model_config.expert_tensor_parallel_size = etp
+    model_config.finalize()
 
 
 def _render_results(import_duration: float, export_duration: float) -> None:
@@ -127,9 +126,9 @@ def main(
         ),
         torch_dtype=torch.bfloat16,
     )
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    _configure_model_provider(model_provider, tp, pp, ep, etp)
-    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    model_config = bridge.get_model_config()
+    _configure_model_config(model_config, tp, pp, ep, etp)
+    megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
     _sync_cuda()
     _maybe_barrier()
     import_duration = perf_counter() - import_start

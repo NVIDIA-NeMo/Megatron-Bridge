@@ -165,17 +165,17 @@ def main(args) -> None:
 
     if args.megatron_model_path:
         print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.init_model_with_meta_device = True
+        model_config = bridge.get_model_config()
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
+        model_config.pipeline_dtype = torch.bfloat16
+        model_config.init_model_with_meta_device = True
         if args.pp_layout:
-            model_provider.pipeline_model_parallel_layout = args.pp_layout
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
+            model_config.pipeline_model_parallel_layout = args.pp_layout
+        model_config.finalize()
+        bridge._get_or_initialize_pg_collection(model_config.transformer, seed=0)
 
         mp_overrides = {
             "tensor_model_parallel_size": tp,
@@ -193,15 +193,14 @@ def main(args) -> None:
         )
     else:
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        model_provider.tensor_model_parallel_size = tp
-        model_provider.pipeline_model_parallel_size = pp
-        model_provider.expert_model_parallel_size = ep
-        model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+        model_config = bridge.get_model_config()
+        model_config.tensor_model_parallel_size = tp
+        model_config.pipeline_model_parallel_size = pp
+        model_config.expert_model_parallel_size = ep
+        model_config.expert_tensor_parallel_size = etp
+        model_config.pipeline_dtype = torch.bfloat16
+        model_config.finalize()
+        model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
     def _disable_mtp(m):
         m.config.mtp_num_layers = None

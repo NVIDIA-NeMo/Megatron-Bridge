@@ -13,8 +13,10 @@
 # limitations under the License.
 
 import logging
+from typing import Any
 
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 from transformers import GlmMoeDsaForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -50,8 +52,10 @@ class GLM5Bridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("zai-org/GLM-5.1")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
@@ -121,6 +125,54 @@ class GLM5Bridge(MegatronModelBridge):
         provider.dsa_indexer_use_sparse_loss = True
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face GLM-5 config to Megatron model-config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            mtp_num_layers=None,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_score_function="sigmoid",
+            moe_router_enable_expert_bias=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=1280,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+            rotary_base=hf_config.rope_parameters["rope_theta"],
+            rope_type="rope",
+            rotary_scaling_factor=1.0,
+            mscale=1.0,
+            mscale_all_dim=1.0,
+            experimental_attention_variant="dsa",
+            dsa_indexer_head_dim=hf_config.index_head_dim,
+            dsa_indexer_n_heads=hf_config.index_n_heads,
+            dsa_indexer_topk=hf_config.index_topk,
+            dsa_indexer_loss_coeff=0.001,
+            dsa_indexer_use_sparse_loss=True,
+        )
+        return config_kwargs
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config: Any) -> dict[str, Any]:
+        """Normalize disabled MTP to the integer representation expected by HF."""
+        hf_config = super().megatron_to_hf_config(model_config)
+        if hf_config.get("num_nextn_predict_layers") is None:
+            hf_config["num_nextn_predict_layers"] = 0
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         param_mappings = {
@@ -216,7 +268,7 @@ class GLM5Bridge(MegatronModelBridge):
         )
 
         hf_config = self.hf_config
-        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0)
+        num_mtp_layers = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
         num_transformer_layers = hf_config.num_hidden_layers
         for mtp_layer in range(num_mtp_layers):
             # MTP specific mappings

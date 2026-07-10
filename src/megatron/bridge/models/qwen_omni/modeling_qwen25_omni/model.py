@@ -12,11 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
+
 import torch
 from megatron.core import InferenceParams
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import MegatronModule
+from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
     Qwen2_5OmniTalkerConfig,
@@ -25,7 +27,10 @@ from transformers.models.qwen2_5_omni.configuration_qwen2_5_omni import (
 )
 
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.thinker_model import Qwen25OmniThinkerModel
-from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.transformer_config import Qwen25OmniTransformerConfig
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_omni.model_config import QwenOmniModelConfig
 
 
 class Qwen25OmniModel(MegatronModule):
@@ -37,7 +42,7 @@ class Qwen25OmniModel(MegatronModule):
 
     def __init__(
         self,
-        language_transformer_config: Qwen25OmniTransformerConfig,
+        language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         thinker_transformer_config: Qwen2_5OmniThinkerConfig,
         talker_transformer_config: Qwen2_5OmniTalkerConfig | None = None,
@@ -48,6 +53,7 @@ class Qwen25OmniModel(MegatronModule):
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        model_config: "QwenOmniModelConfig | None" = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -61,6 +67,7 @@ class Qwen25OmniModel(MegatronModule):
             add_encoder,
             add_decoder,
             pg_collection,
+            model_config,
         )
 
     def shared_embedding_or_output_weight(self):

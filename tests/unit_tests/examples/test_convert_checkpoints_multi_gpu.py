@@ -40,20 +40,14 @@ def cli():
         sys.modules.pop(spec.name, None)
 
 
-class _FakeProvider:
+class _FakeModelConfig:
     def __init__(self, calls):
         self.calls = calls
+        self.transformer = object()
         self.pipeline_model_parallel_layout = None
 
     def finalize(self):
         self.calls.append(("finalize", (), {}))
-
-    def initialize_model_parallel(self, *args, **kwargs):
-        self.calls.append(("initialize_model_parallel", args, kwargs))
-
-    def provide_distributed_model(self, *args, **kwargs):
-        self.calls.append(("provide_distributed_model", args, kwargs))
-        return ["megatron-model"]
 
 
 class _FakeModelBridge:
@@ -73,9 +67,13 @@ class TestImportHfToMegatron:
             _model_bridge = _FakeModelBridge()
             hf_pretrained = _FakeHfPretrained()
 
-            def to_megatron_provider(self, *args, **kwargs):
-                calls.append(("to_megatron_provider", args, kwargs))
-                return _FakeProvider(calls)
+            def get_model_config(self):
+                calls.append(("get_model_config", (), {}))
+                return _FakeModelConfig(calls)
+
+            def get_megatron_model(self, *args, **kwargs):
+                calls.append(("get_megatron_model", args, kwargs))
+                return ["megatron-model"]
 
             def save_megatron_model(self, *args, **kwargs):
                 calls.append(("save_megatron_model", args, kwargs))
@@ -104,6 +102,7 @@ class TestImportHfToMegatron:
         assert "low_memory_save" not in save_call[2]
         assert save_call[2]["hf_tokenizer_path"] == "hf"
         assert save_call[2]["hf_tokenizer_kwargs"] == {"padding_side": "left", "trust_remote_code": True}
+        assert "model_config" not in save_call[2]
 
 
 class TestExportMegatronToHf:
@@ -120,9 +119,12 @@ class TestExportMegatronToHf:
             _model_bridge = object()
             hf_pretrained = _FakeHfPretrained()
 
-            def to_megatron_provider(self, *args, **kwargs):
-                calls.append(("to_megatron_provider", args, kwargs))
-                return _FakeProvider(calls)
+            def get_model_config(self):
+                calls.append(("get_model_config", (), {}))
+                return _FakeModelConfig(calls)
+
+            def _get_or_initialize_pg_collection(self, *args, **kwargs):
+                calls.append(("_get_or_initialize_pg_collection", args, kwargs))
 
             def load_megatron_model(self, *args, **kwargs):
                 calls.append(("load_megatron_model", args, kwargs))

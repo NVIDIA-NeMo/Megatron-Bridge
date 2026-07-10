@@ -36,8 +36,8 @@ _NEMOTRONH_RECIPE_FUNCS = [
 ]
 
 
-class _FakeModelProvider:
-    """Lightweight mutable provider for recipe construction without HF Hub access."""
+class _FakeModelConfig:
+    """Lightweight mutable model config for recipe construction without HF Hub access."""
 
     def __init__(self) -> None:
         self.vocab_size = 256
@@ -47,14 +47,14 @@ class _FakeModelProvider:
 
 
 class _FakeAutoBridge:
-    """Return a local model provider without loading a Hugging Face config."""
+    """Return a local model config without loading a Hugging Face config."""
 
     @classmethod
     def from_hf_pretrained(cls, *args, **kwargs):
         return cls()
 
-    def to_megatron_provider(self, *args, **kwargs):
-        return _FakeModelProvider()
+    def get_model_config(self):
+        return _FakeModelConfig()
 
 
 @pytest.fixture(autouse=True)

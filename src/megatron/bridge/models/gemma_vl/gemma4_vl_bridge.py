@@ -56,6 +56,7 @@ from megatron.bridge.models.gemma_vl.gemma4_vl_provider import (
     Gemma4DenseVLProvider,
     Gemma4VLModelProvider,
 )
+from megatron.bridge.models.gemma_vl.model_config import Gemma4DenseVLModelConfig, Gemma4VLModelConfig
 from megatron.bridge.models.gemma_vl.modeling_gemma4_vl import Gemma4VLModel
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -372,3 +373,37 @@ class Gemma4VLBridge(Gemma4Bridge):
             ]
         )
         return MegatronMappingRegistry(*mapping_list)
+
+    def model_config_bridge(self, hf_pretrained: PreTrainedCausalLM):
+        """Build a pure Gemma4 VL config with serialized HF tower configs."""
+        from megatron.core.transformer import TransformerConfig
+
+        hf_config = hf_pretrained.config
+        text_config = hf_config.text_config
+        if self._conversion_mode() == "text":
+
+            class _TextWrapper:
+                config = text_config
+
+            return super().model_config_bridge(_TextWrapper())
+
+        model_class = (
+            Gemma4VLModelConfig if getattr(text_config, "enable_moe_block", False) else Gemma4DenseVLModelConfig
+        )
+        kwargs = self.hf_config_to_model_config_kwargs(text_config)
+        kwargs.update(
+            vision_config=hf_config.vision_config.to_dict(),
+            text_config=text_config.to_dict(),
+            audio_config=(
+                hf_config.audio_config.to_dict() if getattr(hf_config, "audio_config", None) is not None else None
+            ),
+            vision_soft_tokens_per_image=int(getattr(hf_config, "vision_soft_tokens_per_image", 280)),
+            bos_token_id=int(getattr(hf_config, "bos_token_id", 2)),
+            eos_token_id=getattr(hf_config, "eos_token_id", 1),
+            image_token_id=int(getattr(hf_config, "image_token_id", 258_880)),
+            video_token_id=int(getattr(hf_config, "video_token_id", 258_884)),
+            audio_token_id=int(getattr(hf_config, "audio_token_id", 258_881)),
+            scatter_embedding_sequence_parallel=False,
+        )
+        model_kwargs, transformer_kwargs = self._partition_model_config_kwargs(kwargs, model_class, TransformerConfig)
+        return model_class(transformer=TransformerConfig(**transformer_kwargs), **model_kwargs)

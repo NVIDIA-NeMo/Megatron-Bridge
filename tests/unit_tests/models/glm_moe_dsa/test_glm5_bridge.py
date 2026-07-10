@@ -17,10 +17,12 @@
 from types import SimpleNamespace
 
 import pytest
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, GatedMLPMapping, QKVMapping
 from megatron.bridge.models.glm_moe_dsa.glm5_bridge import GLM5Bridge
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 
 
 pytestmark = pytest.mark.unit
@@ -36,6 +38,61 @@ def glm5_bridge() -> GLM5Bridge:
 
 def _mapping_by_megatron_param(bridge: GLM5Bridge) -> dict[str, object]:
     return {mapping.megatron_param: mapping for mapping in bridge.mapping_registry()}
+
+
+def test_model_config_bridge_maps_mla_dsa_config() -> None:
+    """GLM-5 uses the stock GPT builder with native MLA and DSA transformer config."""
+    hf_config = SimpleNamespace(
+        attention_bias=False,
+        attention_dropout=0.0,
+        first_k_dense_replace=1,
+        hidden_act="silu",
+        hidden_size=1024,
+        index_head_dim=64,
+        index_n_heads=16,
+        index_topk=4,
+        initializer_range=0.02,
+        intermediate_size=4096,
+        kv_lora_rank=512,
+        max_position_embeddings=4096,
+        moe_intermediate_size=1024,
+        n_routed_experts=8,
+        n_shared_experts=1,
+        num_attention_heads=16,
+        num_experts_per_tok=2,
+        num_hidden_layers=4,
+        num_key_value_heads=16,
+        num_nextn_predict_layers=1,
+        q_lora_rank=512,
+        qk_nope_head_dim=64,
+        qk_rope_head_dim=64,
+        rms_norm_eps=1e-6,
+        rope_parameters={"rope_theta": 1000000.0},
+        tie_word_embeddings=False,
+        torch_dtype="float32",
+        v_head_dim=64,
+        vocab_size=32000,
+    )
+
+    model_config = GLM5Bridge().model_config_bridge(SimpleNamespace(config=hf_config))
+    restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
+
+    assert isinstance(model_config, BridgeGPTModelConfig)
+    assert type(model_config.transformer) is MLATransformerConfig
+    assert model_config.transformer.experimental_attention_variant == "dsa"
+    assert model_config.transformer.dsa_indexer_head_dim == 64
+    assert model_config.transformer.dsa_indexer_n_heads == 16
+    assert model_config.transformer.dsa_indexer_topk == 4
+    assert model_config.rotary_base == 1000000.0
+    assert model_config.transformer.rotary_base == 1000000.0
+    assert model_config.transformer.rope_type == "rope"
+    assert model_config.transformer.rotary_scaling_factor == 1.0
+    assert model_config.transformer.mscale == 1.0
+    assert model_config.transformer.mscale_all_dim == 1.0
+    assert model_config.transformer.mtp_num_layers is None
+    assert GLM5Bridge.megatron_to_hf_config(model_config)["num_nextn_predict_layers"] == 0
+    assert type(restored.transformer) is MLATransformerConfig
+    assert restored.as_dict() == model_config.as_dict()
 
 
 def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides: int) -> SimpleNamespace:
@@ -181,9 +238,10 @@ def test_mapping_registry_includes_mtp_standalone_weights(glm5_bridge: GLM5Bridg
         assert mapping.hf_param == hf_param
 
 
-def test_mapping_registry_omits_mtp_mappings_without_nextn_layers() -> None:
+@pytest.mark.parametrize("num_nextn_predict_layers", [0, None])
+def test_mapping_registry_omits_mtp_mappings_without_nextn_layers(num_nextn_predict_layers) -> None:
     """No MTP mappings are registered when the HF config has no MTP layers."""
     bridge = GLM5Bridge()
-    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=0)
+    bridge.hf_config = SimpleNamespace(num_hidden_layers=4, num_nextn_predict_layers=num_nextn_predict_layers)
 
     assert all(not mapping.megatron_param.startswith("mtp.") for mapping in bridge.mapping_registry())

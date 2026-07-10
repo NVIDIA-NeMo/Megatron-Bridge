@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
@@ -33,72 +35,25 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+from megatron.bridge.models.qwen.qwen35_common import (
+    apply_qwen35_common_config as _apply_qwen35_common_config,
+)
+from megatron.bridge.models.qwen.qwen35_common import (
+    apply_qwen35_moe_config as _apply_qwen35_moe_config,
+)
 
 
-def _apply_qwen35_common_config(provider: GPTModelProvider, text_config) -> None:
-    """Apply Qwen3.5 common LM configuration to a Megatron provider.
+def _hf_language_model_prefix(bridge: MegatronModelBridge) -> tuple[str, set[str]]:
+    """Return the current language-model prefix, with legacy key fallback."""
+    hf_pretrained = getattr(bridge, "hf_pretrained", None)
+    if not (hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source")):
+        return "model.language_model.", set()
 
-    Covers settings shared by both dense and MoE variants:
-    normalization, GDN hybrid architecture, and MTP.
-
-    Args:
-        provider: GPTModelProvider (or subclass) to configure.
-        text_config: HuggingFace config object (or text_config for VLMs)
-            so that language-model fields are read from the correct level.
-    """
-    # --- Common Qwen3 LLM settings ---
-    provider.normalization = "RMSNorm"
-    provider.gated_linear_unit = True
-    provider.add_qkv_bias = getattr(text_config, "attention_bias", False)
-    provider.add_bias_linear = False
-    provider.qk_layernorm = True
-    provider.hidden_dropout = 0.0
-
-    # --- Qwen3-Next hybrid architecture settings ---
-    provider.layernorm_zero_centered_gamma = True
-    provider.attention_output_gate = True
-    provider.experimental_attention_variant = "gated_delta_net"
-    # full_attention_interval defines how often standard attention appears:
-    # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
-    provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
-    provider.linear_num_value_heads = getattr(text_config, "linear_num_value_heads", 32)
-    provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
-
-    # --- GDN (Gated DeltaNet) specific parameters ---
-    provider.linear_conv_kernel_dim = getattr(text_config, "linear_conv_kernel_dim", 4)
-    provider.linear_key_head_dim = getattr(text_config, "linear_key_head_dim", 128)
-    provider.linear_value_head_dim = getattr(text_config, "linear_value_head_dim", 128)
-    provider.linear_num_key_heads = getattr(text_config, "linear_num_key_heads", 16)
-
-    # --- MTP (Multi-Token Prediction) ---
-    if provider.mtp_num_layers:
-        provider.mtp_loss_scaling_factor = 0.1
-
-
-def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
-    """Apply Qwen3.5 MoE-specific configuration to a Megatron provider.
-
-    Calls _apply_qwen35_common_config first, then adds MoE parameters.
-
-    Args:
-        provider: GPTModelProvider (or subclass) to configure.
-        text_config: HuggingFace config object (or text_config for VLMs)
-            so that language-model fields are read from the correct level.
-    """
-    _apply_qwen35_common_config(provider, text_config)
-
-    # --- MoE specific parameters ---
-    provider.moe_ffn_hidden_size = getattr(text_config, "moe_intermediate_size", 1024)
-    provider.num_moe_experts = getattr(text_config, "num_experts", 512)
-    provider.moe_router_topk = getattr(text_config, "num_experts_per_tok", 10)
-    provider.moe_shared_expert_intermediate_size = getattr(text_config, "shared_expert_intermediate_size", None)
-    provider.moe_shared_expert_gate = True
-    provider.moe_grouped_gemm = True
-    provider.moe_router_load_balancing_type = "global_aux_loss"
-    provider.moe_router_pre_softmax = False
-    provider.moe_token_dispatcher_type = "alltoall"
-    provider.moe_permute_fusion = True
+    hf_keys = set(hf_pretrained.state.source.get_all_keys())
+    if any(key.startswith(("model.layers.", "model.embed_tokens.", "model.norm.")) for key in hf_keys):
+        return "model.", hf_keys
+    return "model.language_model.", hf_keys
 
 
 @MegatronModelBridge.register_bridge(source=Qwen3_5MoeForCausalLM, target=GPTModel, model_type="qwen3_5_moe_text")
@@ -128,11 +83,27 @@ class Qwen35MoEBridge(MegatronModelBridge):
         >>> tokenizer.save_pretrained("./Qwen3.5-397B-A17B")
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("./Qwen3.5-397B-A17B")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.qwen.model_config.QwenHybridModelBuilder"
+
     @staticmethod
-    def _get_moe_lm_mappings(hf_prefix="model.", megatron_prefix=""):
+    def _experts_are_packed(hf_keys: set[str], *, hf_prefix: str) -> bool:
+        """Detect packed expert tensors, preserving packed layout when keys are unavailable."""
+        expert_prefix = f"{hf_prefix}layers."
+        if any(key.startswith(expert_prefix) and ".mlp.experts.gate_up_proj" in key for key in hf_keys):
+            return True
+        if any(
+            key.startswith(expert_prefix) and ".mlp.experts." in key and key.endswith(".gate_proj.weight")
+            for key in hf_keys
+        ):
+            return False
+        return True
+
+    @staticmethod
+    def _get_moe_lm_mappings(hf_prefix: str = "model.", *, megatron_prefix: str = "", experts_packed: bool = True):
         """Get language model parameter mappings for MoE Qwen3.5.
 
         Args:
@@ -140,6 +111,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
                 for LM and "model.language_model.layers.*" for VL models.
             megatron_prefix: Prefix for Megatron param names. Use "" for LM
                 (default) and "language_model." for VL models.
+            experts_packed: Whether routed experts use packed tensors instead
+                of one gate/up/down tensor per expert.
 
         Returns:
             List of mapping objects for the MoE LM portion.
@@ -234,13 +207,29 @@ class Qwen35MoEBridge(MegatronModelBridge):
                 # Language Model: MoE Expert MLPs (routed experts)
                 # Uses GatedMLPMapping for gate+up projection fusion
                 # =============================================================
-                FusedGatedExpertMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.down_proj",
+                *(
+                    [
+                        FusedGatedExpertMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                            hf_param=f"{hf_prefix}layers.*.mlp.experts.gate_up_proj",
+                        ),
+                        FusedExpertMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                            hf_param=f"{hf_prefix}layers.*.mlp.experts.down_proj",
+                        ),
+                    ]
+                    if experts_packed
+                    else [
+                        GatedMLPMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
+                            gate=f"{hf_prefix}layers.*.mlp.experts.*.gate_proj.weight",
+                            up=f"{hf_prefix}layers.*.mlp.experts.*.up_proj.weight",
+                        ),
+                        AutoMapping(
+                            megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
+                            hf_param=f"{hf_prefix}layers.*.mlp.experts.*.down_proj.weight",
+                        ),
+                    ]
                 ),
                 # Sequential (non-grouped) experts <-> per-expert unfused HF weights. Needed when
                 # moe_grouped_gemm is disabled (e.g. ModelOpt pruning) and for checkpoints that store
@@ -395,6 +384,45 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         return provider
 
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert Qwen3.5 MoE HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        mtp_num_layers = config_kwargs.get("mtp_num_layers")
+        config_kwargs.update(
+            transformer_layer_spec=get_transformer_block_with_experimental_attention_variant_spec,
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=getattr(hf_config, "attention_bias", False),
+            add_bias_linear=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            layernorm_zero_centered_gamma=True,
+            attention_output_gate=True,
+            experimental_attention_variant="gated_delta_net",
+            linear_attention_freq=full_attention_interval_from_hf(hf_config),
+            linear_num_value_heads=getattr(hf_config, "linear_num_value_heads", 32),
+            rotary_percent=getattr(hf_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25),
+            linear_conv_kernel_dim=getattr(hf_config, "linear_conv_kernel_dim", 4),
+            linear_key_head_dim=getattr(hf_config, "linear_key_head_dim", 128),
+            linear_value_head_dim=getattr(hf_config, "linear_value_head_dim", 128),
+            linear_num_key_heads=getattr(hf_config, "linear_num_key_heads", 16),
+            mtp_loss_scaling_factor=0.1 if mtp_num_layers else None,
+            moe_ffn_hidden_size=getattr(hf_config, "moe_intermediate_size", 1024),
+            num_moe_experts=getattr(hf_config, "num_experts", 512),
+            moe_router_topk=getattr(hf_config, "num_experts_per_tok", 10),
+            moe_shared_expert_intermediate_size=getattr(hf_config, "shared_expert_intermediate_size", None),
+            moe_shared_expert_gate=True,
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="global_aux_loss",
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            autocast_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            hetereogenous_dist_checkpoint=True,
+        )
+        return config_kwargs
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry containing parameter mappings for Qwen3.5 LM.
@@ -407,7 +435,8 @@ class Qwen35MoEBridge(MegatronModelBridge):
 
         Naming Convention:
         - Megatron language model params are prefixed with "decoder."
-        - HF language model params are prefixed with "model.layers.*"
+        - HF language model params use either "model.layers.*" or
+          "model.language_model.layers.*", matching the source checkpoint.
 
         Returns:
             MegatronMappingRegistry with all parameter mappings
@@ -416,16 +445,21 @@ class Qwen35MoEBridge(MegatronModelBridge):
         # (mtp.layers.0.mlp.experts.{i}.gate_proj.weight), Qwen3.6 stores packed
         # (mtp.layers.0.mlp.experts.gate_up_proj). Same architecture string,
         # different storage — must inspect HF keys.
-        mtp_experts_packed = False
-        hf_pretrained = getattr(self, "hf_pretrained", None)
-        if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
-            hf_keys = set(hf_pretrained.state.source.get_all_keys())
-            if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
-                mtp_experts_packed = True
+        hf_prefix, hf_keys = _hf_language_model_prefix(self)
+        experts_packed = self._experts_are_packed(hf_keys, hf_prefix=hf_prefix)
+        mtp_experts_packed = any(
+            key.startswith("mtp.layers.") and ".mlp.experts.gate_up_proj" in key for key in hf_keys
+        )
 
         mapping_list = []
 
-        mapping_list.extend(self._get_moe_lm_mappings(megatron_prefix=""))
+        mapping_list.extend(
+            self._get_moe_lm_mappings(
+                hf_prefix=hf_prefix,
+                megatron_prefix="",
+                experts_packed=experts_packed,
+            )
+        )
         mapping_list.extend(self._get_moe_mtp_mappings(megatron_prefix="", mtp_experts_packed=mtp_experts_packed))
         return MegatronMappingRegistry(*mapping_list)
 
@@ -458,8 +492,11 @@ class Qwen35Bridge(MegatronModelBridge):
         >>> tokenizer.save_pretrained("./Qwen3.5-27B-LM")
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("./Qwen3.5-27B-LM")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    MODEL_BUILDER_CLASS = "megatron.bridge.models.qwen.model_config.QwenHybridModelBuilder"
 
     @staticmethod
     def _get_dense_lm_mappings(hf_prefix="model.", megatron_prefix=""):
@@ -623,6 +660,35 @@ class Qwen35Bridge(MegatronModelBridge):
 
         return provider
 
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert dense Qwen3.5 HF config to builder-backed config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        mtp_num_layers = config_kwargs.get("mtp_num_layers")
+        config_kwargs.update(
+            transformer_layer_spec=get_transformer_block_with_experimental_attention_variant_spec,
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=getattr(hf_config, "attention_bias", False),
+            add_bias_linear=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            layernorm_zero_centered_gamma=True,
+            attention_output_gate=True,
+            experimental_attention_variant="gated_delta_net",
+            linear_attention_freq=full_attention_interval_from_hf(hf_config),
+            linear_num_value_heads=getattr(hf_config, "linear_num_value_heads", 32),
+            rotary_percent=getattr(hf_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25),
+            linear_conv_kernel_dim=getattr(hf_config, "linear_conv_kernel_dim", 4),
+            linear_key_head_dim=getattr(hf_config, "linear_key_head_dim", 128),
+            linear_value_head_dim=getattr(hf_config, "linear_value_head_dim", 128),
+            linear_num_key_heads=getattr(hf_config, "linear_num_key_heads", 16),
+            mtp_loss_scaling_factor=0.1 if mtp_num_layers else None,
+            autocast_dtype=torch.bfloat16,
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            hetereogenous_dist_checkpoint=True,
+        )
+        return config_kwargs
+
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
         Return MegatronMappingRegistry for Qwen3.5 dense ML model.
@@ -632,8 +698,9 @@ class Qwen35Bridge(MegatronModelBridge):
         - Pre-MLP layernorm fused into mlp.linear_fc1 (not a separate pre_mlp_layernorm)
         - No MoE router, routed expert MLPs, or shared expert mappings
         """
+        hf_prefix, _ = _hf_language_model_prefix(self)
         mapping_list = []
 
-        mapping_list.extend(self._get_dense_lm_mappings(megatron_prefix=""))
+        mapping_list.extend(self._get_dense_lm_mappings(hf_prefix=hf_prefix, megatron_prefix=""))
         mapping_list.extend(self._get_dense_mtp_mappings(megatron_prefix=""))
         return MegatronMappingRegistry(*mapping_list)

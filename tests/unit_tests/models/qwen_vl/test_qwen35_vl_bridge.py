@@ -21,6 +21,7 @@ import torch
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen.qwen35_bridge import Qwen35MoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
@@ -368,6 +369,65 @@ class TestQwen35VLMoEBridgeMappingRegistry:
         assert any("router" in n or "gate.weight" in n for n in names), "Should contain MoE router"
         assert any("experts" in n for n in names), "Should contain expert MLPs"
         assert any("shared_expert" in n for n in names), "Should contain shared experts"
+
+    @pytest.mark.parametrize(
+        ("hf_keys", "expected"),
+        [
+            (set(), True),
+            ({"model.language_model.layers.2.mlp.experts.gate_up_proj"}, True),
+            ({"model.language_model.layers.2.mlp.experts.5.gate_proj.weight"}, False),
+        ],
+    )
+    def test_expert_storage_detection(self, hf_keys, expected):
+        assert Qwen35MoEBridge._experts_are_packed(hf_keys, hf_prefix="model.language_model.") is expected
+
+    @pytest.mark.parametrize(
+        ("hf_keys", "expected_main_type", "expected_mtp_type"),
+        [
+            (set(), "FusedGatedExpertMapping", "GatedMLPMapping"),
+            (
+                {
+                    "model.language_model.layers.2.mlp.experts.gate_up_proj",
+                    "mtp.layers.3.mlp.experts.gate_up_proj",
+                },
+                "FusedGatedExpertMapping",
+                "FusedGatedExpertMapping",
+            ),
+            (
+                {
+                    "model.language_model.layers.2.mlp.experts.5.gate_proj.weight",
+                    "mtp.layers.3.mlp.experts.5.gate_proj.weight",
+                },
+                "GatedMLPMapping",
+                "GatedMLPMapping",
+            ),
+        ],
+    )
+    def test_mapping_registry_wires_expert_storage_detection(
+        self,
+        bridge,
+        hf_keys,
+        expected_main_type,
+        expected_mtp_type,
+    ):
+        source = Mock()
+        source.get_all_keys.return_value = hf_keys
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        registry = bridge.mapping_registry()
+        main_fc1 = next(
+            mapping
+            for mapping in registry.mappings
+            if mapping.megatron_param == "language_model.decoder.layers.*.mlp.experts.linear_fc1.weight*"
+        )
+        mtp_fc1 = next(
+            mapping
+            for mapping in registry.mappings
+            if mapping.megatron_param == "language_model.mtp.layers.*.mtp_model_layer.mlp.experts.linear_fc1.weight*"
+        )
+
+        assert type(main_fc1).__name__ == expected_main_type
+        assert type(mtp_fc1).__name__ == expected_mtp_type
 
     def test_mapping_registry_has_gdn_mappings(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())

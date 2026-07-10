@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -28,6 +29,7 @@ from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_bridge import (
     _dequant_fp8_blockwise,
 )
 from megatron.bridge.models.mimo_v2_flash.mimo_v2_flash_provider import MiMoV2FlashModelProvider
+from megatron.bridge.models.mimo_v2_flash.model_config import MiMoV2FlashModelConfig
 from megatron.bridge.models.mimo_v2_flash.modeling_mimo_v2_flash import mimo_v2_flash_layer_spec
 
 
@@ -163,6 +165,35 @@ class TestMiMoV2FlashBridgeProviderBridge:
         assert provider.transformer_layer_spec is mimo_v2_flash_layer_spec
 
 
+class TestMiMoV2FlashModelConfig:
+    def test_exact_transformer_type_and_roundtrip(self):
+        config = MiMoV2FlashBridge().model_config_bridge(_make_mock_pretrained())
+
+        assert isinstance(config, MiMoV2FlashModelConfig)
+        assert type(config.transformer) is TransformerConfig
+        assert config.hybrid_attention_pattern == [0, 1, 1, 1, 0, 1]
+        assert config.rotary_base == 5_000_000
+        assert config.rotary_base_local == 10_000
+        assert config.transformer.normalization == "RMSNorm"
+        assert config.transformer.gated_linear_unit is True
+        assert config.transformer.add_bias_linear is False
+        assert config.share_embeddings_and_output_weights is False
+        serialized = config.as_dict()
+        restored = MiMoV2FlashModelConfig.from_dict(serialized)
+        assert restored.as_dict() == serialized
+
+    def test_mtp_depth_and_custom_spec_are_persisted(self):
+        pretrained = _make_mock_pretrained(with_state=True)
+        pretrained.state.source.get_all_keys.return_value = [
+            "model.mtp.layers.0.self_attn.q_proj.weight",
+            "model.mtp.layers.1.self_attn.q_proj.weight",
+        ]
+
+        config = MiMoV2FlashBridge().model_config_bridge(pretrained)
+
+        assert config.transformer.mtp_num_layers == 2
+
+
 class TestMiMoV2FlashMTPDetection:
     @pytest.fixture
     def bridge(self):
@@ -244,6 +275,17 @@ class TestMiMoV2FlashMegatronToHfConfig:
         # Layernorm epsilon
         assert result["layernorm_epsilon"] == original.layernorm_epsilon
 
+    def test_builder_config_roundtrip_preserves_dual_rope_and_window(self):
+        pretrained = _make_mock_pretrained()
+        original = pretrained.config
+        model_config = MiMoV2FlashBridge().model_config_bridge(pretrained)
+
+        result = MiMoV2FlashBridge.megatron_to_hf_config(model_config)
+
+        assert result["rope_theta"] == original.rope_theta
+        assert result["swa_rope_theta"] == original.swa_rope_theta
+        assert result["sliding_window_size"] == original.sliding_window_size
+
 
 class TestMiMoV2FlashBridgeMappingRegistry:
     @pytest.fixture
@@ -323,13 +365,17 @@ class TestMiMoV2FlashQKVMapping:
     V_CH = 128
     HIDDEN = 4096
 
+    @pytest.mark.parametrize("v_rows", [0, NUM_QG * V_CH + 1])
+    def test_rejects_invalid_v_shape(self, v_rows):
+        with pytest.raises(ValueError, match="Cannot infer MiMo V head dim"):
+            MiMoV2FlashQKVMapping._infer_v_head_dim(v_rows, self.NUM_QG)
+
     @pytest.fixture
     def config(self):
         cfg = Mock()
         cfg.num_attention_heads = self.NUM_HEADS
         cfg.num_query_groups = self.NUM_QG
         cfg.kv_channels = self.QK_CH
-        cfg.v_head_dim = self.V_CH
         cfg.hidden_size = self.HIDDEN
         return cfg
 

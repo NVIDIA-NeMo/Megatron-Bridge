@@ -24,7 +24,7 @@ def <model>_<size>_sft_config() -> ConfigContainer:
     cfg = _sft_common()  # or _sft_common_vlm() for VLMs
 
     # Model
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 4
@@ -52,7 +52,7 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
     """PEFT config for <Model> <Size>."""
     cfg = _peft_common()  # or _peft_common_vlm() for VLMs
 
-    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("<org>/<default-model>").get_model_config()
 
     # PEFT typically uses smaller parallelism
     cfg.model.tensor_model_parallel_size = 1
@@ -136,7 +136,7 @@ Add entry to `config_map` dict, docstring model list, and `--model` argparse cho
 
 ### Unit test (no GPU)
 
-Monkeypatch `AutoBridge` to return a mock provider. Verify `ConfigContainer` structure:
+Monkeypatch `AutoBridge` to return a mock model config. Verify `ConfigContainer` structure:
 
 ```python
 def test_sft_config(monkeypatch):

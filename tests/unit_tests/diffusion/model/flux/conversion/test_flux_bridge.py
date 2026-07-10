@@ -16,8 +16,12 @@ import types
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
+from megatron.core.transformer.utils import openai_gelu
 
 from megatron.bridge.diffusion.conversion.flux import flux_bridge as flux_bridge_module
+from megatron.bridge.diffusion.models.flux import model_config as flux_model_config_module
+from megatron.bridge.diffusion.models.flux.model_config import FluxModelBuilder, FluxModelConfig
 
 
 pytestmark = [pytest.mark.unit]
@@ -88,6 +92,72 @@ def test_provider_bridge_constructs_provider_with_expected_fields():
 
     # hidden_size stored on bridge instance
     assert bridge.hidden_size == provider.hidden_size
+
+
+def test_model_config_bridge_constructs_builder_config_with_expected_fields():
+    """The primary bridge path preserves the FLUX provider's architecture settings."""
+
+    class DummyHF:
+        def __init__(self, cfg):
+            self.config = cfg
+
+    cfg = _make_cfg()
+    bridge = flux_bridge_module.FluxBridge()
+    model_config = bridge.model_config_bridge(DummyHF(cfg))
+
+    assert isinstance(model_config, FluxModelConfig)
+    assert type(model_config.transformer) is TransformerConfig
+    assert model_config.num_joint_layers == cfg.num_layers
+    assert model_config.num_single_layers == cfg.num_single_layers
+    assert model_config.hidden_size == cfg.num_attention_heads * cfg.attention_head_dim
+    assert model_config.ffn_hidden_size == 4 * model_config.hidden_size
+    assert model_config.kv_channels == cfg.attention_head_dim
+    assert model_config.num_query_groups == cfg.num_attention_heads
+    assert model_config.context_dim == cfg.joint_attention_dim
+    assert model_config.activation_func is openai_gelu
+    assert model_config.position_embedding_type == "none"
+    assert bridge.hidden_size == model_config.hidden_size
+
+
+def test_model_config_round_trip_preserves_flux_type_and_activation():
+    """FLUX builder configs remain usable after checkpoint serialization."""
+
+    class DummyHF:
+        def __init__(self, cfg):
+            self.config = cfg
+
+    model_config = flux_bridge_module.FluxBridge().model_config_bridge(DummyHF(_make_cfg()))
+    serialized = model_config.as_dict()
+    restored = FluxModelConfig.from_dict(serialized)
+
+    assert isinstance(restored, FluxModelConfig)
+    assert type(restored.transformer) is TransformerConfig
+    assert restored.activation_func is openai_gelu
+    assert restored.axes_dims_rope == [16, 56, 56]
+
+
+def test_model_builder_keeps_family_state_outside_transformer(monkeypatch):
+    """The builder passes exact MCore and outer FLUX configs separately."""
+
+    class DummyHF:
+        def __init__(self, cfg):
+            self.config = cfg
+
+    captured = {}
+
+    def fake_flux(**kwargs):
+        captured.update(kwargs)
+        return object()
+
+    monkeypatch.setattr(flux_model_config_module, "Flux", fake_flux)
+    model_config = flux_bridge_module.FluxBridge().model_config_bridge(DummyHF(_make_cfg()))
+
+    result = FluxModelBuilder(model_config).build_model(None, pre_process=False, post_process=True)
+
+    assert result is not None
+    assert captured["config"] is model_config.transformer
+    assert captured["model_config"] is model_config
+    assert not hasattr(model_config.transformer, "in_channels")
 
 
 def test_mapping_registry_registers_module_types_and_builds_mappings(monkeypatch):

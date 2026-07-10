@@ -38,7 +38,7 @@ def main() -> None:
     print("💡 Usage:")
     print("   To use any of these models, you can load them with:")
     print("   >>> bridge = AutoBridge.from_hf_pretrained('model_name')")
-    print("   >>> model = bridge.to_megatron_model()")
+    print("   >>> model = bridge.get_megatron_model(wrap_with_ddp=False)")
     print()
     print("🔍 Model Bridge Details:")
     print("   Each model has specific implementation details and configurations.")

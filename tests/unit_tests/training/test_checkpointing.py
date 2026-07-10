@@ -33,11 +33,13 @@ from megatron.bridge.training.checkpointing import (
     _clear_auto_bridge_cache,
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
+    _get_model_parallel_size_from_run_config,
     _get_non_persistent_iteration,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
     _load_hf_pretrained_checkpoint,
     _load_model_state_dict,
+    _resolve_hf_source,
     _save_hf_adapter_weights,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
@@ -69,6 +71,16 @@ _dummy_obj = _DummyClass()
 
 class TestCheckpointUtilities:
     """Test utility functions for checkpoint management."""
+
+    @pytest.mark.parametrize(
+        "model_config,expected",
+        [
+            ({"tensor_model_parallel_size": 2}, 2),
+            ({"transformer": {"tensor_model_parallel_size": 4}}, 4),
+        ],
+    )
+    def test_get_model_parallel_size_from_run_config(self, model_config, expected):
+        assert _get_model_parallel_size_from_run_config(model_config, "tensor_model_parallel_size") == expected
 
     @pytest.mark.parametrize(
         "checkpoints_path,iteration,release,expected",
@@ -143,6 +155,15 @@ class TestCheckpointUtilities:
         assert _build_auto_bridge_for_save(cfg) is second_bridge
 
         assert mock_from_hf_pretrained.call_count == 2
+
+    def test_resolve_hf_source_reads_builder_metadata(self):
+        """Test that sidecar export resolves builder-backed model metadata."""
+        cfg = Mock()
+        cfg.checkpoint.hf_source_path = None
+        cfg.model = {"extra_checkpoint_metadata": {"hf_model_id": "builder/model"}}
+        cfg.tokenizer.tokenizer_model = None
+
+        assert _resolve_hf_source(cfg) == "builder/model"
 
     def test_get_checkpoint_tracker_filename(self):
         """Test tracker filename generation for Megatron-LM compatibility."""

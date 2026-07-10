@@ -42,13 +42,14 @@ bridge = AutoBridge.from_hf_pretrained(
     "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
     trust_remote_code=True
 )
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
 
 # Optionally configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 2
-provider.pipeline_model_parallel_size = 1
+model_config.tensor_model_parallel_size = 2
+model_config.pipeline_model_parallel_size = 1
+model_config.finalize()
 
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 **Note**: Heterogeneous Llama-Nemotron models (Super/Ultra) require `trust_remote_code=True` as they use custom `DeciLMForCausalLM` architecture. Homogeneous models (Nano/70B) use standard Llama architecture and don't require this flag.
@@ -120,4 +121,3 @@ Training recipes for Llama Nemotron models are not currently available.
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

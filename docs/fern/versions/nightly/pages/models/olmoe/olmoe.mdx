@@ -38,16 +38,16 @@ from megatron.bridge import AutoBridge
 
 # Example: OLMoE-1B-7B-0125 (latest version)
 bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0125")
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
 
 # Configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 1
-provider.pipeline_model_parallel_size = 1
-provider.expert_model_parallel_size = 8
-provider.sequence_parallel = False
+model_config.tensor_model_parallel_size = 1
+model_config.pipeline_model_parallel_size = 1
+model_config.expert_model_parallel_size = 8
+model_config.sequence_parallel = False
 
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 # You can also use older versions:
 # bridge = AutoBridge.from_hf_pretrained("allenai/OLMoE-1B-7B-0924")
 ```

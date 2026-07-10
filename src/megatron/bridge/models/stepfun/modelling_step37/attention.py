@@ -21,10 +21,10 @@ decoder layer under the ``modelling_step37`` namespace without redefining any
 attention math.
 """
 
-from megatron.bridge.models.stepfun.step35_provider import (
+from megatron.bridge.models.stepfun.step35_modeling import (
     Step35DecoderLayer as Step37DecoderLayer,
 )
-from megatron.bridge.models.stepfun.step35_provider import (
+from megatron.bridge.models.stepfun.step35_modeling import (
     Step35SharedExpertMLP as Step37SharedExpertMLP,
 )
 

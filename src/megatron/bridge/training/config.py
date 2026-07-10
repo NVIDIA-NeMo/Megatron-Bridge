@@ -66,6 +66,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -541,7 +542,7 @@ class CheckpointConfig(MTrainCheckpointConfig):
     points to a HuggingFace directory).
 
     When unset, Bridge resolves a source in this order (see training checkpointing helpers):
-      1. ``cfg.model.hf_model_id`` (preferred when populated by recipes / AutoBridge);
+      1. Model metadata populated by recipes / AutoBridge;
       2. ``cfg.tokenizer.tokenizer_model`` (fallback; may refer to tokenizer assets rather than model ids).
 
     Explicit ``hf_source_path`` always overrides both when set.
@@ -1080,15 +1081,15 @@ class ConfigContainer(Container):
             return
         if self.checkpoint.hf_source_path:
             return
-        if getattr(self.model, "hf_model_id", None):
+        if get_hf_model_id_from_model_config(self.model):
             return
         if getattr(self.tokenizer, "tokenizer_model", None):
             return
 
         raise ValueError(
             "also_save_hf_checkpoint=True requires an HF source to template config/tokenizer files. "
-            "Set cfg.checkpoint.hf_source_path, cfg.model.hf_model_id "
-            "(via AutoBridge / recipe metadata), or cfg.tokenizer.tokenizer_model when it points at "
+            "Set cfg.checkpoint.hf_source_path, model HF metadata "
+            "(via AutoBridge / recipes), or cfg.tokenizer.tokenizer_model when it points at "
             "an HF model id."
         )
 
@@ -1146,10 +1147,15 @@ class ConfigContainer(Container):
                 f"({collate_padding_multiple})."
             )
 
-        # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
-        # can enable variable_seq_lengths for pipeline parallelism.
+        # Propagate in-batch packing state to the transformer that owns pipeline
+        # communication settings. Builder-backed configs keep an exact MCore
+        # TransformerConfig under ``model.transformer``; private attributes on
+        # the outer flat proxy do not reach it.
         if enable_in_batch_packing:
-            self.model._enable_in_batch_packing = True
+            transformer_config = getattr(self.model, "transformer", self.model)
+            transformer_config._enable_in_batch_packing = True
+            if getattr(transformer_config, "pipeline_model_parallel_size", 1) > 1:
+                transformer_config.variable_seq_lengths = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
                 self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
         elif isinstance(self.dataset, DirectHFSFTDatasetConfig):

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 import torch
 from megatron.core import InferenceParams, tensor_parallel
@@ -25,7 +25,7 @@ from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_trans
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import MegatronModule
+from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as Qwen3VLConfigHF
 
@@ -33,7 +33,6 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLS
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
-    Qwen3VLTransformerConfig,
     get_vision_model_config,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
@@ -84,6 +83,10 @@ def _split_if_full_sequence(
     return split_data_cp_rank(val, cp_size, seq_dim, cp_rank), True
 
 
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_vl.model_config import Qwen3VLModelConfig
+
+
 class Qwen3VLModel(MegatronModule):
     """Qwen3VL multi-modal model.
 
@@ -91,6 +94,8 @@ class Qwen3VLModel(MegatronModule):
         language_transformer_config (TransformerConfig): Transformer config for the language model.
         language_transformer_layer_spec (ModuleSpec): Specifies module to use for transformer layers of the
         vision_transformer_config (Qwen3VLConfigHF): HF config for the vision model.
+        model_config (Qwen3VLModelConfig | TransformerConfig): Outer builder config, or a legacy provider config,
+            containing multimodal token IDs and model-construction settings.
         parallel_output (bool): Do not gather the outputs, keep them split across tensor parallel ranks. This
             is typically True for training and False for inference.
         language_rotary_percent (float): Percent of rotary dimension to use for rotary position embeddings
@@ -109,9 +114,11 @@ class Qwen3VLModel(MegatronModule):
 
     def __init__(
         self,
-        language_transformer_config: Qwen3VLTransformerConfig,
+        language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         vision_transformer_config: Qwen3VLConfigHF,
+        *,
+        model_config: "Qwen3VLModelConfig | TransformerConfig",
         parallel_output: bool = True,
         pre_process: bool = True,
         post_process: bool = True,
@@ -122,6 +129,7 @@ class Qwen3VLModel(MegatronModule):
         vp_stage: Optional[int] = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
+        self.model_config = model_config
 
         if hasattr(language_transformer_layer_spec, "submodules"):
             language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
@@ -135,9 +143,9 @@ class Qwen3VLModel(MegatronModule):
         self.encoder_hidden_state = None
         self.vision_model = None
         self.language_model = None
-        self.image_token_id = language_transformer_config.image_token_id
-        self.video_token_id = language_transformer_config.video_token_id
-        self.vision_start_token_id = language_transformer_config.vision_start_token_id
+        self.image_token_id = model_config.image_token_id
+        self.video_token_id = model_config.video_token_id
+        self.vision_start_token_id = model_config.vision_start_token_id
 
         self.square_merge_size = vision_transformer_config.spatial_merge_size**2
 
@@ -162,9 +170,9 @@ class Qwen3VLModel(MegatronModule):
         self.vp_stage = None
         self.vp_size = self.config.virtual_pipeline_model_parallel_size
 
-        if hasattr(self.config, "dist_train") and getattr(self.config.dist_train, "use_dist_train", False) is True:
+        if hasattr(model_config, "dist_train") and getattr(model_config.dist_train, "use_dist_train", False) is True:
             self.use_dist_train = True
-            self.vision_to_llm_dp_ratio = self.config.dist_train.vision_to_llm_dp_ratio
+            self.vision_to_llm_dp_ratio = model_config.dist_train.vision_to_llm_dp_ratio
             self.vision_embeds = None
             self.deepstack_feature_lists = None
             assert not (self.add_encoder and self.add_decoder) and (self.add_encoder or self.add_decoder), (
@@ -178,7 +186,7 @@ class Qwen3VLModel(MegatronModule):
             self.use_dist_train = False
 
         if self.pre_process and self.add_encoder:
-            if language_transformer_config.use_hf_vision_model:
+            if model_config.use_hf_vision_model:
                 raise ValueError("use_hf_vision_model is not supported for Qwen3VLModel for now")
             vision_transformer_layer_spec = get_vit_layer_with_transformer_engine_spec()
             vision_patch_merger_spec = PatchMergerSubmodules(
@@ -206,16 +214,16 @@ class Qwen3VLModel(MegatronModule):
             self.language_model = Qwen3VLGPTModel(
                 config=language_transformer_config,
                 transformer_layer_spec=language_transformer_layer_spec,
-                vocab_size=language_transformer_config.vocab_size,
-                max_sequence_length=language_transformer_config.language_max_sequence_length,
+                vocab_size=model_config.vocab_size,
+                max_sequence_length=model_config.language_max_sequence_length,
                 parallel_output=parallel_output,
                 position_embedding_type="mrope",
-                rotary_percent=language_transformer_config.rotary_percent,
+                rotary_percent=model_config.rotary_percent,
                 pre_process=self.pre_process,
                 post_process=self.post_process,
-                rotary_base=language_transformer_config.rotary_base,
-                fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
-                share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
+                rotary_base=model_config.rotary_base,
+                fp16_lm_cross_entropy=model_config.fp16_lm_cross_entropy,
+                share_embeddings_and_output_weights=model_config.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
                 mtp_block_spec=mtp_block_spec,
                 vp_stage=vp_stage,
@@ -467,7 +475,7 @@ class Qwen3VLModel(MegatronModule):
             vision_embeds = None
 
             if vision_grid_thw is not None and vision_grid_thw.shape[0] > 0:
-                if cp_size > 1 and self.config.vision_dp_when_cp:
+                if cp_size > 1 and self.model_config.vision_dp_when_cp:
                     if cp_img_num is None:
                         assert images_padded is None
                         vision_data, vision_grid_thw, cp_img_num, images_padded = qwen3vl_cp_split(
@@ -527,7 +535,7 @@ class Qwen3VLModel(MegatronModule):
                                 dtype=torch.bfloat16,
                             )
                         )
-                if cp_size > 1 and self.config.vision_dp_when_cp:
+                if cp_size > 1 and self.model_config.vision_dp_when_cp:
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,
@@ -671,7 +679,7 @@ class Qwen3VLModel(MegatronModule):
             # For simplicity, we set hf_attention_mask to None.
             hf_attention_mask = None
             position_ids, _ = get_rope_index(
-                self.config.spatial_merge_size,
+                self.vision_transformer_config.spatial_merge_size,
                 self.image_token_id,
                 self.video_token_id,
                 self.vision_start_token_id,

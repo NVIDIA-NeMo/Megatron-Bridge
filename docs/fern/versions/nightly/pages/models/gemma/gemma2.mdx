@@ -49,14 +49,14 @@ from megatron.bridge import AutoBridge
 
 # Example: Gemma 2 9B
 bridge = AutoBridge.from_hf_pretrained("google/gemma-2-9b")
-provider = bridge.to_megatron_provider()
+model_config = bridge.get_model_config()
 
 # Configure parallelism before instantiating the model
-provider.tensor_model_parallel_size = 8
-provider.pipeline_model_parallel_size = 1
+model_config.tensor_model_parallel_size = 8
+model_config.pipeline_model_parallel_size = 1
 
-provider.finalize()
-model = provider.provide_distributed_model(wrap_with_ddp=False)
+model_config.finalize()
+model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ```
 
 ### Import HF → Megatron

@@ -23,8 +23,10 @@ from typing import Any, Dict, Optional
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 from omegaconf import DictConfig, OmegaConf
 
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.training.utils.omegaconf_utils import (
     OverridesError,
     _apply_overrides,
@@ -92,6 +94,18 @@ class ConfigWithOptionalProfilingConfig:
 
     name: str = "test"
     profiling: Optional[ProfilingConfig] = None
+
+
+@dataclasses.dataclass
+class ConfigWithBuilderModel:
+    """Container with a nested builder-backed model config."""
+
+    model: BridgeGPTModelConfig = dataclasses.field(
+        default_factory=lambda: BridgeGPTModelConfig(
+            transformer=MLATransformerConfig(num_layers=2, hidden_size=16, num_attention_heads=2),
+            vocab_size=32,
+        )
+    )
 
 
 def dummy_function():
@@ -465,6 +479,60 @@ class TestSafeCreateOmegaconfWithPreservation:
         # activation_func is serialized as a string, not excluded
         assert omega_conf.with_callable.activation_func == "relu"
         assert "root.with_callable.activation_func" not in excluded
+
+    @pytest.mark.parametrize(
+        "override",
+        ["model.recompute_modules=[mlp]", "model.transformer.recompute_modules=[mlp]"],
+    )
+    def test_builder_model_supports_flat_and_nested_transformer_overrides(self, override):
+        """Flat compatibility aliases and nested paths remain synchronized."""
+        config = ConfigWithBuilderModel()
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        omega_conf = parse_hydra_overrides(omega_conf, [override])
+        apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
+
+        assert config.model.transformer.recompute_modules == ["mlp"]
+
+    @pytest.mark.parametrize(
+        ("override", "field_name", "expected"),
+        [
+            ("model.rotary_base=20000", "rotary_base", 20000),
+            ("model.transformer.rotary_base=30000", "rotary_base", 30000),
+            ("model.rotary_percent=0.5", "rotary_percent", 0.5),
+            ("model.transformer.rotary_percent=0.75", "rotary_percent", 0.75),
+        ],
+    )
+    def test_builder_model_overlapping_flat_and_nested_overrides_remain_synchronized(
+        self, override, field_name, expected
+    ):
+        """Nested overrides must not be reverted by stale overlapping outer values."""
+        config = ConfigWithBuilderModel()
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        omega_conf = parse_hydra_overrides(omega_conf, [override])
+        apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
+
+        assert getattr(config.model, field_name) == expected
+        assert getattr(config.model.transformer, field_name) == expected
+
+    @pytest.mark.parametrize(
+        ("overrides", "expected"),
+        [
+            (["model.rotary_base=20000", "model.transformer.rotary_base=30000"], 30000),
+            (["model.transformer.rotary_base=30000", "model.rotary_base=20000"], 20000),
+        ],
+    )
+    def test_builder_model_mixed_alias_overrides_follow_cli_order(self, overrides, expected):
+        """The later flat or nested compatibility override must win."""
+        config = ConfigWithBuilderModel()
+        omega_conf, excluded = create_omegaconf_dict_config(config)
+
+        omega_conf = parse_hydra_overrides(omega_conf, overrides)
+        apply_overrides(config, OmegaConf.to_container(omega_conf, resolve=True), excluded)
+
+        assert config.model.rotary_base == expected
+        assert config.model.transformer.rotary_base == expected
 
 
 class TestApplyOverrides:

@@ -31,7 +31,7 @@ def glm45_355b_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -158,7 +158,7 @@ def glm45_air_106b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5-Air").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("zai-org/GLM-4.5-Air").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -291,7 +291,7 @@ def glm45_355b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -422,7 +422,7 @@ def glm45_air_106b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5-Air"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -563,7 +563,7 @@ def glm45_355b_peft_16gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path
@@ -703,7 +703,7 @@ def glm45_air_106b_peft_8gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5-Air"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = hf_path

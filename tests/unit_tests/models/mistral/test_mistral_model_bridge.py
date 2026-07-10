@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 from transformers import GenerationConfig, MistralConfig, MistralForCausalLM
 
 from megatron.bridge.models import AutoBridge
@@ -26,6 +27,7 @@ from megatron.bridge.models.conversion.transformers_compat import rope_theta_fro
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mistral.mistral_bridge import MistralBridge
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
+from megatron.bridge.models.mistral.model_config import MistralModelBuilder
 
 
 class TestMegatronMistralBridge:
@@ -103,6 +105,56 @@ class TestMegatronMistralBridge:
         assert result.num_attention_heads == mistral_config.num_attention_heads
         assert result.seq_length == mistral_config.max_position_embeddings
         assert result.rotary_base == rope_theta_from_hf(mistral_config)
+
+    def test_model_config_bridge_uses_direct_mcore_config(self, mock_pretrained_mistral):
+        result = MistralBridge().model_config_bridge(mock_pretrained_mistral)
+
+        assert type(result.transformer) is TransformerConfig
+        assert result.transformer.normalization == "RMSNorm"
+        assert result.transformer.window_size is None
+        assert "normalization" not in result.__dict__
+
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored.transformer) is TransformerConfig
+        assert restored.transformer.activation_func is result.transformer.activation_func
+
+        exported = MistralBridge.megatron_to_hf_config(result)
+        assert "rope_scaling" not in exported
+
+    def test_model_config_bridge_preserves_yarn_fields(self, mock_pretrained_mistral):
+        mock_pretrained_mistral.config.rope_scaling = {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768,
+        }
+
+        result = MistralBridge().model_config_bridge(mock_pretrained_mistral)
+
+        assert result.position_embedding_type == "yarn"
+        assert result.yarn_rotary_scaling_factor == 4.0
+        assert result.yarn_original_max_position_embeddings == 32768
+        assert result.yarn_beta_fast == 32.0
+        assert result.yarn_beta_slow == 1.0
+        assert result.yarn_mscale == 1.0
+        assert result.yarn_mscale_all_dim == 0.0
+        assert result.yarn_correction_range_round_to_int is True
+
+        exported = MistralBridge.megatron_to_hf_config(result)
+        assert exported["rope_scaling"] == {
+            "rope_type": "yarn",
+            "factor": 4.0,
+            "original_max_position_embeddings": 32768,
+            "beta_fast": 32.0,
+            "beta_slow": 1.0,
+            "mscale": 1.0,
+            "mscale_all_dim": 0.0,
+            "truncate": True,
+        }
+
+        with patch("megatron.bridge.models.mistral.model_config.build_gpt_with_yarn") as mock_build:
+            MistralModelBuilder(result).build_model(Mock())
+
+        mock_build.assert_called_once()
 
     def test_provider_bridge_vocabulary(self, mock_pretrained_mistral, mistral_config):
         """Test vocabulary size mapping."""

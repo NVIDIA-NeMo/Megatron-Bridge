@@ -32,7 +32,7 @@ _HF_PATH = "google/gemma-4-26B-A4B-it"
 
 def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
     """Apply settings common to all Gemma 4 VL 26B-A4B recipes."""
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     cfg.model.seq_length = 4096
 
     # MoE efficiency kernels

@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import json
+import os
+import socket
 import subprocess
 from pathlib import Path
 
@@ -68,6 +70,12 @@ HF_QWEN35_TOY_MODEL_CONFIG = {
         "rope_theta": 10000000.0,
     },
 }
+
+
+def _find_free_port() -> str:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+        sock.bind(("", 0))
+        return str(sock.getsockname()[1])
 
 
 class TestQwen35Conversion:
@@ -209,6 +217,7 @@ class TestQwen35Conversion:
             "python",
             "-m",
             "torch.distributed.run",
+            "--standalone",
             "--nproc_per_node=2",
             "--nnodes=1",
             "-m",
@@ -289,8 +298,13 @@ class TestQwen35Conversion:
             str(tmp_path / "qwen35_roundtrip"),
         ]
 
+        env = {**os.environ, "MASTER_PORT": _find_free_port()}
         result = subprocess.run(
-            cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent.parent
+            cmd,
+            capture_output=True,
+            text=True,
+            cwd=Path(__file__).parent.parent.parent.parent.parent.parent,
+            env=env,
         )
 
         assert result.returncode == 0, (
@@ -507,6 +521,7 @@ class TestQwen35MoEConversion:
             "python",
             "-m",
             "torch.distributed.run",
+            "--standalone",
             "--nproc_per_node=2",
             "--nnodes=1",
             "-m",

@@ -50,9 +50,9 @@ def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     checkpoint_dir = os.path.join(run_output_dir, "checkpoints")
     tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
 
-    # TODO: Add AutoBridge support for diffusion models
+    # Build the serializable model config directly from the diffusion bridge.
     hf = PreTrainedFlux("black-forest-labs/FLUX.1-dev")
-    model_cfg = FluxBridge().provider_bridge(hf)
+    model_cfg = FluxBridge().model_config_bridge(hf)
     model_cfg.tensor_model_parallel_size = 2
     model_cfg.pipeline_model_parallel_size = 1
     model_cfg.pipeline_dtype = torch.bfloat16

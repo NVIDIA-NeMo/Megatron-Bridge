@@ -29,22 +29,8 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfi
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen_vl.model_config import DistTrainConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-
-
-@dataclass
-class DistTrainConfig:
-    """Distributed training (DistTrain) settings for Qwen3-VL providers."""
-
-    use_dist_train: bool = False
-    vision_to_llm_dp_ratio: Optional[int] = None
-    vision_world_size: Optional[int] = None
-    language_world_size: Optional[int] = None
-    vision_tensor_model_parallel_size: Optional[int] = None
-    vision_pipeline_model_parallel_size: Optional[int] = None
-    vision_context_parallel_size: Optional[int] = None
-    vision_expert_tensor_parallel_size: Optional[int] = None
-    vision_expert_model_parallel_size: Optional[int] = None
 
 
 @dataclass
@@ -156,6 +142,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_vision_config,
+            model_config=self,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,
@@ -323,6 +310,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
             language_transformer_config=language_transformer_config,
             language_transformer_layer_spec=language_transformer_layer_spec,
             vision_transformer_config=hf_vision_config,
+            model_config=self,
             pre_process=pre_process,
             post_process=post_process,
             pg_collection=self._pg_collection,

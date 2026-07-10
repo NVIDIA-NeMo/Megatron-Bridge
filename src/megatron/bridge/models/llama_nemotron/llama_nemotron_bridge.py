@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 import torch
+import torch.nn.functional as F
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.heterogeneous.heterogeneous_config import HeterogeneousTransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -23,9 +27,12 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.llama_nemotron.layer_specs import llama_nemotron_layer_spec
 from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import LlamaNemotronHeterogeneousProvider
+from megatron.bridge.utils import fusions
 
 
 @MegatronModelBridge.register_bridge(source="DeciLMForCausalLM", target=GPTModel)
@@ -56,32 +63,52 @@ class LlamaNemotronBridge(MegatronModelBridge):
         ...     "nvidia/Llama-3_3-Nemotron-Super-49B-v1_5",
         ...     trust_remote_code=True
         ... )
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaNemotronHeterogeneousProvider:
-        hf_config = hf_pretrained.config
-        # Validate heterogeneous DeciLM (NAS) config and select provider
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+    TRANSFORMER_CONFIG_CLASS = HeterogeneousTransformerConfig
+
+    @staticmethod
+    def _validate_heterogeneous_config(hf_config: Any) -> None:
+        """Validate that an HF config describes a supported DeciLM model."""
         if not (hasattr(hf_config, "block_configs") and hf_config.block_configs):
             num_layers = getattr(hf_config, "num_hidden_layers", "unknown")
             raise ValueError(
                 "LlamaNemotronBridge only handles heterogeneous models with block_configs. "
                 f"Model with {num_layers} layers and no block_configs should use LlamaBridge."
             )
-        archs = set(getattr(hf_config, "architectures", []) or [])
+        architectures = set(getattr(hf_config, "architectures", []) or [])
         auto_map = getattr(hf_config, "auto_map", {}) or {}
-        is_decilm = ("DeciLMForCausalLM" in archs) or (
-            auto_map.get("AutoModelForCausalLM", "").endswith("DeciLMForCausalLM")
-        )
-        if not is_decilm:
+        auto_model = auto_map.get("AutoModelForCausalLM", "") if isinstance(auto_map, dict) else ""
+        if "DeciLMForCausalLM" not in architectures and not auto_model.endswith("DeciLMForCausalLM"):
             raise ValueError("Unsupported heterogeneous architecture for LlamaNemotronBridge; expected DeciLM.")
+
+    @staticmethod
+    def _num_query_groups(hf_config: Any) -> int | None:
+        """Extract the GQA group count from the first heterogeneous block."""
+        num_query_groups = getattr(hf_config, "num_key_value_heads", None)
+        block = hf_config.block_configs[0]
+        attention = block.get("attention") if isinstance(block, dict) else getattr(block, "attention", None)
+        heads_in_group = (
+            attention.get("n_heads_in_group")
+            if isinstance(attention, dict)
+            else getattr(attention, "n_heads_in_group", None)
+        )
+        if heads_in_group:
+            num_query_groups = hf_config.num_attention_heads // heads_in_group
+        return num_query_groups
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> LlamaNemotronHeterogeneousProvider:
+        hf_config = hf_pretrained.config
+        # Validate heterogeneous DeciLM (NAS) config and select provider
+        self._validate_heterogeneous_config(hf_config)
 
         # Calculate num_query_groups for heterogeneous models
         # For heterogeneous models, GQA is defined in each block config
         # We assume block 0 has a non-no-op attention layer
         num_query_groups = hf_config.num_key_value_heads
         if hasattr(hf_config, "block_configs") and hf_config.block_configs:
-            # Extract from block_configs[0].attention.n_heads_in_group
             block_0 = hf_config.block_configs[0]
             if hasattr(block_0, "attention") and hasattr(block_0.attention, "n_heads_in_group"):
                 n_heads_in_group = block_0.attention.n_heads_in_group
@@ -117,6 +144,34 @@ class LlamaNemotronBridge(MegatronModelBridge):
         provider_kwargs["heterogeneous_layers_config_encoded_json"] = hf_config.to_json_string()
         provider = LlamaNemotronHeterogeneousProvider(**provider_kwargs)
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a heterogeneous DeciLM config to builder-backed config kwargs."""
+        self._validate_heterogeneous_config(hf_config)
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            transformer_layer_spec=llama_nemotron_layer_spec,
+            num_query_groups=self._num_query_groups(hf_config),
+            heterogeneous_layers_config_encoded_json=hf_config.to_json_string(),
+            normalization="RMSNorm",
+            activation_func=F.silu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            hidden_dropout=0.0,
+            attention_dropout=0.0,
+            bias_activation_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            bias_dropout_fusion=True,
+            apply_rope_fusion=fusions.can_enable_rope_fusion(),
+            rotary_percent=1.0,
+        )
+
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        if isinstance(rope_scaling, dict) and rope_scaling.get("rope_type") == "llama3":
+            config_kwargs["rope_scaling"] = True
+            config_kwargs["rope_scaling_factor"] = rope_scaling_factor_from_hf(hf_config, default=8.0)
+        return config_kwargs
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:

@@ -85,7 +85,7 @@ def step37_sft_64gpu_h100_bf16_flickr8k_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # ── Model: AutoBridge load from HF id or local snapshot ──────────────
-    cfg.model = AutoBridge.from_hf_pretrained(_STEP37_HF_PATH).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(_STEP37_HF_PATH).get_model_config()
     cfg.model.seq_length = _STEP37_FLICKR8K_MAX_PACKING_SEQLEN
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8

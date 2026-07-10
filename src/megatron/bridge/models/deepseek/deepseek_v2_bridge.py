@@ -12,14 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from functools import partial
+from typing import Any
 
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -32,6 +35,11 @@ except (ImportError, ModuleNotFoundError):
     HAVE_TE = False
 
 
+def deepseek_v2_layer_spec(config: Any, vp_stage: int | None = None) -> ModuleSpec:
+    """Build the DeepSeek-V2 decoder block with the available backend."""
+    return get_gpt_decoder_block_spec(config, use_transformer_engine=HAVE_TE, vp_stage=vp_stage)
+
+
 @MegatronModelBridge.register_bridge(
     source="DeepseekV2ForCausalLM",
     target=GPTModel,
@@ -41,11 +49,14 @@ except (ImportError, ModuleNotFoundError):
 class DeepSeekV2Bridge(MegatronModelBridge):
     """Megatron Bridge for DeepSeek-V2."""
 
+    TRANSFORMER_CONFIG_CLASS = MLATransformerConfig
+    MODEL_CONFIG_CLASS = BridgeGPTModelConfig
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
 
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = deepseek_v2_layer_spec
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
         provider.add_bias_linear = False
@@ -83,9 +94,43 @@ class DeepSeekV2Bridge(MegatronModelBridge):
 
         return provider
 
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face DeepSeek-V2 config to Megatron model-config kwargs."""
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            transformer_layer_spec=deepseek_v2_layer_spec,
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            share_embeddings_and_output_weights=False,
+            qk_layernorm=True,
+            multi_latent_attention=True,
+            moe_grouped_gemm=True,
+            moe_router_pre_softmax=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_router_load_balancing_type="seq_aux_loss",
+            moe_shared_expert_overlap=True,
+            moe_router_dtype="fp32",
+            moe_permute_fusion=True,
+            apply_rope_fusion=False,
+            bias_activation_fusion=True,
+            bias_dropout_fusion=True,
+            masked_softmax_fusion=True,
+            persist_layer_norm=True,
+            hidden_dropout=0.0,
+            attention_softmax_in_fp32=False,
+            make_vocab_size_divisible_by=3200,
+            seq_length=4096,
+            moe_layer_freq=[0] * hf_config.first_k_dense_replace
+            + [1] * (hf_config.num_hidden_layers - hf_config.first_k_dense_replace),
+            moe_shared_expert_intermediate_size=hf_config.moe_intermediate_size * hf_config.n_shared_experts,
+        )
+        return config_kwargs
+
     @classmethod
-    def megatron_to_hf_config(cls, provider) -> dict:
-        hf_cfg = super().megatron_to_hf_config(provider)
+    def megatron_to_hf_config(cls, model_config) -> dict:
+        """Convert a DeepSeek-V2 model config, retaining legacy provider support."""
+        hf_cfg = super().megatron_to_hf_config(model_config)
 
         # Megatron uses None="not set/disabled", but HF expects integers
         hf_cfg["num_nextn_predict_layers"] = hf_cfg.get("num_nextn_predict_layers") or 0
@@ -93,7 +138,7 @@ class DeepSeekV2Bridge(MegatronModelBridge):
         hf_cfg["topk_group"] = hf_cfg.get("topk_group") or 1
 
         # Reconstruct first_k_dense_replace from moe_layer_freq (count leading dense layers)
-        moe_layer_freq = getattr(provider, "moe_layer_freq", None)
+        moe_layer_freq = getattr(model_config, "moe_layer_freq", None)
         if moe_layer_freq is not None and isinstance(moe_layer_freq, list):
             first_k_dense_replace = 0
             for val in moe_layer_freq:
@@ -104,8 +149,8 @@ class DeepSeekV2Bridge(MegatronModelBridge):
             hf_cfg["first_k_dense_replace"] = first_k_dense_replace
 
         # Reconstruct n_shared_experts from moe_shared_expert_intermediate_size / moe_ffn_hidden_size
-        shared_size = getattr(provider, "moe_shared_expert_intermediate_size", None)
-        moe_ffn = getattr(provider, "moe_ffn_hidden_size", None)
+        shared_size = getattr(model_config, "moe_shared_expert_intermediate_size", None)
+        moe_ffn = getattr(model_config, "moe_ffn_hidden_size", None)
         if shared_size is not None and moe_ffn is not None and moe_ffn > 0:
             hf_cfg["n_shared_experts"] = shared_size // moe_ffn
 

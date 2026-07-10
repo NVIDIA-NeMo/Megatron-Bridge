@@ -165,7 +165,7 @@ def gemma3_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
 
     # Model config from HuggingFace
     hf_path = "google/gemma-3-1b-pt"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _adjust_gemma3_vocab_size(cfg.model, hf_path)
 
     # Tokenizer
@@ -289,7 +289,7 @@ def gemma3_1b_peft_1gpu_h100_bf16_config(
 
     # Model config from HuggingFace
     hf_path = "google/gemma-3-1b-pt"
-    cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(hf_path).get_model_config()
     _adjust_gemma3_vocab_size(cfg.model, hf_path)
 
     # Tokenizer

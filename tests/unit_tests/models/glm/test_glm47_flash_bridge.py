@@ -19,10 +19,13 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.glm.glm47_flash_bridge import GLM47FlashBridge
+from megatron.bridge.models.glm.layer_specs import glm_layer_spec
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -132,6 +135,26 @@ class TestGLM47FlashBridge:
         assert provider.mtp_loss_scaling_factor == 0.3
         assert provider.moe_shared_expert_intermediate_size == (config.moe_intermediate_size * config.n_shared_experts)
         assert provider.moe_layer_freq == [0, 0, 0] + [1] * 44
+
+    def test_model_config_bridge_uses_unscaled_mla_defaults(self, mock_pretrained):
+        """The builder path uses native MLA config without inheriting DeepSeek YaRN defaults."""
+        model_config = GLM47FlashBridge().model_config_bridge(mock_pretrained)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert type(model_config.transformer) is MLATransformerConfig
+        assert model_config.rotary_base == mock_pretrained.config.rope_theta
+        assert model_config.transformer.rotary_base == mock_pretrained.config.rope_theta
+        assert model_config.transformer.rotary_percent == mock_pretrained.config.partial_rotary_factor
+        assert model_config.transformer.rope_type == "rope"
+        assert model_config.transformer.rotary_scaling_factor == 1.0
+        assert model_config.transformer.mscale == 1.0
+        assert model_config.transformer.mscale_all_dim == 1.0
+        assert model_config.transformer.mtp_num_layers == 1
+        assert model_config.transformer.moe_layer_freq == [0, 0, 0] + [1] * 44
+
+        restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is glm_layer_spec
 
     def test_mapping_registry_uses_hf_config_for_mtp_mappings(self, glm47_flash_config):
         """Test mapping_registry reads self.hf_config and includes MTP mappings."""

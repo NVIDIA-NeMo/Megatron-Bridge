@@ -19,7 +19,9 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer import TransformerConfig
 
+from megatron.bridge.models.common.base import ModelConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gemma.gemma4_bridge import (
@@ -27,6 +29,12 @@ from megatron.bridge.models.gemma.gemma4_bridge import (
     _infer_attn_pattern,
 )
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
+from megatron.bridge.models.gemma.model_config import (
+    Gemma4DenseModelBuilder,
+    Gemma4DenseModelConfig,
+    Gemma4ModelBuilder,
+    Gemma4ModelConfig,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -135,6 +143,28 @@ class TestGemma4BridgeRegistration:
         assert callable(getattr(bridge, "mapping_registry", None))
         assert callable(getattr(bridge, "maybe_modify_loaded_hf_weight", None))
         assert callable(getattr(bridge, "maybe_modify_converted_hf_weight", None))
+
+
+@pytest.mark.parametrize(
+    ("pretrained_fixture", "config_class", "builder_class"),
+    [
+        ("mock_pretrained_moe", Gemma4ModelConfig, Gemma4ModelBuilder),
+        ("mock_pretrained_dense", Gemma4DenseModelConfig, Gemma4DenseModelBuilder),
+    ],
+)
+def test_gemma4_model_config_bridge_roundtrips_exact_mcore_config(
+    request, bridge, pretrained_fixture, config_class, builder_class
+):
+    config = bridge.model_config_bridge(request.getfixturevalue(pretrained_fixture))
+
+    restored = ModelConfig.from_dict(config.as_dict())
+
+    assert type(config) is config_class
+    assert type(config.transformer) is TransformerConfig
+    assert type(restored) is config_class
+    assert type(restored.transformer) is TransformerConfig
+    assert restored.get_builder_cls() is builder_class
+    assert restored.as_dict() == config.as_dict()
 
 
 # ===========================================================================

@@ -115,7 +115,7 @@ def create_config(
 
     # Load model configuration from HuggingFace
     bridge = AutoBridge.from_hf_pretrained(model_id, torch_dtype=torch.bfloat16)
-    model_config = bridge.to_megatron_provider()
+    model_config = bridge.get_model_config()
     model_config.tensor_model_parallel_size = 1
     model_config.pipeline_model_parallel_size = 1
     model_config.context_parallel_size = 1

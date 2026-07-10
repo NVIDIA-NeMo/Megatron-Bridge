@@ -1847,7 +1847,7 @@ def _stream_weights_with_merge_disabled(monkeypatch, converted_name: str):
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
@@ -1882,7 +1882,7 @@ def _patch_stream_weights_megatron_to_hf_basics(monkeypatch, *, num_moe_experts:
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
@@ -2049,7 +2049,7 @@ def test_stream_weights_megatron_to_hf_merges_grouped_expert_adapters(monkeypatc
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
@@ -2132,7 +2132,7 @@ def test_stream_weights_megatron_to_hf_merges_grouped_expert_adapters_before_tra
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
@@ -2284,7 +2284,7 @@ def test_stream_weights_megatron_to_hf_merges_shared_expert_fc1_adapters(monkeyp
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
@@ -2365,7 +2365,7 @@ def test_stream_weights_megatron_to_hf_merges_shared_expert_fc2_adapters(monkeyp
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(
@@ -2444,7 +2444,7 @@ def test_stream_weights_megatron_to_hf_merges_router_adapters(monkeypatch):
     )
     monkeypatch.setattr(
         DummyBridge,
-        "_share_embeddings_and_output_weights",
+        "_model_shares_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: False,
     )
     monkeypatch.setattr(

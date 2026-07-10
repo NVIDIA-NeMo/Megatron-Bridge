@@ -210,15 +210,14 @@ def main(args):
     bridge = AutoBridge.from_hf_pretrained(
         args.hf_model_path, torch_dtype=torch.bfloat16, trust_remote_code=trust_remote
     )
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.params_dtype = torch.bfloat16
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=0)
-    model = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.params_dtype = torch.bfloat16
+    model_config.finalize()
+    model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 
     model = [m.cuda() for m in model]
     for m in model:

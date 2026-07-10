@@ -63,10 +63,8 @@ from megatron.core.typed_torch import apply_module
 from megatron.core.utils import deprecate_inference_params, get_pg_rank
 from torch import Tensor
 
-from megatron.bridge.models.gemma.gemma3_provider import (
-    TERowParallelLinearLayerNorm,
-    _is_local_attn_layer,
-)
+from megatron.bridge.models.common.te_layers import TERowParallelLinearLayerNorm
+from megatron.bridge.models.gemma.modeling_gemma3 import _is_local_attn_layer
 from megatron.bridge.utils.import_utils import safe_import_from
 
 
@@ -1305,7 +1303,8 @@ class Gemma4OutputLayer(torch.nn.Module):
 
     def forward(self, *args, **kwargs):
         output, bias = super().forward(*args, **kwargs)
-        output = _logit_softcapping(output, self.config.final_logit_softcapping)
+        scale = getattr(self, "final_logit_softcapping", getattr(self.config, "final_logit_softcapping", None))
+        output = _logit_softcapping(output, scale)
         return output, bias
 
 
@@ -1335,6 +1334,9 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
 def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
     """Build Gemma 4 MoE block spec with patched attention, layer, and MoE modules."""
     block_spec = get_gpt_decoder_block_spec(config, use_transformer_engine=use_transformer_engine, **kwargs)
+    global_head_dim = getattr(config, "global_head_dim", 512)
+    interleaved_attn_pattern = getattr(config, "interleaved_attn_pattern", (5, 1))
+    num_global_key_value_heads = getattr(config, "num_global_key_value_heads", 2)
 
     for layer_spec in block_spec.layer_specs:
         layer_spec.module = Gemma4TransformerLayer
@@ -1342,8 +1344,17 @@ def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
         attn_spec = layer_spec.submodules.self_attention
         if isinstance(attn_spec.module, type) and issubclass(attn_spec.module, SelfAttention):
             attn_spec.module = Gemma4SelfAttention
+            attn_spec.params = {
+                **(getattr(attn_spec, "params", None) or {}),
+                "global_head_dim": global_head_dim,
+                "interleaved_attn_pattern": interleaved_attn_pattern,
+                "num_global_key_value_heads": num_global_key_value_heads,
+            }
         if hasattr(attn_spec, "submodules") and attn_spec.submodules is not None:
-            attn_spec.submodules.core_attention = Gemma4TEDotProductAttention
+            attn_spec.submodules.core_attention = ModuleSpec(
+                module=Gemma4TEDotProductAttention,
+                params={"interleaved_attn_pattern": interleaved_attn_pattern},
+            )
             if use_transformer_engine:
                 attn_spec.submodules.linear_proj = TERowParallelLinearLayerNorm
 
@@ -1359,15 +1370,27 @@ def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
 class Gemma4SelfAttention(SelfAttention):
     """Gemma 4 MoE self attention with heterogeneous sliding/global layers."""
 
-    def __init__(self, config: TransformerConfig, layer_number: int, **kwargs):
+    def __init__(
+        self,
+        config: TransformerConfig,
+        layer_number: int,
+        interleaved_attn_pattern: tuple[int, int] | None = None,
+        global_head_dim: int | None = None,
+        num_global_key_value_heads: int | None = None,
+        **kwargs,
+    ):
+        interleaved_attn_pattern = interleaved_attn_pattern or getattr(config, "interleaved_attn_pattern", (5, 1))
+        global_head_dim = global_head_dim or getattr(config, "global_head_dim", 512)
+        num_global_key_value_heads = num_global_key_value_heads or getattr(config, "num_global_key_value_heads", None)
         config = copy.deepcopy(config)
 
-        if not _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
-            config.kv_channels = config.global_head_dim
-            if getattr(config, "num_global_key_value_heads", None) is not None:
-                config.num_query_groups = config.num_global_key_value_heads
+        if not _is_local_attn_layer(layer_number, interleaved_attn_pattern):
+            config.kv_channels = global_head_dim
+            if num_global_key_value_heads is not None:
+                config.num_query_groups = num_global_key_value_heads
 
         super().__init__(config=config, layer_number=layer_number, **kwargs)
+        self.interleaved_attn_pattern = interleaved_attn_pattern
         self._v_norm_eps = config.layernorm_epsilon
 
     def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
@@ -1377,7 +1400,7 @@ class Gemma4SelfAttention(SelfAttention):
         from megatron.core.dist_checkpointing.mapping import ShardedObject as _SO
         from megatron.core.dist_checkpointing.mapping import ShardedTensor as _ST
 
-        is_global = not _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern)
+        is_global = not _is_local_attn_layer(self.layer_number, self.interleaved_attn_pattern)
         suffix = "_global" if is_global else "_sliding"
         if prefix.endswith("."):
             storage_prefix = prefix[:-1] + suffix + "."
@@ -1391,7 +1414,7 @@ class Gemma4SelfAttention(SelfAttention):
                 return storage_prefix + key[len(prefix) :]
             return key.replace(".self_attention.", f".self_attention{suffix}.", 1)
 
-        pattern = self.config.interleaved_attn_pattern
+        pattern = self.interleaved_attn_pattern
         total_layers = self.config.num_layers
         if is_global:
             type_total = sum(1 for i in range(1, total_layers + 1) if not _is_local_attn_layer(i, pattern))
@@ -1468,7 +1491,7 @@ class Gemma4SelfAttention(SelfAttention):
         assert isinstance(rotary_pos_emb, (tuple, list)) and len(rotary_pos_emb) == 2
         assert rotary_pos_cos is None and rotary_pos_sin is None
 
-        is_local = _is_local_attn_layer(self.layer_number, self.config.interleaved_attn_pattern)
+        is_local = _is_local_attn_layer(self.layer_number, self.interleaved_attn_pattern)
         if isinstance(attention_mask, dict):
             attention_mask = attention_mask["sliding_attention" if is_local else "full_attention"]
 
@@ -1501,10 +1524,12 @@ class Gemma4TEDotProductAttention(TEDotProductAttention):
         attn_mask_type: AttnMaskType,
         attention_type: str,
         attention_dropout: Optional[float] = None,
+        interleaved_attn_pattern: tuple[int, int] | None = None,
         **kwargs,
     ):
+        interleaved_attn_pattern = interleaved_attn_pattern or getattr(config, "interleaved_attn_pattern", (5, 1))
         config = copy.deepcopy(config)
-        if _is_local_attn_layer(layer_number, config.interleaved_attn_pattern):
+        if _is_local_attn_layer(layer_number, interleaved_attn_pattern):
             config.window_size = (config.window_size - 1, 0)
         else:
             config.window_size = None

@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING
+
 import torch
 from megatron.core import InferenceParams
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.transformer import MegatronModule
+from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.transformer.spec_utils import ModuleSpec
 
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.thinker_model import Qwen3ASRThinkerModel
-from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.transformer_config import Qwen3ASRTransformerConfig
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen3_asr.model_config import Qwen3ASRModelConfig
 
 
 class Qwen3ASRModel(MegatronModule):
@@ -32,7 +37,7 @@ class Qwen3ASRModel(MegatronModule):
 
     def __init__(
         self,
-        language_transformer_config: Qwen3ASRTransformerConfig,
+        language_transformer_config: TransformerConfig,
         language_transformer_layer_spec: ModuleSpec,
         thinker_transformer_config,
         parallel_output: bool = True,
@@ -41,6 +46,7 @@ class Qwen3ASRModel(MegatronModule):
         add_encoder: bool = True,
         add_decoder: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        model_config: "Qwen3ASRModelConfig | None" = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
 
@@ -54,6 +60,7 @@ class Qwen3ASRModel(MegatronModule):
             add_encoder,
             add_decoder,
             pg_collection,
+            model_config,
         )
 
     def shared_embedding_or_output_weight(self):

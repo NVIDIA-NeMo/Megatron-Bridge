@@ -13,8 +13,16 @@
 # limitations under the License.
 
 from megatron.bridge.models.glm_vl.glm_45v_bridge import GLM45VBridge
-from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "GLM45VModelProvider":
+        from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
+
+        return GLM45VModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

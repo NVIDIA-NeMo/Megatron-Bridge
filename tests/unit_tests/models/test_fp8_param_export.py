@@ -61,7 +61,7 @@ def _patch_export_task_context(monkeypatch, bridge, global_name: str, **kwargs):
     pp_rank = kwargs.get("pp_rank", 0)
     pp_size = kwargs.get("pp_size", 1)
     monkeypatch.setattr(bridge, "mapping_registry", kwargs["registry_factory"])
-    monkeypatch.setattr(bridge, "_share_embeddings_and_output_weights", lambda *_a, **_k: False)
+    monkeypatch.setattr(bridge, "_model_shares_embeddings_and_output_weights", lambda *_a, **_k: False)
     monkeypatch.setattr(bridge, "_megatron_global_param_names_all_pp_ranks", lambda *_a, **_k: [global_name])
     monkeypatch.setattr(bridge, "_detect_fp8_params", kwargs.get("detect_fp8", lambda *_a, **_k: {global_name: True}))
     monkeypatch.setattr(
@@ -176,6 +176,7 @@ class TestFp8ParamExport:
             megatron_module=Mock(),
             param_weight=target_param,
         )
+        # Standard conversion tasks are synchronized and never contain empty slots.
         monkeypatch.setattr(DummyBridge, "build_conversion_tasks", lambda self, *_a, **_k: [task])
         monkeypatch.setattr(DummyBridge, "_with_progress_tracking", lambda self, tasks, *_a, **_k: tasks)
         monkeypatch.setattr(DummyBridge, "_broadcast_shared_embeddings", lambda self, *_a, **_k: None)
@@ -385,17 +386,21 @@ class TestFp8ParamExport:
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [],
         )
-        tasks = bridge.build_export_fp8_tasks(
-            SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
-        )
-        assert len(tasks) == 2
+
+        def build_tasks():
+            return bridge.build_export_fp8_tasks(
+                SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
+            )
+
         if mode == "remote_pp":
+            tasks = build_tasks()
+            assert len(tasks) == 2
             assert tasks[0] and tasks[1]
             assert tasks[0].megatron_module is None and isinstance(tasks[0].mapping, MappingT)
             assert isinstance(tasks[1].mapping, _HFNameSuffixMapping)
         else:
-            assert tasks[0] and tasks[0].global_param_name == gname
-            assert tasks[1] is None
+            with pytest.raises(RuntimeError, match="FP8 export tasks must be synchronized"):
+                build_tasks()
             assert "No mapping found for global_name" in caplog.text
 
     @pytest.mark.parametrize(

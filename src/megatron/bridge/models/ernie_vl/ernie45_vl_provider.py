@@ -45,6 +45,7 @@ from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.ernie_decoder_layer_spe
     get_ernie45_vl_decoder_block_spec,
 )
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
+from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.vision_transformer_config import get_ernie_vision_config
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -116,8 +117,20 @@ class Ernie45VLModelProvider(GPTModelProvider):
         Returns:
             Ernie45VLModel: Configured ERNIE 4.5 VL MoE model instance.
         """
+        pg_collection = self._pg_collection
+        if pg_collection is None:
+            from megatron.core.process_groups_config import ProcessGroupCollection
+
+            pg_collection = ProcessGroupCollection.use_mpu_process_groups()
         model = Ernie45VLModel(
-            self,
+            config=self,
+            language_transformer_config=self,
+            vision_transformer_config=get_ernie_vision_config(self.vision_config, megatron_config=self),
+            language_model=self.provide_language_model(pre_process, post_process, vp_stage),
+            pg_collection=pg_collection,
+            patch_size=getattr(self.vision_config, "patch_size", 14),
+            in_channels=getattr(self.vision_config, "in_channels", 3),
+            spatial_merge_size=getattr(self.vision_config, "spatial_merge_size", 2),
             pre_process=pre_process,
             post_process=post_process,
             vp_stage=vp_stage,

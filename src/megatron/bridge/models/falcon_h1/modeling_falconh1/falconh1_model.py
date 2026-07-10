@@ -162,7 +162,8 @@ class FalconH1Model(LanguageModule):
 
     def __init__(
         self,
-        config: FalconH1Config,
+        config: TransformerConfig,
+        model_config,
         falconh1_stack_spec: ModuleSpec,
         vocab_size: int,
         max_sequence_length: int,
@@ -184,6 +185,7 @@ class FalconH1Model(LanguageModule):
         pg_collection: Optional[ProcessGroupCollection] = None,
     ) -> None:
         super().__init__(config=config, pg_collection=pg_collection)
+        self.model_config = model_config
 
         if has_config_logger_enabled(config):
             log_config_to_disk(config, locals(), prefix=type(self).__name__)
@@ -229,6 +231,7 @@ class FalconH1Model(LanguageModule):
         self.decoder = build_module(
             falconh1_stack_spec,
             self.config,
+            model_config=self.model_config,
             pre_process=self.pre_process,
             hybrid_attention_ratio=self.hybrid_attention_ratio,
             falconh1_ratio=self.falconh1_ratio,
@@ -310,7 +313,7 @@ class FalconH1Model(LanguageModule):
             pass
         elif self.pre_process:
             decoder_input = (
-                self.embedding(input_ids=input_ids, position_ids=position_ids) * self.config.embedding_multiplier
+                self.embedding(input_ids=input_ids, position_ids=position_ids) * self.model_config.embedding_multiplier
             )
         else:
             # intermediate stage of pipeline
@@ -364,7 +367,7 @@ class FalconH1Model(LanguageModule):
             hidden_states = hidden_states[-1:, :, :]
 
         logits, _ = self.output_layer(hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output)
-        logits = logits * self.config.lm_head_multiplier
+        logits = logits * self.model_config.lm_head_multiplier
 
         if labels is None:
             # [s b h] => [b s h]

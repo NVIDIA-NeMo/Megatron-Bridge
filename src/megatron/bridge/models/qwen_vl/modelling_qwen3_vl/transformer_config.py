@@ -58,12 +58,13 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     max_vision_cuda_graph_seq_length: Optional[int] = None
 
 
-def get_vision_model_config(hf_config, megatron_config=None):
+def get_vision_model_config(hf_config, megatron_config=None, *, exact_mcore: bool = False):
     """
     Get the vision model config for Qwen3VL vision model.
     """
     # init config from scratch to avoid deepcopy of parallel_state
-    config = Qwen3VLTransformerConfig(
+    config_class = TransformerConfig if exact_mcore else Qwen3VLTransformerConfig
+    config = config_class(
         num_layers=hf_config.depth,
         hidden_size=hf_config.hidden_size,
         num_attention_heads=hf_config.num_heads,
@@ -90,21 +91,17 @@ def get_vision_model_config(hf_config, megatron_config=None):
     config.hidden_dropout = 0.0
     config.attention_dropout = 0.0
     config.layernorm_epsilon = 1e-6
-    config.apply_rotary_pos_emb_in_fp32 = True
-
-    config.patch_size = hf_config.patch_size
-    config.temporal_patch_size = hf_config.temporal_patch_size
-    config.in_channels = hf_config.in_channels
-    config.spatial_merge_size = hf_config.spatial_merge_size
-    config.num_position_embeddings = hf_config.num_position_embeddings
-    config.out_hidden_size = hf_config.out_hidden_size
-    # ``deepstack_visual_indexes`` is a Qwen3-VL-only field. Qwen3.5-VL's HF
-    # config does not declare it in the schema, so the field is sometimes
-    # absent — e.g. after a YAML round-trip through
-    # ``PretrainedConfig.to_dict()`` / ``from_dict()`` which only persists
-    # declared fields. ``Qwen3VLModel.__init__`` already reads it
-    # defensively with the same default (``modelling_qwen3_vl/model.py:193``).
-    config.deepstack_visual_indexes = deepcopy(getattr(hf_config, "deepstack_visual_indexes", []))
+    if not exact_mcore:
+        config.apply_rotary_pos_emb_in_fp32 = True
+        config.patch_size = hf_config.patch_size
+        config.temporal_patch_size = hf_config.temporal_patch_size
+        config.in_channels = hf_config.in_channels
+        config.spatial_merge_size = hf_config.spatial_merge_size
+        config.num_position_embeddings = hf_config.num_position_embeddings
+        config.out_hidden_size = hf_config.out_hidden_size
+        # ``deepstack_visual_indexes`` is a Qwen3-VL-only field. Qwen3.5-VL's HF
+        # config does not declare it in the schema, so the field is sometimes absent.
+        config.deepstack_visual_indexes = deepcopy(getattr(hf_config, "deepstack_visual_indexes", []))
 
     config.apply_rope_fusion = False
     config.gated_linear_unit = False  # no gated
@@ -147,7 +144,11 @@ def get_vision_model_config(hf_config, megatron_config=None):
         config.cuda_graph_impl = "none"
         clear_cuda_graph_modules(config)
     # Propagate max vision CUDA graph sequence length from provider
-    if megatron_config is not None and hasattr(megatron_config, "max_vision_cuda_graph_seq_length"):
+    if (
+        not exact_mcore
+        and megatron_config is not None
+        and hasattr(megatron_config, "max_vision_cuda_graph_seq_length")
+    ):
         config.max_vision_cuda_graph_seq_length = megatron_config.max_vision_cuda_graph_seq_length
 
     if megatron_config is not None and hasattr(megatron_config, "use_cpu_initialization"):

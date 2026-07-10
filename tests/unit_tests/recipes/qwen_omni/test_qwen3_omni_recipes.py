@@ -130,8 +130,7 @@ class _FakeAutoBridge:
     def from_hf_pretrained(_hf_path: str):
         return _FakeAutoBridge()
 
-    def to_megatron_provider(self, load_weights: bool = False):
-        assert load_weights is False
+    def get_model_config(self):
         return _FakeProvider()
 
 

@@ -159,10 +159,10 @@ def main() -> None:
     # If --hf-path is provided, override the model's HuggingFace path
     if args.hf_path:
         logger.info(f"Using custom HuggingFace path: {args.hf_path}")
-        # Import AutoBridge to create a new model provider with the custom HF path
+        # Import AutoBridge to create a builder-backed model config for the custom HF path.
         from megatron.bridge.models import AutoBridge
 
-        cfg.model = AutoBridge.from_hf_pretrained(args.hf_path).to_megatron_provider(load_weights=False)
+        cfg.model = AutoBridge.from_hf_pretrained(args.hf_path).get_model_config()
 
     # Print configuration on rank 0
     if get_rank_safe() == 0:

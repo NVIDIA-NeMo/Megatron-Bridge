@@ -40,25 +40,25 @@ AutoBridge.import_ckpt(
 )
 ```
 
-Or, with explicit provider and parallelism settings (similar to [nemo_rl/models/megatron/community_import.py](https://github.com/NVIDIA-NeMo/RL/blob/main/nemo_rl/models/megatron/community_import.py)):
+Or, with explicit builder-backed config and parallelism settings:
 
 ```python
 from megatron.bridge import AutoBridge
 
 bridge = AutoBridge.from_hf_pretrained("meta-llama/Llama-3.2-1B", trust_remote_code=True)
-provider = bridge.to_megatron_provider(load_weights=True)
+model_config = bridge.get_model_config()
 
 # Configure distributed parallelism used during IMPORT
-provider.tensor_model_parallel_size = 2
-provider.pipeline_model_parallel_size = 1
-provider.expert_model_parallel_size = 1
-provider.expert_tensor_parallel_size = 1
-provider.num_layers_in_first_pipeline_stage = 0
-provider.num_layers_in_last_pipeline_stage = 0
-provider.finalize()
+model_config.tensor_model_parallel_size = 2
+model_config.pipeline_model_parallel_size = 1
+model_config.expert_model_parallel_size = 1
+model_config.expert_tensor_parallel_size = 1
+model_config.num_layers_in_first_pipeline_stage = 0
+model_config.num_layers_in_last_pipeline_stage = 0
+model_config.finalize()
 
 # Create distributed model and save as Megatron checkpoint
-megatron_model = provider.provide_distributed_model(wrap_with_ddp=False)
+megatron_model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 bridge.save_megatron_model(megatron_model, "/path/to/megatron_ckpt")
 ```
 
@@ -67,7 +67,7 @@ You can also check and try out our multi-GPU conversion example script: [example
 
 Notes:
 - The import-time parallelism is only for loading/conversion. The saved config is restored to canonical values to avoid validation issues at training time.
-- If you are running inside a framework, make sure to clean up any existing distributed state before and after import by destroying or initializing process groups as needed. The `provide_distributed_model` method will initialize a new distributed environment if one is not already set up.
+- If you are running inside a framework, make sure to clean up any existing distributed state before and after import by destroying or initializing process groups as needed. `get_megatron_model` initializes a standalone distributed environment when one is not already set up.
 
 
 ## 2) Build training configuration and initialize Megatron-Core

@@ -15,9 +15,20 @@
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 from megatron.bridge.models.qwen_omni.modeling_qwen25_omni.model import Qwen25OmniModel
 from megatron.bridge.models.qwen_omni.qwen3_omni_bridge import Qwen3OmniBridge
-from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
 from megatron.bridge.models.qwen_omni.qwen25_omni_bridge import Qwen25OmniBridge
-from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniModelProvider
+
+
+def __getattr__(name: str):
+    """Lazily resolve legacy provider exports."""
+    if name == "Qwen25OmniModelProvider":
+        from megatron.bridge.models.qwen_omni.qwen25_omni_provider import Qwen25OmniModelProvider
+
+        return Qwen25OmniModelProvider
+    if name == "Qwen3OmniModelProvider":
+        from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
+
+        return Qwen3OmniModelProvider
+    raise AttributeError(name)
 
 
 __all__ = [

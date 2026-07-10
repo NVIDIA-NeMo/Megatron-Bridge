@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import Any
+
 from megatron.core.activations import fast_gelu
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import Gemma2ForCausalLM
@@ -24,6 +26,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.gemma.gemma2_provider import Gemma2ModelProvider
+from megatron.bridge.models.gemma.model_config import Gemma2ModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
@@ -42,6 +45,8 @@ class Gemma2Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Gemma2 Causal LM.
     """
+
+    MODEL_CONFIG_CLASS = Gemma2ModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma2ModelProvider:
         """Convert HuggingFace config to Gemma2ModelProvider."""
@@ -64,9 +69,35 @@ class Gemma2Bridge(MegatronModelBridge):
 
         return provider
 
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert a Hugging Face Gemma2 config to model-config kwargs.
+
+        Args:
+            hf_config: Hugging Face Gemma2 configuration.
+
+        Returns:
+            Flat model and transformer config keyword arguments.
+        """
+        config_kwargs = super().hf_config_to_model_config_kwargs(hf_config)
+        config_kwargs.update(
+            query_pre_attn_scalar=hf_config.query_pre_attn_scalar,
+            attn_logit_softcapping=hf_config.attn_logit_softcapping,
+            final_logit_softcapping=hf_config.final_logit_softcapping,
+            window_size=(hf_config.sliding_window - 1, 0),
+            normalization="RMSNorm",
+            activation_func=fast_gelu,
+            gated_linear_unit=True,
+            add_bias_linear=False,
+            attention_dropout=0.0,
+            hidden_dropout=0.0,
+            share_embeddings_and_output_weights=True,
+            layernorm_zero_centered_gamma=True,
+        )
+        return config_kwargs
+
     @classmethod
-    def megatron_to_hf_config(cls, provider: Gemma2ModelProvider) -> dict:
-        """Convert Gemma2 provider config back to HuggingFace config."""
+    def megatron_to_hf_config(cls, provider: Gemma2ModelProvider | Gemma2ModelConfig) -> dict:
+        """Convert a Gemma2 provider or model config back to Hugging Face config."""
         hf_config = super().megatron_to_hf_config(provider)
 
         hf_config["query_pre_attn_scalar"] = provider.query_pre_attn_scalar

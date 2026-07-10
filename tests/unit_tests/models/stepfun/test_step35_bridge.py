@@ -19,6 +19,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 import torch
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -28,15 +29,17 @@ from megatron.bridge.models.conversion.param_mapping import (
     merge_qkvg_weights,
     split_qkvg_weights,
 )
+from megatron.bridge.models.gpt.model_builder import mtp_block_spec_from_layer_spec
 from megatron.bridge.models.stepfun import step35_bridge as _step35_bridge_mod
 from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
     Step35Bridge,
     Step35DecoderLayer,
+    Step35ModelConfig,
     Step35SharedExpertMLP,
-    _build_step35_layer_spec,
     _MTPDenseLayerSpecsList,
+    step35_layer_spec,
 )
 
 
@@ -90,7 +93,7 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         partial_rotary_factors=[0.5, 0.5, 0.5, 0.5],
         use_qk_norm=True,
         use_moe_router_bias=True,
-        moe_router_activation="softmax",
+        moe_router_activation="sigmoid",
         moe_router_scaling_factor=1.0,
         need_fp32_gate=False,
         zero_centered=True,
@@ -167,10 +170,71 @@ class TestStep35BridgeRegistration:
         These cannot be renamed to ``step35`` / ``Step35ForCausalLM`` without
         breaking ``AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")``.
         """
-        # PROVIDER_CLASS is populated by the @register_bridge decorator
-        from megatron.bridge.models.stepfun.step35_provider import Step35ModelProvider
+        assert Step35Bridge.SOURCE_NAME == "Step3p5ForCausalLM"
+        assert Step35Bridge.MODEL_TYPE == "step3p5"
+        assert Step35Bridge.PROVIDER_CLASS is None
 
-        assert Step35Bridge.PROVIDER_CLASS is Step35ModelProvider
+    def test_model_config_bridge_preserves_custom_fields_and_layer_spec(self):
+        hf_config = _make_hf_config(num_attention_groups=4, moe_router_activation="sigmoid")
+        result = Step35Bridge().model_config_bridge(_FakeHFPretrained(hf_config))
+
+        assert type(result) is Step35ModelConfig
+        assert type(result.transformer) is TransformerConfig
+        assert result.layer_types == hf_config.layer_types
+        assert result.rotary_percents == hf_config.partial_rotary_factors
+        assert result.sliding_attention_setting["num_attention_heads"] == 96
+        assert result.transformer.moe_layer_freq == [0, 0, 1, 1]
+        assert result.__dict__["layer_types"] == hf_config.layer_types
+
+        restored = type(result).from_dict(result.as_dict())
+        assert type(restored.transformer) is TransformerConfig
+        assert restored.layer_types == result.layer_types
+        assert restored.rotary_percents == result.rotary_percents
+        assert restored.transformer.activation_func is result.transformer.activation_func
+        assert restored.transformer_layer_spec is step35_layer_spec
+
+    def test_model_config_uses_native_head_wise_gate_without_output_fallback(self):
+        hf_config = _make_hf_config(use_head_wise_attn_gate=True, attention_output_gate=True)
+
+        with patch.object(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", return_value=True):
+            result = Step35Bridge().model_config_bridge(_FakeHFPretrained(hf_config))
+
+        assert result.head_wise_attn_gate is True
+        assert result.attention_output_gate is False
+
+    def test_model_config_preserves_output_fallback_for_legacy_mcore(self):
+        hf_config = _make_hf_config(use_head_wise_attn_gate=True, attention_output_gate=True)
+
+        with patch.object(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", return_value=False):
+            result = Step35Bridge().model_config_bridge(_FakeHFPretrained(hf_config))
+
+        assert result.head_wise_attn_gate is True
+        assert result.attention_output_gate is True
+
+    def test_model_config_mtp_uses_dense_spec_selected_by_step35(self):
+        config = Step35ModelConfig(
+            transformer=TransformerConfig(
+                num_layers=2,
+                hidden_size=128,
+                num_attention_heads=4,
+                mtp_num_layers=1,
+            ),
+            vocab_size=256,
+        )
+        dense_spec = object()
+        block_spec = SimpleNamespace(layer_specs=_MTPDenseLayerSpecsList([], dense_spec))
+
+        with patch("megatron.bridge.models.gpt.model_builder.get_gpt_mtp_block_spec") as get_mtp_spec:
+            get_mtp_spec.return_value = "mtp-spec"
+
+            assert mtp_block_spec_from_layer_spec(config, block_spec) == "mtp-spec"
+
+        get_mtp_spec.assert_called_once_with(
+            config.transformer,
+            dense_spec,
+            use_transformer_engine=True,
+            vp_stage=None,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -446,16 +510,16 @@ class TestStep35BridgeProviderBridge:
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         _, p = self._run()
-        assert p.transformer_layer_spec is _build_step35_layer_spec
+        assert p.transformer_layer_spec is step35_layer_spec
 
 
 # ---------------------------------------------------------------------------
-# _build_step35_layer_spec
+# step35_layer_spec
 # ---------------------------------------------------------------------------
 
 
 class TestBuildStep35LayerSpec:
-    """Cover the per-spec rewrite loop in ``_build_step35_layer_spec``.
+    """Cover the per-spec rewrite loop in ``step35_layer_spec``.
 
     Mocks out the two Megatron-Core spec builders so the test can run without
     a real backend, and feeds them a hand-rolled mix of MoE and dense layer
@@ -496,7 +560,7 @@ class TestBuildStep35LayerSpec:
                 return_value=fake_dense_mtp,
             ) as mock_dense,
         ):
-            out = _build_step35_layer_spec(cfg)
+            out = step35_layer_spec(cfg)
         return out, fake_dense_mtp, mock_block, mock_dense, cfg
 
     def test_moe_shared_experts_rebound_to_step35_shared_expert_mlp(self):
@@ -713,7 +777,6 @@ class TestStackedExpertGatedMLPMapping:
             param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
         )
         first = MegatronModelBridge._accumulate_grouped_export(
-            None,
             task0,
             {
                 "model.layers.5.moe.gate_proj.weight": torch.full((2, 3), 1.0),
@@ -729,7 +792,6 @@ class TestStackedExpertGatedMLPMapping:
             param_name="decoder.layers.5.mlp.experts.linear_fc1.weight1",
         )
         second = MegatronModelBridge._accumulate_grouped_export(
-            None,
             task1,
             {
                 "model.layers.5.moe.gate_proj.weight": torch.full((2, 3), 3.0),

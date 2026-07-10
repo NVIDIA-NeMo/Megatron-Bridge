@@ -436,7 +436,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
     if isinstance(model_config, ModelConfig):
         builder_cls = model_config.get_builder_cls()
         builder = builder_cls(model_config)
-        return builder.build_distributed_models(
+        models = builder.build_distributed_models(
             pg_collection=pg_collection,
             ddp_config=cfg.ddp,
             overlap_param_gather_with_optimizer_step=cfg.optimizer.overlap_param_gather_with_optimizer_step,
@@ -444,6 +444,7 @@ def _build_distributed_model(cfg: ConfigContainer, pg_collection: ProcessGroupCo
             use_torch_fsdp2=cfg.dist.use_torch_fsdp2,
             data_parallel_random_init=cfg.rng.data_parallel_random_init,
         )
+        return models
     else:
         return model_config.provide_distributed_model(
             ddp_config=cfg.ddp,

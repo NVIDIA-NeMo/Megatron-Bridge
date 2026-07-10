@@ -189,12 +189,16 @@ def torch_dist_init(
         or lazy_mpu_init is True, otherwise None.
     """
 
+    distributed_model_config = model_config
+    if isinstance(model_config, (GPTModelConfig, HybridModelConfig)):
+        dist_train = getattr(model_config, "dist_train", None)
+        if not (dist_train is not None and dist_train.use_dist_train):
+            distributed_model_config = model_config.transformer
+
     def finish_mpu_init() -> ProcessGroupCollection:
         # Pytorch distributed.
         pg_collection = _initialize_distributed(
-            model_config=model_config.transformer
-            if isinstance(model_config, (GPTModelConfig, HybridModelConfig))
-            else model_config,
+            model_config=distributed_model_config,
             dist_config=dist_config,
             num_distributed_optimizer_instances=num_distributed_optimizer_instances,
             get_embedding_ranks=get_embedding_ranks,
@@ -308,10 +312,10 @@ def set_jit_fusion_options(
         torch._C._jit_override_can_fuse_on_cpu(True)
         torch._C._jit_override_can_fuse_on_gpu(True)
 
-    _warmup_jit_function(
-        model_config.transformer if isinstance(model_config, (GPTModelConfig, HybridModelConfig)) else model_config,
-        micro_batch_size,
+    transformer_config = (
+        model_config.transformer if isinstance(model_config, (GPTModelConfig, HybridModelConfig)) else model_config
     )
+    _warmup_jit_function(transformer_config, micro_batch_size, seq_length=model_config.seq_length)
 
 
 def destroy_global_state() -> None:
@@ -559,13 +563,18 @@ def _create_pg_collection(
 
 
 def _create_dist_train_pgs(
-    model_config: TransformerConfig,
+    model_config: TransformerConfig | GPTModelConfig | HybridModelConfig,
     num_distributed_optimizer_instances: int,
     get_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
     get_position_embedding_ranks: Optional[Callable[[list[int], Optional[int]], list[int]]],
 ) -> DistTrainProcessGroupCollection:
     """Create process group collections for vision and language models for dist train."""
-    vision_model_config = copy(model_config)
+    if isinstance(model_config, (GPTModelConfig, HybridModelConfig)):
+        vision_model_config = copy(model_config.transformer)
+        language_model_config = copy(model_config.transformer)
+    else:
+        vision_model_config = copy(model_config)
+        language_model_config = copy(model_config)
     vision_model_config.world_size = model_config.dist_train.vision_world_size
     vision_model_config.rank_offset = 0
     vision_model_config.tensor_model_parallel_size = model_config.dist_train.vision_tensor_model_parallel_size
@@ -573,7 +582,6 @@ def _create_dist_train_pgs(
     vision_model_config.context_parallel_size = model_config.dist_train.vision_context_parallel_size
     vision_model_config.expert_tensor_parallel_size = model_config.dist_train.vision_expert_tensor_parallel_size
     vision_model_config.expert_model_parallel_size = model_config.dist_train.vision_expert_model_parallel_size
-    language_model_config = copy(model_config)
     language_model_config.world_size = model_config.dist_train.language_world_size
     language_model_config.rank_offset = model_config.dist_train.vision_world_size
     vision_pg_collection = _create_pg_collection(
@@ -636,7 +644,7 @@ def _create_dist_train_pgs(
             if getattr(vision_model_config, "context_parallel_size", 1)
             else 1
         )
-        dp = vision_model_config.dist_train.vision_world_size // (tp * pp * cp)
+        dp = model_config.dist_train.vision_world_size // (tp * pp * cp)
         print(f"> initialized HyperCommGrid for vision model with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
         tp = int(language_model_config.tensor_model_parallel_size)
         pp = int(language_model_config.pipeline_model_parallel_size)
@@ -645,7 +653,7 @@ def _create_dist_train_pgs(
             if getattr(language_model_config, "context_parallel_size", 1)
             else 1
         )
-        dp = language_model_config.dist_train.language_world_size // (tp * pp * cp)
+        dp = model_config.dist_train.language_world_size // (tp * pp * cp)
         print(f"> initialized HyperCommGrid for language model with tp={tp}, pp={pp}, cp={cp}, dp={dp}")
 
     return pg_collection
@@ -883,7 +891,7 @@ def _set_random_seed(
         )
 
 
-def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int) -> None:
+def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int, *, seq_length: int) -> None:
     """Compilie JIT functions before the main training steps"""
     if model_config.bf16:
         dtype = torch.bfloat16
@@ -899,7 +907,7 @@ def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int)
     )
     input = torch.rand(
         (
-            model_config.seq_length // model_config.context_parallel_size,
+            seq_length // model_config.context_parallel_size,
             micro_batch_size,
             model_config.ffn_hidden_size // model_config.tensor_model_parallel_size,
         ),
@@ -920,9 +928,7 @@ def _warmup_jit_function(model_config: TransformerConfig, micro_batch_size: int)
     # Warmup fused bias+dropout+add
     if model_config.sequence_parallel:
         tp_world_size = int(model_config.tensor_model_parallel_size)
-        seq_length = model_config.seq_length // tp_world_size
-    else:
-        seq_length = model_config.seq_length
+        seq_length = seq_length // tp_world_size
     input = torch.rand(
         (
             seq_length // model_config.context_parallel_size,

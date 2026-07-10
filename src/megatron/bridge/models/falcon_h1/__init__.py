@@ -12,12 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 from megatron.bridge.models.falcon_h1.falconh1_bridge import FalconH1Bridge
-from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_block import FalconH1Stack, FalconH1StackSubmodules
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import FalconH1Layer, FalconH1Submodules
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config, FalconH1Model
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily preserve the legacy provider re-export."""
+    if name == "FalconH1ModelProvider":
+        from megatron.bridge.models.falcon_h1.falconh1_provider import FalconH1ModelProvider
+
+        return FalconH1ModelProvider
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 __all__ = [

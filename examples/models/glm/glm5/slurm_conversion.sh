@@ -105,7 +105,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
     CMD="${CMD}uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
     CMD="$CMD --hf-model-id $HF_MODEL_ID"
-    CMD="$CMD --tp $TP --pp $PP --ep $EP"
+    CMD="$CMD --tp $TP --pp $PP --ep $EP --sequence-parallel"
 
     echo "Executing: $CMD"
 

@@ -356,16 +356,16 @@ def run_megatron_forward(
         torch_dtype=torch.bfloat16,
         trust_remote_code=True,
     )
-    model_provider = bridge.to_megatron_provider(load_weights=True)
-    model_provider.tensor_model_parallel_size = tp
-    model_provider.pipeline_model_parallel_size = pp
-    model_provider.expert_model_parallel_size = ep
-    model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.params_dtype = torch.bfloat16
-    model_provider.finalize()
-    model_provider.initialize_model_parallel(seed=42)
+    model_config = bridge.get_model_config()
+    model_config.tensor_model_parallel_size = tp
+    model_config.pipeline_model_parallel_size = pp
+    model_config.expert_model_parallel_size = ep
+    model_config.pipeline_dtype = torch.bfloat16
+    model_config.params_dtype = torch.bfloat16
+    model_config.finalize()
+    pg_collection = bridge._get_or_initialize_pg_collection(model_config.transformer, seed=42)
 
-    megatron_models = model_provider.provide_distributed_model(wrap_with_ddp=False)
+    megatron_models = bridge.get_megatron_model(model_config, pg_collection=pg_collection, wrap_with_ddp=False)
 
     for m in megatron_models:
         disable_mtp_for_inference(m)
@@ -625,8 +625,7 @@ def main():
     # Synchronize all ranks before Phase 2
     dist.barrier()
 
-    # Destroy the process group before Phase 2 since AutoBridge's
-    # initialize_model_parallel() will create its own process groups.
+    # Destroy the process group before Phase 2 so AutoBridge can initialize its process groups.
     dist.destroy_process_group()
 
     # Phase 2: Megatron forward (all ranks)

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from typing import Dict, Mapping, Optional, Tuple, Union
+import copy
+from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -29,6 +30,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
 from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
+from megatron.bridge.models.gpt_oss.model_config import GPTOSSModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
@@ -56,8 +58,10 @@ class GPTOSSBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("openai/gpt-oss-model")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
+
+    MODEL_CONFIG_CLASS = GPTOSSModelConfig
 
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> HybridModelProvider:
         """Convert HuggingFace config to HybridModelProvider."""
@@ -112,6 +116,68 @@ class GPTOSSBridge(MegatronModelBridge):
         provider.yarn_mscale_all_dim = None
 
         return provider
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Convert GPT-OSS HF config to builder-backed HybridModel settings."""
+        rope_scaling = getattr(hf_config, "rope_scaling", None)
+        unscaled_config = copy.copy(hf_config)
+        if hasattr(unscaled_config, "rope_scaling"):
+            unscaled_config.rope_scaling = None
+        config_kwargs = super().hf_config_to_model_config_kwargs(unscaled_config)
+        num_hf_layers = hf_config.num_hidden_layers
+
+        yarn_values = {
+            "factor": 32.0,
+            "original_max_position_embeddings": 4096,
+            "beta_fast": 32.0,
+            "beta_slow": 1.0,
+            "mscale": None,
+            "mscale_all_dim": None,
+        }
+        if isinstance(rope_scaling, dict):
+            yarn_values.update({name: rope_scaling[name] for name in yarn_values if name in rope_scaling})
+
+        config_kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_bias_linear=True,
+            add_qkv_bias=False,
+            share_embeddings_and_output_weights=False,
+            position_embedding_type="yarn",
+            moe_router_pre_softmax=False,
+            moe_grouped_gemm=True,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            moe_router_load_balancing_type="none",
+            bias_activation_fusion=True,
+            bias_dropout_fusion=False,
+            hidden_dropout=0.0,
+            fp16=False,
+            bf16=True,
+            params_dtype=torch.bfloat16,
+            autocast_dtype=torch.bfloat16,
+            activation_func=quick_gelu,
+            activation_func_clamp_value=7.0,
+            glu_linear_offset=1.0,
+            num_layers=2 * num_hf_layers,
+            hybrid_layer_pattern=(Symbols.ATTENTION + Symbols.MOE) * num_hf_layers,
+            softmax_type="learnable",
+            window_size=(hf_config.sliding_window - 1, 0),
+            window_attn_skip_freq=[
+                flag for layer_idx in range(num_hf_layers) for flag in ((layer_idx + 1) % 2 != 0, False)
+            ],
+            moe_ffn_hidden_size=hf_config.intermediate_size,
+            yarn_rotary_scaling_factor=yarn_values["factor"],
+            yarn_original_max_position_embeddings=yarn_values["original_max_position_embeddings"],
+            yarn_beta_fast=yarn_values["beta_fast"],
+            yarn_beta_slow=yarn_values["beta_slow"],
+            yarn_mscale=yarn_values["mscale"],
+            yarn_mscale_all_dim=yarn_values["mscale_all_dim"],
+            yarn_correction_range_round_to_int=(
+                rope_scaling.get("truncate", False) if isinstance(rope_scaling, dict) else False
+            ),
+        )
+        return config_kwargs
 
     @classmethod
     def megatron_to_hf_config(cls, provider) -> dict:

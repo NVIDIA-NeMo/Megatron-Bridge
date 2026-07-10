@@ -19,9 +19,8 @@ conversion between a Hugging Face model and a Megatron-LM model.
 The process is as follows:
 1. An AutoBridge is initialized from a pretrained Hugging Face model
     (e.g., "meta-llama/Llama-3.2-1B"). This downloads the model from the Hub and loads it.
-2. The bridge's `to_megatron_model` method is called to get a Megatron-LM compatible model provider.
-3. The model provider is used to instantiate the Megatron-LM model.
-4. Finally, the `save_hf_pretrained` method is used to save the Megatron-LM
+2. The bridge's `get_megatron_model` method builds and loads the Megatron-LM model.
+3. Finally, the `save_hf_pretrained` method is used to save the Megatron-LM
     model back into the Hugging Face format. A new directory, named after the
     model, will be created for the converted model files. By default, this
     directory is created in the current working directory, but a different
@@ -58,7 +57,7 @@ def main(hf_model_id: str = HF_MODEL_ID, output_dir: str = None, trust_remote_co
             hf_path=hf_model_id,
         ),
     )
-    megatron_model = bridge.to_megatron_model(wrap_with_ddp=False)
+    megatron_model = bridge.get_megatron_model(wrap_with_ddp=False)
     console.print(weights_verification_table(bridge, megatron_model))
 
     console.print(f"Saving HF-ckpt in {save_path}...")

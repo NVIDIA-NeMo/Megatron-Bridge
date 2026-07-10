@@ -58,7 +58,13 @@ class Gemma4VLModelProvider(Gemma4ModelProvider):
     freeze_vision_projection: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Gemma4VLModel:
-        model = Gemma4VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        model = Gemma4VLModel(
+            self,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+            pg_collection=getattr(self, "_pg_collection", None),
+        )
 
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(
@@ -96,7 +102,13 @@ class Gemma4DenseVLProvider(Gemma4DenseProvider):
     freeze_vision_projection: bool = False
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> Gemma4VLModel:
-        model = Gemma4VLModel(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        model = Gemma4VLModel(
+            self,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+            pg_collection=getattr(self, "_pg_collection", None),
+        )
 
         if self.freeze_language_model or self.freeze_vision_model or self.freeze_vision_projection:
             model.freeze(

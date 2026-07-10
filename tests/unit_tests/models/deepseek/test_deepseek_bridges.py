@@ -21,13 +21,19 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.transformer.transformer_config import MLATransformerConfig
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
-from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge
-from megatron.bridge.models.deepseek.deepseek_v3_bridge import DeepSeekV3Bridge, _dequant_fp8_blockwise
+from megatron.bridge.models.deepseek.deepseek_v2_bridge import DeepSeekV2Bridge, deepseek_v2_layer_spec
+from megatron.bridge.models.deepseek.deepseek_v3_bridge import (
+    DeepSeekV3Bridge,
+    _dequant_fp8_blockwise,
+    deepseek_v3_layer_spec,
+)
+from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
 
@@ -125,6 +131,37 @@ class TestDeepSeekV2Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
+    def test_model_config_bridge_maps_mla_yarn_config(self, mock_pretrained_v2):
+        bridge = DeepSeekV2Bridge()
+
+        model_config = bridge.model_config_bridge(mock_pretrained_v2)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert type(model_config.transformer) is MLATransformerConfig
+        assert model_config.builder == "megatron.training.models.gpt.GPTModelBuilder"
+        assert model_config.transformer.q_lora_rank == mock_pretrained_v2.config.q_lora_rank
+        assert model_config.transformer.rope_type == "yarn"
+        assert model_config.transformer.rotary_scaling_factor == 40
+        assert model_config.transformer.original_max_position_embeddings == 4096
+        assert model_config.transformer.mscale == 0.707
+        assert model_config.transformer.mscale_all_dim == 0.707
+        assert model_config.make_vocab_size_divisible_by == 3200
+        assert model_config.transformer.moe_layer_freq == [0] + [1] * 59
+
+        restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is deepseek_v2_layer_spec
+
+    def test_megatron_to_hf_config_accepts_builder_model_config(self, mock_pretrained_v2):
+        bridge = DeepSeekV2Bridge()
+        model_config = bridge.model_config_bridge(mock_pretrained_v2)
+
+        hf_config = bridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["q_lora_rank"] == mock_pretrained_v2.config.q_lora_rank
+        assert hf_config["first_k_dense_replace"] == mock_pretrained_v2.config.first_k_dense_replace
+        assert hf_config["n_shared_experts"] == mock_pretrained_v2.config.n_shared_experts
+
     def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v2):
         mock_pretrained_v2.config.q_lora_rank = None
         bridge = DeepSeekV2Bridge()
@@ -179,17 +216,16 @@ class TestDeepSeekV2Bridge:
         assert kwargs["yarn_rotary_scaling_factor"] is None
 
     def test_megatron_to_hf_config_yarn_none_value(self, mock_pretrained_v2):
-        """Test that YARN_ROPE_SCALING_MAPPING omits None values on provider.
+        """Test that MLA_ROPE_SCALING_MAPPING omits None values.
 
-        Since yarn_* fields are now proper dataclass fields defaulting to None,
         None means 'unset' and should not appear in the exported rope_scaling dict.
         """
         bridge = DeepSeekV2Bridge()
-        provider = bridge.provider_bridge(mock_pretrained_v2)
-        provider.yarn_rotary_scaling_factor = 40
-        provider.yarn_mscale = None
+        model_config = bridge.model_config_bridge(mock_pretrained_v2)
+        model_config.rotary_scaling_factor = 40
+        model_config.mscale = None
 
-        hf_config = bridge.megatron_to_hf_config(provider)
+        hf_config = bridge.megatron_to_hf_config(model_config)
 
         assert "rope_scaling" in hf_config
         assert hf_config["rope_scaling"]["rope_type"] == "yarn"
@@ -295,6 +331,35 @@ class TestDeepSeekV3Bridge:
         # dtype mapping
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
+
+    def test_model_config_bridge_maps_mla_yarn_and_mtp_config(self, mock_pretrained_v3):
+        bridge = DeepSeekV3Bridge()
+
+        model_config = bridge.model_config_bridge(mock_pretrained_v3)
+
+        assert isinstance(model_config, BridgeGPTModelConfig)
+        assert type(model_config.transformer) is MLATransformerConfig
+        assert model_config.transformer.rope_type == "yarn"
+        assert model_config.transformer.rotary_scaling_factor == 40
+        assert model_config.transformer.mscale == 1.0
+        assert model_config.transformer.mscale_all_dim == 1.0
+        assert model_config.transformer.mtp_num_layers == 1
+        assert model_config.transformer.moe_router_score_function == "sigmoid"
+        assert model_config.make_vocab_size_divisible_by == 1280
+
+        restored = BridgeGPTModelConfig.from_dict(model_config.as_dict())
+        assert type(restored) is BridgeGPTModelConfig
+        assert restored.transformer_layer_spec is deepseek_v3_layer_spec
+
+    def test_megatron_to_hf_config_accepts_builder_model_config(self, mock_pretrained_v3):
+        bridge = DeepSeekV3Bridge()
+        model_config = bridge.model_config_bridge(mock_pretrained_v3)
+
+        hf_config = bridge.megatron_to_hf_config(model_config)
+
+        assert hf_config["q_lora_rank"] == mock_pretrained_v3.config.q_lora_rank
+        assert hf_config["first_k_dense_replace"] == mock_pretrained_v3.config.first_k_dense_replace
+        assert hf_config["n_shared_experts"] == mock_pretrained_v3.config.n_shared_experts
 
     def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v3):
         mock_pretrained_v3.config.q_lora_rank = None

@@ -502,6 +502,19 @@ class GetModelKwargs(TypedDict, total=False):
     mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
 
 
+class BuildDistributedModelKwargs(TypedDict, total=False):
+    """Keyword arguments accepted by ``ModelBuilder.build_distributed_models``."""
+
+    ddp_config: DistributedDataParallelConfig | None
+    model_type: ModelType
+    overlap_param_gather_with_optimizer_step: bool
+    use_megatron_fsdp: bool
+    use_torch_fsdp2: bool
+    wrap_with_ddp: bool
+    data_parallel_random_init: bool
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule] | None
+
+
 class ModelParallelKwargs(TypedDict, total=False):
     """Model-parallel override kwargs.
 

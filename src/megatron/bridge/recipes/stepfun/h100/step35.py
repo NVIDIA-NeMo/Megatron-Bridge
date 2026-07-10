@@ -28,7 +28,7 @@ def step35_196b_a11b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("stepfun-ai/Step-3.5-Flash").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("stepfun-ai/Step-3.5-Flash").get_model_config()
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "stepfun-ai/Step-3.5-Flash"

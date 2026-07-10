@@ -93,12 +93,14 @@ def _get_linear_modules():
 def _get_mlp_module_spec(
     num_experts: Optional[int] = None,
     moe_grouped_gemm: bool = False,
+    moe_intermediate_size: tuple[int, int] | None = None,
 ) -> ModuleSpec:
     """Get MLP module spec for dense or dual-pool MoE layers.
 
     Args:
         num_experts: Number of experts per pool. None for dense MLP.
         moe_grouped_gemm: Whether to use grouped GEMM for experts.
+        moe_intermediate_size: Text and vision expert FFN sizes.
 
     Returns:
         ModuleSpec for either dense MLP or ErnieMultiTypeMoE.
@@ -159,6 +161,7 @@ def _get_mlp_module_spec(
     # Dual-pool MoE
     return ModuleSpec(
         module=ErnieMultiTypeMoE,
+        params={"moe_intermediate_size": moe_intermediate_size},
         submodules=MultiTypeMoeSubmodules(
             text_moe_layer=base_moe_spec,
             vision_moe_layer=base_moe_spec,
@@ -170,12 +173,14 @@ def _get_mlp_module_spec(
 def _get_ernie_decoder_layer_spec(
     num_experts: Optional[int] = None,
     moe_grouped_gemm: bool = False,
+    moe_intermediate_size: tuple[int, int] | None = None,
 ) -> ModuleSpec:
     """Get a single transformer layer spec.
 
     Args:
         num_experts: Number of experts per pool. None for dense layer.
         moe_grouped_gemm: Whether to use grouped GEMM.
+        moe_intermediate_size: Text and vision expert FFN sizes.
 
     Returns:
         ModuleSpec for a TransformerLayer.
@@ -185,6 +190,7 @@ def _get_ernie_decoder_layer_spec(
     mlp_spec = _get_mlp_module_spec(
         num_experts=num_experts,
         moe_grouped_gemm=moe_grouped_gemm,
+        moe_intermediate_size=moe_intermediate_size,
     )
 
     # For dense layers, the post_attention_layernorm is fused into
@@ -236,6 +242,7 @@ def get_ernie45_vl_decoder_block_spec(
     """
     num_experts = getattr(config, "num_moe_experts", None)
     moe_grouped_gemm = getattr(config, "moe_grouped_gemm", False)
+    moe_intermediate_size = config.moe_intermediate_size
 
     # Dense layer spec (no MoE)
     dense_layer_spec = _get_ernie_decoder_layer_spec(
@@ -247,6 +254,7 @@ def get_ernie45_vl_decoder_block_spec(
     moe_layer_spec = _get_ernie_decoder_layer_spec(
         num_experts=num_experts,
         moe_grouped_gemm=moe_grouped_gemm,
+        moe_intermediate_size=moe_intermediate_size,
     )
 
     # Build per-layer specs based on moe_layer_freq

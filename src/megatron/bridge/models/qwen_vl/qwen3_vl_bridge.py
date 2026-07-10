@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from typing import TYPE_CHECKING, Any
+
 import torch
 from transformers import Qwen3VLForConditionalGeneration, Qwen3VLMoeForConditionalGeneration
 
@@ -28,14 +30,17 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen_vl.model_config import Qwen3VLModelConfig
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
-from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider, Qwen3VLMoEModelProvider
 
 
 @MegatronModelBridge.register_bridge(
     source=Qwen3VLForConditionalGeneration,
     target=Qwen3VLModel,
-    provider=Qwen3VLModelProvider,
     model_type="qwen3_vl",
 )
 class Qwen3VLBridge(MegatronModelBridge):
@@ -56,10 +61,10 @@ class Qwen3VLBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-VL-8B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen3VLModelProvider":
         """
         Create a Qwen3VLModelProvider from a HuggingFace pretrained model.
 
@@ -69,6 +74,8 @@ class Qwen3VLBridge(MegatronModelBridge):
         Returns:
             Qwen3VLModelProvider configured with the HF model's parameters
         """
+        from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -197,11 +204,41 @@ class Qwen3VLBridge(MegatronModelBridge):
 
         return MegatronMappingRegistry(*mapping_list)
 
+    MODEL_CONFIG_CLASS = Qwen3VLModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map dense Qwen3-VL HF settings to pure model-config fields."""
+        text_config = hf_config.text_config
+        kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        rope_cfg = getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", {})
+        kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=text_config.attention_bias,
+            add_bias_linear=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            rotary_base=rope_theta_from_hf(text_config),
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            vision_config=hf_config.vision_config.to_dict(),
+            vision_config_target="transformers.models.qwen3_vl.configuration_qwen3_vl.Qwen3VLVisionConfig",
+            image_token_id=getattr(hf_config, "image_token_id", 151655),
+            video_token_id=getattr(hf_config, "video_token_id", 151656),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
+            bos_token_id=getattr(text_config, "bos_token_id", 151643),
+            eos_token_id=getattr(text_config, "eos_token_id", 151645),
+            mrope_section=rope_cfg.get("mrope_section", [24, 20, 20]),
+            deepstack_visual_indexes=getattr(hf_config.vision_config, "deepstack_visual_indexes", [8, 16, 24]),
+        )
+        return kwargs
+
 
 @MegatronModelBridge.register_bridge(
     source=Qwen3VLMoeForConditionalGeneration,
     target=Qwen3VLModel,
-    provider=Qwen3VLMoEModelProvider,
     model_type="qwen3_vl_moe",
 )
 class Qwen3VLMoEBridge(MegatronModelBridge):
@@ -224,10 +261,12 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
-        >>> provider = bridge.to_megatron_provider()
+        >>> model_config = bridge.get_model_config()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3VLMoEModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> "Qwen3VLMoEModelProvider":
+        from megatron.bridge.models.qwen_vl.qwen3_vl_provider import Qwen3VLMoEModelProvider
+
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
 
@@ -409,3 +448,45 @@ class Qwen3VLMoEBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    MODEL_CONFIG_CLASS = Qwen3VLModelConfig
+
+    def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
+        """Map MoE Qwen3-VL HF settings to pure model-config fields."""
+        text_config = hf_config.text_config
+        kwargs = super().hf_config_to_model_config_kwargs(text_config)
+        rope_cfg = getattr(text_config, "rope_parameters", None) or getattr(text_config, "rope_scaling", {})
+        kwargs.update(
+            normalization="RMSNorm",
+            gated_linear_unit=True,
+            add_qkv_bias=text_config.attention_bias,
+            add_bias_linear=False,
+            qk_layernorm=True,
+            hidden_dropout=0.0,
+            rotary_base=rope_theta_from_hf(text_config),
+            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            moe_ffn_hidden_size=text_config.moe_intermediate_size,
+            num_moe_experts=text_config.num_experts,
+            moe_router_topk=text_config.num_experts_per_tok,
+            decoder_sparse_step=getattr(text_config, "decoder_sparse_step", 1),
+            mlp_only_layers=getattr(text_config, "mlp_only_layers", []),
+            moe_grouped_gemm=True,
+            moe_router_load_balancing_type="aux_loss",
+            moe_aux_loss_coeff=1e-3,
+            moe_router_pre_softmax=False,
+            moe_token_dispatcher_type="alltoall",
+            moe_permute_fusion=True,
+            position_embedding_type="mrope",
+            scatter_embedding_sequence_parallel=False,
+            vision_config=hf_config.vision_config.to_dict(),
+            vision_config_target="transformers.models.qwen3_vl.configuration_qwen3_vl.Qwen3VLVisionConfig",
+            image_token_id=getattr(hf_config, "image_token_id", 151655),
+            video_token_id=getattr(hf_config, "video_token_id", 151656),
+            vision_start_token_id=getattr(hf_config, "vision_start_token_id", 151652),
+            vision_end_token_id=getattr(hf_config, "vision_end_token_id", 151653),
+            bos_token_id=getattr(text_config, "bos_token_id", 151643),
+            eos_token_id=getattr(text_config, "eos_token_id", 151645),
+            mrope_section=rope_cfg.get("mrope_section", [24, 20, 20]),
+            deepstack_visual_indexes=getattr(hf_config.vision_config, "deepstack_visual_indexes", [8, 16, 24]),
+        )
+        return kwargs

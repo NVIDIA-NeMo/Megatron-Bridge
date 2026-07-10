@@ -29,7 +29,7 @@ def deepseek_v2_lite_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2-Lite").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2-Lite").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -147,7 +147,7 @@ def deepseek_v2_pretrain_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained("deepseek-ai/DeepSeek-V2").get_model_config()
 
     # Tokenizer - uses NullTokenizer by default (no HF tokenizer download needed)
     cfg.tokenizer.tokenizer_type = "NullTokenizer"

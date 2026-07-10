@@ -13,9 +13,17 @@
 # limitations under the License.
 
 from megatron.bridge.models.llama_nemotron.llama_nemotron_bridge import LlamaNemotronBridge
-from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
-    LlamaNemotronHeterogeneousProvider,
-)
+
+
+def __getattr__(name: str):
+    """Lazily resolve the legacy provider export."""
+    if name == "LlamaNemotronHeterogeneousProvider":
+        from megatron.bridge.models.llama_nemotron.llama_nemotron_provider import (
+            LlamaNemotronHeterogeneousProvider,
+        )
+
+        return LlamaNemotronHeterogeneousProvider
+    raise AttributeError(name)
 
 
 __all__ = [

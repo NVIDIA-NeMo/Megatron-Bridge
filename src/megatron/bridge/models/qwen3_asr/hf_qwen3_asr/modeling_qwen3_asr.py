@@ -778,8 +778,17 @@ class Qwen3ASRAudioEncoder(Qwen3ASRPreTrainedModel):
         )
 
 
+def _default_rope_init_fn(config, device=None):
+    """Initialize standard RoPE when transformers no longer registers the ``default`` type."""
+    head_dim = getattr(config, "head_dim", None) or config.hidden_size // config.num_attention_heads
+    theta = getattr(config, "rope_theta", 10000.0)
+    inv_freq = 1.0 / (theta ** (torch.arange(0, head_dim, 2, dtype=torch.float32, device=device) / head_dim))
+    return inv_freq, 1.0
+
+
 class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
     inv_freq: torch.Tensor  # fix linting for `register_buffer`
+    compute_default_rope_parameters = staticmethod(_default_rope_init_fn)
 
     def __init__(self, config: Qwen3ASRConfig, device=None):
         super().__init__()
@@ -791,7 +800,10 @@ class Qwen3ASRThinkerTextRotaryEmbedding(nn.Module):
         self.original_max_seq_len = config.max_position_embeddings
 
         self.config = config
-        self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
+        if self.rope_type == "default":
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS.get("default", self.compute_default_rope_parameters)
+        else:
+            self.rope_init_fn = ROPE_INIT_FUNCTIONS[self.rope_type]
 
         inv_freq, self.attention_scaling = self.rope_init_fn(self.config, device)
         self.register_buffer("inv_freq", inv_freq, persistent=False)
@@ -1070,7 +1082,7 @@ class Qwen3ASRThinkerForConditionalGeneration(Qwen3ASRPreTrainedModelForConditio
 
     config: Qwen3ASRThinkerConfig
     base_model_prefix = "thinker"
-    _tied_weights_keys = ["model.embed_tokens.weight", "lm_head.weight"]
+    _tied_weights_keys = {"lm_head.weight": "model.embed_tokens.weight"}
     _no_split_modules = [
         "Qwen3ASRAudioEncoderLayer",
         "Qwen3ASRThinkerTextDecoderLayer",

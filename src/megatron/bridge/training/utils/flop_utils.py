@@ -23,6 +23,7 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
 from megatron.core.utils import get_attr_wrapped_model
 
 from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
+from megatron.bridge.models.metadata import get_hf_model_id_from_model_config
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
@@ -657,7 +658,7 @@ def num_floating_point_operations(
             hf_dataset_cfg, "path_or_dataset", None
         )
         is_squad = getattr(dataset_cfg, "dataset_name", hf_dataset_name) in ("squad", "rajpurkar/squad")
-        hf_model_id = getattr(cfg.model, "hf_model_id", None)
+        hf_model_id = get_hf_model_id_from_model_config(cfg.model)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
         packed_specs = (
             getattr(dataset_cfg, "offline_packing_specs", None)
