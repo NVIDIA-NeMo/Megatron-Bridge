@@ -1,5 +1,5 @@
 #!/bin/bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -55,19 +55,19 @@ SOURCE="auto"
 # RECIPE="llama3_8b_pretrain_8gpu_h100_bf16_config"; SOURCE="perf_recipes"
 
 # Optional selector mode. Leave RECIPE empty to use these fields instead.
-MODEL_RECIPE_NAME="llama3_8b"
+MODEL_RECIPE_NAME="qwen3_30b_a3b"
 TASK="pretrain"
-NUM_GPUS=8
+NUM_GPUS=16
 GPU="h100"
 COMPUTE_DTYPE="bf16"
 
-# Runtime defaults.
+# Runtime defaults. Leave DATA empty to preserve the dataset owned by the recipe.
 DOMAIN="llm"
-DATA="mock"
+DATA=""
 
 # Optional: CLI overrides (Hydra-style dot notation)
-CLI_OVERRIDES=""
-# CLI_OVERRIDES="train.train_iters=1000 train.global_batch_size=512 optimizer.lr=0.0002"
+CLI_OVERRIDES=()
+# CLI_OVERRIDES=("train.train_iters=1000" "train.global_batch_size=512" "optimizer.lr=0.0002")
 
 # Container image (required)
 CONTAINER_IMAGE=""
@@ -81,9 +81,8 @@ CONTAINER_MOUNTS=""
 # Environment Setup
 # ==============================================================================
 
-# Set common environment variables
-export TORCH_NCCL_AVOID_RECORD_STREAMS=1
-export NCCL_NVLS_ENABLE=0
+# Recipes provide process-environment defaults. Export values here only when
+# intentionally overriding a recipe for this deployment.
 
 # Authentication tokens (uncomment and set your tokens)
 # export HF_TOKEN="hf_your_token_here"
@@ -123,33 +122,29 @@ if [ ! -f "$SCRIPT_PATH" ]; then
     exit 1
 fi
 
-# Build torchrun command
-CMD="torchrun"
-CMD="$CMD --nproc_per_node=$SLURM_GPUS_PER_NODE"
-CMD="$CMD --nnodes=$SLURM_JOB_NUM_NODES"
-CMD="$CMD --node_rank=\$SLURM_PROCID"
-CMD="$CMD --master_addr=\$(scontrol show hostname \$SLURM_NODELIST | head -n1)"
-CMD="$CMD --master_port=29500"
-CMD="$CMD $SCRIPT_PATH"
+# Build rank-local arguments. Slurm launches one Python process per allocated
+# task; Bridge derives rank and rendezvous settings from the Slurm environment.
+TRAIN_ARGS=()
 if [ -n "$RECIPE" ]; then
-    CMD="$CMD --recipe $RECIPE --source $SOURCE"
+    TRAIN_ARGS+=(--recipe "$RECIPE" --source "$SOURCE")
 else
-    CMD="$CMD --source $SOURCE"
-    CMD="$CMD --model $MODEL_RECIPE_NAME"
-    CMD="$CMD --task $TASK"
-    CMD="$CMD --gpus $NUM_GPUS"
-    CMD="$CMD --gpu $GPU"
-    CMD="$CMD --dtype $COMPUTE_DTYPE"
+    TRAIN_ARGS+=(
+        --source "$SOURCE"
+        --model "$MODEL_RECIPE_NAME"
+        --task "$TASK"
+        --gpus "$NUM_GPUS"
+        --gpu "$GPU"
+        --dtype "$COMPUTE_DTYPE"
+    )
 fi
-CMD="$CMD --domain $DOMAIN"
-CMD="$CMD --data $DATA"
-
-# Add CLI overrides if specified
-if [ -n "$CLI_OVERRIDES" ]; then
-    CMD="$CMD $CLI_OVERRIDES"
+TRAIN_ARGS+=(--domain "$DOMAIN")
+if [ -n "$DATA" ]; then
+    TRAIN_ARGS+=(--data "$DATA")
 fi
 
-echo "Executing: $CMD"
+printf "Executing: uv run python %q " "$SCRIPT_PATH"
+printf "%q " "${TRAIN_ARGS[@]}" "${CLI_OVERRIDES[@]}"
+printf "\n"
 echo "======================================"
 
 # Require container image
@@ -159,16 +154,16 @@ if [ -z "$CONTAINER_IMAGE" ]; then
 fi
 
 # Build srun command (always containerized)
-SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
+SRUN_ARGS=(srun --mpi=pmix "--container-image=$CONTAINER_IMAGE")
 
 # Add container mounts
 if [ -n "$CONTAINER_MOUNTS" ]; then
     for mount in $CONTAINER_MOUNTS; do
-        SRUN_CMD="$SRUN_CMD --container-mounts=$mount"
+        SRUN_ARGS+=("--container-mounts=$mount")
     done
 fi
 
-$SRUN_CMD bash -c "$CMD"
+"${SRUN_ARGS[@]}" uv run python "$SCRIPT_PATH" "${TRAIN_ARGS[@]}" "${CLI_OVERRIDES[@]}"
 
 echo "======================================"
 echo "Job completed"

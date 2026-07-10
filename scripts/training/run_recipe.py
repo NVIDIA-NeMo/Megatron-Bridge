@@ -326,7 +326,7 @@ def _collect_overrides(parser: argparse.ArgumentParser, args: argparse.Namespace
         overrides.append(value)
 
     if args.dataset_preset is not None:
-        overrides.append(f"dataset.dataset_name={args.dataset_preset}")
+        overrides.append(f"dataset.hf_dataset.dataset_name={args.dataset_preset}")
     return overrides
 
 
@@ -414,7 +414,8 @@ def _infer_mode(args: argparse.Namespace, dataset: str | None) -> TrainMode:
         try:
             return infer_train_mode(args.recipe)
         except ValueError:
-            pass
+            if args.task is None:
+                raise
     return _mode_from_task(_normalize_task(args.task))
 
 

@@ -31,9 +31,9 @@ import numpy as np
 import pytest
 import torch
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.energon.hf_task_encoder import HFTaskEncoder
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 
 
 def _make_chatml_sample(key, conversation, imgs=None, videos=None):

@@ -33,19 +33,11 @@ from nemo_run.config import get_nemorun_home
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from utils.executors import kubeflow_executor, slurm_executor
-    from utils.utils import (
-        add_library_recipe_environment_variables,
-        get_exp_name_config,
-        select_config_variant_interactive,
-    )
+    from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.executors import kubeflow_executor, slurm_executor
-    from .utils.utils import (
-        add_library_recipe_environment_variables,
-        get_exp_name_config,
-        select_config_variant_interactive,
-    )
+    from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -54,6 +46,9 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
+from megatron.bridge.recipes.run_plugins import PreemptionPlugin
+
+
 try:
     from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
@@ -61,7 +56,7 @@ except (ImportError, ModuleNotFoundError):
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PEFORMANCE = "run_script_with_env.py"
-ENTRYPOINT_RECIPE = "run_recipe.py"
+ENTRYPOINT_RECIPE = "run_script_with_env.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -71,9 +66,9 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 def _filter_run_script_args(argv: List[str]) -> List[str]:
     """Drop launcher-only args before forwarding argv to the rank-local script.
 
-    The launcher (this script) and the rank-local entrypoint (run_recipe.py /
-    run_script.py) share one parser, but some args are meaningful only to the
-    launcher and must not reach the rank-local script:
+    The launcher (this script) and the rank-local pre-exec wrapper share one
+    parser, but some args are meaningful only to the launcher and must not
+    reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
@@ -81,7 +76,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
-      into run_recipe.py's Hydra override parser.
+      into the training entrypoint's Hydra override parser.
 
     All of these take a value, passed either as ``--flag value`` (two tokens) or
     ``--flag=value`` (one token).
@@ -455,11 +450,11 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
-    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
+    preempt_time: int,
     additional_slurm_params: Optional[Dict[str, Any]],
     enable_pct_binding: bool,
     golden_values_path: str,
@@ -608,20 +603,6 @@ def main(
         ]
     )
 
-    if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
-
-    if use_recipes:
-        add_library_recipe_environment_variables(
-            custom_env_vars=custom_env_vars,
-            model_family_name=model_family_name,
-            model_recipe_name=model_recipe_name,
-            train_task=task,
-            gpu=gpu,
-            experiment_name=exp_name,
-            expert_model_parallel_size=ep_size,
-        )
-
     if kubeflow_namespace:
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
@@ -680,6 +661,15 @@ def main(
 
     plugins = []
 
+    # Long-convergence runs are split across walltime slices and resume from the last
+    # checkpoint each slice. Without a preemption signal, Slurm hard-kills the slice at
+    # the time limit before a checkpoint is written, so no progress persists and the
+    # resume loop stalls. The PreemptionPlugin sends SIGTERM `preempt_time` seconds
+    # before the limit and enables the training exit handler, so each slice saves and
+    # exits gracefully and the next slice resumes from it (inert off Slurm).
+    if is_long_convergence_run:
+        plugins.append(PreemptionPlugin(preempt_time=preempt_time, enable_exit_handler=True))
+
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
     # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
@@ -691,17 +681,6 @@ def main(
             PerfEnvPlugin(
                 enable_vboost=enable_vboost,
                 lock_gpu_freq=lock_gpu_freq,
-                moe_a2a_overlap=moe_a2a_overlap,
-                tp_size=tp_size,
-                pp_size=pp_size,
-                cp_size=cp_size,
-                ep_size=ep_size,
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                gpu=gpu,
-                compute_dtype=compute_dtype,
-                train_task=task,
-                config_variant=config_variant,
                 deterministic=deterministic,
             )
         )
@@ -1020,11 +999,11 @@ if __name__ == "__main__":
         custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
-        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
+        preempt_time=args.preempt_time,
         additional_slurm_params=args.additional_slurm_params,
         enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,

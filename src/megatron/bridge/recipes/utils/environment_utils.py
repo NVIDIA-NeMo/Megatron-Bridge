@@ -12,39 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Composable environment defaults for library and performance recipes."""
+"""Process environment defaults shared by every hardware library recipe.
 
-from megatron.bridge.training.config import ConfigContainer
+Keep this mapping limited to values that are identical across all library
+recipes. Model- and topology-specific values belong directly in the owning
+recipe builder so users can see the complete launch environment.
+"""
 
-
-def set_common_recipe_environment_defaults(config: ConfigContainer) -> None:
-    """Set common Transformer Engine and compilation environment defaults."""
-    config.env_vars.update(
-        {
-            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
-            "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
-            "TORCHINDUCTOR_WORKER_START": "fork",
-            "QUANTIZATION_TYPE_DEBUG": 1,
-        }
-    )
-
-
-def set_hybridep_environment_defaults(
-    config: ConfigContainer,
-    *,
-    ranks_per_nvlink_domain: int,
-    use_mnnvl: bool,
-) -> None:
-    """Set HybridEP topology defaults on a recipe config.
-
-    Args:
-        config: Recipe config to update.
-        ranks_per_nvlink_domain: Number of HybridEP ranks in each NVLink domain.
-        use_mnnvl: Whether the workload uses a multi-node NVLink domain.
-    """
-    config.env_vars.update(
-        {
-            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": ranks_per_nvlink_domain,
-            "USE_MNNVL": int(use_mnnvl),
-        }
-    )
+COMMON_LIBRARY_ENV_VARS: dict[str, str | int | float | bool] = {
+    # Disable graph registration because these recipes use the expandable
+    # allocator rather than NCCL user-buffer graph registration.
+    "NCCL_GRAPH_REGISTER": 0,
+    # Library baselines do not enable NCCL user buffers by default.
+    "NCCL_NVLS_ENABLE": 0,
+    # Use cuDNN LayerNorm for the common Transformer Engine baseline.
+    "NVTE_NORM_BWD_USE_CUDNN": 1,
+    "NVTE_NORM_FWD_USE_CUDNN": 1,
+    # Let long-running training jobs grow allocator segments when needed.
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    # Keep NCCL stream handling consistent across all library recipes.
+    "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+    "TORCH_NCCL_HIGH_PRIORITY": 1,
+}

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 import torch
 from torch.utils.data import DataLoader, Dataset
 
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 
 
 class _MockT2IDataset(Dataset):

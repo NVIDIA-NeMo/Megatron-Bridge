@@ -28,7 +28,13 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import get_library_recipe
+from utils.utils import (
+    apply_library_argparse_overrides,
+    apply_library_target_topology_environment,
+    explicit_environment_override_names,
+    finalize_library_config_overrides,
+    get_library_recipe,
+)
 
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.config import apply_environment_variables
@@ -57,6 +63,7 @@ def _get_diffusion_step(model_family_name: str):
 def set_user_overrides(config, args):
     """Apply CLI arguments to ConfigContainer fields."""
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
+    config = apply_library_argparse_overrides(config, args)
 
     # Training configuration
     if args.max_steps:
@@ -168,8 +175,6 @@ def set_user_overrides(config, args):
         config.model.context_parallel_size = args.context_parallel_size
     if args.virtual_pipeline_model_parallel_size != -1:
         config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
-    if args.expert_model_parallel_size:
-        config.model.expert_model_parallel_size = args.expert_model_parallel_size
     if args.expert_tensor_parallel_size:
         config.model.expert_tensor_model_parallel_size = args.expert_tensor_parallel_size
 
@@ -230,12 +235,20 @@ def main():
         wandb_experiment_name=args.wandb_experiment_name,
     )
 
+    base_env_vars = dict(recipe.env_vars)
     recipe = set_user_overrides(recipe, args)
 
     if cli_overrides:
         logging.info("Applying %d CLI config override(s)", len(cli_overrides))
         recipe = process_config_with_overrides(recipe, cli_overrides=cli_overrides)
 
+    recipe = finalize_library_config_overrides(recipe)
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    apply_library_target_topology_environment(
+        recipe,
+        gpu=args.gpu,
+        protected_env_names=protected_env_names,
+    )
     apply_environment_variables(recipe)
 
     if args.dryrun:

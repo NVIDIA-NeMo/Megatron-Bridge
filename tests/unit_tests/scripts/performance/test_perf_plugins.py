@@ -37,16 +37,12 @@ pytestmark = pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed
 if HAS_NEMO_RUN:
     import perf_plugins
     from perf_plugins import PerfEnvPlugin
+    from utils.utils import WorkloadBaseConfig
 
 
 def test_set_determinism_env_vars_writes_three_keys():
     plugin = PerfEnvPlugin(
         deterministic=True,
-        model_family_name="llama",
-        model_recipe_name="llama3_70b",
-        gpu="h100",
-        compute_dtype="bf16",
-        train_task="pretrain",
     )
     executor = MagicMock()
     executor.env_vars = {}
@@ -58,43 +54,67 @@ def test_set_determinism_env_vars_writes_three_keys():
     assert executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
 
 
-def test_recipe_environment_defaults_preserve_explicit_executor_values(monkeypatch):
-    """Recipe defaults and plugin fallbacks must not replace explicit launcher values."""
-    plugin = PerfEnvPlugin(
-        model_family_name="deepseek",
-        model_recipe_name="deepseek_v3",
-        gpu="gb200",
-        compute_dtype="bf16",
-        train_task="pretrain",
-    )
+def test_finalized_recipe_environment_is_copied_without_rederivation():
+    """Executor values win while the plugin copies finalized recipe environment."""
+    plugin = PerfEnvPlugin()
     executor = MagicMock()
     executor.env_vars = {
         "NVTE_FWD_LAYERNORM_SM_MARGIN": "48",
         "USE_MNNVL": "custom",
     }
-    workload_config = MagicMock()
-    workload_config.env_vars = {
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
-        "TORCHINDUCTOR_WORKER_START": "fork",
-    }
-    workload_config.tensor_model_parallel_size = 1
-    workload_config.pipeline_model_parallel_size = 1
-    workload_config.context_parallel_size = 1
-    workload_config.expert_model_parallel_size = 64
-    workload_config.moe_flex_dispatcher_backend = "hybridep"
-    monkeypatch.setattr("perf_plugins.get_workload_base_config", lambda *args: workload_config)
-    monkeypatch.setattr(plugin, "_set_num_cuda_device_max_connections", MagicMock())
-    monkeypatch.setattr(plugin, "_set_manual_gc", MagicMock())
-    monkeypatch.setattr(plugin, "_set_vboost", MagicMock())
-    monkeypatch.setattr(plugin, "_set_lock_gpu_freq", MagicMock())
-    monkeypatch.setattr(plugin, "_set_model_specific_environment_variables", MagicMock())
+    workload_config = WorkloadBaseConfig(
+        env_vars={
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+            "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        },
+        expert_model_parallel_size=64,
+        moe_flex_dispatcher_backend="hybridep",
+    )
 
-    plugin.setup(MagicMock(), executor)
+    plugin.setup_recipe_environment(MagicMock(), executor, workload_config)
 
     assert executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "48"
+    assert executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "20"
     assert executor.env_vars["TORCHINDUCTOR_WORKER_START"] == "fork"
     assert executor.env_vars["USE_MNNVL"] == "custom"
-    assert executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "64"
+    assert executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "32"
+    assert executor.env_vars["NVLINK_DOMAIN_SIZE"] == "72"
+
+
+def test_explicit_recipe_environment_is_copied_unchanged():
+    """The plugin must not rederive an explicit recipe environment override."""
+    plugin = PerfEnvPlugin()
+    executor = MagicMock()
+    executor.env_vars = {}
+    workload_config = WorkloadBaseConfig(
+        env_vars={
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": "custom-ranks",
+            "NVLINK_DOMAIN_SIZE": "custom-domain",
+            "USE_MNNVL": "custom-mnnvl",
+        },
+        expert_model_parallel_size=64,
+        moe_flex_dispatcher_backend="hybridep",
+    )
+    protected_names = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+
+    plugin.setup_recipe_environment(
+        MagicMock(),
+        executor,
+        workload_config,
+        protected_recipe_env_names=protected_names,
+    )
+
+    assert executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "custom-ranks"
+    assert executor.env_vars["NVLINK_DOMAIN_SIZE"] == "custom-domain"
+    assert executor.env_vars["USE_MNNVL"] == "custom-mnnvl"
 
 
 def test_plugin_added_environment_is_forced_into_slurm_container(monkeypatch):

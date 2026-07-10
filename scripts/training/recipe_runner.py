@@ -170,10 +170,7 @@ def _load_with_optional_kwargs(
         seq_length=seq_length,
         hf_path=hf_path,
     )
-    try:
-        return config_builder(**kwargs)
-    except TypeError:
-        return config_builder()
+    return config_builder(**kwargs)
 
 
 @functools.lru_cache(maxsize=1)

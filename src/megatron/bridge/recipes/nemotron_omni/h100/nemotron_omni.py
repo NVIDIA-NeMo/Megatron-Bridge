@@ -20,9 +20,9 @@ All recipes use ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``)
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -39,11 +39,11 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
-    cfg.dataset = HFConversationDatasetProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_DEFAULT_HF_PATH,
-        maker_name="cord_v2",
-        collate_impl=nemotron_omni_collate_fn,
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
@@ -52,6 +52,10 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -88,11 +92,11 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    cfg.dataset = HFConversationDatasetProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=_DEFAULT_HF_PATH,
-        maker_name="cord_v2",
-        collate_impl=nemotron_omni_collate_fn,
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
@@ -101,6 +105,10 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -221,6 +229,10 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -284,6 +296,10 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

@@ -14,6 +14,7 @@
 
 """Functional tests for flat performance recipe integration."""
 
+import importlib
 import inspect
 import sys
 from pathlib import Path
@@ -157,6 +158,82 @@ class TestPerfConfigIntegration:
         assert cfg.num_gpus == 1024
         assert cfg.global_batch_size == recipe.train.global_batch_size
         assert cfg.tensor_model_parallel_size == recipe.model.tensor_model_parallel_size
+        assert cfg.env_vars == recipe.env_vars
+        assert cfg.env_vars is not recipe.env_vars
+
+    @pytest.mark.parametrize(
+        ("family", "builder", "expected_env"),
+        [
+            (
+                "deepseek",
+                (
+                    "megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3:"
+                    "deepseek_v3_pretrain_256gpu_gb200_bf16_config"
+                ),
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "USE_MNNVL": 1,
+                    "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+                },
+            ),
+            (
+                "gpt_oss",
+                ("megatron.bridge.perf_recipes.gpt_oss.gb200.gpt_oss:gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"),
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "kimi",
+                "megatron.bridge.perf_recipes.kimi.gb300.kimi_k2:kimi_k2_pretrain_256gpu_gb300_fp8mx_config",
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "NVTE_NORM_FWD_USE_CUDNN": 1,
+                },
+            ),
+            (
+                "llama",
+                "megatron.bridge.perf_recipes.llama.h100.llama3:llama3_8b_pretrain_8gpu_h100_fp8cs_config",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "NCCL_CTA_POLICY": 1},
+            ),
+            (
+                "nemotronh",
+                (
+                    "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh:"
+                    "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"
+                ),
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "qwen",
+                ("megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe:qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"),
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+                },
+            ),
+            (
+                "qwen_vl",
+                (
+                    "megatron.bridge.perf_recipes.qwen_vl.gb200.qwen3_vl:"
+                    "qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config"
+                ),
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "wan",
+                "megatron.bridge.perf_recipes.wan.h100.wan:wan_14b_pretrain_32gpu_h100_bf16_config",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
+            ),
+        ],
+    )
+    def test_nemo_ci_perf_family_builders_embed_environment_settings(self, family, builder, expected_env):
+        """Direct builders for every active nemo-ci family should carry process settings."""
+        module_name, function_name = builder.split(":", 1)
+        recipe = getattr(importlib.import_module(module_name), function_name)()
+
+        assert recipe.env_vars.items() >= expected_env.items(), family
 
     def test_generated_workload_metadata_is_not_required(self):
         """Test that removed perf configs do not leave a generated metadata mirror."""
@@ -250,23 +327,6 @@ class TestPerfConfigIntegration:
         )
 
         assert cfg.train.global_batch_size == 16384
-
-    def test_get_perf_optimized_recipe_kimi_adam_optimizer(self):
-        """Test that the Kimi Adam override path applies without import errors."""
-        from utils.utils import get_perf_optimized_recipe
-
-        cfg = get_perf_optimized_recipe(
-            model_family_name="kimi",
-            model_recipe_name="kimi_k2",
-            train_task="pretrain",
-            gpu="h100",
-            compute_dtype="bf16",
-            config_variant=None,
-            optimizer_type="adam",
-        )
-
-        assert cfg.ddp.use_distributed_optimizer is True
-        assert cfg.ddp.overlap_param_gather is True
 
     def test_kimi_flat_perf_recipes_are_parameterless(self):
         """Test that Kimi flat recipes expose fixed recipe entry points."""

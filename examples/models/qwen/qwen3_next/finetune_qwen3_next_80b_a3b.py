@@ -43,11 +43,13 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Tuple
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -61,6 +63,22 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def _replace_with_custom_data_path(config: ConfigContainer, data_path: str) -> None:
+    """Replace the recipe's named HF source with a custom JSON/JSONL source."""
+    if not isinstance(config.dataset, GPTSFTDatasetConfig):
+        raise TypeError("--data-path requires a GPTSFTDatasetConfig recipe.")
+    config.dataset = replace(
+        config.dataset,
+        dataset_root=None,
+        hf_dataset=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            load_kwargs={"data_files": data_path},
+        ),
+        hf_validation_dataset=None,
+        hf_test_dataset=None,
+    )
 
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
@@ -113,9 +131,7 @@ def main() -> None:
     if args.pretrained_checkpoint is not None:
         cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     if args.data_path is not None:
-        cfg.dataset.dataset_name = "json"
-        cfg.dataset.dataset_kwargs = cfg.dataset.dataset_kwargs or {}
-        cfg.dataset.dataset_kwargs["data_files"] = args.data_path
+        _replace_with_custom_data_path(cfg, args.data_path)
     logger.info("Loaded base configuration")
 
     if get_rank_safe() == 0:

@@ -23,6 +23,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
+
 
 def _package(name: str) -> types.ModuleType:
     module = types.ModuleType(name)
@@ -233,7 +235,9 @@ def _load_run_recipe_module():
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda cfg: cfg
     recipe_runner.infer_train_mode.return_value = "pretrain"
     recipe_runner.load_forward_step.return_value = object()
-    recipe_runner.resolve_recipe_source.side_effect = lambda _, source="auto": "recipes" if source == "auto" else source
+    recipe_runner.resolve_recipe_source.side_effect = (
+        lambda _, source="auto": "recipes" if source == "auto" else source
+    )
 
     megatron_module = _package("megatron")
     bridge_module = _package("megatron.bridge")
@@ -448,6 +452,14 @@ class TestUnifiedRunRecipeRouting:
         assert args.recipe == "vanilla_gpt_pretrain_config"
         assert overrides == ["optimizer.lr=0.0003", "train.train_iters=5"]
 
+    def test_ambiguous_full_recipe_requires_explicit_mode_or_task(self):
+        module, handles = _load_run_recipe_module()
+        handles["recipe_runner"].infer_train_mode.side_effect = ValueError("ambiguous")
+        args = SimpleNamespace(mode=None, recipe="custom_config", task=None)
+
+        with pytest.raises(ValueError, match="ambiguous"):
+            module._infer_mode(args, dataset=None)
+
     def test_full_recipe_auto_prefers_library_recipe(self):
         module, handles = _load_run_recipe_module()
         recipe = object()
@@ -530,7 +542,7 @@ class TestUnifiedRunRecipeRouting:
             dataset_type="llm-finetune",
             packed_sequence=True,
             seq_length=128,
-            cli_overrides=["optimizer.lr=0.0001", "dataset.dataset_name=squad"],
+            cli_overrides=["optimizer.lr=0.0001", "dataset.hf_dataset.dataset_name=squad"],
         )
         handles["infer_mode_from_dataset"].assert_called_once_with("llm-finetune")
 

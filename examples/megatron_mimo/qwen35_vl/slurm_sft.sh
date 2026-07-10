@@ -193,7 +193,7 @@ echo "Allocated GPUs:  ${ALLOCATED_GPUS}"
 echo "Language:        TP=${MIMO_LANGUAGE_TP} PP=${MIMO_LANGUAGE_PP} CP=${MIMO_LANGUAGE_CP} DP=${MIMO_LANGUAGE_DP} offset=${MIMO_LANGUAGE_OFFSET}"
 echo "Images:          TP=${MIMO_IMAGES_TP} PP=${MIMO_IMAGES_PP} CP=${MIMO_IMAGES_CP} DP=${MIMO_IMAGES_DP} offset=${MIMO_IMAGES_OFFSET}"
 echo "Batch:           MBS=${MICRO_BATCH_SIZE}, GBS=${GLOBAL_BATCH_SIZE}, language-local MBS=${LANGUAGE_LOCAL_MBS}, num_microbatches=${MIMO_NUM_MICROBATCHES}"
-echo "Dataset:         ${DATASET_NAME}"
+echo "Dataset preset:  ${DATASET_NAME}"
 echo "Sequence length: ${SEQ_LENGTH}"
 echo "Train iters:     ${TRAIN_ITERS}"
 echo "Checkpoint:      ${PRETRAINED_CHECKPOINT}"
@@ -217,7 +217,7 @@ cmd=(
     uv run --no-sync python
     examples/megatron_mimo/qwen35_vl/finetune_qwen35_vl.py
     --hf-model "${HF_MODEL}"
-    --dataset-maker "${DATASET_NAME}"
+    --dataset-name "${DATASET_NAME}"
     --seq-length "${SEQ_LENGTH}"
     --train-iters "${TRAIN_ITERS}"
     --global-batch-size "${GLOBAL_BATCH_SIZE}"

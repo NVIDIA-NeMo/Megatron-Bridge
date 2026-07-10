@@ -23,6 +23,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 
 
@@ -86,6 +87,10 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config() -> "ConfigContainer":
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
@@ -149,6 +154,10 @@ def qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config() -> "ConfigContainer
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     cfg.mixed_precision = "bf16_mixed"
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

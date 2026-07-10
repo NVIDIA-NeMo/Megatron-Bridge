@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -24,24 +24,24 @@ Usage:
     # Test locally (single node)
     python launch_with_nemo_run.py \
         --local \
-        --devices 2 \
-        --recipe llama32_1b_pretrain_config \
+        --gpus-per-node 1 \
+        --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
         --dry-run \
         --max-steps 10
 
     # Launch on Slurm from the cluster (LocalTunnel)
     python launch_with_nemo_run.py \
-        --recipe llama32_1b_pretrain_config \
+        --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config \
         --nodes 2 \
-        --devices 8 \
+        --gpus-per-node 8 \
         --partition gpu \
         --account my_account
 
     # Launch on Slurm from your local machine (SSHTunnel)
     python launch_with_nemo_run.py \
-        --recipe llama32_1b_sft_config \
+        --recipe llama3_8b_sft_2gpu_h100_bf16_config \
         --nodes 1 \
-        --devices 8 \
+        --gpus-per-node 8 \
         --partition gpu \
         --account my_account \
         --ssh-tunnel \
@@ -58,7 +58,7 @@ Usage:
         --gpu h100 \
         --dtype bf16 \
         --nodes 1 \
-        --devices 8 \
+        --gpus-per-node 8 \
         --partition gpu \
         --account my_account \
         train.train_iters=5000 \
@@ -111,10 +111,12 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         help="Launcher to use: 'torchrun', 'ft' (fault-tolerant), or 'default' (no launcher)",
     )
     parser.add_argument(
+        "--gpus-per-node",
         "--devices",
+        dest="gpus_per_node",
         type=int,
         default=None,
-        help="GPUs per node. Required for --local. For Slurm, omit if cluster auto-allocates whole nodes.",
+        help="GPUs per node. --devices remains as a compatibility alias.",
     )
     parser.add_argument(
         "--nodes",
@@ -234,8 +236,8 @@ def main() -> None:
         # Local execution - SSH tunnel args are not used
         if args.ssh_tunnel:
             raise ValueError("--ssh-tunnel cannot be used with --local")
-        if args.devices is None:
-            raise ValueError("--devices is required for --local execution")
+        if args.gpus_per_node is None:
+            raise ValueError("--gpus-per-node is required for --local execution")
     else:
         # Slurm execution - require partition and account
         if not args.partition or not args.account:
@@ -306,7 +308,7 @@ def main() -> None:
     if args.local:
         logger.debug("Using LocalExecutor")
         executor = run.LocalExecutor(
-            ntasks_per_node=args.devices,
+            ntasks_per_node=args.gpus_per_node,
             launcher=launcher,
         )
         if env_vars:
@@ -339,9 +341,9 @@ def main() -> None:
         }
 
         # Add devices only if specified
-        if args.devices is not None:
-            executor_kwargs["ntasks_per_node"] = args.devices
-            executor_kwargs["gpus_per_node"] = args.devices
+        if args.gpus_per_node is not None:
+            executor_kwargs["ntasks_per_node"] = args.gpus_per_node
+            executor_kwargs["gpus_per_node"] = args.gpus_per_node
 
         # Add gres only if explicitly specified
         if args.gres:

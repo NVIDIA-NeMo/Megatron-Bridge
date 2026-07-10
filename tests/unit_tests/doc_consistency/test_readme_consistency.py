@@ -22,12 +22,14 @@ Deliberately stdlib-only (no torch / megatron import) so it scans source files
 directly and runs anywhere, including without the GPU stack.
 """
 
+import ast
 import re
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
+PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
@@ -40,11 +42,19 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions defined under src/.../recipes/**."""
+    """All library and performance recipe-config functions."""
     names: set[str] = set()
-    for py in RECIPES_DIR.rglob("*.py"):
-        for m in re.finditer(r"^def\s+(\w+_config)\s*\(", _read(py), re.MULTILINE):
-            names.add(m.group(1))
+    for recipe_root in (RECIPES_DIR, PERF_RECIPES_DIR):
+        for py in recipe_root.rglob("*.py"):
+            tree = ast.parse(_read(py))
+            for node in ast.walk(tree):
+                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
+                    names.add(node.name)
+                elif isinstance(node, ast.ImportFrom):
+                    for alias in node.names:
+                        exported_name = alias.asname or alias.name
+                        if exported_name.endswith("_config"):
+                            names.add(exported_name)
     return names
 
 
@@ -70,7 +80,7 @@ def test_llama_readme_gptdataset_field_name():
     # Source anchor: the dataset config key is `sequence_length` (see training/config.py).
     assert '"sequence_length"' in _read(TRAINING_CONFIG), "sequence_length not found in config source"
     text = _read(LLAMA_README)
-    # Scope to the GPTDatasetConfig block only (the FinetuningDatasetConfig block
+    # Scope to the GPTDatasetConfig block only (the GPTSFTDatasetConfig block
     # legitimately uses `seq_length`).
     m = re.search(r"#\s*GPTDatasetConfig\b(.*?)(?:\n\s*\n)", text, re.DOTALL)
     assert m, "could not locate GPTDatasetConfig YAML block"

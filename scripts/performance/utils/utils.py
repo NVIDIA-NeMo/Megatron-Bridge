@@ -22,9 +22,10 @@ import pkgutil
 import re
 import select
 import sys
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
@@ -134,6 +135,134 @@ class WorkloadBaseConfig:
         return self.global_batch_size / self.num_gpus
 
 
+def explicit_environment_override_names(
+    cli_overrides: list[str], base_env_vars: dict, effective_env_vars: dict
+) -> set[str]:
+    """Return recipe env names explicitly selected through Hydra overrides."""
+    names = set()
+    for override in cli_overrides:
+        key = override.split("=", 1)[0].lstrip("+~")
+        if key == "env_vars":
+            from hydra.core.override_parser.overrides_parser import OverridesParser
+
+            override_value = OverridesParser.create().parse_override(override).value()
+            if isinstance(override_value, Mapping):
+                names.update(override_value)
+            names.update(
+                name
+                for name in base_env_vars.keys() | effective_env_vars.keys()
+                if name not in base_env_vars
+                or name not in effective_env_vars
+                or base_env_vars[name] != effective_env_vars[name]
+            )
+        elif key.startswith("env_vars."):
+            names.add(key.removeprefix("env_vars.").split(".", 1)[0])
+    return names
+
+
+def apply_library_target_topology_environment(
+    config: Any,
+    *,
+    gpu: str,
+    protected_env_names: set[str] | None = None,
+) -> None:
+    """Adapt only HybridEP topology for the launch target.
+
+    Hardware library exports currently reuse H100 recipe builders on every
+    target. Their model-specific environment remains static and explicit; this
+    compatibility step only translates the final HybridEP EP size to the
+    target GPU's NVLink domain. Explicit ``env_vars`` overrides remain final.
+    """
+    topology_names = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    protected = protected_env_names or set()
+    if getattr(config.model, "moe_flex_dispatcher_backend", None) != "hybridep":
+        for name in topology_names - protected:
+            config.env_vars.pop(name, None)
+        return
+
+    expert_model_parallel_size = getattr(config.model, "expert_model_parallel_size", 1)
+    if expert_model_parallel_size is None:
+        expert_model_parallel_size = 1
+    if expert_model_parallel_size <= 0:
+        raise ValueError("HybridEP expert parallel size must be positive.")
+
+    normalized_gpu = gpu.lower()
+    if normalized_gpu in {"h100", "b200", "b300"}:
+        topology = {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": min(expert_model_parallel_size, 8),
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        }
+    elif normalized_gpu in {"gb200", "gb300", "vr200", "r100"}:
+        if expert_model_parallel_size > 72:
+            raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
+        topology = {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": expert_model_parallel_size,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        }
+    else:
+        raise ValueError(f"Unsupported GPU type for HybridEP topology: {gpu!r}.")
+
+    for name, value in topology.items():
+        if name not in protected:
+            config.env_vars[name] = value
+
+
+def apply_library_argparse_overrides(config: Any, args: Any) -> Any:
+    """Apply argparse values that affect library recipe configuration.
+
+    Both the worker pre-exec wrapper and the final library runner call this
+    helper before Hydra overrides so their effective training configs match.
+    """
+    if getattr(args, "nccl_ub", False):
+        config.ddp.nccl_ub = True
+
+    expert_model_parallel_size = getattr(args, "expert_model_parallel_size", None)
+    if expert_model_parallel_size is not None:
+        config.model.expert_model_parallel_size = expert_model_parallel_size
+
+    dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+        config.model.moe_flex_dispatcher_backend = dispatcher_backend
+    elif dispatcher_backend in {"deepep", "hybridep"}:
+        logger.warning("Ignoring flex dispatcher override for a model without MoE experts.")
+    elif dispatcher_backend is None:
+        config.model.moe_flex_dispatcher_backend = None
+
+    return config
+
+
+def finalize_library_config_overrides(config: Any) -> Any:
+    """Reconcile config invariants after argparse and Hydra overrides.
+
+    Hydra has final precedence over primary fields such as ``ddp.nccl_ub`` and
+    ``model.moe_flex_dispatcher_backend``. Dependent fields are therefore
+    normalized only after both override layers have completed.
+    """
+    if getattr(config.ddp, "nccl_ub", False):
+        config.ddp.average_in_collective = False
+        if getattr(config.ddp, "use_megatron_fsdp", False):
+            config.ddp.fsdp_manual_registration = True
+    elif getattr(config.ddp, "fsdp_manual_registration", False):
+        config.ddp.fsdp_manual_registration = False
+
+    dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+        config.model.moe_token_dispatcher_type = "flex"
+        config.model.moe_shared_expert_overlap = False
+    elif dispatcher_backend is None and getattr(config.model, "moe_token_dispatcher_type", None) == "flex":
+        config.model.moe_token_dispatcher_type = "alltoall"
+
+    return config
+
+
 def _normalize_precision_name(precision: str) -> str:
     return _PRECISION_NAME_MAP.get(precision.lower(), precision.lower().replace("_", ""))
 
@@ -237,7 +366,7 @@ def get_perf_recipe_by_name(
     precision: str,
     config_variant: str | None = None,
 ):
-    """Load a flat perf recipe from ``megatron.bridge.perf_recipes``."""
+    """Load an environment-finalized recipe from ``megatron.bridge.perf_recipes``."""
     name = _recipe_function_name(
         model_recipe_name=model_recipe_name,
         task=task,
@@ -355,6 +484,7 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
         expert_tensor_parallel_size=getattr(model, "expert_tensor_parallel_size", None),
         global_batch_size=train.global_batch_size,
         micro_batch_size=train.micro_batch_size,
+        env_vars=dict(getattr(config, "env_vars", {})),
         use_megatron_fsdp=getattr(ddp, "use_megatron_fsdp", None),
         nccl_ub=getattr(ddp, "nccl_ub", None),
         cuda_graph_impl=getattr(model, "cuda_graph_impl", None),
@@ -581,56 +711,20 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
 def add_library_recipe_environment_variables(
     *,
-    custom_env_vars: dict[str, str],
-    model_family_name: str,
-    model_recipe_name: str,
-    train_task: str,
-    gpu: str,
-    experiment_name: str,
-    expert_model_parallel_size: int | None = None,
+    custom_env_vars: MutableMapping[str, str],
+    config: Any,
 ) -> None:
-    """Add library recipe environment defaults before launching distributed workers.
+    """Copy a library recipe's explicit process defaults into the worker environment.
 
     Args:
         custom_env_vars: Existing user or cluster environment values to preserve.
-        model_family_name: Model family used to locate the recipe.
-        model_recipe_name: Model recipe selector name.
-        train_task: Training task such as pretrain or sft.
-        gpu: Target GPU architecture name.
-        experiment_name: Experiment name used when constructing a library recipe.
-        expert_model_parallel_size: Optional launcher override for expert parallelism.
+        config: Resolved library recipe configuration.
 
     Raises:
         TypeError: If a recipe environment value is not a supported scalar.
-        ValueError: If an environment name is invalid or HybridEP exceeds the NVLink domain.
+        ValueError: If an environment name is invalid.
     """
-    config = get_library_recipe(
-        model_family_name=model_family_name,
-        model_recipe_name=model_recipe_name,
-        train_task=train_task,
-        wandb_experiment_name=experiment_name,
-    )
-    model_config = config.model
-    env_vars = dict(config.env_vars)
-
-    topology_env_name = "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"
-    if (
-        expert_model_parallel_size is not None
-        and topology_env_name in env_vars
-        and getattr(model_config, "moe_flex_dispatcher_backend", None) == "hybridep"
-    ):
-        if gpu.lower() in {"h100", "b200", "b300"}:
-            env_vars[topology_env_name] = min(expert_model_parallel_size, 8)
-            if "USE_MNNVL" in env_vars:
-                env_vars["USE_MNNVL"] = 0
-        else:
-            if expert_model_parallel_size > 72:
-                raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
-            env_vars[topology_env_name] = expert_model_parallel_size
-            if "USE_MNNVL" in env_vars:
-                env_vars["USE_MNNVL"] = 1
-
-    for name, value in env_vars.items():
+    for name, value in config.env_vars.items():
         if not isinstance(name, str) or not name:
             raise ValueError("Environment variable names must be non-empty strings.")
         if not isinstance(value, (str, int, float, bool)):

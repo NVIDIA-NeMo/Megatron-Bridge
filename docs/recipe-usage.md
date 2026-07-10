@@ -21,9 +21,9 @@ Training mode follows the recipe and dataset type:
 | Workflow | Typical config | Entry point | Checkpoint expectation |
 |----------|----------------|-------------|------------------------|
 | LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
-| Full SFT | `FinetuningDatasetConfig` or a dataset provider | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
+| Full SFT | `GPTSFTDatasetConfig` for local JSONL or Hugging Face source data | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
-| VLM SFT or PEFT | VLM dataset provider such as Energon, HF, or preloaded JSON provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
+| VLM SFT or PEFT | `DirectHFSFTDatasetConfig` + builder, Energon, or a specialized/preloaded provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for local JSONL data. Do not use `data_path` for SFT/PEFT JSONL roots.
 
@@ -136,6 +136,7 @@ Common dataset overrides:
 
 ```python
 from megatron.bridge.recipes.llama import llama32_1b_sft_config, llama3_8b_pretrain_config
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 pretrain_cfg = llama3_8b_pretrain_config()
 finetune_cfg = llama32_1b_sft_config()
@@ -147,8 +148,15 @@ pretrain_cfg.dataset.seq_length = 8192
 
 # SFT/PEFT local JSONL data on a finetune recipe:
 # directory containing training.jsonl, validation.jsonl, and optionally test.jsonl
-finetune_cfg.dataset.dataset_root = "/data/sft_jsonl"
-finetune_cfg.dataset.seq_length = 4096
+finetune_cfg.dataset = GPTSFTDatasetConfig(
+    dataset_root="/data/sft_jsonl",
+    seq_length=4096,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    ),
+)
 ```
 
 For more detail on accepted dataset layouts, see [Data Preparation](training/data-preparation.md).
@@ -235,8 +243,8 @@ if __name__ == "__main__":
     train_script = run.Script(path="/path/to/train/script.py", entrypoint="python")
     executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
 
-    plugins = [] # plugins argument expects a list
-    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15, ...)
+    plugins = []  # plugins argument expects a list
+    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15)
     plugins.append(nsys)
     run.run(train_script, plugins=plugins, executor=executor)
 ```
@@ -296,11 +304,12 @@ Library and performance recipes can declare process environment defaults in the 
 ```python
 cfg.env_vars.update(
     {
-        "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
-        "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "TORCHINDUCTOR_WORKER_START": "fork",
         "QUANTIZATION_TYPE_DEBUG": 1,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
     }
@@ -309,11 +318,17 @@ cfg.env_vars.update(
 
 Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for library recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
 
-When launching through `scripts/performance/setup_experiment.py`, recipe defaults are copied into the Slurm or Kubeflow executor before distributed workers start. Explicit `--env` and `--custom_env_vars` values take precedence.
+When launching through `scripts/performance/setup_experiment.py`, a rank-local pre-exec wrapper resolves library or flat performance recipe defaults inside the worker container, then replaces itself with the selected training entry point. This keeps recipe imports off dependency-light launcher nodes. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
 
 Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={TORCHINDUCTOR_WORKER_START:fork,QUANTIZATION_TYPE_DEBUG:1}'`. Do not store credentials or other secrets in recipe configs.
 
-For library recipes, `setup_experiment.py` keeps `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN` aligned with its expert-parallel CLI override. When invoking a rank-local entry point directly, override topology-dependent environment values together with fields such as `model.expert_model_parallel_size`.
+Flat performance and hardware library recipes keep feature-dependent environment values static and visible instead of recomputing them after command-line overrides. When overriding a feature that affects the process environment—such as CUDA graph mode, NCCL user buffers, dispatcher or parallelism settings—override the corresponding `env_vars` entries explicitly as well. For example, HybridEP topology changes must update `NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN`, `NVLINK_DOMAIN_SIZE`, and `USE_MNNVL` together.
+
+Every flat performance recipe builder assigns `cfg.env_vars` directly before returning its config. `COMMON_PERF_ENV_VARS` contains only `TORCH_NCCL_HIGH_PRIORITY=1`, the one value shared by every workload; all GPU-, topology-, precision-, CUDA graph-, and model-specific values are written inline with comments in the owning recipe. This is intentionally verbose so a recipe user can see the exact benchmark environment without following a decorator or global derivation rules.
+
+Hardware library recipe builders follow the same explicit pattern. `COMMON_LIBRARY_ENV_VARS` contains only the seven settings that are identical across every supported library recipe; each of the 245 supported builders assigns `cfg.env_vars` directly before returning and writes any HybridEP or model-specific additions inline. There is no recipe decorator or generic launcher-side environment recomposition. Because the compatibility catalog currently reuses H100 builders on other targets, the library launcher adapts only the three HybridEP topology values to the selected GPU after overrides; explicit `env_vars` remain final. The nemo-ci executors under `scripts/performance` do not provide fallback values for recipe-owned process settings.
+
+Cluster fabric and orchestration settings do not belong in recipes. Keep credentials, cache/offline policy, scheduler metadata, W&B state, and cluster-specific NCCL network tuning in the launcher or executor. In particular, settings such as `NCCL_NET_GDR_LEVEL`, `NCCL_NET_GDR_C2C`, and `NCCL_IB_QPS_PER_CONNECTION` must remain deployment-owned.
 
 ## Resources
 

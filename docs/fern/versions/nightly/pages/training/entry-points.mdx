@@ -6,7 +6,7 @@ Megatron Bridge provides unified training entry points for pretraining, Supervis
 
 Use `pretrain()` for language-model pretraining jobs that use `GPTDatasetConfig` or `MockGPTDatasetConfig`. This includes training from scratch, continued pretraining on new corpora, and initializing model weights from `checkpoint.pretrained_checkpoint` before starting a new training run.
 
-Use `finetune()` for full SFT and PEFT. The function validates that either `checkpoint.pretrained_checkpoint` or `checkpoint.load` is set, then calls the same underlying training loop used by `pretrain()`. PEFT does not use a separate entry point: set `cfg.peft` to a LoRA or DoRA config, use a finetuning dataset config or provider, and launch through `finetune()`.
+Use `finetune()` for full SFT and PEFT. The function validates that either `checkpoint.pretrained_checkpoint` or `checkpoint.load` is set, then calls the same underlying training loop used by `pretrain()`. PEFT does not use a separate entry point: set `cfg.peft` to a LoRA or DoRA config, use `GPTSFTDatasetConfig`, `DirectHFSFTDatasetConfig`, or a specialized dataset provider, and launch through `finetune()`.
 
 The generic recipe launcher, `scripts/training/run_recipe.py`, can load library recipes from `megatron.bridge.recipes` and flat performance recipes from `megatron.bridge.perf_recipes`. Pass a full recipe name with `--recipe`, or select a flat performance recipe with `--source perf_recipes --model <name> --task <task> --gpus <N> --gpu <type> --dtype <precision>`. Dataset types beginning with `llm-pretrain` run `pretrain()`. SFT, PEFT, VLM, and diffusion fine-tuning dataset types run `finetune()`.
 

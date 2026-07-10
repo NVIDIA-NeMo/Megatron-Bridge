@@ -39,6 +39,17 @@ if HAS_NEMO_RUN:
     from utils.executors import PERF_ENV_VARS, kubeflow_executor, slurm_executor
 
 
+RECIPE_PROCESS_ENV_NAMES = {
+    "NCCL_GRAPH_REGISTER",
+    "NCCL_NVLS_ENABLE",
+    "NVTE_NORM_BWD_USE_CUDNN",
+    "NVTE_NORM_FWD_USE_CUDNN",
+    "PYTORCH_CUDA_ALLOC_CONF",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS",
+    "TORCH_NCCL_HIGH_PRIORITY",
+}
+
+
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 def test_container_env_includes_perf_vars(tmp_path):
     """PERF_ENV_VARS keys must appear in container_env so they override container defaults."""
@@ -68,6 +79,22 @@ def test_custom_env_vars_in_container_env(tmp_path):
         custom_env_vars={"MY_CUSTOM_VAR": "1"},
     )
     assert "MY_CUSTOM_VAR" in executor.container_env
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_executor_never_supplies_recipe_process_defaults(tmp_path):
+    """Flat and library recipes should supply process settings without executor shadowing."""
+    executor = slurm_executor(
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
+    )
+
+    assert RECIPE_PROCESS_ENV_NAMES.isdisjoint(executor.env_vars)
+    assert "TRANSFORMERS_OFFLINE" in executor.env_vars
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

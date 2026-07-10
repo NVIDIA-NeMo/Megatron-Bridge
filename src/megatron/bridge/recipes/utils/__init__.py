@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from .determinism_utils import apply_determinism_overrides
-from .environment_utils import set_common_recipe_environment_defaults, set_hybridep_environment_defaults
+from .environment_utils import COMMON_LIBRARY_ENV_VARS
 from .naming import (
     PRECISION_NAME_MAP,
     normalize_precision_name,
@@ -24,10 +24,9 @@ from .naming import (
 
 __all__ = [
     "PRECISION_NAME_MAP",
+    "COMMON_LIBRARY_ENV_VARS",
     "apply_determinism_overrides",
     "normalize_precision_name",
     "recipe_function_name",
     "recipe_variant_suffix",
-    "set_common_recipe_environment_defaults",
-    "set_hybridep_environment_defaults",
 ]
