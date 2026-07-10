@@ -249,6 +249,176 @@ class TestPreTrainedMaskedLMProperties:
         assert "PreTrainedMaskedLM" in repr_str
 
 
+class TestPreTrainedMaskedLMHasRegisteredMaskedLMHead:
+    """Test the registry / auto_map detection used to choose the loader class."""
+
+    def test_auto_map_declares_masked_lm_head(self):
+        """A trust_remote_code config with 'AutoModelForMaskedLM' in auto_map is detected."""
+        config = Mock()
+        config.auto_map = {"AutoModelForMaskedLM": "modeling_custom.CustomForMaskedLM"}
+
+        assert PreTrainedMaskedLM._has_registered_masked_lm_head(config) is True
+
+    def test_auto_map_without_masked_lm_entry_falls_back_to_registry(self):
+        """An auto_map that doesn't declare AutoModelForMaskedLM falls back to the static registry."""
+        config = GPT2Config()
+        config.auto_map = {"AutoModelForCausalLM": "modeling_custom.CustomForCausalLM"}
+
+        assert PreTrainedMaskedLM._has_registered_masked_lm_head(config) is False
+
+    def test_registered_config_class_detected(self):
+        """A config class registered in MODEL_FOR_MASKED_LM_MAPPING is detected without auto_map."""
+        config = BertConfig()
+
+        assert PreTrainedMaskedLM._has_registered_masked_lm_head(config) is True
+
+
+class TestPreTrainedMaskedLMTokenizer:
+    """Test tokenizer lazy loading and manual assignment."""
+
+    @patch("megatron.bridge.models.hf_pretrained.masked_lm.AutoTokenizer.from_pretrained")
+    def test_tokenizer_lazy_load(self, mock_from_pretrained, mock_tokenizer):
+        """Test tokenizer is lazily loaded via AutoTokenizer on first access."""
+        mock_from_pretrained.return_value = mock_tokenizer
+
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased", trust_remote_code=True)
+        assert not hasattr(lm, "_tokenizer")
+
+        tokenizer = lm.tokenizer
+
+        assert tokenizer is mock_tokenizer
+        mock_from_pretrained.assert_called_once_with("bert-base-uncased", trust_remote_code=True)
+        # Second access must not reload.
+        _ = lm.tokenizer
+        mock_from_pretrained.assert_called_once()
+
+    def test_tokenizer_without_model_path(self):
+        """Test accessing tokenizer without model_name_or_path raises error."""
+        lm = PreTrainedMaskedLM()
+
+        with pytest.raises(ValueError, match="model_name_or_path must be provided"):
+            _ = lm.tokenizer
+
+    def test_tokenizer_setter(self, mock_tokenizer):
+        """Test the tokenizer can be set manually, bypassing lazy loading."""
+        lm = PreTrainedMaskedLM()
+
+        lm.tokenizer = mock_tokenizer
+
+        assert lm.tokenizer is mock_tokenizer
+
+
+class TestPreTrainedMaskedLMModelNameOrPathAndHasModel:
+    """Test the model_name_or_path and has_model properties."""
+
+    def test_model_name_or_path_property(self):
+        """Test model_name_or_path exposes the constructor argument."""
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+        assert lm.model_name_or_path == "bert-base-uncased"
+
+        lm_none = PreTrainedMaskedLM()
+        assert lm_none.model_name_or_path is None
+
+    def test_has_model_true_after_setting_model(self, mock_model):
+        """Test has_model reports True once a model has been assigned."""
+        lm = PreTrainedMaskedLM()
+        assert lm.has_model is False
+
+        lm.model = mock_model
+
+        assert lm.has_model is True
+
+
+class TestPreTrainedMaskedLMSavePretrained:
+    """Test save_pretrained behavior."""
+
+    def test_save_pretrained_saves_model_and_artifacts(self, mock_model, tmp_path):
+        """Test save_pretrained saves the model and artifacts when the model is loaded."""
+        lm = PreTrainedMaskedLM()
+        lm._model = mock_model
+
+        with patch.object(lm, "save_artifacts") as mock_save_artifacts:
+            lm.save_pretrained(tmp_path)
+
+        mock_model.save_pretrained.assert_called_once_with(tmp_path)
+        mock_save_artifacts.assert_called_once_with(tmp_path)
+
+    def test_save_pretrained_without_model_only_saves_artifacts(self, tmp_path):
+        """Test save_pretrained skips model saving when no model has been loaded."""
+        lm = PreTrainedMaskedLM()
+
+        with patch.object(lm, "save_artifacts") as mock_save_artifacts:
+            lm.save_pretrained(tmp_path)
+
+        mock_save_artifacts.assert_called_once_with(tmp_path)
+
+
+class TestPreTrainedMaskedLMDeviceManagementWithLoadedModel:
+    """Test to/half/float behavior once a model is loaded, complementing the no-model cases above."""
+
+    def test_to_method_without_model_only_updates_device(self):
+        """Test to() updates the recorded device even if no model has been loaded yet."""
+        lm = PreTrainedMaskedLM(device="cpu")
+
+        result = lm.to("cuda:0")
+
+        assert result is lm
+        assert lm.device == "cuda:0"
+        assert lm.has_model is False
+
+    def test_half_method_with_loaded_model(self, mock_model):
+        """Test half() converts a loaded model to float16."""
+        mock_model.half.return_value = mock_model
+        lm = PreTrainedMaskedLM()
+        lm._model = mock_model
+
+        result = lm.half()
+
+        assert result is lm
+        mock_model.half.assert_called_once()
+
+    def test_float_method_no_model(self):
+        """Test float() is a no-op when no model has been loaded."""
+        lm = PreTrainedMaskedLM()
+        result = lm.float()
+        assert result is lm
+
+
+class TestPreTrainedMaskedLMLoadedModelProperties:
+    """Test dtype/num_parameters/__repr__ once a model has been loaded."""
+
+    def test_dtype_and_num_parameters_with_model(self):
+        """Test dtype and num_parameters reflect the loaded model's real parameters."""
+        real_model = torch.nn.Linear(4, 4)
+        lm = PreTrainedMaskedLM()
+        lm._model = real_model
+
+        assert lm.dtype == real_model.weight.dtype
+        assert lm.num_parameters == sum(p.numel() for p in real_model.parameters())
+
+    def test_repr_with_loaded_model(self, mock_model):
+        """Test __repr__ includes the loaded model class name and parameter count."""
+        mock_model.parameters.return_value = iter([torch.nn.Parameter(torch.zeros(2, 2))])
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+        lm._model = mock_model
+
+        with patch.object(PreTrainedMaskedLM, "config", new=Mock(num_hidden_layers=12, hidden_size=768)):
+            repr_str = repr(lm)
+
+        assert "PreTrainedMaskedLM" in repr_str
+        assert "loaded" in repr_str
+
+    def test_repr_with_config_only_uses_architectures(self):
+        """Test __repr__ falls back to config.architectures when no model is loaded."""
+        lm = PreTrainedMaskedLM(model_name_or_path="bert-base-uncased")
+        lm._config = Mock(architectures=["BertForMaskedLM"], num_hidden_layers=12, hidden_size=768)
+
+        repr_str = repr(lm)
+
+        assert "BertForMaskedLM" in repr_str
+        assert "not loaded" in repr_str
+
+
 @pytest.fixture
 def mock_config():
     """Mock AutoConfig for testing."""

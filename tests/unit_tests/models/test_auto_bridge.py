@@ -676,6 +676,11 @@ class TestAutoBridge:
         bridge_config = AutoBridge(mock_config)
         assert bridge_config.hf_pretrained == mock_config
 
+        # Test with PreTrainedMaskedLM
+        mock_masked_lm = Mock(spec=PreTrainedMaskedLM)
+        bridge_masked_lm = AutoBridge(mock_masked_lm)
+        assert bridge_masked_lm.hf_pretrained == mock_masked_lm
+
         # Test with invalid type
         with pytest.raises(
             ValueError,
@@ -687,6 +692,29 @@ class TestAutoBridge:
         import inspect
 
         assert inspect.ismethod(AutoBridge.from_hf_pretrained)
+
+    def test_pretrained_wrapper_cls_property(self):
+        """Test _pretrained_wrapper_cls resolves the wrapper class for each hf_pretrained kind."""
+        # A PreTrainedMaskedLM instance resolves directly, regardless of its config.
+        mock_masked_lm = Mock(spec=PreTrainedMaskedLM)
+        bridge = AutoBridge(mock_masked_lm)
+        assert bridge._pretrained_wrapper_cls is PreTrainedMaskedLM
+
+        # A PreTrainedCausalLM instance resolves directly, regardless of its config.
+        mock_causal_lm = Mock(spec=PreTrainedCausalLM)
+        bridge = AutoBridge(mock_causal_lm)
+        assert bridge._pretrained_wrapper_cls is PreTrainedCausalLM
+
+        # A bare PretrainedConfig falls back to resolving from the config's architectures.
+        masked_lm_config = Mock(spec=PretrainedConfig)
+        masked_lm_config.architectures = ["BertForMaskedLM"]
+        bridge = AutoBridge(masked_lm_config)
+        assert bridge._pretrained_wrapper_cls is PreTrainedMaskedLM
+
+        causal_lm_config = Mock(spec=PretrainedConfig)
+        causal_lm_config.architectures = ["LlamaForCausalLM"]
+        bridge = AutoBridge(causal_lm_config)
+        assert bridge._pretrained_wrapper_cls is PreTrainedCausalLM
 
     def test_from_hf_config(self):
         """Test creating bridge from config only."""
@@ -890,6 +918,41 @@ class TestAutoBridge:
                 bridge.load_hf_weights(mock_megatron_model, "./custom_model")
 
                 mock_from_pretrained.assert_called_once_with("./custom_model", trust_remote_code=False)
+                mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
+                    mock_loaded_model,
+                    mock_megatron_model,
+                    allowed_mismatched_params=None,
+                )
+
+    def test_load_hf_weights_from_path_with_masked_lm(self):
+        """Test loading weights from a path dispatches to PreTrainedMaskedLM when hf_pretrained is one."""
+        mock_hf_model = Mock(spec=PreTrainedMaskedLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        mock_model_bridge = Mock()
+        mock_model_bridge.load_weights_hf_to_megatron = Mock()
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+
+            with (
+                patch(
+                    "megatron.bridge.models.conversion.auto_bridge.PreTrainedMaskedLM.from_pretrained"
+                ) as mock_masked_lm_from_pretrained,
+                patch(
+                    "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+                ) as mock_causal_lm_from_pretrained,
+            ):
+                mock_loaded_model = Mock(spec=PreTrainedMaskedLM)
+                mock_masked_lm_from_pretrained.return_value = mock_loaded_model
+
+                bridge.load_hf_weights(mock_megatron_model, "./custom_model")
+
+                mock_masked_lm_from_pretrained.assert_called_once_with("./custom_model", trust_remote_code=False)
+                mock_causal_lm_from_pretrained.assert_not_called()
                 mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
                     mock_loaded_model,
                     mock_megatron_model,
@@ -1157,6 +1220,23 @@ class TestAutoBridge:
             mock_transformers.LlamaForCausalLM = mock_arch_class
 
             # Create bridge instance directly without isinstance validation
+            bridge = AutoBridge.__new__(AutoBridge)
+            bridge.hf_pretrained = mock_hf_model
+
+            arch = bridge._causal_lm_architecture
+            assert arch == mock_arch_class
+
+    def test_get_causal_lm_architecture_with_masked_lm_wrapper(self):
+        """Test _causal_lm_architecture reads config off a PreTrainedMaskedLM wrapper too."""
+        mock_hf_model = Mock(spec=PreTrainedMaskedLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["BertForMaskedLM"]
+        mock_hf_model.config.auto_map = None
+
+        with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+            mock_arch_class = Mock()
+            mock_transformers.BertForMaskedLM = mock_arch_class
+
             bridge = AutoBridge.__new__(AutoBridge)
             bridge.hf_pretrained = mock_hf_model
 
