@@ -404,6 +404,23 @@ class TestApplyDatasetOverride:
         result = apply_dataset_override(config, "vlm-energon")
         assert result.dataset is existing
 
+    def test_vlm_energon_applies_explicit_sequence_length_to_dataset_and_model(self):
+        from megatron.bridge.data.builders import EnergonDatasetConfig, HFEnergonTaskEncoderConfig
+
+        existing = EnergonDatasetConfig(
+            path="/data/shards",
+            seq_length=4096,
+            micro_batch_size=2,
+            task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+        )
+        config = _make_mock_config(dataset=existing, model_seq_length=4096)
+
+        result = apply_dataset_override(config, "vlm-energon", seq_length=8192)
+
+        assert result.dataset is existing
+        assert result.dataset.seq_length == 8192
+        assert result.model.seq_length == 8192
+
     def test_vlm_energon_requires_recipe_specific_task_encoder_config(self):
         config = _make_mock_config(dataset=None, micro_batch_size=4, global_batch_size=64)
 

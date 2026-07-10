@@ -242,6 +242,8 @@ def apply_dataset_override(
                 "vlm-energon requires a recipe that defines EnergonDatasetConfig with a model-specific "
                 "task_encoder config; a generic runtime encoder cannot be inferred."
             )
+        if seq_length is not None:
+            config.dataset.seq_length = resolved_seq_length
         logger.info("Recipe already provides EnergonDatasetConfig; keeping its task-encoder configuration.")
 
     elif dataset_type == "vlm-hf":

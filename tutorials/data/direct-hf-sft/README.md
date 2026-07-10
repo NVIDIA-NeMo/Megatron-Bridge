@@ -79,13 +79,13 @@ cfg.dataset = DirectHFSFTDatasetConfig(
 
 Use a JSON array or one object per line in JSONL. Rows may use `messages`, singular `conversation`, or legacy `conversations` with `from`/`value` turns.
 
-For local multimodal rows, use typed content directly or legacy placeholders plus top-level media lists:
+For local multimodal rows, encode processor-supported media directly in the conversation. The exact typed-content schema is model-specific; for example, Qwen-VL accepts:
 
 ```json
-{"messages": [{"role": "user", "content": "<image>Describe this receipt."}, {"role": "assistant", "content": "A store receipt."}], "images": ["receipts/0001.png"]}
+{"messages": [{"role": "user", "content": [{"type": "image", "image": "/data/vlm/receipts/0001.png"}, {"type": "text", "text": "Describe this receipt."}]}, {"role": "assistant", "content": [{"type": "text", "text": "A store receipt."}]}]}
 ```
 
-Media references are row data, so use paths or URLs that the workers can resolve. For large local media collections that need dataset-managed sharding and asset loading, use Energon. Rows loaded by the Hugging Face `json` builder follow the same chat-template/loss-mask logic and model processor/collator path as Hub rows. CP/SP padding and supported in-batch packing settings remain fields of `DirectHFSFTDatasetConfig`.
+Media references are row data interpreted by the selected model processor, so use a processor-supported schema and paths or URLs that every worker can resolve. The removed preloaded placeholder plus top-level media-list schema is not adapted automatically. For large local media collections that need dataset-managed sharding and asset loading, use Energon. Rows loaded by the Hugging Face `json` builder follow the same chat-template/loss-mask logic and model processor/collator path as Hub rows. CP/SP padding and supported in-batch packing settings remain fields of `DirectHFSFTDatasetConfig`.
 
 ### Migrate from `vlm-preloaded`
 
@@ -97,7 +97,7 @@ Media references are row data, so use paths or URLs that the workers can resolve
 | `dataset.train_data_path` | `source=HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": {"train": ...}})` |
 | `dataset.valid_data_path` | An explicit HF `validation_source`, or an Energon split |
 | `dataset.test_data_path` | An explicit HF `test_source`, or an Energon split |
-| `dataset.image_folder` | Store worker-resolvable media references in HF rows, use an adapter-owned root, or use Energon |
+| `dataset.image_folder` | Encode processor-supported, worker-resolvable media references in conversation content; use an adapter-owned root or Energon where applicable |
 
 The Direct HF path keeps chat rendering, assistant loss masking, processor-selected VLM/omni collation, CP/SP padding, and supported in-batch packing in `DirectHFSFTDatasetBuilder`; Hugging Face datasets owns source loading.
 

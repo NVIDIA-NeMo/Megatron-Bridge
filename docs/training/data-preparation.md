@@ -226,10 +226,10 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 `EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Qwen-VL, generic HF, and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig`, `HFEnergonTaskEncoderConfig`, and `NemotronOmniEnergonTaskEncoderConfig`, respectively. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
 
-For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations` plus worker-resolvable media paths:
+For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations`. Multimodal content must follow the selected model processor's schema; for example, Qwen-VL accepts an inline typed image with a worker-resolvable path:
 
 ```json
-{"messages": [{"role": "user", "content": "<image>Describe the image."}, {"role": "assistant", "content": "A receipt."}], "images": ["receipt_0001.jpg"]}
+{"messages": [{"role": "user", "content": [{"type": "image", "image": "/data/vlm/receipt_0001.jpg"}, {"type": "text", "text": "Describe the image."}]}, {"role": "assistant", "content": [{"type": "text", "text": "A receipt."}]}]}
 ```
 
 ```bash
@@ -246,7 +246,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-The `vlm-preloaded` selector and `PreloadedVLMConversationProvider` were removed without a replacement local selector. Use `vlm-hf` plus `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` for files supported by Hugging Face datasets, or convert the data to Energon. File-based validation and test data require explicit `validation_source` and `test_source` configs in Python; otherwise disable those stages. There is no `image_folder` compatibility field: keep media references resolvable in the rows, use an adapter-owned root where available, or use Energon.
+The `vlm-preloaded` selector and `PreloadedVLMConversationProvider` were removed without a replacement local selector. Use `vlm-hf` plus `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` for files supported by Hugging Face datasets, or convert the data to Energon. File-based validation and test data require explicit `validation_source` and `test_source` configs in Python; otherwise disable those stages. There is no `image_folder` compatibility field and the old placeholder plus top-level media-list schema is not rewritten: encode media using the selected processor's supported conversation schema, use an adapter-owned root where available, or use Energon.
 
 For a complete WebDataset/Energon preparation example, see [VALOR32K-AVQA Dataset Preparation Guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md).
 
