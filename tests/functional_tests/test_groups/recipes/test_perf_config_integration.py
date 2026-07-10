@@ -194,7 +194,7 @@ class TestPerfConfigIntegration:
             (
                 "llama",
                 "megatron.bridge.perf_recipes.llama.h100.llama3:llama3_8b_pretrain_8gpu_h100_fp8cs_config",
-                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "NCCL_CTA_POLICY": 1},
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_CTA_POLICY": 1},
             ),
             (
                 "nemotronh",
@@ -224,7 +224,7 @@ class TestPerfConfigIntegration:
             (
                 "wan",
                 "megatron.bridge.perf_recipes.wan.h100.wan:wan_14b_pretrain_32gpu_h100_bf16_config",
-                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 16, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
             ),
         ],
     )

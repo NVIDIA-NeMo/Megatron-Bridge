@@ -356,8 +356,8 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Apply launcher-only settings without importing Megatron-Bridge on the login node."""
-        # Recipe-dependent environment variables are applied by run_script_with_env.py
-        # inside the training container, where the flat recipe can be imported safely.
+        # Recipe-dependent environment variables are applied by run_script.py inside
+        # the training container, where the flat recipe can be imported safely.
         self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
         self._set_vboost(task, executor, self.enable_vboost)
         self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)

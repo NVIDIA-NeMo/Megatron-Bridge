@@ -55,8 +55,8 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script_with_env.py"
-ENTRYPOINT_RECIPE = "run_script_with_env.py"
+ENTRYPOINT_PERFORMANCE = "run_script.py"
+ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -66,7 +66,7 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 def _filter_run_script_args(argv: List[str]) -> List[str]:
     """Drop launcher-only args before forwarding argv to the rank-local script.
 
-    The launcher (this script) and the rank-local pre-exec wrapper share one
+    The launcher (this script) and the rank-local training scripts share one
     parser, but some args are meaningful only to the launcher and must not
     reach the rank-local scripts:
 
@@ -537,7 +537,7 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
+        script_name = ENTRYPOINT_PERFORMANCE
         if wandb_experiment_name is not None:
             # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
             # login node in this path: recipe imports belong in the training container.
