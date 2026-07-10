@@ -75,13 +75,16 @@ class HYV3Bridge(MegatronModelBridge):
         provider.qk_layernorm = True  # Hy V3 uses QK layernorm
         provider.attention_softmax_in_fp32 = False
         provider.autocast_dtype = torch.bfloat16
-
+        provider.fp16 = False
+        provider.bf16 = True
+        provider.params_dtype = torch.bfloat16
         provider.moe_grouped_gemm = True
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_router_load_balancing_type = "none"
         provider.moe_router_pre_softmax = False
         provider.moe_router_score_function = "sigmoid"
         provider.moe_router_enable_expert_bias = True
+        provider.moe_router_bias_update_rate = 0
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
         provider.moe_shared_expert_overlap = False
