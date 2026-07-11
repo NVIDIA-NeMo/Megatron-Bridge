@@ -38,7 +38,7 @@ def gemma_2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return the original Gemma 2B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="google/gemma-2b",
-        revision="9cf48e52b224239de00d483ec8eb84fb8d0f3a3a",
+        revision="9cf48e52b224239de00d483ec8eb84fb8d0f3a3a",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
     )
@@ -49,7 +49,7 @@ def gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     with _gemma4_text_conversion_mode():
         return build_text_pretrain_config(
             hf_model_id="google/gemma-4-26B-A4B",
-            revision="6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb",
+            revision="6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb",  # pragma: allowlist secret
             tensor_parallelism=1,
             pipeline_parallelism=1,
             expert_parallelism=8,
@@ -62,7 +62,7 @@ def gemma4_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     with _gemma4_text_conversion_mode():
         return build_text_pretrain_config(
             hf_model_id="google/gemma-4-31B",
-            revision="d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3",
+            revision="d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3",  # pragma: allowlist secret
             tensor_parallelism=4,
             pipeline_parallelism=2,
             trust_remote_code=True,

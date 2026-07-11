@@ -22,7 +22,7 @@ def mimo_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return the MiMo 7B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="XiaomiMiMo/MiMo-7B-Base",
-        revision="c72df4586cb8bdeebd65f36929cd3385a6566fbe",
+        revision="c72df4586cb8bdeebd65f36929cd3385a6566fbe",  # pragma: allowlist secret
         tensor_parallelism=2,
         pipeline_parallelism=1,
         trust_remote_code=True,

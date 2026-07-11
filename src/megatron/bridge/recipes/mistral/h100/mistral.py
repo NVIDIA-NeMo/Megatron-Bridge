@@ -22,7 +22,7 @@ def mistral_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Mistral 7B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="mistralai/Mistral-7B-v0.1",
-        revision="27d67f1b5f57dc0953326b2601d68371d40ea8da",
+        revision="27d67f1b5f57dc0953326b2601d68371d40ea8da",  # pragma: allowlist secret
         tensor_parallelism=2,
         pipeline_parallelism=1,
     )

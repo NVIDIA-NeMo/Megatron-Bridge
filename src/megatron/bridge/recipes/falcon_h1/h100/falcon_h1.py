@@ -22,7 +22,7 @@ def falcon_h1_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Falcon H1 500M H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="tiiuae/Falcon-H1-0.5B-Instruct",
-        revision="8f2587ca06bff78d8fa1adfccbe8c24d5f86b368",
+        revision="8f2587ca06bff78d8fa1adfccbe8c24d5f86b368",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
         trust_remote_code=True,

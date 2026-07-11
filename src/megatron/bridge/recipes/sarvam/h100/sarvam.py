@@ -22,7 +22,7 @@ def sarvam_30b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Sarvam 30B MoE H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="sarvamai/sarvam-30b",
-        revision="071ae95e933605ca1104a6b4524a36a98488efa4",
+        revision="071ae95e933605ca1104a6b4524a36a98488efa4",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
         expert_parallelism=8,

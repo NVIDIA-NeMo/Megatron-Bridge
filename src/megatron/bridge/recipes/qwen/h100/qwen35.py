@@ -22,7 +22,7 @@ def qwen35_27b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Qwen3.5 27B dense H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="Qwen/Qwen3.5-27B",
-        revision="fc05daec18b0a78c049392ed2e771dde82bdf654",
+        revision="fc05daec18b0a78c049392ed2e771dde82bdf654",  # pragma: allowlist secret
         tensor_parallelism=4,
         pipeline_parallelism=2,
         trust_remote_code=True,
@@ -33,7 +33,7 @@ def qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Qwen3.5 35B-A3B MoE H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="Qwen/Qwen3.5-35B-A3B",
-        revision="59d61f3ce65a6d9863b86d2e96597125219dc754",
+        revision="59d61f3ce65a6d9863b86d2e96597125219dc754",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
         expert_parallelism=8,
