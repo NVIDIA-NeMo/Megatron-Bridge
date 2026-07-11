@@ -38,6 +38,8 @@ from .deepseek_v4 import (
     deepseek_v4_flash_pretrain_muon_config,
     deepseek_v4_flash_pretrain_mxfp8_config,
     deepseek_v4_flash_sft_config,
+    deepseek_v4_pro_pretrain_config,
+    deepseek_v4_pro_pretrain_mxfp8_config,
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 
@@ -56,5 +58,7 @@ __all__ = [
     "deepseek_v4_flash_pretrain_muon_config",
     "deepseek_v4_flash_sft_config",
     "deepseek_v4_flash_no_mtp_sft_config",
+    "deepseek_v4_pro_pretrain_config",
+    "deepseek_v4_pro_pretrain_mxfp8_config",
     "set_deepseek_v4_pipeline_model_parallel_layout",
 ]

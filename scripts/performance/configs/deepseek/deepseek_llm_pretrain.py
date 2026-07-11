@@ -14,6 +14,7 @@
 
 import logging
 
+import torch
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
@@ -23,6 +24,9 @@ from megatron.bridge.recipes.deepseek.deepseek_v3 import (
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import (
     set_deepseek_v3_pipeline_model_parallel_layout,
+)
+from megatron.bridge.recipes.deepseek.deepseek_v4 import (
+    deepseek_v4_pro_pretrain_mxfp8_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
@@ -285,5 +289,108 @@ def deepseek_v3_pretrain_config_h100(
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
+
+    return cfg
+
+
+def set_deepseek_v4_pro_common_configs(cfg: ConfigContainer) -> None:
+    """Set the full-scale DeepSeek-V4-Pro performance knobs.
+
+    Call after ``set_workload_base_configs``/``set_full_iter_cg_configs`` so
+    these settings win over
+    ``_set_common_perf_overrides`` (which forces the TE op fuser off and the
+    cross-entropy fusion impl back to ``te``).
+    """
+    cfg.model.moe_router_force_load_balancing = True
+
+    # Fused DSA sparse attention (FlashMLA forward + cuDNN DSA backward) — the
+    # dominant perf lever over the unfused PyTorch DSA path.
+    cfg.model.apply_dsa_kernel_fusion = True
+
+    # TE op fuser + native cross-entropy fusion (dev backbone disables the "te"
+    # cross-entropy fusion path for DSv4).
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+
+    # cuteDSL fused grouped-MLP interleave (clamped SwiGLU fusion path).
+    cfg.model.moe_mlp_glu_interleave_size = 32
+
+    # Native global MXFP8 (matching the MLM reference), overriding the lib mxfp8 config's
+    # eval-oriented choices. The lib bundles a per-layer "kitchen" quant_recipe
+    # (TEQuantizationParams, MXFP8-train/BF16-eval) with fp8_param_gather=False; that exists
+    # only for DSv4 MTP/validation BF16 eval, which a perf benchmark (eval_iters=0) doesn't
+    # use. Perf wants standard TE MXFP8 with fp8 param gather ON (perf-optimal, = MLM).
+    cfg.model.quant_recipe = None
+    cfg.mixed_precision.fp8_param_gather = True
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = True
+
+    # Train the DSA/CSA indexer, matching the MLM reference. The library recipe
+    # zeroes the indexer auxiliary loss for evaluation-oriented use, which leaves
+    # the sparse-token selector without a direct training signal. A faithful
+    # performance configuration keeps it on.
+    cfg.model.dsa_indexer_loss_coeff = 0.01
+    cfg.model.dsa_indexer_use_sparse_loss = True
+
+    # No CPU (pinned host) paged-stash spill buffer, matching the MLM reference
+    # (cpu factor 0.0; cuda factor stays 1.2). set_full_iter_cg_configs defaults
+    # this to 1.0, which mirrors the multi-tens-of-GB stash working set into
+    # page-locked host RAM per rank -- with 4 ranks/GB300 node that blows the
+    # host cgroup (OOM-killed at iter 2). The 1.2x HBM buffer holds the stash alone.
+    cfg.model.moe_paged_stash_buffer_size_factor_cpu = 0.0
+
+    # BF16 precision-aware optimizer master gradients, matching the MLM reference.
+    # The lib forces main_grads_dtype=fp32 (deepseek_v4.py); MLM uses bf16. With the
+    # precision-aware optimizer (enabled here) bf16 master grads are valid and halve
+    # the master-grad buffer. grad_reduce_in_fp32 (the DDP reduce path) is already
+    # False above -- this is the separate optimizer-side knob.
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+
+    cfg.dist.enable_megatron_core_experimental = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+
+def deepseek_v4_pro_pretrain_config_gb300(
+    precision: str = "fp8_mx", mock: bool = True, config_variant: str = "v1"
+) -> ConfigContainer:
+    """Build the full 61-layer DeepSeek-V4-Pro GB300 performance config."""
+    if precision != "fp8_mx":
+        raise NotImplementedError(
+            "DeepSeek-V4-Pro performance configs currently support precision='fp8_mx' "
+            f"(MXFP8) only; got {precision!r}."
+        )
+
+    base_cfg = get_workload_base_config(
+        model_family_name="deepseek",
+        model_recipe_name="deepseek_v4_pro",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        task="pretrain",
+        config_variant=config_variant,
+    )
+
+    cfg = deepseek_v4_pro_pretrain_mxfp8_config()
+
+    # Pre-apply the validated full-scale parallelism before common overrides.
+    cfg.model.pipeline_model_parallel_size = base_cfg.pipeline_model_parallel_size
+    cfg.model.virtual_pipeline_model_parallel_size = base_cfg.virtual_pipeline_model_parallel_size
+    cfg.model.expert_model_parallel_size = base_cfg.expert_model_parallel_size
+    cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
+
+    cfg.model.pipeline_model_parallel_layout = base_cfg.pp_layout
+
+    set_workload_base_configs(cfg, base_cfg)
+    if is_full_iteration_cuda_graph(cfg.model):
+        set_full_iter_cg_configs(cfg)
+    set_deepseek_v4_pro_common_configs(cfg)
+
+    # Fine-grained activation offloading of attention activations matches the
+    # validated full-scale GB300 run.
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["core_attn", "attn_proj"]
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 2
+
+    cfg.comm_overlap.overlap_grad_reduce = True
 
     return cfg

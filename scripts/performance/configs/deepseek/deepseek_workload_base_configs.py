@@ -344,7 +344,39 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_GBS15360 = replace(
 )
 
 
+# =============================================================================
+# DeepSeek V4 Pro Pretrain (MXFP8, full-iteration CUDA graph + fused DSA)
+#
+# Full Pro is the 61-layer production model. This configuration mirrors the
+# DeepSeek-V3 FP8_MX full-iteration pattern: full-iteration CUDA graphs and the
+# cuteDSL fused grouped MLP automatically plumb the required environment via
+# the performance plugins.
+# =============================================================================
+
+BASE_DEEPSEEK_V4_PRO_CONFIG = WorkloadBaseConfig(
+    expert_tensor_parallel_size=1,
+    moe_flex_dispatcher_backend="hybridep",
+    num_gpus=256,
+    micro_batch_size=1,
+    global_batch_size=4096,
+)
+
+# Full 61-layer Pro: TP=1, PP=4, VPP=4, EP=64 on 256 GPUs, GBS=4096.
+DEEPSEEK_V4_PRO_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
+    BASE_DEEPSEEK_V4_PRO_CONFIG,
+    pipeline_model_parallel_size=4,
+    virtual_pipeline_model_parallel_size=4,
+    expert_model_parallel_size=64,
+    moe_a2a_overlap=False,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    cutedsl_fused_grouped_mlp=True,
+    pp_layout="Et*4|(tttt|)*14tmL",
+    recompute_modules=["mla_up_proj", "mhc"],
+)
 __all__ = [
+    # DeepSeek V4 Pro (MXFP8)
+    "DEEPSEEK_V4_PRO_PRETRAIN_CONFIG_GB300_FP8_MX_V1",
     # V1 (original GBS settings)
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_BF16_V1",
     "DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
