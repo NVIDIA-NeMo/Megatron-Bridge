@@ -46,16 +46,16 @@ removed from the scope.
 
 | ID | Family | Architecture | Params | Recipe | Status |
 |---|---|---|---:|---|---|
-| `ling-flash-2` | Bailing | Ling 2.0 Flash | 100B | `ling_flash_100b_pretrain_16gpu_h100_bf16_config` | TODO |
+| `ling-flash-2` | Bailing | Ling 2.0 Flash | 100B | `ling_flash_100b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5613704 borderline OOM; expandable segments added |
 | `ling-mini-2` | Bailing | Ling MoE V2 / Mini | 16B | `ling_mini_16b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `deepseek-v2` | DeepSeek | DeepSeek V2 | 235.7B | `deepseek_v2_pretrain_128gpu_h100_bf16_config` | TODO |
 | `deepseek-v2-lite` | DeepSeek | DeepSeek V2 Lite | 15.7B | `deepseek_v2_lite_pretrain_8gpu_h100_bf16_config` | TODO |
 | `deepseek-v4-flash` | DeepSeek | DeepSeek V4 Flash | 292B | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_config` | TODO |
 | `ernie45-21b-a3b` | Ernie | Ernie 4.5 MoE | 21.9B | `ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config` | TODO |
-| `falcon-h1-500m` | Falcon | Falcon H1 | 0.5B | `falcon_h1_500m_pretrain_1gpu_h100_bf16_config` | TODO |
-| `gemma-2b` | Gemma | Gemma | 2.5B | `gemma_2b_pretrain_1gpu_h100_bf16_config` | TODO |
-| `gemma2-2b` | Gemma | Gemma 2 | 2.6B | `gemma2_2b_pretrain_2gpu_h100_bf16_config` | TODO |
-| `gemma3-1b` | Gemma | Gemma 3 | 1B | `gemma3_1b_pretrain_1gpu_h100_bf16_config` | TODO |
+| `falcon-h1-500m` | Falcon | Falcon H1 | 0.5B | `falcon_h1_500m_pretrain_1gpu_h100_bf16_config` | RETRY: job 5613696 missing `[ssm]` runtime extra |
+| `gemma-2b` | Gemma | Gemma | 2.5B | `gemma_2b_pretrain_1gpu_h100_bf16_config` | RETRY: job 5613698 gated-config 401; direct provider added |
+| `gemma2-2b` | Gemma | Gemma 2 | 2.6B | `gemma2_2b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613705](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/03w4wcsy) |
+| `gemma3-1b` | Gemma | Gemma 3 | 1B | `gemma3_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613697](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/a62ht0v9) |
 | `gemma4-26b-a4b` | Gemma | Gemma 4 26B-A4B MoE | 26.5B | `gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `gemma4-31b` | Gemma | Gemma 4 31B dense | 32.7B | `gemma4_31b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `glm45-355b` | GLM | GLM-4.5 | 358.3B | `glm45_355b_pretrain_128gpu_h100_bf16_config` | TODO |
@@ -67,7 +67,7 @@ removed from the scope.
 | `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | TODO |
 | `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | TODO |
 | `llama31-8b` | Llama | Llama 3.1 | 8B | `llama31_8b_pretrain_2gpu_h100_bf16_config` | TODO |
-| `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | TODO |
+| `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613679](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3w8ubwh7) |
 | `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama31_70b_pretrain_32gpu_h100_bf16_config` | TODO |
 | `minimax-m2` | MiniMax | MiniMax-M2 | 456B | `minimax_m2_pretrain_16gpu_h100_bf16_config` | TODO |
 | `minimax-m2-5` | MiniMax | MiniMax-M2.5 | 456B | `minimax_m2_5_pretrain_16gpu_h100_bf16_config` | TODO |
