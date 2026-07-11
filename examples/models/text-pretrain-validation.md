@@ -57,7 +57,7 @@ removed from the scope.
 | `gemma2-2b` | Gemma | Gemma 2 | 2.6B | `gemma2_2b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613705](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/03w4wcsy) |
 | `gemma3-1b` | Gemma | Gemma 3 | 1B | `gemma3_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613697](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/a62ht0v9) |
 | `gemma4-26b-a4b` | Gemma | Gemma 4 26B-A4B MoE | 26.5B | `gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config` | RETRY: job 5615021 full recompute is incompatible with tuple output; TP=2 added |
-| `gemma4-31b` | Gemma | Gemma 4 31B dense | 32.7B | `gemma4_31b_pretrain_8gpu_h100_bf16_config` | RETRY: job 5614970 used unsupported PP=2; changed to TP=8/PP=1 |
+| `gemma4-31b` | Gemma | Gemma 4 31B dense | 32.7B | `gemma4_31b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615073](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/mggjp1f0) |
 | `glm45-355b` | GLM | GLM-4.5 | 358.3B | `glm45_355b_pretrain_128gpu_h100_bf16_config` | FAIL: job 5615002 requires a 31.75 GiB/rank grad buffer after 71.30 GiB is allocated; exceeds 16-H100 capacity |
 | `glm47-355b` | GLM | GLM-4.7 | 358.3B | `glm47_355b_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615004 requires a 31.75 GiB/rank grad buffer after 71.30 GiB is allocated; exceeds 16-H100 capacity |
 | `glm47-flash-31b` | GLM | GLM-4.7-Flash | 31.2B | `glm47_flash_31b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615023](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/6w25bpw6) |
