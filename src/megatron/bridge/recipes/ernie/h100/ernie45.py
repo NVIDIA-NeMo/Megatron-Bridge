@@ -20,7 +20,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 def ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the ERNIE 4.5 21B-A3B H100 pretrain config."""
-    return build_text_pretrain_config(
+    cfg = build_text_pretrain_config(
         hf_model_id="baidu/ERNIE-4.5-21B-A3B-PT",
         revision="87db95487941cb39592ee0abca3b9155a6d19c5c",  # pragma: allowlist secret
         tensor_parallelism=1,
@@ -28,6 +28,13 @@ def ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         expert_parallelism=8,
         trust_remote_code=True,
     )
+    # The 103,424-way output projection needs a 1.58 GiB float32 logits
+    # buffer. Full recompute leaves enough headroom for that buffer on H100.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+    return cfg
 
 
 __all__ = ["ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config"]
