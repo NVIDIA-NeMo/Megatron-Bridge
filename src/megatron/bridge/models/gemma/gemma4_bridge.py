@@ -50,6 +50,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
     rope_local_base_freq_from_hf,
     rope_theta_from_hf,
 )
+from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -148,13 +149,6 @@ def _rope_parameters_from_provider(provider: Gemma4ModelProvider | Gemma4DensePr
             "rope_type": "default",
         },
     }
-
-
-def _sliding_window_from_provider(window_size: int | list[int] | tuple[int, int] | None) -> int | None:
-    """Convert MCore's causal window representation to the Hugging Face size."""
-    if isinstance(window_size, (list, tuple)):
-        return window_size[0] + 1
-    return window_size
 
 
 # ---------------------------------------------------------------------------
@@ -321,7 +315,7 @@ class Gemma4Bridge(MegatronModelBridge):
                     provider.num_global_key_value_heads if is_moe else provider.num_global_query_groups
                 ),
                 "rope_parameters": _rope_parameters_from_provider(provider),
-                "sliding_window": _sliding_window_from_provider(window_size),
+                "sliding_window": mcore_to_hf_window_size(window_size),
                 "use_double_wide_mlp": getattr(provider, "use_double_wide_mlp", False),
                 "vocab_size_per_layer_input": getattr(provider, "per_layer_embed_vocab_size", provider.vocab_size),
             }
