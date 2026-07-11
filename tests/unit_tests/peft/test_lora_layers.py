@@ -417,15 +417,15 @@ class TestPatchLinearModule:
         """Quantized and specialized Linear subclasses should retain their forward implementation."""
 
         class OffsetLinear(nn.Linear):
-            def forward(self, x):
-                return super().forward(x) + 3.0
+            def forward(self, x, *, offset=3.0):
+                return super().forward(x) + offset
 
         linear = OffsetLinear(3, 2)
         patched_linear = patch_linear_module(linear, dim=2)
         patched_linear.disable_adapter_layers()
         x = torch.randn(4, 3)
 
-        torch.testing.assert_close(patched_linear(x), linear(x))
+        torch.testing.assert_close(patched_linear(x, offset=5.0), linear(x, offset=5.0))
 
     def test_patch_linear_module_preserves_base_children(self):
         """Specialized Linear child modules should remain traversable, movable, and checkpointed."""
@@ -481,6 +481,62 @@ class TestPatchLinearModule:
         with pytest.raises(RuntimeError, match="Unexpected key"):
             target.load_state_dict(state_with_unknown_key, strict=True)
 
+    def test_patch_linear_module_assignment_load_updates_wrapper_and_base(self):
+        """Assignment-style loads should replace the shared parameters on both module views."""
+        source = patch_linear_module(nn.Linear(3, 2), dim=2)
+        target = patch_linear_module(nn.Linear(3, 2), dim=2)
+        old_weight = target.weight
+        with torch.no_grad():
+            source.weight.fill_(7.0)
+
+        target.load_state_dict(source.state_dict(), strict=True, assign=True)
+
+        assert target.weight is not old_weight
+        assert target.base_linear.weight is target.weight
+        torch.testing.assert_close(target.weight, source.weight)
+
+    def test_patch_linear_module_preserves_base_serialization_hooks(self):
+        """Save and load hooks should run once with the original module identity."""
+        events = []
+        linear = nn.Linear(3, 2)
+        linear.register_state_dict_pre_hook(
+            lambda module, prefix, keep_vars: events.append(("save_pre", module, prefix))
+        )
+        linear.register_state_dict_post_hook(
+            lambda module, state_dict, prefix, local_metadata: events.append(("save_post", module, prefix))
+        )
+        linear.register_load_state_dict_pre_hook(
+            lambda module, state_dict, prefix, local_metadata, strict, missing, unexpected, errors: events.append(
+                ("load_pre", module, prefix)
+            )
+        )
+        linear.register_load_state_dict_post_hook(
+            lambda module, incompatible_keys: events.append(("load_post", module, incompatible_keys))
+        )
+        patched_linear = patch_linear_module(linear, dim=2)
+
+        state_dict = patched_linear.state_dict()
+
+        assert [(event[0], event[1]) for event in events] == [("save_pre", linear), ("save_post", linear)]
+        events.clear()
+
+        patched_linear.load_state_dict(state_dict, strict=True)
+
+        assert [(event[0], event[1]) for event in events] == [("load_pre", linear), ("load_post", linear)]
+
+    def test_patch_linear_module_tracks_fsdp_style_parameter_replacement(self):
+        """The delegated forward should use a parameter later installed on the wrapper."""
+        target = patch_linear_module(nn.Linear(3, 2, bias=False), dim=2)
+        target.disable_adapter_layers()
+        replacement = nn.Parameter(torch.full_like(target.weight, 2.0), requires_grad=False)
+        target._parameters["weight"] = replacement
+        x = torch.ones(1, 3)
+
+        output = target(x)
+
+        assert target.base_linear.weight is replacement
+        torch.testing.assert_close(output, torch.full((1, 2), 6.0))
+
     def test_patch_te_linear_module(self):
         """Test patching TELinear module."""
         te_linear = te.Linear(10, 5, device="cuda")
@@ -497,6 +553,7 @@ class TestPatchLinearModule:
         assert hasattr(patched_linear, "linear_in")
         assert hasattr(patched_linear, "linear_out")
         torch.testing.assert_close(patched_linear(x), base_output)
+        torch.testing.assert_close(patched_linear(x, is_first_microbatch=True), base_output)
         with torch.no_grad():
             patched_linear.linear_in.weight.fill_(0.25)
             patched_linear.linear_out.weight.fill_(0.5)
@@ -508,6 +565,18 @@ class TestPatchLinearModule:
         patched_linear.disable_adapter_layers()
         torch.testing.assert_close(patched_linear(x), base_output)
         torch.testing.assert_close(target(x), base_output)
+
+    def test_patch_te_linear_module_preserves_return_bias_tuple(self):
+        """The wrapper should adapt TE output without dropping its returned bias."""
+        te_linear = te.Linear(10, 5, device="cuda", return_bias=True)
+        x = torch.randn(3, 10, device="cuda")
+        base_output, base_bias = te_linear(x)
+        patched_linear = patch_linear_module(te_linear, dim=4)
+
+        output, bias = patched_linear(x, is_first_microbatch=True)
+
+        torch.testing.assert_close(output, base_output)
+        assert bias is base_bias
 
     def test_patch_linear_module_unsupported_type(self):
         """Test error with unsupported module type."""

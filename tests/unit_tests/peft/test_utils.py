@@ -1714,18 +1714,22 @@ class TestGroupedExpertLinearAdapter:
             adapter.linear_out.weight.normal_()
         x = torch.randn(5, 16, device="cuda", dtype=torch.bfloat16, requires_grad=True)
 
-        output = adapter(x, [2, 3])
+        reference_x = x.detach().clone().requires_grad_()
+        reference_linear_in = adapter.linear_in.weight.detach().clone().requires_grad_()
+        reference_linear_out = adapter.linear_out.weight.detach().clone().requires_grad_()
         expected_chunks = []
-        for expert_idx, expert_input in enumerate(x.split([2, 3])):
-            hidden = nn.functional.linear(expert_input, adapter.linear_in.weight[expert_idx])
-            expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
+        for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
+            hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
         expected = torch.cat(expected_chunks)
+        expected.float().sum().backward()
 
+        output = adapter(x, [2, 3])
         torch.testing.assert_close(output, expected, rtol=2e-2, atol=2e-2)
         output.float().sum().backward()
-        assert x.grad is not None
-        assert adapter.linear_in.weight.grad is not None
-        assert adapter.linear_out.weight.grad is not None
+        torch.testing.assert_close(x.grad, reference_x.grad, rtol=2e-2, atol=2e-2)
+        torch.testing.assert_close(adapter.linear_in.weight.grad, reference_linear_in.grad, rtol=2e-2, atol=2e-2)
+        torch.testing.assert_close(adapter.linear_out.weight.grad, reference_linear_out.grad, rtol=2e-2, atol=2e-2)
 
     def test_grouped_expert_linear_adapter_requires_expert_tp_group_for_gather(self):
         """Per-expert LoRA should fail clearly when expert TP is configured without initialized groups."""

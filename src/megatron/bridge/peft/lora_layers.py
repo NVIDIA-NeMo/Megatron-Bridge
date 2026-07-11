@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Any, Literal, Optional, Tuple, Union
+from typing import Any, Literal, Optional, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
@@ -22,14 +22,6 @@ from megatron.core.transformer.moe.moe_utils import apply_random_logits
 
 from megatron.bridge.peft.adapter_wrapper import AdapterWrapper
 from megatron.bridge.peft.lora_merge import LoRAMerge
-from megatron.bridge.utils.import_utils import safe_import
-
-
-if torch.cuda.is_available():
-    bitsandbytes, HAVE_BNB = safe_import("bitsandbytes")
-else:
-    bitsandbytes = None
-    HAVE_BNB = False
 
 
 class LoRALinear(AdapterWrapper):
@@ -694,6 +686,7 @@ class LinearModuleAdapter(nn.Module):
         for name, module in orig_linear._modules.items():
             self.add_module(name, module)
         object.__setattr__(self, "_base_linear", orig_linear)
+        self._register_base_state_hooks()
         self._sync_base_state()
         LinearAdapter._init_adapter(
             self,
@@ -735,6 +728,47 @@ class LinearModuleAdapter(nn.Module):
         for name in self._base_module_names:
             base_linear._modules[name] = self._modules[name]
 
+    def _register_base_state_hooks(self) -> None:
+        """Run the hidden base module's serialization hooks on this wrapper."""
+        base_linear = object.__getattribute__(self, "_base_linear")
+
+        for base_hook in base_linear._state_dict_pre_hooks.values():
+
+            def state_dict_pre_hook(_module, prefix, keep_vars, hook=base_hook):
+                return hook(base_linear, prefix, keep_vars)
+
+            self.register_state_dict_pre_hook(state_dict_pre_hook)
+
+        for base_hook in base_linear._state_dict_hooks.values():
+
+            def state_dict_hook(_module, state_dict, prefix, local_metadata, hook=base_hook):
+                return hook(base_linear, state_dict, prefix, local_metadata)
+
+            if getattr(base_hook, "_from_public_api", False):
+                self.register_state_dict_post_hook(state_dict_hook)
+            else:
+                self._register_state_dict_hook(state_dict_hook)
+
+        for base_hook in base_linear._load_state_dict_pre_hooks.values():
+            self._register_load_state_dict_pre_hook(base_hook)
+
+        for base_hook in base_linear._load_state_dict_post_hooks.values():
+
+            def load_state_dict_post_hook(_module, incompatible_keys, hook=base_hook):
+                return hook(base_linear, incompatible_keys)
+
+            self.register_load_state_dict_post_hook(load_state_dict_post_hook)
+
+    def _sync_wrapper_state_from_base(self) -> None:
+        """Adopt base state replaced by assignment-style checkpoint loading."""
+        base_linear = object.__getattribute__(self, "_base_linear")
+        for name in self._base_parameter_names:
+            self._parameters[name] = base_linear._parameters[name]
+        for name in self._base_buffer_names:
+            self._buffers[name] = base_linear._buffers[name]
+        for name in self._base_module_names:
+            self._modules[name] = base_linear._modules[name]
+
     def _apply(self, fn: Any, recurse: bool = True) -> "LinearModuleAdapter":
         super()._apply(fn, recurse=recurse)
         self._sync_base_state()
@@ -756,8 +790,14 @@ class LinearModuleAdapter(nn.Module):
         error_msgs: list[str],
     ) -> None:
         """Delegate base state loading while adapter children load normally."""
-        base_keys = {f"{prefix}{name}" for name in self.base_linear.state_dict()}
-        base_state_dict = {name: value for name, value in state_dict.items() if name in base_keys}
+        adapter_module_names = set(self._modules).difference(self._base_module_names)
+        base_state_dict = {}
+        for key, value in state_dict.items():
+            if not key.startswith(prefix):
+                continue
+            local_key = key[len(prefix) :]
+            if local_key.split(".", 1)[0] not in adapter_module_names:
+                base_state_dict[key] = value
         self.base_linear._load_from_state_dict(
             base_state_dict,
             prefix,
@@ -767,17 +807,10 @@ class LinearModuleAdapter(nn.Module):
             unexpected_keys,
             error_msgs,
         )
-        local_state = set(self._parameters) | set(self._buffers)
-        for key in state_dict:
-            if not key.startswith(prefix) or key in base_keys:
-                continue
-            local_key = key[len(prefix) :]
-            key_parts = local_key.split(".", 1)
-            if (len(key_parts) > 1 and key_parts[0] not in self._modules) or (
-                len(key_parts) == 1 and key_parts[0] not in local_state
-            ):
-                unexpected_keys.append(key)
-        self._sync_base_state()
+        if local_metadata.get("assign_to_params_buffers", False):
+            self._sync_wrapper_state_from_base()
+        else:
+            self._sync_base_state()
 
     def train(self, mode: bool = True) -> "LinearModuleAdapter":
         """Set training mode on both the wrapper and delegated base module."""
@@ -793,17 +826,21 @@ class LinearModuleAdapter(nn.Module):
         """Disable the LoRA contribution."""
         self._adapter_enabled = False
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor | tuple[Any, ...]:
         """Run the original linear forward and add the LoRA update."""
         self._sync_base_state()
-        result = self.base_linear(x)
+        base_result = self.base_linear(x, *args, **kwargs)
         if not self._adapter_enabled:
-            return result
+            return cast(torch.Tensor | tuple[Any, ...], base_result)
+        result = cast(torch.Tensor, base_result[0] if isinstance(base_result, tuple) else base_result)
         lora_input = self.dropout(x) if self.dropout_position == "pre" else x
         lora_result = self.linear_out(self.linear_in(lora_input)) * self.scale
         if self.dropout_position == "post":
             lora_result = self.dropout(lora_result)
-        return result + lora_result
+        adapted_result = result + lora_result
+        if isinstance(base_result, tuple):
+            return (adapted_result, *base_result[1:])
+        return adapted_result
 
 
 def patch_linear_module(
