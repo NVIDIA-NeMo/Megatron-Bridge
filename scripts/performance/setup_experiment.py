@@ -56,13 +56,10 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
-from megatron.bridge.recipes.run_plugins import PreemptionPlugin
-
-
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_PERFORMANCE = "run_script.py"
