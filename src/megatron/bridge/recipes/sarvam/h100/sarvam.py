@@ -20,7 +20,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 def sarvam_30b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Sarvam 30B MoE H100 pretrain config."""
-    return build_text_pretrain_config(
+    cfg = build_text_pretrain_config(
         hf_model_id="sarvamai/sarvam-30b",
         revision="071ae95e933605ca1104a6b4524a36a98488efa4",  # pragma: allowlist secret
         tensor_parallelism=1,
@@ -28,6 +28,13 @@ def sarvam_30b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         expert_parallelism=8,
         trust_remote_code=True,
     )
+    # The token-dispatch combine and grouped-expert paths need temporary
+    # 100--200 MiB buffers near the end of the forward pass.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+    return cfg
 
 
 __all__ = ["sarvam_30b_pretrain_8gpu_h100_bf16_config"]
