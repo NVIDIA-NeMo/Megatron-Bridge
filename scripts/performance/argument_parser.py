@@ -814,7 +814,11 @@ def parse_cli_args():
     )
     performance_args.add_argument(
         "--cuda_graph_scope",
-        help=f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of scopes is allowed.",
+        help=(
+            f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of "
+            "scopes is allowed. Scoped captures such as attn or mlp require "
+            "cuda_graph_impl=transformer_engine; local is reserved for full_iteration."
+        ),
         type=is_cuda_graph_scope_valid,
         required=False,
     )
