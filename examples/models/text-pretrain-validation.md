@@ -64,7 +64,7 @@ removed from the scope.
 | `gpt-oss-20b` | GPT-OSS | GPT-OSS 20B | 21.5B | `gpt_oss_20b_pretrain_16gpu_h100_bf16_config` | TODO |
 | `gpt-oss-120b` | GPT-OSS | GPT-OSS 120B | 120.4B | `gpt_oss_120b_pretrain_64gpu_h100_bf16_config` | TODO |
 | `hy3-preview-base` | HY V3 | Hy3 preview-Base | 298.8B | `hy3_299b_pretrain_16gpu_h100_bf16_config` | TODO |
-| `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | TODO |
+| `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | RETRY: job 5613750 gated-config 401; direct provider added |
 | `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | TODO |
 | `llama31-8b` | Llama | Llama 3.1 | 8B | `llama31_8b_pretrain_2gpu_h100_bf16_config` | TODO |
 | `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613679](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3w8ubwh7) |

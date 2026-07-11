@@ -18,6 +18,7 @@ import pytest
 
 from megatron.bridge.recipes.gemma.h100.gemma2 import gemma2_2b_pretrain_2gpu_h100_bf16_config
 from megatron.bridge.recipes.gemma.h100.gemma_text import gemma_2b_pretrain_1gpu_h100_bf16_config
+from megatron.bridge.recipes.llama.h100.llama2 import llama2_7b_pretrain_2gpu_h100_bf16_config
 from megatron.bridge.recipes.utils import text_pretrain_utils
 
 
@@ -74,3 +75,17 @@ def test_gemma_pretrain_configs_do_not_require_gated_hf_access(monkeypatch):
     assert gemma2.model.num_layers == 26
     assert gemma2.model.hidden_size == 2304
     assert gemma2.model.query_pre_attn_scalar == 256
+
+
+def test_llama2_pretrain_config_does_not_require_gated_hf_access(monkeypatch):
+    def _unexpected_hf_access(*_args, **_kwargs):
+        raise AssertionError("from-scratch Llama2 pretrain must not access a gated HF config")
+
+    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+
+    config = llama2_7b_pretrain_2gpu_h100_bf16_config()
+
+    assert config.model.num_layers == 32
+    assert config.model.hidden_size == 4096
+    assert config.model.ffn_hidden_size == 11008
+    assert config.model.num_query_groups == 32
