@@ -38,6 +38,7 @@ from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
     _load_hf_pretrained_checkpoint,
     _load_model_state_dict,
+    _process_state_dict_for_glu_interleaving,
     _save_hf_adapter_weights,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
@@ -68,6 +69,21 @@ _dummy_obj = _DummyClass()
 
 class TestCheckpointUtilities:
     """Test utility functions for checkpoint management."""
+
+    def test_glu_interleave_expert_weight_and_bias_round_trip(self):
+        weight_key = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.weight"
+        bias_key = "decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.bias"
+        original = {
+            weight_key: torch.arange(256).reshape(128, 2),
+            bias_key: torch.arange(128),
+        }
+
+        with patch("megatron.bridge.training.checkpointing.print_rank_0"):
+            interleaved = _process_state_dict_for_glu_interleaving(original, 32, interleave=True)
+            round_trip = _process_state_dict_for_glu_interleaving(interleaved, 32, interleave=False)
+
+        assert torch.equal(round_trip[weight_key], original[weight_key])
+        assert torch.equal(round_trip[bias_key], original[bias_key])
 
     @pytest.mark.parametrize(
         "checkpoints_path,iteration,release,expected",

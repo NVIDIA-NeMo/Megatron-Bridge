@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 import torch
 from megatron.core.transformer.transformer_config import TransformerConfig
 
+from megatron.bridge.models.conversion.glu_interleave import deinterleave_glu_tensor, interleave_glu_tensor
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ColumnParallelMapping,
@@ -38,6 +40,41 @@ from megatron.bridge.models.conversion.param_mapping import (
     split_qkv_biases,
     split_qkv_weights,
 )
+
+
+@pytest.mark.parametrize("shape", [(128,), (128, 2)])
+def test_glu_interleave_converts_contiguous_blocks_and_is_reversible(shape):
+    tensor = torch.arange(torch.tensor(shape).prod().item()).reshape(shape)
+    original = tensor.clone()
+    gate, up = torch.chunk(tensor, 2, dim=0)
+    expected = torch.cat([gate[:32], up[:32], gate[32:], up[32:]], dim=0)
+
+    interleaved = interleave_glu_tensor(tensor, interleave_size=32)
+    interleaved_original = interleaved.clone()
+
+    assert torch.equal(interleaved, expected)
+    assert torch.equal(deinterleave_glu_tensor(interleaved, interleave_size=32), original)
+    assert torch.equal(tensor, original)
+    assert torch.equal(interleaved, interleaved_original)
+
+
+@pytest.mark.parametrize("function", [interleave_glu_tensor, deinterleave_glu_tensor])
+def test_glu_interleave_rejects_scalar_tensor(function):
+    with pytest.raises(ValueError, match="rank must be at least 1"):
+        function(torch.tensor(1), interleave_size=32)
+
+
+@pytest.mark.parametrize("function", [interleave_glu_tensor, deinterleave_glu_tensor])
+@pytest.mark.parametrize("interleave_size", [0, -1])
+def test_glu_interleave_rejects_non_positive_size(function, interleave_size):
+    with pytest.raises(ValueError, match="interleave_size must be positive"):
+        function(torch.arange(64), interleave_size=interleave_size)
+
+
+@pytest.mark.parametrize("function", [interleave_glu_tensor, deinterleave_glu_tensor])
+def test_glu_interleave_rejects_incompatible_dim_zero(function):
+    with pytest.raises(ValueError, match=r"dim 0 size 65.*2 \* interleave_size \(64\)"):
+        function(torch.arange(65), interleave_size=32)
 
 
 @pytest.fixture
@@ -68,12 +105,15 @@ def mock_distributed_env():
 
             tp_group = _MockGroup(tp_size, tp_rank)
             pp_group = _MockGroup(pp_size, pp_rank)
+            ep_group = _MockGroup(1, 0)
 
             mock_mpu.get_tensor_model_parallel_world_size.return_value = tp_size
             mock_mpu.get_tensor_model_parallel_rank.return_value = tp_rank
             mock_mpu.get_pipeline_model_parallel_world_size.return_value = pp_size
             mock_mpu.get_pipeline_model_parallel_rank.return_value = pp_rank
             mock_mpu.get_tensor_model_parallel_group.return_value = tp_group
+            mock_mpu.get_expert_tensor_parallel_group.return_value = tp_group
+            mock_mpu.get_expert_model_parallel_group.return_value = ep_group
             mock_mpu.get_pipeline_model_parallel_group.return_value = pp_group
 
             # Utility fns used by mapping helpers
@@ -387,6 +427,181 @@ class TestKVMapping:
 
 
 class TestGatedMLPMapping:
+    @staticmethod
+    def _expert_mapping(parameter: str) -> GatedMLPMapping:
+        return GatedMLPMapping(
+            megatron_param=f"decoder.layers.0.mlp.experts.local_experts.0.linear_fc1.{parameter}",
+            gate=f"model.layers.0.mlp.experts.0.gate_proj.{parameter}",
+            up=f"model.layers.0.mlp.experts.0.up_proj.{parameter}",
+        )
+
+    @pytest.mark.parametrize("parameter,shape", [("weight", (64, 2)), ("bias", (64,))])
+    def test_expert_interleave_round_trip_single_tp(self, mock_distributed_env, transformer_config, parameter, shape):
+        mock_distributed_env()
+        transformer_config.moe_mlp_glu_interleave_size = 32
+        mapping = self._expert_mapping(parameter)
+        gate = torch.arange(torch.tensor(shape).prod().item()).reshape(shape)
+        up = gate + gate.numel()
+        module = MockModule(
+            transformer_config,
+            weight_shape=(128, 2),
+            has_bias=parameter == "bias",
+        )
+        if parameter == "bias":
+            module.bias = torch.nn.Parameter(torch.empty(128))
+
+        fused = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+
+        assert torch.equal(fused, torch.cat([gate[:32], up[:32], gate[32:], up[32:]], dim=0))
+        exported = mapping.megatron_to_hf(fused, module)
+        assert torch.equal(exported[str(mapping.hf_param["gate"])], gate)
+        assert torch.equal(exported[str(mapping.hf_param["up"])], up)
+
+    def test_expert_interleave_is_applied_per_tp_local_shard(self, mock_distributed_env, transformer_config):
+        mock_distributed_env(tp_size=2, tp_rank=0)
+        transformer_config.moe_mlp_glu_interleave_size = 32
+        mapping = self._expert_mapping("weight")
+        gate = torch.arange(256).reshape(128, 2)
+        up = gate + gate.numel()
+        module = MockModule(transformer_config, weight_shape=(128, 2))
+
+        with patch.object(mapping, "scatter_to_tp_ranks", side_effect=lambda splits, *_args: splits[0]) as scatter:
+            local_result = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+
+        local_shards = scatter.call_args.args[0]
+        expected_shards = []
+        for gate_shard, up_shard in zip(torch.chunk(gate, 2), torch.chunk(up, 2)):
+            expected_shards.append(torch.cat([gate_shard[:32], up_shard[:32], gate_shard[32:], up_shard[32:]], dim=0))
+        assert torch.equal(local_result, expected_shards[0])
+        assert all(torch.equal(actual, expected) for actual, expected in zip(local_shards, expected_shards))
+
+        with patch.object(mapping, "gather_from_tp_ranks", return_value=local_shards):
+            exported = mapping.megatron_to_hf(local_result, module)
+
+        assert torch.equal(exported[str(mapping.hf_param["gate"])], gate)
+        assert torch.equal(exported[str(mapping.hf_param["up"])], up)
+
+    def test_non_expert_mapping_ignores_interleave_config(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        transformer_config.moe_mlp_glu_interleave_size = 32
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.linear_fc1.weight",
+            gate="model.layers.0.mlp.gate_proj.weight",
+            up="model.layers.0.mlp.up_proj.weight",
+        )
+        gate = torch.arange(128).reshape(64, 2)
+        up = gate + gate.numel()
+        module = MockModule(transformer_config, weight_shape=(128, 2))
+
+        result = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+
+        assert torch.equal(result, torch.cat([gate, up], dim=0))
+
+    def test_shared_expert_mapping_ignores_routed_interleave_config(self, mock_distributed_env, transformer_config):
+        mock_distributed_env()
+        transformer_config.moe_mlp_glu_interleave_size = 32
+        mapping = GatedMLPMapping(
+            megatron_param="decoder.layers.0.mlp.shared_experts.linear_fc1.weight",
+            gate="model.layers.0.mlp.shared_expert.gate_proj.weight",
+            up="model.layers.0.mlp.shared_expert.up_proj.weight",
+        )
+        gate = torch.arange(128).reshape(64, 2)
+        up = gate + gate.numel()
+        module = MockModule(transformer_config, weight_shape=(128, 2))
+
+        result = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+
+        assert mapping._is_routed_expert is False
+        assert torch.equal(result, torch.cat([gate, up], dim=0))
+
+    def test_expert_interleave_metadata_is_broadcast_to_non_owner_pp_rank(
+        self, mock_distributed_env, transformer_config
+    ):
+        mock_distributed_env(pp_size=2, pp_rank=0)
+        transformer_config.moe_mlp_glu_interleave_size = 32
+        gate = torch.arange(128).reshape(64, 2)
+        up = gate + gate.numel()
+        fused = interleave_glu_tensor(torch.cat([gate, up], dim=0), 32)
+        module = MockModule(transformer_config, weight_shape=(128, 2))
+
+        owner_mapping = self._expert_mapping("weight")
+        with (
+            patch.object(owner_mapping, "broadcast_from_pp_rank", return_value=fused),
+            patch.object(
+                owner_mapping,
+                "broadcast_obj_from_pp_rank",
+                side_effect=lambda metadata, _cache_key: metadata,
+            ) as owner_metadata_broadcast,
+        ):
+            owner_result = owner_mapping.megatron_to_hf(fused, module)
+
+        non_owner_mapping = self._expert_mapping("weight")
+        non_owner_mapping.pp_group = SimpleNamespace(size=lambda: 2, rank=lambda: 1)
+        with (
+            patch.object(non_owner_mapping, "broadcast_from_pp_rank", return_value=fused),
+            patch.object(non_owner_mapping, "broadcast_obj_from_pp_rank", return_value=(32,)) as metadata_broadcast,
+        ):
+            non_owner_result = non_owner_mapping.megatron_to_hf(None, None)
+
+        tensor_cache_key = str(owner_mapping.hf_param)
+        assert owner_metadata_broadcast.call_args.args[1] != tensor_cache_key
+        assert metadata_broadcast.call_args.args[1] != tensor_cache_key
+        assert torch.equal(owner_result[str(owner_mapping.hf_param["gate"])], gate)
+        assert torch.equal(owner_result[str(owner_mapping.hf_param["up"])], up)
+        assert torch.equal(non_owner_result[str(non_owner_mapping.hf_param["gate"])], gate)
+        assert torch.equal(non_owner_result[str(non_owner_mapping.hf_param["up"])], up)
+
+    def test_invalid_expert_interleave_config_is_validated_after_pp_broadcast(self, mock_distributed_env):
+        mock_distributed_env(pp_size=2, pp_rank=0)
+        owner_module = MockModule(
+            SimpleNamespace(moe_mlp_glu_interleave_size=0),
+            weight_shape=(128, 2),
+        )
+        error_messages = []
+
+        for module, expected_payload in ((owner_module, (0,)), (None, None)):
+            mapping = self._expert_mapping("weight")
+            with patch.object(mapping, "broadcast_obj_from_pp_rank", return_value=(0,)) as metadata_broadcast:
+                with pytest.raises(
+                    ValueError,
+                    match="moe_mlp_glu_interleave_size must be a positive integer, got 0",
+                ) as error:
+                    mapping._broadcast_glu_interleave_size(module)
+
+            metadata_broadcast.assert_called_once()
+            assert metadata_broadcast.call_args.args[0] == expected_payload
+            error_messages.append(str(error.value))
+
+        assert error_messages[0] == error_messages[1]
+
+    @pytest.mark.parametrize("config", [SimpleNamespace(), SimpleNamespace(moe_mlp_glu_interleave_size=None)])
+    def test_expert_mapping_without_active_interleave_preserves_contiguous_layout(self, mock_distributed_env, config):
+        mock_distributed_env()
+        mapping = self._expert_mapping("weight")
+        gate = torch.arange(128).reshape(64, 2)
+        up = gate + gate.numel()
+        module = MockModule(config, weight_shape=(128, 2))
+
+        result = mapping.hf_to_megatron({"gate": gate, "up": up}, module)
+
+        assert torch.equal(result, torch.cat([gate, up], dim=0))
+        exported = mapping.megatron_to_hf(result, module)
+        assert torch.equal(exported[str(mapping.hf_param["gate"])], gate)
+        assert torch.equal(exported[str(mapping.hf_param["up"])], up)
+
+    @pytest.mark.parametrize("interleave_size", [0, -1, 1.5, True, "32"])
+    def test_expert_mapping_rejects_invalid_interleave_config(self, mock_distributed_env, interleave_size):
+        mock_distributed_env()
+        mapping = self._expert_mapping("weight")
+        gate = torch.arange(128).reshape(64, 2)
+        module = MockModule(
+            SimpleNamespace(moe_mlp_glu_interleave_size=interleave_size),
+            weight_shape=(128, 2),
+        )
+
+        with pytest.raises(ValueError, match="moe_mlp_glu_interleave_size must be a positive integer"):
+            mapping.hf_to_megatron({"gate": gate, "up": gate.clone()}, module)
+
     def test_hf_to_megatron_single_tp(self, mock_distributed_env, transformer_config):
         """Test gate+up merging with single TP rank."""
         mock_distributed_env()

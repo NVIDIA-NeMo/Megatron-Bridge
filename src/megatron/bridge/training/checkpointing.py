@@ -61,6 +61,12 @@ from modelopt.torch.opt.plugins import (
 )
 from torch.distributed.tensor import DTensor
 
+from megatron.bridge.models.conversion.glu_interleave import (
+    deinterleave_glu_tensor as _deinterleave_glu_tensor,
+)
+from megatron.bridge.models.conversion.glu_interleave import (
+    interleave_glu_tensor as _interleave_glu_tensor,
+)
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training import fault_tolerance
 from megatron.bridge.training.callbacks import CallbackContext, CallbackManager, should_fire
@@ -2126,36 +2132,6 @@ def load_checkpoint(
         pg_collection=pg_collection,
         module_name=module_name,
     )
-
-
-def _deinterleave_glu_tensor(tensor: torch.Tensor, interleave_size: int) -> torch.Tensor:
-    """De-interleave SwiGLU fc1 tensor along dim 0: block-interleaved -> contiguous [W_all, V_all].
-
-    Same layout for ``linear_fc1.weight`` (dim 0 + remaining dims) and ``linear_fc1.bias`` (dim 0 only).
-    Interleaved format (dim 0): [W0:k, V0:k, Wk:2k, Vk:2k, ...] with ``k = interleave_size``.
-    """
-    shape = tensor.shape
-    x = tensor.reshape(
-        shape[0] // (2 * interleave_size),
-        2,
-        interleave_size,
-        *shape[1:],
-    )
-    x = x.transpose(0, 1).contiguous()
-    return x.reshape(shape)
-
-
-def _interleave_glu_tensor(tensor: torch.Tensor, interleave_size: int) -> torch.Tensor:
-    """Interleave SwiGLU fc1 tensor along dim 0: contiguous [W_all, V_all] -> block-interleaved."""
-    shape = tensor.shape
-    x = tensor.reshape(
-        2,
-        shape[0] // (2 * interleave_size),
-        interleave_size,
-        *shape[1:],
-    )
-    x = x.transpose(0, 1).contiguous()
-    return x.reshape(shape)
 
 
 def _is_swiglu_fc1_checkpoint_key(

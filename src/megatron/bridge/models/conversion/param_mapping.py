@@ -30,6 +30,7 @@ from megatron.core.utils import (
 )
 from torch.distributed._tensor import DTensor
 
+from megatron.bridge.models.conversion.glu_interleave import deinterleave_glu_tensor, interleave_glu_tensor
 from megatron.bridge.models.conversion.utils import (
     get_module_and_param_from_name,
     is_modelopt_dynamic_module,
@@ -2608,15 +2609,49 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         """
         super().__init__(megatron_param, {"gate": gate, "up": up})
 
+    @property
+    def _is_routed_expert(self) -> bool:
+        """Return whether this mapping targets a routed, non-shared expert."""
+        return self.is_expert and ".shared_experts." not in self.megatron_param
+
+    def _get_raw_glu_interleave_size(self, megatron_module: nn.Module | None) -> object | None:
+        if not self._is_routed_expert or megatron_module is None:
+            return None
+
+        config = self._get_config(megatron_module)
+        return getattr(config, "moe_mlp_glu_interleave_size", None)
+
+    @staticmethod
+    def _validate_glu_interleave_size(interleave_size: object | None) -> int | None:
+        if interleave_size is None:
+            return None
+        if type(interleave_size) is not int or interleave_size <= 0:
+            raise ValueError(f"moe_mlp_glu_interleave_size must be a positive integer, got {interleave_size!r}")
+        return interleave_size
+
+    def _get_glu_interleave_size(self, megatron_module: nn.Module | None) -> int | None:
+        return self._validate_glu_interleave_size(self._get_raw_glu_interleave_size(megatron_module))
+
+    def _broadcast_glu_interleave_size(self, megatron_module: nn.Module | None) -> int | None:
+        raw_interleave_size = self._get_raw_glu_interleave_size(megatron_module)
+        metadata = (raw_interleave_size,) if megatron_module is not None else None
+        metadata = self.broadcast_obj_from_pp_rank(metadata, f"{self.hf_param}:glu_interleave_size")
+        return self._validate_glu_interleave_size(metadata[0] if metadata is not None else None)
+
     def hf_to_megatron(
         self,
         hf_weights: Dict[str, torch.Tensor],
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Split gate and up separately, then concatenate corresponding shards."""
+        interleave_size = self._get_glu_interleave_size(megatron_module)
+
         # For single TP, just concatenate and return
         if self.tp_size == 1:
-            return torch.cat([hf_weights["gate"], hf_weights["up"]], dim=0)
+            fused_mlp = torch.cat([hf_weights["gate"], hf_weights["up"]], dim=0)
+            if interleave_size is not None:
+                fused_mlp = interleave_glu_tensor(fused_mlp, interleave_size)
+            return fused_mlp
 
         # Get target parameter info from megatron module
         # Some parameters are named with global expert number, e.g. experts.weight15,
@@ -2646,7 +2681,12 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             up_splits = torch.chunk(up, self.tp_size, dim=0)
 
             # Concatenate corresponding pieces: [gate_shard_i; up_shard_i] for each rank i
-            splits = [torch.cat([gate_splits[i], up_splits[i]], dim=0) for i in range(self.tp_size)]
+            splits = []
+            for gate_split, up_split in zip(gate_splits, up_splits):
+                split = torch.cat([gate_split, up_split], dim=0)
+                if interleave_size is not None:
+                    split = interleave_glu_tensor(split, interleave_size)
+                splits.append(split)
         else:
             splits = None
 
@@ -2676,11 +2716,14 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         # Dequantize if needed
         megatron_weights = self.maybe_dequantize(megatron_weights)
+        interleave_size = self._broadcast_glu_interleave_size(megatron_module)
 
         # Handle TP gathering
         if self.tp_size == 1:
             # No TP, just split the concatenated tensor
             fused_mlp = megatron_weights
+            if interleave_size is not None:
+                fused_mlp = deinterleave_glu_tensor(fused_mlp, interleave_size)
             gate, up = torch.chunk(fused_mlp, 2, dim=0)
 
         else:
@@ -2696,6 +2739,8 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             for shard in gathered_shards:
                 # Each shard is [gate_shard; up_shard] concatenated along dim 0
                 # This works for both bias (1D) and weight (2D) tensors
+                if interleave_size is not None:
+                    shard = deinterleave_glu_tensor(shard, interleave_size)
                 gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
                 gate_parts.append(gate_shard)
                 up_parts.append(up_shard)
