@@ -40,7 +40,7 @@ def create_masked_next_token_loss_function(
 
 def masked_next_token_loss(
     loss_mask: torch.Tensor,
-    output_tensor: torch.Tensor | Tuple[torch.Tensor],
+    output_tensor: torch.Tensor | Tuple[torch.Tensor, torch.Tensor | None],
     check_for_nan_in_loss: bool = True,
     check_for_spiky_loss: bool = False,
 ) -> tuple[torch.Tensor, torch.Tensor, dict[str, tuple[torch.Tensor, torch.Tensor]]]:
@@ -61,7 +61,9 @@ def masked_next_token_loss(
     """
     if isinstance(output_tensor, tuple):
         losses = output_tensor[0].view(-1).float()
-        loss_mask = output_tensor[1].view(-1).float()
+        output_loss_mask = output_tensor[1]
+        if output_loss_mask is not None:
+            loss_mask = output_loss_mask
     else:
         losses = output_tensor.view(-1).float()
     loss_mask = loss_mask.view(-1).float()
