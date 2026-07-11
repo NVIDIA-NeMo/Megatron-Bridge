@@ -55,10 +55,7 @@ def _load_module():
     recipe_runner.load_forward_step.return_value = object()
 
     dataset_utils = types.ModuleType("megatron.bridge.recipes.utils.dataset_utils")
-    dataset_utils.apply_dataset_override = Mock(side_effect=lambda config, **_kwargs: config)
-    finetune_utils = types.ModuleType("megatron.bridge.recipes.utils.finetune_utils")
-    finetune_utils.default_openmathinstruct2_thinking_packed_config = Mock(return_value=object())
-
+    dataset_utils.apply_public_dataset_override = Mock(side_effect=lambda config, **_kwargs: config)
     stub_modules = {
         "recipe_runner": recipe_runner,
         "megatron": _package("megatron"),
@@ -66,7 +63,6 @@ def _load_module():
         "megatron.bridge.recipes": _package("megatron.bridge.recipes"),
         "megatron.bridge.recipes.utils": _package("megatron.bridge.recipes.utils"),
         "megatron.bridge.recipes.utils.dataset_utils": dataset_utils,
-        "megatron.bridge.recipes.utils.finetune_utils": finetune_utils,
     }
     previous = {name: sys.modules.get(name) for name in (*stub_modules, module_name)}
     sys.modules.update(stub_modules)
@@ -85,9 +81,8 @@ def _load_module():
                 sys.modules[name] = old_module
 
     return module, SimpleNamespace(
-        apply_dataset_override=dataset_utils.apply_dataset_override,
+        apply_public_dataset_override=dataset_utils.apply_public_dataset_override,
         recipe_runner=recipe_runner,
-        thinking_dataset=finetune_utils.default_openmathinstruct2_thinking_packed_config,
     )
 
 
@@ -195,22 +190,22 @@ def test_named_finetuning_dataset_maps_to_internal_config():
 
     module.main(["--recipe", "gpt_oss_20b_sft_config", "--mode", "sft", "--dataset", "squad"])
 
-    handles.apply_dataset_override.assert_called_once_with(
+    handles.apply_public_dataset_override.assert_called_once_with(
         config,
-        dataset_type="llm-finetune",
+        dataset_name="squad",
         packed_sequence=False,
+        pad_seq_to_mult=1,
         seq_length=None,
-        cli_overrides=["dataset.hf_dataset.dataset_name=squad"],
+        cli_overrides=[],
     )
 
 
 @pytest.mark.parametrize(
-    ("public_name", "internal_type", "overrides"),
+    ("public_name", "overrides"),
     [
-        ("local-jsonl", "llm-finetune-preloaded", ["dataset.dataset_root=/data/sft"]),
+        ("local-jsonl", ["dataset.dataset_root=/data/sft"]),
         (
             "preloaded-vlm",
-            "vlm-preloaded",
             [
                 "dataset.train_data_path=/data/vlm.jsonl",
                 "dataset.image_folder=/data/images",
@@ -219,17 +214,18 @@ def test_named_finetuning_dataset_maps_to_internal_config():
         ),
     ],
 )
-def test_local_dataset_names_replace_the_dataset_provider(public_name, internal_type, overrides):
+def test_local_dataset_names_replace_the_dataset_provider(public_name, overrides):
     module, handles = _load_module()
     config = SimpleNamespace()
     handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", "gpt_oss_20b_sft_config", "--mode", "sft", "--dataset", public_name, *overrides])
 
-    handles.apply_dataset_override.assert_called_once_with(
+    handles.apply_public_dataset_override.assert_called_once_with(
         config,
-        dataset_type=internal_type,
+        dataset_name=public_name,
         packed_sequence=False,
+        pad_seq_to_mult=1,
         seq_length=None,
         cli_overrides=overrides,
     )
@@ -285,12 +281,14 @@ def test_thinking_dataset_enables_packing_and_cp_padding():
         ]
     )
 
-    handles.thinking_dataset.assert_called_once_with(
-        seq_length=1024,
+    handles.apply_public_dataset_override.assert_called_once_with(
+        config,
+        dataset_name="openmathinstruct2-thinking",
         packed_sequence=True,
         pad_seq_to_mult=4,
+        seq_length=None,
+        cli_overrides=[],
     )
-    handles.apply_dataset_override.assert_not_called()
 
 
 def test_indexed_dataset_paths_are_validated(tmp_path):

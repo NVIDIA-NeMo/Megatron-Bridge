@@ -647,17 +647,21 @@ def main(
     # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
+    training_script_dir = SCRIPT_DIR.parent / "training"
     if kubeflow_namespace:
         in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+        in_container_training_script_dir = "/opt/Megatron-Bridge/scripts/training"
         in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
         in_container_script_dir = str(SCRIPT_DIR)
+        in_container_training_script_dir = str(training_script_dir)
         in_container_script_path = str(run_script_path)
 
     custom_mounts.extend(
         [
             f"{run_script_path}:{run_script_path}",
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
+            f"{training_script_dir}:{training_script_dir}",
         ]
     )
 
@@ -771,7 +775,7 @@ def main(
     nemorun_script = run.Script(
         path=in_container_script_path,
         entrypoint="python",
-        env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
+        env={"PYTHONPATH": f"{in_container_script_dir}:{in_container_training_script_dir}:$PYTHONPATH"},
         args=_filter_run_script_args(sys.argv[1:]),
     )
 

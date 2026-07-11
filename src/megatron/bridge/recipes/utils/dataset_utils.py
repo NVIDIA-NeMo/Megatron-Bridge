@@ -30,6 +30,7 @@ from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMCon
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
+    default_openmathinstruct2_thinking_packed_config,
     default_squad_config,
 )
 from megatron.bridge.training.config import (
@@ -124,10 +125,37 @@ DATASET_TYPES = [
     "vlm-preloaded",
 ]
 
+PUBLIC_DATASET_NAMES = [
+    "mock",
+    "dclm",
+    "rp2",
+    "c4",
+    "squad",
+    "squad-packed",
+    "openmathinstruct2",
+    "openmathinstruct2-thinking",
+    "gsm8k",
+    "local-jsonl",
+    "preloaded-vlm",
+]
+
 LLM_FINETUNE_PRESETS: dict[str, Callable] = {
     "squad": default_squad_config,
     "openmathinstruct2": default_openmathinstruct2_config,
     "gsm8k": default_gsm8k_config,
+}
+
+_PUBLIC_DATASET_OVERRIDES: dict[str, tuple[str, str | None]] = {
+    "mock": ("llm-pretrain-mock", None),
+    "dclm": ("llm-pretrain", None),
+    "rp2": ("llm-pretrain", None),
+    "c4": ("llm-pretrain", None),
+    "squad": ("llm-finetune", "squad"),
+    "squad-packed": ("llm-finetune", "squad"),
+    "openmathinstruct2": ("llm-finetune", "openmathinstruct2"),
+    "gsm8k": ("llm-finetune", "gsm8k"),
+    "local-jsonl": ("llm-finetune-preloaded", None),
+    "preloaded-vlm": ("vlm-preloaded", None),
 }
 
 
@@ -297,6 +325,54 @@ def apply_dataset_override(
         config.model.seq_length = seq_length
 
     return config
+
+
+def apply_public_dataset_override(
+    config: ConfigContainer,
+    dataset_name: str,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+    seq_length: int | None = None,
+    cli_overrides: list[str] | None = None,
+) -> ConfigContainer:
+    """Replace a recipe dataset using a public launcher dataset name.
+
+    Args:
+        config: The recipe config to modify.
+        dataset_name: One of :data:`PUBLIC_DATASET_NAMES`.
+        packed_sequence: Whether to enable packed sequences for SFT datasets.
+        pad_seq_to_mult: Sequence padding multiple for packed SFT datasets.
+        seq_length: Explicit sequence length (None = use model's or default 4096).
+        cli_overrides: Mutable list of Hydra-style CLI overrides consumed by
+            dataset-specific local-source selectors.
+
+    Returns:
+        The modified ConfigContainer.
+    """
+    if dataset_name not in _PUBLIC_DATASET_OVERRIDES:
+        if dataset_name == "openmathinstruct2-thinking":
+            config.dataset = default_openmathinstruct2_thinking_packed_config(
+                seq_length=_resolve_seq_length(config, seq_length),
+                packed_sequence=True,
+                pad_seq_to_mult=pad_seq_to_mult,
+            )
+            if seq_length is not None and hasattr(config, "model") and config.model is not None:
+                config.model.seq_length = seq_length
+            return config
+        raise ValueError(f"Unknown dataset name: '{dataset_name}'. Choose from: {', '.join(PUBLIC_DATASET_NAMES)}")
+
+    dataset_type, preset_name = _PUBLIC_DATASET_OVERRIDES[dataset_name]
+    if cli_overrides is None:
+        cli_overrides = []
+    if preset_name is not None:
+        cli_overrides.append(f"dataset.hf_dataset.dataset_name={preset_name}")
+    return apply_dataset_override(
+        config,
+        dataset_type,
+        packed_sequence=packed_sequence,
+        seq_length=seq_length,
+        cli_overrides=cli_overrides,
+    )
 
 
 def infer_mode_from_dataset(dataset_type: str) -> str:

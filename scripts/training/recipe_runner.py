@@ -87,11 +87,6 @@ TRAIN_FUNCTIONS = {
 }
 
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
-ERR_INFER_MODE_FAILED = (
-    "Unable to infer training mode. "
-    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
-    "(or 'sft'/'peft'/'lora') in the recipe name."
-)
 
 
 def dump_env_rank0() -> None:
@@ -323,67 +318,6 @@ def load_recipe(
     )
 
 
-def resolve_recipe_source(recipe_name: str, *, source: RecipeSource = "auto") -> RecipeSource:
-    """Resolve the recipe namespace without constructing the recipe config."""
-    if source != "auto":
-        return source
-    if find_library_recipe(recipe_name) is not None:
-        return "recipes"
-    if find_perf_recipe(recipe_name) is not None:
-        return "perf_recipes"
-    raise AttributeError(
-        f"Recipe '{recipe_name}' not found. "
-        "Check megatron.bridge.recipes exports or megatron.bridge.perf_recipes flat recipe names."
-    )
-
-
-def load_library_recipe_by_family(
-    *,
-    model_family_name: str,
-    model_recipe_name: str,
-    train_task: str,
-    num_gpus: int,
-    gpu: str,
-    precision: str,
-    config_variant: str | None,
-    wandb_experiment_name: str | None,
-    peft_scheme: str | None = None,
-) -> ConfigContainer:
-    """Load a library recipe from family/name/task CLI dimensions."""
-    family_pkg = importlib.import_module(f"megatron.bridge.recipes.{model_family_name}")
-    library_task = "peft" if train_task in {"lora", "peft"} else train_task
-    h100_recipe_name = recipe_function_name(
-        model_recipe_name=model_recipe_name,
-        task=library_task,
-        num_gpus=num_gpus,
-        gpu=gpu,
-        precision=precision,
-        config_variant=config_variant,
-    )
-
-    if model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":
-        recipe_name = "deepseek_v3_pretrain_config_32nodes"
-    elif train_task in ("lora", "peft"):
-        recipe_name = f"{model_recipe_name}_peft_config"
-    else:
-        recipe_name = f"{model_recipe_name}_{train_task}_config"
-
-    recipe_builder = find_library_recipe(h100_recipe_name, model_family_name=model_family_name)
-    if recipe_builder is None:
-        recipe_builder = getattr(family_pkg, recipe_name)
-    cfg = _load_with_optional_kwargs(recipe_builder, peft_scheme=peft_scheme)
-
-    if wandb_experiment_name:
-        run_output_dir = os.path.join("/nemo_run", wandb_experiment_name)
-        cfg.checkpoint.save = os.path.join(run_output_dir, "checkpoints")
-        cfg.checkpoint.load = os.path.join(run_output_dir, "checkpoints")
-        cfg.logger.tensorboard_dir = os.path.join(run_output_dir, "tb_logs")
-        cfg.logger.wandb_exp_name = wandb_experiment_name
-        cfg.logger.wandb_save_dir = os.path.join(run_output_dir, "wandb")
-
-    return cfg
-
-
 def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
     """Load a forward-step callable by name."""
     step_key = step_type.lower()
@@ -406,16 +340,6 @@ def _load_step_function(step_key: str) -> Callable:
 
     module_name, attribute_name = entry
     return cast(Callable, getattr(importlib.import_module(module_name), attribute_name))
-
-
-def infer_train_mode(recipe_name: str) -> str:
-    """Infer train mode from a recipe name."""
-    lowered = recipe_name.lower()
-    has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered or "lora" in lowered
-    if has_pretrain ^ has_finetune:
-        return "pretrain" if has_pretrain else "finetune"
-    raise ValueError(ERR_INFER_MODE_FAILED)
 
 
 def apply_cli_overrides(config: ConfigContainer, cli_overrides: list[str] | None) -> ConfigContainer:

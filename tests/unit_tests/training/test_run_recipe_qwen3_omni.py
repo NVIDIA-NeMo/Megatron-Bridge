@@ -286,35 +286,6 @@ class TestRecipeRunnerQwen3Omni:
         assert cfg is library_config
         module.find_perf_recipe.assert_not_called()
 
-    def test_library_lora_selector_uses_peft_recipe_name(self):
-        """Library LoRA selectors should resolve the existing PEFT recipe namespace."""
-        module, _ = _load_recipe_runner_module()
-        config = object()
-        module.importlib.import_module = Mock(return_value=SimpleNamespace())
-        module.recipe_function_name = Mock(return_value="gpt_oss_20b_peft_1gpu_h100_fp8cs_config")
-        module.find_library_recipe = Mock(return_value=lambda: config)
-
-        result = module.load_library_recipe_by_family(
-            model_family_name="gpt_oss",
-            model_recipe_name="gpt_oss_20b",
-            train_task="lora",
-            num_gpus=1,
-            gpu="h100",
-            precision="fp8_cs",
-            config_variant="v2",
-            wandb_experiment_name=None,
-        )
-
-        assert result is config
-        module.recipe_function_name.assert_called_once_with(
-            model_recipe_name="gpt_oss_20b",
-            task="peft",
-            num_gpus=1,
-            gpu="h100",
-            precision="fp8_cs",
-            config_variant="v2",
-        )
-
     def test_seq_length_shortcut_updates_model_and_dataset(self):
         """The easy seq-length flag should keep model and dataset lengths aligned."""
         module, _ = _load_recipe_runner_module()

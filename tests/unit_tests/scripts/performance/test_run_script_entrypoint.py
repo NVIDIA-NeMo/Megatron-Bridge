@@ -16,13 +16,135 @@
 
 import ast
 import sys
+import types
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
+
+
+def _install_launcher_stubs() -> None:
+    """Install import-time stubs for launcher-only optional dependencies."""
+    nemo_run = types.ModuleType("nemo_run")
+
+    class Script:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+        def to_command(self):
+            return []
+
+    class _RunObject:
+        def __init__(self, *args, **kwargs):
+            self.args = args
+            self.kwargs = kwargs
+
+    nemo_run.Plugin = object
+    nemo_run.Script = Script
+    nemo_run.SlurmExecutor = _RunObject
+    nemo_run.LocalTunnel = _RunObject
+    nemo_run.GitArchivePackager = _RunObject
+    nemo_run.Packager = _RunObject
+    nemo_run.KubeflowExecutor = _RunObject
+    nemo_run.Torchrun = _RunObject
+
+    nemo_run_config = types.ModuleType("nemo_run.config")
+    nemo_run_config.get_nemorun_home = lambda: str(Path.home() / ".nemo_run")
+    nemo_run_config.set_nemorun_home = lambda _path: None
+    nemo_run.config = nemo_run_config
+
+    launcher_module = types.ModuleType("nemo_run.core.execution.launcher")
+    launcher_module.SlurmTemplate = _RunObject
+
+    run_plugins = types.ModuleType("megatron.bridge.recipes.run_plugins")
+    run_plugins.PreemptionPlugin = object
+
+    for package_name in (
+        "megatron",
+        "megatron.bridge",
+        "megatron.bridge.recipes",
+        "megatron.bridge.recipes.deepseek",
+        "megatron.bridge.recipes.kimi",
+        "megatron.bridge.recipes.utils",
+        "megatron.bridge.training",
+        "megatron.bridge.training.utils",
+        "megatron.bridge.utils",
+    ):
+        package = types.ModuleType(package_name)
+        package.__path__ = []
+        sys.modules.setdefault(package_name, package)
+
+    deepseek_v3 = types.ModuleType("megatron.bridge.recipes.deepseek.deepseek_v3")
+    deepseek_v3.set_deepseek_v3_pipeline_model_parallel_layout = lambda *_args, **_kwargs: None
+
+    kimi_k2 = types.ModuleType("megatron.bridge.recipes.kimi.kimi_k2")
+    kimi_k2._get_kimi_k2_pipeline_layout = lambda *_args, **_kwargs: None
+
+    determinism_utils = types.ModuleType("megatron.bridge.recipes.utils.determinism_utils")
+    determinism_utils.apply_determinism_overrides = lambda _config: None
+
+    comm_overlap = types.ModuleType("megatron.bridge.training.comm_overlap")
+
+    class CommOverlapConfig:
+        pass
+
+    comm_overlap.CommOverlapConfig = CommOverlapConfig
+
+    config_module = types.ModuleType("megatron.bridge.training.config")
+
+    class TokenizerConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
+    config_module.ConfigContainer = object
+    config_module.TokenizerConfig = TokenizerConfig
+
+    flex_dispatcher = types.ModuleType("megatron.bridge.training.flex_dispatcher_backend")
+
+    def apply_flex_dispatcher_backend(model, backend):
+        model.moe_token_dispatcher_type = "flex"
+        model.moe_flex_dispatcher_backend = backend
+
+    flex_dispatcher.apply_flex_dispatcher_backend = apply_flex_dispatcher_backend
+
+    moe_token_drop = types.ModuleType("megatron.bridge.training.utils.moe_token_drop")
+    moe_token_drop.apply_moe_token_drop = lambda *_args, **_kwargs: None
+
+    omegaconf_utils = types.ModuleType("megatron.bridge.training.utils.omegaconf_utils")
+    omegaconf_utils.apply_overrides = lambda config, *_args, **_kwargs: config
+    omegaconf_utils.create_omegaconf_dict_config = lambda *_args, **_kwargs: {}
+    omegaconf_utils.parse_hydra_overrides = lambda overrides: overrides
+
+    cuda_graph = types.ModuleType("megatron.bridge.utils.cuda_graph")
+    cuda_graph.cuda_graph_module_names = lambda *_args, **_kwargs: []
+    cuda_graph.is_full_iteration_cuda_graph = lambda *_args, **_kwargs: False
+    cuda_graph.set_cuda_graph_modules = lambda *_args, **_kwargs: None
+    cuda_graph.set_full_iteration_cuda_graph = lambda *_args, **_kwargs: None
+    cuda_graph.validate_cuda_graph_configuration = lambda *_args, **_kwargs: None
+
+    sys.modules.setdefault("nemo_run", nemo_run)
+    sys.modules.setdefault("nemo_run.config", nemo_run_config)
+    sys.modules.setdefault("nemo_run.core", types.ModuleType("nemo_run.core"))
+    sys.modules.setdefault("nemo_run.core.execution", types.ModuleType("nemo_run.core.execution"))
+    sys.modules.setdefault("nemo_run.core.execution.launcher", launcher_module)
+    sys.modules.setdefault("megatron.bridge.recipes.run_plugins", run_plugins)
+    sys.modules.setdefault("megatron.bridge.recipes.deepseek.deepseek_v3", deepseek_v3)
+    sys.modules.setdefault("megatron.bridge.recipes.kimi.kimi_k2", kimi_k2)
+    sys.modules.setdefault("megatron.bridge.recipes.utils.determinism_utils", determinism_utils)
+    sys.modules.setdefault("megatron.bridge.training.comm_overlap", comm_overlap)
+    sys.modules.setdefault("megatron.bridge.training.config", config_module)
+    sys.modules.setdefault("megatron.bridge.training.flex_dispatcher_backend", flex_dispatcher)
+    sys.modules.setdefault("megatron.bridge.training.utils.moe_token_drop", moe_token_drop)
+    sys.modules.setdefault("megatron.bridge.training.utils.omegaconf_utils", omegaconf_utils)
+    sys.modules.setdefault("megatron.bridge.utils.cuda_graph", cuda_graph)
+
+
+_install_launcher_stubs()
 
 import run_script
 import setup_experiment
@@ -30,15 +152,12 @@ from utils import utils
 
 
 def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
-    assert run_script._flat_recipe_variant_suffix(None) == ""
-    assert run_script._flat_recipe_variant_suffix("v1") == ""
-    assert run_script._flat_recipe_variant_suffix("V1") == ""
-    assert run_script._flat_recipe_variant_suffix("v2") == ""
+    assert utils._recipe_variant_suffix(None) == ""
     assert utils._recipe_variant_suffix("v1") == ""
     assert utils._recipe_variant_name("v1") is None
     assert utils._recipe_variant_suffix("v2") == ""
     assert utils._recipe_variant_name("v2") is None
-    assert run_script._flat_recipe_variant_suffix("large_scale") == "_large_scale"
+    assert utils._recipe_variant_suffix("large_scale") == "_large_scale"
 
 
 def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
@@ -71,6 +190,7 @@ def test_setup_experiment_uses_run_script_for_every_perf_workload():
     argument_parser_source = (_PERF_SCRIPTS_DIR / "argument_parser.py").read_text()
     assert "--require-env-bootstrap" not in setup_source
     assert "--require-env-bootstrap" not in argument_parser_source
+    assert "in_container_training_script_dir" in setup_source
     assert not (_PERF_SCRIPTS_DIR / "run_script_with_env.py").exists()
 
 
@@ -194,6 +314,63 @@ def test_run_script_ignores_stale_bootstrap_marker(monkeypatch):
     run_script.main()
 
     assert calls == [(args, [])]
+
+
+def test_run_script_delegates_training_to_shared_recipe_runner(monkeypatch):
+    args = SimpleNamespace(
+        model_recipe_name="qwen3_vl_30b_a3b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="h100",
+        compute_dtype="bf16",
+        config_variant=None,
+        domain="qwen3vl",
+        dryrun=True,
+        save_config_filepath="/tmp/config.yaml",
+        dump_env=True,
+    )
+    recipe = SimpleNamespace()
+    final_recipe = SimpleNamespace()
+    forward_step = object()
+    runner = SimpleNamespace(
+        load_perf_recipe_by_name=Mock(return_value=recipe),
+        load_forward_step=Mock(return_value=forward_step),
+        run_config=Mock(),
+    )
+    apply_overrides = Mock(return_value=final_recipe)
+
+    monkeypatch.setattr(run_script, "_load_recipe_runner", lambda: runner)
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
+
+    run_script._run_training(args, ["model.num_layers=1"])
+
+    runner.load_perf_recipe_by_name.assert_called_once_with(
+        model_recipe_name="qwen3_vl_30b_a3b",
+        task="pretrain",
+        num_gpus=8,
+        gpu="h100",
+        precision="bf16",
+        config_variant=None,
+    )
+    apply_overrides.assert_called_once_with(recipe, ["model.num_layers=1"], args)
+    runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
+    runner.run_config.assert_called_once_with(
+        config=final_recipe,
+        mode="pretrain",
+        step_func=forward_step,
+        dryrun=True,
+        save_config_filepath="/tmp/config.yaml",
+        barrier_before_destroy=True,
+        dryrun_num_gpus=8,
+        dump_environment=True,
+    )
+
+
+def test_run_script_maps_perf_domains_to_shared_step_names():
+    assert run_script._step_function_name("llm") == "llm_step"
+    assert run_script._step_function_name("vlm") == "vlm_step"
+    assert run_script._step_function_name("qwen3vl") == "qwen3_vl_step"
+    assert run_script._step_function_name("diffusion") == "wan_step"
 
 
 def test_run_script_defers_training_framework_imports():

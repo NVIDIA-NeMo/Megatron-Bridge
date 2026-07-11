@@ -20,26 +20,6 @@ def recipe_runner() -> ModuleType:
     return module
 
 
-@pytest.mark.parametrize(
-    ("recipe_name", "expected_mode"),
-    [
-        ("llama3_8b_pretrain_config", "pretrain"),
-        ("llama3_8b_finetune_config", "finetune"),
-        ("llama3_8b_sft_config", "finetune"),
-        ("llama3_8b_peft_config", "finetune"),
-        ("llama3_8b_lora_config", "finetune"),
-    ],
-)
-def test_infer_train_mode(recipe_runner: ModuleType, recipe_name: str, expected_mode: str) -> None:
-    assert recipe_runner.infer_train_mode(recipe_name) == expected_mode
-
-
-@pytest.mark.parametrize("recipe_name", ["custom_config", "pretrain_sft_config"])
-def test_infer_train_mode_rejects_ambiguous_names(recipe_runner: ModuleType, recipe_name: str) -> None:
-    with pytest.raises(ValueError, match="Unable to infer training mode"):
-        recipe_runner.infer_train_mode(recipe_name)
-
-
 def test_perf_recipe_function_name_normalizes_precision_and_variant(recipe_runner: ModuleType) -> None:
     assert (
         recipe_runner.perf_recipe_function_name(

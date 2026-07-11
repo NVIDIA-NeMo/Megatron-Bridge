@@ -32,22 +32,80 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
 def _install_lightweight_environment_utils() -> None:
     """Load environment_utils without importing the full Bridge dependency tree."""
     module_name = "megatron.bridge.recipes.utils.environment_utils"
-    try:
-        __import__(module_name)
+    if module_name in sys.modules:
         return
-    except ModuleNotFoundError:
-        pass
 
-    for package_name in ("megatron", "megatron.bridge", "megatron.bridge.recipes", "megatron.bridge.recipes.utils"):
+    for package_name in (
+        "megatron",
+        "megatron.bridge",
+        "megatron.bridge.recipes",
+        "megatron.bridge.recipes.deepseek",
+        "megatron.bridge.recipes.kimi",
+        "megatron.bridge.recipes.utils",
+        "megatron.bridge.training",
+        "megatron.bridge.training.utils",
+        "megatron.bridge.utils",
+    ):
         package = types.ModuleType(package_name)
         package.__path__ = []
-        sys.modules[package_name] = package
-    training_package = types.ModuleType("megatron.bridge.training")
-    training_package.__path__ = []
-    sys.modules[training_package.__name__] = training_package
+        sys.modules.setdefault(package_name, package)
+
+    deepseek_v3 = types.ModuleType("megatron.bridge.recipes.deepseek.deepseek_v3")
+    deepseek_v3.set_deepseek_v3_pipeline_model_parallel_layout = lambda *_args, **_kwargs: None
+    sys.modules.setdefault(deepseek_v3.__name__, deepseek_v3)
+
+    kimi_k2 = types.ModuleType("megatron.bridge.recipes.kimi.kimi_k2")
+    kimi_k2._get_kimi_k2_pipeline_layout = lambda *_args, **_kwargs: None
+    sys.modules.setdefault(kimi_k2.__name__, kimi_k2)
+
+    determinism_utils = types.ModuleType("megatron.bridge.recipes.utils.determinism_utils")
+    determinism_utils.apply_determinism_overrides = lambda _config: None
+    sys.modules.setdefault(determinism_utils.__name__, determinism_utils)
+
+    comm_overlap = types.ModuleType("megatron.bridge.training.comm_overlap")
+
+    class CommOverlapConfig:
+        pass
+
+    comm_overlap.CommOverlapConfig = CommOverlapConfig
+    sys.modules.setdefault(comm_overlap.__name__, comm_overlap)
+
     config_module = types.ModuleType("megatron.bridge.training.config")
+
+    class TokenizerConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
     config_module.ConfigContainer = object
-    sys.modules[config_module.__name__] = config_module
+    config_module.TokenizerConfig = TokenizerConfig
+    sys.modules.setdefault(config_module.__name__, config_module)
+
+    flex_dispatcher = types.ModuleType("megatron.bridge.training.flex_dispatcher_backend")
+
+    def apply_flex_dispatcher_backend(model, backend):
+        model.moe_token_dispatcher_type = "flex"
+        model.moe_flex_dispatcher_backend = backend
+
+    flex_dispatcher.apply_flex_dispatcher_backend = apply_flex_dispatcher_backend
+    sys.modules.setdefault(flex_dispatcher.__name__, flex_dispatcher)
+
+    moe_token_drop = types.ModuleType("megatron.bridge.training.utils.moe_token_drop")
+    moe_token_drop.apply_moe_token_drop = lambda *_args, **_kwargs: None
+    sys.modules.setdefault(moe_token_drop.__name__, moe_token_drop)
+
+    omegaconf_utils = types.ModuleType("megatron.bridge.training.utils.omegaconf_utils")
+    omegaconf_utils.apply_overrides = lambda config, *_args, **_kwargs: config
+    omegaconf_utils.create_omegaconf_dict_config = lambda *_args, **_kwargs: {}
+    omegaconf_utils.parse_hydra_overrides = lambda overrides: overrides
+    sys.modules.setdefault(omegaconf_utils.__name__, omegaconf_utils)
+
+    cuda_graph = types.ModuleType("megatron.bridge.utils.cuda_graph")
+    cuda_graph.cuda_graph_module_names = lambda *_args, **_kwargs: []
+    cuda_graph.is_full_iteration_cuda_graph = lambda *_args, **_kwargs: False
+    cuda_graph.set_cuda_graph_modules = lambda *_args, **_kwargs: None
+    cuda_graph.set_full_iteration_cuda_graph = lambda *_args, **_kwargs: None
+    cuda_graph.validate_cuda_graph_configuration = lambda *_args, **_kwargs: None
+    sys.modules.setdefault(cuda_graph.__name__, cuda_graph)
 
     source = (
         Path(__file__).resolve().parents[4]

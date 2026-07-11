@@ -43,10 +43,7 @@ from recipe_runner import (  # noqa: E402
     sync_model_dataset_sequence_length,
 )
 
-from megatron.bridge.recipes.utils.dataset_utils import apply_dataset_override  # noqa: E402
-from megatron.bridge.recipes.utils.finetune_utils import (  # noqa: E402
-    default_openmathinstruct2_thinking_packed_config,
-)
+from megatron.bridge.recipes.utils.dataset_utils import apply_public_dataset_override  # noqa: E402
 
 
 PublicMode = Literal["pretrain", "sft", "lora", "dora"]
@@ -57,40 +54,33 @@ TrainMode = Literal["pretrain", "finetune"]
 class _DatasetSelection:
     """Internal configuration for one public dataset name."""
 
-    config_type: str
     train_mode: TrainMode
-    preset: str | None = None
     packed_sequence: bool = False
     thinking_format: bool = False
     indexed_data: bool = False
 
 
 DATASETS = {
-    "mock": _DatasetSelection("llm-pretrain-mock", "pretrain"),
-    "dclm": _DatasetSelection("llm-pretrain", "pretrain", indexed_data=True),
-    "rp2": _DatasetSelection("llm-pretrain", "pretrain", indexed_data=True),
-    "c4": _DatasetSelection("llm-pretrain", "pretrain", indexed_data=True),
-    "squad": _DatasetSelection("llm-finetune", "finetune", preset="squad"),
+    "mock": _DatasetSelection("pretrain"),
+    "dclm": _DatasetSelection("pretrain", indexed_data=True),
+    "rp2": _DatasetSelection("pretrain", indexed_data=True),
+    "c4": _DatasetSelection("pretrain", indexed_data=True),
+    "squad": _DatasetSelection("finetune"),
     "squad-packed": _DatasetSelection(
-        "llm-finetune",
         "finetune",
-        preset="squad",
         packed_sequence=True,
     ),
     "openmathinstruct2": _DatasetSelection(
-        "llm-finetune",
         "finetune",
-        preset="openmathinstruct2",
     ),
     "openmathinstruct2-thinking": _DatasetSelection(
-        "llm-finetune",
         "finetune",
         packed_sequence=True,
         thinking_format=True,
     ),
-    "gsm8k": _DatasetSelection("llm-finetune", "finetune", preset="gsm8k"),
-    "local-jsonl": _DatasetSelection("llm-finetune-preloaded", "finetune"),
-    "preloaded-vlm": _DatasetSelection("vlm-preloaded", "finetune"),
+    "gsm8k": _DatasetSelection("finetune"),
+    "local-jsonl": _DatasetSelection("finetune"),
+    "preloaded-vlm": _DatasetSelection("finetune"),
 }
 
 
@@ -305,25 +295,16 @@ def _apply_dataset(
     if selection.train_mode != requested_train_mode:
         raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
 
-    if selection.thinking_format:
-        seq_length = args.seq_length or getattr(getattr(recipe, "model", None), "seq_length", 4096)
-        context_parallel_size = args.context_parallel_size or getattr(
-            getattr(recipe, "model", None), "context_parallel_size", 1
-        )
-        recipe.dataset = default_openmathinstruct2_thinking_packed_config(
-            seq_length=seq_length,
-            packed_sequence=True,
-            pad_seq_to_mult=max(1, 2 * context_parallel_size) if context_parallel_size > 1 else 1,
-        )
-        return recipe
-
-    if selection.preset is not None:
-        cli_overrides.append(f"dataset.hf_dataset.dataset_name={selection.preset}")
-
-    recipe = apply_dataset_override(
+    context_parallel_size = args.context_parallel_size or getattr(
+        getattr(recipe, "model", None), "context_parallel_size", 1
+    )
+    recipe = apply_public_dataset_override(
         recipe,
-        dataset_type=selection.config_type,
+        dataset_name=args.dataset,
         packed_sequence=selection.packed_sequence,
+        pad_seq_to_mult=max(1, 2 * context_parallel_size)
+        if selection.thinking_format and context_parallel_size > 1
+        else 1,
         seq_length=args.seq_length,
         cli_overrides=cli_overrides,
     )
