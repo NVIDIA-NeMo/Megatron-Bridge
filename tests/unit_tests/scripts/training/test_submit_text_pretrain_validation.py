@@ -140,6 +140,10 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     gemma4_dense = next(target for target in targets if target.id == "gemma4-31b")
     assert (gemma4_dense.tensor_parallelism, gemma4_dense.pipeline_parallelism) == (8, 1)
 
+    gemma4_moe = next(target for target in targets if target.id == "gemma4-26b-a4b")
+    assert "mixed_precision.grad_reduce_in_fp32=false" in gemma4_moe.overrides
+    assert "optimizer.main_params_dtype=float16" in gemma4_moe.overrides
+
     qwen3_next = next(target for target in targets if target.id == "qwen3-next-80b-a3b")
     assert "model.recompute_granularity=full" in qwen3_next.overrides
     assert "model.recompute_modules=null" in qwen3_next.overrides
