@@ -144,6 +144,9 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "model.recompute_granularity=full" in qwen3_next.overrides
     assert "model.recompute_modules=null" in qwen3_next.overrides
 
+    gpt_oss_120b = next(target for target in targets if target.id == "gpt-oss-120b")
+    assert (gpt_oss_120b.pipeline_parallelism, gpt_oss_120b.expert_parallelism) == (2, 8)
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
