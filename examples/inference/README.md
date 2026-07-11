@@ -64,16 +64,15 @@ Ling/Bailing runs MoE inference with coordinator mode:
 bash examples/models/bailing/inference.sh
 ```
 
-GPT-OSS runs through static generation with Transformer Engine's unfused attention:
+GPT-OSS runs through static generation with local attention:
 
 ```bash
 bash examples/models/gpt_oss/inference.sh
 ```
 
 `examples/models/gpt_oss/inference.sh` uses `--use-legacy-generation` and
-`--attention-backend unfused`. The static path supports GPT-OSS generation,
-while the unfused Transformer Engine backend handles its learnable softmax and
-sliding-window attention without relying on an unavailable fused kernel.
+`--attention-backend local` because GPT-OSS uses attention behavior that should
+run through the static path for this example.
 
 For larger models that need multiple nodes, use the Slurm wrapper for that
 model. For example:
