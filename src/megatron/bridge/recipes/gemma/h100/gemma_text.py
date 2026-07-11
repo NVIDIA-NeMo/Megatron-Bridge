@@ -59,17 +59,12 @@ def gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         cfg = build_text_pretrain_config(
             hf_model_id="google/gemma-4-26B-A4B",
             revision="6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb",  # pragma: allowlist secret
-            tensor_parallelism=1,
+            # TP=2 leaves headroom for the custom fp32 RMSNorm temporaries.
+            tensor_parallelism=2,
             pipeline_parallelism=1,
             expert_parallelism=8,
             trust_remote_code=True,
         )
-    # The local Gemma 4 MoE implementation creates temporary fp32 RMSNorm
-    # buffers. Full recompute keeps enough activation headroom for them.
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
-    cfg.model.recompute_modules = None
     return cfg
 
 
