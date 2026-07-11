@@ -357,21 +357,21 @@ DEEPSEEK_V3_PRETRAIN_CONFIG_GB300_FP8_MX_GBS15360 = replace(
 BASE_DEEPSEEK_V4_PRO_CONFIG = WorkloadBaseConfig(
     expert_tensor_parallel_size=1,
     moe_flex_dispatcher_backend="hybridep",
-    moe_a2a_overlap=False,
-    cuda_graph_impl="full_iteration",
-    cuda_graph_scope=[],
-    cutedsl_fused_grouped_mlp=True,
+    num_gpus=256,
+    micro_batch_size=1,
+    global_batch_size=4096,
 )
 
 # Full 61-layer Pro: TP=1, PP=4, VPP=4, EP=64 on 256 GPUs, GBS=4096.
 DEEPSEEK_V4_PRO_PRETRAIN_CONFIG_GB300_FP8_MX_V1 = replace(
     BASE_DEEPSEEK_V4_PRO_CONFIG,
-    num_gpus=256,
-    micro_batch_size=1,
-    global_batch_size=4096,
     pipeline_model_parallel_size=4,
     virtual_pipeline_model_parallel_size=4,
     expert_model_parallel_size=64,
+    moe_a2a_overlap=False,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    cutedsl_fused_grouped_mlp=True,
     pp_layout="Et*4|(tttt|)*14tmL",
     recompute_modules=["mla_up_proj", "mhc"],
 )
