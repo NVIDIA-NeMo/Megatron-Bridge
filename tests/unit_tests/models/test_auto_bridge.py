@@ -332,7 +332,7 @@ class TestAutoBridge:
             ),
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_bridge,
             patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
-            patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+            patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
         ):
             mock_bridge.return_value = fake_model_bridge
             bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
@@ -1766,7 +1766,7 @@ class TestAutoBridge:
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
-                "megatron.bridge.models.conversion.auto_bridge.is_quantized",
+                "modelopt.torch.quantization.utils.is_quantized",
                 return_value=True,
             ),
             patch("torch.save") as mock_torch_save,
@@ -1834,7 +1834,7 @@ class TestAutoBridge:
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
-                "megatron.bridge.models.conversion.auto_bridge.is_quantized",
+                "modelopt.torch.quantization.utils.is_quantized",
                 return_value=False,
             ),
             patch("torch.save") as mock_torch_save,
@@ -1892,7 +1892,7 @@ class TestAutoBridge:
 
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
-            patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+            patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
         ):
             mock_model_bridge_prop.return_value = mock_model_bridge
             bridge.save_hf_weights([wrapper], tmp_path)
