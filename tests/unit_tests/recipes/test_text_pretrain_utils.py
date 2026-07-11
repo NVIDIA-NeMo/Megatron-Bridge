@@ -18,7 +18,10 @@ import pytest
 
 from megatron.bridge.recipes.ernie.h100.ernie45 import ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.gemma.h100.gemma2 import gemma2_2b_pretrain_2gpu_h100_bf16_config
-from megatron.bridge.recipes.gemma.h100.gemma_text import gemma_2b_pretrain_1gpu_h100_bf16_config
+from megatron.bridge.recipes.gemma.h100.gemma_text import (
+    gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config,
+    gemma_2b_pretrain_1gpu_h100_bf16_config,
+)
 from megatron.bridge.recipes.llama.h100.llama2 import llama2_7b_pretrain_2gpu_h100_bf16_config
 from megatron.bridge.recipes.llama.h100.llama3 import (
     llama3_8b_pretrain_2gpu_h100_bf16_config,
@@ -82,6 +85,28 @@ def test_ernie45_pretrain_uses_full_recompute_for_logits_headroom(monkeypatch):
     )
 
     config = ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config()
+
+    assert config.model.recompute_granularity == "full"
+    assert config.model.recompute_method == "uniform"
+    assert config.model.recompute_num_layers == 1
+    assert config.model.recompute_modules is None
+
+
+def test_gemma4_moe_pretrain_uses_full_recompute_for_rmsnorm_headroom(monkeypatch):
+    provider = SimpleNamespace()
+
+    class _Bridge:
+        def to_megatron_provider(self, *, load_weights):
+            assert load_weights is False
+            return provider
+
+    monkeypatch.setattr(
+        text_pretrain_utils.AutoBridge,
+        "from_hf_pretrained",
+        lambda *_args, **_kwargs: _Bridge(),
+    )
+
+    config = gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config()
 
     assert config.model.recompute_granularity == "full"
     assert config.model.recompute_method == "uniform"
