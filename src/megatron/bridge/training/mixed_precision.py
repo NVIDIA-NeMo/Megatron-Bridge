@@ -198,6 +198,14 @@ def bf16_mixed() -> MixedPrecisionConfig:
 
 
 @register
+def bf16_mixed_with_bf16_grad_reduce() -> MixedPrecisionConfig:
+    """Create a BF16 config that also reduces gradients in BF16."""
+    cfg = bf16_mixed()
+    cfg.grad_reduce_in_fp32 = False
+    return cfg
+
+
+@register
 def fp16_mixed() -> MixedPrecisionConfig:
     """Create a MixedPrecisionConfig for mixed precision training using FP16.
 
