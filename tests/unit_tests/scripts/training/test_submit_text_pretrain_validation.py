@@ -140,6 +140,10 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     gemma4_dense = next(target for target in targets if target.id == "gemma4-31b")
     assert (gemma4_dense.tensor_parallelism, gemma4_dense.pipeline_parallelism) == (8, 1)
 
+    qwen3_next = next(target for target in targets if target.id == "qwen3-next-80b-a3b")
+    assert "model.recompute_granularity=full" in qwen3_next.overrides
+    assert "model.recompute_modules=null" in qwen3_next.overrides
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
