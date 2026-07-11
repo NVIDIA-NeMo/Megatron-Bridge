@@ -135,6 +135,7 @@ _CHECKPOINT_VERSION = None
 logger = getLogger(__name__)
 _NON_PERSISTENT_CKPT_SUBDIR = "non_persistent"
 _DIRECT_ITERATION_DIR_SENTINEL = -2
+_CHECKPOINT_CLEANUP_LOCK = threading.Lock()
 
 HF_WEIGHTS_SUBDIR = "hf"
 
@@ -1085,18 +1086,21 @@ def save_checkpoint(
 
     # Determine checkpoint type and save directory
     save_dir = ckpt_cfg.save
+    is_global_non_persistent_ckpt = non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "global"
+    checkpoint_step = train_state.step
+    global_non_persistent_keep_count = 0
+    if is_global_non_persistent_ckpt:
+        global_non_persistent_keep_count = 2 if ckpt_cfg.most_recent_k < 0 else min(2, ckpt_cfg.most_recent_k)
     if non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "local":
         ckpt_type = CheckpointType.LOCAL
         save_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
-    elif non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "global":
+    elif is_global_non_persistent_ckpt:
         ckpt_type = CheckpointType.GLOBAL
         save_dir = (
             ckpt_cfg.non_persistent_global_ckpt_dir
             if ckpt_cfg.non_persistent_global_ckpt_dir
             else os.path.join(save_dir, _NON_PERSISTENT_CKPT_SUBDIR)
         )
-        # TODO Can we ensure the previous checkpoint is saved? We don't want to allow two saves in parallel.
-        cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=1, do_async=ckpt_cfg.async_save)
     elif non_persistent_ckpt:
         # Invalid non_persistent_ckpt_type value
         raise ValueError(
@@ -1521,8 +1525,28 @@ def save_checkpoint(
         else:
             fire_callback()
 
+    # Keep the tracker-selected checkpoint until the async replacement is durable. Only checkpoints at
+    # or before this finalized step participate, because later iteration directories may still be incomplete.
+    if ckpt_cfg.async_save and is_global_non_persistent_ckpt:
+
+        def cleanup_old_non_persistent_checkpoints_finalize_fn() -> None:
+            cleanup_old_non_persistent_checkpoint(
+                save_dir,
+                leave_ckpt_num=global_non_persistent_keep_count,
+                do_async=True,
+                max_iteration=checkpoint_step,
+            )
+
+        assert async_save_request is not None
+        async_save_request.add_finalize_fn(cleanup_old_non_persistent_checkpoints_finalize_fn)
+
     # Do not remove the tracker-selected checkpoint until its async replacement is durable.
-    if ckpt_cfg.async_save and ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
+    if (
+        ckpt_cfg.async_save
+        and ckpt_cfg.most_recent_k > -1
+        and ckpt_type != CheckpointType.LOCAL
+        and not is_global_non_persistent_ckpt
+    ):
 
         def cleanup_old_checkpoints_finalize_fn() -> None:
             cleanup_old_non_persistent_checkpoint(
@@ -1543,9 +1567,22 @@ def save_checkpoint(
 
     fault_tolerance.on_checkpointing_end(global_state=state, is_async_finalization=False)
 
+    if not ckpt_cfg.async_save and is_global_non_persistent_ckpt:
+        cleanup_old_non_persistent_checkpoint(
+            save_dir,
+            leave_ckpt_num=global_non_persistent_keep_count,
+            do_async=False,
+            max_iteration=checkpoint_step,
+        )
+
     # Keep synchronous cleanup after the fault-tolerance checkpointing section.
     # Skip for LOCAL checkpoints — LocalCheckpointManager manages its own cleanup.
-    if not ckpt_cfg.async_save and ckpt_cfg.most_recent_k > -1 and ckpt_type != CheckpointType.LOCAL:
+    if (
+        not ckpt_cfg.async_save
+        and ckpt_cfg.most_recent_k > -1
+        and ckpt_type != CheckpointType.LOCAL
+        and not is_global_non_persistent_ckpt
+    ):
         cleanup_old_non_persistent_checkpoint(save_dir, leave_ckpt_num=ckpt_cfg.most_recent_k, do_async=False)
 
     # Wait so everyone is done (not necessary)
@@ -1557,6 +1594,8 @@ def cleanup_old_non_persistent_checkpoint(
     save_dir: str,
     leave_ckpt_num: int = 1,
     do_async: bool = False,
+    *,
+    max_iteration: int | None = None,
 ) -> None:
     """Clean up old non-persistent checkpoints in a directory.
 
@@ -1567,6 +1606,7 @@ def cleanup_old_non_persistent_checkpoint(
         save_dir: The directory containing non-persistent checkpoints.
         leave_ckpt_num: The number of latest checkpoints to keep.
         do_async: If True, performs cleanup in a background thread.
+        max_iteration: If set, ignores newer iteration directories that may still be incomplete.
     """
     if torch.distributed.is_initialized() and torch.distributed.get_rank() != 0:
         return
@@ -1574,6 +1614,10 @@ def cleanup_old_non_persistent_checkpoint(
 
     iter_prefix = "iter_"
     iter_ckpts = save_dir.rglob(f"{iter_prefix}*")
+    if max_iteration is not None:
+        iter_ckpts = (
+            ckpt_path for ckpt_path in iter_ckpts if int(ckpt_path.name[len(iter_prefix) :]) <= max_iteration
+        )
     sorted_iter_ckpts = sorted(iter_ckpts, key=lambda ckpt_name: int(ckpt_name.name[len(iter_prefix) :]))
     if not sorted_iter_ckpts:
         return
@@ -1589,8 +1633,10 @@ def cleanup_old_non_persistent_checkpoint(
     print_rank_0(f"Non-persistent checkpoints to be kept: {keep_iter_ckpts}")
 
     def remove_iter_ckpts(_iter_ckpts):
-        for ckpt in _iter_ckpts:
-            shutil.rmtree(ckpt)
+        with _CHECKPOINT_CLEANUP_LOCK:
+            for ckpt in _iter_ckpts:
+                if ckpt.exists():
+                    shutil.rmtree(ckpt)
 
     if do_async:
         threading.Thread(target=remove_iter_ckpts, args=(rm_iter_ckpts,)).start()
