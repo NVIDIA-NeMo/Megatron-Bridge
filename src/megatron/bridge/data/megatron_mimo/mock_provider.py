@@ -16,10 +16,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.dataset import MegatronMIMODataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext
 
 
 def _generate_random_image(width: int, height: int, rng: np.random.Generator) -> Image.Image:

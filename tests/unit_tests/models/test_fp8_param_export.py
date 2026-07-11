@@ -46,6 +46,9 @@ def _make_qkv_mapping_type(global_name: str = _QKV_GLOBAL):
         def resolve(self, _captures):
             return MegatronQkvMapping()
 
+        def set_process_groups_from_pg_collection(self, _pg_collection):
+            pass
+
         def hf_to_megatron(self, hf_weights, _module):
             return hf_weights
 
@@ -246,11 +249,6 @@ class TestFp8ParamExport:
         gname = _QKV_GLOBAL
         MappingT = _make_qkv_mapping_type(gname)
 
-        class Reg:
-            @staticmethod
-            def megatron_to_hf_lookup(_n):
-                return MappingT()
-
         rowwise = torch.ones(scale_shape, dtype=torch.float32)
         metadata = {
             "rowwise_data": torch.zeros((2, 256), dtype=torch.uint8),
@@ -263,7 +261,12 @@ class TestFp8ParamExport:
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
         )
-        _patch_export_task_context(monkeypatch, bridge, gname, registry_factory=lambda: Reg())
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            gname,
+            registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+        )
         monkeypatch.setattr(
             f"{_MODEL_MB}.get_module_and_param_from_name",
             lambda *_a, **_k: (SimpleNamespace(config=model.config), fake_w),
@@ -351,23 +354,24 @@ class TestFp8ParamExport:
         MappingT = _make_qkv_mapping_type(gname)
 
         if mode == "remote_pp":
-
-            class Reg:
-                @staticmethod
-                def megatron_to_hf_lookup(_n):
-                    return MappingT()
-
             _patch_export_task_context(
-                monkeypatch, bridge, gname, registry_factory=lambda: Reg(), pp_rank=1, pp_size=2
+                monkeypatch,
+                bridge,
+                gname,
+                registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+                pp_rank=1,
+                pp_size=2,
             )
         else:
             n = {"c": 0}
 
-            class Reg:
-                @staticmethod
-                def megatron_to_hf_lookup(_n):
+            class Reg(MegatronMappingRegistry):
+                def __init__(self):
+                    super().__init__(MappingT())
+
+                def megatron_to_hf_lookup(self, _n):
                     n["c"] += 1
-                    return MappingT() if n["c"] == 1 else None
+                    return super().megatron_to_hf_lookup(_n) if n["c"] == 1 else None
 
             _patch_export_task_context(monkeypatch, bridge, gname, registry_factory=lambda: Reg())
 

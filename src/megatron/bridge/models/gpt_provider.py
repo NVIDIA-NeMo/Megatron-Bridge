@@ -15,7 +15,6 @@
 import contextlib
 import inspect
 import logging
-import warnings
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, Callable, Literal, Optional, Union
@@ -42,6 +41,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
+from megatron.bridge.utils.cuda_graph import validate_cuda_graph_configuration
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -226,6 +226,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
 
+        validate_cuda_graph_configuration(self)
         if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "
@@ -406,153 +407,3 @@ def _patch_yarn_concentration_factor():
 
 
 _patch_yarn_concentration_factor()
-
-
-def _patch_mtp_checkpointed_forward_padding_mask():
-    """Guard for MCore commits where MTP recompute drops the padding_mask parameter.
-
-    MCore main commit 4c636026 passes ``padding_mask`` from
-    ``MultiTokenPredictionLayer.forward`` into ``_checkpointed_forward``, but
-    that helper's signature does not accept the kwarg yet. Keep the Bridge bump
-    working without editing the MCore submodule. This is a no-op once upstream
-    MCore adds the parameter.
-
-    TODO: Remove once MCore's ``MultiTokenPredictionLayer._checkpointed_forward``
-    accepts ``padding_mask`` directly.
-    """
-    try:
-        from megatron.core import parallel_state, tensor_parallel
-        from megatron.core.enums import Fp8Recipe
-        from megatron.core.fp8_utils import get_fp8_context
-        from megatron.core.transformer.multi_token_prediction import MultiTokenPredictionLayer
-    except ImportError:
-        return
-
-    _checkpointed_forward_signature = inspect.signature(MultiTokenPredictionLayer._checkpointed_forward)
-    _checkpointed_forward_params = _checkpointed_forward_signature.parameters
-    if "padding_mask" in _checkpointed_forward_params or any(
-        param.kind == inspect.Parameter.VAR_KEYWORD for param in _checkpointed_forward_params.values()
-    ):
-        return
-    if "hidden_states" not in _checkpointed_forward_params:
-        return
-    if "padding_mask" not in inspect.signature(MultiTokenPredictionLayer._proj_and_transformer_layer).parameters:
-        return
-
-    def _checkpointed_forward(
-        self,
-        hidden_states,
-        decoder_input,
-        attention_mask=None,
-        padding_mask=None,
-        context=None,
-        context_mask=None,
-        rotary_pos_emb=None,
-        rotary_pos_cos=None,
-        rotary_pos_sin=None,
-        attention_bias=None,
-        inference_params=None,
-        packed_seq_params=None,
-        sequence_len_offset=None,
-    ):
-        def custom_forward(
-            hidden_states,
-            decoder_input,
-            attention_mask,
-            padding_mask,
-            context,
-            context_mask,
-            rotary_pos_emb,
-            rotary_pos_cos,
-            rotary_pos_sin,
-            sequence_len_offset,
-        ):
-            return self._proj_and_transformer_layer(
-                hidden_states=hidden_states,
-                decoder_input=decoder_input,
-                attention_mask=attention_mask,
-                padding_mask=padding_mask,
-                context=context,
-                context_mask=context_mask,
-                rotary_pos_emb=rotary_pos_emb,
-                rotary_pos_cos=rotary_pos_cos,
-                rotary_pos_sin=rotary_pos_sin,
-                attention_bias=attention_bias,
-                inference_params=inference_params,
-                packed_seq_params=packed_seq_params,
-                sequence_len_offset=sequence_len_offset,
-            )
-
-        if self.config.fp8 and self.config.fp8_recipe == Fp8Recipe.delayed:
-            outer_quantization_context = get_fp8_context(self.config)
-        else:
-            outer_quantization_context = contextlib.nullcontext()
-
-        def checkpoint_handler():
-            if self.config.fp8 or getattr(self.config, "fp4", None):
-                from megatron.core.extensions.transformer_engine import te_checkpoint
-
-                return te_checkpoint(
-                    custom_forward,
-                    self.config.distribute_saved_activations,
-                    tensor_parallel.random.get_cuda_rng_tracker,
-                    parallel_state.get_tensor_model_parallel_group(),
-                    hidden_states,
-                    decoder_input,
-                    attention_mask,
-                    padding_mask,
-                    context,
-                    context_mask,
-                    rotary_pos_emb,
-                    rotary_pos_cos,
-                    rotary_pos_sin,
-                    sequence_len_offset,
-                )
-            return tensor_parallel.checkpoint(
-                custom_forward,
-                self.config.distribute_saved_activations,
-                hidden_states,
-                decoder_input,
-                attention_mask,
-                padding_mask,
-                context,
-                context_mask,
-                rotary_pos_emb,
-                rotary_pos_cos,
-                rotary_pos_sin,
-                sequence_len_offset,
-            )
-
-        if self.config.recompute_method == "uniform":
-            assert self.config.recompute_num_layers == 1, "recompute_num_layers must be 1 for MTP recompute"
-            with outer_quantization_context:
-                outputs = checkpoint_handler()
-        elif self.config.recompute_method == "block":
-            warnings.warn(
-                "recompute_method == 'block' is not supported for MTP yet. Skipping recompute.",
-                stacklevel=2,
-            )
-            outputs = self._proj_and_transformer_layer(
-                hidden_states=hidden_states,
-                decoder_input=decoder_input,
-                attention_mask=attention_mask,
-                padding_mask=padding_mask,
-                context=context,
-                context_mask=context_mask,
-                rotary_pos_emb=rotary_pos_emb,
-                rotary_pos_cos=rotary_pos_cos,
-                rotary_pos_sin=rotary_pos_sin,
-                attention_bias=attention_bias,
-                inference_params=inference_params,
-                packed_seq_params=packed_seq_params,
-                sequence_len_offset=sequence_len_offset,
-            )
-        else:
-            raise ValueError("Invalid activation recompute method.")
-
-        return outputs
-
-    MultiTokenPredictionLayer._checkpointed_forward = _checkpointed_forward
-
-
-_patch_mtp_checkpointed_forward_padding_mask()
