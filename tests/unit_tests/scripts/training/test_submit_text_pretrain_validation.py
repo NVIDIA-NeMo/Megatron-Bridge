@@ -135,10 +135,10 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert all(16 % target.minimum_world_size == 0 for target in targets)
 
     nemotron3_nano = next(target for target in targets if target.id == "nemotron3-nano")
-    assert (nemotron3_nano.tensor_parallelism, nemotron3_nano.expert_parallelism) == (2, 8)
+    assert (nemotron3_nano.tp, nemotron3_nano.ep) == (2, 8)
 
     gemma4_dense = next(target for target in targets if target.id == "gemma4-31b")
-    assert (gemma4_dense.tensor_parallelism, gemma4_dense.pipeline_parallelism) == (8, 1)
+    assert (gemma4_dense.tp, gemma4_dense.pp) == (8, 1)
 
     gemma4_moe = next(target for target in targets if target.id == "gemma4-26b-a4b")
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in gemma4_moe.overrides
@@ -154,14 +154,14 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "checkpoint.save_optim=false" in llama33.overrides
 
     gpt_oss_120b = next(target for target in targets if target.id == "gpt-oss-120b")
-    assert (gpt_oss_120b.pipeline_parallelism, gpt_oss_120b.expert_parallelism) == (2, 8)
+    assert (gpt_oss_120b.pp, gpt_oss_120b.ep) == (2, 8)
     assert "optimizer.use_precision_aware_optimizer=true" in gpt_oss_120b.overrides
     assert "optimizer.main_params_dtype=float16" in gpt_oss_120b.overrides
     assert "optimizer.exp_avg_sq_dtype=bfloat16" in gpt_oss_120b.overrides
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in gpt_oss_120b.overrides
 
     nemotron3_super = next(target for target in targets if target.id == "nemotron3-super")
-    assert (nemotron3_super.tensor_parallelism, nemotron3_super.pipeline_parallelism) == (4, 2)
+    assert (nemotron3_super.tp, nemotron3_super.pp) == (4, 2)
     assert "model.pipeline_model_parallel_layout=null" in nemotron3_super.overrides
     assert "optimizer.main_params_dtype=float16" in nemotron3_super.overrides
     assert "optimizer.exp_avg_sq_dtype=bfloat16" in nemotron3_super.overrides

@@ -268,7 +268,7 @@ def test_nemotron3_super_h100_pretrain_uses_hopper_fp8(monkeypatch):
     config = nemotron_3_super_pretrain_8gpu_h100_bf16_config()
 
     assert config.mixed_precision.fp8 == "hybrid"
-    assert config.mixed_precision.fp8_recipe == "current"
+    assert config.mixed_precision.fp8_recipe == "tensorwise"
     assert config.mixed_precision.grad_reduce_in_fp32 is False
 
 
