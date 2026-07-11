@@ -158,6 +158,7 @@ def _model_forward(model, input_ids):
         input_ids=input_ids,
         position_ids=position_ids,
         attention_mask=None,
+        runtime_gather_output=True,
     )
     logits = output if isinstance(output, torch.Tensor) else output[0]
     return logits
@@ -408,7 +409,7 @@ def tp_follower_loop(model):
             )
             seq_len = input_ids.shape[1]
             position_ids = torch.arange(seq_len, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
-            model(input_ids=input_ids, position_ids=position_ids, attention_mask=None)
+            model(input_ids=input_ids, position_ids=position_ids, attention_mask=None, runtime_gather_output=True)
         elif cmd == _CMD_SET_INF_MODE_ON:
             for attn in _get_core_attentions(model):
                 attn.set_inference_mode(True)

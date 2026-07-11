@@ -46,16 +46,13 @@ try:
 except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
-from megatron.bridge.recipes.run_plugins import PreemptionPlugin
-
-
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PerfEnvPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script_with_env.py"
+ENTRYPOINT_PERFORMANCE = "run_script.py"
 ENTRYPOINT_RECIPE = "run_recipe.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -538,7 +535,7 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
+        script_name = ENTRYPOINT_PERFORMANCE
         if wandb_experiment_name is not None:
             # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
             # login node in this path: recipe imports belong in the training container.

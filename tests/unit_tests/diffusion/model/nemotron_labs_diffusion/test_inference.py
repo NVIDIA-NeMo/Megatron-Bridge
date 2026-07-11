@@ -495,6 +495,27 @@ class TestGenerateAr:
         result, *_ = self._run_generate_ar(prompt_len=prompt_len, max_new_tokens=max_new_tokens)
         assert result.shape == (1, prompt_len + max_new_tokens)
 
+    def test_generate_ar_selects_from_full_vocab_with_parallel_output(self):
+        """TP generation selects the global maximum, not a rank-local vocabulary index."""
+        model, _ = _make_mock_model()
+        prompt = torch.zeros(1, 1, dtype=torch.long)
+
+        def fake_mcore_forward(*, input_ids, position_ids, attention_mask, runtime_gather_output=None):
+            del position_ids, attention_mask
+            vocab_size = 8 if runtime_gather_output else 4
+            logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], vocab_size)
+            logits[:, :, 2] = 5.0
+            if runtime_gather_output:
+                logits[:, :, 6] = 10.0
+            return logits
+
+        model.side_effect = fake_mcore_forward
+
+        with patch(f"{_MODULE}._tp_send_cmd"):
+            result = generate_ar(model, prompt, max_new_tokens=1)
+
+        assert result[0, -1].item() == 6
+
     def test_generate_ar_with_temperature(self):
         """temperature > 0 uses multinomial sampling; output length is still correct."""
         torch.manual_seed(7)
