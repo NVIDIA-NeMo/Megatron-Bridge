@@ -373,8 +373,8 @@ def load_peft_adapter_checkpoint(
 ) -> None:
     """Load a PEFT adapter checkpoint into an already transformed model."""
     from megatron.core import dist_checkpointing
-    from megatron.core.dist_checkpointing.serialization import get_default_load_sharded_strategy
     from megatron.core.dist_checkpointing.strategies.fully_parallel import FullyParallelLoadStrategyWrapper
+    from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 
     from megatron.bridge.training.checkpointing import apply_peft_adapter_filter_to_state_dict
 
@@ -389,7 +389,7 @@ def load_peft_adapter_checkpoint(
 
     checkpoint_path = str(adapter_checkpoint_path)
     if load_strategy is None:
-        load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+        load_strategy = TorchDistLoadShardedStrategy()
         if pg_collection is None and fully_parallel_load:
             try:
                 pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["dp_cp"])
