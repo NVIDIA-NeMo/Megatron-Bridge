@@ -1261,6 +1261,13 @@ def llama31_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_LIBRARY_ENV_VARS,
     }
+    # BF16 gradients and moments keep the 70B optimizer state within H100
+    # memory at TP=8 / PP=2 while retaining FP32 master parameters.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg
 
 
