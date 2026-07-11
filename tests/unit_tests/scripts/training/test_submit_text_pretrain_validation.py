@@ -154,6 +154,10 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert (nemotron3_super.tensor_parallelism, nemotron3_super.pipeline_parallelism) == (4, 2)
     assert "model.pipeline_model_parallel_layout=null" in nemotron3_super.overrides
 
+    mimo_v2_flash = next(target for target in targets if target.id == "mimo-v2-flash")
+    assert "ddp.grad_reduce_in_fp32=false" in mimo_v2_flash.overrides
+    assert "optimizer.main_params_dtype=bfloat16" in mimo_v2_flash.overrides
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
