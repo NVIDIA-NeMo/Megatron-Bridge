@@ -221,6 +221,7 @@ def test_qwen35_moe_pretrain_uses_full_recompute_for_hybrid_headroom(monkeypatch
 
     config = qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config()
 
+    assert config.model.tensor_model_parallel_size == 2
     assert config.model.recompute_granularity == "full"
     assert config.model.recompute_method == "uniform"
     assert config.model.recompute_num_layers == 1

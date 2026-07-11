@@ -34,7 +34,7 @@ def qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = build_text_pretrain_config(
         hf_model_id="Qwen/Qwen3.5-35B-A3B",
         revision="59d61f3ce65a6d9863b86d2e96597125219dc754",  # pragma: allowlist secret
-        tensor_parallelism=1,
+        tensor_parallelism=2,
         pipeline_parallelism=1,
         expert_parallelism=8,
         trust_remote_code=True,
