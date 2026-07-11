@@ -158,6 +158,11 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "ddp.grad_reduce_in_fp32=false" in mimo_v2_flash.overrides
     assert "optimizer.main_params_dtype=bfloat16" in mimo_v2_flash.overrides
 
+    ling_flash = next(target for target in targets if target.id == "ling-flash-2")
+    assert "model.moe_permute_fusion=false" in ling_flash.overrides
+    assert "ddp.grad_reduce_in_fp32=false" in ling_flash.overrides
+    assert "optimizer.main_params_dtype=bfloat16" in ling_flash.overrides
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
