@@ -30,6 +30,7 @@ from megatron.bridge.recipes.llama.h100.llama3 import (
     llama31_8b_pretrain_2gpu_h100_bf16_config,
     llama31_70b_pretrain_32gpu_h100_bf16_config,
 )
+from megatron.bridge.recipes.qwen.h100.qwen35 import qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.sarvam.h100.sarvam import sarvam_30b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.utils import text_pretrain_utils
 
@@ -174,6 +175,28 @@ def test_sarvam_pretrain_uses_full_recompute_for_dispatch_headroom(monkeypatch):
     )
 
     config = sarvam_30b_pretrain_8gpu_h100_bf16_config()
+
+    assert config.model.recompute_granularity == "full"
+    assert config.model.recompute_method == "uniform"
+    assert config.model.recompute_num_layers == 1
+    assert config.model.recompute_modules is None
+
+
+def test_qwen35_moe_pretrain_uses_full_recompute_for_hybrid_headroom(monkeypatch):
+    provider = SimpleNamespace()
+
+    class _Bridge:
+        def to_megatron_provider(self, *, load_weights):
+            assert load_weights is False
+            return provider
+
+    monkeypatch.setattr(
+        text_pretrain_utils.AutoBridge,
+        "from_hf_pretrained",
+        lambda *_args, **_kwargs: _Bridge(),
+    )
+
+    config = qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config()
 
     assert config.model.recompute_granularity == "full"
     assert config.model.recompute_method == "uniform"
