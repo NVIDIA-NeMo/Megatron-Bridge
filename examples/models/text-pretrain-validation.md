@@ -64,8 +64,8 @@ removed from the scope.
 | `gpt-oss-20b` | GPT-OSS | GPT-OSS 20B | 21.5B | `gpt_oss_20b_pretrain_16gpu_h100_bf16_config` | [PASS: job 5614349](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/h9y0hlvc) |
 | `gpt-oss-120b` | GPT-OSS | GPT-OSS 120B | 120.4B | `gpt_oss_120b_pretrain_64gpu_h100_bf16_config` | RETRY: job 5614979 main-param OOM; validation changed to PP=2/EP=8 |
 | `hy3-preview-base` | HY V3 | Hy3 preview-Base | 298.8B | `hy3_299b_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615000 requires a 33.07 GiB/rank grad buffer; exceeds 16-H100 capacity |
-| `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | RETRY: job 5613750 gated-config 401; direct provider added |
-| `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | RETRY: job 5614256 gated-config 401; direct provider added |
+| `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5615013](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/twcr25g5) |
+| `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5615014](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/cdx4xe8i) |
 | `llama31-8b` | Llama | Llama 3.1 | 8B | `llama31_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614263](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/gry9jhfg) |
 | `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613679](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3w8ubwh7) |
 | `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama31_70b_pretrain_32gpu_h100_bf16_config` | RETRY: job 5614973 optimizer-state OOM; BF16 moments added |
