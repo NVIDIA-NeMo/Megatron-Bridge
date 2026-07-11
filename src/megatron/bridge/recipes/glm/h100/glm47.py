@@ -20,7 +20,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 def glm47_flash_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the GLM-4.7-Flash 31B H100 pretrain config."""
-    return build_text_pretrain_config(
+    cfg = build_text_pretrain_config(
         hf_model_id="zai-org/GLM-4.7-Flash",
         revision="7dd20894a642a0aa287e9827cb1a1f7f91386b67",  # pragma: allowlist secret
         tensor_parallelism=1,
@@ -28,6 +28,13 @@ def glm47_flash_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         expert_parallelism=8,
         trust_remote_code=True,
     )
+    # Without full recompute the first step leaves insufficient allocator
+    # headroom even for the MoE metric all-reduce's sub-KiB NCCL buffers.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+    return cfg
 
 
 def glm47_355b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
