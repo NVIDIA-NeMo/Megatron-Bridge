@@ -78,7 +78,7 @@ removed from the scope.
 | `moonlight-16b` | Moonlight | Moonlight | 16B | `moonlight_16b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614345](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/gefczmtj) |
 | `nemotron-h-4b` | Nemotron | Nemotron H | 4.5B | `nemotronh_4b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613719](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/9yryey3k) |
 | `nemotron-nano-9b-v2` | Nemotron | Nemotron Nano v2 | 8.9B | `nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614274](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/dq1lmioh) |
-| `nemotron3-nano` | Nemotron | Nemotron-3 Nano | 31.6B | `nemotron_3_nano_pretrain_8gpu_h100_bf16_config` | TODO |
+| `nemotron3-nano` | Nemotron | Nemotron-3 Nano | 31.6B | `nemotron_3_nano_pretrain_8gpu_h100_bf16_config` | RETRY: job 5614962 logits OOM; validation TP increased to 2 |
 | `nemotron3-super` | Nemotron | Nemotron-3 Super | 123.6B | `nemotron_3_super_pretrain_8gpu_h100_bf16_config` | TODO |
 | `llama31-nemotron-nano-4b` | Nemotron | Llama Nemotron | 4.5B | `llama31_nemotron_nano_4b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613712](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/utr0drdl) |
 | `olmoe-7b` | OLMoE | OLMoE | 6.9B | `olmoe_7b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5613795](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/87iw0tzr) |
