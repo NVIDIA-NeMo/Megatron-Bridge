@@ -50,7 +50,7 @@ removed from the scope.
 | `ling-mini-2` | Bailing | Ling MoE V2 / Mini | 16B | `ling_mini_16b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614323](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/esj00tu8) |
 | `deepseek-v2` | DeepSeek | DeepSeek V2 | 235.7B | `deepseek_v2_pretrain_128gpu_h100_bf16_config` | FAIL: job 5614992 requires a 48.52 GiB/rank grad buffer; exceeds 16-H100 capacity |
 | `deepseek-v2-lite` | DeepSeek | DeepSeek V2 Lite | 15.7B | `deepseek_v2_lite_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614279](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bnpkjx66) |
-| `deepseek-v4-flash` | DeepSeek | DeepSeek V4 Flash | 292B | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_config` | RETRY: job 5614993 used invalid `mhc` recompute module; removed |
+| `deepseek-v4-flash` | DeepSeek | DeepSeek V4 Flash | 292B | `deepseek_v4_flash_pretrain_32gpu_h100_bf16_config` | FAIL: job 5615653 requires DSv4 hybrid-attention modules absent from the pinned MCore |
 | `ernie45-21b-a3b` | Ernie | Ernie 4.5 MoE | 21.9B | `ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config` | RETRY: job 5615017 full recompute exceeded time budget; TP=2 added to shard logits |
 | `falcon-h1-500m` | Falcon | Falcon H1 | 0.5B | `falcon_h1_500m_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613718](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/e5hgbepa) |
 | `gemma-2b` | Gemma | Gemma | 2.5B | `gemma_2b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5615009](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3xymq1yl) |
@@ -74,7 +74,7 @@ removed from the scope.
 | `minimax-m2-7` | MiniMax | MiniMax-M2.7 | 456B | `minimax_m2_7_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615007 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
 | `mistral-7b` | Mistral | Mistral | 7.2B | `mistral_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613796](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/f6agifw6) |
 | `mimo-7b` | Xiaomi-MiMo | MiMo | 7.8B | `mimo_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614060](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/vxv6bxye) |
-| `mimo-v2-flash` | Xiaomi-MiMo | MiMo-V2-Flash | 309.8B | `mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5615001 canceled after config loading fetched checkpoint weights; direct provider added |
+| `mimo-v2-flash` | Xiaomi-MiMo | MiMo-V2-Flash | 309.8B | `mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5615656 FP32 grad-buffer OOM; validation uses BF16 grads and optimizer state |
 | `moonlight-16b` | Moonlight | Moonlight | 16B | `moonlight_16b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614345](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/gefczmtj) |
 | `nemotron-h-4b` | Nemotron | Nemotron H | 4.5B | `nemotronh_4b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613719](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/9yryey3k) |
 | `nemotron-nano-9b-v2` | Nemotron | Nemotron Nano v2 | 8.9B | `nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614274](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/dq1lmioh) |
