@@ -1261,11 +1261,12 @@ def llama31_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_LIBRARY_ENV_VARS,
     }
-    # BF16 optimizer state keeps the 70B model and checkpoint materialization
-    # within H100 memory at TP=8 / PP=2.
+    # Two-byte optimizer state keeps the 70B model and checkpoint materialization
+    # within H100 memory at TP=8 / PP=2. FusedAdam requires FP16 or FP32 master
+    # parameters, while gradients and moments support BF16.
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg
