@@ -65,7 +65,7 @@ removed from the scope.
 | `gpt-oss-120b` | GPT-OSS | GPT-OSS 120B | 120.4B | `gpt_oss_120b_pretrain_64gpu_h100_bf16_config` | TODO |
 | `hy3-preview-base` | HY V3 | Hy3 preview-Base | 298.8B | `hy3_299b_pretrain_16gpu_h100_bf16_config` | TODO |
 | `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | RETRY: job 5613750 gated-config 401; direct provider added |
-| `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | TODO |
+| `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | RETRY: job 5614256 gated-config 401; direct provider added |
 | `llama31-8b` | Llama | Llama 3.1 | 8B | `llama31_8b_pretrain_2gpu_h100_bf16_config` | TODO |
 | `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613679](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3w8ubwh7) |
 | `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama31_70b_pretrain_32gpu_h100_bf16_config` | TODO |
@@ -73,7 +73,7 @@ removed from the scope.
 | `minimax-m2-5` | MiniMax | MiniMax-M2.5 | 456B | `minimax_m2_5_pretrain_16gpu_h100_bf16_config` | TODO |
 | `minimax-m2-7` | MiniMax | MiniMax-M2.7 | 456B | `minimax_m2_7_pretrain_16gpu_h100_bf16_config` | TODO |
 | `mistral-7b` | Mistral | Mistral | 7.2B | `mistral_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613796](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/f6agifw6) |
-| `mimo-7b` | Xiaomi-MiMo | MiMo | 7.8B | `mimo_7b_pretrain_2gpu_h100_bf16_config` | TODO |
+| `mimo-7b` | Xiaomi-MiMo | MiMo | 7.8B | `mimo_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614060](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/vxv6bxye) |
 | `mimo-v2-flash` | Xiaomi-MiMo | MiMo-V2-Flash | 309.8B | `mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config` | TODO |
 | `moonlight-16b` | Moonlight | Moonlight | 16B | `moonlight_16b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `nemotron-h-4b` | Nemotron | Nemotron H | 4.5B | `nemotronh_4b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613719](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/9yryey3k) |
@@ -83,7 +83,7 @@ removed from the scope.
 | `llama31-nemotron-nano-4b` | Nemotron | Llama Nemotron | 4.5B | `llama31_nemotron_nano_4b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613712](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/utr0drdl) |
 | `olmoe-7b` | OLMoE | OLMoE | 6.9B | `olmoe_7b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5613795](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/87iw0tzr) |
 | `qwen2-7b` | Qwen | Qwen2 | 7.6B | `qwen2_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613798](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/1txppez6) |
-| `qwen25-7b` | Qwen | Qwen2.5 | 7.6B | `qwen25_7b_pretrain_2gpu_h100_bf16_config` | TODO |
+| `qwen25-7b` | Qwen | Qwen2.5 | 7.6B | `qwen25_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614046](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bgh028ce) |
 | `qwen3-8b` | Qwen | Qwen3 | 8.2B | `qwen3_8b_pretrain_4gpu_h100_bf16_config` | TODO |
 | `qwen3-30b-a3b` | Qwen | Qwen3-MoE | 30.5B | `qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `qwen3-next-80b-a3b` | Qwen | Qwen3 Next | 81.3B | `qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config` | TODO |
