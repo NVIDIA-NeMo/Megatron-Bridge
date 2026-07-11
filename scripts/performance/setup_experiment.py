@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import sys
 import tempfile
 import time
@@ -105,6 +106,47 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _shell_join_commands(commands: Optional[List[List[str]]]) -> str:
+    """Render repeated command-token lists as one shell command sequence."""
+    if not commands:
+        return ":"
+    return " ; ".join(shlex.join(command) for command in commands)
+
+
+def _script_with_hooks(
+    script: run.Script,
+    custom_bash_cmds: Optional[List[List[str]]],
+    custom_post_bash_cmds: Optional[List[List[str]]],
+) -> run.Script:
+    """Wrap a script with pre/post hook commands while preserving train exit code."""
+    pre_cmds = _shell_join_commands(custom_bash_cmds)
+    post_cmds = _shell_join_commands(custom_post_bash_cmds)
+    training_cmd = shlex.join(script.to_command(with_entrypoint=True))
+    wrapped_cmd = f"""
+set -euo pipefail
+
+set +e
+bash -c {shlex.quote(f"{pre_cmds} ; {training_cmd}")}
+TRAIN_RC="$?"
+set -e
+
+export NEMO_RUN_TRAINING_EXIT_CODE="${{TRAIN_RC}}"
+POST_RC=0
+bash -c {shlex.quote(post_cmds)} || POST_RC="$?"
+
+if [ "${{TRAIN_RC}}" -ne 0 ]; then
+    exit "${{TRAIN_RC}}"
+fi
+exit "${{POST_RC}}"
+"""
+    return run.Script(
+        path="-lc",
+        entrypoint="bash",
+        args=[wrapped_cmd],
+        env=script.env,
+    )
 
 
 def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
@@ -711,6 +753,12 @@ def main(
         env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
         args=_filter_run_script_args(sys.argv[1:]),
     )
+    if kubeflow_namespace and (custom_bash_cmds or custom_post_bash_cmds):
+        nemorun_script = _script_with_hooks(
+            nemorun_script,
+            custom_bash_cmds=custom_bash_cmds,
+            custom_post_bash_cmds=custom_post_bash_cmds,
+        )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
 
