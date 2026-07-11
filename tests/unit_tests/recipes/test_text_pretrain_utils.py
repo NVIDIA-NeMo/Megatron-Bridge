@@ -99,7 +99,7 @@ def test_mimo_v2_flash_pretrain_is_fully_local(monkeypatch):
     assert config.model.expert_model_parallel_size == 16
 
 
-def test_ernie45_pretrain_uses_full_recompute_for_logits_headroom(monkeypatch):
+def test_ernie45_pretrain_shards_logits_with_tensor_parallelism(monkeypatch):
     provider = SimpleNamespace()
 
     class _Bridge:
@@ -115,10 +115,9 @@ def test_ernie45_pretrain_uses_full_recompute_for_logits_headroom(monkeypatch):
 
     config = ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config()
 
-    assert config.model.recompute_granularity == "full"
-    assert config.model.recompute_method == "uniform"
-    assert config.model.recompute_num_layers == 1
-    assert config.model.recompute_modules is None
+    assert config.model.tensor_model_parallel_size == 2
+    assert config.model.recompute_granularity == "selective"
+    assert config.model.recompute_modules == ["core_attn"]
 
 
 def test_gemma4_moe_pretrain_uses_full_recompute_for_rmsnorm_headroom(monkeypatch):
