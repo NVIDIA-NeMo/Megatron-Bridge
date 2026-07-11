@@ -98,8 +98,8 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
 
-    # Mixed Precision
-    cfg.mixed_precision = "nemotron_3_super_bf16_with_nvfp4_mixed"
+    # H100 supports FP8 but not the NVFP4 tensor-map path used on Blackwell.
+    cfg.mixed_precision = "nemotron_h_bf16_with_fp8_current_scaling_mixed"
 
     # Optimizer hyperparameters
     cfg.optimizer.lr = 4.5e-4
