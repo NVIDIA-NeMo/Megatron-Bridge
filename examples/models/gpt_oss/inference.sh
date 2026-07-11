@@ -47,7 +47,7 @@ run_generation() {
         --seed 0 \
         --top_k 1 \
         --use-legacy-generation \
-        --attention-backend local \
+        --attention-backend unfused \
         --trust-remote-code \
         "$@"
 }

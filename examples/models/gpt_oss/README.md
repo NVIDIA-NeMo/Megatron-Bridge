@@ -178,7 +178,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/inference/text
     --max_new_tokens 64 \
     --tp 1 --pp 1 --ep 8 --etp 1 \
     --use-legacy-generation \
-    --attention-backend local \
+    --attention-backend unfused \
     --trust-remote-code
 ```
 
