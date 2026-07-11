@@ -107,6 +107,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--submission-dry-run", action="store_true", help="Ask NeMo-Run to render Slurm scripts.")
     parser.add_argument("--nodes", type=int, default=2)
     parser.add_argument("--gpus-per-node", type=int, default=8)
+    parser.add_argument(
+        "--implicit-gpu-allocation",
+        action="store_true",
+        help="Use whole-node implicit GPUs instead of emitting a Slurm GPU request.",
+    )
     parser.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), required=False)
     parser.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), required=False)
     parser.add_argument("--time", default="04:00:00")
@@ -183,6 +188,8 @@ def build_command(args: argparse.Namespace, target: ValidationTarget) -> list[st
         "--experiment-name",
         f"mb747-{target.id}",
     ]
+    if args.implicit_gpu_allocation:
+        command.append("--implicit-gpu-allocation")
     mounts: list[str] = []
     _append_mount(command, mounts, f"{REPO_ROOT}:{CONTAINER_REPO_ROOT}")
     for path in (args.dataset_path.parent, args.dataset_cache, args.output_root):

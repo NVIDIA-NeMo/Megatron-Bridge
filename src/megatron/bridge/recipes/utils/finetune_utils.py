@@ -17,6 +17,7 @@
 from typing import Any
 
 from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
@@ -207,11 +208,19 @@ def default_openmathinstruct2_thinking_packed_config(
         packed_sequence: Whether to enable offline packed-sequence preparation.
         pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs).
     """
-    cfg = default_openmathinstruct2_config(
+    offline_packing_specs = None
+    if packed_sequence:
+        offline_packing_specs = PackedSequenceSpecs(
+            packed_sequence_size=seq_length,
+            pad_seq_to_mult=pad_seq_to_mult,
+        )
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking"),
+        preprocessing=ChatSFTPreprocessingConfig(),
         seq_length=seq_length,
-        packed_sequence=packed_sequence,
-        pad_seq_to_mult=pad_seq_to_mult,
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
+        val_proportion=0.05,
+        num_workers=2,
     )
-    assert cfg.hf_dataset is not None
-    cfg.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
-    return cfg

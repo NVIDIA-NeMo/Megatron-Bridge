@@ -58,6 +58,11 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
+        "--implicit-gpu-allocation",
+        action="store_true",
+        help="Do not emit a Slurm GPU request when exclusive nodes provide GPUs without GRES.",
+    )
+    execution.add_argument(
         "--container-image",
         default=os.environ.get("CONTAINER_IMAGE"),
         help="Slurm container image; defaults to CONTAINER_IMAGE.",
@@ -149,17 +154,22 @@ def _build_executor(
 ) -> object:
     """Build a Slurm NeMo-Run executor."""
     packager = run.GitArchivePackager(include_submodules=False) if args.packager == "git" else run.Packager()
+    executor_kwargs = {
+        "account": args.account,
+        "partition": args.partition,
+        "nodes": args.nodes,
+        "ntasks_per_node": args.gpus_per_node,
+        "mem": "0",
+        "exclusive": True,
+        "time": args.time,
+        "gres": args.gres,
+        "tunnel": run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
+        "packager": packager,
+    }
+    if not args.implicit_gpu_allocation:
+        executor_kwargs["gpus_per_node"] = args.gpus_per_node
     executor = run.SlurmExecutor(
-        account=args.account,
-        partition=args.partition,
-        nodes=args.nodes,
-        ntasks_per_node=args.gpus_per_node,
-        mem="0",
-        exclusive=True,
-        time=args.time,
-        gres=args.gres,
-        tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
-        packager=packager,
+        **executor_kwargs,
     )
     executor.container_image = args.container_image
     executor.container_mounts = mounts

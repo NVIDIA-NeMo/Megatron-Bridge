@@ -183,10 +183,41 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
 
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
-    assert "gpus_per_node" not in executor.kwargs
+    assert executor.kwargs["gpus_per_node"] == 1
     assert executor.env_vars == {"EXPLICIT_VALUE": "provided"}
     assert executor.container_env == ["EXPLICIT_VALUE", "HF_TOKEN"]
     assert executor.container_mounts == ["/host:/container"]
+
+
+def test_slurm_executor_can_use_whole_node_implicit_gpus(tmp_path, monkeypatch):
+    module = _load_setup_experiment_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.Packager = object
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(
+        [
+            "--gpus-per-node",
+            "8",
+            "--implicit-gpu-allocation",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+        ]
+    )
+
+    executor = module._build_executor(args, env_vars={}, inherited_env=[], mounts=[])
+
+    assert executor.kwargs["ntasks_per_node"] == 8
+    assert "gpus_per_node" not in executor.kwargs
 
 
 @pytest.mark.parametrize(

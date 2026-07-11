@@ -145,7 +145,7 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "optimizer.main_params_dtype=float16" in gemma4_moe.overrides
 
     qwen3_next = next(target for target in targets if target.id == "qwen3-next-80b-a3b")
-    assert (qwen3_next.tp, qwen3_next.pp, qwen3_next.ep) == (2, 2, 8)
+    assert (qwen3_next.tp, qwen3_next.pp, qwen3_next.ep) == (4, 2, 8)
     assert "model.recompute_granularity=full" in qwen3_next.overrides
     assert "model.recompute_modules=null" in qwen3_next.overrides
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in qwen3_next.overrides
@@ -169,11 +169,13 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert all(not override.startswith("mixed_precision=") for override in nemotron3_super.overrides)
 
     mimo_v2_flash = next(target for target in targets if target.id == "mimo-v2-flash")
+    assert (mimo_v2_flash.tp, mimo_v2_flash.ep) == (2, 16)
     assert "ddp.grad_reduce_in_fp32=false" in mimo_v2_flash.overrides
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in mimo_v2_flash.overrides
     assert "optimizer.main_params_dtype=float16" in mimo_v2_flash.overrides
 
     ling_flash = next(target for target in targets if target.id == "ling-flash-2")
+    assert (ling_flash.tp, ling_flash.ep) == (4, 16)
     assert "model.moe_permute_fusion=false" in ling_flash.overrides
     assert "ddp.grad_reduce_in_fp32=false" in ling_flash.overrides
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in ling_flash.overrides
@@ -214,6 +216,16 @@ def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     assert f"VIRTUAL_ENV={tmp_path / 'venv'}" in command
     assert any(value.startswith(f"PATH={tmp_path / 'venv' / 'bin'}:") for value in command)
     assert "checkpoint.load=null" in command
+
+
+def test_command_can_select_whole_node_implicit_gpu_allocation(tmp_path):
+    module = _load_module()
+    target = module.load_manifest(module.DEFAULT_MANIFEST)[0]
+    args = _parse_required_args(module, tmp_path, "--implicit-gpu-allocation")
+
+    command = module.build_command(args, target)
+
+    assert "--implicit-gpu-allocation" in command
 
 
 def test_sensitive_environment_values_must_be_inherited_by_name(tmp_path):
