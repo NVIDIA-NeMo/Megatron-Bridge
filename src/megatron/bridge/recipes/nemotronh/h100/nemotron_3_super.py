@@ -22,6 +22,7 @@ from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 
 
 NEMOTRON_3_SUPER_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
@@ -99,7 +100,8 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
 
     # H100 supports FP8 but not the NVFP4 tensor-map path used on Blackwell.
-    cfg.mixed_precision = "nemotron_h_bf16_with_fp8_current_scaling_mixed"
+    cfg.mixed_precision = get_mixed_precision_config("nemotron_h_bf16_with_fp8_current_scaling_mixed")
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
 
     # Optimizer hyperparameters
     cfg.optimizer.lr = 4.5e-4

@@ -28,6 +28,7 @@ from megatron.bridge.training.config import DistributedDataParallelConfig, Optim
 from megatron.bridge.training.mixed_precision import (
     MixedPrecisionConfig,
     bf16_mixed,
+    bf16_mixed_with_bf16_grad_reduce,
     bf16_with_fp8_current_scaling_mixed,
     bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_fp8_subchannel_scaling_mixed,
@@ -479,6 +480,14 @@ class TestMixedPrecisionRecipes:
         # Base BF16 recipe should have fp8_param as False
         assert config.fp8_param is False
         assert config.fp8_param_gather is False
+
+    def test_bf16_mixed_with_bf16_grad_reduce(self):
+        config = bf16_mixed_with_bf16_grad_reduce()
+
+        assert config.bf16 is True
+        assert config.params_dtype == torch.bfloat16
+        assert config.pipeline_dtype == torch.bfloat16
+        assert config.grad_reduce_in_fp32 is False
 
     def test_fp16_mixed(self):
         config = fp16_mixed()
