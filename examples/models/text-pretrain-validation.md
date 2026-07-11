@@ -62,7 +62,7 @@ removed from the scope.
 | `glm47-355b` | GLM | GLM-4.7 | 358.3B | `glm47_355b_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615004 requires a 31.75 GiB/rank grad buffer after 71.30 GiB is allocated; exceeds 16-H100 capacity |
 | `glm47-flash-31b` | GLM | GLM-4.7-Flash | 31.2B | `glm47_flash_31b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615023](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/6w25bpw6) |
 | `gpt-oss-20b` | GPT-OSS | GPT-OSS 20B | 21.5B | `gpt_oss_20b_pretrain_16gpu_h100_bf16_config` | [PASS: job 5614349](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/h9y0hlvc) |
-| `gpt-oss-120b` | GPT-OSS | GPT-OSS 120B | 120.4B | `gpt_oss_120b_pretrain_64gpu_h100_bf16_config` | RETRY: job 5614979 main-param OOM; validation changed to PP=2/EP=8 |
+| `gpt-oss-120b` | GPT-OSS | GPT-OSS 120B | 120.4B | `gpt_oss_120b_pretrain_64gpu_h100_bf16_config` | RETRY: job 5615615 optimizer OOM; validation uses PP=2/EP=8 plus BF16 optimizer state |
 | `hy3-preview-base` | HY V3 | Hy3 preview-Base | 298.8B | `hy3_299b_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615000 requires a 33.07 GiB/rank grad buffer; exceeds 16-H100 capacity |
 | `llama2-7b` | Llama | Llama 2 | 6.7B | `llama2_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5615013](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/twcr25g5) |
 | `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5615014](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/cdx4xe8i) |
