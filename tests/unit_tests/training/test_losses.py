@@ -90,6 +90,24 @@ class TestMaskedNextTokenLoss:
         assert num_tokens.ndim == 0, f"num_tokens should be scalar, got shape {num_tokens.shape}"
         assert num_tokens.item() == 2 * 4 * 8, "All tokens should be counted"
 
+    def test_tuple_without_override_mask_uses_input_mask(self):
+        """A model output of ``(losses, None)`` keeps the batch loss mask."""
+        losses_tensor = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+        input_loss_mask = torch.tensor([[1.0, 0.0], [0.0, 1.0]])
+
+        with patch("megatron.bridge.training.losses.get_rerun_state_machine") as mock_rsm:
+            mock_rsm.return_value = MagicMock()
+
+            loss, num_tokens, _ = masked_next_token_loss(
+                loss_mask=input_loss_mask,
+                output_tensor=(losses_tensor, None),
+                check_for_nan_in_loss=False,
+                check_for_spiky_loss=False,
+            )
+
+        assert torch.isclose(loss, torch.tensor(5.0))
+        assert num_tokens.item() == 2
+
     def test_tuple_output_tensor_dtype_conversion(self):
         """Test that tuple tensors are converted to float regardless of input dtype."""
         # Test with various dtypes
