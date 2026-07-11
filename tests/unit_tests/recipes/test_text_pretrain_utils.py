@@ -20,6 +20,7 @@ from megatron.bridge.recipes.ernie.h100.ernie45 import ernie45_21b_a3b_pretrain_
 from megatron.bridge.recipes.gemma.h100.gemma2 import gemma2_2b_pretrain_2gpu_h100_bf16_config
 from megatron.bridge.recipes.gemma.h100.gemma_text import (
     gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config,
+    gemma4_31b_pretrain_8gpu_h100_bf16_config,
     gemma_2b_pretrain_1gpu_h100_bf16_config,
 )
 from megatron.bridge.recipes.glm.h100.glm47 import glm47_flash_31b_pretrain_8gpu_h100_bf16_config
@@ -114,6 +115,26 @@ def test_gemma4_moe_pretrain_uses_full_recompute_for_rmsnorm_headroom(monkeypatc
     assert config.model.recompute_method == "uniform"
     assert config.model.recompute_num_layers == 1
     assert config.model.recompute_modules is None
+
+
+def test_gemma4_dense_pretrain_avoids_unsupported_pipeline_parallelism(monkeypatch):
+    provider = SimpleNamespace()
+
+    class _Bridge:
+        def to_megatron_provider(self, *, load_weights):
+            assert load_weights is False
+            return provider
+
+    monkeypatch.setattr(
+        text_pretrain_utils.AutoBridge,
+        "from_hf_pretrained",
+        lambda *_args, **_kwargs: _Bridge(),
+    )
+
+    config = gemma4_31b_pretrain_8gpu_h100_bf16_config()
+
+    assert config.model.tensor_model_parallel_size == 8
+    assert config.model.pipeline_model_parallel_size == 1
 
 
 def test_glm47_flash_pretrain_uses_full_recompute_for_nccl_headroom(monkeypatch):

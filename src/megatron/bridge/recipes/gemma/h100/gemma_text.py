@@ -79,8 +79,9 @@ def gemma4_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         return build_text_pretrain_config(
             hf_model_id="google/gemma-4-31B",
             revision="d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3",  # pragma: allowlist secret
-            tensor_parallelism=4,
-            pipeline_parallelism=2,
+            # Gemma4DenseProvider does not support pipeline parallelism.
+            tensor_parallelism=8,
+            pipeline_parallelism=1,
             trust_remote_code=True,
         )
 
