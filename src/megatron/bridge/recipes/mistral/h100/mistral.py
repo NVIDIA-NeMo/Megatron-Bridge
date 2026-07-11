@@ -12,17 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.recipes.glm.h100.glm45 import *  # noqa: F403
-from megatron.bridge.recipes.glm.h100.glm47 import *  # noqa: F403
+"""H100 pretrain recipe for Mistral 7B."""
+
+from megatron.bridge.recipes.utils.text_pretrain_utils import build_text_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
 
 
-__all__ = [
-    "glm45_355b_peft_16gpu_h100_bf16_config",
-    "glm45_355b_pretrain_128gpu_h100_bf16_config",
-    "glm45_355b_sft_128gpu_h100_bf16_config",
-    "glm45_air_106b_peft_8gpu_h100_bf16_config",
-    "glm45_air_106b_pretrain_32gpu_h100_bf16_config",
-    "glm45_air_106b_sft_32gpu_h100_bf16_config",
-    "glm47_355b_pretrain_16gpu_h100_bf16_config",
-    "glm47_flash_31b_pretrain_8gpu_h100_bf16_config",
-]
+def mistral_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
+    """Return the Mistral 7B H100 pretrain config."""
+    return build_text_pretrain_config(
+        hf_model_id="mistralai/Mistral-7B-v0.1",
+        revision="27d67f1b5f57dc0953326b2601d68371d40ea8da",
+        tensor_parallelism=2,
+        pipeline_parallelism=1,
+    )
+
+
+__all__ = ["mistral_7b_pretrain_2gpu_h100_bf16_config"]
