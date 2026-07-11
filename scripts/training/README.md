@@ -138,6 +138,15 @@ the index cache.
 The launcher does not infer the source corpus from the files. For one preprocessing example, see
 [the DCLM tutorial](../../tutorials/data/dclm/README.md).
 
+### Text-only model validation matrix
+
+The [text-only pretrain inventory](../../examples/models/text-pretrain-validation.md)
+tracks the PR #4805 text models under one reproducible contract: two 8-GPU
+H100 nodes, real indexed DCLM, 100 iterations, per-step logging, and one W&B
+project/group. Use `submit_text_pretrain_validation.py` to render or submit
+selected rows through this launcher. The driver renders commands unless
+`--submit` is explicitly provided.
+
 ### OpenMathInstruct-2
 
 `openmathinstruct2` uses prompt/completion records. `openmathinstruct2-thinking` changes only the semantic output
