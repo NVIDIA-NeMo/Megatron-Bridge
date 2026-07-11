@@ -112,7 +112,7 @@ def qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     # Optimizer precision settings
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
-    cfg.optimizer.main_params_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
