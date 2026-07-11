@@ -7,7 +7,7 @@ This benchmark summarizes 3-Tier Evaluation from NVSkills-Eval results for the s
 ## Evaluation Summary
 
 - Skill: `nemo-mbridge-perf-sequence-packing`
-- Evaluation date: 2026-07-10
+- Evaluation date: 2026-07-11
 - NVSkills-Eval profile: `external`
 - Environment: `astra-sandbox`
 - Dataset: 1 evaluation tasks
@@ -55,10 +55,10 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 88% (+62%) |
-| Discoverability | 1 | 100% (+100%) | 88% (+56%) |
-| Effectiveness | 1 | 98% (+98%) | 84% (+25%) |
-| Efficiency | 1 | 94% (+67%) | 92% (+58%) |
+| Correctness | 1 | 100% (+100%) | 97% (+62%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+69%) |
+| Effectiveness | 1 | 96% (+96%) | 89% (+65%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+74%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

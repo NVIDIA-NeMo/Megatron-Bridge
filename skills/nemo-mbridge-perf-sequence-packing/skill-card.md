@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling sequence packing or long-context SFT in Megatron-Bridge training workflows, or investigating commits that change packing behavior. <br>
+Developers and engineers enabling sequence packing or long-context SFT in Megatron-Bridge, or investigating commits that broke sequence packing or changed packing behavior. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,9 +25,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Megatron-Bridge Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron-Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Megatron-Bridge GitHub Repository](https://github.com/NVIDIA-NeMo/Megatron-Bridge) <br>
 
 
 ## Skill Output: <br>
@@ -37,13 +37,13 @@ Mitigation: Review and scan skill before deployment. <br>
 **Other Properties Related to Output:** [None] <br>
 
 ## Evaluation Agents Used: <br>
-- claude-code <br>
-- codex <br>
+- Claude Code (`claude-code`) <br>
+- Codex (`codex`) <br>
 
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in NVSkills-Eval external profile (astra-sandbox environment). <br>
+Evaluated against 1 evaluation task (positive skill-activation case) using NVSkills-Eval external profile in astra-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -68,10 +68,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 88% (+62%) |
-| Discoverability | 1 | 100% (+100%) | 88% (+56%) |
-| Effectiveness | 1 | 98% (+98%) | 84% (+25%) |
-| Efficiency | 1 | 94% (+67%) | 92% (+58%) |
+| Correctness | 1 | 100% (+100%) | 97% (+62%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+69%) |
+| Effectiveness | 1 | 96% (+96%) | 89% (+65%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+74%) |
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>
