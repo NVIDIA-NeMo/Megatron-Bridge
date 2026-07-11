@@ -34,6 +34,10 @@ uv run --extra recipes python scripts/training/submit_text_pretrain_validation.p
   --model llama32-1b
 ```
 
+Clusters such as EOS that allocate GPUs implicitly with exclusive whole nodes
+must add `--implicit-gpu-allocation`. Other Slurm clusters use the default,
+which emits an explicit `--gpus-per-node` resource request.
+
 Omit `--model` to select all rows, or repeat it to submit a size-aware batch.
 All W&B runs use project `megatron-bridge-text-pretrain-validation`, group
 `mb747-text-pretrain-dclm-20260710`, and a unique model ID as the run name.
@@ -46,7 +50,7 @@ removed from the scope.
 
 | ID | Family | Architecture | Params | Recipe | Status |
 |---|---|---|---:|---|---|
-| `ling-flash-2` | Bailing | Ling 2.0 Flash | 100B | `ling_flash_100b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5615835 reached the first optimizer step but lacked 16-32 MiB at TP=2/EP=16; TP=4 added |
+| `ling-flash-2` | Bailing | Ling 2.0 Flash | 100B | `ling_flash_100b_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615842 reaches the first optimizer step at TP=4/EP=16, then exhausts 79.1 GiB/rank on a 16-32 MiB allocation; exceeds 16-H100 capacity |
 | `ling-mini-2` | Bailing | Ling MoE V2 / Mini | 16B | `ling_mini_16b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614323](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/esj00tu8) |
 | `deepseek-v2` | DeepSeek | DeepSeek V2 | 235.7B | `deepseek_v2_pretrain_128gpu_h100_bf16_config` | FAIL: job 5614992 requires a 48.52 GiB/rank grad buffer; exceeds 16-H100 capacity |
 | `deepseek-v2-lite` | DeepSeek | DeepSeek V2 Lite | 15.7B | `deepseek_v2_lite_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614279](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bnpkjx66) |
@@ -86,7 +90,7 @@ removed from the scope.
 | `qwen25-7b` | Qwen | Qwen2.5 | 7.6B | `qwen25_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614046](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bgh028ce) |
 | `qwen3-8b` | Qwen | Qwen3 | 8.2B | `qwen3_8b_pretrain_4gpu_h100_bf16_config` | [PASS: job 5614268](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/diw9fxv9) |
 | `qwen3-30b-a3b` | Qwen | Qwen3-MoE | 30.5B | `qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614462](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/s759zs24) |
-| `qwen3-next-80b-a3b` | Qwen | Qwen3 Next | 81.3B | `qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config` | RETRY: job 5615793 first optimizer step still lacked 20 MiB at TP=2; TP=4 added |
+| `qwen3-next-80b-a3b` | Qwen | Qwen3 Next | 81.3B | `qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config` | FAIL: job 5615838 reaches the first optimizer step at TP=4/PP=2/EP=8, then exhausts GPU memory during the model-parallel status all-reduce; exceeds 16-H100 capacity |
 | `qwen35-27b` | Qwen | Qwen3.5 dense | 27.8B | `qwen35_27b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614457](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/ozws43ul) |
 | `qwen35-35b-a3b` | Qwen | Qwen3.5 MoE | 36B | `qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615668](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/s5jqbga8) |
 | `sarvam-30b` | Sarvam | Sarvam | 32.2B | `sarvam_30b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615032](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/n9bsgyl5) |
