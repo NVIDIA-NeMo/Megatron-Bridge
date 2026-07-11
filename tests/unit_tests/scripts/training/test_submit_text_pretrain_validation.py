@@ -143,26 +143,34 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     qwen3_next = next(target for target in targets if target.id == "qwen3-next-80b-a3b")
     assert "model.recompute_granularity=full" in qwen3_next.overrides
     assert "model.recompute_modules=null" in qwen3_next.overrides
+    assert "mixed_precision.grad_reduce_in_fp32=false" in qwen3_next.overrides
+
+    llama33 = next(target for target in targets if target.id == "llama33-70b")
+    assert "mixed_precision.grad_reduce_in_fp32=false" in llama33.overrides
 
     gpt_oss_120b = next(target for target in targets if target.id == "gpt-oss-120b")
     assert (gpt_oss_120b.pipeline_parallelism, gpt_oss_120b.expert_parallelism) == (2, 8)
     assert "optimizer.use_precision_aware_optimizer=true" in gpt_oss_120b.overrides
     assert "optimizer.main_params_dtype=float16" in gpt_oss_120b.overrides
     assert "optimizer.exp_avg_sq_dtype=bfloat16" in gpt_oss_120b.overrides
+    assert "mixed_precision.grad_reduce_in_fp32=false" in gpt_oss_120b.overrides
 
     nemotron3_super = next(target for target in targets if target.id == "nemotron3-super")
     assert (nemotron3_super.tensor_parallelism, nemotron3_super.pipeline_parallelism) == (4, 2)
     assert "model.pipeline_model_parallel_layout=null" in nemotron3_super.overrides
     assert "optimizer.main_params_dtype=float16" in nemotron3_super.overrides
     assert "optimizer.exp_avg_sq_dtype=bfloat16" in nemotron3_super.overrides
+    assert "mixed_precision.grad_reduce_in_fp32=false" in nemotron3_super.overrides
 
     mimo_v2_flash = next(target for target in targets if target.id == "mimo-v2-flash")
     assert "ddp.grad_reduce_in_fp32=false" in mimo_v2_flash.overrides
+    assert "mixed_precision.grad_reduce_in_fp32=false" in mimo_v2_flash.overrides
     assert "optimizer.main_params_dtype=float16" in mimo_v2_flash.overrides
 
     ling_flash = next(target for target in targets if target.id == "ling-flash-2")
     assert "model.moe_permute_fusion=false" in ling_flash.overrides
     assert "ddp.grad_reduce_in_fp32=false" in ling_flash.overrides
+    assert "mixed_precision.grad_reduce_in_fp32=false" in ling_flash.overrides
     assert "optimizer.main_params_dtype=float16" in ling_flash.overrides
 
 
