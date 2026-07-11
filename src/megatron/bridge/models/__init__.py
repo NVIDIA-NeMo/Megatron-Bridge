@@ -75,6 +75,9 @@ from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hy_v3 import (
+    HYV3Bridge,
+)
 from megatron.bridge.models.hybrid import (
     HybridModelBuilder,
     HybridModelConfig,
@@ -213,6 +216,7 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
+    "HYV3Bridge",
     "HybridModelBuilder",
     "HybridModelConfig",
     "HybridModelProvider",

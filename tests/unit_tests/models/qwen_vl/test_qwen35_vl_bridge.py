@@ -20,7 +20,7 @@ import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_vl.qwen35_vl_bridge import Qwen35VLBridge, Qwen35VLMoEBridge
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
     _TRANSFORMERS_HAS_QWEN3_5,
@@ -110,7 +110,7 @@ def _make_vision_config():
 
 def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False):
     """Create a minimal VLM pretrained wrapper for provider tests."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     config = Mock()
     config.text_config = text_config
     config.vision_config = vision_config
@@ -368,6 +368,17 @@ class TestQwen35VLMoEBridgeMappingRegistry:
         assert any("router" in n or "gate.weight" in n for n in names), "Should contain MoE router"
         assert any("experts" in n for n in names), "Should contain expert MLPs"
         assert any("shared_expert" in n for n in names), "Should contain shared experts"
+
+    def test_moe_expert_mappings_wiring(self, bridge):
+        # The VL MoE bridge reuses Qwen35MoEBridge._get_moe_lm_mappings; fused-vs-per-expert layout
+        # selection is covered in test_qwen35_bridge. Here we only verify the VL wiring: sequential
+        # (non-grouped) routed-expert mappings, used when moe_grouped_gemm=False (e.g. ModelOpt pruning),
+        # are emitted with the language_model prefix.
+        mappings = bridge.mapping_registry().mappings
+        seq_fc1 = next(
+            m for m in mappings if getattr(m, "megatron_param", "").endswith("local_experts.*.linear_fc1.weight")
+        )
+        assert seq_fc1.megatron_param.startswith("language_model.decoder.")
 
     def test_mapping_registry_has_gdn_mappings(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())

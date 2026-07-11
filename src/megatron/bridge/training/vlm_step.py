@@ -28,7 +28,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
@@ -269,6 +269,7 @@ def forward_step(
     accumulate_flops_metadata(
         state,
         tokens,
+        vp_stage=get_model_chunk_vp_stage(model),
         cu_seqlens=cu_seqlens,
         cu_seqlens_unpadded=cu_seqlens_unpadded,
         num_vision_patches=num_vision_patches,

@@ -23,11 +23,11 @@ from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
     qwen2_audio_7b_peft_1gpu_h100_bf16_config as qwen2_audio_7b_peft_config,
 )
 from megatron.bridge.recipes.qwen2_audio.h100.qwen2_audio import (
-    qwen2_audio_7b_sft_1gpu_h100_bf16_config as qwen2_audio_7b_finetune_config,
+    qwen2_audio_7b_sft_1gpu_h100_bf16_config as qwen2_audio_7b_sft_config,
 )
 
 
 __all__ = [
-    "qwen2_audio_7b_finetune_config",
+    "qwen2_audio_7b_sft_config",
     "qwen2_audio_7b_peft_config",
 ]

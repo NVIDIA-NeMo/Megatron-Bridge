@@ -71,7 +71,7 @@ def _deepseek_v4_hf_config():
         o_lora_rank=1024,
         rope_theta=10000,
         compress_rope_theta=160000,
-        rope_scaling={"factor": 16, "original_max_position_embeddings": 65536},
+        rope_scaling={"factor": 16, "original_max_position_embeddings": 65536, "rope_theta": 10000},
         num_hidden_layers=4,
         num_nextn_predict_layers=1,
         num_hash_layers=3,
@@ -403,6 +403,7 @@ class TestDeepSeekV4RotaryPercent:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.rotary_percent == 1.0
+        assert out.csa_compress_rotary_base == 160000
 
 
 class TestDeepSeekV4HardwareDefaults:
