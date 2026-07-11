@@ -4852,7 +4852,7 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.17.0+2e559f0"
+version = "2.17.0+2e559f06"
 source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=2e559f062497bef768dfbe9d7e45548fadeca80a#2e559f062497bef768dfbe9d7e45548fadeca80a" }
 dependencies = [
     { name = "einops" },
