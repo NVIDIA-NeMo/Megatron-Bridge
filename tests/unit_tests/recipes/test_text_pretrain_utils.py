@@ -120,7 +120,7 @@ def test_ernie45_pretrain_shards_logits_with_tensor_parallelism(monkeypatch):
     assert config.model.recompute_modules == ["core_attn"]
 
 
-def test_gemma4_moe_pretrain_uses_full_recompute_for_rmsnorm_headroom(monkeypatch):
+def test_gemma4_moe_pretrain_uses_tp_for_rmsnorm_headroom(monkeypatch):
     provider = SimpleNamespace()
 
     class _Bridge:
@@ -136,10 +136,9 @@ def test_gemma4_moe_pretrain_uses_full_recompute_for_rmsnorm_headroom(monkeypatc
 
     config = gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config()
 
-    assert config.model.recompute_granularity == "full"
-    assert config.model.recompute_method == "uniform"
-    assert config.model.recompute_num_layers == 1
-    assert config.model.recompute_modules is None
+    assert config.model.tensor_model_parallel_size == 2
+    assert config.model.recompute_granularity == "selective"
+    assert config.model.recompute_modules == ["core_attn"]
 
 
 def test_gemma4_dense_pretrain_avoids_unsupported_pipeline_parallelism(monkeypatch):
