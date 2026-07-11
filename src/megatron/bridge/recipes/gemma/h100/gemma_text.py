@@ -56,7 +56,7 @@ def gemma_2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
 def gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the text-only Gemma 4 26B-A4B MoE H100 pretrain config."""
     with _gemma4_text_conversion_mode():
-        return build_text_pretrain_config(
+        cfg = build_text_pretrain_config(
             hf_model_id="google/gemma-4-26B-A4B",
             revision="6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb",  # pragma: allowlist secret
             tensor_parallelism=1,
@@ -64,6 +64,13 @@ def gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
             expert_parallelism=8,
             trust_remote_code=True,
         )
+    # The local Gemma 4 MoE implementation creates temporary fp32 RMSNorm
+    # buffers. Full recompute keeps enough activation headroom for them.
+    cfg.model.recompute_granularity = "full"
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_modules = None
+    return cfg
 
 
 def gemma4_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
