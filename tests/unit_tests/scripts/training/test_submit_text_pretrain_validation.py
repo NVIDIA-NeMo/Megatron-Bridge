@@ -150,6 +150,10 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "optimizer.main_params_dtype=bfloat16" in gpt_oss_120b.overrides
     assert "optimizer.exp_avg_sq_dtype=bfloat16" in gpt_oss_120b.overrides
 
+    nemotron3_super = next(target for target in targets if target.id == "nemotron3-super")
+    assert (nemotron3_super.tensor_parallelism, nemotron3_super.pipeline_parallelism) == (4, 2)
+    assert "model.pipeline_model_parallel_layout=null" in nemotron3_super.overrides
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
