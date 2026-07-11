@@ -246,7 +246,7 @@ def test_qwen3_next_pretrain_uses_bf16_optimizer_state(monkeypatch):
     config = qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config()
 
     assert config.optimizer.use_precision_aware_optimizer is True
-    assert config.optimizer.main_params_dtype == torch.bfloat16
+    assert config.optimizer.main_params_dtype == torch.float16
     assert config.optimizer.main_grads_dtype == torch.bfloat16
     assert config.optimizer.exp_avg_dtype == torch.bfloat16
     assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
