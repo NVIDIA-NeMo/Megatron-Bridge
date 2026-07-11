@@ -103,13 +103,13 @@ def test_parse_env_inherits_names_and_accepts_explicit_values(monkeypatch):
     module = _load_setup_experiment_module()
     monkeypatch.setenv("INHERITED_VALUE", "from-launcher")
 
-    env_vars = module._parse_env(["INHERITED_VALUE", "EXPLICIT_VALUE=provided", "EMPTY_VALUE="])
+    env_vars, inherited_env = module._parse_env(["INHERITED_VALUE", "EXPLICIT_VALUE=provided", "EMPTY_VALUE="])
 
     assert env_vars == {
-        "INHERITED_VALUE": "from-launcher",
         "EXPLICIT_VALUE": "provided",
         "EMPTY_VALUE": "",
     }
+    assert inherited_env == ["INHERITED_VALUE"]
 
 
 def test_parse_env_rejects_missing_inherited_name(monkeypatch):
@@ -174,13 +174,18 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
         ]
     )
 
-    executor = module._build_executor(args, {"HF_TOKEN": "token"}, ["/host:/container"])
+    executor = module._build_executor(
+        args,
+        env_vars={"EXPLICIT_VALUE": "provided"},
+        inherited_env=["HF_TOKEN"],
+        mounts=["/host:/container"],
+    )
 
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert "gpus_per_node" not in executor.kwargs
-    assert executor.env_vars == {"HF_TOKEN": "token"}
-    assert executor.container_env == ["HF_TOKEN"]
+    assert executor.env_vars == {"EXPLICIT_VALUE": "provided"}
+    assert executor.container_env == ["EXPLICIT_VALUE", "HF_TOKEN"]
     assert executor.container_mounts == ["/host:/container"]
 
 
@@ -237,7 +242,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     sentinel_executor = object()
     module.run.Script = _Script
     module.run.Experiment = _Experiment
-    monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: sentinel_executor)
 
     training_args = ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"]
     module.main(

@@ -83,6 +83,15 @@ incomplete data fails before distributed training starts.
 
 For preprocessing instructions, see [the DCLM tutorial](../../tutorials/data/dclm/README.md).
 
+### Text-only model validation matrix
+
+The [text-only pretrain inventory](../../examples/models/text-pretrain-validation.md)
+tracks the PR #4805 text models under one reproducible contract: two 8-GPU
+H100 nodes, real indexed DCLM, 100 iterations, per-step logging, and one W&B
+project/group. Use `submit_text_pretrain_validation.py` to render or submit
+selected rows through this launcher. The driver renders commands unless
+`--submit` is explicitly provided.
+
 ### OpenMathInstruct-2
 
 The builder downloads/materializes the Hugging Face source and prepares packed data when
@@ -147,7 +156,9 @@ Required Slurm arguments are:
 
 Set `CONTAINER_IMAGE` to avoid repeating `--container-image`. Environment variables and filesystem paths are never
 forwarded implicitly. Repeat `--env NAME` to forward a variable from the login-node environment, or use
-`--env NAME=VALUE`. Repeat `--mount HOST` for the same host and container path, or use
+`--env NAME=VALUE`. Inherited names are forwarded through Slurm/container inheritance and are not serialized with
+their values into the generated sbatch script; reserve `NAME=VALUE` for non-secret settings. Repeat `--mount HOST` for
+the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
