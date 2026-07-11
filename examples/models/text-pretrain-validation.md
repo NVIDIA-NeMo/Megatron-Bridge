@@ -46,7 +46,7 @@ removed from the scope.
 
 | ID | Family | Architecture | Params | Recipe | Status |
 |---|---|---|---:|---|---|
-| `ling-flash-2` | Bailing | Ling 2.0 Flash | 100B | `ling_flash_100b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5615788 reached first gradient synchronization, then exhausted CUDA memory on NCCL allocation; TP=2/EP=16 added |
+| `ling-flash-2` | Bailing | Ling 2.0 Flash | 100B | `ling_flash_100b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5615835 reached the first optimizer step but lacked 16-32 MiB at TP=2/EP=16; TP=4 added |
 | `ling-mini-2` | Bailing | Ling MoE V2 / Mini | 16B | `ling_mini_16b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614323](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/esj00tu8) |
 | `deepseek-v2` | DeepSeek | DeepSeek V2 | 235.7B | `deepseek_v2_pretrain_128gpu_h100_bf16_config` | FAIL: job 5614992 requires a 48.52 GiB/rank grad buffer; exceeds 16-H100 capacity |
 | `deepseek-v2-lite` | DeepSeek | DeepSeek V2 Lite | 15.7B | `deepseek_v2_lite_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614279](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bnpkjx66) |
@@ -74,7 +74,7 @@ removed from the scope.
 | `minimax-m2-7` | MiniMax | MiniMax-M2.7 | 456B | `minimax_m2_7_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615007 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
 | `mistral-7b` | Mistral | Mistral | 7.2B | `mistral_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613796](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/f6agifw6) |
 | `mimo-7b` | Xiaomi-MiMo | MiMo | 7.8B | `mimo_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614060](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/vxv6bxye) |
-| `mimo-v2-flash` | Xiaomi-MiMo | MiMo-V2-Flash | 309.8B | `mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config` | RETRY: job 5615831 used TP=2/EP=8, which doubled experts per rank; corrected TP=2/EP=16 folding pending |
+| `mimo-v2-flash` | Xiaomi-MiMo | MiMo-V2-Flash | 309.8B | `mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615834 with TP=2/EP=16 still requires a 35.25 GiB expert parameter buffer with only 29.29 GiB free; exceeds 16-H100 capacity |
 | `moonlight-16b` | Moonlight | Moonlight | 16B | `moonlight_16b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614345](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/gefczmtj) |
 | `nemotron-h-4b` | Nemotron | Nemotron H | 4.5B | `nemotronh_4b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613719](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/9yryey3k) |
 | `nemotron-nano-9b-v2` | Nemotron | Nemotron Nano v2 | 8.9B | `nemotron_nano_9b_v2_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614274](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/dq1lmioh) |
