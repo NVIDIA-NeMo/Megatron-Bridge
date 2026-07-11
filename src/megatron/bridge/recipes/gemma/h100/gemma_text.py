@@ -17,7 +17,9 @@
 import os
 from contextlib import contextmanager
 
-from megatron.bridge.recipes.utils.text_pretrain_utils import build_text_pretrain_config
+from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
+from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.text_pretrain_utils import apply_text_pretrain_defaults, build_text_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -36,9 +38,16 @@ def _gemma4_text_conversion_mode():
 
 def gemma_2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return the original Gemma 2B H100 pretrain config."""
-    return build_text_pretrain_config(
-        hf_model_id="google/gemma-2b",
-        revision="9cf48e52b224239de00d483ec8eb84fb8d0f3a3a",  # pragma: allowlist secret
+    cfg = _pretrain_common()
+    cfg.model = GemmaModelProvider(
+        num_layers=18,
+        hidden_size=2048,
+        ffn_hidden_size=16384,
+        num_attention_heads=8,
+        num_query_groups=1,
+    )
+    return apply_text_pretrain_defaults(
+        cfg,
         tensor_parallelism=1,
         pipeline_parallelism=1,
     )

@@ -22,6 +22,63 @@ from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_V
 from megatron.bridge.training.config import ConfigContainer
 
 
+def apply_text_pretrain_defaults(
+    cfg: ConfigContainer,
+    *,
+    tensor_parallelism: int,
+    pipeline_parallelism: int,
+    expert_parallelism: int = 1,
+    expert_tensor_parallelism: int = 1,
+    sequence_length: int = 4096,
+) -> ConfigContainer:
+    """Apply the shared H100 pretrain defaults to a model provider config.
+
+    Args:
+        cfg: Config container whose model provider is already populated.
+        tensor_parallelism: Tensor model parallel degree.
+        pipeline_parallelism: Pipeline model parallel degree.
+        expert_parallelism: Expert model parallel degree.
+        expert_tensor_parallelism: Expert tensor parallel degree.
+        sequence_length: Training sequence length.
+
+    Returns:
+        The updated config container.
+    """
+    cfg.model.tensor_model_parallel_size = tensor_parallelism
+    cfg.model.pipeline_model_parallel_size = pipeline_parallelism
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = expert_parallelism
+    cfg.model.expert_tensor_parallel_size = expert_tensor_parallelism
+    cfg.model.sequence_parallel = tensor_parallelism > 1
+    cfg.model.pipeline_dtype = torch.bfloat16 if pipeline_parallelism > 1 else None
+    cfg.model.seq_length = sequence_length
+
+    cfg.dataset.seq_length = sequence_length
+    cfg.dataset.blend = None
+    cfg.dataset.blend_per_split = None
+    cfg.dataset.num_workers = 1
+
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 100
+    cfg.validation.eval_iters = 1
+    cfg.logger.log_interval = 1
+    cfg.checkpoint.save_interval = 100
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 1000
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.cuda_graph_impl = "none"
+
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
+
+
 def build_text_pretrain_config(
     *,
     hf_model_id: str,
@@ -59,40 +116,14 @@ def build_text_pretrain_config(
         trust_remote_code=trust_remote_code,
     )
     cfg.model = bridge.to_megatron_provider(load_weights=False)
-
-    cfg.model.tensor_model_parallel_size = tensor_parallelism
-    cfg.model.pipeline_model_parallel_size = pipeline_parallelism
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = expert_parallelism
-    cfg.model.expert_tensor_parallel_size = expert_tensor_parallelism
-    cfg.model.sequence_parallel = tensor_parallelism > 1
-    cfg.model.pipeline_dtype = torch.bfloat16 if pipeline_parallelism > 1 else None
-    cfg.model.seq_length = sequence_length
-
-    cfg.dataset.seq_length = sequence_length
-    cfg.dataset.blend = None
-    cfg.dataset.blend_per_split = None
-    cfg.dataset.num_workers = 1
-
-    cfg.train.train_iters = 1000
-    cfg.train.global_batch_size = 128
-    cfg.train.micro_batch_size = 1
-    cfg.validation.eval_interval = 100
-    cfg.validation.eval_iters = 1
-    cfg.logger.log_interval = 1
-    cfg.checkpoint.save_interval = 100
-    cfg.scheduler.lr_warmup_iters = 10
-    cfg.scheduler.lr_decay_iters = 1000
-
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn"]
-    cfg.model.cuda_graph_impl = "none"
-
-    cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
-    }
-    return cfg
+    return apply_text_pretrain_defaults(
+        cfg,
+        tensor_parallelism=tensor_parallelism,
+        pipeline_parallelism=pipeline_parallelism,
+        expert_parallelism=expert_parallelism,
+        expert_tensor_parallelism=expert_tensor_parallelism,
+        sequence_length=sequence_length,
+    )
 
 
-__all__ = ["build_text_pretrain_config"]
+__all__ = ["apply_text_pretrain_defaults", "build_text_pretrain_config"]

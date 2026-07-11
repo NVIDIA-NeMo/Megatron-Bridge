@@ -216,6 +216,8 @@ def build_command(args: argparse.Namespace, target: ValidationTarget) -> list[st
             f"WANDB_RUN_GROUP={args.wandb_group}",
             "--env",
             "WANDB_JOB_TYPE=pretrain-validation",  # pragma: allowlist secret
+            "--env",
+            "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
             "--recipe",
             target.recipe,
             "--mode",

@@ -164,6 +164,7 @@ def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     assert command[command.index("--etp") + 1] == "1"
     assert command[command.index("--wandb-project") + 1] == "megatron-bridge-text-pretrain-validation"
     assert "WANDB_RUN_GROUP=mb747-text-pretrain-dclm-20260710" in command  # pragma: allowlist secret
+    assert "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True" in command
     assert f"{tmp_path / '.netrc'}:/root/.netrc" in command
     assert f"VIRTUAL_ENV={tmp_path / 'venv'}" in command
     assert any(value.startswith(f"PATH={tmp_path / 'venv' / 'bin'}:") for value in command)

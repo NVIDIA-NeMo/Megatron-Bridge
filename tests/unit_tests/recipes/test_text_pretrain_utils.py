@@ -16,6 +16,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.recipes.gemma.h100.gemma2 import gemma2_2b_pretrain_2gpu_h100_bf16_config
+from megatron.bridge.recipes.gemma.h100.gemma_text import gemma_2b_pretrain_1gpu_h100_bf16_config
 from megatron.bridge.recipes.utils import text_pretrain_utils
 
 
@@ -56,3 +58,19 @@ def test_build_text_pretrain_config_uses_pinned_lazy_bridge(monkeypatch):
     assert config.model.seq_length == 2048
     assert config.dataset.seq_length == 2048
     assert config.logger.log_interval == 1
+
+
+def test_gemma_pretrain_configs_do_not_require_gated_hf_access(monkeypatch):
+    def _unexpected_hf_access(*_args, **_kwargs):
+        raise AssertionError("from-scratch Gemma pretrain must not access a gated HF config")
+
+    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+
+    gemma = gemma_2b_pretrain_1gpu_h100_bf16_config()
+    gemma2 = gemma2_2b_pretrain_2gpu_h100_bf16_config()
+
+    assert gemma.model.num_layers == 18
+    assert gemma.model.hidden_size == 2048
+    assert gemma2.model.num_layers == 26
+    assert gemma2.model.hidden_size == 2304
+    assert gemma2.model.query_pre_attn_scalar == 256
