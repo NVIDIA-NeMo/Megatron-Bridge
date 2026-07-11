@@ -60,7 +60,7 @@ removed from the scope.
 | `gemma4-31b` | Gemma | Gemma 4 31B dense | 32.7B | `gemma4_31b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `glm45-355b` | GLM | GLM-4.5 | 358.3B | `glm45_355b_pretrain_128gpu_h100_bf16_config` | TODO |
 | `glm47-355b` | GLM | GLM-4.7 | 358.3B | `glm47_355b_pretrain_16gpu_h100_bf16_config` | TODO |
-| `glm47-flash-31b` | GLM | GLM-4.7-Flash | 31.2B | `glm47_flash_31b_pretrain_8gpu_h100_bf16_config` | TODO |
+| `glm47-flash-31b` | GLM | GLM-4.7-Flash | 31.2B | `glm47_flash_31b_pretrain_8gpu_h100_bf16_config` | RETRY: job 5614789 allocator exhaustion; full recompute added |
 | `gpt-oss-20b` | GPT-OSS | GPT-OSS 20B | 21.5B | `gpt_oss_20b_pretrain_16gpu_h100_bf16_config` | [PASS: job 5614349](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/h9y0hlvc) |
 | `gpt-oss-120b` | GPT-OSS | GPT-OSS 120B | 120.4B | `gpt_oss_120b_pretrain_64gpu_h100_bf16_config` | TODO |
 | `hy3-preview-base` | HY V3 | Hy3 preview-Base | 298.8B | `hy3_299b_pretrain_16gpu_h100_bf16_config` | TODO |
@@ -85,9 +85,9 @@ removed from the scope.
 | `qwen2-7b` | Qwen | Qwen2 | 7.6B | `qwen2_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613798](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/1txppez6) |
 | `qwen25-7b` | Qwen | Qwen2.5 | 7.6B | `qwen25_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614046](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bgh028ce) |
 | `qwen3-8b` | Qwen | Qwen3 | 8.2B | `qwen3_8b_pretrain_4gpu_h100_bf16_config` | [PASS: job 5614268](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/diw9fxv9) |
-| `qwen3-30b-a3b` | Qwen | Qwen3-MoE | 30.5B | `qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config` | TODO |
+| `qwen3-30b-a3b` | Qwen | Qwen3-MoE | 30.5B | `qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614462](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/s759zs24) |
 | `qwen3-next-80b-a3b` | Qwen | Qwen3 Next | 81.3B | `qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config` | TODO |
-| `qwen35-27b` | Qwen | Qwen3.5 dense | 27.8B | `qwen35_27b_pretrain_8gpu_h100_bf16_config` | TODO |
+| `qwen35-27b` | Qwen | Qwen3.5 dense | 27.8B | `qwen35_27b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614457](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/ozws43ul) |
 | `qwen35-35b-a3b` | Qwen | Qwen3.5 MoE | 36B | `qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `sarvam-30b` | Sarvam | Sarvam | 32.2B | `sarvam_30b_pretrain_8gpu_h100_bf16_config` | TODO |
 | `step35-flash` | StepFun | Step-3.5-Flash | 199.4B | `step35_196b_a11b_pretrain_512gpu_h100_bf16_config` | TODO |
