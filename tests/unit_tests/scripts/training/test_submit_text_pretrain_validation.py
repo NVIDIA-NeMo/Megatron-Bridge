@@ -151,6 +151,7 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
 
     llama33 = next(target for target in targets if target.id == "llama33-70b")
     assert "mixed_precision.grad_reduce_in_fp32=false" in llama33.overrides
+    assert "checkpoint.save_optim=false" in llama33.overrides
 
     gpt_oss_120b = next(target for target in targets if target.id == "gpt-oss-120b")
     assert (gpt_oss_120b.pipeline_parallelism, gpt_oss_120b.expert_parallelism) == (2, 8)
