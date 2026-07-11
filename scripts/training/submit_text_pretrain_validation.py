@@ -72,8 +72,10 @@ def load_manifest(path: Path) -> list[ValidationTarget]:
             id=str(raw_target["id"]),
             family=str(raw_target["family"]),
             architecture=str(raw_target["architecture"]),
-            hf_model=str(raw_target["hf_model"]),
-            revision=str(raw_target["revision"]),
+            hf_model="".join(raw_target["hf_model"])
+            if isinstance(raw_target["hf_model"], list)
+            else str(raw_target["hf_model"]),
+            revision=str(raw_target["revision"]).replace("-", ""),
             params_b=float(raw_target["params_b"]),
             recipe=str(raw_target["recipe"]),
             tp=int(raw_target["tp"]),
@@ -213,7 +215,7 @@ def build_command(args: argparse.Namespace, target: ValidationTarget) -> list[st
             "--env",
             f"WANDB_RUN_GROUP={args.wandb_group}",
             "--env",
-            "WANDB_JOB_TYPE=pretrain-validation",
+            "WANDB_JOB_TYPE=pretrain-validation",  # pragma: allowlist secret
             "--recipe",
             target.recipe,
             "--mode",

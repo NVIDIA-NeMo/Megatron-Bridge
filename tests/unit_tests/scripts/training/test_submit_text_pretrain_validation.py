@@ -110,6 +110,23 @@ def test_manifest_exactly_matches_pr4805_text_only_scope():
     assert all(target.recipe.endswith("_config") for target in targets)
 
 
+def test_manifest_revision_segments_are_restored_to_immutable_sha():
+    module = _load_module()
+
+    targets = module.load_manifest(module.DEFAULT_MANIFEST)
+
+    assert targets[0].revision == "18ca64a019b553be57bab50af3207fb2f3675edc"  # pragma: allowlist secret
+
+
+def test_manifest_model_segments_are_restored():
+    module = _load_module()
+
+    targets = module.load_manifest(module.DEFAULT_MANIFEST)
+
+    target = next(target for target in targets if target.id == "nemotron3-super")
+    assert target.hf_model == "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"  # pragma: allowlist secret
+
+
 def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     module = _load_module()
     targets = module.load_manifest(module.DEFAULT_MANIFEST)
@@ -146,7 +163,7 @@ def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     assert command[command.index("--vp") + 1] == "none"
     assert command[command.index("--etp") + 1] == "1"
     assert command[command.index("--wandb-project") + 1] == "megatron-bridge-text-pretrain-validation"
-    assert "WANDB_RUN_GROUP=mb747-text-pretrain-dclm-20260710" in command
+    assert "WANDB_RUN_GROUP=mb747-text-pretrain-dclm-20260710" in command  # pragma: allowlist secret
     assert f"{tmp_path / '.netrc'}:/root/.netrc" in command
     assert f"VIRTUAL_ENV={tmp_path / 'venv'}" in command
     assert any(value.startswith(f"PATH={tmp_path / 'venv' / 'bin'}:") for value in command)

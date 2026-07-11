@@ -31,17 +31,26 @@ def _minimax_m2_config(hf_model_id: str, revision: str) -> ConfigContainer:
 
 def minimax_m2_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the MiniMax-M2 H100 pretrain config."""
-    return _minimax_m2_config("MiniMaxAI/MiniMax-M2", "757303d492a50514c312788b5247a4f696a4c6a3")
+    return _minimax_m2_config(
+        "MiniMaxAI/MiniMax-M2",
+        "757303d492a50514c312788b5247a4f696a4c6a3",  # pragma: allowlist secret
+    )
 
 
 def minimax_m2_5_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the MiniMax-M2.5 H100 pretrain config."""
-    return _minimax_m2_config("MiniMaxAI/MiniMax-M2.5", "f710177d938eff80b684d42c5aa84b382612f21f")
+    return _minimax_m2_config(
+        "MiniMaxAI/MiniMax-M2.5",
+        "f710177d938eff80b684d42c5aa84b382612f21f",  # pragma: allowlist secret
+    )
 
 
 def minimax_m2_7_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the MiniMax-M2.7 H100 pretrain config."""
-    return _minimax_m2_config("MiniMaxAI/MiniMax-M2.7", "d494266a4affc0d2995ba1fa35c8481cbd84294b")
+    return _minimax_m2_config(
+        "MiniMaxAI/MiniMax-M2.7",
+        "d494266a4affc0d2995ba1fa35c8481cbd84294b",  # pragma: allowlist secret
+    )
 
 
 __all__ = [

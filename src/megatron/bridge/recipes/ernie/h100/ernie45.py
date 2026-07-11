@@ -22,7 +22,7 @@ def ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the ERNIE 4.5 21B-A3B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="baidu/ERNIE-4.5-21B-A3B-PT",
-        revision="87db95487941cb39592ee0abca3b9155a6d19c5c",
+        revision="87db95487941cb39592ee0abca3b9155a6d19c5c",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
         expert_parallelism=8,

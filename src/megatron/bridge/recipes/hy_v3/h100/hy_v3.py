@@ -22,7 +22,7 @@ def hy3_299b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Hy3 preview-Base 299B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="tencent/Hy3-preview-Base",
-        revision="54a62bb00a50195423bffb6b55e91aa28b6a8ce2",
+        revision="54a62bb00a50195423bffb6b55e91aa28b6a8ce2",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
         expert_parallelism=16,

@@ -22,7 +22,7 @@ def mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the MiMo-V2-Flash 310B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="XiaomiMiMo/MiMo-V2-Flash",
-        revision="1afd314a2406c282e0956375c34a676501c78649",
+        revision="1afd314a2406c282e0956375c34a676501c78649",  # pragma: allowlist secret
         tensor_parallelism=1,
         pipeline_parallelism=1,
         expert_parallelism=16,

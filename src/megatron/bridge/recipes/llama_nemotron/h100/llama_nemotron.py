@@ -22,7 +22,7 @@ def llama31_nemotron_nano_4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer
     """Return the Llama 3.1 Nemotron Nano 4B H100 pretrain config."""
     return build_text_pretrain_config(
         hf_model_id="nvidia/Llama-3.1-Nemotron-Nano-4B-v1.1",
-        revision="d552708a9d575fa8d4a690b988fd870d65279f98",
+        revision="d552708a9d575fa8d4a690b988fd870d65279f98",  # pragma: allowlist secret
         tensor_parallelism=2,
         pipeline_parallelism=1,
     )
