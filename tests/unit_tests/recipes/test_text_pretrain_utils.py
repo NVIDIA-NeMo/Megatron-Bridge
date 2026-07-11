@@ -31,6 +31,9 @@ from megatron.bridge.recipes.llama.h100.llama3 import (
     llama31_8b_pretrain_2gpu_h100_bf16_config,
     llama31_70b_pretrain_32gpu_h100_bf16_config,
 )
+from megatron.bridge.recipes.mimo_v2_flash.h100.mimo_v2_flash import (
+    mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config,
+)
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_pretrain_8gpu_h100_bf16_config,
 )
@@ -76,6 +79,24 @@ def test_build_text_pretrain_config_uses_pinned_lazy_bridge(monkeypatch):
     assert config.model.seq_length == 2048
     assert config.dataset.seq_length == 2048
     assert config.logger.log_interval == 1
+
+
+def test_mimo_v2_flash_pretrain_is_fully_local(monkeypatch):
+    def _unexpected_hf_access(*_args, **_kwargs):
+        raise AssertionError("MiMo-V2-Flash pretraining must not access Hugging Face")
+
+    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+
+    config = mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config()
+
+    assert config.model.num_layers == 48
+    assert config.model.hidden_size == 4096
+    assert config.model.num_moe_experts == 256
+    assert config.model.moe_layer_freq == [0] + [1] * 47
+    assert config.model.hybrid_attention_pattern == [0] + [1, 1, 1, 1, 0] * 9 + [1, 1]
+    assert config.model.tensor_model_parallel_size == 1
+    assert config.model.pipeline_model_parallel_size == 1
+    assert config.model.expert_model_parallel_size == 16
 
 
 def test_ernie45_pretrain_uses_full_recompute_for_logits_headroom(monkeypatch):
