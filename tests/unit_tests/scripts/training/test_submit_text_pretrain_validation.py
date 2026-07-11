@@ -137,6 +137,9 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     nemotron3_nano = next(target for target in targets if target.id == "nemotron3-nano")
     assert (nemotron3_nano.tensor_parallelism, nemotron3_nano.expert_parallelism) == (2, 8)
 
+    gemma4_dense = next(target for target in targets if target.id == "gemma4-31b")
+    assert (gemma4_dense.tensor_parallelism, gemma4_dense.pipeline_parallelism) == (8, 1)
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
