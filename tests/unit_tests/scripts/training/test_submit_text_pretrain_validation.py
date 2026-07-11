@@ -134,6 +134,9 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert all(target.minimum_world_size <= 16 for target in targets)
     assert all(16 % target.minimum_world_size == 0 for target in targets)
 
+    nemotron3_nano = next(target for target in targets if target.id == "nemotron3-nano")
+    assert (nemotron3_nano.tensor_parallelism, nemotron3_nano.expert_parallelism) == (2, 8)
+
 
 def test_command_uses_fixed_real_data_and_wandb_contract(tmp_path):
     module = _load_module()
