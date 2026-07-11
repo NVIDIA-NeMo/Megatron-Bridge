@@ -37,6 +37,7 @@ from megatron.bridge.recipes.mimo_v2_flash.h100.mimo_v2_flash import (
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_pretrain_8gpu_h100_bf16_config,
 )
+from megatron.bridge.recipes.qwen.h100.qwen3_next import qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config
 from megatron.bridge.recipes.qwen.h100.qwen35 import qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.sarvam.h100.sarvam import sarvam_30b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.utils import text_pretrain_utils
@@ -226,6 +227,29 @@ def test_qwen35_moe_pretrain_uses_full_recompute_for_hybrid_headroom(monkeypatch
     assert config.model.recompute_method == "uniform"
     assert config.model.recompute_num_layers == 1
     assert config.model.recompute_modules is None
+
+
+def test_qwen3_next_pretrain_uses_bf16_optimizer_state(monkeypatch):
+    provider = SimpleNamespace()
+
+    class _Bridge:
+        def to_megatron_provider(self, *, load_weights):
+            assert load_weights is False
+            return provider
+
+    monkeypatch.setattr(
+        text_pretrain_utils.AutoBridge,
+        "from_hf_pretrained",
+        lambda *_args, **_kwargs: _Bridge(),
+    )
+
+    config = qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config()
+
+    assert config.optimizer.use_precision_aware_optimizer is True
+    assert config.optimizer.main_params_dtype == torch.bfloat16
+    assert config.optimizer.main_grads_dtype == torch.bfloat16
+    assert config.optimizer.exp_avg_dtype == torch.bfloat16
+    assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
 
 
 def test_nemotron3_super_h100_pretrain_uses_hopper_fp8(monkeypatch):
