@@ -155,7 +155,7 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "checkpoint.save_optim=false" in llama33.overrides
 
     gpt_oss_120b = next(target for target in targets if target.id == "gpt-oss-120b")
-    assert (gpt_oss_120b.pp, gpt_oss_120b.ep) == (2, 8)
+    assert (gpt_oss_120b.tp, gpt_oss_120b.pp, gpt_oss_120b.ep) == (2, 2, 8)
     assert "optimizer.use_precision_aware_optimizer=true" in gpt_oss_120b.overrides
     assert "optimizer.main_params_dtype=float16" in gpt_oss_120b.overrides
     assert "optimizer.exp_avg_sq_dtype=bfloat16" in gpt_oss_120b.overrides
