@@ -145,6 +145,7 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "optimizer.main_params_dtype=float16" in gemma4_moe.overrides
 
     qwen3_next = next(target for target in targets if target.id == "qwen3-next-80b-a3b")
+    assert (qwen3_next.tp, qwen3_next.pp, qwen3_next.ep) == (2, 2, 8)
     assert "model.recompute_granularity=full" in qwen3_next.overrides
     assert "model.recompute_modules=null" in qwen3_next.overrides
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in qwen3_next.overrides
