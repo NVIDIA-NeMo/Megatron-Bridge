@@ -293,7 +293,7 @@ def test_llama3_pretrain_configs_do_not_require_gated_hf_access(monkeypatch):
     assert llama33.model.num_layers == 80
     assert llama33.model.hidden_size == 8192
     assert llama33.optimizer.use_precision_aware_optimizer is True
-    assert llama33.optimizer.main_params_dtype == torch.float32
+    assert llama33.optimizer.main_params_dtype == torch.bfloat16
     assert llama33.optimizer.main_grads_dtype == torch.bfloat16
     assert llama33.optimizer.exp_avg_dtype == torch.bfloat16
     assert llama33.optimizer.exp_avg_sq_dtype == torch.bfloat16
