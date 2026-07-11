@@ -68,7 +68,7 @@ removed from the scope.
 | `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5615014](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/cdx4xe8i) |
 | `llama31-8b` | Llama | Llama 3.1 | 8B | `llama31_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614263](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/gry9jhfg) |
 | `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613679](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3w8ubwh7) |
-| `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama31_70b_pretrain_32gpu_h100_bf16_config` | RETRY: job 5615691 completed 100 steps but optimizer serialization OOM; weights-only save added |
+| `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama31_70b_pretrain_32gpu_h100_bf16_config` | [PASS: job 5615791](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/28aepf04) |
 | `minimax-m2` | MiniMax | MiniMax-M2 | 456B | `minimax_m2_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615005 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
 | `minimax-m2-5` | MiniMax | MiniMax-M2.5 | 456B | `minimax_m2_5_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615006 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
 | `minimax-m2-7` | MiniMax | MiniMax-M2.7 | 456B | `minimax_m2_7_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615007 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
@@ -86,7 +86,7 @@ removed from the scope.
 | `qwen25-7b` | Qwen | Qwen2.5 | 7.6B | `qwen25_7b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614046](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/bgh028ce) |
 | `qwen3-8b` | Qwen | Qwen3 | 8.2B | `qwen3_8b_pretrain_4gpu_h100_bf16_config` | [PASS: job 5614268](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/diw9fxv9) |
 | `qwen3-30b-a3b` | Qwen | Qwen3-MoE | 30.5B | `qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614462](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/s759zs24) |
-| `qwen3-next-80b-a3b` | Qwen | Qwen3 Next | 81.3B | `qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config` | RETRY: job 5615776 first optimizer step lacked 20 MiB; TP=2 added |
+| `qwen3-next-80b-a3b` | Qwen | Qwen3 Next | 81.3B | `qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config` | RETRY: job 5615793 first optimizer step still lacked 20 MiB at TP=2; TP=4 added |
 | `qwen35-27b` | Qwen | Qwen3.5 dense | 27.8B | `qwen35_27b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5614457](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/ozws43ul) |
 | `qwen35-35b-a3b` | Qwen | Qwen3.5 MoE | 36B | `qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615668](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/s5jqbga8) |
 | `sarvam-30b` | Sarvam | Sarvam | 32.2B | `sarvam_30b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615032](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/n9bsgyl5) |
