@@ -232,6 +232,12 @@ def _apply_library_recipe_overrides(recipe, cli_overrides: list[str], args):
     from utils.utils import apply_library_argparse_overrides, finalize_library_config_overrides
 
     recipe = apply_library_argparse_overrides(recipe, args)
+    # Determinism owns process environment values that must be installed before
+    # the clean interpreter imports Torch, Transformer Engine, cuBLAS, or NCCL.
+    if getattr(args, "deterministic", False):
+        from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
+        apply_determinism_overrides(recipe)
     if cli_overrides:
         recipe = _process_library_hydra_overrides(recipe, cli_overrides)
     return finalize_library_config_overrides(recipe)

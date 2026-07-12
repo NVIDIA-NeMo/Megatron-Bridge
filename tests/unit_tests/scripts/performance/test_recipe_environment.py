@@ -293,6 +293,104 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
     ]
 
 
+def test_flat_deterministic_environment_reaches_self_exec(monkeypatch):
+    """The clean flat-recipe interpreter must start with deterministic process values."""
+    from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
+    deterministic_env = {
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+    }
+    for name in deterministic_env:
+        monkeypatch.delenv(name, raising=False)
+
+    recipe = SimpleNamespace(
+        env_vars={},
+        model=SimpleNamespace(deterministic_mode=False, cross_entropy_loss_fusion=True),
+        comm_overlap=None,
+    )
+    args = SimpleNamespace(
+        model_recipe_name="test_model",
+        task="pretrain",
+        num_gpus=1,
+        gpu="h100",
+        compute_dtype="bf16",
+        config_variant=None,
+    )
+    exec_environments = []
+
+    monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", lambda **_kwargs: recipe)
+
+    def apply_overrides(config, _overrides, _args):
+        apply_determinism_overrides(config)
+        return config
+
+    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
+    monkeypatch.setattr(run_script.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
+
+    run_script._bootstrap_recipe_environment(args, [])
+
+    assert len(exec_environments) == 1
+    exec_environment = exec_environments[0]
+    assert {name: exec_environment[name] for name in deterministic_env} == deterministic_env
+    assert exec_environment[run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
+
+
+def test_flat_deterministic_preserves_explicit_hydra_environment(monkeypatch):
+    """Hydra env additions, changes, and removals remain final with deterministic argparse."""
+    from utils import overrides as override_utils
+
+    from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
+    recipe = SimpleNamespace(
+        env_vars={"NCCL_ALGO": "Recipe", "REMOVE_ME": "recipe"},
+        model=SimpleNamespace(
+            deterministic_mode=False,
+            cross_entropy_loss_fusion=True,
+            moe_flex_dispatcher_backend=None,
+        ),
+        comm_overlap=SimpleNamespace(tp_comm_overlap=True),
+    )
+    cli_overrides = [
+        "env_vars.NCCL_ALGO=Tree",
+        "+env_vars.USER_SELECTED=custom",
+        "~env_vars.REMOVE_ME",
+    ]
+
+    def apply_hydra(config, overrides):
+        assert overrides == cli_overrides
+        config.env_vars["NCCL_ALGO"] = "Tree"
+        config.env_vars["USER_SELECTED"] = "custom"
+        config.env_vars.pop("REMOVE_ME")
+        return config
+
+    def apply_argparse(config, args):
+        assert args.deterministic is True
+        apply_determinism_overrides(config)
+        return config
+
+    monkeypatch.setattr(override_utils, "set_cli_overrides", apply_hydra)
+    monkeypatch.setattr(override_utils, "set_user_overrides", apply_argparse)
+    monkeypatch.setattr(
+        override_utils,
+        "_apply_flat_cli_environment_compatibility",
+        lambda config, _args, **_kwargs: config,
+    )
+
+    effective_recipe = run_script._apply_perf_recipe_overrides(
+        recipe,
+        cli_overrides,
+        SimpleNamespace(deterministic=True),
+    )
+
+    assert effective_recipe.env_vars["NCCL_ALGO"] == "Tree"
+    assert effective_recipe.env_vars["USER_SELECTED"] == "custom"
+    assert "REMOVE_ME" not in effective_recipe.env_vars
+    assert effective_recipe.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert effective_recipe.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0
+
+
 def test_flat_environment_compatibility_preserves_explicit_hydra_values():
     from utils.overrides import _apply_flat_cli_environment_compatibility
 
@@ -520,6 +618,120 @@ def test_library_runner_applies_env_relevant_argparse_overrides():
     assert effective_recipe.model.moe_shared_expert_overlap is False
 
 
+def test_library_runner_applies_determinism_before_environment_export():
+    """Deterministic env and config must be resolved in the pre-exec pass."""
+    recipe = SimpleNamespace(
+        env_vars={"RECIPE_ENV": 1},
+        model=SimpleNamespace(
+            deterministic_mode=False,
+            cross_entropy_loss_fusion=True,
+            moe_flex_dispatcher_backend=None,
+            moe_token_dispatcher_type=None,
+            num_moe_experts=None,
+        ),
+        comm_overlap=SimpleNamespace(tp_comm_overlap=True),
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        deterministic=True,
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend=-1,
+    )
+
+    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
+
+    assert effective_recipe.model.deterministic_mode is True
+    assert effective_recipe.model.cross_entropy_loss_fusion is False
+    assert effective_recipe.comm_overlap.tp_comm_overlap is False
+    assert effective_recipe.env_vars == {
+        "RECIPE_ENV": 1,
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
+
+
+def test_library_deterministic_environment_reaches_self_exec(monkeypatch):
+    """The clean library interpreter must start with deterministic process values."""
+    deterministic_env = {
+        "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+        "NCCL_ALGO": "Ring",
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+    }
+    for name in deterministic_env:
+        monkeypatch.delenv(name, raising=False)
+
+    recipe = SimpleNamespace(
+        env_vars={},
+        model=SimpleNamespace(
+            deterministic_mode=False,
+            cross_entropy_loss_fusion=True,
+            moe_flex_dispatcher_backend=None,
+            moe_token_dispatcher_type=None,
+            num_moe_experts=None,
+        ),
+        comm_overlap=None,
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        deterministic=True,
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend=-1,
+    )
+    exec_environments = []
+
+    monkeypatch.setattr(run_recipe, "_get_library_recipe", lambda _args: recipe)
+    monkeypatch.setattr(run_recipe, "_apply_target_environment", lambda *_args: None)
+    monkeypatch.setattr(run_recipe.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
+
+    run_recipe._bootstrap_recipe_environment(args, [])
+
+    assert len(exec_environments) == 1
+    exec_environment = exec_environments[0]
+    assert {name: exec_environment[name] for name in deterministic_env} == deterministic_env
+    assert exec_environment[run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())
+
+
+def test_library_hydra_environment_override_wins_after_deterministic_argparse(monkeypatch):
+    """Explicit Hydra env values remain final in the deterministic pre-exec pass."""
+    recipe = SimpleNamespace(
+        env_vars={},
+        model=SimpleNamespace(
+            deterministic_mode=False,
+            cross_entropy_loss_fusion=True,
+            moe_flex_dispatcher_backend=None,
+            moe_token_dispatcher_type=None,
+            num_moe_experts=None,
+        ),
+        comm_overlap=None,
+        ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
+    )
+    args = SimpleNamespace(
+        deterministic=True,
+        expert_model_parallel_size=None,
+        nccl_ub=False,
+        moe_flex_dispatcher_backend=-1,
+    )
+
+    def apply_hydra(config, overrides):
+        assert config.env_vars["NCCL_ALGO"] == "Ring"
+        assert overrides == ["env_vars.NCCL_ALGO=Tree"]
+        config.env_vars["NCCL_ALGO"] = "Tree"
+        return config
+
+    monkeypatch.setattr(run_recipe, "_process_library_hydra_overrides", apply_hydra)
+
+    effective_recipe = run_recipe._apply_library_recipe_overrides(
+        recipe,
+        ["env_vars.NCCL_ALGO=Tree"],
+        args,
+    )
+
+    assert effective_recipe.env_vars["NCCL_ALGO"] == "Tree"
+
+
 def test_library_runner_disables_flex_dispatcher_consistently():
     """The explicit None backend must clear both flex dispatcher fields."""
     recipe = SimpleNamespace(
@@ -575,6 +787,7 @@ def test_library_runner_uses_shared_environment_override_helpers():
         repo_root / "scripts" / "performance" / "run_recipe.py": {
             "_apply_library_recipe_overrides": {
                 "apply_library_argparse_overrides",
+                "apply_determinism_overrides",
                 "finalize_library_config_overrides",
             },
             "set_user_overrides": {"apply_library_argparse_overrides"},

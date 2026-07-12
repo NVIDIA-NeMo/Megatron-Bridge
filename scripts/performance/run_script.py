@@ -142,7 +142,16 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     )
     recipe = set_cli_overrides(recipe, cli_overrides)
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    hydra_env_vars = {name: recipe.env_vars[name] for name in protected_env_names if name in recipe.env_vars}
     recipe = set_user_overrides(recipe, args)
+    # Argparse normally has higher precedence than Hydra in the flat runner,
+    # but explicit Hydra env selections remain final. Restore changed, added,
+    # and removed env keys after argparse features such as --deterministic.
+    for name in protected_env_names:
+        if name in hydra_env_vars:
+            recipe.env_vars[name] = hydra_env_vars[name]
+        else:
+            recipe.env_vars.pop(name, None)
     return _apply_flat_cli_environment_compatibility(
         recipe,
         args,
