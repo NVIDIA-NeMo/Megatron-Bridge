@@ -294,7 +294,7 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
 
 
 def test_flat_environment_compatibility_preserves_explicit_hydra_values():
-    from utils.overrides import apply_flat_cli_environment_compatibility
+    from utils.overrides import _apply_flat_cli_environment_compatibility
 
     base_env = {
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -333,7 +333,7 @@ def test_flat_environment_compatibility_preserves_explicit_hydra_values():
         task="pretrain",
     )
 
-    apply_flat_cli_environment_compatibility(
+    _apply_flat_cli_environment_compatibility(
         recipe,
         args,
         base_dispatcher_backend="hybridep",
@@ -348,7 +348,7 @@ def test_flat_environment_compatibility_preserves_explicit_hydra_values():
 
 
 def test_flat_default_args_leave_inline_recipe_environment_unchanged():
-    from utils.overrides import apply_flat_cli_environment_compatibility
+    from utils.overrides import _apply_flat_cli_environment_compatibility
 
     recipe = SimpleNamespace(
         env_vars={"FUTURE_RECIPE_SPECIFIC_SETTING": 7},
@@ -373,7 +373,7 @@ def test_flat_default_args_leave_inline_recipe_environment_unchanged():
     )
     original_env = recipe.env_vars.copy()
 
-    apply_flat_cli_environment_compatibility(
+    _apply_flat_cli_environment_compatibility(
         recipe,
         args,
         base_dispatcher_backend="hybridep",
@@ -384,7 +384,7 @@ def test_flat_default_args_leave_inline_recipe_environment_unchanged():
 
 
 def test_flat_explicit_argparse_compatibility_changes_only_legacy_coupled_values():
-    from utils.overrides import apply_flat_cli_environment_compatibility
+    from utils.overrides import _apply_flat_cli_environment_compatibility
 
     recipe = SimpleNamespace(
         env_vars={
@@ -414,7 +414,7 @@ def test_flat_explicit_argparse_compatibility_changes_only_legacy_coupled_values
         task="pretrain",
     )
 
-    apply_flat_cli_environment_compatibility(
+    _apply_flat_cli_environment_compatibility(
         recipe,
         args,
         base_dispatcher_backend="hybridep",
@@ -434,7 +434,7 @@ def test_flat_explicit_argparse_compatibility_changes_only_legacy_coupled_values
 
 
 def test_flat_explicit_false_a2a_preserves_legacy_config_and_env_behavior():
-    from utils.overrides import _set_moe_a2a_overlap_overrides, apply_flat_cli_environment_compatibility
+    from utils.overrides import _apply_flat_cli_environment_compatibility, _set_moe_a2a_overlap_overrides
 
     recipe = SimpleNamespace(
         env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 32},
@@ -463,7 +463,7 @@ def test_flat_explicit_false_a2a_preserves_legacy_config_and_env_behavior():
     )
 
     _set_moe_a2a_overlap_overrides(recipe, moe_a2a_overlap=args.moe_a2a_overlap)
-    apply_flat_cli_environment_compatibility(
+    _apply_flat_cli_environment_compatibility(
         recipe,
         args,
         base_dispatcher_backend="hybridep",

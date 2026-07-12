@@ -208,7 +208,7 @@ def _remove_recipe_env(recipe: ConfigContainer, name: str, protected_env_names: 
         recipe.env_vars.pop(name, None)
 
 
-def apply_flat_cli_environment_compatibility(
+def _apply_flat_cli_environment_compatibility(
     recipe: ConfigContainer,
     args: argparse.Namespace,
     *,
@@ -216,12 +216,20 @@ def apply_flat_cli_environment_compatibility(
     base_moe_a2a_overlap: bool,
     protected_env_names: set[str] | None = None,
 ) -> ConfigContainer:
-    """Preserve env coupling only for legacy argparse overrides.
+    """Apply legacy argparse-to-environment coupling for a flat perf recipe.
 
-    The recipe's inline ``env_vars`` mapping is the source of truth. This
-    compatibility step is intentionally narrow: it updates only process values
-    that the removed launcher plugin changed for explicit argparse options.
-    Explicit Hydra ``env_vars`` overrides remain final.
+    This is an internal ``run_script.py`` compatibility helper, not a general
+    recipe environment API. Flat recipes own their default ``env_vars``, but
+    the removed launcher plugin also changed a small set of environment values
+    when users explicitly overrode TP, PP, CP, EP, MoE A2A overlap, or NCCL UB
+    through the legacy argparse interface. Call this after applying both Hydra
+    and argparse config overrides so those old commands retain their effective
+    process environment.
+
+    With no relevant argparse override, the recipe environment is unchanged.
+    Names explicitly overridden through Hydra ``env_vars`` are protected and
+    remain final. Existing shell or launcher values retain higher precedence
+    later, when the recipe environment is installed with ``os.environ.setdefault``.
     """
     protected = protected_env_names or set()
     model = recipe.model

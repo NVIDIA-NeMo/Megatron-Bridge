@@ -129,7 +129,7 @@ def get_perf_recipe_by_name(
 
 def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     """Apply the same CLI and argparse overrides in both self-exec passes."""
-    from utils.overrides import apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
+    from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
     from utils.utils import explicit_environment_override_names
 
     base_env_vars = dict(recipe.env_vars)
@@ -141,7 +141,7 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     recipe = set_cli_overrides(recipe, cli_overrides)
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
     recipe = set_user_overrides(recipe, args)
-    return apply_flat_cli_environment_compatibility(
+    return _apply_flat_cli_environment_compatibility(
         recipe,
         args,
         base_dispatcher_backend=base_dispatcher_backend,
