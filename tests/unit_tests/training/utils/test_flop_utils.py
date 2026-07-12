@@ -791,6 +791,54 @@ class TestGDNLayerFlops:
             "List [1,1,0,1,1,0,1,1] should produce the same FLOPs as int freq=3 (equivalent 6/2 split)"
         )
 
+    @pytest.mark.parametrize("linear_attention_freq", [4, [1, 1, 1, 0]])
+    def test_gdn_mtp_repeats_last_decoder_attention(self, linear_attention_freq):
+        """MTP should reuse the final decoder layer's standard-attention spec."""
+        batch_size = 1
+        hidden_size = 128
+        seq_length = 32
+        ffn_hidden_size = 256
+        num_attention_heads = 4
+        num_query_groups = 2
+        kv_channels = 32
+        vocab_size = 1024
+        model_overrides = {
+            "num_layers": 4,
+            "hidden_size": hidden_size,
+            "seq_length": seq_length,
+            "ffn_hidden_size": ffn_hidden_size,
+            "num_attention_heads": num_attention_heads,
+            "num_query_groups": num_query_groups,
+            "kv_channels": kv_channels,
+            "vocab_size": vocab_size,
+            "gated_linear_unit": False,
+            "linear_attention_freq": linear_attention_freq,
+        }
+        base_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides))
+        mtp_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides, mtp_num_layers=1))
+
+        query_projection_size = kv_channels * num_attention_heads
+        key_value_projection_size = kv_channels * num_query_groups
+        dense_mlp = 3 * 2 * hidden_size * (ffn_hidden_size * 2)
+        standard_attention = (
+            3
+            * 2
+            * (
+                hidden_size * (query_projection_size + 2 * key_value_projection_size)
+                + query_projection_size * hidden_size
+                + query_projection_size * seq_length
+            )
+        )
+        mtp_aux = 3 * 2 * (3 * hidden_size + 2 * hidden_size**2)
+        extra_logits = 3 * 2 * hidden_size * vocab_size
+        expected_delta = batch_size * seq_length * (dense_mlp + standard_attention + mtp_aux + extra_logits)
+
+        actual_delta = num_floating_point_operations(mtp_cfg, batch_size=batch_size) - num_floating_point_operations(
+            base_cfg, batch_size=batch_size
+        )
+
+        assert actual_delta == pytest.approx(expected_delta)
+
     def test_gdn_exact_self_attn_term(self):
         """Verify the GDN self_attn_term matches the expected formula from Megatron-LM."""
         batch_size = 1

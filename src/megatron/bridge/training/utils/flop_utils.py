@@ -968,20 +968,21 @@ def num_floating_point_operations(
         # weighted sum of GDN and standard-attention per-layer costs.
         if experimental_attention_variant == "gated_delta_net":
             linear_attention_freq = cfg.model.linear_attention_freq
+            decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
                 raise ValueError(
                     "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
                 )
             if isinstance(linear_attention_freq, int):
                 linear_attention_pattern = [
-                    0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(num_layers)
+                    0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(decoder_num_layers)
                 ]
             elif isinstance(linear_attention_freq, list):
                 linear_attention_pattern = linear_attention_freq
-                if len(linear_attention_pattern) != num_layers:
+                if len(linear_attention_pattern) != decoder_num_layers:
                     raise ValueError(
                         f"Invalid length of linear_attention_pattern: {len(linear_attention_pattern)}, "
-                        f"expected {num_layers}, "
+                        f"expected {decoder_num_layers}, "
                         f"current linear_attention_freq: {linear_attention_freq}"
                     )
             else:
@@ -989,7 +990,10 @@ def num_floating_point_operations(
                     f"linear_attention_freq must be int or list, got {type(linear_attention_freq).__name__}"
                 )
 
-            num_gdn_layers = sum(linear_attention_pattern)
+            # MTP construction reuses the final decoder layer spec, so each MTP
+            # layer has the same attention type as the final decoder layer.
+            last_layer_is_gdn = linear_attention_pattern[-1] if linear_attention_pattern else 0
+            num_gdn_layers = sum(linear_attention_pattern) + last_layer_is_gdn * mtp_num_layers
             num_standard_attn_layers = num_layers - num_gdn_layers
 
             standard_self_attn_per_layer = self_attn_term / num_layers if num_layers > 0 else 0
