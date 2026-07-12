@@ -258,7 +258,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. The legacy nemo-ci labels `v1` and `v2` also select that canonical recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments

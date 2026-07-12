@@ -90,6 +90,8 @@ def _find_perf_recipe(name: str) -> Callable[[], object] | None:
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
+    # Temporary compatibility for legacy nemo-ci configs that still pass the
+    # removed v1/v2 labels. They select the canonical recipe, not a variant.
     if config_variant is None or config_variant.lower() in {"v1", "v2"}:
         return ""
     return f"_{config_variant.lower()}"

@@ -284,12 +284,15 @@ def _normalize_precision_name(precision: str) -> str:
 
 
 def _recipe_variant_suffix(config_variant: str | None) -> str:
+    # Temporary compatibility for legacy nemo-ci configs that still pass the
+    # removed v1/v2 labels. They select the canonical recipe, not a variant.
     if config_variant is None or config_variant.lower() in {"v1", "v2"}:
         return ""
     return f"_{config_variant.lower()}"
 
 
 def _recipe_variant_name(config_variant: str | None) -> str | None:
+    # Keep legacy nemo-ci v1/v2 labels out of canonical recipe names.
     return None if config_variant is None or config_variant.lower() in {"v1", "v2"} else config_variant.lower()
 
 
