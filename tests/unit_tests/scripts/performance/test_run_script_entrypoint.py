@@ -146,7 +146,7 @@ def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
         setup_lines="existing setup\n",
     )
 
-    setup_experiment._configure_slurm_gpu_tuning(
+    utils.configure_slurm_gpu_tuning(
         executor,
         enable_vboost=True,
         lock_gpu_freq=1200,

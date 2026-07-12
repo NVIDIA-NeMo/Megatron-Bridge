@@ -39,7 +39,7 @@ if HAS_NEMO_RUN:
     from utils import executors as executors_module
     from utils.executors import (
         KUBEFLOW_NUMA_BINDING_ENV,
-        PERF_ENV_VARS,
+        OFFLINE_BENCHMARK_ENV_VARS,
         _kubeflow_numa_binding_enabled,
         _kubeflow_numa_binding_script,
         kubeflow_executor,
@@ -59,8 +59,8 @@ RECIPE_PROCESS_ENV_NAMES = {
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-def test_container_env_includes_perf_vars(tmp_path):
-    """PERF_ENV_VARS keys must appear in container_env so they override container defaults."""
+def test_container_env_includes_offline_benchmark_vars(tmp_path):
+    """Offline benchmark defaults must override matching container values."""
     executor = slurm_executor(
         gpu="h100",
         account="test",
@@ -70,8 +70,8 @@ def test_container_env_includes_perf_vars(tmp_path):
         num_gpus_per_node=8,
     )
     assert executor.container_env is not None, "container_env is None — was the field removed from the executor?"
-    missing = set(PERF_ENV_VARS) - set(executor.container_env)
-    assert not missing, f"PERF_ENV_VARS keys missing from container_env: {missing}"
+    missing = set(OFFLINE_BENCHMARK_ENV_VARS) - set(executor.container_env)
+    assert not missing, f"Offline benchmark vars missing from container_env: {missing}"
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

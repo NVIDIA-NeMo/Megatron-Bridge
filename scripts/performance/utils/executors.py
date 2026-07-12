@@ -84,7 +84,7 @@ set -euo pipefail
 bash -c '{{ pre_cmds }} {{ command }}'
 """
 
-PERF_ENV_VARS = {
+OFFLINE_BENCHMARK_ENV_VARS = {
     "TRANSFORMERS_OFFLINE": "1",  # Default for benchmark runs that mostly use NullTokenizer.
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
     "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
@@ -143,7 +143,7 @@ def slurm_executor(
                 f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
             )
 
-    perf_env = PERF_ENV_VARS.copy()
+    perf_env = OFFLINE_BENCHMARK_ENV_VARS.copy()
 
     if wandb_key is not None:
         perf_env["WANDB_API_KEY"] = wandb_key
@@ -285,7 +285,7 @@ def kubeflow_executor(
         Configured ``run.KubeflowExecutor`` instance.
     """
     # K8s/Kubeflow jobs deliberately do NOT inherit the Slurm orchestration
-    # defaults in PERF_ENV_VARS. Recipe-owned process settings are applied by
+    # defaults in OFFLINE_BENCHMARK_ENV_VARS. Recipe-owned process settings are applied by
     # each training script's self-exec bootstrap; the cluster supplies fabric
     # tuning explicitly via KUBEFLOW_ENV_LIST_JSON (-> custom_env_vars / env_list).
     env_vars: Dict[str, str] = {}

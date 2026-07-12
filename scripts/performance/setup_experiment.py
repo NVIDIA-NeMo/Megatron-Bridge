@@ -19,7 +19,6 @@ import json
 import logging
 import os
 import re
-import shlex
 import sys
 import tempfile
 import time
@@ -39,7 +38,7 @@ try:
         kubeflow_executor,
         slurm_executor,
     )
-    from utils.utils import get_exp_name_config, select_config_variant_interactive
+    from utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.executors import (
@@ -48,7 +47,7 @@ except (ImportError, ModuleNotFoundError):
         kubeflow_executor,
         slurm_executor,
     )
-    from .utils.utils import get_exp_name_config, select_config_variant_interactive
+    from .utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -69,55 +68,6 @@ ENTRYPOINT_RECIPE = "run_recipe.py"
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
-
-
-def _configure_slurm_gpu_tuning(executor, *, enable_vboost: bool, lock_gpu_freq: int | None) -> None:
-    """Add optional GPU tuning commands to a Slurm executor once before submission."""
-    commands = []
-    job_dir = executor.tunnel.job_dir
-
-    if enable_vboost:
-        commands.append(
-            " ".join(
-                [
-                    "\n# Enable VBoost\n",
-                    "srun",
-                    f"--ntasks={executor.nodes}",
-                    "--output",
-                    os.path.join(job_dir, "vboost.out"),
-                    "--error",
-                    os.path.join(job_dir, "vboost.err"),
-                    "bash -c",
-                    shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
-                ]
-            )
-        )
-
-    if lock_gpu_freq is not None:
-        commands.append(
-            "\n".join(
-                [
-                    "",
-                    "# Lock GPU graphics clock",
-                    " ".join(
-                        [
-                            "srun",
-                            "--ntasks-per-node=1",
-                            "--output",
-                            os.path.join(job_dir, "lock_gpu_freq.out"),
-                            "--error",
-                            os.path.join(job_dir, "lock_gpu_freq.err"),
-                            "bash -c",
-                            shlex.quote(f"sudo nvidia-smi -lgc {lock_gpu_freq}"),
-                        ]
-                    ),
-                    "",
-                ]
-            )
-        )
-
-    if commands:
-        executor.setup_lines = f"{executor.setup_lines or ''}{''.join(commands)}"
 
 
 def _filter_run_script_args(argv: List[str]) -> List[str]:
@@ -746,7 +696,7 @@ def main(
             packager=packager,
             enable_pct_binding=enable_pct_binding,
         )
-        _configure_slurm_gpu_tuning(
+        configure_slurm_gpu_tuning(
             executor,
             enable_vboost=enable_vboost,
             lock_gpu_freq=lock_gpu_freq,

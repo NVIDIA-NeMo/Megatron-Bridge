@@ -21,6 +21,7 @@ import os
 import pkgutil
 import re
 import select
+import shlex
 import sys
 from collections.abc import Callable, Mapping, MutableMapping
 from dataclasses import dataclass, field, fields
@@ -69,6 +70,55 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
     ("qwen3_30b_a3b", "pretrain", "h100", "bf16", None): 16,
     ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", None): 16,
 }
+
+
+def configure_slurm_gpu_tuning(executor: Any, *, enable_vboost: bool, lock_gpu_freq: int | None) -> None:
+    """Add optional GPU tuning commands to a Slurm executor before submission."""
+    commands = []
+    job_dir = executor.tunnel.job_dir
+
+    if enable_vboost:
+        commands.append(
+            " ".join(
+                [
+                    "\n# Enable VBoost\n",
+                    "srun",
+                    f"--ntasks={executor.nodes}",
+                    "--output",
+                    os.path.join(job_dir, "vboost.out"),
+                    "--error",
+                    os.path.join(job_dir, "vboost.err"),
+                    "bash -c",
+                    shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
+                ]
+            )
+        )
+
+    if lock_gpu_freq is not None:
+        commands.append(
+            "\n".join(
+                [
+                    "",
+                    "# Lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {lock_gpu_freq}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+        )
+
+    if commands:
+        executor.setup_lines = f"{executor.setup_lines or ''}{''.join(commands)}"
 
 
 @dataclass
