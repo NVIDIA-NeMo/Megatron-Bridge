@@ -98,6 +98,7 @@ class WanModel(VisionModule):
         fp16_lm_cross_entropy: bool = False,
         parallel_output: bool = True,
         transformer_decoder_layer_spec=WanLayerWithAdaLNspec,
+        vp_stage: Optional[int] = None,
         **kwargs,
     ):
         super(WanModel, self).__init__(config=config)
@@ -159,6 +160,7 @@ class WanModel(VisionModule):
             pre_process=self.pre_process,
             post_process=self.post_process,
             post_layer_norm=False,
+            vp_stage=vp_stage,
         )
 
         # output head

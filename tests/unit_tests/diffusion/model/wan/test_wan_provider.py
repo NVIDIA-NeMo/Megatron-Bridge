@@ -34,6 +34,7 @@ def test_wan_model_provider_provide_returns_model(monkeypatch):
         def __init__(self, *args, **kwargs):
             super().__init__()
             self.input_tensor = None
+            self.vp_stage = kwargs.get("vp_stage")
 
         def set_input_tensor(self, input_tensor):
             self.input_tensor = input_tensor
@@ -44,7 +45,7 @@ def test_wan_model_provider_provide_returns_model(monkeypatch):
     monkeypatch.setattr(wan_model_module, "TransformerBlock", DummyTransformerBlock, raising=False)
 
     provider = WanModelProvider(
-        num_layers=2,  # keep small
+        num_layers=4,  # keep small and divisible across PP=2, VPP=2
         hidden_size=64,
         ffn_hidden_size=128,
         num_attention_heads=4,
@@ -72,12 +73,15 @@ def test_wan_model_provider_provide_returns_model(monkeypatch):
         freq_dim=16,
         text_len=32,
         text_dim=64,
+        pipeline_model_parallel_size=2,
+        virtual_pipeline_model_parallel_size=2,
     )
     # Ensure config supplies fields expected by core attention
     provider.kv_channels = provider.hidden_size // provider.num_attention_heads
     provider.num_query_groups = provider.num_attention_heads
-    model = provider.provide()
+    model = provider.provide(pre_process=True, post_process=True, vp_stage=1)
     assert isinstance(model, WanModel)
+    assert model.decoder.vp_stage == 1
     # Sanity check key config properties were plumbed
     assert model.config.hidden_size == 64
     assert model.config.num_attention_heads == 4

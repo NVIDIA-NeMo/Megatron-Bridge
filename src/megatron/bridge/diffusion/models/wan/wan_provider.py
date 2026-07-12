@@ -84,8 +84,9 @@ class WanModelProvider(TransformerConfig, ModelProviderMixin[VisionModule]):  # 
 
         return model(
             self,
-            pre_process=parallel_state.is_pipeline_first_stage(),
-            post_process=parallel_state.is_pipeline_last_stage(),
+            pre_process=parallel_state.is_pipeline_first_stage() if pre_process is None else pre_process,
+            post_process=parallel_state.is_pipeline_last_stage() if post_process is None else post_process,
             fp16_lm_cross_entropy=self.fp16_lm_cross_entropy,
             parallel_output=self.parallel_output,
+            vp_stage=vp_stage,
         )

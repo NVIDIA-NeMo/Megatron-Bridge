@@ -111,7 +111,11 @@ class WanLayerWithAdaLN(TransformerLayer):
         # Replace any submodules that will have CP disabled and build them manually later after TransformerLayer init.
         # modified_submods = _replace_no_cp_submodules(submodules)
         super().__init__(
-            config=config, submodules=submodules, layer_number=layer_number, hidden_dropout=hidden_dropout
+            config=config,
+            submodules=submodules,
+            layer_number=layer_number,
+            hidden_dropout=hidden_dropout,
+            vp_stage=vp_stage,
         )
 
         # TODO (pmannan): Override Cross Attention to disable CP.
