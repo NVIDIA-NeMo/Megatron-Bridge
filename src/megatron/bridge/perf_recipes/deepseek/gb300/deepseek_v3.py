@@ -134,6 +134,20 @@ def deepseek_v3_pretrain_72gpu_gb300_bf16_perf72_e144_config() -> ConfigContaine
     return cfg
 
 
+def deepseek_v3_pretrain_144gpu_gb300_bf16_perf72_e144_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 144× GB300, BF16, 144 experts perf72 probe."""
+    cfg = deepseek_v3_pretrain_72gpu_gb300_bf16_perf72_e144_config()
+    cfg.train.global_batch_size = 2304
+    return cfg
+
+
+def deepseek_v3_pretrain_288gpu_gb300_bf16_perf72_e144_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 288× GB300, BF16, 144 experts perf72 probe."""
+    cfg = deepseek_v3_pretrain_72gpu_gb300_bf16_perf72_e144_config()
+    cfg.train.global_batch_size = 4608
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_fp8cs_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, FP8 current-scaling."""
     cfg = deepseek_v3_pretrain_config()
@@ -206,6 +220,20 @@ def deepseek_v3_pretrain_72gpu_gb300_fp8mx_perf72_e144_config() -> ConfigContain
     return cfg
 
 
+def deepseek_v3_pretrain_144gpu_gb300_fp8mx_perf72_e144_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 144× GB300, MXFP8, 144 experts perf72 probe."""
+    cfg = deepseek_v3_pretrain_72gpu_gb300_fp8mx_perf72_e144_config()
+    cfg.train.global_batch_size = 2304
+    return cfg
+
+
+def deepseek_v3_pretrain_288gpu_gb300_fp8mx_perf72_e144_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 288× GB300, MXFP8, 144 experts perf72 probe."""
+    cfg = deepseek_v3_pretrain_72gpu_gb300_fp8mx_perf72_e144_config()
+    cfg.train.global_batch_size = 4608
+    return cfg
+
+
 def deepseek_v3_pretrain_256gpu_gb300_nvfp4_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB300, NVFP4."""
     cfg = deepseek_v3_pretrain_config()
@@ -246,6 +274,20 @@ def deepseek_v3_pretrain_72gpu_gb300_nvfp4_perf72_e144_config() -> ConfigContain
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     _apply_deepseek_v3_72gpu_gb300_nvfp4_perf72_configs(cfg, num_moe_experts=144)
+    return cfg
+
+
+def deepseek_v3_pretrain_144gpu_gb300_nvfp4_perf72_e144_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 144× GB300, NVFP4, 144 experts perf72 probe."""
+    cfg = deepseek_v3_pretrain_72gpu_gb300_nvfp4_perf72_e144_config()
+    cfg.train.global_batch_size = 2304
+    return cfg
+
+
+def deepseek_v3_pretrain_288gpu_gb300_nvfp4_perf72_e144_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 288× GB300, NVFP4, 144 experts perf72 probe."""
+    cfg = deepseek_v3_pretrain_72gpu_gb300_nvfp4_perf72_e144_config()
+    cfg.train.global_batch_size = 4608
     return cfg
 
 
