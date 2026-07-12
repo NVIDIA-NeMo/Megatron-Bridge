@@ -791,9 +791,17 @@ class TestGDNLayerFlops:
             "List [1,1,0,1,1,0,1,1] should produce the same FLOPs as int freq=3 (equivalent 6/2 split)"
         )
 
-    @pytest.mark.parametrize("linear_attention_freq", [4, [1, 1, 1, 0]])
-    def test_gdn_mtp_repeats_last_decoder_attention(self, linear_attention_freq):
-        """MTP should reuse the final decoder layer's standard-attention spec."""
+    @pytest.mark.parametrize(
+        ("linear_attention_freq", "last_layer_is_gdn"),
+        [
+            pytest.param(4, False, id="int-last-standard"),
+            pytest.param([1, 1, 1, 0], False, id="list-last-standard"),
+            pytest.param(3, True, id="int-last-gdn"),
+            pytest.param([1, 1, 0, 1], True, id="list-last-gdn"),
+        ],
+    )
+    def test_gdn_mtp_reuses_last_decoder_attention_type(self, linear_attention_freq, last_layer_is_gdn):
+        """Every MTP depth should reuse the final decoder layer's attention type."""
         batch_size = 1
         hidden_size = 128
         seq_length = 32
@@ -802,6 +810,12 @@ class TestGDNLayerFlops:
         num_query_groups = 2
         kv_channels = 32
         vocab_size = 1024
+        mtp_num_layers = 2
+        linear_key_head_dim = 16
+        linear_value_head_dim = 16
+        linear_num_key_heads = 4
+        linear_num_value_heads = 8
+        linear_conv_kernel_dim = 4
         model_overrides = {
             "num_layers": 4,
             "hidden_size": hidden_size,
@@ -813,9 +827,14 @@ class TestGDNLayerFlops:
             "vocab_size": vocab_size,
             "gated_linear_unit": False,
             "linear_attention_freq": linear_attention_freq,
+            "linear_key_head_dim": linear_key_head_dim,
+            "linear_value_head_dim": linear_value_head_dim,
+            "linear_num_key_heads": linear_num_key_heads,
+            "linear_num_value_heads": linear_num_value_heads,
+            "linear_conv_kernel_dim": linear_conv_kernel_dim,
         }
         base_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides))
-        mtp_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides, mtp_num_layers=1))
+        mtp_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides, mtp_num_layers=mtp_num_layers))
 
         query_projection_size = kv_channels * num_attention_heads
         key_value_projection_size = kv_channels * num_query_groups
@@ -829,9 +848,24 @@ class TestGDNLayerFlops:
                 + query_projection_size * seq_length
             )
         )
+        qk_dim = linear_key_head_dim * linear_num_key_heads
+        v_dim = linear_value_head_dim * linear_num_value_heads
+        gdn_attention = (
+            3
+            * 2
+            * (
+                hidden_size * (2 * qk_dim + 2 * v_dim + 2 * linear_num_value_heads)
+                + linear_conv_kernel_dim * (2 * qk_dim + v_dim)
+                + linear_num_value_heads * linear_value_head_dim**2 * 4
+                + hidden_size * v_dim
+            )
+        )
         mtp_aux = 3 * 2 * (3 * hidden_size + 2 * hidden_size**2)
         extra_logits = 3 * 2 * hidden_size * vocab_size
-        expected_delta = batch_size * seq_length * (dense_mlp + standard_attention + mtp_aux + extra_logits)
+        last_attention = gdn_attention if last_layer_is_gdn else standard_attention
+        expected_delta = (
+            batch_size * seq_length * mtp_num_layers * (dense_mlp + last_attention + mtp_aux + extra_logits)
+        )
 
         actual_delta = num_floating_point_operations(mtp_cfg, batch_size=batch_size) - num_floating_point_operations(
             base_cfg, batch_size=batch_size
