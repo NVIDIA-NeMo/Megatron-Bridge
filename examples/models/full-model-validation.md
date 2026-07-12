@@ -65,7 +65,7 @@ Hugging Face commit SHAs resolved on the date above. Status is one of `TODO`,
 | Nemotron | Llama Nemotron | `nvidia/Llama-3.1-Nemotron-Nano-4B-v1.1` | `d552708a9d575fa8d4a690b988fd870d65279f98` | 4.5B | text | `examples/conversion` | TODO |
 | Nemotron | Nemotron Nano v2 VL | `nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16` | `5d250e2e111dc5e1434131bdf3d590c27a878ade` | 13.2B | vision-language | `examples/models/nemotron/nemotron_vl` | TODO |
 | Nemotron | Nemotron-3 Nano Omni | `nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16` | `24e67ea000b7c2837fc8f9488aa2008524fac8ba` | 33.0B | vision-language-audio | `examples/models/nemotron/nemotron_3_omni` | TODO |
-| OLMoE | OLMoE | `allenai/OLMoE-1B-7B-0125` | `9b0c1aa87e34a20052389dce1f0cf01da783f654` | 6.9B | text | `examples/conversion` | TODO |
+| OLMoE | OLMoE | `allenai/OLMoE-1B-7B-0125` | `9b0c1aa87e34a20052389dce1f0cf01da783f654` | 6.9B | text | `examples/conversion` | PASS |
 | Qwen | Qwen2 | `Qwen/Qwen2-7B` | `453ed1575b739b5b03ce3758b23befdb0967f40e` | 7.6B | text | `examples/conversion` | TODO |
 | Qwen | Qwen2.5 | `Qwen/Qwen2.5-7B` | `d149729398750b98c0af14eb82c78cfe92750796` | 7.6B | text | `examples/conversion` | TODO |
 | Qwen | Qwen3 | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | 8.2B | text | `examples/conversion` | TODO |
