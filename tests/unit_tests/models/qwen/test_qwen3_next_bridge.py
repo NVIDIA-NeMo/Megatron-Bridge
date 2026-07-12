@@ -16,15 +16,24 @@
 Unit tests for Qwen3 Next bridge functionality.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.qwen.qwen3_next_bridge import Qwen3NextBridge
+
+
+@pytest.fixture(autouse=True)
+def _set_bridge_hf_config():
+    previous = Qwen3NextBridge.hf_config
+    Qwen3NextBridge.hf_config = SimpleNamespace(num_hidden_layers=4, full_attention_interval=4)
+    yield
+    Qwen3NextBridge.hf_config = previous
 
 
 class TestQwen3NextBridge:
@@ -121,11 +130,11 @@ class TestQwen3NextBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_next)
 
-        # Check that it returns a GPTModelProvider instance (not a model-specific subclass)
-        assert isinstance(result, GPTModelProvider)
+        assert isinstance(result, HybridModelProvider)
 
         # Check basic configuration mapping
-        assert result.num_layers == mock_qwen3_next_config.num_hidden_layers
+        assert result.num_layers == 2 * mock_qwen3_next_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == "GEGEGE*E" * 12
         assert result.hidden_size == mock_qwen3_next_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_next_config.num_attention_heads
         assert result.seq_length == mock_qwen3_next_config.max_position_embeddings
@@ -165,7 +174,7 @@ class TestQwen3NextBridge:
             assert result.linear_attention_freq == mock_qwen3_next_config.full_attention_interval
         else:
             assert isinstance(result.linear_attention_freq, list)
-            for i in range(result.num_layers):
+            for i in range(mock_qwen3_next_config.num_hidden_layers):
                 if (i + 1) % mock_qwen3_next_config.full_attention_interval == 0:
                     assert result.linear_attention_freq[i] == 0
                 else:
@@ -357,7 +366,7 @@ class TestQwen3NextBridge:
         result = bridge.provider_bridge(mock_pretrained)
 
         # Check 80B-A3B-specific configuration
-        assert result.num_layers == 48
+        assert result.num_layers == 96
         assert result.hidden_size == 2048
         assert result.num_attention_heads == 16
         assert result.ffn_hidden_size == 5120
@@ -404,7 +413,7 @@ class TestQwen3NextBridge:
 
         # Should have layer norm mappings
         assert "model.norm.weight" in hf_params
-        assert "decoder.final_layernorm.weight" in megatron_params
+        assert "decoder.final_norm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
@@ -485,10 +494,10 @@ class TestQwen3NextBridge:
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
-        assert "model.layers.*.mlp.gate.weight" in hf_params
+        assert "model.layers.0.mlp.gate.weight" in hf_params
         # shared_expert_gate is represented via ReplicatedMapping in bridge
         replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
-        assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
+        assert "model.layers.0.mlp.shared_expert_gate.weight" in replicated_hf_params
 
         # Check for expert mappings in GatedMLPMapping
         assert len(gated_mlp_mappings) > 0

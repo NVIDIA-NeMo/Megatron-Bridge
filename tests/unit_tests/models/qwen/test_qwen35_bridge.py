@@ -16,14 +16,15 @@
 Unit tests for Qwen3.5 bridge functionality.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
 
 
@@ -38,6 +39,18 @@ _NULL_ATTRS = (
     "num_nextn_predict_layers",
     "mtp_num_hidden_layers",
 )
+
+
+@pytest.fixture(autouse=True)
+def _set_bridge_hf_configs():
+    config = SimpleNamespace(num_hidden_layers=4, full_attention_interval=4)
+    previous_dense = Qwen35Bridge.hf_config
+    previous_moe = Qwen35MoEBridge.hf_config
+    Qwen35Bridge.hf_config = config
+    Qwen35MoEBridge.hf_config = config
+    yield
+    Qwen35Bridge.hf_config = previous_dense
+    Qwen35MoEBridge.hf_config = previous_moe
 
 
 class TestQwen35DenseBridge:
@@ -105,8 +118,9 @@ class TestQwen35DenseBridge:
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5)
 
-        assert isinstance(result, GPTModelProvider)
-        assert result.num_layers == mock_qwen3_5_config.num_hidden_layers
+        assert isinstance(result, HybridModelProvider)
+        assert result.num_layers == 2 * mock_qwen3_5_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == "G-G-G-*-" * 16
         assert result.hidden_size == mock_qwen3_5_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_5_config.num_attention_heads
         assert result.seq_length == mock_qwen3_5_config.max_position_embeddings
@@ -143,7 +157,7 @@ class TestQwen35DenseBridge:
             assert result.linear_attention_freq == mock_qwen3_5_config.full_attention_interval
         else:
             assert isinstance(result.linear_attention_freq, list)
-            for i in range(result.num_layers):
+            for i in range(mock_qwen3_5_config.num_hidden_layers):
                 if (i + 1) % mock_qwen3_5_config.full_attention_interval == 0:
                     assert result.linear_attention_freq[i] == 0
                 else:
@@ -257,7 +271,7 @@ class TestQwen35DenseBridge:
         bridge = Qwen35Bridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        assert result.num_layers == 64
+        assert result.num_layers == 128
         assert result.hidden_size == 5120
         assert result.num_attention_heads == 24
         assert result.ffn_hidden_size == 17408
@@ -304,7 +318,7 @@ class TestQwen35DenseBridge:
 
         # Should have layer norm mappings
         assert "model.norm.weight" in hf_params
-        assert "decoder.final_layernorm.weight" in megatron_params
+        assert "decoder.final_norm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
@@ -461,8 +475,9 @@ class TestQwen35MoEBridge:
 
         result = bridge.provider_bridge(mock_pretrained_qwen3_5_moe)
 
-        assert isinstance(result, GPTModelProvider)
-        assert result.num_layers == mock_qwen3_5_moe_config.num_hidden_layers
+        assert isinstance(result, HybridModelProvider)
+        assert result.num_layers == 2 * mock_qwen3_5_moe_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == "GEGEGE*E" * 15
         assert result.hidden_size == mock_qwen3_5_moe_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_5_moe_config.num_attention_heads
         assert result.seq_length == mock_qwen3_5_moe_config.max_position_embeddings
@@ -610,7 +625,7 @@ class TestQwen35MoEBridge:
         bridge = Qwen35MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        assert result.num_layers == 60
+        assert result.num_layers == 120
         assert result.hidden_size == 4096
         assert result.num_attention_heads == 32
         assert result.moe_ffn_hidden_size == 1024
@@ -653,7 +668,7 @@ class TestQwen35MoEBridge:
         assert "output_layer.weight" in megatron_params
 
         assert "model.norm.weight" in hf_params
-        assert "decoder.final_layernorm.weight" in megatron_params
+        assert "decoder.final_norm.weight" in megatron_params
 
     def test_mapping_registry_mtp_mapping(self):
         """Test that mapping_registry contains MTP mapping."""
@@ -735,10 +750,10 @@ class TestQwen35MoEBridge:
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
-        assert "model.layers.*.mlp.gate.weight" in hf_params
+        assert "model.layers.0.mlp.gate.weight" in hf_params
         # shared_expert_gate is represented via ReplicatedMapping in bridge
         replicated_hf_params = [mapping.hf_param for mapping in replicated_mappings]
-        assert "model.layers.*.mlp.shared_expert_gate.weight" in replicated_hf_params
+        assert "model.layers.0.mlp.shared_expert_gate.weight" in replicated_hf_params
 
         # Routed-expert mappings exist for both the grouped-GEMM (experts.linear_fc*.weight*) and
         # SequentialMLP (local_experts.*.linear_fc*) layouts. Their fused-vs-per-expert form depends
