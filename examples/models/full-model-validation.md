@@ -32,7 +32,7 @@ Hugging Face commit SHAs resolved on the date above. Status is one of `TODO`,
 | Gemma | Gemma | `google/gemma-2b` | `9cf48e52b224239de00d483ec8eb84fb8d0f3a3a` | 2.5B | text | `examples/conversion` | TODO |
 | Gemma | Gemma 2 | `google/gemma-2-2b` | `c5ebcd40d208330abc697524c919956e692655cf` | 2.6B | text | `examples/conversion` | TODO |
 | Gemma | Gemma 3 | `google/gemma-3-1b-it` | `dcc83ea841ab6100d6b47a070329e1ba4cf78752` | 1.0B | text | `examples/conversion` | TODO |
-| Gemma | Gemma 3-VL | `google/gemma-3-4b-it` | `093f9f388b31de276ce2de164bdc2081324b9767` | 4.3B | vision-language | `examples/models/gemma/gemma3_vl` | TODO |
+| Gemma | Gemma 3-VL | `google/gemma-3-4b-it` | `093f9f388b31de276ce2de164bdc2081324b9767` | 4.3B | vision-language | `examples/models/gemma/gemma3_vl` | PASS |
 | Gemma | Gemma 4 26B-A4B MoE | `google/gemma-4-26B-A4B` | `6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb` | 26.5B | text | `examples/models/gemma/gemma4` | TODO |
 | Gemma | Gemma 4 31B dense | `google/gemma-4-31B` | `d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3` | 32.7B | text | `examples/models/gemma/gemma4` | TODO |
 | Gemma | Gemma 4-VL 26B-A4B MoE | `google/gemma-4-26B-A4B-it` | `5305c1e72ea29c01f31a81230d52b375ba88b409` | 26.5B | vision-language | `examples/models/gemma/gemma4_vl` | TODO |
