@@ -17,6 +17,7 @@ from types import SimpleNamespace
 import pytest
 import torch
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.ernie.h100.ernie45 import ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.gemma.h100.gemma2 import gemma2_2b_pretrain_2gpu_h100_bf16_config
 from megatron.bridge.recipes.gemma.h100.gemma_text import (
@@ -40,53 +41,16 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
 from megatron.bridge.recipes.qwen.h100.qwen3_next import qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config
 from megatron.bridge.recipes.qwen.h100.qwen35 import qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config
 from megatron.bridge.recipes.sarvam.h100.sarvam import sarvam_30b_pretrain_8gpu_h100_bf16_config
-from megatron.bridge.recipes.utils import text_pretrain_utils
 
 
 pytestmark = pytest.mark.unit
-
-
-def test_build_text_pretrain_config_uses_pinned_lazy_bridge(monkeypatch):
-    calls = []
-    provider = SimpleNamespace()
-
-    class _Bridge:
-        def to_megatron_provider(self, *, load_weights):
-            assert load_weights is False
-            return provider
-
-    def _from_hf_pretrained(model_id, **kwargs):
-        calls.append((model_id, kwargs))
-        return _Bridge()
-
-    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _from_hf_pretrained)
-
-    config = text_pretrain_utils.build_text_pretrain_config(
-        hf_model_id="org/model",
-        revision="a" * 40,
-        tensor_parallelism=2,
-        pipeline_parallelism=2,
-        expert_parallelism=8,
-        sequence_length=2048,
-        trust_remote_code=True,
-    )
-
-    assert calls == [("org/model", {"revision": "a" * 40, "trust_remote_code": True})]
-    assert config.model is provider
-    assert config.model.tensor_model_parallel_size == 2
-    assert config.model.pipeline_model_parallel_size == 2
-    assert config.model.expert_model_parallel_size == 8
-    assert config.model.sequence_parallel is True
-    assert config.model.seq_length == 2048
-    assert config.dataset.seq_length == 2048
-    assert config.logger.log_interval == 1
 
 
 def test_mimo_v2_flash_pretrain_is_fully_local(monkeypatch):
     def _unexpected_hf_access(*_args, **_kwargs):
         raise AssertionError("MiMo-V2-Flash pretraining must not access Hugging Face")
 
-    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
 
     config = mimo_v2_flash_310b_pretrain_16gpu_h100_bf16_config()
 
@@ -101,6 +65,7 @@ def test_mimo_v2_flash_pretrain_is_fully_local(monkeypatch):
 
 
 def test_ernie45_pretrain_shards_logits_with_tensor_parallelism(monkeypatch):
+    calls = []
     provider = SimpleNamespace()
 
     class _Bridge:
@@ -108,14 +73,23 @@ def test_ernie45_pretrain_shards_logits_with_tensor_parallelism(monkeypatch):
             assert load_weights is False
             return provider
 
-    monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
-        "from_hf_pretrained",
-        lambda *_args, **_kwargs: _Bridge(),
-    )
+    def _from_hf_pretrained(model_id, **kwargs):
+        calls.append((model_id, kwargs))
+        return _Bridge()
+
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", _from_hf_pretrained)
 
     config = ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config()
 
+    assert calls == [
+        (
+            "baidu/ERNIE-4.5-21B-A3B-PT",
+            {
+                "revision": "87db95487941cb39592ee0abca3b9155a6d19c5c",
+                "trust_remote_code": True,
+            },
+        )
+    ]
     assert config.model.tensor_model_parallel_size == 2
     assert config.model.recompute_granularity == "selective"
     assert config.model.recompute_modules == ["core_attn"]
@@ -130,7 +104,7 @@ def test_gemma4_moe_pretrain_uses_tp_for_rmsnorm_headroom(monkeypatch):
             return provider
 
     monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
+        AutoBridge,
         "from_hf_pretrained",
         lambda *_args, **_kwargs: _Bridge(),
     )
@@ -151,7 +125,7 @@ def test_gemma4_dense_pretrain_avoids_unsupported_pipeline_parallelism(monkeypat
             return provider
 
     monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
+        AutoBridge,
         "from_hf_pretrained",
         lambda *_args, **_kwargs: _Bridge(),
     )
@@ -171,7 +145,7 @@ def test_glm47_flash_pretrain_uses_full_recompute_for_nccl_headroom(monkeypatch)
             return provider
 
     monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
+        AutoBridge,
         "from_hf_pretrained",
         lambda *_args, **_kwargs: _Bridge(),
     )
@@ -193,7 +167,7 @@ def test_sarvam_pretrain_uses_full_recompute_for_dispatch_headroom(monkeypatch):
             return provider
 
     monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
+        AutoBridge,
         "from_hf_pretrained",
         lambda *_args, **_kwargs: _Bridge(),
     )
@@ -215,7 +189,7 @@ def test_qwen35_moe_pretrain_uses_full_recompute_for_hybrid_headroom(monkeypatch
             return provider
 
     monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
+        AutoBridge,
         "from_hf_pretrained",
         lambda *_args, **_kwargs: _Bridge(),
     )
@@ -238,7 +212,7 @@ def test_qwen3_next_pretrain_uses_bf16_optimizer_state(monkeypatch):
             return provider
 
     monkeypatch.setattr(
-        text_pretrain_utils.AutoBridge,
+        AutoBridge,
         "from_hf_pretrained",
         lambda *_args, **_kwargs: _Bridge(),
     )
@@ -276,7 +250,7 @@ def test_gemma_pretrain_configs_do_not_require_gated_hf_access(monkeypatch):
     def _unexpected_hf_access(*_args, **_kwargs):
         raise AssertionError("from-scratch Gemma pretrain must not access a gated HF config")
 
-    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
 
     gemma = gemma_2b_pretrain_1gpu_h100_bf16_config()
     gemma2 = gemma2_2b_pretrain_2gpu_h100_bf16_config()
@@ -292,7 +266,7 @@ def test_llama2_pretrain_config_does_not_require_gated_hf_access(monkeypatch):
     def _unexpected_hf_access(*_args, **_kwargs):
         raise AssertionError("from-scratch Llama2 pretrain must not access a gated HF config")
 
-    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
 
     config = llama2_7b_pretrain_2gpu_h100_bf16_config()
 
@@ -306,7 +280,7 @@ def test_llama3_pretrain_configs_do_not_require_gated_hf_access(monkeypatch):
     def _unexpected_hf_access(*_args, **_kwargs):
         raise AssertionError("from-scratch Llama3 pretrain must not access a gated HF config")
 
-    monkeypatch.setattr(text_pretrain_utils.AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
+    monkeypatch.setattr(AutoBridge, "from_hf_pretrained", _unexpected_hf_access)
 
     llama3 = llama3_8b_pretrain_2gpu_h100_bf16_config()
     llama31 = llama31_8b_pretrain_2gpu_h100_bf16_config()

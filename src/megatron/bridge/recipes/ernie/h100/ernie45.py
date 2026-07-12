@@ -14,21 +14,55 @@
 
 """H100 pretrain recipe for the text-only ERNIE 4.5 MoE model."""
 
-from megatron.bridge.recipes.utils.text_pretrain_utils import build_text_pretrain_config
+from megatron.bridge import AutoBridge
+from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 
 
 def ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the ERNIE 4.5 21B-A3B H100 pretrain config."""
-    cfg = build_text_pretrain_config(
-        hf_model_id="baidu/ERNIE-4.5-21B-A3B-PT",
+    cfg = _pretrain_common()
+
+    cfg.model = AutoBridge.from_hf_pretrained(
+        "baidu/ERNIE-4.5-21B-A3B-PT",
         revision="87db95487941cb39592ee0abca3b9155a6d19c5c",  # pragma: allowlist secret
-        # TP=2 shards the 103,424-way output projection and its logits buffer.
-        tensor_parallelism=2,
-        pipeline_parallelism=1,
-        expert_parallelism=8,
         trust_remote_code=True,
-    )
+    ).to_megatron_provider(load_weights=False)
+
+    # TP=2 shards the 103,424-way output projection and its logits buffer.
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.pipeline_dtype = None
+    cfg.model.seq_length = 4096
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.blend = None
+    cfg.dataset.blend_per_split = None
+    cfg.dataset.num_workers = 1
+
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 100
+    cfg.validation.eval_iters = 1
+    cfg.logger.log_interval = 1
+    cfg.checkpoint.save_interval = 100
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 1000
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.cuda_graph_impl = "none"
+
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 

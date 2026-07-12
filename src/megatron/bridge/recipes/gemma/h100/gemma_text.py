@@ -15,25 +15,12 @@
 """Additional text-only Gemma H100 pretrain recipes."""
 
 import os
-from contextlib import contextmanager
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
-from megatron.bridge.recipes.utils.text_pretrain_utils import apply_text_pretrain_defaults, build_text_pretrain_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
-
-
-@contextmanager
-def _gemma4_text_conversion_mode():
-    previous_mode = os.environ.get("GEMMA4_CONVERSION_MODE")
-    os.environ["GEMMA4_CONVERSION_MODE"] = "text"
-    try:
-        yield
-    finally:
-        if previous_mode is None:
-            os.environ.pop("GEMMA4_CONVERSION_MODE", None)
-        else:
-            os.environ["GEMMA4_CONVERSION_MODE"] = previous_mode
 
 
 def gemma_2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
@@ -46,39 +33,148 @@ def gemma_2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
         num_attention_heads=8,
         num_query_groups=1,
     )
-    return apply_text_pretrain_defaults(
-        cfg,
-        tensor_parallelism=1,
-        pipeline_parallelism=1,
-    )
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.pipeline_dtype = None
+    cfg.model.seq_length = 4096
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.blend = None
+    cfg.dataset.blend_per_split = None
+    cfg.dataset.num_workers = 1
+
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 100
+    cfg.validation.eval_iters = 1
+    cfg.logger.log_interval = 1
+    cfg.checkpoint.save_interval = 100
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 1000
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.cuda_graph_impl = "none"
+
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
 def gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the text-only Gemma 4 26B-A4B MoE H100 pretrain config."""
-    with _gemma4_text_conversion_mode():
-        cfg = build_text_pretrain_config(
-            hf_model_id="google/gemma-4-26B-A4B",
+    cfg = _pretrain_common()
+
+    previous_mode = os.environ.get("GEMMA4_CONVERSION_MODE")
+    os.environ["GEMMA4_CONVERSION_MODE"] = "text"
+    try:
+        cfg.model = AutoBridge.from_hf_pretrained(
+            "google/gemma-4-26B-A4B",
             revision="6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb",  # pragma: allowlist secret
-            # TP=2 leaves headroom for the custom fp32 RMSNorm temporaries.
-            tensor_parallelism=2,
-            pipeline_parallelism=1,
-            expert_parallelism=8,
             trust_remote_code=True,
-        )
+        ).to_megatron_provider(load_weights=False)
+    finally:
+        if previous_mode is None:
+            os.environ.pop("GEMMA4_CONVERSION_MODE", None)
+        else:
+            os.environ["GEMMA4_CONVERSION_MODE"] = previous_mode
+
+    # TP=2 leaves headroom for the custom fp32 RMSNorm temporaries.
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.pipeline_dtype = None
+    cfg.model.seq_length = 4096
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.blend = None
+    cfg.dataset.blend_per_split = None
+    cfg.dataset.num_workers = 1
+
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 100
+    cfg.validation.eval_iters = 1
+    cfg.logger.log_interval = 1
+    cfg.checkpoint.save_interval = 100
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 1000
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.cuda_graph_impl = "none"
+
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
     return cfg
 
 
 def gemma4_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the text-only Gemma 4 31B dense H100 pretrain config."""
-    with _gemma4_text_conversion_mode():
-        return build_text_pretrain_config(
-            hf_model_id="google/gemma-4-31B",
+    cfg = _pretrain_common()
+
+    previous_mode = os.environ.get("GEMMA4_CONVERSION_MODE")
+    os.environ["GEMMA4_CONVERSION_MODE"] = "text"
+    try:
+        cfg.model = AutoBridge.from_hf_pretrained(
+            "google/gemma-4-31B",
             revision="d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3",  # pragma: allowlist secret
-            # Gemma4DenseProvider does not support pipeline parallelism.
-            tensor_parallelism=8,
-            pipeline_parallelism=1,
             trust_remote_code=True,
-        )
+        ).to_megatron_provider(load_weights=False)
+    finally:
+        if previous_mode is None:
+            os.environ.pop("GEMMA4_CONVERSION_MODE", None)
+        else:
+            os.environ["GEMMA4_CONVERSION_MODE"] = previous_mode
+
+    # Gemma4DenseProvider does not support pipeline parallelism.
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.pipeline_dtype = None
+    cfg.model.seq_length = 4096
+
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.blend = None
+    cfg.dataset.blend_per_split = None
+    cfg.dataset.num_workers = 1
+
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 100
+    cfg.validation.eval_iters = 1
+    cfg.logger.log_interval = 1
+    cfg.checkpoint.save_interval = 100
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 1000
+
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.cuda_graph_impl = "none"
+
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
 
 
 __all__ = [

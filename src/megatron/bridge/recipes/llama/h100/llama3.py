@@ -38,48 +38,6 @@ SEQUENCE_LENGTH_64K: int = 65536
 SEQUENCE_LENGTH_128K: int = 131072
 
 
-def _llama_provider(
-    *,
-    num_layers: int,
-    hidden_size: int,
-    ffn_hidden_size: int,
-    num_attention_heads: int,
-    num_query_groups: int,
-    seq_length: int,
-    rope_scaling: bool = False,
-) -> GPTModelProvider:
-    """Construct a Llama provider without accessing a gated Hugging Face repo."""
-    return GPTModelProvider(
-        num_layers=num_layers,
-        hidden_size=hidden_size,
-        ffn_hidden_size=ffn_hidden_size,
-        num_attention_heads=num_attention_heads,
-        num_query_groups=num_query_groups,
-        vocab_size=128256,
-        seq_length=seq_length,
-        rotary_base=500000,
-        rope_scaling=rope_scaling,
-        rope_scaling_factor=8.0 if rope_scaling else 1.0,
-        layernorm_epsilon=1e-5,
-        init_method_std=0.02,
-        activation_func=F.silu,
-        normalization="RMSNorm",
-        gated_linear_unit=True,
-        position_embedding_type="rope",
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-        add_bias_linear=False,
-        add_qkv_bias=False,
-        share_embeddings_and_output_weights=False,
-        bias_activation_fusion=True,
-        masked_softmax_fusion=True,
-        persist_layer_norm=True,
-        bias_dropout_fusion=True,
-        apply_rope_fusion=True,
-        rotary_percent=1.0,
-    )
-
-
 # =============================================================================
 # Llama 3.2 Pretrain Configs
 # =============================================================================
@@ -283,13 +241,34 @@ def llama3_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = _llama_provider(
+    cfg.model = GPTModelProvider(
         num_layers=32,
         hidden_size=4096,
         ffn_hidden_size=14336,
         num_attention_heads=32,
         num_query_groups=8,
+        vocab_size=128256,
         seq_length=8192,
+        rotary_base=500000,
+        rope_scaling=False,
+        rope_scaling_factor=1.0,
+        layernorm_epsilon=1e-5,
+        init_method_std=0.02,
+        activation_func=F.silu,
+        normalization="RMSNorm",
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        hidden_dropout=0.0,
+        attention_dropout=0.0,
+        add_bias_linear=False,
+        add_qkv_bias=False,
+        share_embeddings_and_output_weights=False,
+        bias_activation_fusion=True,
+        masked_softmax_fusion=True,
+        persist_layer_norm=True,
+        bias_dropout_fusion=True,
+        apply_rope_fusion=True,
+        rotary_percent=1.0,
     )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -1075,14 +1054,34 @@ def llama31_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = _llama_provider(
+    cfg.model = GPTModelProvider(
         num_layers=32,
         hidden_size=4096,
         ffn_hidden_size=14336,
         num_attention_heads=32,
         num_query_groups=8,
+        vocab_size=128256,
         seq_length=SEQUENCE_LENGTH_128K,
+        rotary_base=500000,
         rope_scaling=True,
+        rope_scaling_factor=8.0,
+        layernorm_epsilon=1e-5,
+        init_method_std=0.02,
+        activation_func=F.silu,
+        normalization="RMSNorm",
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        hidden_dropout=0.0,
+        attention_dropout=0.0,
+        add_bias_linear=False,
+        add_qkv_bias=False,
+        share_embeddings_and_output_weights=False,
+        bias_activation_fusion=True,
+        masked_softmax_fusion=True,
+        persist_layer_norm=True,
+        bias_dropout_fusion=True,
+        apply_rope_fusion=True,
+        rotary_percent=1.0,
     )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -1170,14 +1169,34 @@ def llama31_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = _llama_provider(
+    cfg.model = GPTModelProvider(
         num_layers=80,
         hidden_size=8192,
         ffn_hidden_size=28672,
         num_attention_heads=64,
         num_query_groups=8,
+        vocab_size=128256,
         seq_length=SEQUENCE_LENGTH_128K,
+        rotary_base=500000,
         rope_scaling=True,
+        rope_scaling_factor=8.0,
+        layernorm_epsilon=1e-5,
+        init_method_std=0.02,
+        activation_func=F.silu,
+        normalization="RMSNorm",
+        gated_linear_unit=True,
+        position_embedding_type="rope",
+        hidden_dropout=0.0,
+        attention_dropout=0.0,
+        add_bias_linear=False,
+        add_qkv_bias=False,
+        share_embeddings_and_output_weights=False,
+        bias_activation_fusion=True,
+        masked_softmax_fusion=True,
+        persist_layer_norm=True,
+        bias_dropout_fusion=True,
+        apply_rope_fusion=True,
+        rotary_percent=1.0,
     )
 
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
