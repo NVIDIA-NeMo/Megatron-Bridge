@@ -38,7 +38,7 @@ Hugging Face commit SHAs resolved on the date above. Status is one of `TODO`,
 | Gemma | Gemma 4-VL 26B-A4B MoE | `google/gemma-4-26B-A4B-it` | `5305c1e72ea29c01f31a81230d52b375ba88b409` | 26.5B | vision-language | `examples/models/gemma/gemma4_vl` | TODO |
 | GLM | GLM-4.5 | `zai-org/GLM-4.5` | `cbb2c7cfb52fa128a9660cb1a7a78e017899e115` | 358.3B | text | `examples/conversion` | TODO |
 | GLM | GLM-4.7 | `zai-org/GLM-4.7` | `602d01efcdd332c5238ca4bcede555defbe83eb7` | 358.3B | text | `examples/models/glm47` | TODO |
-| GLM | GLM-4.7-Flash | `zai-org/GLM-4.7-Flash` | `7dd20894a642a0aa287e9827cb1a1f7f91386b67` | 31.2B | text | `examples/models/glm47` | TODO |
+| GLM | GLM-4.7-Flash | `zai-org/GLM-4.7-Flash` | `7dd20894a642a0aa287e9827cb1a1f7f91386b67` | 31.2B | text | `examples/models/glm47` | PASS |
 | GLM | GLM-4.5V | `zai-org/GLM-4.5V` | `ed47433b37111465ec527affaaddceff371bca04` | 107.7B | vision-language | `examples/models/glm/glm_45v` | TODO |
 | GPT-OSS | GPT-OSS 20B | `openai/gpt-oss-20b` | `6cee5e81ee83917806bbde320786a8fb61efebee` | 21.5B | text | `examples/models/gpt_oss` | TODO |
 | GPT-OSS | GPT-OSS 120B | `openai/gpt-oss-120b` | `b5c939de8f754692c1647ca79fbf85e8c1e70f8a` | 120.4B | text | `examples/models/gpt_oss` | TODO |
