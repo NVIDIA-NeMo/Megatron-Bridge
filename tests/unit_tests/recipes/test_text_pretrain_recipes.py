@@ -109,7 +109,7 @@ def test_mimo_v2_flash_pretrain_uses_pinned_config_as_source_of_truth(monkeypatc
         (
             "config",
             "XiaomiMiMo/MiMo-V2-Flash",
-            {"revision": "1afd314a2406c282e0956375c34a676501c78649"},
+            {"revision": "1afd314a2406c282e0956375c34a676501c78649"},  # pragma: allowlist secret
         ),
         ("bridge", hf_config),
     ]
@@ -140,7 +140,7 @@ def test_ernie45_pretrain_shards_logits_with_tensor_parallelism(monkeypatch):
         (
             "baidu/ERNIE-4.5-21B-A3B-PT",
             {
-                "revision": "87db95487941cb39592ee0abca3b9155a6d19c5c",
+                "revision": "87db95487941cb39592ee0abca3b9155a6d19c5c",  # pragma: allowlist secret
             },
         )
     ]
@@ -325,7 +325,7 @@ def test_gemma_pretrain_uses_pinned_hf_config_as_source_of_truth(monkeypatch):
     assert calls == [
         (
             "google/gemma-2b",
-            {"revision": "9cf48e52b224239de00d483ec8eb84fb8d0f3a3a"},
+            {"revision": "9cf48e52b224239de00d483ec8eb84fb8d0f3a3a"},  # pragma: allowlist secret
         )
     ]
     assert config.model is provider
@@ -377,7 +377,7 @@ def test_llama3_pretrain_configs_use_their_own_hf_sources(monkeypatch):
         ("meta-llama/Meta-Llama-3.1-70B", {}),
         (
             "meta-llama/Llama-3.3-70B-Instruct",
-            {"revision": "6f6073b423013f6a7d4d9f39144961bfbfbc386b"},
+            {"revision": "6f6073b423013f6a7d4d9f39144961bfbfbc386b"},  # pragma: allowlist secret
         ),
     ]
     assert llama33.optimizer.use_precision_aware_optimizer is True
