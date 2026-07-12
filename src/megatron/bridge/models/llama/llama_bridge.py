@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import logging
+from collections.abc import Mapping
 
+import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 from transformers import LlamaForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
@@ -148,3 +150,38 @@ class LlamaBridge(MegatronModelBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask,
+        converted_weights_dict: dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor],
+    ) -> dict[str, torch.Tensor]:
+        """Preserve persisted Llama rotary inverse-frequency buffers on export."""
+        input_layernorm_key = next(
+            (
+                name
+                for name in converted_weights_dict
+                if name.startswith("model.layers.") and name.endswith(".input_layernorm.weight")
+            ),
+            None,
+        )
+        if input_layernorm_key is None:
+            return converted_weights_dict
+
+        parts = input_layernorm_key.split(".")
+        if len(parts) < 5 or not parts[2].isdigit():
+            return converted_weights_dict
+
+        layer_idx = int(parts[2])
+        inv_freq_key = f"model.layers.{layer_idx}.self_attn.rotary_emb.inv_freq"
+        if inv_freq_key not in hf_state_dict or inv_freq_key in converted_weights_dict:
+            return converted_weights_dict
+
+        inv_freq = hf_state_dict[inv_freq_key]
+        reference_tensor = next(iter(converted_weights_dict.values()), None)
+        if reference_tensor is not None:
+            inv_freq = inv_freq.to(reference_tensor.device)
+
+        converted_weights_dict[inv_freq_key] = inv_freq
+        return converted_weights_dict

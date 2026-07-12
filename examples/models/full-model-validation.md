@@ -1,6 +1,6 @@
 # Full-model validation inventory
 
-Last updated: 2026-07-10
+Last updated: 2026-07-11
 
 This manifest tracks full-checkpoint conversion and inference validation for the
 model architectures and explicitly named variants in the root
@@ -43,7 +43,7 @@ Hugging Face commit SHAs resolved on the date above. Status is one of `TODO`,
 | GPT-OSS | GPT-OSS 20B | `openai/gpt-oss-20b` | `6cee5e81ee83917806bbde320786a8fb61efebee` | 21.5B | text | `examples/models/gpt_oss` | TODO |
 | GPT-OSS | GPT-OSS 120B | `openai/gpt-oss-120b` | `b5c939de8f754692c1647ca79fbf85e8c1e70f8a` | 120.4B | text | `examples/models/gpt_oss` | TODO |
 | HY V3 | Hy3 preview-Base | `tencent/Hy3-preview-Base` | `54a62bb00a50195423bffb6b55e91aa28b6a8ce2` | 298.8B | text | `examples/conversion` | TODO |
-| Llama | Llama 2 | `meta-llama/Llama-2-7b-hf` | `01c7f73d771dfac7d292323805ebc428287df4f9` | 6.7B | text | `examples/conversion` | TODO |
+| Llama | Llama 2 | `meta-llama/Llama-2-7b-hf` | `01c7f73d771dfac7d292323805ebc428287df4f9` | 6.7B | text | `examples/conversion` | PASS |
 | Llama | Llama 3 | `meta-llama/Meta-Llama-3-8B` | `8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920` | 8.0B | text | `examples/conversion` | TODO |
 | Llama | Llama 3.1 | `meta-llama/Meta-Llama-3.1-8B` | `d04e592bb4f6aa9cfee91e2e20afa771667e1d4b` | 8.0B | text | `examples/conversion` | TODO |
 | Llama | Llama 3.2 | `meta-llama/Llama-3.2-1B` | `4e20de362430cd3b72f300e6b0f18e50e7166e08` | 1.2B | text | `examples/conversion` | TODO |
