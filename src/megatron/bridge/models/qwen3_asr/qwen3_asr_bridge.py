@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import torch
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -23,6 +24,11 @@ from megatron.bridge.models.conversion.param_mapping import (
     ReplicatedMapping,
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.qwen.qwen_hybrid import (
+    configure_qwen_hybrid_layers,
+    qwen_logical_layer_count,
+    qwen_physical_layer_indices,
+)
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
 
@@ -30,7 +36,12 @@ from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelPro
 # Use string-based registration because Qwen3ASRForConditionalGeneration is not in
 # the standard transformers library (it's a custom model in qwen_asr package).
 # auto_bridge.py resolves custom architectures via config.auto_map or string fallback.
-@MegatronModelBridge.register_bridge(source="Qwen3ASRForConditionalGeneration", target=Qwen3ASRModel)
+@MegatronModelBridge.register_bridge(
+    source="Qwen3ASRForConditionalGeneration",
+    target=Qwen3ASRModel,
+    provider=Qwen3ASRModelProvider,
+    model_type="qwen3_asr",
+)
 class Qwen3ASRBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-ASR Conditional Generation.
@@ -79,31 +90,57 @@ class Qwen3ASRBridge(MegatronModelBridge):
             audio_start_token_id=getattr(thinker_config, "audio_start_token_id", 151647),
             mrope_section=(getattr(text_config, "rope_scaling", None) or {}).get("mrope_section", [24, 20, 20]),
         )
+        configure_qwen_hybrid_layers(
+            provider,
+            num_logical_layers=text_config.num_hidden_layers,
+            mlp_symbols=Symbols.MLP,
+            mtp_mlp_symbol=Symbols.MLP,
+        )
         return provider
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return MegatronMappingRegistry containing parameter mappings for Qwen3-ASR models."""
-        # LLM parameter mappings (Qwen3-style with QK layernorm, prefixed with thinker.)
         param_mappings = {
-            # Embeddings and output layers
             "thinker.language_model.embedding.word_embeddings.weight": "thinker.model.embed_tokens.weight",
             "thinker.language_model.output_layer.weight": "thinker.lm_head.weight",
-            "thinker.language_model.decoder.final_layernorm.weight": "thinker.model.norm.weight",
-            # Layer normalization
-            "thinker.language_model.decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "thinker.model.layers.*.input_layernorm.weight",
-            "thinker.language_model.decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "thinker.model.layers.*.post_attention_layernorm.weight",
-            # QK layernorm (Qwen3-specific)
-            "thinker.language_model.decoder.layers.*.self_attention.q_layernorm.weight": "thinker.model.layers.*.self_attn.q_norm.weight",
-            "thinker.language_model.decoder.layers.*.self_attention.k_layernorm.weight": "thinker.model.layers.*.self_attn.k_norm.weight",
-            # Attention output projection
-            "thinker.language_model.decoder.layers.*.self_attention.linear_proj.weight": "thinker.model.layers.*.self_attn.o_proj.weight",
-            # MLP down projection
-            "thinker.language_model.decoder.layers.*.mlp.linear_fc2.weight": "thinker.model.layers.*.mlp.down_proj.weight",
+            "thinker.language_model.decoder.final_norm.weight": "thinker.model.norm.weight",
         }
 
-        mapping_list = []
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+        mapping_list = [AutoMapping(k, v) for k, v in param_mappings.items()]
+
+        num_layers = self.hf_config.thinker_config.text_config.num_hidden_layers
+        for logical_layer_idx in range(num_layers):
+            attention_layer_idx, mlp_layer_idx = qwen_physical_layer_indices(logical_layer_idx)
+            hf_layer = f"thinker.model.layers.{logical_layer_idx}"
+            attention_layer = f"thinker.language_model.decoder.layers.{attention_layer_idx}.self_attention"
+            mlp_layer = f"thinker.language_model.decoder.layers.{mlp_layer_idx}.mlp"
+            mapping_list.extend(
+                [
+                    AutoMapping(
+                        f"{attention_layer}.linear_qkv.layer_norm_weight",
+                        f"{hf_layer}.input_layernorm.weight",
+                    ),
+                    AutoMapping(f"{attention_layer}.q_layernorm.weight", f"{hf_layer}.self_attn.q_norm.weight"),
+                    AutoMapping(f"{attention_layer}.k_layernorm.weight", f"{hf_layer}.self_attn.k_norm.weight"),
+                    AutoMapping(f"{attention_layer}.linear_proj.weight", f"{hf_layer}.self_attn.o_proj.weight"),
+                    AutoMapping(
+                        f"{mlp_layer}.linear_fc1.layer_norm_weight",
+                        f"{hf_layer}.post_attention_layernorm.weight",
+                    ),
+                    AutoMapping(f"{mlp_layer}.linear_fc2.weight", f"{hf_layer}.mlp.down_proj.weight"),
+                    QKVMapping(
+                        megatron_param=f"{attention_layer}.linear_qkv.weight",
+                        q=f"{hf_layer}.self_attn.q_proj.weight",
+                        k=f"{hf_layer}.self_attn.k_proj.weight",
+                        v=f"{hf_layer}.self_attn.v_proj.weight",
+                    ),
+                    GatedMLPMapping(
+                        megatron_param=f"{mlp_layer}.linear_fc1.weight",
+                        gate=f"{hf_layer}.mlp.gate_proj.weight",
+                        up=f"{hf_layer}.mlp.up_proj.weight",
+                    ),
+                ]
+            )
 
         mapping_list.extend(
             [
@@ -113,20 +150,16 @@ class Qwen3ASRBridge(MegatronModelBridge):
                     megatron_param="thinker.audio_model.**",
                     hf_param="thinker.audio_tower.**",
                 ),
-                # QKV weight: Combine separate Q, K, V weights into single QKV matrix (no bias for Qwen3)
-                QKVMapping(
-                    megatron_param="thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight",
-                    q="thinker.model.layers.*.self_attn.q_proj.weight",
-                    k="thinker.model.layers.*.self_attn.k_proj.weight",
-                    v="thinker.model.layers.*.self_attn.v_proj.weight",
-                ),
-                # Gated MLP: Combine gate and up projection matrices into single FC1 matrix
-                GatedMLPMapping(
-                    megatron_param="thinker.language_model.decoder.layers.*.mlp.linear_fc1.weight",
-                    gate="thinker.model.layers.*.mlp.gate_proj.weight",
-                    up="thinker.model.layers.*.mlp.up_proj.weight",
-                ),
             ]
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Restore the logical Qwen layer count when exporting HybridModel config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        logical_layer_count = qwen_logical_layer_count(provider.hybrid_layer_pattern)
+        if logical_layer_count is not None:
+            hf_config["num_hidden_layers"] = logical_layer_count
+        return hf_config

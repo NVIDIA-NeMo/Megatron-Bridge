@@ -27,8 +27,7 @@ from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.modeling_qwen3_asr import (
 )
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.rope import get_rope_index
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.transformer_config import Qwen3ASRTransformerConfig
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLHybridModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_data_cp_rank,
 )
@@ -55,8 +54,6 @@ class Qwen3ASRThinkerModel(MegatronModule):
         pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         super().__init__(config=language_transformer_config)
-
-        language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
 
         self.pre_process = pre_process
         self.post_process = post_process
@@ -95,13 +92,13 @@ class Qwen3ASRThinkerModel(MegatronModule):
             self.audio_model = Qwen3ASRAudioEncoderHF._from_config(thinker_transformer_config.audio_config)
             hook_hf_module_setattr_for_tp_grad_sync(self.audio_model)
 
-        self.language_model = Qwen3VLGPTModel(
+        self.language_model = Qwen3VLHybridModel(
             config=language_transformer_config,
-            transformer_layer_spec=language_transformer_layer_spec,
+            hybrid_stack_spec=language_transformer_layer_spec,
             vocab_size=language_transformer_config.vocab_size,
             max_sequence_length=language_transformer_config.language_max_sequence_length,
+            hybrid_layer_pattern=language_transformer_config.hybrid_layer_pattern,
             parallel_output=parallel_output,
-            position_embedding_type="mrope",
             rotary_percent=language_transformer_config.rotary_percent,
             pre_process=self.pre_process,
             post_process=self.post_process,

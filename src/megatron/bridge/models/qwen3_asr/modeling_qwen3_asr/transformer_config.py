@@ -29,6 +29,7 @@ class Qwen3ASRTransformerConfig(TransformerConfig):
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 5000000.0
+    hybrid_layer_pattern: str | None = None
 
     # Multimodal rope section for 3 dimensions (same position IDs across all dims for ASR)
     mrope_section: list[int] = field(default_factory=lambda: [24, 20, 20])

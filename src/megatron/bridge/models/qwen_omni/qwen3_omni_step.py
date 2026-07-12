@@ -21,8 +21,8 @@ from functools import partial
 from typing import TYPE_CHECKING, Any, Iterable
 
 import torch
-from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.losses import (
@@ -214,7 +214,7 @@ def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[st
 def forward_step(
     state: "GlobalState",
     data_iterator: Iterable,
-    model: GPTModel,
+    model: MegatronModule,
     return_schedule_plan: bool = False,
 ) -> tuple[torch.Tensor, partial]:
     """Forward training step for Qwen3-Omni thinker."""

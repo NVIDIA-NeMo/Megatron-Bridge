@@ -15,14 +15,26 @@
 import pytest
 
 from megatron.bridge.models.conversion.utils import conform_config_to_reference
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRConfig,
     Qwen3ASRThinkerConfig,
 )
+from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
 from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_qwen3_asr_uses_hybrid_provider():
+    assert issubclass(Qwen3ASRModelProvider, HybridModelProvider)
+
+    provider = Qwen3ASRModelProvider(num_layers=2, hidden_size=128, num_attention_heads=4)
+    provider.finalize()
+
+    assert provider.num_layers == 4
+    assert provider.hybrid_layer_pattern == "*-*-"
 
 
 def test_qwen3_asr_config_default_constructs_thinker_config():

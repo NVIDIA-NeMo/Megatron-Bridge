@@ -91,7 +91,8 @@ class TestQwen3OmniBridge:
         provider = bridge.provider_bridge(mock_hf_pretrained)
 
         assert isinstance(provider, Qwen3OmniModelProvider)
-        assert provider.num_layers == 48
+        assert provider.num_layers == 96
+        assert provider.hybrid_layer_pattern == "*E" * 48
         assert provider.hidden_size == 2048
         assert provider.ffn_hidden_size == 6144
         assert provider.moe_ffn_hidden_size == 768
@@ -128,8 +129,9 @@ class TestQwen3OmniBridge:
         assert provider.fp16 is False
         assert provider.params_dtype == torch.bfloat16
 
-    def test_mapping_registry(self):
+    def test_mapping_registry(self, mock_hf_config):
         bridge = Qwen3OmniBridge()
+        bridge.hf_config = mock_hf_config
         registry = bridge.mapping_registry()
 
         assert isinstance(registry, MegatronMappingRegistry)
@@ -140,10 +142,10 @@ class TestQwen3OmniBridge:
 
         assert any("thinker.language_model.embedding.word_embeddings.weight" in name for name in mapping_names)
         assert any(
-            "thinker.language_model.decoder.layers.*.self_attention.linear_qkv.weight" in name
+            "thinker.language_model.decoder.layers.0.self_attention.linear_qkv.weight" in name
             for name in mapping_names
         )
-        assert any("thinker.language_model.decoder.layers.*.mlp.router.weight" in name for name in mapping_names)
+        assert any("thinker.language_model.decoder.layers.1.mlp.router.weight" in name for name in mapping_names)
 
     def test_provider_bridge_warns_for_audio_output_stack(self, mock_hf_pretrained, caplog):
         mock_hf_pretrained.config.enable_audio_output = True

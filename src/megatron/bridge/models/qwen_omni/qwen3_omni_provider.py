@@ -16,20 +16,8 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import torch.nn.functional as F
-from megatron.core.extensions.transformer_engine import HAVE_TE
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.gpt_layer_specs import (
-    get_gpt_layer_local_spec,
-    get_gpt_layer_with_transformer_engine_spec,
-)
-from megatron.core.pipeline_parallel.utils import (
-    is_pp_first_stage,
-    is_pp_last_stage,
-    is_vp_first_stage,
-    is_vp_last_stage,
-)
-from megatron.core.transformer.attention import SelfAttention
-from megatron.core.transformer.enums import AttnBackend
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeCode2WavConfig,
@@ -37,44 +25,17 @@ from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerConfig,
 )
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen.qwen_hybrid import QwenHybridModelProvider, configure_qwen_hybrid_layers
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
-
-
-def _use_qwen3_vl_self_attention(layer_spec) -> None:
-    """Install the mRoPE-aware Qwen3-VL attention module on standard attention specs."""
-    if layer_spec is None:
-        return
-
-    if hasattr(layer_spec, "layer_specs"):
-        for sub_spec in layer_spec.layer_specs:
-            _use_qwen3_vl_self_attention(sub_spec)
-        return
-
-    if not isinstance(layer_spec, ModuleSpec):
-        return
-
-    submodules = getattr(layer_spec, "submodules", None)
-    if submodules is None:
-        return
-
-    if hasattr(submodules, "mtp_model_layer"):
-        _use_qwen3_vl_self_attention(submodules.mtp_model_layer)
-
-    attention_spec = getattr(submodules, "self_attention", None)
-    if attention_spec is None:
-        return
-
-    attention_module = getattr(attention_spec, "module", None)
-    if attention_module is SelfAttention or (
-        isinstance(attention_module, type) and issubclass(attention_module, SelfAttention)
-    ):
-        attention_spec.module = Qwen3VLSelfAttention
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
+    Qwen3VLHybridModel,
+    get_qwen3_vl_hybrid_stack_spec,
+)
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import _provide_qwen3_vl_language_model
 
 
 @dataclass
-class Qwen3OmniModelProvider(GPTModelProvider):
+class Qwen3OmniModelProvider(QwenHybridModelProvider):
     """Provider for Qwen3-Omni.
 
     The current implementation focuses on thinker-side multimodal training and
@@ -128,39 +89,40 @@ class Qwen3OmniModelProvider(GPTModelProvider):
     freeze_audio_model: bool = False
     vit_gradient_checkpointing: bool = False
     multimodal_attn_impl: str = "auto"
+    mtp_num_layers: int | None = None
+    hybrid_stack_spec: ModuleSpec | Callable = get_qwen3_vl_hybrid_stack_spec
+
+    def finalize(self) -> None:
+        if self.hybrid_layer_pattern is None:
+            if self.num_layers is None:
+                raise ValueError("num_layers must be configured for Qwen3-Omni")
+            configure_qwen_hybrid_layers(
+                self,
+                num_logical_layers=self.num_layers,
+                mlp_symbols=Symbols.MOE,
+                mtp_mlp_symbol=Symbols.MOE,
+            )
+        super().finalize()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
+        if vp_stage is not None or self.virtual_pipeline_model_parallel_size is not None:
+            raise ValueError("Virtual pipeline parallelism is not supported by HybridModel.")
+        if self.hybrid_layer_pattern is None:
+            if self.num_layers is None:
+                raise ValueError("num_layers must be configured for Qwen3-Omni")
+            configure_qwen_hybrid_layers(
+                self,
+                num_logical_layers=self.num_layers,
+                mlp_symbols=Symbols.MOE,
+                mtp_mlp_symbol=Symbols.MOE,
+            )
         pp_group = self._pg_collection.pp if self._pg_collection is not None else None
-        vp_size = self.virtual_pipeline_model_parallel_size
         if pre_process is None:
-            pre_process = (
-                is_vp_first_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_first_stage(pp_group)
-                if pp_group is not None
-                else True
-            )
+            pre_process = is_pp_first_stage(pp_group) if pp_group is not None else True
         if post_process is None:
-            post_process = (
-                is_vp_last_stage(vp_stage=vp_stage, vp_size=vp_size) and is_pp_last_stage(pp_group)
-                if pp_group is not None
-                else True
-            )
+            post_process = is_pp_last_stage(pp_group) if pp_group is not None else True
 
-        use_local_attention = self.attention_backend in {AttnBackend.local, "local"}
-        if HAVE_TE and not use_local_attention:
-            language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-                num_experts=self.num_moe_experts,
-                moe_grouped_gemm=self.moe_grouped_gemm,
-                qk_layernorm=self.qk_layernorm,
-                fp8=False,
-            )
-        else:
-            language_transformer_layer_spec = get_gpt_layer_local_spec(
-                num_experts=self.num_moe_experts,
-                moe_grouped_gemm=self.moe_grouped_gemm,
-                qk_layernorm=self.qk_layernorm,
-                normalization=self.normalization,
-            )
-        _use_qwen3_vl_self_attention(language_transformer_layer_spec)
+        language_transformer_layer_spec = self._resolve_hybrid_stack_spec()
 
         model = Qwen3OmniModel(
             language_transformer_config=self,
@@ -182,5 +144,5 @@ class Qwen3OmniModelProvider(GPTModelProvider):
 
         return model
 
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
-        return super().provide(pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLHybridModel:
+        return _provide_qwen3_vl_language_model(self, pre_process, post_process, vp_stage)
