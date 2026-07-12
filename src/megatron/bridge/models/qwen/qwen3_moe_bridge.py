@@ -13,7 +13,8 @@
 # limitations under the License.
 
 import torch
-from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.models.hybrid.hybrid_model import HybridModel
 from transformers import Qwen3MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -23,15 +24,26 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.qwen.qwen_hybrid import (
+    QwenHybridModelProvider,
+    configure_qwen_hybrid_layers,
+    qwen_logical_layer_count,
+    qwen_physical_layer_indices,
+)
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3MoeForCausalLM, target=GPTModel, model_type="qwen3_moe")
+@MegatronModelBridge.register_bridge(
+    source=Qwen3MoeForCausalLM,
+    target=HybridModel,
+    provider=QwenHybridModelProvider,
+    model_type="qwen3_moe",
+)
 class Qwen3MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3 MoE Causal LM.
 
     This bridge handles the conversion between HuggingFace Qwen3MoeForCausalLM
-    and Megatron-Core GPTModel formats. Qwen3 MoE models use mixture of experts
+    and Megatron-Core HybridModel formats. Qwen3 MoE models use mixture of experts
     architecture with QK layernorm.
 
     Example:
@@ -44,13 +56,17 @@ class Qwen3MoEBridge(MegatronModelBridge):
     def megatron_to_hf_config(cls, provider) -> dict:
         """Convert Megatron provider config to HuggingFace Qwen3MoeConfig dict."""
         hf_config = super().megatron_to_hf_config(provider)
+        logical_layer_count = qwen_logical_layer_count(provider.hybrid_layer_pattern)
+        if logical_layer_count is not None:
+            hf_config["num_hidden_layers"] = logical_layer_count
         hf_config["decoder_sparse_step"] = 1  # All layers are MoE in Qwen3 MoE
         hf_config["norm_topk_prob"] = not provider.moe_router_pre_softmax
         return hf_config
 
     def provider_bridge(self, hf_pretrained):
-        """Convert HuggingFace Qwen3 MoE config to GPTModelProvider."""
+        """Convert a Hugging Face Qwen3 MoE config to HybridModelProvider."""
         provider = super().provider_bridge(hf_pretrained)
+        hf_config = hf_pretrained.config
 
         provider.normalization = "RMSNorm"
         provider.gated_linear_unit = True
@@ -66,6 +82,14 @@ class Qwen3MoEBridge(MegatronModelBridge):
         provider.moe_router_pre_softmax = not hf_pretrained.config.norm_topk_prob
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
+        provider.share_embeddings_and_output_weights = getattr(hf_config, "tie_word_embeddings", True)
+
+        configure_qwen_hybrid_layers(
+            provider,
+            num_logical_layers=hf_config.num_hidden_layers,
+            mlp_symbols=Symbols.MOE,
+            mtp_mlp_symbol=Symbols.MOE,
+        )
 
         return provider
 
@@ -73,57 +97,70 @@ class Qwen3MoEBridge(MegatronModelBridge):
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
 
-        # Dictionary maps Megatron parameter names -> HF parameter names
-        # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
             "embedding.word_embeddings.weight": "model.embed_tokens.weight",
             "output_layer.weight": "lm_head.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
-            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
+            "decoder.final_norm.weight": "model.norm.weight",
         }
 
-        mapping_list = []
-        # Convert each dictionary entry to AutoMapping(megatron_param, hf_param)
-        for megatron_param, hf_param in param_mappings.items():
-            mapping_list.append(AutoMapping(megatron_param=megatron_param, hf_param=hf_param))
+        mapping_list = [AutoMapping(megatron_param=k, hf_param=v) for k, v in param_mappings.items()]
 
-        # Add special mappings that require parameter concatenation/transformation
-        mapping_list.extend(
-            [
-                # QKV: Combine separate Q, K, V matrices into single QKV matrix
-                # Note: Qwen3 MoE does NOT have bias in QKV projections
-                QKVMapping(
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                    q="model.layers.*.self_attn.q_proj.weight",
-                    k="model.layers.*.self_attn.k_proj.weight",
-                    v="model.layers.*.self_attn.v_proj.weight",
-                ),
-                # Expert mappings for TEGroupedMLP
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    gate="model.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="model.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-                # Expert mappings for SequentialMLP (used by quantization)
-                GatedMLPMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
-                    gate="model.layers.*.mlp.experts.*.gate_proj.weight",
-                    up="model.layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
-                    hf_param="model.layers.*.mlp.experts.*.down_proj.weight",
-                ),
-            ]
-        )
+        for logical_layer_idx in range(self.hf_config.num_hidden_layers):
+            attention_layer_idx, moe_layer_idx = qwen_physical_layer_indices(logical_layer_idx)
+            hf_layer = f"model.layers.{logical_layer_idx}"
+            attention_layer = f"decoder.layers.{attention_layer_idx}.self_attention"
+            moe_layer = f"decoder.layers.{moe_layer_idx}"
+            mapping_list.extend(
+                [
+                    AutoMapping(
+                        megatron_param=f"{attention_layer}.linear_qkv.layer_norm_weight",
+                        hf_param=f"{hf_layer}.input_layernorm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{attention_layer}.q_layernorm.weight",
+                        hf_param=f"{hf_layer}.self_attn.q_norm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{attention_layer}.k_layernorm.weight",
+                        hf_param=f"{hf_layer}.self_attn.k_norm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{attention_layer}.linear_proj.weight",
+                        hf_param=f"{hf_layer}.self_attn.o_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{moe_layer}.pre_mlp_layernorm.weight",
+                        hf_param=f"{hf_layer}.post_attention_layernorm.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{moe_layer}.mlp.router.weight",
+                        hf_param=f"{hf_layer}.mlp.gate.weight",
+                    ),
+                    QKVMapping(
+                        megatron_param=f"{attention_layer}.linear_qkv.weight",
+                        q=f"{hf_layer}.self_attn.q_proj.weight",
+                        k=f"{hf_layer}.self_attn.k_proj.weight",
+                        v=f"{hf_layer}.self_attn.v_proj.weight",
+                    ),
+                    GatedMLPMapping(
+                        megatron_param=f"{moe_layer}.mlp.experts.linear_fc1.weight*",
+                        gate=f"{hf_layer}.mlp.experts.*.gate_proj.weight",
+                        up=f"{hf_layer}.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{moe_layer}.mlp.experts.linear_fc2.weight*",
+                        hf_param=f"{hf_layer}.mlp.experts.*.down_proj.weight",
+                    ),
+                    GatedMLPMapping(
+                        megatron_param=f"{moe_layer}.mlp.experts.local_experts.*.linear_fc1.weight",
+                        gate=f"{hf_layer}.mlp.experts.*.gate_proj.weight",
+                        up=f"{hf_layer}.mlp.experts.*.up_proj.weight",
+                    ),
+                    AutoMapping(
+                        megatron_param=f"{moe_layer}.mlp.experts.local_experts.*.linear_fc2.weight",
+                        hf_param=f"{hf_layer}.mlp.experts.*.down_proj.weight",
+                    ),
+                ]
+            )
 
         return MegatronMappingRegistry(*mapping_list)

@@ -28,7 +28,7 @@ from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe
 QWEN_PRETRAIN_RECIPES = [
     # (config_func, name, parallelism_overrides, model_overrides)
     (qwen25_500m_config, "qwen25_500m", {}, {"num_layers": 2}),
-    (qwen3_600m_config, "qwen3_600m", {}, {"num_layers": 2}),
+    (qwen3_600m_config, "qwen3_600m", {}, {"num_layers": 4, "hybrid_layer_pattern": "*-*-"}),
 ]
 
 

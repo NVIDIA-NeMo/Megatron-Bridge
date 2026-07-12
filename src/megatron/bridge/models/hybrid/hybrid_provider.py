@@ -193,9 +193,13 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
             self.hybrid_override_pattern = None
             used_hybrid_override_pattern = True
 
-        # Combine hybrid_layer_pattern (main decoder) with mtp_hybrid_override_pattern
-        # into a single unified pattern that MCore HybridModel can parse.
-        if self.hybrid_layer_pattern is not None and self.mtp_hybrid_override_pattern:
+        # Combine the main and MTP patterns only when MTP is enabled. Providers may
+        # predeclare an MTP override before a recipe sets mtp_num_layers.
+        if (
+            self.hybrid_layer_pattern is not None
+            and self.mtp_hybrid_override_pattern
+            and (self.mtp_num_layers or self.mtp_use_repeated_layer)
+        ):
             sep = Symbols.MTP_SEPARATOR
             main_pattern = self.hybrid_layer_pattern.split(sep)[0]
             # When mtp_use_repeated_layer=True, the shared MTP layer always exists
