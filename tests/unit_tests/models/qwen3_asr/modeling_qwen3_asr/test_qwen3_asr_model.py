@@ -28,7 +28,6 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 
@@ -38,6 +37,7 @@ from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr impor
 )
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.transformer_config import Qwen3ASRTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import get_qwen3_vl_hybrid_stack_spec
 
 
 HIDDEN_SIZE = 128
@@ -147,7 +147,7 @@ class TestQwen3ASRModel:
         mrope_section = (rope_scaling or {}).get("mrope_section", [4, 6, 6])
 
         return Qwen3ASRTransformerConfig(
-            num_layers=2,
+            num_layers=4,
             hidden_size=text_cfg.hidden_size,
             num_attention_heads=text_cfg.num_attention_heads,
             num_query_groups=text_cfg.num_key_value_heads,
@@ -171,26 +171,23 @@ class TestQwen3ASRModel:
             attention_dropout=text_cfg.attention_dropout,
             audio_token_id=thinker_config.audio_token_id,
             audio_start_token_id=thinker_config.audio_start_token_id,
+            hybrid_layer_pattern="*-*-",
         )
 
     @staticmethod
-    def _make_layer_spec():
-        """Create a GPT layer spec for the language model (Qwen3 uses QK layernorm)."""
-        return get_gpt_layer_with_transformer_engine_spec(
-            num_experts=None,
-            moe_grouped_gemm=False,
-            qk_layernorm=True,
-            fp8=False,
-        )
+    def _make_layer_spec(language_config):
+        """Create a Qwen multimodal Hybrid stack spec."""
+        return get_qwen3_vl_hybrid_stack_spec(language_config)
 
     def _build_model(self, thinker_config, pre_process=True, post_process=True, add_encoder=True, add_decoder=True):
         """Helper to build a Qwen3ASRModel with the given flags."""
         self._setup_parallel_state(tp_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
 
+        language_config = self._make_language_config(thinker_config)
         return Qwen3ASRModel(
-            language_transformer_config=self._make_language_config(thinker_config),
-            language_transformer_layer_spec=self._make_layer_spec(),
+            language_transformer_config=language_config,
+            language_transformer_layer_spec=self._make_layer_spec(language_config),
             thinker_transformer_config=thinker_config,
             parallel_output=True,
             pre_process=pre_process,

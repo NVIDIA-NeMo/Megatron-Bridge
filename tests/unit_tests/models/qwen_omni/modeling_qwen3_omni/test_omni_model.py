@@ -23,10 +23,6 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.models.gpt.gpt_layer_specs import (
-    get_gpt_layer_local_spec,
-    get_gpt_layer_with_transformer_engine_spec,
-)
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
@@ -39,6 +35,7 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.thinker_model import _
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import get_qwen3_vl_hybrid_stack_spec
 
 
 HIDDEN_SIZE = 128
@@ -165,7 +162,7 @@ class TestQwen3OmniModel:
     @staticmethod
     def _make_language_config():
         return Qwen3OmniTransformerConfig(
-            num_layers=2,
+            num_layers=4,
             hidden_size=HIDDEN_SIZE,
             num_attention_heads=4,
             num_query_groups=2,
@@ -195,30 +192,20 @@ class TestQwen3OmniModel:
             audio_start_token_id=AUDIO_START_TOKEN_ID,
             position_id_per_seconds=25,
             seconds_per_chunk=2,
+            hybrid_layer_pattern="*E*E",
         )
 
     @staticmethod
-    def _make_layer_spec():
-        if not torch.cuda.is_available():
-            return get_gpt_layer_local_spec(
-                num_experts=8,
-                moe_grouped_gemm=True,
-                qk_layernorm=True,
-                normalization="RMSNorm",
-            )
-        return get_gpt_layer_with_transformer_engine_spec(
-            num_experts=8,
-            moe_grouped_gemm=True,
-            qk_layernorm=True,
-            fp8=False,
-        )
+    def _make_layer_spec(language_config):
+        return get_qwen3_vl_hybrid_stack_spec(language_config)
 
     def _build_model(self, thinker_config):
         self._setup_parallel_state(tp_size=1, pp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
+        language_config = self._make_language_config()
         return Qwen3OmniModel(
-            language_transformer_config=self._make_language_config(),
-            language_transformer_layer_spec=self._make_layer_spec(),
+            language_transformer_config=language_config,
+            language_transformer_layer_spec=self._make_layer_spec(language_config),
             thinker_transformer_config=thinker_config,
             parallel_output=True,
             pre_process=True,
@@ -261,7 +248,7 @@ class TestQwen3OmniModel:
 
         model = Qwen3OmniModel(
             language_transformer_config=cfg,
-            language_transformer_layer_spec=self._make_layer_spec(),
+            language_transformer_layer_spec=self._make_layer_spec(cfg),
             thinker_transformer_config=thinker_config,
             parallel_output=True,
             pre_process=True,

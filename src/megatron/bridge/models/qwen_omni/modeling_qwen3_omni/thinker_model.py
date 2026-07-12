@@ -32,7 +32,7 @@ from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.rope import get_rope_i
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.transformer_config import (
     Qwen3OmniTransformerConfig,
 )
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLHybridModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_data_cp_rank,
     split_deepstack_embs,
@@ -215,13 +215,13 @@ class Qwen3OmniThinkerModel(MegatronModule):
                 _enable_multimodal_gradient_checkpointing(self.visual)
                 _enable_multimodal_gradient_checkpointing(self.audio_model)
 
-        self.language_model = Qwen3VLGPTModel(
+        self.language_model = Qwen3VLHybridModel(
             config=language_transformer_config,
-            transformer_layer_spec=language_transformer_layer_spec,
+            hybrid_stack_spec=language_transformer_layer_spec,
             vocab_size=language_transformer_config.vocab_size,
             max_sequence_length=language_transformer_config.language_max_sequence_length,
+            hybrid_layer_pattern=language_transformer_config.hybrid_layer_pattern,
             parallel_output=parallel_output,
-            position_embedding_type="mrope",
             rotary_percent=language_transformer_config.rotary_percent,
             pre_process=self.pre_process,
             post_process=self.post_process,

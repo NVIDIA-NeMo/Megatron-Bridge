@@ -23,21 +23,26 @@ from dataclasses import dataclass, field
 from typing import Callable
 
 import torch.nn.functional as F
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.transformer.spec_utils import ModuleSpec
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.qwen.qwen_hybrid import QwenHybridModelProvider, configure_qwen_hybrid_layers
 from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRThinkerConfig,
 )
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
+    Qwen3VLHybridModel,
+    get_qwen3_vl_hybrid_stack_spec,
+)
+from megatron.bridge.models.qwen_vl.qwen3_vl_provider import _provide_qwen3_vl_language_model
 
 
 @dataclass
-class Qwen3ASRModelProvider(GPTModelProvider):
+class Qwen3ASRModelProvider(QwenHybridModelProvider):
     """
     Base model provider for Qwen3-ASR Models.
-    Inherits language model configuration from GPTModelProvider with Qwen3-specific defaults.
+    Inherits language model configuration from HybridModelProvider with Qwen3-specific defaults.
 
     Key characteristics:
     - Audio-only (no vision, no video)
@@ -85,19 +90,36 @@ class Qwen3ASRModelProvider(GPTModelProvider):
     distribute_saved_activations: bool = False
     cp_comm_type: str = "p2p"
     gradient_accumulation_fusion: bool = False
+    mtp_num_layers: int | None = None
+    hybrid_stack_spec: ModuleSpec | Callable = get_qwen3_vl_hybrid_stack_spec
+
+    def finalize(self) -> None:
+        if self.hybrid_layer_pattern is None:
+            if self.num_layers is None:
+                raise ValueError("num_layers must be configured for Qwen3-ASR")
+            configure_qwen_hybrid_layers(
+                self,
+                num_logical_layers=self.num_layers,
+                mlp_symbols=Symbols.MLP,
+                mtp_mlp_symbol=Symbols.MLP,
+            )
+        super().finalize()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None):
         """Provide a Qwen3-ASR model instance with audio and language components."""
+        if self.hybrid_layer_pattern is None:
+            if self.num_layers is None:
+                raise ValueError("num_layers must be configured for Qwen3-ASR")
+            configure_qwen_hybrid_layers(
+                self,
+                num_logical_layers=self.num_layers,
+                mlp_symbols=Symbols.MLP,
+                mtp_mlp_symbol=Symbols.MLP,
+            )
         language_transformer_config = self
         thinker_config = self.thinker_config
 
-        # Qwen3 GPT layer spec with QK layernorm
-        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-            num_experts=None,
-            moe_grouped_gemm=False,
-            qk_layernorm=self.qk_layernorm,
-            fp8=False,
-        )
+        language_transformer_layer_spec = self._resolve_hybrid_stack_spec()
 
         model = Qwen3ASRModel(
             language_transformer_config=language_transformer_config,
@@ -116,6 +138,6 @@ class Qwen3ASRModelProvider(GPTModelProvider):
 
         return model
 
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLHybridModel:
         """Provide just the language model component without audio."""
-        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return _provide_qwen3_vl_language_model(self, pre_process, post_process, vp_stage)
