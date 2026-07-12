@@ -14,6 +14,8 @@
 
 """H100 pretrain recipe for Sarvam 30B."""
 
+from transformers import PretrainedConfig
+
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
@@ -24,11 +26,12 @@ def sarvam_30b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Sarvam 30B MoE H100 pretrain config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(
+    hf_config = PretrainedConfig.from_pretrained(
         "sarvamai/sarvam-30b",
         revision="071ae95e933605ca1104a6b4524a36a98488efa4",  # pragma: allowlist secret
-        trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    )
+    hf_config.name_or_path = "sarvamai/sarvam-30b"
+    cfg.model = AutoBridge.from_hf_config(hf_config).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1

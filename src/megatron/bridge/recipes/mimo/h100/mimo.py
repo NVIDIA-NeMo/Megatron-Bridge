@@ -14,6 +14,8 @@
 
 """H100 pretrain recipe for MiMo 7B."""
 
+from transformers import PretrainedConfig
+
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
@@ -24,11 +26,12 @@ def mimo_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     """Return the MiMo 7B H100 pretrain config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(
+    hf_config = PretrainedConfig.from_pretrained(
         "XiaomiMiMo/MiMo-7B-Base",
         revision="c72df4586cb8bdeebd65f36929cd3385a6566fbe",  # pragma: allowlist secret
-        trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    )
+    hf_config.name_or_path = "XiaomiMiMo/MiMo-7B-Base"
+    cfg.model = AutoBridge.from_hf_config(hf_config).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1

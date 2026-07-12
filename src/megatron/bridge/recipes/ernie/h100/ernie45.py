@@ -27,7 +27,6 @@ def ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "baidu/ERNIE-4.5-21B-A3B-PT",
         revision="87db95487941cb39592ee0abca3b9155a6d19c5c",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     # TP=2 shards the 103,424-way output projection and its logits buffer.

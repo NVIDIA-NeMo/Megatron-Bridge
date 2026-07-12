@@ -27,7 +27,6 @@ def hy3_299b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "tencent/Hy3-preview-Base",
         revision="54a62bb00a50195423bffb6b55e91aa28b6a8ce2",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1

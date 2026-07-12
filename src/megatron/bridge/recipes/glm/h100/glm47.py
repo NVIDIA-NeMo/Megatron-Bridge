@@ -27,7 +27,6 @@ def glm47_flash_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "zai-org/GLM-4.7-Flash",
         revision="7dd20894a642a0aa287e9827cb1a1f7f91386b67",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
@@ -76,7 +75,6 @@ def glm47_355b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "zai-org/GLM-4.7",
         revision="602d01efcdd332c5238ca4bcede555defbe83eb7",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1

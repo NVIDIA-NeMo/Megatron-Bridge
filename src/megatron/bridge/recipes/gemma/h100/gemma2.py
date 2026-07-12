@@ -17,7 +17,6 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.gemma.gemma2_provider import Gemma2ModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
@@ -35,14 +34,7 @@ def gemma2_2b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = Gemma2ModelProvider(
-        num_layers=26,
-        hidden_size=2304,
-        ffn_hidden_size=9216,
-        num_attention_heads=8,
-        num_query_groups=4,
-        query_pre_attn_scalar=256,
-    )
+    cfg.model = AutoBridge.from_hf_pretrained("google/gemma-2-2b").to_megatron_provider(load_weights=False)
 
     # Tokenizer - uses HuggingFaceTokenizer
     cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"

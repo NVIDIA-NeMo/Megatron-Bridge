@@ -27,7 +27,6 @@ def minimax_m2_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "MiniMaxAI/MiniMax-M2",
         revision="757303d492a50514c312788b5247a4f696a4c6a3",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
@@ -72,7 +71,6 @@ def minimax_m2_5_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "MiniMaxAI/MiniMax-M2.5",
         revision="f710177d938eff80b684d42c5aa84b382612f21f",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
@@ -117,7 +115,6 @@ def minimax_m2_7_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "MiniMaxAI/MiniMax-M2.7",
         revision="d494266a4affc0d2995ba1fa35c8481cbd84294b",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1

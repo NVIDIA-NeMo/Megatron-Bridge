@@ -17,7 +17,6 @@
 import os
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.models.gemma.gemma_provider import GemmaModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
@@ -26,13 +25,10 @@ from megatron.bridge.training.config import ConfigContainer
 def gemma_2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return the original Gemma 2B H100 pretrain config."""
     cfg = _pretrain_common()
-    cfg.model = GemmaModelProvider(
-        num_layers=18,
-        hidden_size=2048,
-        ffn_hidden_size=16384,
-        num_attention_heads=8,
-        num_query_groups=1,
-    )
+    cfg.model = AutoBridge.from_hf_pretrained(
+        "google/gemma-2b",
+        revision="9cf48e52b224239de00d483ec8eb84fb8d0f3a3a",  # pragma: allowlist secret
+    ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -79,7 +75,6 @@ def gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         cfg.model = AutoBridge.from_hf_pretrained(
             "google/gemma-4-26B-A4B",
             revision="6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb",  # pragma: allowlist secret
-            trust_remote_code=True,
         ).to_megatron_provider(load_weights=False)
     finally:
         if previous_mode is None:
@@ -133,7 +128,6 @@ def gemma4_31b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         cfg.model = AutoBridge.from_hf_pretrained(
             "google/gemma-4-31B",
             revision="d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3",  # pragma: allowlist secret
-            trust_remote_code=True,
         ).to_megatron_provider(load_weights=False)
     finally:
         if previous_mode is None:

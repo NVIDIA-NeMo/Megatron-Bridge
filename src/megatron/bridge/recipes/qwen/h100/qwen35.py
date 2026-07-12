@@ -15,6 +15,7 @@
 """H100 pretrain recipes for text-only Qwen3.5 models."""
 
 import torch
+from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
@@ -26,11 +27,14 @@ def qwen35_27b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Qwen3.5 27B dense H100 pretrain config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(
+    hf_config = AutoConfig.from_pretrained(
         "Qwen/Qwen3.5-27B",
         revision="fc05daec18b0a78c049392ed2e771dde82bdf654",  # pragma: allowlist secret
-        trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    )
+    text_config = hf_config.text_config
+    text_config.architectures = ["Qwen3_5ForCausalLM"]
+    text_config.name_or_path = "Qwen/Qwen3.5-27B"
+    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 2
@@ -71,11 +75,14 @@ def qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Qwen3.5 35B-A3B MoE H100 pretrain config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(
+    hf_config = AutoConfig.from_pretrained(
         "Qwen/Qwen3.5-35B-A3B",
         revision="59d61f3ce65a6d9863b86d2e96597125219dc754",  # pragma: allowlist secret
-        trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    )
+    text_config = hf_config.text_config
+    text_config.architectures = ["Qwen3_5MoeForCausalLM"]
+    text_config.name_or_path = "Qwen/Qwen3.5-35B-A3B"
+    cfg.model = AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1

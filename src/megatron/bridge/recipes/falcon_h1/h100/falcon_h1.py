@@ -27,7 +27,6 @@ def falcon_h1_500m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(
         "tiiuae/Falcon-H1-0.5B-Instruct",
         revision="8f2587ca06bff78d8fa1adfccbe8c24d5f86b368",  # pragma: allowlist secret
-        trust_remote_code=True,
     ).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1

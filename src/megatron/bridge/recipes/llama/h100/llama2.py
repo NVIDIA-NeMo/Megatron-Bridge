@@ -13,9 +13,8 @@
 # limitations under the License.
 
 import torch
-import torch.nn.functional as F
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -31,33 +30,7 @@ def llama2_7b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = GPTModelProvider(
-        num_layers=32,
-        hidden_size=4096,
-        ffn_hidden_size=11008,
-        num_attention_heads=32,
-        num_query_groups=32,
-        vocab_size=32000,
-        seq_length=4096,
-        rotary_base=10000.0,
-        layernorm_epsilon=1e-5,
-        init_method_std=0.02,
-        activation_func=F.silu,
-        normalization="RMSNorm",
-        gated_linear_unit=True,
-        position_embedding_type="rope",
-        hidden_dropout=0.0,
-        attention_dropout=0.0,
-        add_bias_linear=False,
-        add_qkv_bias=False,
-        share_embeddings_and_output_weights=False,
-        bias_activation_fusion=True,
-        masked_softmax_fusion=True,
-        persist_layer_norm=True,
-        bias_dropout_fusion=True,
-        apply_rope_fusion=True,
-        rotary_percent=1.0,
-    )
+    cfg.model = AutoBridge.from_hf_pretrained("meta-llama/Llama-2-7b-hf").to_megatron_provider(load_weights=False)
 
     # Tokenizer - uses NullTokenizer by default
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
