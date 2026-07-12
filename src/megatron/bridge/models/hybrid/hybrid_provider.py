@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 import logging
 import warnings
@@ -31,6 +32,7 @@ from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_s
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_total_layer_count, parse_hybrid_pattern
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -240,11 +242,19 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         """Resolve the configured Hybrid stack spec."""
         hybrid_stack_spec = self.hybrid_stack_spec
         if hybrid_stack_spec is None:
-            return get_default_hybrid_stack_spec(self)
-        if not isinstance(hybrid_stack_spec, ModuleSpec):
+            hybrid_stack_spec = get_default_hybrid_stack_spec(self)
+        elif not isinstance(hybrid_stack_spec, ModuleSpec):
             if len(inspect.signature(hybrid_stack_spec).parameters) > 0:
-                return hybrid_stack_spec(self)
-            return hybrid_stack_spec()
+                hybrid_stack_spec = hybrid_stack_spec(self)
+            else:
+                hybrid_stack_spec = hybrid_stack_spec()
+
+        if self.attention_backend in {AttnBackend.local, "local"}:
+            hybrid_stack_spec = copy.deepcopy(hybrid_stack_spec)
+            attention_layer = getattr(hybrid_stack_spec.submodules, "attention_layer", None)
+            if attention_layer is not None:
+                attention_layer.submodules.self_attention.submodules.core_attention = DotProductAttention
+
         return hybrid_stack_spec
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreHybridModel:
