@@ -28,7 +28,6 @@ EXPECTED_TARGET_IDS = {
     "ernie45-21b-a3b",
     "falcon-h1-500m",
     "gemma-2b",
-    "gemma2-2b",
     "gemma3-1b",
     "gemma4-26b-a4b",
     "gemma4-31b",
@@ -104,7 +103,7 @@ def test_manifest_exactly_matches_pr4805_text_only_scope():
 
     targets = module.load_manifest(module.DEFAULT_MANIFEST)
 
-    assert len(targets) == 45
+    assert len(targets) == 44
     assert {target.id for target in targets} == EXPECTED_TARGET_IDS
     assert all(target.revision.isalnum() and len(target.revision) == 40 for target in targets)
     assert all(target.recipe.endswith("_config") for target in targets)
@@ -151,6 +150,7 @@ def test_all_target_parallelism_is_valid_for_two_by_eight_world():
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in qwen3_next.overrides
 
     llama33 = next(target for target in targets if target.id == "llama33-70b")
+    assert llama33.recipe == "llama33_70b_pretrain_32gpu_h100_bf16_config"
     assert "mixed_precision=bf16_mixed_with_bf16_grad_reduce" in llama33.overrides
     assert "checkpoint.save_optim=false" in llama33.overrides
 

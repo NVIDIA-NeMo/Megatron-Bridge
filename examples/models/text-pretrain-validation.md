@@ -58,7 +58,6 @@ removed from the scope.
 | `ernie45-21b-a3b` | Ernie | Ernie 4.5 MoE | 21.9B | `ernie45_21b_a3b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615689](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/5j2ukr4u) |
 | `falcon-h1-500m` | Falcon | Falcon H1 | 0.5B | `falcon_h1_500m_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613718](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/e5hgbepa) |
 | `gemma-2b` | Gemma | Gemma | 2.5B | `gemma_2b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5615009](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3xymq1yl) |
-| `gemma2-2b` | Gemma | Gemma 2 | 2.6B | `gemma2_2b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5613705](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/03w4wcsy) |
 | `gemma3-1b` | Gemma | Gemma 3 | 1B | `gemma3_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613697](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/a62ht0v9) |
 | `gemma4-26b-a4b` | Gemma | Gemma 4 26B-A4B MoE | 26.5B | `gemma4_26b_a4b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615770](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/mo2vl37i) |
 | `gemma4-31b` | Gemma | Gemma 4 31B dense | 32.7B | `gemma4_31b_pretrain_8gpu_h100_bf16_config` | [PASS: job 5615073](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/mggjp1f0) |
@@ -72,7 +71,7 @@ removed from the scope.
 | `llama3-8b` | Llama | Llama 3 | 8B | `llama3_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5615014](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/cdx4xe8i) |
 | `llama31-8b` | Llama | Llama 3.1 | 8B | `llama31_8b_pretrain_2gpu_h100_bf16_config` | [PASS: job 5614263](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/gry9jhfg) |
 | `llama32-1b` | Llama | Llama 3.2 | 1.2B | `llama32_1b_pretrain_1gpu_h100_bf16_config` | [PASS: job 5613679](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/3w8ubwh7) |
-| `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama31_70b_pretrain_32gpu_h100_bf16_config` | [PASS: job 5615791](https://wandb.ai/yaoyu/megatron-bridge-text-pretrain-validation/runs/28aepf04) |
+| `llama33-70b` | Llama | Llama 3.3 | 70.6B | `llama33_70b_pretrain_32gpu_h100_bf16_config` | PENDING: revalidate the isolated Llama 3.3 AutoBridge recipe |
 | `minimax-m2` | MiniMax | MiniMax-M2 | 456B | `minimax_m2_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615005 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
 | `minimax-m2-5` | MiniMax | MiniMax-M2.5 | 456B | `minimax_m2_5_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615006 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |
 | `minimax-m2-7` | MiniMax | MiniMax-M2.7 | 456B | `minimax_m2_7_pretrain_16gpu_h100_bf16_config` | FAIL: job 5615007 requires a 52.31 GiB/rank grad buffer after 74.72 GiB is allocated; exceeds 16-H100 capacity |

@@ -14,6 +14,8 @@
 
 """H100 pretrain recipes for text-only Bailing MoE V2 models."""
 
+from transformers import PretrainedConfig
+
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
@@ -24,11 +26,12 @@ def ling_mini_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Ling Mini 16B H100 pretrain config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(
+    hf_config = PretrainedConfig.from_pretrained(
         "inclusionAI/Ling-mini-2.0",
         revision="920c3fd9916e3d5e543fc4f609e827cad8a32983",  # pragma: allowlist secret
-        trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    )
+    hf_config.name_or_path = "inclusionAI/Ling-mini-2.0"
+    cfg.model = AutoBridge.from_hf_config(hf_config).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -69,11 +72,12 @@ def ling_flash_100b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Ling Flash 100B H100 pretrain config."""
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(
+    hf_config = PretrainedConfig.from_pretrained(
         "inclusionAI/Ling-flash-2.0",
         revision="18ca64a019b553be57bab50af3207fb2f3675edc",  # pragma: allowlist secret
-        trust_remote_code=True,
-    ).to_megatron_provider(load_weights=False)
+    )
+    hf_config.name_or_path = "inclusionAI/Ling-flash-2.0"
+    cfg.model = AutoBridge.from_hf_config(hf_config).to_megatron_provider(load_weights=False)
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
