@@ -1,6 +1,6 @@
 # Full-model validation inventory
 
-Last updated: 2026-07-11
+Last updated: 2026-07-12
 
 This manifest tracks full-checkpoint conversion and inference validation for the
 model architectures and explicitly named variants in the root
@@ -80,7 +80,7 @@ Hugging Face commit SHAs resolved on the date above. Status is one of `TODO`,
 | Qwen | Qwen2 Audio | `Qwen/Qwen2-Audio-7B-Instruct` | `0a095220c30b7b31434169c3086508ef3ea5bf0a` | 8.4B | audio-text | `examples/models/qwen/qwen2_audio` | TODO |
 | Qwen | Qwen2.5-Omni | `Qwen/Qwen2.5-Omni-7B` | `ae9e1690543ffd5c0221dc27f79834d0294cba00` | 10.7B | vision-audio-text | `examples/models/qwen/qwen25_omni` | TODO |
 | Qwen | Qwen3-Omni | `Qwen/Qwen3-Omni-30B-A3B-Instruct` | `26291f793822fb6be9555850f06dfe95f2d7e695` | 35.3B | vision-audio-text | `examples/models/qwen/qwen3_omni` | TODO |
-| Qwen | Qwen3-ASR | `Qwen/Qwen3-ASR-1.7B` | `7278e1e70fe206f11671096ffdd38061171dd6e5` | 2.3B | audio-text | `examples/models/qwen/qwen3_asr` | TODO |
+| Qwen | Qwen3-ASR | `Qwen/Qwen3-ASR-1.7B` | `7278e1e70fe206f11671096ffdd38061171dd6e5` | 2.3B | audio-text | `examples/models/qwen/qwen3_asr` | PASS |
 | Sarvam | Sarvam | `sarvamai/sarvam-30b` | `071ae95e933605ca1104a6b4524a36a98488efa4` | 32.2B | text | `examples/models/sarvam` | TODO |
 | StepFun | Step-3.5-Flash | `stepfun-ai/Step-3.5-Flash` | `ab446a3de5e171ea341227e24bb1f090e1b771f7` | 199.4B | text | `examples/models/stepfun/step35` | TODO |
 | StepFun | Step-3.7-Flash | `stepfun-ai/Step-3.7-Flash` | `5f6244077ac62e04eec3f320501ff8c2b293373a` | 201.4B | vision-language | `examples/models/stepfun/step37` | TODO |
