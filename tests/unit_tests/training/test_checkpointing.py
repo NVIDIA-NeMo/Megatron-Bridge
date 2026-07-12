@@ -779,6 +779,171 @@ class TestSaveCheckpoint:
         assert not old_checkpoint.exists()
         assert torch.load(latest_train_state, weights_only=True)["step"].item() == 1000
 
+    @pytest.mark.parametrize("most_recent_k", [0, 1])
+    def test_async_global_non_persistent_overlap_preserves_tracker_checkpoint(
+        self, tmp_path, save_checkpoint_fixtures, most_recent_k
+    ):
+        """An incomplete async replacement must not evict the tracker-selected checkpoint."""
+        save_dir = tmp_path / "persistent"
+        non_persistent_dir = tmp_path / "non_persistent"
+        durable_checkpoint = non_persistent_dir / "iter_0000010"
+        incomplete_checkpoint = non_persistent_dir / "iter_0000020"
+        current_checkpoint = non_persistent_dir / "iter_0000030"
+        future_incomplete_checkpoint = non_persistent_dir / "iter_0000040"
+        durable_checkpoint.mkdir(parents=True)
+        incomplete_checkpoint.mkdir()
+        future_incomplete_checkpoint.mkdir()
+        latest_train_state = non_persistent_dir / "latest_train_state.pt"
+        torch.save({"step": torch.tensor(10)}, latest_train_state)
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 30
+        state.train_state.state_dict.return_value = {"step": torch.tensor(30)}
+        state.cfg.checkpoint.save = str(save_dir)
+        state.cfg.checkpoint.non_persistent_ckpt_type = "global"
+        state.cfg.checkpoint.non_persistent_global_ckpt_dir = str(non_persistent_dir)
+        state.cfg.checkpoint.async_save = True
+        state.cfg.checkpoint.most_recent_k = most_recent_k
+        state.wandb_logger = Mock()
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        finalize_fns = []
+        async_request = Mock()
+        async_request.add_finalize_fn.side_effect = finalize_fns.append
+
+        def run_cleanup_immediately(*, target, args):
+            thread = Mock()
+            thread.start.side_effect = lambda: target(*args)
+            return thread
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=async_request),
+            patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.schedule_async_save"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=False),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("megatron.bridge.training.checkpointing.threading.Thread", side_effect=run_cleanup_immediately),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context={},
+                non_persistent_ckpt=True,
+            )
+
+            assert durable_checkpoint.is_dir()
+            assert incomplete_checkpoint.is_dir()
+            assert future_incomplete_checkpoint.is_dir()
+            assert torch.load(latest_train_state, weights_only=True)["step"].item() == 10
+
+            for finalize_fn in finalize_fns:
+                finalize_fn()
+
+        assert not durable_checkpoint.exists()
+        assert not incomplete_checkpoint.exists()
+        assert current_checkpoint.is_dir()
+        assert future_incomplete_checkpoint.is_dir()
+        assert torch.load(latest_train_state, weights_only=True)["step"].item() == 30
+
+    def test_sync_global_non_persistent_honors_configured_retention(self, tmp_path, save_checkpoint_fixtures):
+        """Synchronous global non-persistent cleanup must retain the configured checkpoint count."""
+        save_dir = tmp_path / "persistent"
+        non_persistent_dir = tmp_path / "non_persistent"
+        checkpoint_steps = (10, 20, 30, 40, 50)
+        for step in checkpoint_steps:
+            (non_persistent_dir / f"iter_{step:07d}").mkdir(parents=True, exist_ok=True)
+        current_checkpoint = non_persistent_dir / "iter_0000060"
+        future_incomplete_checkpoint = non_persistent_dir / "iter_0000070"
+        future_incomplete_checkpoint.mkdir()
+
+        state = save_checkpoint_fixtures["mock_state"]
+        state.train_state.step = 60
+        state.train_state.state_dict.return_value = {"step": torch.tensor(60)}
+        state.cfg.checkpoint.save = str(save_dir)
+        state.cfg.checkpoint.non_persistent_ckpt_type = "global"
+        state.cfg.checkpoint.non_persistent_global_ckpt_dir = str(non_persistent_dir)
+        state.cfg.checkpoint.async_save = False
+        state.cfg.checkpoint.most_recent_k = 5
+        state.wandb_logger = Mock()
+
+        pg_collection = Mock()
+        pg_collection.expt_dp.rank.return_value = 0
+        pg_collection.tp.rank.return_value = 0
+        pg_collection.tp.size.return_value = 1
+        pg_collection.pp.rank.return_value = 0
+        pg_collection.pp.size.return_value = 1
+
+        with (
+            patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=None),
+            patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
+            patch("megatron.bridge.training.checkpointing._get_model_glu_interleave_sizes", return_value=(None, None)),
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict",
+                return_value={"model": {"weight": Mock()}},
+            ),
+            patch(
+                "megatron.bridge.training.checkpointing.unwrap_model",
+                return_value=save_checkpoint_fixtures["mock_model"],
+            ),
+            patch("megatron.bridge.training.checkpointing.save_sharded_modelopt_state"),
+            patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state"),
+            patch("megatron.bridge.training.checkpointing.fault_tolerance"),
+            patch("megatron.bridge.training.checkpointing.is_empty_async_queue", return_value=True),
+            patch("megatron.bridge.training.checkpointing.get_rank_safe", return_value=0),
+            patch("megatron.bridge.training.checkpointing.is_last_rank", return_value=False),
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+            patch("torch.distributed.barrier"),
+        ):
+            mock_rerun.return_value.state_dict.return_value = {}
+            save_checkpoint(
+                state,
+                save_checkpoint_fixtures["mock_model"],
+                save_checkpoint_fixtures["mock_optimizer"],
+                save_checkpoint_fixtures["mock_scheduler"],
+                1000000,
+                checkpointing_context={},
+                non_persistent_ckpt=True,
+            )
+
+        assert not (non_persistent_dir / "iter_0000010").exists()
+        for step in (20, 30, 40, 50):
+            assert (non_persistent_dir / f"iter_{step:07d}").is_dir()
+        assert current_checkpoint.is_dir()
+        assert future_incomplete_checkpoint.is_dir()
+
     @patch("megatron.bridge.training.checkpointing.wandb_utils")
     @patch("megatron.bridge.training.checkpointing.is_last_rank")
     @patch("builtins.open", new_callable=mock_open)
@@ -1663,6 +1828,27 @@ class TestCleanupNonPersistentCheckpoints:
             # All three checkpoints must be scheduled for removal.
             assert mock_rmtree.call_count == 3
 
+    @patch("torch.distributed.is_initialized", return_value=True)
+    @patch("torch.distributed.get_rank", return_value=0)
+    def test_cleanup_old_non_persistent_checkpoint_max_iteration(self, mock_get_rank, mock_dist_init, tmp_path):
+        """Checkpoints newer than max_iteration must not participate in retention cleanup."""
+        old_checkpoint = tmp_path / "iter_0000010"
+        retained_checkpoint = tmp_path / "iter_0000020"
+        future_incomplete_checkpoint = tmp_path / "iter_0000030"
+        for checkpoint in (old_checkpoint, retained_checkpoint, future_incomplete_checkpoint):
+            checkpoint.mkdir()
+
+        cleanup_old_non_persistent_checkpoint(
+            str(tmp_path),
+            leave_ckpt_num=1,
+            do_async=False,
+            max_iteration=20,
+        )
+
+        assert not old_checkpoint.exists()
+        assert retained_checkpoint.is_dir()
+        assert future_incomplete_checkpoint.is_dir()
+
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
     def test_cleanup_old_non_persistent_checkpoint_retain_interval(self, mock_get_rank, mock_dist_init):
@@ -2512,8 +2698,8 @@ class TestMegatronLMCompatibility:
         mock_pg_collection.dp_cp.rank.return_value = 0
         mock_get_pg_collection.return_value = mock_pg_collection
 
-        # Mock dist_checkpointing
-        mock_dist_ckpt.load_content_metadata.return_value = {}
+        # Legacy checkpoints predate content metadata in the common state.
+        mock_dist_ckpt.load_content_metadata.return_value = None
         mock_dist_ckpt.load.return_value = {}
 
         mock_rerun_machine.return_value.load_state_dict = Mock()
