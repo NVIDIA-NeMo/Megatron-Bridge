@@ -31,7 +31,7 @@ from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLConfig as
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import get_rope_index
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLHybridModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import (
     Qwen3VLTransformerConfig,
     get_vision_model_config,
@@ -123,9 +123,6 @@ class Qwen3VLModel(MegatronModule):
     ) -> None:
         super().__init__(config=language_transformer_config)
 
-        if hasattr(language_transformer_layer_spec, "submodules"):
-            language_transformer_layer_spec.submodules.self_attention.module = Qwen3VLSelfAttention
-
         self.vision_transformer_config = vision_transformer_config
         self.pre_process = pre_process
         self.post_process = post_process
@@ -203,13 +200,15 @@ class Qwen3VLModel(MegatronModule):
                 pg_collection=pg_collection,
             )
         if self.add_decoder:
-            self.language_model = Qwen3VLGPTModel(
+            if mtp_block_spec is not None:
+                raise ValueError("Qwen3 multimodal HybridModel does not accept a separate MTP block spec.")
+            self.language_model = Qwen3VLHybridModel(
                 config=language_transformer_config,
-                transformer_layer_spec=language_transformer_layer_spec,
+                hybrid_stack_spec=language_transformer_layer_spec,
                 vocab_size=language_transformer_config.vocab_size,
                 max_sequence_length=language_transformer_config.language_max_sequence_length,
+                hybrid_layer_pattern=language_transformer_config.hybrid_layer_pattern,
                 parallel_output=parallel_output,
-                position_embedding_type="mrope",
                 rotary_percent=language_transformer_config.rotary_percent,
                 pre_process=self.pre_process,
                 post_process=self.post_process,
@@ -217,16 +216,15 @@ class Qwen3VLModel(MegatronModule):
                 fp16_lm_cross_entropy=language_transformer_config.fp16_lm_cross_entropy,
                 share_embeddings_and_output_weights=language_transformer_config.share_embeddings_and_output_weights,
                 scatter_embedding_sequence_parallel=False,
-                mtp_block_spec=mtp_block_spec,
                 vp_stage=vp_stage,
                 pg_collection=pg_collection,
             )
             if pre_process:
                 deepstack_indexes = getattr(vision_transformer_config, "deepstack_visual_indexes", [])
-                assert len(deepstack_indexes) <= len(self.language_model.decoder.layers), (
+                logical_layers = len(self.language_model.decoder.layers) // 2
+                assert len(deepstack_indexes) <= logical_layers, (
                     "the deepstack_visual_embeds should on the first pp-stage of language model",
-                    f"got {len(deepstack_indexes)} deepstack_visual_indexes, "
-                    f" {len(self.language_model.decoder.layers)} language model layers",
+                    f"got {len(deepstack_indexes)} deepstack_visual_indexes,  {logical_layers} language model layers",
                 )
 
             self.share_embeddings_and_output_weights = self.language_model.share_embeddings_and_output_weights

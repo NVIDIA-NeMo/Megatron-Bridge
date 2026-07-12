@@ -32,6 +32,7 @@ This module provides two bridges:
 import logging
 
 import torch
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -40,6 +41,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen35_bridge import (
@@ -47,6 +49,10 @@ from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35MoEBridge,
     _apply_qwen35_common_config,
     _apply_qwen35_moe_config,
+)
+from megatron.bridge.models.qwen.qwen_hybrid import (
+    configure_qwen_hybrid_layers,
+    qwen_logical_layer_count,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import (
@@ -164,6 +170,15 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Restore the logical Qwen layer count when exporting HybridModel config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        logical_layer_count = qwen_logical_layer_count(provider.hybrid_layer_pattern)
+        if logical_layer_count is not None:
+            hf_config["num_hidden_layers"] = logical_layer_count
+        return hf_config
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLMoEModelProvider:
         """
         Create a Qwen35VLMoEModelProvider from a HuggingFace pretrained model.
@@ -212,6 +227,13 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         # With partial_rotary_factor=0.25 and head_dim=256, rotary_dim=64,
         # so each pair needs 32 dims total → sections [11, 11, 10].
         provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
+        configure_qwen_hybrid_layers(
+            provider,
+            num_logical_layers=text_config.num_hidden_layers,
+            mlp_symbols=Symbols.MOE,
+            linear_attention_freq=provider.linear_attention_freq,
+            mtp_mlp_symbol=Symbols.MOE,
+        )
 
         return provider
 
@@ -256,7 +278,11 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         mapping_list = []
         mapping_list.extend(
             Qwen35MoEBridge._get_moe_lm_mappings(
-                hf_prefix="model.language_model.", megatron_prefix="language_model.", experts_packed=experts_packed
+                self.hf_config.text_config.num_hidden_layers,
+                full_attention_interval_from_hf(self.hf_config.text_config),
+                hf_prefix="model.language_model.",
+                megatron_prefix="language_model.",
+                experts_packed=experts_packed,
             )
         )
         mapping_list.extend(
@@ -299,6 +325,15 @@ class Qwen35VLBridge(MegatronModelBridge):
 
     mimo_source_prefixes = {"language": "language_model.", "images": "vision_model."}
 
+    @classmethod
+    def megatron_to_hf_config(cls, provider) -> dict:
+        """Restore the logical Qwen layer count when exporting HybridModel config."""
+        hf_config = super().megatron_to_hf_config(provider)
+        logical_layer_count = qwen_logical_layer_count(provider.hybrid_layer_pattern)
+        if logical_layer_count is not None:
+            hf_config["num_hidden_layers"] = logical_layer_count
+        return hf_config
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen35VLModelProvider:
         """Create a Qwen35VLModelProvider from a HuggingFace pretrained model."""
         hf_config = hf_pretrained.config
@@ -330,6 +365,13 @@ class Qwen35VLBridge(MegatronModelBridge):
         provider.image_token_id = getattr(hf_config, "image_token_id", 248056)
         provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
         provider.mrope_section = getattr(text_config, "rope_scaling", {}).get("mrope_section", [11, 11, 10])
+        configure_qwen_hybrid_layers(
+            provider,
+            num_logical_layers=text_config.num_hidden_layers,
+            mlp_symbols=Symbols.MLP,
+            linear_attention_freq=provider.linear_attention_freq,
+            mtp_mlp_symbol=Symbols.MLP,
+        )
 
         return provider
 
@@ -346,7 +388,12 @@ class Qwen35VLBridge(MegatronModelBridge):
         mapping_list = []
 
         mapping_list.extend(
-            Qwen35Bridge._get_dense_lm_mappings(hf_prefix="model.language_model.", megatron_prefix="language_model.")
+            Qwen35Bridge._get_dense_lm_mappings(
+                self.hf_config.text_config.num_hidden_layers,
+                full_attention_interval_from_hf(self.hf_config.text_config),
+                hf_prefix="model.language_model.",
+                megatron_prefix="language_model.",
+            )
         )
         mapping_list.extend(Qwen35Bridge._get_dense_mtp_mappings(megatron_prefix="language_model."))
         mapping_list.extend(_get_vision_mappings())

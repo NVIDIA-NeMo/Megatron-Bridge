@@ -33,7 +33,11 @@ from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_rec
 pytestmark = pytest.mark.integration
 
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
-_TINY_MODEL = {"num_layers": 4, "linear_attention_freq": [1, 1, 1, 0]}
+_TINY_MODEL = {
+    "num_layers": 8,
+    "hybrid_layer_pattern": "G-G-G-*-",
+    "linear_attention_freq": [1, 1, 1, 0],
+}
 
 QWEN35_VL_PRETRAIN_RECIPES = [
     (

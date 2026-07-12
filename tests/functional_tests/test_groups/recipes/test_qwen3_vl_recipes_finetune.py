@@ -32,6 +32,13 @@ from megatron.bridge.recipes.qwen_vl.qwen3_vl import qwen3_vl_8b_sft_config
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
 
 
+_TINY_MODEL = {
+    "num_layers": 8,
+    "hybrid_layer_pattern": "*-*-*-*-",
+    "deepstack_visual_indexes": [0, 1, 2],
+}
+
+
 # Variants that route through the Qwen3-VL-specific forward step (``qwen3_vl_step``).
 # Covers the step function used by the examples / ``run_recipe.py --step_func qwen3_vl_step``,
 # which is otherwise only exercised by the DistTrain smoke test that requires 8 GPUs.
@@ -46,7 +53,7 @@ QWEN3_VL_FINETUNE_RECIPES = [
         qwen3_vl_8b_sft_config,
         "qwen3_vl_8b_sft_qwen3_vl_step",
         {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1},
-        {"num_layers": 4, "deepstack_visual_indexes": [0, 1, 2]},
+        _TINY_MODEL,
     ),
     (
         qwen3_vl_8b_sft_config,
@@ -56,11 +63,10 @@ QWEN3_VL_FINETUNE_RECIPES = [
             "pipeline_model_parallel_size": 1,
         },
         {
+            **_TINY_MODEL,
             "freeze_language_model": False,
             "freeze_vision_model": False,
             "freeze_vision_projection": False,
-            "num_layers": 4,
-            "deepstack_visual_indexes": [0, 1, 2],
             "recompute_granularity": "full",
             "recompute_method": "uniform",
             "recompute_num_layers": 1,
@@ -73,10 +79,7 @@ QWEN3_VL_FINETUNE_RECIPES = [
             "tensor_model_parallel_size": 2,
             "pipeline_model_parallel_size": 1,
         },
-        {
-            "num_layers": 4,
-            "deepstack_visual_indexes": [0, 1, 2],
-        },
+        _TINY_MODEL,
     ),
 ]
 

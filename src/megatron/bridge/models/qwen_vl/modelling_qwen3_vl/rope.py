@@ -139,6 +139,22 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         self.mrope_section = [24, 20, 20]
         assert cp_group is not None, "cp_group is required"
         self.cp_group = cp_group
+        self._position_ids_context: torch.Tensor | None = None
+        self._mrope_section_context: List[int] | None = None
+
+    def set_forward_context(
+        self,
+        position_ids: torch.Tensor,
+        mrope_section: List[int] | None,
+    ) -> None:
+        """Set explicit positions for HybridModel's standard RoPE call path."""
+        self._position_ids_context = position_ids
+        self._mrope_section_context = mrope_section
+
+    def clear_forward_context(self) -> None:
+        """Release references to per-forward position tensors."""
+        self._position_ids_context = None
+        self._mrope_section_context = None
 
     def apply_interleaved_mrope(self, freqs, mrope_section):
         """Apply interleaved MRoPE to 3D rotary embeddings.
@@ -159,8 +175,8 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
 
     def forward(
         self,
-        position_ids: torch.Tensor,
-        mrope_section: List[int] | None,
+        position_ids: torch.Tensor | int,
+        mrope_section: List[int] | None = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
         **kwargs,
     ) -> Tensor:
@@ -174,6 +190,12 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         Returns:
             Tensor: Embeddings after applying RoPE.
         """
+        if not isinstance(position_ids, torch.Tensor):
+            if self._position_ids_context is None:
+                raise RuntimeError("Qwen mRoPE positions must be set before HybridModel forward.")
+            position_ids = self._position_ids_context
+            mrope_section = self._mrope_section_context
+
         if position_ids.ndim == 2:
             position_ids = position_ids[None, ...].expand(3, position_ids.shape[0], -1)
         # Use fp32 for position indices to avoid precision loss when inv_freq is bf16.

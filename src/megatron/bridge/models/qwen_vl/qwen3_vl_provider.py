@@ -21,15 +21,24 @@ Reference: https://huggingface.co/Qwen/Qwen3-VL-30B-A3B-Instruct
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Callable, List, Optional
 
-from megatron.core.models.gpt import GPTModel as MCoreGPTModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
+from megatron.core.models.hybrid.hybrid_layer_allocation import Symbols
+from megatron.core.transformer.spec_utils import ModuleSpec
 from transformers.models.qwen3_vl.configuration_qwen3_vl import Qwen3VLTextConfig, Qwen3VLVisionConfig
 from transformers.models.qwen3_vl_moe.configuration_qwen3_vl_moe import Qwen3VLMoeTextConfig
 
-from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.models.qwen.qwen_hybrid import (
+    QwenHybridModelProvider,
+    configure_qwen_hybrid_layers,
+    qwen_moe_layer_symbols,
+)
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
+    Qwen3VLHybridModel,
+    get_qwen3_vl_hybrid_stack_spec,
+)
 
 
 @dataclass
@@ -48,7 +57,7 @@ class DistTrainConfig:
 
 
 @dataclass
-class Qwen3VLModelProvider(GPTModelProvider):
+class Qwen3VLModelProvider(QwenHybridModelProvider):
     """
     Base model provider for Qwen 3 VL Models.
     Inherits language model configuration from Qwen3ModelProvider.
@@ -133,8 +142,19 @@ class Qwen3VLModelProvider(GPTModelProvider):
     # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
     # If None, calculated from num_position_embeddings / spatial_merge_size^2
     max_vision_cuda_graph_seq_length: Optional[int] = None
+    mtp_num_layers: Optional[int] = None
+    hybrid_stack_spec: ModuleSpec | Callable = get_qwen3_vl_hybrid_stack_spec
 
     def finalize(self) -> None:
+        if self.hybrid_layer_pattern is None:
+            if self.num_layers is None:
+                raise ValueError("num_layers must be configured for Qwen3-VL")
+            configure_qwen_hybrid_layers(
+                self,
+                num_logical_layers=self.num_layers,
+                mlp_symbols=Symbols.MLP,
+                mtp_mlp_symbol=Symbols.MLP,
+            )
         if (self.context_parallel_size or 1) > 1:
             self.calculate_per_token_loss = True
         super().finalize()
@@ -144,13 +164,7 @@ class Qwen3VLModelProvider(GPTModelProvider):
         language_transformer_config = self
         hf_vision_config = self.vision_config
 
-        # Spec for the Qwen3VLTransformerLayer
-        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-            num_experts=None,
-            moe_grouped_gemm=False,
-            qk_layernorm=self.qk_layernorm,
-            fp8=False,
-        )
+        language_transformer_layer_spec = self._resolve_hybrid_stack_spec()
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -173,18 +187,17 @@ class Qwen3VLModelProvider(GPTModelProvider):
 
         return model
 
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLHybridModel:
         """Provide just the language model component without vision."""
-        # Use GPTModelProvider's provide method to create standard language model
-        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return _provide_qwen3_vl_language_model(self, pre_process, post_process, vp_stage)
 
 
 @dataclass
-class Qwen3VLMoEModelProvider(GPTModelProvider):
+class Qwen3VLMoEModelProvider(QwenHybridModelProvider):
     """
     Base model provider for Qwen 3 VL MoE (Mixture of Experts) Models.
 
-    This provider inherits directly from GPTModelProvider following the
+    This provider inherits directly from HybridModelProvider following the
     provider_bridge refactoring pattern. It includes:
     - Qwen3 MoE-specific LLM defaults (RMSNorm, gated linear unit, QK layernorm, MoE config)
     - VL-specific configurations (vision_config, token IDs, mrope)
@@ -298,8 +311,23 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
     vision_cuda_graph_scope: List[str] = field(default_factory=list)
     # Maximum sequence length for vision encoder CUDA graphs (must accommodate largest input)
     max_vision_cuda_graph_seq_length: Optional[int] = None
+    mtp_num_layers: Optional[int] = None
+    hybrid_stack_spec: ModuleSpec | Callable = get_qwen3_vl_hybrid_stack_spec
 
     def finalize(self) -> None:
+        if self.hybrid_layer_pattern is None:
+            if self.num_layers is None:
+                raise ValueError("num_layers must be configured for Qwen3-VL MoE")
+            configure_qwen_hybrid_layers(
+                self,
+                num_logical_layers=self.num_layers,
+                mlp_symbols=qwen_moe_layer_symbols(
+                    self.num_layers,
+                    decoder_sparse_step=self.decoder_sparse_step,
+                    mlp_only_layers=self.mlp_only_layers,
+                ),
+                mtp_mlp_symbol=Symbols.MOE,
+            )
         if (self.context_parallel_size or 1) > 1:
             self.calculate_per_token_loss = True
         if self.tensor_model_parallel_size > 1:
@@ -311,12 +339,7 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
         language_transformer_config = self
         hf_vision_config = self.vision_config
 
-        language_transformer_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-            num_experts=self.num_moe_experts,
-            moe_grouped_gemm=True,
-            qk_layernorm=self.qk_layernorm,
-            fp8=False,
-        )
+        language_transformer_layer_spec = self._resolve_hybrid_stack_spec()
 
         # Reuse Qwen3VLModel for MoE model but replace the language model with MoE language model
         model = Qwen3VLModel(
@@ -340,7 +363,48 @@ class Qwen3VLMoEModelProvider(GPTModelProvider):
 
         return model
 
-    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreGPTModel:
+    def provide_language_model(self, pre_process=None, post_process=None, vp_stage=None) -> Qwen3VLHybridModel:
         """Provide just the language MoE model component without vision."""
-        # Use GPTModelProvider's provide method to create standard MoE language model
-        return GPTModelProvider.provide(self, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+        return _provide_qwen3_vl_language_model(self, pre_process, post_process, vp_stage)
+
+
+def _provide_qwen3_vl_language_model(
+    provider: HybridModelProvider,
+    pre_process: bool | None,
+    post_process: bool | None,
+    vp_stage: int | None,
+) -> Qwen3VLHybridModel:
+    """Construct the Qwen multimodal Hybrid language decoder without the vision encoder."""
+    from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+
+    from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+    if vp_stage is not None or provider.virtual_pipeline_model_parallel_size is not None:
+        raise ValueError("Virtual pipeline parallelism is not supported by HybridModel.")
+    if provider.vocab_size is None or provider.hybrid_layer_pattern is None:
+        raise ValueError("vocab_size and hybrid_layer_pattern must be configured before model construction.")
+    vocab_size = provider.vocab_size
+    if provider.should_pad_vocab:
+        vocab_size = calculate_padded_vocab_size(
+            vocab_size,
+            provider.make_vocab_size_divisible_by,
+            provider.tensor_model_parallel_size,
+        )
+    pre_process = pre_process if pre_process is not None else is_pp_first_stage(provider._pg_collection.pp)
+    post_process = post_process if post_process is not None else is_pp_last_stage(provider._pg_collection.pp)
+    return Qwen3VLHybridModel(
+        config=provider,
+        hybrid_stack_spec=provider._resolve_hybrid_stack_spec(),
+        vocab_size=vocab_size,
+        max_sequence_length=provider.language_max_sequence_length,
+        hybrid_layer_pattern=provider.hybrid_layer_pattern,
+        pre_process=pre_process,
+        post_process=post_process,
+        fp16_lm_cross_entropy=provider.fp16_lm_cross_entropy,
+        parallel_output=provider.parallel_output,
+        share_embeddings_and_output_weights=provider.share_embeddings_and_output_weights,
+        rotary_percent=provider.rotary_percent,
+        rotary_base=provider.rotary_base,
+        scatter_embedding_sequence_parallel=False,
+        pg_collection=provider._pg_collection,
+    )
