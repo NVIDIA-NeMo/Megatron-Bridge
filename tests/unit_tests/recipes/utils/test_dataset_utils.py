@@ -382,12 +382,51 @@ class TestApplyDatasetOverride:
         assert result.dataset.dataloader_type == "batch"
         assert "dataset.dataset_root=/data/sft" not in overrides
         assert "train.train_iters=10" in overrides
+        # Packing must stay disabled unless explicitly requested.
+        assert result.dataset.enable_offline_packing is False
+        assert result.dataset.offline_packing_specs is None
 
     def test_llm_finetune_preloaded_requires_local_source(self):
         config = _make_mock_config()
 
         with pytest.raises(ValueError, match="requires dataset.dataset_root"):
             apply_dataset_override(config, "llm-finetune-preloaded", seq_length=2048)
+
+    def test_llm_finetune_preloaded_honors_packed_sequence(self):
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
+
+        config = _make_mock_config()
+        overrides = ["dataset.dataset_root=/data/sft"]
+        result = apply_dataset_override(
+            config,
+            "llm-finetune-preloaded",
+            packed_sequence=True,
+            seq_length=16384,
+            cli_overrides=overrides,
+        )
+        assert isinstance(result.dataset, GPTSFTDatasetConfig)
+        assert result.dataset.enable_offline_packing is True
+        assert result.dataset.offline_packing_specs is not None
+        assert result.dataset.offline_packing_specs.packed_sequence_size == 16384
+        assert result.dataset.offline_packing_specs.pad_seq_to_mult == 1
+        assert result.dataset.dataset_kwargs == {"pad_to_max_length": True}
+
+    def test_llm_finetune_preloaded_packed_false_leaves_packing_disabled(self):
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
+
+        config = _make_mock_config()
+        overrides = ["dataset.dataset_root=/data/sft"]
+        result = apply_dataset_override(
+            config,
+            "llm-finetune-preloaded",
+            packed_sequence=False,
+            seq_length=2048,
+            cli_overrides=overrides,
+        )
+        assert isinstance(result.dataset, GPTSFTDatasetConfig)
+        assert result.dataset.enable_offline_packing is False
+        assert result.dataset.offline_packing_specs is None
+        assert result.dataset.dataset_kwargs is None
 
     # -- VLM energon ----------------------------------------------------------
 

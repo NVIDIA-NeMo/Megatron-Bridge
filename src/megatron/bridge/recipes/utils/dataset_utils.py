@@ -26,6 +26,7 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
@@ -226,6 +227,14 @@ def apply_dataset_override(
             raise ValueError(
                 "llm-finetune-preloaded requires dataset.dataset_root=<path> to select the local JSONL source."
             )
+        offline_packing_specs = None
+        dataset_kwargs = None
+        if packed_sequence:
+            offline_packing_specs = PackedSequenceSpecs(
+                packed_sequence_size=resolved_seq_length,
+                pad_seq_to_mult=1,
+            )
+            dataset_kwargs = {"pad_to_max_length": True}
         config.dataset = GPTSFTDatasetConfig(
             seq_length=resolved_seq_length,
             dataset_root=dataset_root,
@@ -236,6 +245,9 @@ def apply_dataset_override(
             ),
             dataloader_type="batch",
             seed=5678,
+            enable_offline_packing=packed_sequence,
+            offline_packing_specs=offline_packing_specs,
+            dataset_kwargs=dataset_kwargs,
         )
 
     elif dataset_type == "vlm-energon":
