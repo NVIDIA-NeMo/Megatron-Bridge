@@ -16,7 +16,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.hybrid import hybrid_provider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
@@ -172,6 +175,40 @@ class TestHybridModelProvider:
         spec_call_kwarg = mock_model.call_args.kwargs["hybrid_stack_spec"]
         assert isinstance(spec_call_kwarg, Mock)
         assert spec_call_kwarg.info == "custom spec"
+
+    def test_local_attention_clones_stack_spec_and_uses_mcore_attention(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            attention_backend=AttnBackend.local,
+        )
+
+        resolved_spec = provider._resolve_hybrid_stack_spec()
+        resolved_core_attention = (
+            resolved_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+        )
+        default_core_attention = hybrid_provider.default_hybrid_stack_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+
+        assert resolved_spec is not hybrid_provider.default_hybrid_stack_spec
+        assert resolved_core_attention is DotProductAttention
+        assert default_core_attention is TEDotProductAttention
+
+    def test_non_local_attention_keeps_transformer_engine_stack_spec(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            attention_backend=AttnBackend.flash,
+        )
+
+        resolved_spec = provider._resolve_hybrid_stack_spec()
+        resolved_core_attention = (
+            resolved_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+        )
+
+        assert resolved_spec is hybrid_provider.default_hybrid_stack_spec
+        assert resolved_core_attention is TEDotProductAttention
 
     def test_finalize_uses_compatible_hybrid_layer_count(self):
         provider = HybridModelProvider(
