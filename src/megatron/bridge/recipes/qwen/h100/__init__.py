@@ -16,6 +16,7 @@ from megatron.bridge.recipes.qwen.h100.qwen2 import *  # noqa: F403
 from megatron.bridge.recipes.qwen.h100.qwen3 import *  # noqa: F403
 from megatron.bridge.recipes.qwen.h100.qwen3_moe import *  # noqa: F403
 from megatron.bridge.recipes.qwen.h100.qwen3_next import *  # noqa: F403
+from megatron.bridge.recipes.qwen.h100.qwen35 import *  # noqa: F403
 
 
 __all__ = [
@@ -78,4 +79,6 @@ __all__ = [
     "qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config",
     "qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config",
     "qwen3_next_80b_a3b_sft_16gpu_h100_bf16_config",
+    "qwen35_27b_pretrain_8gpu_h100_bf16_config",
+    "qwen35_35b_a3b_pretrain_8gpu_h100_bf16_config",
 ]

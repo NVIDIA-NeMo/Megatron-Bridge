@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.recipes.glm.h100.glm45 import *  # noqa: F403
+from megatron.bridge.recipes.glm.h100.glm47 import *  # noqa: F403
 
 
 __all__ = [
@@ -22,4 +23,6 @@ __all__ = [
     "glm45_air_106b_peft_8gpu_h100_bf16_config",
     "glm45_air_106b_pretrain_32gpu_h100_bf16_config",
     "glm45_air_106b_sft_32gpu_h100_bf16_config",
+    "glm47_355b_pretrain_16gpu_h100_bf16_config",
+    "glm47_flash_31b_pretrain_8gpu_h100_bf16_config",
 ]

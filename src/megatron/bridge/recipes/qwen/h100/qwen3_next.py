@@ -110,11 +110,11 @@ def qwen3_next_80b_a3b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Optimizer precision settings
-    cfg.optimizer.use_precision_aware_optimizer = False
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     # Communication overlap (default None, can pass CommOverlapConfig for advanced overlap)
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable

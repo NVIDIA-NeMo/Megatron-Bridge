@@ -1197,6 +1197,89 @@ def llama31_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def llama33_70b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for Llama 3.3 70B.
+
+    Recommended parallelism: TP=4, PP=4, VPP=5, CP=2, SP=True with CommOverlap, seq=128K.
+    """
+    cfg = _pretrain_common()
+
+    cfg.model = AutoBridge.from_hf_pretrained(
+        "meta-llama/Llama-3.3-70B-Instruct",
+        revision="6f6073b423013f6a7d4d9f39144961bfbfbc386b",  # pragma: allowlist secret
+    ).to_megatron_provider(load_weights=False)
+
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+
+    cfg.dataset.blend = None
+    cfg.dataset.num_workers = 8
+    cfg.dataset.seq_length = SEQUENCE_LENGTH_128K
+
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = 5
+    cfg.model.context_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    cfg.model.seq_length = SEQUENCE_LENGTH_128K
+
+    cfg.train.train_iters = 1168251
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
+    cfg.validation.eval_interval = 2000
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+
+    cfg.scheduler.lr_warmup_iters = 2000
+    cfg.logger.log_timers_to_tensorboard = True
+
+    cfg.model.transformer_impl = "transformer_engine"
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.attention_backend = None
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+
+    # Two-byte optimizer state reduces the 70B model's optimizer footprint.
+    # FusedAdam requires FP16 or FP32 master parameters, while gradients and
+    # moments support BF16.
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+
+    cfg.checkpoint.save_interval = 500
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.use_megatron_fsdp = False
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
+    cfg.ddp.data_parallel_sharding_strategy = "no_shard"
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        tp_comm_overlap_cfg=userbuffers_bf16_h100_h8192_tp4_mbs1_seqlen8192,
+    )
+    cfg.mixed_precision = bf16_mixed()
+
+    cfg.env_vars = {
+        **COMMON_LIBRARY_ENV_VARS,
+    }
+    return cfg
+
+
 def llama31_405b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Llama 3.1 405B.
 
@@ -2962,6 +3045,7 @@ __all__ = [
     "llama32_3b_peft_1gpu_h100_bf16_config",
     "llama32_3b_pretrain_1gpu_h100_bf16_config",
     "llama32_3b_sft_1gpu_h100_bf16_config",
+    "llama33_70b_pretrain_32gpu_h100_bf16_config",
     "llama3_70b_peft_8gpu_h100_bf16_config",
     "llama3_70b_pretrain_256gpu_h100_bf16_64k_config",
     "llama3_70b_pretrain_32gpu_h100_bf16_16k_config",

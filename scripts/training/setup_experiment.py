@@ -58,6 +58,11 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
+        "--implicit-gpu-allocation",
+        action="store_true",
+        help="Do not emit a Slurm GPU request when exclusive nodes provide GPUs without GRES.",
+    )
+    execution.add_argument(
         "--container-image",
         default=os.environ.get("CONTAINER_IMAGE"),
         help="Slurm container image; defaults to CONTAINER_IMAGE.",
@@ -89,9 +94,10 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     return parser
 
 
-def _parse_env(values: list[str]) -> dict[str, str]:
-    """Resolve explicit environment values for the training container."""
+def _parse_env(values: list[str]) -> tuple[dict[str, str], list[str]]:
+    """Separate explicit environment values from inherited variable names."""
     env_vars: dict[str, str] = {}
+    inherited_env: list[str] = []
     for value in values:
         if "=" in value:
             name, env_value = value.split("=", 1)
@@ -99,11 +105,15 @@ def _parse_env(values: list[str]) -> dict[str, str]:
             name = value
             if name not in os.environ:
                 raise ValueError(f"Environment variable '{name}' is not set; pass --env {name}=VALUE instead.")
-            env_value = os.environ[name]
+            env_value = None
         if not name:
             raise ValueError("Environment variable names cannot be empty.")
-        env_vars[name] = env_value
-    return env_vars
+        if env_value is None:
+            if name not in inherited_env:
+                inherited_env.append(name)
+        else:
+            env_vars[name] = env_value
+    return env_vars, inherited_env
 
 
 def _parse_mounts(values: list[str]) -> list[str]:
@@ -135,25 +145,36 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
 
 
-def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: list[str]) -> object:
+def _build_executor(
+    args: argparse.Namespace,
+    *,
+    env_vars: dict[str, str],
+    inherited_env: list[str],
+    mounts: list[str],
+) -> object:
     """Build a Slurm NeMo-Run executor."""
     packager = run.GitArchivePackager(include_submodules=False) if args.packager == "git" else run.Packager()
+    executor_kwargs = {
+        "account": args.account,
+        "partition": args.partition,
+        "nodes": args.nodes,
+        "ntasks_per_node": args.gpus_per_node,
+        "mem": "0",
+        "exclusive": True,
+        "time": args.time,
+        "gres": args.gres,
+        "tunnel": run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
+        "packager": packager,
+    }
+    if not args.implicit_gpu_allocation:
+        executor_kwargs["gpus_per_node"] = args.gpus_per_node
     executor = run.SlurmExecutor(
-        account=args.account,
-        partition=args.partition,
-        nodes=args.nodes,
-        ntasks_per_node=args.gpus_per_node,
-        mem="0",
-        exclusive=True,
-        time=args.time,
-        gres=args.gres,
-        tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
-        packager=packager,
+        **executor_kwargs,
     )
     executor.container_image = args.container_image
     executor.container_mounts = mounts
     executor.env_vars = env_vars
-    executor.container_env = sorted(env_vars)
+    executor.container_env = sorted(set(env_vars) | set(inherited_env))
     executor.srun_args = ["--mpi=pmix", "--no-container-mount-home", "--container-writable"]
     return executor
 
@@ -168,9 +189,9 @@ def main(argv: list[str] | None = None) -> None:
     args, training_args = parse_args(argv)
     _validate_args(args)
 
-    env_vars = _parse_env(args.env)
+    env_vars, inherited_env = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
-    executor = _build_executor(args, env_vars, mounts)
+    executor = _build_executor(args, env_vars=env_vars, inherited_env=inherited_env, mounts=mounts)
 
     task = run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
@@ -182,7 +203,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     experiment_name = args.experiment_name or "training"
     logger.info("Training command: %s", " ".join(task.to_command()))
-    logger.info("Forwarded environment variables: %s", ", ".join(sorted(env_vars)) or "none")
+    forwarded_env = sorted(set(env_vars) | set(inherited_env))
+    logger.info("Forwarded environment variables: %s", ", ".join(forwarded_env) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
     with run.Experiment(experiment_name) as experiment:

@@ -513,7 +513,9 @@ class TestApplyPublicDatasetOverride:
         assert overrides == ["train.train_iters=10"]
 
     def test_openmathinstruct2_thinking_public_name_enables_packing(self):
-        from megatron.bridge.data.builders import GPTSFTDatasetConfig
+        from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
+        from megatron.bridge.data.sft_processing import normalize_sft_example
+        from megatron.bridge.data.sources.hf_adapters import adapt_hf_dataset
 
         config = _make_mock_config()
         result = apply_public_dataset_override(
@@ -525,8 +527,26 @@ class TestApplyPublicDatasetOverride:
 
         assert isinstance(result.dataset, GPTSFTDatasetConfig)
         assert result.dataset.hf_dataset.dataset_name == "openmathinstruct2_thinking"
+        assert isinstance(result.dataset.preprocessing, ChatSFTPreprocessingConfig)
         assert result.dataset.enable_offline_packing is True
         assert result.dataset.offline_packing_specs.pad_seq_to_mult == 4
+
+        adapted = adapt_hf_dataset(
+            [
+                {
+                    "problem": "What is 2 + 2?",
+                    "generated_solution": r"Compute the sum. $\boxed{4}$",
+                    "expected_answer": "4",
+                }
+            ],
+            adapter_name="openmathinstruct2_thinking",
+        )
+        normalized = normalize_sft_example(adapted[0], result.dataset.preprocessing)
+
+        assert normalized["conversation"][0] == {"role": "user", "content": "What is 2 + 2?"}
+        assert normalized["conversation"][1]["role"] == "assistant"
+        assert normalized["conversation"][1]["content"] == "#### 4"
+        assert normalized["conversation"][1]["thinking"] == "Compute the sum."
 
     def test_unknown_public_name_raises(self):
         config = _make_mock_config()
