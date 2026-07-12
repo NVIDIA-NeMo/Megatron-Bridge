@@ -1090,7 +1090,8 @@ def save_checkpoint(
     checkpoint_step = train_state.step
     global_non_persistent_keep_count = 0
     if is_global_non_persistent_ckpt:
-        global_non_persistent_keep_count = 2 if ckpt_cfg.most_recent_k < 0 else min(2, ckpt_cfg.most_recent_k)
+        # Global non-persistent saves must leave a durable resume point, even when retention is configured as zero.
+        global_non_persistent_keep_count = 2 if ckpt_cfg.most_recent_k < 0 else max(1, ckpt_cfg.most_recent_k)
     if non_persistent_ckpt and ckpt_cfg.non_persistent_ckpt_type == "local":
         ckpt_type = CheckpointType.LOCAL
         save_dir = checkpointing_context["local_checkpoint_manager"].local_ckpt_dir
