@@ -26,6 +26,25 @@ SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
 
 
+class _OfflineKimiProvider:
+    """Minimal Kimi provider for env-only tests that must run with HF offline."""
+
+    vocab_size = 163840
+    apply_rope_fusion = False
+
+    def finalize(self):
+        return None
+
+
+class _OfflineKimiAutoBridge:
+    @classmethod
+    def from_hf_pretrained(cls, *args, **kwargs):
+        return cls()
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _OfflineKimiProvider()
+
+
 class TestPerfConfigIntegration:
     """Test performance recipe integration with flat perf recipes and library recipes."""
 
@@ -228,8 +247,12 @@ class TestPerfConfigIntegration:
             ),
         ],
     )
-    def test_nemo_ci_perf_family_builders_embed_environment_settings(self, family, builder, expected_env):
+    def test_nemo_ci_perf_family_builders_embed_environment_settings(self, family, builder, expected_env, monkeypatch):
         """Direct builders for every active nemo-ci family should carry process settings."""
+        if family == "kimi":
+            kimi_recipe_module = importlib.import_module("megatron.bridge.recipes.kimi.h100.kimi_k2")
+            monkeypatch.setattr(kimi_recipe_module, "AutoBridge", _OfflineKimiAutoBridge)
+
         module_name, function_name = builder.split(":", 1)
         recipe = getattr(importlib.import_module(module_name), function_name)()
 

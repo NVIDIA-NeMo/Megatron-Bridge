@@ -17,8 +17,6 @@
 Test FSDP, EP=4, and MoE performance optimizations.
 """
 
-import os
-
 import pytest
 
 from megatron.bridge.recipes.deepseek import (
@@ -124,16 +122,25 @@ class TestDeepSeekRecipesPerf:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("config_func,recipe_name,config_overrides", DEEPSEEK_PRETRAIN_PERF_RECIPES)
-    def test_deepseek_pretrain_recipes(self, config_func, recipe_name, config_overrides):
+    def test_deepseek_pretrain_recipes(self, config_func, recipe_name, config_overrides, monkeypatch):
         """Functional test for DeepSeek V3 with GB200 proxy perf configurations."""
-        os.environ["NVTE_CPU_OFFLOAD_V1"] = "1"
-        os.environ["NVTE_FWD_LAYERNORM_SM_MARGIN"] = "0"
-        os.environ["NVTE_BWD_LAYERNORM_SM_MARGIN"] = "0"
-        os.environ["NVTE_NORM_FWD_USE_CUDNN"] = "1"
-        os.environ["NVTE_NORM_BWD_USE_CUDNN"] = "1"
-        os.environ["CUDA_DEVICE_MAX_CONNECTIONS"] = "32"
-        os.environ["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-        os.environ["NCCL_ALGO"] = "Ring"
+        environment = {
+            "NVTE_CPU_OFFLOAD_V1": "1",
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": "0",
+            "NVTE_BWD_LAYERNORM_SM_MARGIN": "0",
+            "NVTE_NORM_FWD_USE_CUDNN": "1",
+            "NVTE_NORM_BWD_USE_CUDNN": "1",
+            "CUDA_DEVICE_MAX_CONNECTIONS": "32",
+            "NVTE_ALLOW_NONDETERMINISTIC_ALGO": "0",
+            "NCCL_ALGO": "Ring",
+            # This is a 4-rank GB200 proxy, not the H100 recipe's NVL8 topology.
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": "4",
+            "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": "128",
+            "NVLINK_DOMAIN_SIZE": "72",
+            "USE_MNNVL": "1",
+        }
+        for name, value in environment.items():
+            monkeypatch.setenv(name, value)
 
         run_pretrain_recipe_perf_test(
             config_func,
