@@ -43,6 +43,7 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     share_embeddings_and_output_weights: bool = False
     rotary_percent: float = 1.0
     rotary_base: float = 10000
+    hybrid_layer_pattern: str | None = None
 
     # Multimodal rope section for [temporal, height, width] dimensions
     mrope_section: List[int] = field(default_factory=lambda: [24, 20, 20])

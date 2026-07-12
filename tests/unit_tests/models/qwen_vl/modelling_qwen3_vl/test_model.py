@@ -30,7 +30,6 @@ import torch
 import torch.distributed as dist
 import torch.nn.functional as F
 from megatron.core import parallel_state
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transformer_engine_spec
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
@@ -38,6 +37,7 @@ from PIL import Image
 from transformers import AutoProcessor, Qwen3VLMoeConfig
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import get_qwen3_vl_hybrid_stack_spec
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig
 
@@ -143,7 +143,7 @@ class TestQwen3VLModel:
         """
         return Qwen3VLTransformerConfig(
             # Use actual model dimensions from HF config
-            num_layers=4,  # Reduced for testing (actual: hf_config.text_config.num_hidden_layers)
+            num_layers=8,  # Four logical blocks, each represented by attention and MLP layers.
             hidden_size=hf_config.text_config.hidden_size,  # Must match vision output: 2048
             num_attention_heads=hf_config.text_config.num_attention_heads,
             num_query_groups=hf_config.text_config.num_key_value_heads,
@@ -182,22 +182,17 @@ class TestQwen3VLModel:
             use_cpu_initialization=True,
             hidden_dropout=0.0,
             attention_dropout=hf_config.text_config.attention_dropout,
+            hybrid_layer_pattern="*-*-*-*-",
         )
 
     @staticmethod
-    def get_language_model_layer_spec():
-        """Create a GPT layer spec for the language model.
+    def get_language_model_layer_spec(config):
+        """Create a Hybrid stack spec for the language model.
 
         Returns:
             ModuleSpec: Layer specification for transformer layers.
         """
-        language_model_layer_spec = get_gpt_layer_with_transformer_engine_spec(
-            num_experts=None,  # No MoE for basic test
-            moe_grouped_gemm=False,
-            qk_layernorm=False,
-            fp8=False,
-        )
-        return language_model_layer_spec
+        return get_qwen3_vl_hybrid_stack_spec(config)
 
     @staticmethod
     def get_data_batch(processor, random_image):
@@ -275,7 +270,7 @@ class TestQwen3VLModel:
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
-        language_model_layer_spec = self.get_language_model_layer_spec()
+        language_model_layer_spec = self.get_language_model_layer_spec(language_transformer_config)
 
         model = Qwen3VLModel(
             vision_transformer_config=vision_transformer_config,
@@ -314,7 +309,7 @@ class TestQwen3VLModel:
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
-        language_model_layer_spec = self.get_language_model_layer_spec()
+        language_model_layer_spec = self.get_language_model_layer_spec(language_transformer_config)
 
         # Test with add_decoder=True
         model = Qwen3VLModel(
@@ -361,7 +356,7 @@ class TestQwen3VLModel:
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
-        language_model_layer_spec = self.get_language_model_layer_spec()
+        language_model_layer_spec = self.get_language_model_layer_spec(language_transformer_config)
 
         # Test with pre_process=True
         model_pre = Qwen3VLModel(
@@ -428,7 +423,7 @@ class TestQwen3VLModel:
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
         self._attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio=1)
-        language_model_layer_spec = self.get_language_model_layer_spec()
+        language_model_layer_spec = self.get_language_model_layer_spec(language_transformer_config)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -474,7 +469,7 @@ class TestQwen3VLModel:
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
         self._attach_dist_train(language_transformer_config, vision_to_llm_dp_ratio=1)
-        language_model_layer_spec = self.get_language_model_layer_spec()
+        language_model_layer_spec = self.get_language_model_layer_spec(language_transformer_config)
 
         encoder = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -821,7 +816,7 @@ class TestQwen3VLModel:
 
         vision_transformer_config = self.get_vision_transformer_config(hf_config)
         language_transformer_config = self.get_language_transformer_config(hf_config)
-        language_model_layer_spec = self.get_language_model_layer_spec()
+        language_model_layer_spec = self.get_language_model_layer_spec(language_transformer_config)
 
         model = Qwen3VLModel(
             language_transformer_config=language_transformer_config,
@@ -868,7 +863,7 @@ class TestQwen3VLModel:
         model = Qwen3VLModel(
             vision_transformer_config=self.get_vision_transformer_config(hf_config),
             language_transformer_config=language_transformer_config,
-            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            language_transformer_layer_spec=self.get_language_model_layer_spec(language_transformer_config),
             parallel_output=True,
             pre_process=True,
             post_process=True,
@@ -897,7 +892,7 @@ class TestQwen3VLModel:
         model = Qwen3VLModel(
             vision_transformer_config=self.get_vision_transformer_config(hf_config),
             language_transformer_config=language_transformer_config,
-            language_transformer_layer_spec=self.get_language_model_layer_spec(),
+            language_transformer_layer_spec=self.get_language_model_layer_spec(language_transformer_config),
             parallel_output=True,
             pre_process=True,
             post_process=True,

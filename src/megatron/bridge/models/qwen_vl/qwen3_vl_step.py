@@ -17,9 +17,9 @@ from functools import partial
 from typing import Any, Iterable
 
 import torch
-from megatron.core.models.gpt import GPTModel
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
+from megatron.core.transformer import MegatronModule
 from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 
 from megatron.bridge.training.config import ConfigContainer
@@ -213,7 +213,7 @@ def _pad_and_pack_qwen3_vl_step(
 def forward_step(
     state: GlobalState,
     data_iterator: Iterable,
-    model: GPTModel,
+    model: MegatronModule,
     return_schedule_plan: bool = False,
 ) -> tuple[torch.Tensor, partial]:
     """Forward training step.
@@ -221,7 +221,7 @@ def forward_step(
     Args:
         state: Global state for the run
         data_iterator: Input data iterator
-        model: The GPT Model
+        model: The Qwen3-VL model
         return_schedule_plan (bool): Whether to return the schedule plan instead of the output tensor
 
     Returns:

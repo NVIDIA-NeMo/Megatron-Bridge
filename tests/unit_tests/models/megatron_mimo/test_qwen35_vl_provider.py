@@ -12,7 +12,7 @@ from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     ModuleParallelismConfig,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLHybridModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
 from megatron.bridge.models.qwen_vl.qwen35_vl_provider import _TRANSFORMERS_HAS_QWEN3_5, Qwen35VLModelProvider
 from megatron.bridge.training.config import ConfigContainer
@@ -58,20 +58,20 @@ class TestQwen35VLProviderMIMOAPI:
         spec = provider.build_language_model_spec()
 
         assert isinstance(spec, ModuleSpec)
-        assert spec.module is Qwen3VLGPTModel
+        assert spec.module is Qwen3VLHybridModel
 
         params = spec.params
         assert params is not None
         assert params["config"] is provider
-        assert params["transformer_layer_spec"] is sentinel_block_spec
+        assert params["hybrid_stack_spec"] is sentinel_block_spec
+        assert params["hybrid_layer_pattern"] == "G-G-G-*-" * 16
         assert params["vocab_size"] == provider.vocab_size
         assert params["max_sequence_length"] == provider.language_max_sequence_length
-        assert params["position_embedding_type"] == "mrope"
         assert params["rotary_percent"] == provider.rotary_percent
         assert params["rotary_base"] == provider.rotary_base
-        assert params["mtp_block_spec"] is None
         assert params["parallel_output"] is True
         assert params["scatter_embedding_sequence_parallel"] is False
+        assert provider.num_layers == 128
         assert "pg_collection" not in params
         assert "pre_process" not in params
         assert "post_process" not in params

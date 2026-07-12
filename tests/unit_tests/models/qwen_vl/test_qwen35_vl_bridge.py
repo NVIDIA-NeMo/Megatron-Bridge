@@ -124,6 +124,17 @@ def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False)
     return pretrained
 
 
+@pytest.fixture(autouse=True)
+def _set_bridge_hf_configs():
+    previous_dense = Qwen35VLBridge.hf_config
+    previous_moe = Qwen35VLMoEBridge.hf_config
+    Qwen35VLBridge.hf_config = SimpleNamespace(text_config=_make_dense_text_config())
+    Qwen35VLMoEBridge.hf_config = SimpleNamespace(text_config=_make_moe_text_config())
+    yield
+    Qwen35VLBridge.hf_config = previous_dense
+    Qwen35VLMoEBridge.hf_config = previous_moe
+
+
 # =====================================================================
 # Tests for Qwen35VLBridge (Dense)
 # =====================================================================
@@ -155,7 +166,8 @@ class TestQwen35VLBridgeProviderBridge:
 
     def test_provider_bridge_basic_config(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.num_layers == 64
+        assert provider.num_layers == 128
+        assert provider.hybrid_layer_pattern == "G-G-G-*-" * 16
         assert provider.hidden_size == 5120
         assert provider.ffn_hidden_size == 17408
         assert provider.num_attention_heads == 24
@@ -308,7 +320,8 @@ class TestQwen35VLMoEBridgeProviderBridge:
 
     def test_provider_bridge_basic_config(self, bridge, mock_pretrained):
         provider = bridge.provider_bridge(mock_pretrained)
-        assert provider.num_layers == 60
+        assert provider.num_layers == 120
+        assert provider.hybrid_layer_pattern == "GEGEGE*E" * 15
         assert provider.hidden_size == 4096
         assert provider.num_attention_heads == 32
         assert provider.num_query_groups == 2
