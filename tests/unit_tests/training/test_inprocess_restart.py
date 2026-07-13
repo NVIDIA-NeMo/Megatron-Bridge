@@ -379,6 +379,52 @@ class TestInProcessRestart:
 class TestAbortCheckpoint:
     """Test cases for the AbortCheckpoint class functionality."""
 
+    def test_abort_checkpoint_resets_mcore_results_queue(self):
+        """Test AbortCheckpoint resets MCore's queue owner for a retry."""
+        from megatron.core.dist_checkpointing.strategies import filesystem_async
+
+        mock_config = MagicMock(spec=InProcessRestartConfig)
+        mock_config.active_world_size = 1
+        mock_config.granularity = "rank"
+        mock_config.empty_cuda_cache = False
+        mock_config.max_rank_faults = None
+        mock_config.monitor_process_logdir = None
+        mock_config.heartbeat_interval = 30.0
+        mock_config.heartbeat_timeout = 60.0
+        mock_config.barrier_timeout = 120.0
+        mock_config.completion_timeout = 120.0
+        mock_config.monitor_process_interval = 1.0
+        mock_config.monitor_thread_interval = 1.0
+        mock_config.last_call_wait = 1.0
+        mock_config.soft_timeout = 60.0
+        mock_config.hard_timeout = 90.0
+        mock_config.termination_grace_time = 1.0
+        mock_global_state = MagicMock(spec=GlobalState)
+        mock_global_state.async_calls_queue = None
+        mock_results_queue = MagicMock()
+        filesystem_async._results_queue = mock_results_queue
+
+        try:
+            with (
+                patch.dict(os.environ, {"MASTER_PORT": "29500"}),
+                patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+                patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+            ):
+                mock_wrapper.return_value.return_value = MagicMock()
+                inprocess_restart(MagicMock(), mock_config, mock_global_state)
+                abort = mock_wrapper.call_args.kwargs["abort"]
+                abort_checkpoint = next(
+                    instance for instance in abort.instances if type(instance).__name__ == "AbortCheckpoint"
+                )
+
+                frozen_state = MagicMock()
+                assert abort_checkpoint(frozen_state) is frozen_state
+
+            mock_results_queue._manager.shutdown.assert_called_once_with()
+            assert filesystem_async._results_queue is None
+        finally:
+            filesystem_async._results_queue = None
+
     def test_abort_checkpoint_with_async_calls_queue(self):
         """Test AbortCheckpoint when async_calls_queue exists."""
         mock_global_state = MagicMock(spec=GlobalState)
