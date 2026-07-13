@@ -1,0 +1,316 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import argparse
+import logging
+from typing import Optional
+
+import megatron.core.parallel_state as mpu
+import torch
+from megatron.core import tensor_parallel
+from megatron.core.enums import ModelType
+from megatron.core.fp8_utils import correct_amax_history_if_needed
+from megatron.core.models.gpt import GPTModel
+from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+    get_transformer_block_with_experimental_attention_variant_spec,
+)
+from megatron.core.models.gpt.gpt_layer_specs import (
+    get_gpt_decoder_block_spec,
+    get_gpt_layer_local_spec,
+    get_gpt_layer_with_transformer_engine_spec,
+    get_gpt_mtp_block_spec,
+)
+from megatron.core.models.gpt.heterogeneous.heterogeneous_layer_specs import (
+    get_gpt_heterogeneous_layer_spec,
+)
+from megatron.core.models.hybrid.hybrid_model import HybridModel
+from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, parse_hybrid_pattern
+from megatron.core.transformer import MegatronModule, ModuleSpec, TransformerConfig
+from megatron.core.transformer.module import Float16Module
+from megatron.core.transformer.spec_utils import import_module
+from megatron.core.utils import get_model_config
+
+from megatron.bridge.training.mlm_compat.arguments import _transformer_config_from_args
+from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+
+
+logger = logging.getLogger(__name__)
+
+
+def _get_transformer_layer_spec(args: argparse.Namespace, use_te: bool, use_kitchen: bool) -> ModuleSpec:
+    """Get transformer layer specification based on configuration.
+
+    Args:
+        args: Training arguments
+        use_te: Whether to use Transformer Engine
+        use_kitchen: Whether to use kitchen extension
+
+    Returns:
+        ModuleSpec: The transformer layer specification
+    """
+    if use_te:
+        return get_gpt_layer_with_transformer_engine_spec(
+            num_experts=args.num_experts,
+            moe_grouped_gemm=args.moe_grouped_gemm,
+            qk_layernorm=args.qk_layernorm,
+            multi_latent_attention=args.multi_latent_attention,
+            qk_l2_norm=args.qk_l2_norm,
+            use_kitchen=use_kitchen,
+        )
+    else:
+        return get_gpt_layer_local_spec(
+            num_experts=args.num_experts,
+            moe_grouped_gemm=args.moe_grouped_gemm,
+            qk_layernorm=args.qk_layernorm,
+            multi_latent_attention=args.multi_latent_attention,
+            normalization=args.normalization,
+            use_kitchen=use_kitchen,
+        )
+
+
+def _gpt_provider(
+    args: argparse.Namespace,
+    config: Optional[TransformerConfig] = None,
+    pre_process: bool = True,
+    post_process: bool = True,
+    vp_stage: Optional[int] = None,
+) -> GPTModel:
+    """Provide the GPTModel exactly as done by MLM using an argparse args object.
+
+    May need to set `args` and `config` with functools.partial.
+    """
+    use_te = args.transformer_impl == "transformer_engine"
+
+    if config is None:
+        config = _transformer_config_from_args(args)
+
+    if getattr(args, "experimental_attention_variant", None) is not None:
+        transformer_layer_spec = get_transformer_block_with_experimental_attention_variant_spec(
+            config=config, vp_stage=vp_stage
+        )
+    elif args.num_experts:
+        # Define the decoder block spec
+        transformer_layer_spec = get_gpt_decoder_block_spec(
+            config,
+            use_transformer_engine=use_te,
+            normalization=args.normalization,
+            qk_l2_norm=args.qk_l2_norm,
+            vp_stage=vp_stage,
+        )
+    elif args.heterogeneous_layers_config_path is not None:
+        transformer_layer_spec = get_gpt_heterogeneous_layer_spec(config, use_te)
+    else:
+        # Define the decoder layer spec
+        transformer_layer_spec = _get_transformer_layer_spec(args, use_te, config.use_kitchen)
+
+    mtp_block_spec = None
+    if args.mtp_num_layers is not None:
+        if hasattr(transformer_layer_spec, "layer_specs") and len(transformer_layer_spec.layer_specs) == 0:
+            # Get the decoder layer spec explicitly if no decoder layer in the last stage,
+            # Only happens with block spec (TransformerBlockSubmodules) when using MoE.
+            transformer_layer_spec_for_mtp = _get_transformer_layer_spec(args, use_te, config.use_kitchen)
+        else:
+            transformer_layer_spec_for_mtp = transformer_layer_spec
+        mtp_block_spec = get_gpt_mtp_block_spec(
+            config, transformer_layer_spec_for_mtp, use_transformer_engine=use_te, vp_stage=vp_stage
+        )
+
+    return GPTModel(
+        config=config,
+        transformer_layer_spec=transformer_layer_spec,
+        vocab_size=args.padded_vocab_size,
+        max_sequence_length=args.max_position_embeddings,
+        pre_process=pre_process,
+        post_process=post_process,
+        fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
+        parallel_output=True,
+        share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
+        position_embedding_type=args.position_embedding_type,
+        rotary_percent=args.rotary_percent,
+        rotary_base=args.rotary_base,
+        rope_scaling=args.use_rope_scaling,
+        mtp_block_spec=mtp_block_spec,
+        vp_stage=vp_stage,
+    )
+
+
+def _hybrid_provider(
+    args: argparse.Namespace,
+    config: Optional[TransformerConfig] = None,
+    pre_process: bool = True,
+    post_process: bool = True,
+    vp_stage: Optional[int] = None,
+) -> HybridModel:
+    """Provide the HybridModel exactly as done by MLM using an argparse args object.
+
+    May need to set `args` and `config` with functools.partial.
+    """
+    if config is None:
+        config = _transformer_config_from_args(args)
+
+    assert args.spec is not None, "You must provide a valid Hybrid layer spec!"
+    _validate_target_prefix(target=args.spec, full_key="args.spec")
+    hybrid_stack_spec = import_module(args.spec)
+
+    # Migrate deprecated hybrid_override_pattern → hybrid_layer_pattern
+    if getattr(args, "hybrid_override_pattern", None) is not None and args.hybrid_layer_pattern is None:
+        args.hybrid_layer_pattern = args.hybrid_override_pattern
+        args.hybrid_override_pattern = None
+
+    sep = Symbols.MTP_SEPARATOR
+    if (
+        getattr(args, "mtp_hybrid_override_pattern", None) is not None
+        and args.mtp_num_layers is not None
+        and args.mtp_num_layers > 0
+        and (args.hybrid_layer_pattern is None or sep not in args.hybrid_layer_pattern)
+    ):
+        main_pattern = args.hybrid_layer_pattern or ""
+        mtp_pattern = args.mtp_hybrid_override_pattern
+        args.hybrid_layer_pattern = main_pattern + sep + sep.join([mtp_pattern] * args.mtp_num_layers)
+        args.mtp_hybrid_override_pattern = None
+        logger.info("Converted legacy MTP pattern to unified: %s", args.hybrid_layer_pattern)
+
+    # Infer mtp_num_layers from unified pattern
+    if args.hybrid_layer_pattern and sep in args.hybrid_layer_pattern:
+        parsed = parse_hybrid_pattern(args.hybrid_layer_pattern)
+        if parsed.mtp_pattern and parsed.mtp_num_depths > 0:
+            inferred_mtp_num_layers = parsed.mtp_num_depths
+            if args.mtp_num_layers is None:
+                args.mtp_num_layers = inferred_mtp_num_layers
+            elif args.mtp_num_layers != inferred_mtp_num_layers:
+                logger.warning(
+                    "--mtp-num-layers (%s) conflicts with MTP depth count (%s) in pattern '%s'. "
+                    "Using the inferred value (%s).",
+                    args.mtp_num_layers,
+                    inferred_mtp_num_layers,
+                    args.hybrid_layer_pattern,
+                    inferred_mtp_num_layers,
+                )
+                args.mtp_num_layers = inferred_mtp_num_layers
+
+    # MTP validation
+    if args.mtp_num_layers:
+        assert not args.use_legacy_models, "The legacy Megatron models does not support Multi-Token Prediction (MTP)."
+        assert args.position_embedding_type == "rope" or args.position_embedding_type == "none", (
+            f"Multi-Token Prediction (MTP) is not supported with {args.position_embedding_type} position embedding type."
+            + "The supported position embedding types are rope and none."
+        )
+
+    model = HybridModel(
+        config=config,
+        hybrid_stack_spec=hybrid_stack_spec,
+        vocab_size=args.padded_vocab_size,
+        max_sequence_length=args.max_position_embeddings,
+        pre_process=pre_process,
+        hybrid_layer_pattern=args.hybrid_layer_pattern,
+        post_process=post_process,
+        fp16_lm_cross_entropy=args.fp16_lm_cross_entropy,
+        parallel_output=True,
+        share_embeddings_and_output_weights=not args.untie_embeddings_and_output_weights,
+        position_embedding_type=args.position_embedding_type,
+        rotary_percent=args.rotary_percent,
+        rotary_base=args.rotary_base,
+        vp_stage=vp_stage,
+    )
+
+    return model
+
+
+def _mamba_provider(
+    args: argparse.Namespace,
+    config: Optional[TransformerConfig] = None,
+    pre_process: bool = True,
+    post_process: bool = True,
+    vp_stage: Optional[int] = None,
+) -> HybridModel:
+    """Backward-compatible wrapper for ``_hybrid_provider``."""
+    return _hybrid_provider(args, config=config, pre_process=pre_process, post_process=post_process, vp_stage=vp_stage)
+
+
+def _get_model(
+    args: argparse.Namespace,
+    model_provider_func,
+    model_cfg: TransformerConfig,
+    model_type=ModelType.encoder_or_decoder,
+) -> list[MegatronModule]:
+    """Build the model vp stages and wrappers for inference. In the same style as MLM."""
+
+    # Build model.
+    def build_model():
+        if (
+            mpu.get_pipeline_model_parallel_world_size() > 1
+            and mpu.get_virtual_pipeline_model_parallel_world_size() is not None
+        ):
+            model = []
+            for i in range(mpu.get_virtual_pipeline_model_parallel_world_size()):
+                # Set pre_process and post_process only after virtual rank is set.
+                pre_process = mpu.is_pipeline_first_stage(ignore_virtual=False, vp_stage=i)
+                post_process = mpu.is_pipeline_last_stage(ignore_virtual=False, vp_stage=i)
+                this_model = model_provider_func(
+                    args, model_cfg, pre_process=pre_process, post_process=post_process, vp_stage=i
+                )
+                this_model.model_type = model_type
+                this_model.vp_stage = i
+                model.append(this_model)
+        else:
+            pre_process = mpu.is_pipeline_first_stage()
+            post_process = mpu.is_pipeline_last_stage()
+            model = model_provider_func(args, model_cfg, pre_process=pre_process, post_process=post_process)
+            model.model_type = model_type
+        return model
+
+    if args.init_model_with_meta_device:
+        with torch.device("meta"):
+            model = build_model()
+    else:
+        model = build_model()
+
+    if not isinstance(model, list):
+        model = [model]
+
+    # Set tensor model parallel attributes if not set.
+    # Only parameters that are already tensor model parallel have these
+    # attributes set for them. We should make sure the default attributes
+    # are set for all params so the optimizer can use them.
+    for model_module in model:
+        for param in model_module.parameters():
+            tensor_parallel.set_defaults_if_not_set_tensor_model_parallel_attributes(param)
+
+    # Print number of parameters.
+    num_parameters = sum([sum([p.nelement() for p in model_module.parameters()]) for model_module in model])
+    if mpu.get_data_parallel_rank() == 0 and mpu.get_context_parallel_rank() == 0:
+        logger.info(
+            " > number of parameters on (tensor, pipeline) model parallel rank (%s, %s): %s",
+            mpu.get_tensor_model_parallel_rank(),
+            mpu.get_pipeline_model_parallel_rank(),
+            num_parameters,
+        )
+
+    if not args.init_model_with_meta_device:
+        for model_module in model:
+            model_module.cuda(torch.cuda.current_device())
+
+    # Fp16 conversion.
+    if args.fp16 or args.bf16:
+        config = get_model_config(model[0])
+        model = [Float16Module(config, model_module) for model_module in model]
+
+    # Before TE2.x: The model_module.bfloat16()/model_module.half() above will call the inplace
+    #               copy of TE's Float8Tensor, which will write an unwanted value (amax calculated
+    #               from the current fp8 param) to its amax_history. The below function will correct
+    #               the amax_history back.
+    # After TE2.x: Below function is an empty function and does nothing.
+    correct_amax_history_if_needed(model)
+
+    return model

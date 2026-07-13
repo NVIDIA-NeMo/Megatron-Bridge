@@ -1,0 +1,132 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: "Build, validate, and release Megatron-Bridge"
+
+on:
+  push:
+    branches:
+      - main
+      - "pull-request/[0-9]+"
+      - "deploy-release/*"
+  workflow_dispatch:
+    inputs:
+      release-ref:
+        description: Ref (SHA or branch name) to release
+        required: true
+        type: string
+      dry-run:
+        description: Compute the release but do not publish wheel, GH release, or docs.
+        required: true
+        default: true
+        type: boolean
+      create-gh-release:
+        description: Create a GitHub release
+        required: true
+        default: true
+        type: boolean
+      generate-changelog:
+        description: Generate changelog
+        required: false
+        default: true
+        type: boolean
+      publish-docs:
+        description: Publish docs
+        required: false
+        default: true
+        type: boolean
+      version-bump-branch:
+        description: Branch for version bump
+        required: true
+        type: string
+      gh-release-from-tag:
+        description: Tag of previous release for changelog builder
+        required: false
+        type: string
+        default: ""
+
+defaults:
+  run:
+    shell: bash -x -e -u -o pipefail {0}
+
+permissions:
+  id-token: write
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name }}
+  cancel-in-progress: ${{ github.event_name == 'push' }}
+
+jobs:
+  pre-flight:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_cicd_preflight.yml@v0.80.1
+    with:
+      default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+      non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+      non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+      sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
+    secrets: inherit  # pragma: allowlist secret
+
+  release:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v1.4.3
+    needs: [pre-flight]
+    if: |
+      !cancelled() && !failure()
+      && !(needs.pre-flight.outputs.docs_only == 'true'
+           || needs.pre-flight.outputs.is_deployment_workflow == 'true')
+    with:
+      release-ref: ${{ inputs.release-ref || github.sha }}
+      python-package: megatron.bridge
+      library-name: Megatron-Bridge
+      validate-only: ${{ github.event_name != 'workflow_dispatch' }}
+      dry-run: ${{ inputs.dry-run || false }}
+      version-bump-branch: ${{ inputs.version-bump-branch || github.ref_name }}
+      create-gh-release: ${{ inputs.create-gh-release || true }}
+      gh-release-use-changelog-builder: ${{ inputs.generate-changelog || false }}
+      gh-release-from-tag: ${{ inputs.gh-release-from-tag || '' }}
+      packaging: uv
+      has-src-dir: true
+      skip-test-wheel: true
+      custom-container: nvcr.io/nvidia/pytorch:25.11-py3
+      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
+      no-build-isolation: true
+      app-id: ${{ vars.BOT_ID }}
+      publish-docs: ${{ inputs.publish-docs || true }}
+      docs-target-path: nemo/megatron-bridge
+      submodules: recursive
+      container-options: "--gpus all --runtime=nvidia"
+      extra-no-build-isolation-packages: "grpcio-tools"
+      restrict-to-admins: true
+    secrets: inherit  # pragma: allowlist secret
+
+  release-summary:
+    needs: [pre-flight, release]
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Result
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          FAILED_JOBS=$(gh run view $GITHUB_RUN_ID --repo ${{ github.repository }} --json jobs --jq '[.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
+
+          if [ "${FAILED_JOBS:-0}" -eq 0 ]; then
+              echo "✅ All previous jobs completed successfully"
+              exit 0
+          else
+              echo "❌ Found $FAILED_JOBS failed job(s)"
+              gh run view $GITHUB_RUN_ID --repo ${{ github.repository }} --json jobs --jq '.jobs[] | select(.conclusion == "failure" or .conclusion == "timed_out" or .conclusion == "action_required") | .name'
+              exit 1
+          fi

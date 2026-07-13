@@ -1,0 +1,154 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Build layer variables
+# Supported mode: FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# TRT-LLM stages are not present in this Dockerfile.
+ARG FW_DEP_BUILDER
+ARG FW_BASE_FINAL
+
+ARG NEMO_FW_BASE_IMAGE
+FROM ${NEMO_FW_BASE_IMAGE} AS base
+
+ENV NVIDIA_PRODUCT_NAME="NeMo Framework" \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive
+
+##############################################################################
+##
+## VLLM wheel
+##
+##############################################################################
+
+FROM base AS vllm_wheel
+
+ARG VLLM_VERSION=v0.14.1
+ARG MAX_JOBS=4
+ENV VLLM_VERSION=$VLLM_VERSION
+
+# Build vllm
+RUN mkdir -p /src/vllm && \
+    git clone https://github.com/vllm-project/vllm.git /src/vllm && \
+    cd /src/vllm && \
+    echo "Building vLLM version: $VLLM_VERSION" && \
+    git checkout $VLLM_VERSION && \
+    python use_existing_torch.py && \
+    pip install -r requirements/build/cuda.txt && \
+    pip wheel --no-deps --no-build-isolation -v .
+
+##############################################################################
+##
+## Top layer of FW_BASE container
+##
+## default, FW_DEP_BUILDER=base
+##
+##############################################################################
+
+FROM ${FW_DEP_BUILDER} AS fw_dep_builder
+
+##############################################################################
+##
+## UV setup and UV python configuration
+##
+## Setup ipykernel to use uv python
+## Fix torchrun shebang to use uv python
+##
+##############################################################################
+
+ARG UV_VERSION=0.9.17
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_CACHE_DIR=/opt/uv_cache \
+    PATH="/opt/venv/bin:$PATH" \
+    UV_LINK_MODE=copy
+RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr/local/bin sh && \
+    uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
+    python -m ipykernel install --name=python3 --display-name="Python 3 (ipykernel)" && \
+    if [ -f /usr/local/bin/torchrun ]; then \
+    sed -i '1s|#!/usr/bin/python|#!/usr/bin/env python|' /usr/local/bin/torchrun; \
+    fi
+
+##############################################################################
+##
+## CUDA toolkit stage
+##
+##############################################################################
+
+FROM fw_dep_builder AS fw_toolkit_builder
+
+##############################################################################
+##
+## Reinstall CUDA toolkit packages
+##############################################################################
+
+ARG REINSTALL_NSYS
+ARG NSYS_VERSION
+ARG REINSTALL_CUDNN
+ARG CUDNN_VERSION
+ENV NSIGHT_SYSTEMS_VERSION $NSYS_VERSION
+ARG REINSTALL_NCCL
+ARG NCCL_VERSION
+ARG REINSTALL_CUBLAS
+ARG CUBLAS_VERSION
+
+RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_nsys.sh \
+    --mount=type=bind,source=docker/common/install_cudnn.sh,target=/opt/install_cudnn.sh \
+    --mount=type=bind,source=docker/common/install_nccl.sh,target=/opt/install_nccl.sh \
+    --mount=type=bind,source=docker/common/install_cublas.sh,target=/opt/install_cublas.sh \
+    if [ $REINSTALL_NSYS = "True" ]; then \
+    bash /opt/install_nsys.sh --NSYS_VERSION=$NSYS_VERSION; \
+    fi && \
+    if [ $REINSTALL_CUDNN = "True" ]; then \
+    bash /opt/install_cudnn.sh --CUDNN_VERSION=$CUDNN_VERSION --DEVEL; \
+    fi && \
+    if [ $REINSTALL_NCCL = "True" ]; then \
+    bash /opt/install_nccl.sh --NCCL_VER=$NCCL_VERSION; \
+    fi && \
+    if [ $REINSTALL_CUBLAS = "True" ]; then \
+    bash /opt/install_cublas.sh --CUBLAS_VER=$CUBLAS_VERSION; \
+    fi
+
+##############################################################################
+##
+## Install vLLM
+##
+##############################################################################
+
+# Copy Wheels
+RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
+    --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
+    pip install /tmp/vllm/vllm*.whl && \
+    pushd /usr/local/lib/python3.12/dist-packages/vllm && \
+    patch -p1 < /opt/vllm.patch && \
+    popd
+
+##############################################################################
+##
+## Final layer of FW_BASE container
+##
+## default, FW_BASE_FINAL=fw_toolkit_builder
+##
+##############################################################################
+
+FROM ${FW_BASE_FINAL} AS nemo_fw_base_final
+
+##############################################################################
+##
+## Remove nvidia-modelopt
+##
+## nvidia-modelopt ships in the NeMo FW base image but is not used by
+## Megatron-Bridge; uninstall it to keep the final image lean.
+##
+##############################################################################
+
+RUN cd /opt && pip uninstall -y nvidia-modelopt || true

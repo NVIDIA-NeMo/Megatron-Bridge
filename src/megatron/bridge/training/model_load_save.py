@@ -1,0 +1,841 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import argparse
+import logging
+import os
+import socket
+from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Generator, Literal, Optional, Union
+
+import torch
+import torch.distributed as dist
+from megatron.core import parallel_state
+from megatron.core.optimizer import OptimizerConfig
+from megatron.core.process_groups_config import ProcessGroupCollection
+from megatron.core.transformer import MegatronModule, TransformerConfig
+from megatron.core.utils import get_model_config
+from megatron.training.models.base import ModelConfig
+
+from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
+from megatron.bridge.training.checkpointing import save_checkpoint
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
+from megatron.bridge.training.state import GlobalState
+from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
+from megatron.bridge.training.utils.checkpoint_utils import file_exists
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
+from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
+
+
+logger = logging.getLogger(__name__)
+
+HF_BASED_TOKENIZERS = [
+    "BertWordPieceLowerCase",
+    "BertWordPieceCase",
+    "GPT2BPETokenizer",
+    "HuggingFaceTokenizer",
+]
+
+
+def _uses_hybrid_rng_tracker(model_cfg: Any) -> bool:
+    is_hybrid_model = getattr(model_cfg, "is_hybrid_model", False)
+    if isinstance(is_hybrid_model, bool) and is_hybrid_model:
+        return True
+
+    hybrid_layer_pattern = getattr(model_cfg, "hybrid_layer_pattern", None)
+    return isinstance(hybrid_layer_pattern, str) and bool(hybrid_layer_pattern)
+
+
+def _disable_cuda_graphs_for_hybrid_load(model_cfg: Any) -> None:
+    if not _uses_hybrid_rng_tracker(model_cfg):
+        return
+
+    for name, value in (
+        ("cuda_graph_impl", "none"),
+        ("enable_cuda_graph", False),
+        ("external_cuda_graph", False),
+    ):
+        if hasattr(model_cfg, name):
+            setattr(model_cfg, name, value)
+    if hasattr(model_cfg, "cuda_graph_scope") or hasattr(model_cfg, "cuda_graph_modules"):
+        clear_cuda_graph_modules(model_cfg)
+
+
+def torch_dtype_from_mcore_config(config: Any) -> torch.dtype:
+    """Convert Megatron-Core config dtype settings to torch dtype.
+
+    Args:
+        config: Megatron-Core configuration object with bf16/fp16 flags.
+
+    Returns:
+        The corresponding torch dtype.
+    """
+    if hasattr(config, "bf16") and config.bf16:
+        return torch.bfloat16
+    elif hasattr(config, "fp16") and config.fp16:
+        return torch.float16
+    else:
+        return torch.float32
+
+
+@contextmanager
+def megatron_cpu_init_context(config: Any) -> Generator[None, None, None]:
+    """Context manager to temporarily force CPU initialization for Megatron models.
+
+    This is useful when initializing a model on a system without GPUs or when
+    memory constraints prevent GPU initialization.
+
+    Args:
+        config: The Megatron model configuration object (e.g., GPTConfig).
+            Must have a `use_cpu_initialization` attribute.
+
+    Yields:
+        None. The context modifies the config in place.
+    """
+    original_use_cpu_initialization = config.use_cpu_initialization
+    config.use_cpu_initialization = True
+
+    try:
+        yield
+    finally:
+        config.use_cpu_initialization = original_use_cpu_initialization
+
+
+@contextmanager
+def temporary_distributed_context(backend: str = "gloo") -> Generator[None, None, None]:
+    """Context manager to temporarily initialize a minimal distributed environment.
+
+    Sets up a single-process distributed backend, initializes Megatron model parallel state,
+    yields control, and then cleans up the distributed environment.
+    Useful for operations that require Megatron's parallel state but should run
+    standalone (e.g., loading distributed checkpoints).
+
+    Args:
+        backend: The distributed backend to use ("gloo" for CPU, "nccl" for GPU).
+
+    Yields:
+        None.
+    """
+    if "MASTER_ADDR" in os.environ and "MASTER_PORT" in os.environ:
+        init_method = None
+    else:
+        # Find an available port dynamically
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.bind(("localhost", 0))
+            addr, port = s.getsockname()
+        init_method = f"tcp://{addr}:{port}"
+
+    dist.init_process_group(backend=backend, init_method=init_method, world_size=1, rank=0)
+    parallel_state.initialize_model_parallel()
+
+    # Initialize RNG tracker for model initialization
+    # This is needed even for CPU/gloo backend as some model components
+    # (like MambaMixer) may use get_cuda_rng_tracker().fork() during __init__
+    if torch.cuda.is_available() and torch.cuda.device_count() > 0:
+        try:
+            from megatron.core.tensor_parallel import model_parallel_cuda_manual_seed
+
+            model_parallel_cuda_manual_seed(0)
+        except Exception:
+            # If RNG tracker initialization fails (e.g., in test environments
+            # or when parallel groups aren't fully initialized), continue anyway.
+            # Models that need the RNG tracker will fail later with a clearer error.
+            pass
+
+    try:
+        yield
+    finally:
+        parallel_state.destroy_model_parallel()
+        dist.destroy_process_group()
+
+
+def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
+    """Create a tokenizer from a training checkpoint.
+
+    Obtains tokenizer configuration from the checkpoint and builds the tokenizer.
+    Checkpoint should be in MCore distributed checkpoint format.
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory
+                          (e.g., /path/to/model/checkpoints/iter_0000001).
+        **kwargs: Overrides to the TokenizerConfig used to build the tokenizer.
+                Useful if the tokenizer assets have moved since training.
+
+    """
+    from megatron.bridge.training.checkpointing import (
+        get_checkpoint_run_config_filename,
+        read_run_config,
+    )
+    from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _tokenizer_config_from_args
+    from megatron.bridge.utils.instantiate_utils import instantiate
+
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+
+    if file_exists(run_config_filename):
+        run_config = read_run_config(run_config_filename)
+        mbridge_ckpt = True
+    else:
+        try:
+            mlm_args = _load_args_from_checkpoint(checkpoint_path)
+            mbridge_ckpt = False
+        except AssertionError:
+            raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
+
+    if mbridge_ckpt:
+        cfg = instantiate(run_config["tokenizer"])
+    else:
+        cfg = _tokenizer_config_from_args(mlm_args)
+
+    hf_tokenizer_kwargs = kwargs.get("hf_tokenizer_kwargs")
+    caller_trusts_remote_code = kwargs.get("trust_remote_code") is True or (
+        isinstance(hf_tokenizer_kwargs, dict) and hf_tokenizer_kwargs.get("trust_remote_code") is True
+    )
+
+    for key, val in kwargs.items():
+        if hasattr(cfg, key):
+            setattr(cfg, key, val)
+        else:
+            raise AttributeError(
+                f"Attempting to set a non-existent attribute '{key}' on TokenizerConfig.\nState of TokenizerConfig before attempting this override: {cfg}"
+            )
+
+    if getattr(cfg, "trust_remote_code", False) is True and not caller_trusts_remote_code:
+        raise ValueError(
+            "Checkpoint tokenizer config requested trust_remote_code=True. "
+            "Pass trust_remote_code=True to load_tokenizer() only if you trust the checkpoint tokenizer code."
+        )
+
+    if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
+        cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
+
+    return build_tokenizer(cfg)
+
+
+def _normalize_moe_dispatcher_sm_config(model_dict: dict[str, Any]) -> None:
+    """Migrate legacy per-backend MoE SM counts when MCore supports the unified field."""
+    unified_key = "moe_flex_dispatcher_num_sms"
+    if not hasattr(TransformerConfig, unified_key):
+        return
+
+    # TODO: remove this guard when MCore dev includes commit 2d7060f44fc9 and Bridge no longer
+    # supports checkpoints saved with the legacy per-backend SM-count fields.
+    if model_dict.get(unified_key) is None:
+        backend = model_dict.get("moe_flex_dispatcher_backend", "deepep")
+        legacy_key = "moe_hybridep_num_sms" if backend == "hybridep" else "moe_deepep_num_sms"
+        legacy_value = model_dict.get(legacy_key)
+        if legacy_value is not None:
+            model_dict[unified_key] = legacy_value
+
+    for legacy_key in ("moe_deepep_num_sms", "moe_hybridep_num_sms"):
+        if legacy_key in model_dict:
+            model_dict[legacy_key] = None
+
+
+def load_model_config(
+    checkpoint_path: str,
+) -> tuple[TransformerConfig | ModelConfig, Optional[argparse.Namespace]]:
+    """Returns the model config saved in the checkpoint.
+
+    Supports checkpoints saved with either Megatron Bridge or MegatronLM.
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory
+                          (e.g., /path/to/model/checkpoints/iter_0000001).
+
+    Returns:
+        - The model config from the checkpoint. The object returned will be a
+          model provider (e.g. GPTModelProvider) if using a Megatron Bridge
+          checkpoint or a TransformerConfig if using a MegatronLM checkpoint.
+        - If the checkpoint is from MegatronLM, returns the argparse.Namespace
+          object. Otherwise None.
+    """
+    from megatron.bridge.training.checkpointing import (
+        get_checkpoint_run_config_filename,
+        read_run_config,
+    )
+    from megatron.bridge.training.mlm_compat.arguments import _load_args_from_checkpoint, _transformer_config_from_args
+    from megatron.bridge.utils.instantiate_utils import instantiate
+
+    run_config_filename = get_checkpoint_run_config_filename(checkpoint_path)
+
+    if file_exists(run_config_filename):
+        run_config = read_run_config(run_config_filename)
+        mbridge_ckpt = True
+        mlm_args = None
+
+        # For backward compatibility reasons only
+        model_dict = run_config.get("model", {})
+        if model_dict.get("hybrid_override_pattern") and not model_dict.get("hybrid_layer_pattern"):
+            model_dict["hybrid_layer_pattern"] = model_dict.pop("hybrid_override_pattern")
+        if isinstance(model_dict.get("pipeline_model_parallel_layout"), dict):
+            model_dict["pipeline_model_parallel_layout"] = None
+        _normalize_moe_dispatcher_sm_config(model_dict)
+    else:
+        try:
+            mlm_args = _load_args_from_checkpoint(checkpoint_path)
+            mbridge_ckpt = False
+        except AssertionError:
+            raise RuntimeError(f"Checkpoint at {checkpoint_path} is not in a supported format.")
+
+    if mbridge_ckpt:
+        if "_builder_" in run_config["model"]:
+            model_cfg = ModelConfig.from_dict(run_config["model"])
+        else:
+            model_cfg = instantiate(run_config["model"])
+    else:
+        model_cfg = _transformer_config_from_args(mlm_args)
+
+    return model_cfg, mlm_args
+
+
+def build_and_load_model(
+    checkpoint_path: str,
+    model_cfg: TransformerConfig | ModelConfig,
+    model_type: Optional[Literal["gpt", "hybrid", "mamba"]] = None,
+    megatron_args: Optional[argparse.Namespace] = None,
+    return_state_dict: bool = False,
+    use_cpu_init: bool = False,
+    skip_temp_dist_context: Optional[bool] = None,
+) -> Union[Any, dict[str, torch.Tensor]]:
+    """Load a Megatron model from a distributed checkpoint.
+
+    Creates model instances and optionally a minimal distributed environment
+    to load the model weights from `checkpoint_path` into the model.
+    Automatically selects the appropriate distributed backend (Gloo for CPU, NCCL for GPU).
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory. Used only for
+                    model weights (e.g., /path/to/model/checkpoints/iter_0000001).
+        model_cfg: Model config from load_model_config(). Either a TransformerConfig or
+            a model provider (e.g. GPTModelProvider) depending on source of checkpoint.
+        model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
+            GPT and Hybrid models are supported; "mamba" is accepted as a deprecated alias.
+        megatron_args: If the checkpoint is from MegatronLM, this is required.
+        return_state_dict: If True, return the state dict instead of model instance. Default: False.
+        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
+                     If False, use GPU initialization and NCCL backend. Default: False.
+        skip_temp_dist_context: If True, skip temporary distributed context setup.
+                               If None, automatically skip if distributed is already initialized.
+                               Default: None.
+
+    Returns:
+        The model instance with loaded weights if return_state_dict is False,
+        otherwise returns a dictionary containing the full, unsharded model state_dict.
+    """
+    from megatron.bridge.training.checkpointing import (
+        _load_model_weights_from_checkpoint,
+    )
+    from megatron.bridge.training.mlm_compat.arguments import _tokenizer_config_from_args
+    from megatron.bridge.training.mlm_compat.model import _get_model, _gpt_provider, _hybrid_provider
+    from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
+
+    if has_modelopt_state(checkpoint_path):
+        if hasattr(model_cfg, "restore_modelopt_state"):
+            model_cfg.restore_modelopt_state = True
+
+    def _call_model_provider(model_cfg):
+        """Handles provider call for both MBridge and MLM providers."""
+        if isinstance(model_cfg, ModelProviderMixin):
+            if hasattr(model_cfg, "finalize"):
+                model_cfg.finalize()
+            return model_cfg.provide_distributed_model(wrap_with_ddp=False, use_cpu_initialization=use_cpu_init)
+        elif isinstance(model_cfg, ModelConfig):
+            if hasattr(model_cfg, "finalize"):
+                model_cfg.finalize()
+            builder_cls = model_cfg.get_builder_cls()
+            builder = builder_cls(model_cfg)
+            # Note: `use_cpu_initialization` is not passed as an explicit kwarg here,
+            # unlike the ModelProviderMixin path which passes it directly to
+            # `provide_distributed_model`. Instead, it is handled by the
+            # `megatron_cpu_init_context` context manager (see below), which sets
+            # the flag on the config object. This is intentional — we do not want
+            # to duplicate TransformerConfig fields like `use_cpu_initialization`
+            # as kwargs on `build_distributed_models`.
+            return builder.build_distributed_models(
+                ProcessGroupCollection.use_mpu_process_groups(), wrap_with_ddp=False
+            )
+        else:
+            assert model_type in ("gpt", "hybrid", "mamba"), f"model type {model_type} not supported."
+            assert megatron_args is not None, "megatron_args must be provided if the checkpoint is from MegatronLM."
+
+            # Generate the unpadded vocab size based on the tokenizer from the checkpoint
+            cfg = _tokenizer_config_from_args(megatron_args)
+            tokenizer = build_tokenizer(cfg)
+            vocab_size = tokenizer.vocab_size
+
+            # Re-calculate the padded vocab size based on the model config instead of the args from the checkpoint
+            # to accommodate TP overrides
+            megatron_args.padded_vocab_size = calculate_padded_vocab_size(
+                vocab_size,
+                megatron_args.make_vocab_size_divisible_by,
+                model_cfg.tensor_model_parallel_size,
+            )
+            provider = _gpt_provider if model_type == "gpt" else _hybrid_provider
+            return _get_model(megatron_args, provider, model_cfg)
+
+    # Auto-detect if we should skip temp dist context
+    if skip_temp_dist_context is None:
+        skip_temp_dist_context = dist.is_available() and dist.is_initialized()
+
+    def _load_checkpoint():
+        target_dtype = torch_dtype_from_mcore_config(model_cfg)
+        if model_cfg.params_dtype != target_dtype:
+            logger.info(f"Converting params_dtype from {model_cfg.params_dtype} to {target_dtype}")
+            model_cfg.params_dtype = target_dtype
+
+        if use_cpu_init:
+            with megatron_cpu_init_context(model_cfg):
+                model = _call_model_provider(model_cfg)
+        else:
+            model = _call_model_provider(model_cfg)
+
+        if getattr(model_cfg, "restore_modelopt_state", False):
+            from megatron.bridge.training.post_training.checkpointing import (
+                load_modelopt_state,
+            )
+
+            load_modelopt_state(model, checkpoint_path)
+
+        maybe_state_dict = _load_model_weights_from_checkpoint(
+            checkpoint_path, model, return_state_dict=return_state_dict
+        )
+
+        if return_state_dict:
+            del model
+            return maybe_state_dict
+        else:
+            return model
+
+    if skip_temp_dist_context:
+        return _load_checkpoint()
+    else:
+        # Use appropriate backend based on initialization type
+        backend = "gloo" if use_cpu_init else "nccl"
+        with temporary_distributed_context(backend=backend):
+            return _load_checkpoint()
+
+
+def load_megatron_model(
+    checkpoint_path: str,
+    model_type: Optional[Literal["gpt", "hybrid", "mamba"]] = None,
+    return_state_dict: bool = False,
+    use_cpu_init: bool = False,
+    skip_temp_dist_context: Optional[bool] = None,
+    mp_overrides: Optional[ModelParallelKwargs] = None,
+) -> Union[Any, dict[str, torch.Tensor]]:
+    """Load a Megatron model from a distributed checkpoint.
+
+    Wrapper around load_model_config() and build_and_load_model() for convenience.
+
+    Args:
+        checkpoint_path: path to an MCore distributed checkpoint directory
+                          (e.g., /path/to/model/checkpoints/iter_0000001).
+        model_type: If the checkpoint is from MegatronLM, the model type is required. Currently,
+            GPT and Hybrid models are supported; "mamba" is accepted as a deprecated alias.
+        return_state_dict: If True, return the state dict instead of model instance. Default: False.
+        use_cpu_init: If True, use CPU initialization context for the model and Gloo backend.
+                     If False, use GPU initialization and NCCL backend. Default: False.
+        skip_temp_dist_context: If True, skip temporary distributed context setup.
+                               If None, automatically skip if distributed is already initialized.
+                               Default: None.
+        mp_overrides: Optional model-parallel overrides to apply to the loaded config.
+                      Only provided fields are overridden.
+
+    Returns:
+        The model instance with loaded weights if return_state_dict is False,
+        otherwise returns a dictionary containing the full, unsharded model state_dict.
+    """
+    model_cfg, mlm_args = load_model_config(checkpoint_path)
+    # If in single GPU environment, reset additional parallel settings
+    model_cfg.tensor_model_parallel_size = 1
+    model_cfg.pipeline_model_parallel_size = 1
+    model_cfg.num_layers_in_first_pipeline_stage = None
+    model_cfg.num_layers_in_last_pipeline_stage = None
+    model_cfg.context_parallel_size = 1
+    model_cfg.expert_model_parallel_size = 1
+    model_cfg.expert_tensor_parallel_size = 1
+    if getattr(model_cfg, "hybrid_layer_pattern", None):
+        model_cfg.hybrid_layer_pattern = model_cfg.hybrid_layer_pattern.replace("|", "")
+    model_cfg.sequence_parallel = False
+    model_cfg.perform_initialization = False
+    model_cfg.virtual_pipeline_model_parallel_size = None
+    model_cfg.hierarchical_context_parallel_sizes = None
+    model_cfg.overlap_moe_expert_parallel_comm = False  # Required with EP=1
+    model_cfg.delay_wgrad_compute = False  # Required with overlap=False
+    _disable_cuda_graphs_for_hybrid_load(model_cfg)
+    if use_cpu_init:
+        model_cfg.fp8 = None
+        model_cfg.fp8_param = False
+
+    # Apply model-parallel overrides if provided
+    if mp_overrides:
+        for key, value in mp_overrides.items():
+            if hasattr(model_cfg, key) and value is not None:
+                setattr(model_cfg, key, value)
+
+    # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
+    if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
+        tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
+        ep = getattr(model_cfg, "expert_model_parallel_size", 1)
+        if tp * ep == 1:
+            model_cfg.moe_token_dispatcher_type = "allgather"
+
+    return build_and_load_model(
+        checkpoint_path, model_cfg, model_type, mlm_args, return_state_dict, use_cpu_init, skip_temp_dist_context
+    )
+
+
+def save_megatron_model(
+    model: list[MegatronModule],
+    path: Union[str, Path],
+    ckpt_format: str = "torch_dist",
+    hf_tokenizer_path: Optional[Union[str, Path]] = None,
+    low_memory_save: bool = False,
+    hf_tokenizer_kwargs: Optional[dict] = None,
+) -> None:
+    """Save a Megatron model in native Megatron checkpoint format without optimizer state.
+
+    This method saves the model in Megatron's native checkpoint format, which
+    can be loaded directly by Megatron for training or inference. The checkpoint
+    includes the model configuration and weights, NO optimizer state or other
+    artifacts.
+
+    Args:
+        model: Megatron model instance or list of instances.
+        path: Directory path where the checkpoint will be saved.
+        ckpt_format: Checkpoint format to use ("torch_dist" or other supported formats).
+        hf_tokenizer_path: Optional HuggingFace model ID or path for tokenizer metadata.
+            If provided, the tokenizer metadata will be included in the checkpoint.
+        low_memory_save: If True, uses a memory-optimized save flow that:
+            1. Builds the sharded state dict
+            2. Expands ShardedTensorFactory objects early
+            3. Clears factory data references
+            4. Deletes the model from memory
+            5. Forces garbage collection
+            6. Saves the pre-processed state dict
+            This reduces peak memory by ~50% for models with merged weights
+            (e.g., gate+up projections) at the cost of destroying the model.
+            Default is False, preserving the model for further use.
+        hf_tokenizer_kwargs: Optional dictionary of kwargs to pass to the HuggingFace tokenizer.
+            Common options include trust_remote_code=True for models with custom tokenizers.
+
+    Example:
+        >>> # Save model checkpoint
+        >>> save_megatron_model(megatron_model, "./megatron_checkpoint")
+
+        >>> # Save model checkpoint with tokenizer metadata
+        >>> save_megatron_model(
+        ...     megatron_model,
+        ...     "./megatron_checkpoint",
+        ...     hf_tokenizer_path="meta-llama/Meta-Llama-3-8B"
+        ... )
+
+        >>> # Save model checkpoint with low-memory mode (destroys model after save)
+        >>> save_megatron_model(
+        ...     megatron_model,
+        ...     "./megatron_checkpoint",
+        ...     low_memory_save=True
+        ... )
+
+    Note:
+        - This method is collective and must be called by all ranks
+        - The saved checkpoint can be loaded with Megatron's checkpoint loading utilities
+        - The checkpoint format follows Megatron's standard structure for compatibility
+        - When low_memory_save=True, the model is deleted and cannot be used afterward
+    """
+    # Create tokenizer config if tokenizer path is provided
+    tokenizer_config = None
+    if hf_tokenizer_path is not None:
+        from megatron.bridge.training.tokenizers.config import TokenizerConfig
+
+        tokenizer_config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=str(hf_tokenizer_path),
+            hf_tokenizer_kwargs=hf_tokenizer_kwargs or {},
+        )
+
+    # Get model config from the first model instance
+    model_config = get_model_config(model[0])
+
+    # Validate that the model config is a model provider
+    if not isinstance(model_config, ModelProviderMixin):
+        raise TypeError(
+            f"Expected model config to be an instance of ModelProviderMixin, "
+            f"but got {type(model_config).__name__}. "
+            f"Model configs must inherit from ModelProviderMixin to ensure proper "
+            f"model instantiation and configuration handling."
+        )
+
+    # Create global state for checkpointing
+    state = GlobalState()
+    state.cfg = ConfigContainer(
+        model=model_config,
+        train=None,
+        optimizer=OptimizerConfig(use_distributed_optimizer=False),
+        ddp=None,
+        scheduler=None,
+        dataset=None,
+        logger=LoggerConfig(),
+        tokenizer=tokenizer_config,
+        checkpoint=CheckpointConfig(
+            async_save=False,
+            save=str(path),
+            save_optim=False,
+            save_rng=False,
+            ckpt_format=ckpt_format,
+            dist_ckpt_optim_fully_reshardable=True,
+        ),
+        dist=None,
+    )
+
+    if low_memory_save:
+        # Low-memory save flow: process factories incrementally, freeing memory as we go
+        import gc
+        from dataclasses import replace
+
+        from megatron.core.dist_checkpointing.dict_utils import (
+            nested_values,
+        )
+        from megatron.core.dist_checkpointing.mapping import (
+            ShardedTensor,
+            ShardedTensorFactory,
+        )
+        from tqdm import tqdm
+
+        from megatron.bridge.training.checkpointing import (
+            _build_sharded_state_dict_metadata,
+            generate_state_dict,
+            get_rng_state,
+        )
+        from megatron.bridge.training.utils.pg_utils import get_pg_collection
+
+        logger.info("[LOW_MEMORY_SAVE] Generating state dict...")
+
+        # Get RNG state (minimal, since save_rng=False)
+        pg_collection = get_pg_collection(model)
+        rng_state = get_rng_state(
+            data_parallel_random_init=False, ckpt_format=ckpt_format, pg_collection=pg_collection
+        )
+
+        # Build sharded state dict metadata
+        sharded_sd_metadata = _build_sharded_state_dict_metadata(False, state.cfg.checkpoint)
+
+        # Generate state dict with ShardedTensorFactory objects
+        state_dict = generate_state_dict(
+            state.cfg.checkpoint,
+            model,
+            optimizer=None,
+            opt_param_scheduler=None,
+            rng_state=rng_state,
+            iteration=0,
+            optim_sd_kwargs=dict(metadata=sharded_sd_metadata),
+            model_sd_kwargs=dict(metadata=sharded_sd_metadata),
+            rerun_state=None,
+        )
+
+        # Build a map from storage data_ptr to model parameter
+        # This allows us to clear model params as we process factories
+        storage_to_param = {}
+        for m in model:
+            for name, param in m.named_parameters():
+                storage_ptr = param.data.untyped_storage().data_ptr()
+                storage_to_param[storage_ptr] = param
+
+        logger.info(f"[LOW_MEMORY_SAVE] Mapped {len(storage_to_param)} model parameters")
+
+        def _clear_source_param(tensor):
+            """Clear the model parameter that shares storage with this tensor."""
+            storage_ptr = tensor.untyped_storage().data_ptr()
+            if storage_ptr in storage_to_param:
+                param = storage_to_param[storage_ptr]
+                # Clear the parameter data
+                param.data = torch.empty(0, device=param.device, dtype=param.dtype)
+                del storage_to_param[storage_ptr]
+                return True
+            return False
+
+        def _apply_factory_and_free(container, key, factory):
+            """Apply a single factory, clone results, and free the source data."""
+            # Get the source tensor before applying
+            source_tensor = factory.data
+
+            # Build the factory result (this creates clones for gated MLP)
+            result = factory.build_fn(factory.key, factory.data, factory.replica_id, factory.flattened_range)
+
+            # Clone all ShardedTensor data in the result to decouple from source
+            if isinstance(result, dict):
+                for sh_ten in nested_values(result):
+                    if isinstance(sh_ten, ShardedTensor) and sh_ten.data is not None:
+                        sh_ten.data = sh_ten.data.clone()
+            elif isinstance(result, ShardedTensor) and result.data is not None:
+                result = replace(result, data=result.data.clone())
+
+            # Replace factory with result in container
+            container[key] = result
+
+            # NOW clear the source parameter from the model
+            # This is safe because we've cloned all the data we need
+            _clear_source_param(source_tensor)
+
+        def _collect_factories(d):
+            """Collect all (container, key, factory) tuples from nested dict/list."""
+            factories = []
+            if isinstance(d, dict):
+                for k, v in list(d.items()):
+                    if isinstance(v, ShardedTensorFactory):
+                        factories.append((d, k, v))
+                    elif isinstance(v, (dict, list)):
+                        factories.extend(_collect_factories(v))
+            elif isinstance(d, list):
+                for i, v in enumerate(d):
+                    if isinstance(v, ShardedTensorFactory):
+                        factories.append((d, i, v))
+                    elif isinstance(v, (dict, list)):
+                        factories.extend(_collect_factories(v))
+            return factories
+
+        # Collect all factories first to get total count for progress bar
+        factories = _collect_factories(state_dict)
+
+        # Process factories with progress bar
+        for idx, (container, key, factory) in enumerate(
+            tqdm(factories, desc="[LOW_MEMORY_SAVE] Processing factories", unit="factory")
+        ):
+            _apply_factory_and_free(container, key, factory)
+            # Periodic garbage collection
+            if (idx + 1) % 20 == 0:
+                gc.collect()
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+
+        # Force GC after processing all factories
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        # Collect remaining ShardedTensors for progress bar
+        remaining_tensors = [
+            sh_ten
+            for sh_ten in nested_values(state_dict)
+            if isinstance(sh_ten, ShardedTensor) and sh_ten.data is not None
+        ]
+
+        # Clone remaining ShardedTensor data with progress bar
+        for idx, sh_ten in enumerate(tqdm(remaining_tensors, desc="[LOW_MEMORY_SAVE] Cloning tensors", unit="tensor")):
+            source_tensor = sh_ten.data
+            sh_ten.data = sh_ten.data.clone()
+            _clear_source_param(source_tensor)
+            if (idx + 1) % 50 == 0:
+                gc.collect()
+
+        # Clear any remaining model params not processed above
+        remaining_params = len(storage_to_param)
+        for m in model:
+            for param in m.parameters():
+                if param.data.numel() > 0:  # Not already cleared
+                    param.data = torch.empty(0, device=param.device, dtype=param.dtype)
+        model.clear()
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        logger.info(f"[LOW_MEMORY_SAVE] Cleared {remaining_params} remaining params, memory freed")
+
+        # Save with pre-built state dict
+        save_checkpoint(
+            state=state,
+            model=[],  # Empty model list since we've freed it
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+            prebuilt_state_dict=state_dict,
+            pg_collection=pg_collection,
+            callback_manager=None,
+        )
+    else:
+        # Save the checkpoint
+        save_checkpoint(
+            state=state,
+            model=model,
+            optimizer=None,
+            opt_param_scheduler=None,
+            num_floating_point_operations_so_far=0,
+            callback_manager=None,
+        )
+
+    # Save tokenizer files separately if tokenizer config is provided
+    if tokenizer_config is not None:
+        from megatron.bridge.training.checkpointing import (
+            get_checkpoint_name,
+            save_tokenizer_assets,
+        )
+
+        # Build the tokenizer
+        tokenizer = build_tokenizer(tokenizer_config)
+
+        # Get the checkpoint name for step 0
+        checkpoint_name = get_checkpoint_name(str(path), 0, release=False)
+
+        # Save tokenizer files
+        save_tokenizer_assets(tokenizer, tokenizer_config, checkpoint_name)
+
+
+def dtype_from_str(dtype: str) -> torch.dtype:
+    """Convert a string representation of a dtype to a torch.dtype.
+
+    Handles common variations like 'fp16', 'bf16-mixed'. Defaults to float32
+    for unrecognized strings.
+
+    Args:
+        dtype: The string representation (e.g., "bf16", "fp16", "float32").
+
+    Returns:
+        The corresponding torch.dtype.
+    """
+    if not isinstance(dtype, str):
+        raise TypeError(f"Expected str, got {type(dtype)}")
+
+    from megatron.bridge.utils.activation_map import str_to_dtype
+
+    try:
+        return str_to_dtype(dtype)
+    except ValueError:
+        return torch.float32
+
+
+def dtype_from_hf(config: Any) -> torch.dtype:
+    """Extract the torch.dtype from a Hugging Face PretrainedConfig object.
+
+    Args:
+        config: A Hugging Face model config object (must have `torch_dtype` attribute).
+
+    Returns:
+        The corresponding torch.dtype.
+
+    Raises:
+        ValueError: If the `torch_dtype` attribute is not a recognized string or torch.dtype.
+        AttributeError: If the config object does not have a `torch_dtype` attribute.
+    """
+    if not hasattr(config, "torch_dtype"):
+        raise AttributeError("Expected config to have attr `torch_dtype`")
+
+    torch_dtype = config.torch_dtype
+
+    if isinstance(torch_dtype, torch.dtype):
+        return torch_dtype
+    elif isinstance(torch_dtype, str):
+        return dtype_from_str(torch_dtype)
+    else:
+        raise ValueError(f"torch_dtype is not of type str/torch.dtype, got {type(torch_dtype)}")

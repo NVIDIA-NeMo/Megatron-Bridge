@@ -1,0 +1,282 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+[build-system]
+requires = ["setuptools<80.0.0", "pybind11", "torch", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["megatron.bridge", "megatron.bridge.*"]
+
+[project]
+name = "megatron-bridge"
+description = "Megatron Bridge: Training Recipes for Megatron-based LLM and VLM models"
+readme = "README.md"
+dynamic = ["version"]
+license = {file = "LICENSE"}
+requires-python = ">=3.12,<3.13"
+authors = [{ name = "NVIDIA", email = "nemo-toolkit@nvidia.com" }]
+maintainers = [
+    { name = "Ananth Subramaniam", email = "ansubramania@nvidia.com" },
+    { name = "Chen Cui", email = "chcui@nvidia.com" },
+    { name = "Yu Yao", email = "yuya@nvidia.com" },
+    { name = "NVIDIA", email = "nemo-toolkit@nvidia.com" },
+]
+keywords = [
+    "NLP",
+    "NeMo",
+    "deep",
+    "gpu",
+    "language",
+    "learning",
+    "machine",
+    "nvidia",
+    "pytorch",
+    "speech",
+    "torch",
+    "tts",
+]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: Apache Software License",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+    "Topic :: Scientific/Engineering :: Mathematics",
+    "Topic :: Scientific/Engineering",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Utilities",
+]
+dependencies = [
+    "transformers>=5.8.1,<5.9.0",
+    "mistral-common>=1.10.0",
+    "peft>=0.18.1",
+    "datasets>=2.20.0",
+    "accelerate",
+    "diffusers>=0.36.0",
+    "peft>=0.18.0",
+    "einops",
+    "omegaconf>=2.3.0",
+    "tensorboard>=2.19.0",
+    "typing-extensions",
+    "rich",
+    "wandb>=0.25.0",
+    "six>=1.17.0",
+    "regex>=2024.11.6",
+    "pyyaml>=6.0.2",
+    "tqdm>=4.67.1",
+    "hydra-core>1.3,<=1.3.2",
+    "megatron-core[dev,mlm]",
+    "qwen-vl-utils",
+    "nvidia-resiliency-ext",
+    "flash-linear-attention",
+    "timm",
+    "open-clip-torch>=3.2.0",
+    "mlflow>=3.9.0",    # To address CVE-2025-15031
+    "comet-ml>=3.50.0",
+    "torch>=2.6.0",
+    "flashinfer-python==0.6.8.post1",  # keep flashinfer-python and flashinfer-cubin in lockstep:
+    "flashinfer-cubin==0.6.8.post1",   # the runtime version-match check fails otherwise
+]
+
+
+[tool.setuptools.dynamic]
+version = { attr = "megatron.bridge.package_info.__version__" }
+
+[tool.uv]
+managed = true
+# Packages that require pre-installed torch/CUDA at build time (no PEP 517 isolation).
+# mamba-ssm, causal-conv1d, and transformer-engine are optional extras ([ssm], [te])
+# but kept here so they build correctly when installed.
+no-build-isolation-package = [
+    "transformer-engine",
+    "transformer-engine-torch",
+    "mamba-ssm",
+    "causal-conv1d",
+    "nv-grouped-gemm",
+    "flash_mla",
+    "flash-linear-attention",
+    "fast-hadamard-transform",
+]
+prerelease = "allow"
+override-dependencies = [
+    "av; sys_platform == 'never'",                          # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
+    "imageio; sys_platform == 'never'",                     # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
+    "imageio-ffmpeg; sys_platform == 'never'",              # CVE: WAN-only codec; excluded from build, installed at test time via scripts/install_diffusion_deps.sh
+    "torch; sys_platform == 'never'",
+    "torchvision; sys_platform == 'never'",
+    "triton; sys_platform == 'never'",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@d64bc14dc87eb658ab98839e4b7687595ee53e2d",
+    "mlflow>=3.9.0",                                        # To address CVE-2025-15031
+    "cachetools>=5.0.0",
+    "cryptography>=43.0.0,<47",
+    "nvidia-modelopt==0.44.0rc5",
+    "urllib3>=2.6.3",                                       # To address CVE-2026-21441
+    "langchain>=0.3.28",                                    # To address CVE-2025-65106
+    "langchain-core>=0.3.80",                               # To address CVE-2025-65106
+    "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
+    # TODO: Remove this cap once huggingface/transformers#46381 is merged and included in a Transformers release.
+    "tokenizers>=0.22.0,<0.23",                             # tokenizers 0.23 renames RobertaProcessing's 'cls' kwarg to 'cls_token'; transformers still passes cls= (breaks CLIPTokenizer)
+    "nvidia-cudnn-frontend==1.24.0",
+    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
+    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
+]
+
+[[tool.uv.index]]
+name = "nvidia"
+url = "https://pypi.nvidia.com"
+
+# flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
+# resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
+[[tool.uv.dependency-metadata]]
+name = "flash-mla"
+version = "1.0.0+b7643bd"
+requires-dist = []
+
+[tool.uv.sources]
+megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
+nvidia-modelopt = { index = "nvidia" }
+flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
+
+[project.optional-dependencies]
+recipes = [
+    "nemo-run",
+]
+parquet = [
+    "pyarrow>=14.0.0",
+]
+tensor-inspect = [
+    "nvdlfw-inspect==0.2.1",
+]
+te = [
+    "transformer-engine[pytorch,core_cu13]",
+]
+ssm = [
+    "mamba-ssm",
+    "causal-conv1d",
+]
+audio = [
+    "librosa",
+]
+
+[dependency-groups]
+docs = [
+    "myst-parser>=4.0.1",
+    "nvidia-sphinx-theme>=0.0.8",
+    "sphinx>=8.1.3",
+    "sphinx-autobuild>=2024.10.3",
+    "sphinx-autodoc2>=0.5.0",
+    "sphinx-copybutton>=0.5.2",
+    "sphinxcontrib-mermaid",
+]
+test = [
+    "coverage>=7.8.1",
+    "flake8>=7.2.0",
+    "pylint>=3.3.7",
+    "pytest>=8.3.5",
+    "pytest-timeout>=2.4.0",
+    "pytest-mock>=3.14.0",
+    "pytest-runner>=6.0.1",
+    "pygithub",
+    "click",
+]
+dev = [
+    "pre-commit>=3.6.0",
+    "ruff>=0.9.9",
+    "mypy>=1.8.0",
+]
+build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "nvidia-mathdx"]
+# CVE-carrying WAN diffusion codecs, needed only by WAN video caching
+# (src/megatron/bridge/diffusion/models/wan/inference/utils.py). All three are suppressed
+# in the default build by the [tool.uv] override-dependencies above (each marked
+# `sys_platform == 'never'`), so they are never installed and appear only as `never`-marked
+# edges in uv.lock — keeping them out of both the image and SBOM/manifest scans. Install
+# them at test time with scripts/install_diffusion_deps.sh. This group is kept for
+# documentation only; `uv sync --group diffusion` will NOT install them on Linux.
+diffusion = ["imageio", "imageio-ffmpeg", "av"]
+# flash-mla has no PyPI wheel and is built from source by uv (no-build-isolation) during the
+# image's `uv sync --all-groups`. Megatron-LM declares it in the same group, but uv does not
+# install a path dependency's groups, so it is declared here too.
+no_pypi_wheels = ["flash_mla"]
+
+[project.entry-points."nemo_run.cli"]
+lm = "megatron.bridge"
+
+[project.urls]
+Download = "https://github.com/NVIDIA-NeMo/Megatron-Bridge/releases"
+Homepage = "https://github.com/NVIDIA-NeMo/Megatron-Bridge"
+
+[tool.pytest.ini_options]
+# durations=0 will display all tests execution time, sorted in ascending order starting from from the slowest one.
+# -vv will also display tests with durration = 0.00s
+addopts = "--verbose --pyargs --durations=0 --strict-markers"  # always add these arguments to pytest
+testpaths = ["tests"]
+# directories to ignore when discovering tests
+norecursedirs = [
+    "src",
+    "external",
+    "examples",
+    "docs",
+    "scripts",
+    "tools",
+    "tutorials",
+    "*.egg",
+    ".*",
+    "_darcs",
+    "build",
+    "CVS",
+    "dist",
+    "venv",
+    "{arch}"
+]
+# markers to select tests, use `pytest --markers` to see all available markers, `pytest -m "<marker>"` to select tests
+markers = [
+    "unit: marks unit test, i.e. testing a single, well isolated functionality (deselect with '-m \"not unit\"')",
+    "integration: marks test checking the elements when integrated into subsystems (deselect with '-m \"not integration\"')",
+    "system: marks test working at the highest integration level (deselect with '-m \"not system\"')",
+    "acceptance: marks test checking whether the developed product/model passes the user defined acceptance criteria (deselect with '-m \"not acceptance\"')",
+    "docs: mark tests related to documentation (deselect with '-m \"not docs\"')",
+    "internal: marks tests requiring internal NVIDIA infrastructure or resources",
+    "gpu: marks tests requiring GPU hardware",
+    "skipduringci: marks tests that are skipped ci as they are addressed by Jenkins jobs but should be run to test user setups",
+    "pleasefixme: marks tests that are broken and need fixing",
+]
+
+[tool.coverage.run]
+concurrency = ["thread", "multiprocessing"]
+omit = [
+    "/tmp/*",
+    "/opt/Megatron-Bridge/tests/*",
+    "/opt/Megatron-Bridge/*.py",
+    "*_ray.py",
+]
+
+[tool.coverage.paths]
+source = [
+    ".",
+    "/opt/Megatron-Bridge/",
+    "/home/runner/work/Megatron-Bridge/Megatron-Bridge",
+]

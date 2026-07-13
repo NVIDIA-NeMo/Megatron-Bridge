@@ -1,0 +1,291 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Import model providers for easy access
+from megatron.bridge.models.bailing import (
+    BailingMoeV2Bridge,
+)
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
+from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    ColumnParallelMapping,
+    GatedMLPMapping,
+    MegatronParamMapping,
+    QKVMapping,
+    ReplicatedMapping,
+    RowParallelMapping,
+)
+from megatron.bridge.models.deepseek import (
+    DeepSeekV2Bridge,
+    DeepSeekV3Bridge,
+)
+from megatron.bridge.models.ernie import (
+    Ernie45Bridge,
+)
+from megatron.bridge.models.ernie_vl import (
+    Ernie45VLBridge,
+    Ernie45VLModel,
+    Ernie45VLModelProvider,
+)
+from megatron.bridge.models.exaone import (
+    Exaone4Bridge,
+)
+from megatron.bridge.models.falcon_h1 import (
+    FalconH1Bridge,
+    FalconH1ModelProvider,
+)
+from megatron.bridge.models.gemma import (
+    Gemma2ModelProvider,
+    Gemma3ModelProvider,
+    GemmaModelProvider,
+)
+from megatron.bridge.models.gemma_vl import (
+    Gemma3VLBridge,
+    Gemma3VLModel,
+    Gemma3VLModelProvider,
+    Gemma4VLBridge,
+    Gemma4VLModel,
+    Gemma4VLModelProvider,
+)
+from megatron.bridge.models.glm import (
+    GLM45Bridge,
+    GLM47FlashBridge,
+)
+from megatron.bridge.models.glm_moe_dsa import (
+    GLM5Bridge,
+)
+from megatron.bridge.models.glm_vl import (
+    GLM45VBridge,
+    GLM45VModelProvider,
+)
+from megatron.bridge.models.gpt_oss import (
+    GPTOSSBridge,
+)
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hy_v3 import (
+    HYV3Bridge,
+)
+from megatron.bridge.models.hybrid import (
+    HybridModelBuilder,
+    HybridModelConfig,
+    HybridModelProvider,
+)
+from megatron.bridge.models.kimi import (
+    KimiK2Bridge,
+)
+from megatron.bridge.models.kimi_vl import (
+    KimiK25VLBridge,
+    KimiK25VLModel,
+    KimiK25VLModelProvider,
+)
+from megatron.bridge.models.llama import (
+    LlamaBridge,
+)
+from megatron.bridge.models.llama_nemotron import (
+    LlamaNemotronBridge,
+    LlamaNemotronHeterogeneousProvider,
+)
+from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.mimo.mimo_bridge import MimoBridge
+from megatron.bridge.models.mimo_v2_flash import (
+    MiMoV2FlashBridge,
+    MiMoV2FlashModelProvider,
+)
+from megatron.bridge.models.minimax_m2 import (
+    MiniMaxM2Bridge,
+)
+from megatron.bridge.models.ministral3 import (
+    Ministral3Bridge,
+    Ministral3Model,
+    Ministral3ModelProvider,
+)
+from megatron.bridge.models.mistral import (
+    MistralModelProvider,
+)
+from megatron.bridge.models.nemotron import (
+    NemotronBridge,
+)
+from megatron.bridge.models.nemotron_omni import (
+    NemotronOmniBridge,
+    NemotronOmniModel,
+)
+from megatron.bridge.models.nemotron_vl import (
+    NemotronVLBridge,
+    NemotronVLModel,
+    NemotronVLModelProvider,
+)
+from megatron.bridge.models.nemotronh import (
+    NemotronHBridge,
+)
+from megatron.bridge.models.olmoe import (
+    OlMoEBridge,
+    OlMoEModelProvider,
+)
+from megatron.bridge.models.qwen3_asr import (
+    Qwen3ASRBridge,
+    Qwen3ASRModel,
+    Qwen3ASRModelProvider,
+)
+from megatron.bridge.models.qwen_audio import (
+    Qwen2AudioBridge,
+    Qwen2AudioModel,
+    Qwen2AudioModelProvider,
+)
+from megatron.bridge.models.qwen_omni import (
+    Qwen3OmniBridge,
+    Qwen3OmniModel,
+    Qwen3OmniModelProvider,
+    Qwen25OmniBridge,
+    Qwen25OmniModel,
+    Qwen25OmniModelProvider,
+)
+from megatron.bridge.models.qwen_vl import (
+    Qwen25VLBridge,
+    Qwen25VLModel,
+    Qwen25VLModelProvider,
+    Qwen35VLBridge,
+    Qwen35VLModelProvider,
+    Qwen35VLMoEBridge,
+    Qwen35VLMoEModelProvider,
+)
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl import (
+    Qwen3VLBridge,
+    Qwen3VLModel,
+    Qwen3VLModelProvider,
+    Qwen3VLMoEBridge,
+    Qwen3VLMoEModelProvider,
+)
+from megatron.bridge.models.sarvam import (
+    SarvamMLABridge,
+    SarvamMoEBridge,
+)
+from megatron.bridge.models.stepfun import (
+    Step35Bridge,
+    Step37Bridge,
+    Step37Model,
+    Step37ModelProvider,
+)
+from megatron.bridge.models.t5_provider import T5ModelProvider
+
+
+__all__ = [
+    "AutoBridge",
+    "MegatronMappingRegistry",
+    "MegatronModelBridge",
+    "ColumnParallelMapping",
+    "GatedMLPMapping",
+    "MegatronParamMapping",
+    "QKVMapping",
+    "ReplicatedMapping",
+    "RowParallelMapping",
+    "AutoMapping",
+    "BailingMoeV2Bridge",
+    # DeepSeek Models
+    "DeepSeekV2Bridge",
+    "DeepSeekV3Bridge",
+    # ERNIE Text-Only Models
+    "Ernie45Bridge",
+    # ERNIE VL Models
+    "Ernie45VLBridge",
+    "Ernie45VLModel",
+    "Ernie45VLModelProvider",
+    "Exaone4Bridge",
+    "FalconH1Bridge",
+    "FalconH1ModelProvider",
+    "Gemma3ModelProvider",
+    "GemmaModelProvider",
+    "Gemma2ModelProvider",
+    "GLM45Bridge",
+    "GLM47FlashBridge",
+    "GLM5Bridge",
+    "GLM45VBridge",
+    "GLM45VModelProvider",
+    "GPTModelProvider",
+    "GPTOSSBridge",
+    "T5ModelProvider",
+    "HYV3Bridge",
+    "HybridModelBuilder",
+    "HybridModelConfig",
+    "HybridModelProvider",
+    "KimiK2Bridge",
+    "KimiK25VLModel",
+    "KimiK25VLBridge",
+    "KimiK25VLModelProvider",
+    "LlamaBridge",
+    "LlamaNemotronHeterogeneousProvider",
+    "LlamaNemotronBridge",
+    "MistralModelProvider",
+    # Ministral 3 Models
+    "Ministral3Bridge",
+    "Ministral3Model",
+    "Ministral3ModelProvider",
+    "MiniMaxM2Bridge",
+    "OlMoEBridge",
+    "OlMoEModelProvider",
+    "NemotronHBridge",
+    "MambaModelProvider",
+    "MimoBridge",
+    # MiMo-V2-Flash
+    "MiMoV2FlashBridge",
+    "MiMoV2FlashModelProvider",
+    # Nemotron Models
+    "NemotronBridge",
+    # Audio-Language Models
+    "Qwen2AudioBridge",
+    "Qwen2AudioModel",
+    "Qwen2AudioModelProvider",
+    # VL Models
+    "Qwen25VLModel",
+    "Qwen25VLBridge",
+    "Qwen25VLModelProvider",
+    "Qwen3VLModel",
+    "Qwen3VLModelProvider",
+    "Qwen3VLMoEModelProvider",
+    "Qwen3VLBridge",
+    "Qwen3VLMoEBridge",
+    "Qwen35VLBridge",
+    "Qwen35VLModelProvider",
+    "Qwen35VLMoEBridge",
+    "Qwen35VLMoEModelProvider",
+    "Gemma3VLBridge",
+    "Gemma3VLModel",
+    "Gemma3VLModelProvider",
+    "Gemma4VLBridge",
+    "Gemma4VLModel",
+    "Gemma4VLModelProvider",
+    "NemotronVLModel",
+    "NemotronVLBridge",
+    "NemotronVLModelProvider",
+    "NemotronOmniBridge",
+    "NemotronOmniModel",
+    # ASR Models
+    "Qwen3ASRBridge",
+    "Qwen3ASRModel",
+    "Qwen3ASRModelProvider",
+    # Qwen Omni registrations
+    "Qwen25OmniModel",
+    "Qwen25OmniBridge",
+    "Qwen25OmniModelProvider",
+    "Qwen3OmniModel",
+    "Qwen3OmniBridge",
+    "Qwen3OmniModelProvider",
+    "SarvamMLABridge",
+    "SarvamMoEBridge",
+    "Step35Bridge",
+    "Step37Bridge",
+    "Step37Model",
+    "Step37ModelProvider",
+]
