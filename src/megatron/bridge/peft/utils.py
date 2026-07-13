@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import math
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, fields
+from functools import cache
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
@@ -61,6 +64,18 @@ TELayerNormColumnParallelLinear, HAVE_TE_LN_COL_LINEAR = safe_import_from(
 TEColumnParallelGroupedLinear, HAVE_TE_COL_GRP_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TEColumnParallelGroupedLinear"
 )
+TEFP8GlobalStateManager, HAVE_TE_FP8_GLOBAL_STATE_MANAGER = safe_import_from(
+    "megatron.core.extensions.transformer_engine", "FP8GlobalStateManager"
+)
+TEPytorchGroupedLinear, HAVE_TE_PYTORCH_GROUPED_LINEAR = safe_import_from(
+    "transformer_engine.pytorch", "GroupedLinear"
+)
+TEPytorchGroupedLinearAutograd, HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD = safe_import_from(
+    "transformer_engine.pytorch.module.grouped_linear", "_GroupedLinear"
+)
+TEPytorchIsCPUOffloadEnabled, HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS = safe_import_from(
+    "transformer_engine.pytorch.cpu_offload", "is_cpu_offload_enabled"
+)
 TERowParallelLinear, HAVE_TE_ROW_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TERowParallelLinear"
 )
@@ -78,6 +93,15 @@ HAVE_TE = all(
         HAVE_TE_ROW_GRP_LINEAR,
     )
 )
+
+
+@cache
+def _te_grouped_linear_uses_explicit_m_splits(
+    autograd_function: type[torch.autograd.Function],
+) -> bool:
+    """Return whether TE's grouped-linear autograd takes a separate splits tensor."""
+
+    return "m_splits" in inspect.signature(autograd_function.forward).parameters
 
 
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
@@ -776,9 +800,7 @@ def pad_seq_to_mult(x: torch.Tensor, mult: int) -> Tuple[torch.Tensor, int]:
     if x.shape[0] % mult == 0:
         return x, 0
     pad_len = mult - (x.shape[0] % mult)
-    with torch.no_grad():
-        # pad at the tail
-        x = nn.functional.pad(x, (0, 0, 0, pad_len))
+    x = nn.functional.pad(x, (0, 0, 0, pad_len))
     return x, pad_len
 
 
@@ -794,9 +816,7 @@ def unpad_seq_to_mult(x: torch.Tensor, pad_len: int) -> torch.Tensor:
     """
     if pad_len <= 0:
         return x
-    with torch.no_grad():
-        # prune tail padding
-        return x[:-pad_len, :]
+    return x[:-pad_len, :]
 
 
 class _All2AllHp2Sp(torch.autograd.Function):
@@ -1751,6 +1771,9 @@ class GroupedExpertLinearAdapter(nn.Module):
         self.base_linear_is_parallel = base_linear_is_parallel
         self.is_expert = True
         self.num_local_experts = num_local_experts
+        # Keep TE helpers outside the module tree so their meta parameters do not
+        # appear in adapter state dicts or optimizer parameter groups.
+        self._te_grouped_linear_helpers: Dict[Tuple[str, int, int, int, torch.dtype, torch.device], nn.Module] = {}
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
         self.config = model_parallel_config
@@ -1897,6 +1920,162 @@ class GroupedExpertLinearAdapter(nn.Module):
             return False
         return torch.cuda.get_device_capability(x.device) >= (8, 0)
 
+    def _is_te_fp8_enabled(self) -> bool:
+        """Return whether Transformer Engine's FP8 autocast context is active."""
+
+        return HAVE_TE_FP8_GLOBAL_STATE_MANAGER and TEFP8GlobalStateManager.is_fp8_enabled()
+
+    def _can_use_te_grouped_linear_fp8(self, x: torch.Tensor) -> bool:
+        """Return whether TE can run the grouped adapter weights through FP8."""
+
+        if not (
+            HAVE_TE_PYTORCH_GROUPED_LINEAR
+            and HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD
+            and HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS
+        ):
+            return False
+        if not x.is_cuda or x.dtype not in (torch.bfloat16, torch.float16):
+            return False
+        # TE binds FP8 autocast state to the current CUDA device before this
+        # module runs. An input on another device must use the safe fallback.
+        if x.device.index != torch.cuda.current_device():
+            return False
+        if self.linear_in.weight.dtype != x.dtype or self.linear_out.weight.dtype != x.dtype:
+            return False
+        fp8_grouped_dimensions = self.linear_in.weight.shape[-2:] + self.linear_out.weight.shape[-2:]
+        return all(dimension % 16 == 0 for dimension in fp8_grouped_dimensions)
+
+    def _get_te_grouped_linear_helper(
+        self,
+        *,
+        projection: str,
+        num_gemms: int,
+        in_features: int,
+        out_features: int,
+        params_dtype: torch.dtype,
+        device: torch.device,
+    ) -> nn.Module:
+        """Create or reuse a meta-device TE helper that owns FP8 runtime state."""
+
+        # Each helper owns delayed-scaling state per GEMM slot. Keep one fixed
+        # slot per local expert and logical projection so routing changes cannot
+        # transfer FP8 history between weights or grow the helper cache.
+        key = (projection, num_gemms, in_features, out_features, params_dtype, device)
+        helper = self._te_grouped_linear_helpers.get(key)
+        if helper is None:
+            helper = TEPytorchGroupedLinear(
+                num_gemms=num_gemms,
+                in_features=in_features,
+                out_features=out_features,
+                sequence_parallel=False,
+                fuse_wgrad_accumulation=False,
+                tp_group=None,
+                tp_size=1,
+                bias=False,
+                return_bias=False,
+                params_dtype=params_dtype,
+                parallel_mode=None,
+                device="meta",
+            )
+            self._te_grouped_linear_helpers[key] = helper
+        helper.train(self.training)
+        return helper
+
+    def _forward_te_grouped_linear_fp8(
+        self,
+        x: torch.Tensor,
+        *,
+        weight: torch.Tensor,
+        m_splits: List[int],
+        projection: str,
+        active_expert_indices: Tuple[int, ...],
+    ) -> torch.Tensor:
+        """Apply externally owned grouped adapter weights through TE's FP8 kernel."""
+
+        device_context = torch.cuda.device(x.device) if x.is_cuda else nullcontext()
+        with device_context:
+            return self._forward_te_grouped_linear_fp8_on_current_device(
+                x,
+                weight=weight,
+                m_splits=m_splits,
+                projection=projection,
+                active_expert_indices=active_expert_indices,
+            )
+
+    def _forward_te_grouped_linear_fp8_on_current_device(
+        self,
+        x: torch.Tensor,
+        *,
+        weight: torch.Tensor,
+        m_splits: List[int],
+        projection: str,
+        active_expert_indices: Tuple[int, ...],
+    ) -> torch.Tensor:
+        """Run TE FP8 grouped linear after selecting the input tensor's CUDA device."""
+
+        helper = self._get_te_grouped_linear_helper(
+            projection=projection,
+            num_gemms=self.num_local_experts,
+            in_features=weight.shape[-1],
+            out_features=weight.shape[-2],
+            params_dtype=weight.dtype,
+            device=x.device,
+        )
+        x = helper.prepare_forward(x, num_gemms=self.num_local_experts)
+        try:
+            quantizer_groups = helper._get_quantizers()
+            (
+                input_quantizers,
+                weight_quantizers,
+                output_quantizers,
+                grad_input_quantizers,
+                grad_weight_quantizers,
+                grad_output_quantizers,
+            ) = ([quantizers[expert_idx] for expert_idx in active_expert_indices] for quantizers in quantizer_groups)
+            common_non_tensor_args = (
+                helper.apply_bias,
+                None,
+                helper.fp8,
+                helper.fp8_calibration,
+                helper.wgrad_store,
+                input_quantizers,
+                weight_quantizers,
+                output_quantizers,
+                grad_input_quantizers,
+                grad_weight_quantizers,
+                grad_output_quantizers,
+                helper.fuse_wgrad_accumulation,
+                TEPytorchIsCPUOffloadEnabled(),
+                helper.sequence_parallel,
+                helper.activation_dtype,
+                torch.is_grad_enabled(),
+                [None] * weight.shape[0],
+                False,
+                None,
+                helper.save_original_input,
+                False,
+            )
+            empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
+            weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
+
+            # TODO: Replace this private FP8 dispatch once Transformer Engine exposes
+            # a public functional grouped-linear API for externally owned weights
+            # (NVIDIA/TransformerEngine#3191).
+            if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
+                te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
+                autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
+            else:
+                non_tensor_args = (m_splits, *common_non_tensor_args)
+                autograd_args = (x, non_tensor_args, *weights_and_biases)
+
+            if torch.is_grad_enabled():
+                output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
+            else:
+                output, _ = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
+            return output
+        finally:
+            helper.end_forward()
+
     def _build_grouped_mm_offsets(self, m_splits: List[int], *, device: torch.device) -> torch.Tensor:
         """Build inclusive grouped_mm offsets from per-expert split sizes."""
 
@@ -1908,10 +2087,21 @@ class GroupedExpertLinearAdapter(nn.Module):
         *,
         weight: torch.Tensor,
         m_splits: List[int],
+        use_te_fp8: bool,
+        projection: str,
+        active_expert_indices: Tuple[int, ...],
         offs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Apply one grouped expert projection with PyTorch's public grouped GEMM."""
+        """Apply one grouped expert projection through the selected grouped backend."""
 
+        if use_te_fp8:
+            return self._forward_te_grouped_linear_fp8(
+                x,
+                weight=weight,
+                m_splits=m_splits,
+                projection=projection,
+                active_expert_indices=active_expert_indices,
+            )
         if offs is None:
             offs = self._build_grouped_mm_offsets(m_splits, device=x.device)
         return nn.functional.grouped_mm(x, weight.transpose(1, 2), offs=offs)
@@ -1980,7 +2170,10 @@ class GroupedExpertLinearAdapter(nn.Module):
             grad_anchor = linear_in_weight.reshape(-1)[0] + linear_out_weight.reshape(-1)[0]
             return (x.new_empty((0, output_features)) + grad_anchor * 0.0) * (self.alpha / self.dim)
 
-        if not self._can_use_grouped_mm(x):
+        fp8_enabled = self._is_te_fp8_enabled()
+        use_te_fp8 = fp8_enabled and self._can_use_te_grouped_linear_fp8(x)
+        use_grouped_mm = not fp8_enabled and self._can_use_grouped_mm(x)
+        if not use_te_fp8 and not use_grouped_mm:
             return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size) * (
                 self.alpha / self.dim
             )
@@ -1989,13 +2182,14 @@ class GroupedExpertLinearAdapter(nn.Module):
         grouped_inputs = []
         padded_splits = []
         pad_lengths = []
+        grouped_padding_multiple = math.lcm(expert_tp_size, 16) if use_te_fp8 else expert_tp_size
         start = 0
         for expert_idx, split_size in enumerate(expert_splits):
             if split_size == 0:
                 continue
             expert_input = x.narrow(0, start, split_size)
             start += split_size
-            expert_input, pad_len = pad_seq_to_mult(expert_input, expert_tp_size)
+            expert_input, pad_len = pad_seq_to_mult(expert_input, grouped_padding_multiple)
             active_expert_indices.append(expert_idx)
             grouped_inputs.append(expert_input)
             padded_splits.append(expert_input.shape[0])
@@ -2005,13 +2199,17 @@ class GroupedExpertLinearAdapter(nn.Module):
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             grouped_input.activation_offloading = True
 
-        offs = self._build_grouped_mm_offsets(padded_splits, device=x.device)
+        offs = None if use_te_fp8 else self._build_grouped_mm_offsets(padded_splits, device=x.device)
 
         active_linear_in = self.linear_in(active_expert_indices)
+        active_expert_tuple = tuple(active_expert_indices)
         hidden = self._forward_grouped_projection(
             grouped_input,
             weight=active_linear_in,
             m_splits=padded_splits,
+            use_te_fp8=use_te_fp8,
+            projection="linear_in",
+            active_expert_indices=active_expert_tuple,
             offs=offs,
         )
         if not self.input_is_parallel:
@@ -2025,6 +2223,9 @@ class GroupedExpertLinearAdapter(nn.Module):
             hidden,
             weight=active_linear_out,
             m_splits=padded_splits,
+            use_te_fp8=use_te_fp8,
+            projection="linear_out",
+            active_expert_indices=active_expert_tuple,
             offs=offs,
         )
         if self.input_is_parallel:
