@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Compatibility helpers for Megatron-Core inference API differences."""
+from megatron.bridge.models.hy_v3.hy_v3_bridge import HYV3Bridge  # noqa: F401
 
-from megatron.core.inference.utils import InferenceMode as InferenceMode
+
+__all__ = ["HYV3Bridge"]
