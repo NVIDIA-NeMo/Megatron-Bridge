@@ -66,6 +66,7 @@ def _install_lightweight_environment_utils() -> None:
 
 _install_lightweight_environment_utils()
 
+import bootstrap
 import run_recipe
 import run_script
 from utils import utils
@@ -217,7 +218,7 @@ def test_perf_runner_environment_preserves_process_values(monkeypatch):
     monkeypatch.delenv("RECIPE_DEFAULT", raising=False)
     monkeypatch.setenv("LAUNCHER_VALUE", "launcher")
 
-    run_script._apply_recipe_environment(recipe)
+    bootstrap._apply_recipe_environment(recipe)
 
     assert run_script.os.environ["RECIPE_DEFAULT"] == "1"
     assert run_script.os.environ["LAUNCHER_VALUE"] == "launcher"
@@ -226,11 +227,11 @@ def test_perf_runner_environment_preserves_process_values(monkeypatch):
 @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
 def test_perf_runner_environment_rejects_invalid_values(env_vars):
     with pytest.raises((TypeError, ValueError)):
-        run_script._apply_recipe_environment(SimpleNamespace(env_vars=env_vars))
+        bootstrap._apply_recipe_environment(SimpleNamespace(env_vars=env_vars))
 
 
-def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch):
-    """Hydra env overrides must be reflected in the pre-exec process environment."""
+def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
+    """Hydra env overrides must be reflected in the bootstrap recipe."""
     args = SimpleNamespace(
         model_family_name=None,
         model_recipe_name="deepseek_v3",
@@ -252,26 +253,22 @@ def test_perf_runner_applies_cli_environment_overrides_before_export(monkeypatch
     effective_recipe = SimpleNamespace(env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 1})
     calls = []
 
-    monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", lambda **kwargs: base_recipe)
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", lambda **kwargs: base_recipe)
 
     def apply_overrides(recipe, overrides, parsed_args):
         calls.append(("overrides", recipe, overrides, parsed_args))
         return effective_recipe
 
     monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_script, "_apply_recipe_environment", lambda recipe: calls.append(("environment", recipe)))
-    monkeypatch.setattr(run_script.os, "execvpe", lambda *args: None)
 
-    run_script._bootstrap_recipe_environment(args, cli_overrides)
+    result = run_script._prepare_perf_recipe(args, cli_overrides)
 
-    assert calls == [
-        ("overrides", base_recipe, cli_overrides, args),
-        ("environment", effective_recipe),
-    ]
+    assert result is effective_recipe
+    assert calls == [("overrides", base_recipe, cli_overrides, args)]
 
 
-def test_flat_deterministic_environment_reaches_self_exec(monkeypatch):
-    """The clean flat-recipe interpreter must start with deterministic process values."""
+def test_flat_deterministic_environment_reaches_training_exec(monkeypatch):
+    """The flat training interpreter must start with deterministic process values."""
     from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 
     deterministic_env = {
@@ -294,24 +291,26 @@ def test_flat_deterministic_environment_reaches_self_exec(monkeypatch):
         gpu="h100",
         compute_dtype="bf16",
         config_variant=None,
+        use_recipes=False,
     )
+    parser = SimpleNamespace(parse_known_args=lambda: (args, []))
     exec_environments = []
 
-    monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", lambda **_kwargs: recipe)
+    monkeypatch.setattr(bootstrap, "parse_cli_args", lambda: parser)
+    monkeypatch.setattr(run_script, "get_perf_recipe_by_name", lambda **_kwargs: recipe)
 
     def apply_overrides(config, _overrides, _args):
         apply_determinism_overrides(config)
         return config
 
     monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_script.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
+    monkeypatch.setattr(bootstrap.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
 
-    run_script._bootstrap_recipe_environment(args, [])
+    bootstrap.main()
 
     assert len(exec_environments) == 1
     exec_environment = exec_environments[0]
     assert {name: exec_environment[name] for name in deterministic_env} == deterministic_env
-    assert exec_environment[run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
 
 
 def test_flat_deterministic_preserves_explicit_hydra_environment(monkeypatch):
@@ -669,8 +668,8 @@ def test_runner_applies_determinism_before_environment_export():
     }
 
 
-def test_deterministic_environment_reaches_self_exec(monkeypatch):
-    """The clean interpreter must start with deterministic process values."""
+def test_deterministic_environment_reaches_training_exec(monkeypatch):
+    """The training interpreter must start with deterministic process values."""
     deterministic_env = {
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
@@ -700,19 +699,21 @@ def test_deterministic_environment_reaches_self_exec(monkeypatch):
         expert_model_parallel_size=None,
         nccl_ub=False,
         moe_flex_dispatcher_backend=-1,
+        use_recipes=True,
     )
     exec_environments = []
+    parser = SimpleNamespace(parse_known_args=lambda: (args, []))
 
+    monkeypatch.setattr(bootstrap, "parse_cli_args", lambda: parser)
     monkeypatch.setattr(utils, "build_recipe_config", lambda **_kwargs: recipe)
     monkeypatch.setattr(run_recipe, "_finalize_recipe", lambda prepared, *_args: prepared)
-    monkeypatch.setattr(run_recipe.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
+    monkeypatch.setattr(bootstrap.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
 
-    run_recipe._bootstrap_recipe_environment(args, [])
+    bootstrap.main()
 
     assert len(exec_environments) == 1
     exec_environment = exec_environments[0]
     assert {name: exec_environment[name] for name in deterministic_env} == deterministic_env
-    assert exec_environment[run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())
 
 
 def test_hydra_environment_override_wins_after_deterministic_argparse(monkeypatch):
@@ -805,7 +806,7 @@ def test_runner_preserves_dense_dispatcher_fields(dispatcher_override):
 
 
 def test_runner_uses_three_stage_recipe_preparation():
-    """Both self-exec passes share base, override, and finalize stages."""
+    """Bootstrap and training share base, override, and finalize stages."""
     repo_root = Path(__file__).resolve().parents[4]
     expected_calls = {
         repo_root / "scripts" / "performance" / "run_recipe.py": {
@@ -966,9 +967,10 @@ def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
     ]
 
 
-def test_runner_exports_resolved_recipe_environment_before_exec(monkeypatch):
-    """The runner exports the prepared recipe environment before self-exec."""
-    args = SimpleNamespace()
+def test_bootstrap_exports_model_recipe_environment_before_exec(monkeypatch):
+    """The bootstrap exports a prepared model recipe before training."""
+    args = SimpleNamespace(use_recipes=True)
+    parser = SimpleNamespace(parse_known_args=lambda: (args, []))
     effective_recipe = SimpleNamespace(env_vars={"TORCHINDUCTOR_WORKER_START": "fork"})
     calls = []
 
@@ -978,13 +980,13 @@ def test_runner_exports_resolved_recipe_environment_before_exec(monkeypatch):
     def exec_runner(executable, argv, env):
         calls.append(("exec", executable, argv, env))
 
+    monkeypatch.setattr(bootstrap, "parse_cli_args", lambda: parser)
     monkeypatch.setattr(run_recipe, "_prepare_recipe", lambda *_args, **_kwargs: effective_recipe)
-    monkeypatch.setattr(run_recipe, "_apply_recipe_environment", apply_environment)
-    monkeypatch.setattr(run_recipe.os, "execvpe", exec_runner)
+    monkeypatch.setattr(bootstrap, "_apply_recipe_environment", apply_environment)
+    monkeypatch.setattr(bootstrap.os, "execvpe", exec_runner)
 
-    run_recipe._bootstrap_recipe_environment(args, [])
+    bootstrap.main()
 
     assert calls[0] == ("environment", effective_recipe)
     assert calls[1][0] == "exec"
     assert calls[1][2][1].endswith("run_recipe.py")
-    assert calls[1][3][run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())

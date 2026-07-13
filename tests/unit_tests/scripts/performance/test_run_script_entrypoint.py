@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for the single environment-aware performance entry point."""
+"""Tests for the rank-local performance bootstrap and training entrypoints."""
 
 import ast
 import sys
@@ -24,21 +24,19 @@ _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performan
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
+import bootstrap
+import run_recipe
 import run_script
 import setup_experiment
 from utils import utils
 
 
 def test_nemo_ci_legacy_variants_select_the_default_flat_recipe_name():
-    assert run_script._flat_recipe_variant_suffix(None) == ""
-    assert run_script._flat_recipe_variant_suffix("v1") == ""
-    assert run_script._flat_recipe_variant_suffix("V1") == ""
-    assert run_script._flat_recipe_variant_suffix("v2") == ""
     assert utils._recipe_variant_suffix("v1") == ""
     assert utils._recipe_variant_name("v1") is None
     assert utils._recipe_variant_suffix("v2") == ""
     assert utils._recipe_variant_name("v2") is None
-    assert run_script._flat_recipe_variant_suffix("large_scale") == "_large_scale"
+    assert utils._recipe_variant_suffix("large_scale") == "_large_scale"
 
 
 def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
@@ -52,7 +50,7 @@ def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
     ) == ["--deterministic"]
 
 
-def test_setup_experiment_uses_run_script_for_every_perf_workload():
+def test_setup_experiment_uses_one_bootstrap_entrypoint():
     setup_path = _PERF_SCRIPTS_DIR / "setup_experiment.py"
     tree = ast.parse(setup_path.read_text())
     entrypoints = {
@@ -63,10 +61,7 @@ def test_setup_experiment_uses_run_script_for_every_perf_workload():
         if isinstance(target, ast.Name) and target.id.startswith("ENTRYPOINT")
     }
 
-    assert entrypoints == {
-        "ENTRYPOINT_PERFORMANCE": "run_script.py",
-        "ENTRYPOINT_RECIPE": "run_recipe.py",
-    }
+    assert entrypoints == {"ENTRYPOINT_BOOTSTRAP": "bootstrap.py"}
     setup_source = setup_path.read_text()
     argument_parser_source = (_PERF_SCRIPTS_DIR / "argument_parser.py").read_text()
     assert "--require-env-bootstrap" not in setup_source
@@ -74,7 +69,7 @@ def test_setup_experiment_uses_run_script_for_every_perf_workload():
     assert not (_PERF_SCRIPTS_DIR / "run_script_with_env.py").exists()
 
 
-def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
+def test_bootstrap_exports_flat_recipe_environment_before_exec(monkeypatch):
     args = SimpleNamespace(
         model_family_name="qwen",
         model_recipe_name="qwen3_30b_a3b",
@@ -89,31 +84,30 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
         context_parallel_size=None,
         expert_model_parallel_size=None,
         deterministic=False,
+        use_recipes=False,
     )
     parser = SimpleNamespace(parse_known_args=lambda: (args, []))
     recipe = SimpleNamespace(env_vars={"CUDA_DEVICE_MAX_CONNECTIONS": 1})
     calls = []
 
-    monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
+    monkeypatch.setattr(bootstrap, "parse_cli_args", lambda: parser)
 
-    def get_recipe(**kwargs):
-        calls.append(("recipe", kwargs))
+    def get_recipe(parsed_args, overrides):
+        calls.append(("recipe", parsed_args, overrides))
         return recipe
 
     def exec_runner(executable, argv, env):
         calls.append(("exec", executable, argv, env))
 
-    monkeypatch.setattr(run_script, "get_perf_recipe_for_environment", get_recipe)
-    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", lambda config, _overrides, _args: config)
-    monkeypatch.setattr(run_script, "_apply_recipe_environment", lambda config: calls.append(("environment", config)))
-    monkeypatch.setattr(run_script.os, "execvpe", exec_runner)
+    monkeypatch.setattr(run_script, "_prepare_perf_recipe", get_recipe)
+    monkeypatch.setattr(bootstrap, "_apply_recipe_environment", lambda config: calls.append(("environment", config)))
+    monkeypatch.setattr(bootstrap.os, "execvpe", exec_runner)
 
-    run_script.main()
+    bootstrap.main()
 
     assert [call[0] for call in calls] == ["recipe", "environment", "exec"]
     assert calls[1] == ("environment", recipe)
     assert calls[2][2][1].endswith("run_script.py")
-    assert calls[2][3][run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
 
 
 def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
@@ -159,15 +153,13 @@ def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
     assert "--ntasks-per-node=1" in executor.setup_lines
 
 
-def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):
+def test_run_script_main_runs_training_once(monkeypatch):
     args = SimpleNamespace()
     cli_overrides = ["model.num_layers=1"]
     parser = SimpleNamespace(parse_known_args=lambda: (args, cli_overrides))
     calls = []
 
     monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
-    monkeypatch.setenv(run_script.ENV_BOOTSTRAP_MARKER, str(run_script.os.getpid()))
-    monkeypatch.setattr(run_script, "_bootstrap_recipe_environment", lambda *_: calls.append("bootstrap"))
     monkeypatch.setattr(
         run_script, "_run_training", lambda parsed_args, overrides: calls.append((parsed_args, overrides))
     )
@@ -177,23 +169,26 @@ def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):
     assert calls == [(args, cli_overrides)]
 
 
-def test_run_script_ignores_stale_bootstrap_marker(monkeypatch):
+def test_run_recipe_main_runs_training_once(monkeypatch):
     args = SimpleNamespace()
     parser = SimpleNamespace(parse_known_args=lambda: (args, []))
     calls = []
 
-    monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
-    monkeypatch.setenv(run_script.ENV_BOOTSTRAP_MARKER, "stale-pid")
+    monkeypatch.setattr(run_recipe, "parse_cli_args", lambda: parser)
     monkeypatch.setattr(
-        run_script,
-        "_bootstrap_recipe_environment",
-        lambda parsed_args, overrides: calls.append((parsed_args, overrides)),
+        run_recipe, "_run_training", lambda parsed_args, overrides: calls.append((parsed_args, overrides))
     )
-    monkeypatch.setattr(run_script, "_run_training", lambda *_: calls.append("training"))
 
-    run_script.main()
+    run_recipe.main()
 
     assert calls == [(args, [])]
+
+
+def test_training_entrypoints_do_not_self_exec():
+    for script_name in ("run_script.py", "run_recipe.py"):
+        source = (_PERF_SCRIPTS_DIR / script_name).read_text()
+        assert "ENV_BOOTSTRAP_MARKER" not in source
+        assert "execvpe" not in source
 
 
 def test_run_script_defers_training_framework_imports():

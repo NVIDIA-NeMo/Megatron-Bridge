@@ -62,8 +62,7 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PERFORMANCE = "run_script.py"
-ENTRYPOINT_RECIPE = "run_recipe.py"
+ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -564,8 +563,8 @@ def main(
     if export_nsys_sqlite and not enable_nsys:
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
+    script_name = ENTRYPOINT_BOOTSTRAP
     if use_recipes:
-        script_name = ENTRYPOINT_RECIPE
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
@@ -573,7 +572,6 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PERFORMANCE
         if wandb_experiment_name is not None:
             # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
             # login node in this path: recipe imports belong in the training container.

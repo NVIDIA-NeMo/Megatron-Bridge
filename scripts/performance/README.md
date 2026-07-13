@@ -10,6 +10,11 @@ Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The pe
 launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
 and config variant.
 
+`setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
+applies recipe-owned process settings before importing Torch, then replaces itself with
+either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
+Each training entrypoint therefore executes only once.
+
 - Prefer command-line overrides for one-off changes.
 - Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 

@@ -27,7 +27,6 @@ from argument_parser import parse_cli_args
 # Diffusion model families manage their own dataset configs and require
 # a dedicated forward step function rather than the standard GPT step.
 DIFFUSION_FAMILIES = frozenset({"flux", "wan"})
-ENV_BOOTSTRAP_MARKER = "_MB_PERF_ENV_BOOTSTRAPPED"
 
 
 def _get_diffusion_step(model_family_name: str):
@@ -277,23 +276,6 @@ def _prepare_recipe(args, cli_overrides: list[str], *, environment_only: bool):
     return _finalize_recipe(recipe, args, cli_overrides, base_env_vars)
 
 
-def _apply_recipe_environment(recipe) -> None:
-    """Project recipe env defaults onto the current process."""
-    from megatron.bridge.training.config import apply_environment_variables
-
-    apply_environment_variables(recipe)
-
-
-def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
-    """Apply the effective recipe env and replace this process with a clean interpreter."""
-    recipe = _prepare_recipe(args, cli_overrides, environment_only=True)
-    _apply_recipe_environment(recipe)
-
-    environment = dict(os.environ)
-    environment[ENV_BOOTSTRAP_MARKER] = str(os.getpid())
-    os.execvpe(sys.executable, [sys.executable, __file__, *sys.argv[1:]], environment)
-
-
 def _run_training(args, cli_overrides: list[str]) -> None:
     """Build the final recipe and run training after environment bootstrap."""
     import torch
@@ -301,7 +283,6 @@ def _run_training(args, cli_overrides: list[str]) -> None:
     from megatron.bridge.utils.common_utils import get_rank_safe
 
     recipe = _prepare_recipe(args, cli_overrides, environment_only=False)
-    _apply_recipe_environment(recipe)
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
@@ -344,14 +325,10 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
 
 def main() -> None:
-    """Bootstrap recipe env on the first pass and train in the self-exec process."""
+    """Parse the final training arguments and run the workload once."""
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
-
-    if os.environ.get(ENV_BOOTSTRAP_MARKER) != str(os.getpid()):
-        _bootstrap_recipe_environment(args, cli_overrides)
-    else:
-        _run_training(args, cli_overrides)
+    _run_training(args, cli_overrides)
 
 
 if __name__ == "__main__":

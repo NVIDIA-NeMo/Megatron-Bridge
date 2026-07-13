@@ -282,8 +282,8 @@ def apply_feature_environment(
 def apply_argparse_overrides(config: Any, args: Any) -> Any:
     """Apply argparse values that affect recipe configuration.
 
-    Both passes of the runner's self-exec bootstrap call this helper before
-    Hydra overrides so parallelism and environment-relevant settings match.
+    The bootstrap and training entrypoints call this helper before Hydra
+    overrides so parallelism and environment-relevant settings match.
     """
     if getattr(args, "nccl_ub", False):
         config.ddp.nccl_ub = True

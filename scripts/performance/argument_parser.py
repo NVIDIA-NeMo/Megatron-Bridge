@@ -258,7 +258,7 @@ def parse_cli_args():
         "-d",
         "--dryrun",
         help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
-        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "In bootstrap.py: selects a training entrypoint, builds the full ConfigContainer with all overrides, "
         "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",

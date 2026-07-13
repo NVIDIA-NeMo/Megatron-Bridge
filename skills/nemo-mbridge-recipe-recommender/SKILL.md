@@ -66,7 +66,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ### Performance recipes (throughput benchmarks)
 
 ```bash
-python scripts/performance/run_script.py \
+python scripts/performance/bootstrap.py \
     --recipe <model_family> \
     --gpu_type h100 \
     --num_gpus 64 \
@@ -431,6 +431,6 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
 | Perf recipes root | `src/megatron/bridge/perf_recipes/` |
-| Perf entry point | `scripts/performance/run_script.py` |
+| Perf entry point | `scripts/performance/bootstrap.py` |
 | Perf recipe helpers | `scripts/performance/utils/utils.py` |
 | Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |

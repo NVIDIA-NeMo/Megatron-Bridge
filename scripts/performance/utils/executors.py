@@ -286,7 +286,7 @@ def kubeflow_executor(
     """
     # K8s/Kubeflow jobs deliberately do NOT inherit the Slurm orchestration
     # defaults in OFFLINE_BENCHMARK_ENV_VARS. Recipe-owned process settings are applied by
-    # each training script's self-exec bootstrap; the cluster supplies fabric
+    # the rank-local bootstrap; the cluster supplies fabric
     # tuning explicitly via KUBEFLOW_ENV_LIST_JSON (-> custom_env_vars / env_list).
     env_vars: Dict[str, str] = {}
     if wandb_key is not None:
