@@ -905,7 +905,12 @@ class GPTSFTDatasetBuilder:
                 tokenizer_model_name = name.replace("/", "--")
             return tokenizer_model_name
         else:
-            return f"unknown_tokenizer_{hash(self.tokenizer)}"
+            identifiers = getattr(self.tokenizer, "unique_identifiers", None)
+            if not isinstance(identifiers, dict):
+                identifiers = {"class": f"{type(self.tokenizer).__module__}.{type(self.tokenizer).__qualname__}"}
+            encoded_identifiers = json.dumps(identifiers, sort_keys=True, separators=(",", ":"), default=str)
+            fingerprint = hashlib.sha256(encoded_identifiers.encode("utf-8")).hexdigest()[:12]
+            return f"unknown_tokenizer_{fingerprint}"
 
 
 def gpt_sft_train_valid_test_datasets_provider(
