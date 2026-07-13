@@ -46,6 +46,7 @@ export WKDIR="${WKDIR:-}"
 MODEL_NAME=deepseek_v4_flash
 HF_CONFIG=deepseek-ai/DeepSeek-V4-Flash
 RECIPE_NAME=deepseek_v4_flash_pretrain_mxfp8_config       # Adam MXFP8
+# RECIPE_NAME=deepseek_v4_flash_pretrain_config           # Adam BF16
 # RECIPE_NAME=deepseek_v4_flash_pretrain_muon_config      # Muon BF16
 
 DATASET_NAME=dclm  # set to "mock" for mock data
