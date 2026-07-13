@@ -14,17 +14,92 @@
 
 """Nemotron Omni Energon adapter backed by the shared HF-style collator."""
 
-from typing import Any, Sequence
+from collections.abc import Iterator, MutableMapping
+from dataclasses import dataclass, fields
+from typing import Any, Mapping, Sequence
 
 from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample, HFTaskEncoder
 from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_collate_fn
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
-# Compatibility aliases for callers that imported the old model-specific
-# sample and batch names. Their representation is now the generic HF-style
-# Energon contract shared by all processor-backed VLMs.
+# Import-name migration alias. The sample representation intentionally changed
+# from model-ready tensors to the shared HF-style example contract; callers that
+# directly constructed the old sample dataclass must migrate to ``example``.
 NemotronOmniTaskSample = HFEnergonSample
-NemotronOmniTaskBatch = HFEnergonBatch
+
+
+_VISUAL_INPUT_FIELDS = frozenset(field.name for field in fields(GenericVisualInputs))
+
+
+class _LegacyVisualTensorMapping(MutableMapping[str, Any]):
+    """Live mapping view over a batch's ``GenericVisualInputs`` fields."""
+
+    def __init__(self, batch: "NemotronOmniTaskBatch") -> None:
+        self.batch = batch
+
+    def __getitem__(self, key: str) -> Any:
+        if key not in _VISUAL_INPUT_FIELDS or self.batch.visual_inputs is None:
+            raise KeyError(key)
+        value = getattr(self.batch.visual_inputs, key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        if key not in _VISUAL_INPUT_FIELDS:
+            raise KeyError(key)
+        if self.batch.visual_inputs is None:
+            self.batch.visual_inputs = GenericVisualInputs()
+        setattr(self.batch.visual_inputs, key, value)
+
+    def __delitem__(self, key: str) -> None:
+        self[key]
+        assert self.batch.visual_inputs is not None
+        setattr(self.batch.visual_inputs, key, None)
+
+    def __iter__(self) -> Iterator[str]:
+        if self.batch.visual_inputs is None:
+            return iter(())
+        return iter(self.batch.visual_inputs.as_model_kwargs())
+
+    def __len__(self) -> int:
+        return sum(1 for _ in self)
+
+
+@dataclass(init=False)
+class NemotronOmniTaskBatch(HFEnergonBatch):
+    """HF-style batch with the legacy ``visual_tensors`` constructor/property."""
+
+    def __init__(
+        self,
+        *args: Any,
+        visual_inputs: GenericVisualInputs | None = None,
+        visual_tensors: Mapping[str, Any] | None = None,
+        **kwargs: Any,
+    ) -> None:
+        if visual_inputs is not None and visual_tensors is not None:
+            raise ValueError("Specify only one of visual_inputs or legacy visual_tensors.")
+        if visual_inputs is None and visual_tensors is not None:
+            visual_inputs = GenericVisualInputs(
+                **{key: value for key, value in visual_tensors.items() if value is not None}
+            )
+        super().__init__(*args, visual_inputs=visual_inputs, **kwargs)
+        self._visual_tensors_proxy = _LegacyVisualTensorMapping(self)
+
+    @property
+    def visual_tensors(self) -> MutableMapping[str, Any]:
+        """Expose a live legacy visual tensor mapping for low-level batch consumers."""
+        return self._visual_tensors_proxy
+
+    @visual_tensors.setter
+    def visual_tensors(self, value: Mapping[str, Any] | None) -> None:
+        """Normalize assignment through the legacy visual tensor attribute."""
+        self.visual_inputs = (
+            GenericVisualInputs(**{key: item for key, item in value.items() if item is not None})
+            if value is not None
+            else None
+        )
 
 
 class NemotronOmniTaskEncoder(HFTaskEncoder):
@@ -90,3 +165,15 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
             use_temporal_video_embedder=self.use_temporal_video_embedder,
             patch_dim=self.patch_dim,
         )
+
+    def batch(self, samples: list[HFEnergonSample]) -> NemotronOmniTaskBatch:
+        """Collate shared samples while retaining the model-specific batch type."""
+        batch = super().batch(samples)
+        batch_kwargs = {field.name: getattr(batch, field.name) for field in fields(batch) if field.init}
+        return NemotronOmniTaskBatch(**batch_kwargs)
+
+    def encode_batch(self, batch: HFEnergonBatch) -> dict[str, Any]:
+        """Return the shared batch plus the legacy ``tokens`` alias."""
+        raw = super().encode_batch(batch)
+        raw["tokens"] = raw["input_ids"]
+        return raw

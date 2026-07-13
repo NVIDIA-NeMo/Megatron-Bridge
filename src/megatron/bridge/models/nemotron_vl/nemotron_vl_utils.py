@@ -232,7 +232,9 @@ def adjust_image_tokens(
     in row-major sample order. A text-only row consumes no entry, while a row
     with multiple images consumes one entry for each ``<img>...</img>`` region.
     Every tensor in an input dictionary is adjusted at the same positions and
-    rows are right-padded back to a common length.
+    rows are right-padded back to a common length. If the dictionary contains
+    ``attention_mask``, trailing masked positions are discarded before the
+    adjustment so stale processor padding cannot pin the adjusted batch width.
 
     Example:
         input_ids decoded may look like this
@@ -276,6 +278,14 @@ def adjust_image_tokens(
                 f"Tensor {key} has shape {tuple(tensor.shape)} but input_ids has shape {tuple(token_ids.shape)}."
             )
 
+    valid_lengths = [token_ids.shape[1]] * token_ids.shape[0]
+    attention_mask = aligned_tensors.get("attention_mask")
+    if attention_mask is not None:
+        valid_lengths = []
+        for row in attention_mask:
+            valid_positions = torch.where(row != 0)[0]
+            valid_lengths.append(int(valid_positions[-1].item()) + 1 if valid_positions.numel() else 0)
+
     if isinstance(num_tiles, int):
         tile_counts = [num_tiles]
     elif isinstance(num_tiles, torch.Tensor):
@@ -287,7 +297,8 @@ def adjust_image_tokens(
 
     boundaries_by_row: list[list[tuple[int, int]]] = []
     total_images = 0
-    for row in token_ids:
+    for row_index, row in enumerate(token_ids):
+        row = row[: valid_lengths[row_index]]
         starts = (row == img_start_token_id).nonzero(as_tuple=True)[0].tolist()
         ends = (row == img_end_token_id).nonzero(as_tuple=True)[0].tolist()
         if len(starts) != len(ends):
@@ -318,7 +329,7 @@ def adjust_image_tokens(
         row_tile_counts = tile_counts[tile_offset : tile_offset + len(boundaries)]
         tile_offset += len(boundaries)
         for key, tensor in aligned_tensors.items():
-            row = tensor[row_index]
+            row = tensor[row_index, : valid_lengths[row_index]]
             pieces: list[torch.Tensor] = []
             cursor = 0
             for (start, end), count in zip(boundaries, row_tile_counts, strict=True):

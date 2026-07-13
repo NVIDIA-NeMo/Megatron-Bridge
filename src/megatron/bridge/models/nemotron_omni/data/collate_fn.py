@@ -40,6 +40,8 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 CHATML_ASSISTANT_START = "<|im_start|>assistant\n"
 CHATML_ASSISTANT_END = "<|im_end|>\n"
 CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
+VISION_FRAME_SIZE = 512
+PIXEL_SHUFFLE_FACTOR = 2
 
 
 def _pad_text_rows(
@@ -134,6 +136,7 @@ def _patchify_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> t
     """Match the RADIO/CLIP frame normalization used by Omni inference."""
     from torchvision import transforms
 
+    _pixel_shuffled_token_count(height=height, width=width, patch_dim=patch_dim)
     image = frame.resize((width, height))
     tensor = transforms.ToTensor()(image)
     mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
@@ -145,6 +148,19 @@ def _patchify_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> t
         .permute(1, 3, 0, 2, 4)
         .reshape(patch_rows * patch_cols, 3 * patch_dim * patch_dim)
     )
+
+
+def _pixel_shuffled_token_count(*, height: int, width: int, patch_dim: int) -> int:
+    """Return RADIO tokens after the model's fixed 2x2 spatial pixel shuffle."""
+    if patch_dim < 1 or height % patch_dim or width % patch_dim:
+        raise ValueError(f"Image {height}x{width} is not divisible by patch_dim={patch_dim}.")
+    patch_rows, patch_cols = height // patch_dim, width // patch_dim
+    if patch_rows % PIXEL_SHUFFLE_FACTOR or patch_cols % PIXEL_SHUFFLE_FACTOR:
+        raise ValueError(
+            f"Image {height}x{width} produces a {patch_rows}x{patch_cols} patch grid, which is not divisible "
+            f"by the {PIXEL_SHUFFLE_FACTOR}x{PIXEL_SHUFFLE_FACTOR} vision pixel shuffle."
+        )
+    return (patch_rows // PIXEL_SHUFFLE_FACTOR) * (patch_cols // PIXEL_SHUFFLE_FACTOR)
 
 
 def _render_text_conversation(example: Mapping[str, Any]) -> tuple[list[dict[str, Any]], list[Any]]:
@@ -186,7 +202,7 @@ def _prepare_temporal_rows(
     """Build row-local temporal prompts and one packed all-frame vision tensor."""
     if temporal_patch_size < 1:
         raise ValueError("temporal_patch_size must be at least 1.")
-    frame_height = frame_width = 512
+    frame_height = frame_width = VISION_FRAME_SIZE
     token_rows: list[torch.Tensor] = []
     mask_examples: list[dict[str, Any]] = []
     all_patches: list[torch.Tensor] = []
@@ -220,7 +236,13 @@ def _prepare_temporal_rows(
                         )
                         all_sizes.append([frame_height, frame_width])
                         all_num_frames.append(1)
-                        all_num_image_tiles.append((frame_height // patch_dim) * (frame_width // patch_dim) // 4)
+                        all_num_image_tiles.append(
+                            _pixel_shuffled_token_count(
+                                height=frame_height,
+                                width=frame_width,
+                                patch_dim=patch_dim,
+                            )
+                        )
                         row_placeholder_count += 1
                     elif isinstance(item, Mapping) and item.get("type") == "video":
                         payload = item.get("video", item.get("path"))
@@ -249,7 +271,11 @@ def _prepare_temporal_rows(
                         )
                         all_sizes.extend([[frame_height, frame_width]] * len(frames))
                         all_num_frames.append(len(frames))
-                        tiles_per_frame = (frame_height // patch_dim) * (frame_width // patch_dim) // 4
+                        tiles_per_frame = _pixel_shuffled_token_count(
+                            height=frame_height,
+                            width=frame_width,
+                            patch_dim=patch_dim,
+                        )
                         all_num_image_tiles.extend([tiles_per_frame] * len(frames))
                     elif isinstance(item, Mapping) and item.get("type") == "text":
                         text_parts.append(str(item.get("text", "")))
@@ -519,14 +545,27 @@ def _add_audio_inputs(
                 )
             first_position = int(sound_positions[0].item())
             last_position = int(sound_positions[-1].item()) + 1
-            sound_tokens = torch.full((token_count,), sound_token_id, dtype=row.dtype)
-            row = torch.cat((row[:first_position], sound_tokens, row[last_position:]))
+            has_start = first_position > 0 and int(row[first_position - 1].item()) == sound_start_id
+            has_end = last_position < row.numel() and int(row[last_position].item()) == sound_end_id
+            if has_start != has_end:
+                raise ValueError(
+                    "Nemotron Omni audio placeholders must have both <so_start> and <so_end> delimiters or neither."
+                )
+            replacement = torch.tensor(
+                ([sound_token_id] * token_count)
+                if has_start
+                else [sound_start_id, *([sound_token_id] * token_count), sound_end_id],
+                dtype=row.dtype,
+                device=row.device,
+            )
+            row = torch.cat((row[:first_position], replacement, row[last_position:]))
         else:
             image_end_positions = torch.where(row == image_end_id)[0]
             insertion = int(image_end_positions[-1].item()) + 1 if image_end_positions.numel() else min(1, row.numel())
             sound_block = torch.tensor(
                 [sound_start_id, *([sound_token_id] * token_count), sound_end_id],
                 dtype=row.dtype,
+                device=row.device,
             )
             row = torch.cat((row[:insertion], sound_block, row[insertion:]))
         rows.append(row)
@@ -587,8 +626,7 @@ def _pack_dynamic_images(batch: dict[str, Any], *, patch_dim: int) -> None:
         if image.dim() != 3:
             raise ValueError(f"Expected one [3,H,W] image, got {tuple(image.shape)}.")
         channels, height, width = image.shape
-        if height % patch_dim or width % patch_dim:
-            raise ValueError(f"Image {height}x{width} is not divisible by patch_dim={patch_dim}.")
+        token_count = _pixel_shuffled_token_count(height=height, width=width, patch_dim=patch_dim)
         patch_rows, patch_cols = height // patch_dim, width // patch_dim
         patches.append(
             image.reshape(channels, patch_rows, patch_dim, patch_cols, patch_dim)
@@ -597,11 +635,68 @@ def _pack_dynamic_images(batch: dict[str, Any], *, patch_dim: int) -> None:
             .contiguous()
         )
         sizes.append([height, width])
-        tile_counts.append((patch_rows * patch_cols) // 4)
+        tile_counts.append(token_count)
     batch["visual_inputs"] = GenericVisualInputs(pixel_values=torch.cat(patches).unsqueeze(0).contiguous())
     batch["imgs_sizes"] = torch.tensor(sizes, dtype=torch.long)
     batch["num_frames"] = torch.ones(len(images), dtype=torch.long)
     batch["num_image_tiles"] = torch.tensor(tile_counts, dtype=torch.int)
+
+
+def _model_merge_row_lengths(
+    batch: Mapping[str, Any],
+    processor: Any,
+    *,
+    packed_dynamic_resolution: bool,
+    patch_dim: int,
+) -> torch.Tensor:
+    """Return per-row lengths after MCore replaces compact image placeholders."""
+    attention_mask = batch["attention_mask"].to(dtype=torch.bool)
+    collapsed_lengths = attention_mask.sum(dim=1)
+    image_token_id = processor.tokenizer.convert_tokens_to_ids("<image>")
+    image_counts = torch.stack(
+        [
+            ((row == image_token_id) & row_mask).sum()
+            for row, row_mask in zip(batch["input_ids"], attention_mask, strict=True)
+        ]
+    )
+    total_images = int(image_counts.sum().item())
+    if total_images == 0:
+        return collapsed_lengths
+
+    if packed_dynamic_resolution:
+        replacement_counts = batch.get("num_image_tiles")
+        if replacement_counts is None:
+            raise ValueError("Dynamic-resolution image batches require one model token count per image.")
+        replacement_counts = torch.as_tensor(
+            replacement_counts, dtype=torch.long, device=collapsed_lengths.device
+        ).flatten()
+    else:
+        # Nemotron Omni's provider fixes RADIO input frames at 512x512 and uses
+        # 2x2 pixel shuffle. Static tiles and temporal tubelets therefore each
+        # replace one compact <image> token with this many model embeddings.
+        tokens_per_image = _pixel_shuffled_token_count(
+            height=VISION_FRAME_SIZE,
+            width=VISION_FRAME_SIZE,
+            patch_dim=patch_dim,
+        )
+        replacement_counts = torch.full(
+            (total_images,), tokens_per_image, dtype=torch.long, device=collapsed_lengths.device
+        )
+
+    if replacement_counts.numel() != total_images:
+        raise ValueError(
+            "Nemotron Omni image metadata does not match compact placeholders: "
+            f"got {replacement_counts.numel()} model token counts for {total_images} <image> tokens."
+        )
+
+    expanded_lengths = collapsed_lengths.clone()
+    offset = 0
+    for row_index, image_count_tensor in enumerate(image_counts):
+        image_count = int(image_count_tensor.item())
+        row_counts = replacement_counts[offset : offset + image_count]
+        expanded_lengths[row_index] += row_counts.sum() - image_count
+        offset += image_count
+    return expanded_lengths
 
 
 def nemotron_omni_collate_fn(
@@ -716,11 +811,18 @@ def nemotron_omni_collate_fn(
 
     has_modalities = batch.get("visual_inputs") is not None or batch.get("sound_clips") is not None
     if sequence_length is not None and has_modalities:
-        row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
-        if bool((row_lengths > sequence_length).any()):
+        collapsed_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
+        post_merge_row_lengths = _model_merge_row_lengths(
+            batch,
+            processor,
+            packed_dynamic_resolution=is_dynamic_resolution,
+            patch_dim=patch_dim,
+        )
+        if bool((post_merge_row_lengths > sequence_length).any()):
             raise ValueError(
                 "Nemotron Omni cannot truncate image, video, or audio rows because modality metadata would no "
-                f"longer align with text placeholders; got row lengths {row_lengths.tolist()} with "
+                "longer align with text placeholders; got post-merge row lengths "
+                f"{post_merge_row_lengths.tolist()} (collapsed text lengths {collapsed_row_lengths.tolist()}) with "
                 f"sequence_length={sequence_length}."
             )
 

@@ -89,7 +89,8 @@ def get_batch_from_iterator(
         required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
     if is_first_pp_stage:
-        required_device_keys.update(("tokens", "input_ids", "position_ids"))
+        input_key = "tokens" if batch.get("tokens") is not None else "input_ids"
+        required_device_keys.update((input_key, "position_ids"))
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
 

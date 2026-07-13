@@ -18,6 +18,29 @@ from megatron.bridge.training.nemotron_omni_step import get_batch_from_iterator
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 
 
+def test_batch_moves_only_one_compatible_token_alias_to_cuda(monkeypatch):
+    cuda_inputs = []
+
+    def record_cuda(tensor, **kwargs):  # noqa: ARG001
+        cuda_inputs.append(tensor)
+        return tensor
+
+    monkeypatch.setattr(torch.Tensor, "cuda", record_cuda)
+    tokens = torch.tensor([[1, 2, 3]])
+    position_ids = torch.tensor([[0, 1, 2]])
+    batch = {"tokens": tokens, "input_ids": tokens, "position_ids": position_ids}
+
+    moved = get_batch_from_iterator(
+        iter([batch]),
+        is_first_pp_stage=True,
+        is_last_pp_stage=False,
+    )
+
+    assert moved["tokens"] is tokens
+    assert moved["input_ids"] is None
+    assert sum(tensor is tokens for tensor in cuda_inputs) == 1
+
+
 def test_packed_batch_preserves_mamba_sequence_boundaries(monkeypatch):
     monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
     batch = {

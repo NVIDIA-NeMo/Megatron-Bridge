@@ -185,6 +185,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
     raw = NemotronOmniTaskEncoder.__new__(NemotronOmniTaskEncoder).encode_batch(batch)
 
     assert raw["input_ids"] is tokens
+    assert raw["tokens"] is tokens
     assert raw["cu_seqlens_q"] is cu_seqlens_q
     assert raw["cu_seqlens_kv"] is cu_seqlens_q
     assert raw["max_seqlen_q"] is max_seqlen_q

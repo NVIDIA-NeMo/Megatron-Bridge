@@ -19,7 +19,7 @@ import torch
 
 import megatron.bridge.models.nemotron_omni.data.collate_fn as omni_collate
 from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample
-from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
+from megatron.bridge.data.energon.metadata import batch_metadata_kwargs, sample_metadata_kwargs
 from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
     NemotronOmniTaskBatch,
     NemotronOmniTaskEncoder,
@@ -27,6 +27,7 @@ from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
 )
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 pytestmark = pytest.mark.unit
@@ -115,7 +116,7 @@ def _mask_all_tokens(example, input_ids, processor, skipped_tokens, **kwargs):  
 
 def test_encoder_uses_generic_hf_style_sample_and_batch_contract():
     assert NemotronOmniTaskSample is HFEnergonSample
-    assert NemotronOmniTaskBatch is HFEnergonBatch
+    assert issubclass(NemotronOmniTaskBatch, HFEnergonBatch)
 
     encoder = NemotronOmniTaskEncoder(processor=_Processor([[1, 2]]), pad_to_multiple_of=1)
     encoded = encoder.encode_sample(
@@ -129,6 +130,42 @@ def test_encoder_uses_generic_hf_style_sample_and_batch_contract():
 
     assert isinstance(encoded, HFEnergonSample)
     assert encoded.example["conversation"][0]["content"] == "question"
+
+
+def test_legacy_visual_tensors_batch_contract_is_normalized_and_exposed():
+    pixel_values = torch.ones(1, 3, 4, 4)
+    metadata = batch_metadata_kwargs(keys=["sample"])
+    batch = NemotronOmniTaskBatch(**metadata, visual_tensors={"pixel_values": pixel_values})
+
+    assert batch.visual_inputs is not None
+    assert batch.visual_inputs.pixel_values is pixel_values
+    assert batch.visual_tensors["pixel_values"] is pixel_values
+
+    replacement = torch.zeros_like(pixel_values)
+    batch.visual_tensors = {"pixel_values": replacement}
+    assert batch.visual_inputs is not None
+    assert batch.visual_inputs.pixel_values is replacement
+
+    item_replacement = torch.full_like(pixel_values, 2)
+    batch.visual_tensors["pixel_values"] = item_replacement
+    assert batch.visual_inputs.pixel_values is item_replacement
+    del batch.visual_tensors["pixel_values"]
+    assert batch.visual_inputs.pixel_values is None
+    assert "pixel_values" not in batch.visual_tensors
+
+    empty_batch = NemotronOmniTaskBatch(**metadata)
+    empty_batch.visual_tensors["pixel_values"] = pixel_values
+    assert empty_batch.visual_inputs is not None
+    assert empty_batch.visual_inputs.pixel_values is pixel_values
+
+    with pytest.raises(ValueError, match="only one of visual_inputs or legacy visual_tensors"):
+        NemotronOmniTaskBatch(
+            **metadata,
+            visual_inputs=GenericVisualInputs(pixel_values=pixel_values),
+            visual_tensors={"pixel_values": pixel_values},
+        )
+    with pytest.raises(ValueError, match="only one of visual_inputs or legacy visual_tensors"):
+        NemotronOmniTaskBatch(**metadata, visual_inputs=GenericVisualInputs(), visual_tensors={})
 
 
 def test_energon_batch_preserves_real_tokens_when_pad_id_equals_turn_end(monkeypatch):
@@ -220,6 +257,33 @@ def test_energon_audio_uses_shared_collator_token_expansion(monkeypatch):
     ]
     assert batch.sound_clips.shape == (1, 9, 4)
     assert batch.sound_length.tolist() == [9]
+
+
+def test_energon_audio_placeholder_uses_framed_shared_expansion(monkeypatch):
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    monkeypatch.setattr(
+        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features",
+        lambda waveform, sampling_rate=16000, num_mel_bins=4: torch.ones(9, num_mel_bins),
+    )
+    processor = _Processor([[1, SO_EMBEDDING_ID, 21, PAD_AND_END_ID]])
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=32,
+        num_mel_bins=4,
+        pad_to_multiple_of=1,
+    )
+    encoded = encoder.encode_sample(
+        _sample(
+            [{"role": "user", "content": "<|audio_1|>"}, {"role": "assistant", "content": "answer"}],
+            audio=torch.tensor([0.0, 0.1, -0.1]),
+        )
+    )
+
+    batch = encoder.batch([encoded])
+
+    assert batch.input_ids.tolist() == [
+        [1, SO_START_ID, SO_EMBEDDING_ID, SO_EMBEDDING_ID, SO_END_ID, 21, PAD_AND_END_ID]
+    ]
 
 
 def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
