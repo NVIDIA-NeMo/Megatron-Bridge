@@ -25,6 +25,7 @@ class FakeStandardProvider:
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
         self.context_parallel_size = 1
+        self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = 1
         self.build_language_model_spec_calls = []
 
@@ -79,7 +80,7 @@ class TestMegatronMIMOProvider:
         assert provider.freeze_modality_encoders == {"images": True}
 
     def test_from_standard_provider_applies_language_parallelism(self):
-        """Test standard-provider specs inherit language component TP/PP."""
+        """Test standard-provider specs inherit language component parallelism."""
         standard_provider = FakeStandardProvider()
         megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
             module_parallelisms={
@@ -87,7 +88,8 @@ class TestMegatronMIMOProvider:
                     tensor_model_parallel_size=2,
                     pipeline_model_parallel_size=3,
                     context_parallel_size=4,
-                    expert_tensor_parallel_size=1,
+                    expert_model_parallel_size=5,
+                    expert_tensor_parallel_size=6,
                     data_parallel_size=1,
                 ),
             },
@@ -101,6 +103,8 @@ class TestMegatronMIMOProvider:
         assert standard_provider.tensor_model_parallel_size == 2
         assert standard_provider.pipeline_model_parallel_size == 3
         assert standard_provider.context_parallel_size == 4
+        assert standard_provider.expert_model_parallel_size == 5
+        assert standard_provider.expert_tensor_parallel_size == 6
         assert standard_provider.build_language_model_spec_calls == [0]
 
         spec = provider._build_standard_language_model_spec(pp_rank=2)
@@ -133,7 +137,7 @@ class TestMegatronMIMOProvider:
         pp_group = MagicMock(name="pp_group")
         mock_grid = MagicMock()
         mock_grid.is_current_rank_in_grid.return_value = True
-        mock_grid.get_pg.side_effect = lambda dims, view=None: pp_group if dims == ["pp"] else MagicMock()
+        mock_grid.get_pg.side_effect = lambda dims, *, view=None: pp_group if dims == ["pp"] else MagicMock()
         mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MegatronMIMOProvider.from_standard_provider(
@@ -779,6 +783,8 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_expt_tp = MagicMock(name="expt_tp_pg")
         mock_expt_dp = MagicMock(name="expt_dp_pg")
         mock_dp_cp = MagicMock(name="dp_cp_pg")
+        mock_tp_cp = MagicMock(name="tp_cp_pg")
+        mock_tp_dp_cp = MagicMock(name="tp_dp_cp_pg")
         mock_mp = MagicMock(name="mp_pg")
         mock_tp_ep = MagicMock(name="tp_ep_pg")
         mock_tp_ep_pp = MagicMock(name="tp_ep_pp_pg")
@@ -791,14 +797,16 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
             (None, ("dp",)): mock_dp,
             (None, ("pp",)): mock_pp,
             (None, ("cp",)): mock_cp,
+            (None, ("dp", "cp")): mock_dp_cp,
+            (None, ("tp", "cp")): mock_tp_cp,
+            (None, ("tp", "dp", "cp")): mock_tp_dp_cp,
+            (None, ("tp", "pp")): mock_mp,
+            (None, ("tp", "cp", "dp", "pp")): mock_intra_dist_opt,
             ("expert", ("ep",)): mock_ep,
             ("expert", ("expt_tp",)): mock_expt_tp,
             ("expert", ("expt_dp",)): mock_expt_dp,
-            (None, ("dp", "cp")): mock_dp_cp,
-            (None, ("tp", "pp")): mock_mp,
             ("expert", ("expt_tp", "ep")): mock_tp_ep,
             ("expert", ("expt_tp", "ep", "pp")): mock_tp_ep_pp,
-            (None, ("tp", "cp", "dp", "pp")): mock_intra_dist_opt,
         }
 
         mock_grid = MagicMock()
@@ -823,8 +831,10 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.expt_dp == mock_expt_dp
         assert pgc.dp_cp == mock_dp_cp
         assert pgc.intra_dp_cp == mock_dp_cp
-        assert pgc.intra_expt_dp == mock_expt_dp
+        assert pgc.tp_cp == mock_tp_cp
+        assert pgc.tp_dp_cp == mock_tp_dp_cp
         assert pgc.mp == mock_mp
         assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
+        assert pgc.intra_expt_dp == mock_expt_dp
         assert pgc.intra_dist_opt == mock_intra_dist_opt
