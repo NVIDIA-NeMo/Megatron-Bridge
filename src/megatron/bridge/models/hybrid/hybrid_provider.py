@@ -60,8 +60,9 @@ def _configure_mamba_chunk_size(stack_spec: ModuleSpec, chunk_size: int) -> Modu
 def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> ModuleSpec:
     """Hybrid stack specification for quantization with ModelOpt.
 
-    Uses Norm instead of TENorm and ColumnParallelLinear/RowParallelLinear
-    instead of TE layers to enable proper quantizer insertion by ModelOpt.
+    Grouped-GEMM MoE checkpoints retain the default Transformer Engine stack so
+    their shared expert quantizers have the same state-dict paths when restored.
+    Other Hybrid models use ModelOpt's local stack specification.
 
     Args:
         config: Optional Hybrid configuration object.
@@ -69,6 +70,11 @@ def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> M
     Returns:
         Module specification for quantization-ready Hybrid stack.
     """
+    if config is not None and config.num_moe_experts is not None and config.moe_grouped_gemm:
+        return get_hybrid_stack_modelopt_spec(
+            use_default_te_spec=True,
+            moe_grouped_gemm=True,
+        )
     return get_hybrid_stack_modelopt_spec(
         local_core_attention=False,
         remap_te_layernorm=True,
