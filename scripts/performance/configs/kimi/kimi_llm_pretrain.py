@@ -90,7 +90,8 @@ def kimi_k2_pretrain_config_gb300(
     cfg = pretrain_config(optimizer_type=optimizer_type)
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
-
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
