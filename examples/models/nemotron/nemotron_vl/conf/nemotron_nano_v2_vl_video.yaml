@@ -45,17 +45,14 @@ logger:
   log_interval: 1
 
 dataset:
-  sequence_length: 8192
-  maker_name: make_llava_video_178k_dataset
-  maker_kwargs:
-    video_root_path: ???
-    subsets:
-    - 0_30_s_nextqa
+  seq_length: 8192
+  source:
+    dataset_name: llava_video_178k
+    adapter_kwargs:
+      video_root_path: ???
 
 rng:
   seed: 42
 
 ddp:
   grad_reduce_in_fp32: true
-
-

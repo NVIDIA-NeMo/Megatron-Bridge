@@ -183,6 +183,7 @@ only reads the architecture configuration.
 
 For runnable recipe, data preparation, and training examples, see the repository
 [`tutorials/`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials) directory.
+The [data tutorial index](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/README.md) compares pretraining, text-only SFT, direct Hugging Face SFT, and Energon workflows.
 
 More examples:
 
@@ -204,7 +205,7 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
   - Simple high-level `AutoBridge` API with architecture auto-detection
   - Optimized paths when Transformer Engine is available
 - **Flexible to Customize**: Lightweight custom training loop making it easy to configure custom logic in data loading, distributed training, checkpointing, evaluation and logging ([training framework](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/training), [training utilities](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/training/utils))
-- **Supervised & Parameter-Efficient Finetuning**: SFT & PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods ([PEFT implementations](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/peft), [finetune module](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/finetune.py), [SFT dataset](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/data/datasets/sft.py))
+- **Supervised & Parameter-Efficient Finetuning**: SFT & PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods ([PEFT implementations](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/peft), [finetune module](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/finetune.py), [SFT dataset](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/data/datasets/gpt_sft.py))
 - **SOTA Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration ([Llama recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/recipes/llama), [recipe examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models))
 - **Performance Optimization**: Built-in support for FP8 training, model parallelism, and memory-efficient techniques to offer high utilization and near-linear scalability to thousands of nodes. ([mixed precision](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/mixed_precision.py), [communication overlap](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/comm_overlap.py), [optimizer utilities](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/utils/optimizer_utils.py))
 
@@ -222,6 +223,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 | [**Gemma**](docs/models/gemma/index.md) | Gemma / Gemma 2, Gemma 3, Gemma 3-VL, Gemma 4 (26B-A4B MoE / 31B dense), Gemma 4-VL (26B-A4B MoE) |
 | [**GLM**](docs/models/glm/index.md) | GLM-4.5 / 4.7 / 4.7-Flash, GLM-4.5V, GLM-5 / 5.1 |
 | [**GPT-OSS**](docs/models/gpt_oss/index.md) | GPT-oss |
+| [**HY V3**](https://huggingface.co/tencent/Hy3-preview-Base) | Hy3 preview-Base (HF → Megatron checkpoint conversion) |
 | [**Kimi**](docs/models/kimi/index.md) | Kimi K2, Kimi-K2.5-VL |
 | [**Llama**](docs/models/llama/index.md) | Llama 2, Llama 3 / 3.1 / 3.2 / 3.3 |
 | [**MiniMax**](docs/models/minimax/index.md) | MiniMax-M2 / M2.5 / M2.7 |
@@ -243,6 +245,8 @@ Runnable tutorials live in `tutorials/recipes/llama` that covers:
 - `00_quickstart_pretrain.py` for mock-data pretraining
 - `01_quickstart_finetune.py` + LoRA configs
 - YAML-driven flows and launch helpers
+
+Dataset preparation tutorials live in [`tutorials/data`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/tutorials/data), including local/materialized text-only SFT and direct Hugging Face SFT examples.
 
 ## Performance Benchmarks
 

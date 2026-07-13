@@ -572,8 +572,8 @@ class PerfEnvPlugin(Plugin):
 
     def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
         """Apply launcher-only settings without importing Megatron-Bridge on the login node."""
-        # Recipe-dependent environment variables are applied by run_script_with_env.py
-        # inside the training container, where the flat recipe can be imported safely.
+        # Recipe-dependent environment variables are applied by run_script.py inside
+        # the training container, where the flat recipe can be imported safely.
         self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
         self._set_vboost(task, executor, self.enable_vboost)
         self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
@@ -655,3 +655,71 @@ class PyTorchProfilerPlugin(Plugin):
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
             raise NotImplementedError("PyTorchProfilerPlugin is only supported for run.Script tasks")
+
+
+@dataclass
+class PreemptionPluginScriptArgs:
+    """Arguments for PreemptionPlugin to pass to run.Script."""
+
+    enable_exit_handler: bool
+    enable_exit_handler_for_data_loader: bool
+
+
+def _default_preemption_converter(args: PreemptionPluginScriptArgs) -> List[str]:
+    """Default converter for PreemptionPlugin that generates hydra-style overrides."""
+    return [
+        f"train.exit_signal_handler={str(args.enable_exit_handler)}",
+        f"train.exit_signal_handler_for_dataloader={str(args.enable_exit_handler_for_data_loader)}",
+    ]
+
+
+@dataclass(kw_only=True)
+class PreemptionPlugin(Plugin):
+    """A plugin for setting up preemption handling and signals.
+
+    Args:
+        preempt_time (int): The time, in seconds, before the task's time limit at which the executor
+                             will send a SIGTERM preemption signal. This allows tasks to be gracefully
+                             stopped before reaching their time limit, reducing waste and
+                             promoting fair resource usage. The default value is 60 seconds (1 minute).
+                             This is only supported for ``run.SlurmExecutor``.
+        enable_exit_handler (bool): Whether to enable the exit signal handler in training config.
+        enable_exit_handler_for_data_loader (bool): Whether to enable the exit signal handler for data loader.
+        script_args_converter_fn (Optional[Callable]): A function that takes PreemptionPluginScriptArgs
+                                                        and returns a list of CLI arguments. If not provided,
+                                                        uses the default hydra-style converter.
+    """
+
+    preempt_time: int = 60
+    enable_exit_handler: bool = True
+    enable_exit_handler_for_data_loader: bool = False
+    script_args_converter_fn: Optional[Callable[[PreemptionPluginScriptArgs], List[str]]] = None
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        """Set up the preemption plugin."""
+        if isinstance(task, Script):
+            # For run.Script, append CLI overrides to the script arguments
+            if self.enable_exit_handler:
+                # Create args dataclass
+                script_args = PreemptionPluginScriptArgs(
+                    enable_exit_handler=self.enable_exit_handler,
+                    enable_exit_handler_for_data_loader=self.enable_exit_handler_for_data_loader,
+                )
+
+                # Use custom converter or default
+                converter = self.script_args_converter_fn or _default_preemption_converter
+                cli_overrides = converter(script_args)
+
+                task.args.extend(cli_overrides)
+                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+        else:
+            raise NotImplementedError("PreemptionPlugin is only supported for run.Script tasks")
+
+        # Apply signal configuration for both task types when using SlurmExecutor
+        if isinstance(executor, SlurmExecutor):
+            # Sends a SIGTERM self.preempt_time seconds before hitting time limit
+            logger.info(
+                f"{self.__class__.__name__} will send a SIGTERM {self.preempt_time} seconds before the "
+                "job's time limit for your Slurm executor."
+            )
+            executor.signal = f"TERM@{self.preempt_time}"
