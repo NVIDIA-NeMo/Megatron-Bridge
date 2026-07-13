@@ -2050,6 +2050,46 @@ def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
     assert model[0].loaded_strict is False
 
 
+def test_load_peft_adapter_checkpoint_builds_default_parallel_strategy(monkeypatch) -> None:
+    model = [_FakeModel()]
+    peft = _FakePeft()
+    pg_collection = make_mock_pg_collection()
+    base_strategy = object()
+    parallel_strategy = object()
+
+    _patch_checkpointing(
+        monkeypatch,
+        lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {"model": model[0].sharded_state_dict()},
+        lambda state_dict, peft: state_dict,
+    )
+
+    with (
+        patch(
+            "megatron.core.dist_checkpointing.strategies.torch.TorchDistLoadShardedStrategy",
+            return_value=base_strategy,
+        ) as mock_strategy_cls,
+        patch(
+            "megatron.core.dist_checkpointing.strategies.fully_parallel.FullyParallelLoadStrategyWrapper",
+            return_value=parallel_strategy,
+        ) as mock_parallel_wrapper,
+        patch(
+            "megatron.core.dist_checkpointing.load",
+            return_value={"model": {"adapter.weight": torch.tensor([4.0])}},
+        ) as mock_load,
+    ):
+        peft_utils.load_peft_adapter_checkpoint(
+            model,
+            "/adapter",
+            peft=peft,
+            pg_collection=pg_collection,
+        )
+
+    mock_strategy_cls.assert_called_once_with()
+    mock_parallel_wrapper.assert_called_once_with(base_strategy, pg_collection.dp_cp)
+    mock_load.assert_called_once()
+    assert mock_load.call_args.args[1:] == ("/adapter", parallel_strategy)
+
+
 def test_load_peft_adapter_checkpoint_errors_for_missing_model_key(monkeypatch) -> None:
     model = [_FakeModel()]
     peft = _FakePeft()

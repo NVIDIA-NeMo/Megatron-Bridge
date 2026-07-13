@@ -1105,6 +1105,27 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_direct_hf_preserves_explicit_fixed_length_padding(self, monkeypatch):
+        """Test explicit fixed-length padding remains enabled without PP or EP."""
+        gpt_model_cfg = create_test_gpt_config(
+            pipeline_model_parallel_size=1,
+            expert_model_parallel_size=1,
+        )
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.pad_to_max_length = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_max_length is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_direct_hf_seq_length_must_support_cp_and_sp_collate_slicing(self, monkeypatch):
         """Test the sequence cap cannot undo CP/SP-safe collate padding."""
         gpt_model_cfg = create_test_gpt_config(
