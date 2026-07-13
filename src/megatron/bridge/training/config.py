@@ -1130,7 +1130,7 @@ class ConfigContainer(Container):
                 getattr(self.model, "pipeline_model_parallel_size", 1) > 1
                 or getattr(self.model, "expert_model_parallel_size", 1) > 1
             )
-            self.dataset.pad_to_max_length = requires_fixed_seq_len
+            self.dataset.pad_to_max_length = self.dataset.pad_to_max_length or requires_fixed_seq_len
 
         cp_size = getattr(self.model, "context_parallel_size", 1)
         eval_cp_size = self.dist.eval_context_parallel_size
