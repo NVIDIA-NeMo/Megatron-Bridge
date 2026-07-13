@@ -45,7 +45,7 @@ def _enable_deepseek_full_iteration_mxfp8(
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_scope = []
     cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_expert_rank_capacity_factor = None
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True

@@ -42,7 +42,7 @@ def _enable_hybridep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
     cfg.model.offload_modules = []
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_expert_rank_capacity_factor = None
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 

@@ -27,7 +27,7 @@ def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_warmup_steps = 2
     cfg.model.fp8_output_proj = True
     cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_expert_rank_capacity_factor = None
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_hybridep_num_sms = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
