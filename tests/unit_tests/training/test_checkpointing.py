@@ -594,7 +594,7 @@ class TestSaveCheckpoint:
     @patch("megatron.bridge.training.checkpointing.get_rank_safe")
     @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
-    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -605,7 +605,7 @@ class TestSaveCheckpoint:
         mock_get_dist_rank,
         mock_dist_init,
         mock_print_rank_0,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_ensure_dir,
         mock_save_dataloader,
         mock_get_rank_safe,
@@ -645,7 +645,7 @@ class TestSaveCheckpoint:
         mock_pg_collection.pp.size.return_value = 1
         mock_get_pg_collection.return_value = mock_pg_collection
 
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.save.return_value = None  # Synchronous save
         mock_save_modelopt.return_value = None  # Mock ModelOpt save
         mock_is_last_rank.return_value = False  # Disable wandb logging for simplicity
@@ -731,7 +731,7 @@ class TestSaveCheckpoint:
 
         with (
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", side_effect=start_async_save),
-            patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
@@ -824,7 +824,7 @@ class TestSaveCheckpoint:
 
         with (
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=async_request),
-            patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
@@ -904,7 +904,7 @@ class TestSaveCheckpoint:
 
         with (
             patch("megatron.bridge.training.checkpointing.dist_checkpointing.save", return_value=None),
-            patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy", return_value=Mock()),
+            patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_pg_collection", return_value=pg_collection),
             patch("megatron.bridge.training.checkpointing.get_rng_state", return_value=Mock()),
             patch("megatron.bridge.training.checkpointing.get_rerun_state_machine") as mock_rerun,
@@ -963,7 +963,7 @@ class TestSaveCheckpoint:
     @patch("megatron.bridge.training.checkpointing.get_rank_safe")
     @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
-    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -974,7 +974,7 @@ class TestSaveCheckpoint:
         mock_get_dist_rank,
         mock_dist_init,
         mock_print_rank_0,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_ensure_dir,
         mock_save_dataloader,
         mock_get_rank_safe,
@@ -1019,7 +1019,7 @@ class TestSaveCheckpoint:
         mock_pg_collection.pp.size.return_value = 1
         mock_get_pg_collection.return_value = mock_pg_collection
 
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.save.return_value = None
         mock_save_modelopt.return_value = None
         mock_is_last_rank.return_value = False
@@ -1070,7 +1070,7 @@ class TestSaveCheckpoint:
     @patch("megatron.bridge.training.checkpointing.get_rank_safe")
     @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
-    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -1081,7 +1081,7 @@ class TestSaveCheckpoint:
         mock_get_dist_rank,
         mock_dist_init,
         mock_print_rank_0,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_ensure_dir,
         mock_save_dataloader,
         mock_get_rank_safe,
@@ -1138,7 +1138,7 @@ class TestSaveCheckpoint:
         mock_pg_collection.pp.size.return_value = 1
         mock_get_pg_collection.return_value = mock_pg_collection
 
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.save.return_value = None
         mock_save_modelopt.return_value = None
         mock_is_last_rank.return_value = False
@@ -1190,7 +1190,7 @@ class TestSaveCheckpoint:
     @patch("megatron.bridge.training.checkpointing.get_rank_safe")
     @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
-    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -1201,7 +1201,7 @@ class TestSaveCheckpoint:
         mock_get_dist_rank,
         mock_dist_init,
         mock_print_rank_0,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_ensure_dir,
         mock_save_dataloader,
         mock_get_rank_safe,
@@ -1248,7 +1248,7 @@ class TestSaveCheckpoint:
         mock_get_pg_collection.return_value = mock_pg_collection
 
         async_request = Mock()
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.save.return_value = async_request
         mock_save_modelopt.return_value = None
         mock_is_last_rank.return_value = False
@@ -2095,14 +2095,14 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     def test_load_model_weights_single_model_success(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_load_state_dict,
         mock_generate_state_dict,
         mock_unwrap_model,
@@ -2117,7 +2117,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_dist_ckpt.load.return_value = mock_full_state_dict
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
 
@@ -2144,17 +2144,17 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_generate_state_dict.assert_called_once()
         call_args = mock_generate_state_dict.call_args
         assert call_args[0][1] == {"metadata": mock_metadata}
-        mock_get_strategy.assert_called_once_with("/test/checkpoint")
+        mock_strategy_cls.assert_called_once_with()
         mock_load_state_dict.assert_called_once_with(mock_model[0], mock_full_state_dict["model"], True)
 
     @patch("megatron.bridge.training.checkpointing.delete_extra_state")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     def test_load_model_weights_calls_delete_extra_state(
         self,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_generate_state_dict,
         mock_unwrap_model,
         mock_dist_ckpt,
@@ -2168,7 +2168,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_dist_ckpt.load.return_value = mock_full_state_dict
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(1)}}
         mock_unwrap_model.return_value = mock_model
 
@@ -2188,14 +2188,14 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     def test_load_model_weights_multiple_models_success(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_load_state_dict,
         mock_generate_state_dict,
         mock_unwrap_model,
@@ -2210,7 +2210,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_dist_ckpt.load.return_value = mock_full_state_dict
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {
             "model0": {"weight1": torch.randn(10, 10)},
             "model1": {"weight2": torch.randn(5, 5)},
@@ -2238,7 +2238,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load_content_metadata.assert_called_once_with(preloaded_state_dict=mock_common_state_dict)
         mock_unwrap_model.assert_called_once_with(mock_multiple_models)
         mock_generate_state_dict.assert_called_once()
-        mock_get_strategy.assert_called_once_with("/test/checkpoint")
+        mock_strategy_cls.assert_called_once_with()
 
         # Verify both models were loaded
         assert mock_load_state_dict.call_count == 2
@@ -2249,14 +2249,14 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     def test_load_model_weights_fully_parallel_load(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_load_state_dict,
         mock_generate_state_dict,
         mock_unwrap_model,
@@ -2270,7 +2270,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_strategy = Mock()
-        mock_get_strategy.return_value = mock_strategy
+        mock_strategy_cls.return_value = mock_strategy
         mock_fully_parallel_wrapper.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
@@ -2299,14 +2299,14 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     def test_load_model_weights_none_state_dict(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_load_state_dict,
         mock_generate_state_dict,
         mock_unwrap_model,
@@ -2318,7 +2318,7 @@ class TestLoadModelWeightsFromCheckpoint:
         # Setup mocks
         mock_dist_ckpt.load_common_state_dict.return_value = None
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
 
@@ -2343,14 +2343,14 @@ class TestLoadModelWeightsFromCheckpoint:
     @patch("megatron.bridge.training.checkpointing.unwrap_model")
     @patch("megatron.bridge.training.checkpointing._generate_model_state_dict")
     @patch("megatron.bridge.training.checkpointing._load_model_state_dict")
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.FullyParallelLoadStrategyWrapper")
     @patch("megatron.bridge.training.checkpointing.get_pg_collection")
     def test_return_state_dict(
         self,
         mock_get_pg_collection,
         mock_fully_parallel_wrapper,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_load_state_dict,
         mock_generate_state_dict,
         mock_unwrap_model,
@@ -2365,7 +2365,7 @@ class TestLoadModelWeightsFromCheckpoint:
         mock_dist_ckpt.load_common_state_dict.return_value = mock_common_state_dict
         mock_dist_ckpt.load_content_metadata.return_value = mock_metadata
         mock_dist_ckpt.load.return_value = mock_full_state_dict
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_generate_state_dict.return_value = {"model": {"weight": torch.randn(10, 10)}}
         mock_unwrap_model.return_value = mock_model
 
@@ -3548,9 +3548,9 @@ class TestFSDPDTensorFunctionality:
 class TestCheckpointPathOverride:
     """Test checkpoint_path_override parameter in loading functions."""
 
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
-    def test_load_global_dist_uses_override_rank0(self, mock_dist_ckpt, mock_strategy):
+    def test_load_global_dist_uses_override_rank0(self, mock_dist_ckpt, mock_strategy_cls):
         """rank0 path should use checkpoint_path_override instead of find_checkpoint_rank_0."""
         from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
 
@@ -3571,14 +3571,15 @@ class TestCheckpointPathOverride:
         assert checkpoint_name == "/direct/iter_0001000"
         assert ckpt_type == CheckpointType.GLOBAL
         mock_dist_ckpt.load_common_state_dict.assert_called_once_with("/direct/iter_0001000")
+        mock_strategy_cls.assert_not_called()
 
-    @patch("megatron.bridge.training.checkpointing.get_default_load_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistLoadShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.dist_checkpointing")
-    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy):
+    def test_load_global_dist_uses_override_non_rank0(self, mock_dist_ckpt, mock_strategy_cls):
         """Non-rank0 path should use checkpoint_path_override instead of get_checkpoint_name."""
         from megatron.bridge.training.checkpointing import _load_global_dist_base_checkpoint
 
-        mock_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.load.return_value = {"model": "sharded_data"}
         mock_pg = Mock()
         mock_pg.dp_cp = Mock()
@@ -3596,6 +3597,7 @@ class TestCheckpointPathOverride:
         )
 
         assert checkpoint_name == "/direct/iter_0001000"
+        mock_strategy_cls.assert_called_once_with()
         mock_dist_ckpt.load.assert_called_once()
         load_call_args = mock_dist_ckpt.load.call_args
         assert load_call_args[0][1] == "/direct/iter_0001000"
@@ -4095,7 +4097,7 @@ class TestLayerWiseOptimizerCheckpointing:
     @patch("megatron.bridge.training.checkpointing.get_rank_safe")
     @patch("megatron.bridge.training.checkpointing.maybe_save_dataloader_state")
     @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
-    @patch("megatron.bridge.training.checkpointing.get_default_save_sharded_strategy")
+    @patch("megatron.bridge.training.checkpointing.TorchDistSaveShardedStrategy")
     @patch("megatron.bridge.training.checkpointing.print_rank_0")
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
@@ -4106,7 +4108,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_get_dist_rank,
         mock_dist_init,
         mock_print_rank_0,
-        mock_get_strategy,
+        mock_strategy_cls,
         mock_ensure_dir,
         mock_save_dataloader,
         mock_get_rank_safe,
@@ -4147,7 +4149,7 @@ class TestLayerWiseOptimizerCheckpointing:
         mock_rerun.return_value.state_dict.return_value = {}
         mock_gen_state.return_value = {"model": {"p": "v"}}
         mock_is_last_rank.return_value = False
-        mock_get_strategy.return_value = Mock()
+        mock_strategy_cls.return_value = Mock()
         mock_dist_ckpt.save.return_value = None
         save_checkpoint_fixtures["mock_state"].wandb_logger = Mock()
         save_checkpoint_fixtures["mock_state"].cfg.checkpoint.most_recent_k = -1
