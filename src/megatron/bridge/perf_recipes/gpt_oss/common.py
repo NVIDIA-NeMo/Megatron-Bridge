@@ -39,7 +39,7 @@ def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.use_te_rng_tracker = True
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.offload_modules = []
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.rng.te_rng_tracker = True
@@ -134,5 +134,5 @@ def _apply_gpt_oss_20b_local_graph_configs(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_impl = "local"
     cfg.model.cuda_graph_modules = "full_iteration"
     cfg.model.cuda_graph_scope = None
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.moe_mlp_glu_interleave_size = 32

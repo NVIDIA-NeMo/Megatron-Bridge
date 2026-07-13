@@ -52,7 +52,7 @@ def _enable_deepseek_full_iteration_mxfp8(
     cfg.model.moe_paged_stash = True
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.fp8_output_proj = fp8_output_proj
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True

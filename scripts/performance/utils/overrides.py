@@ -252,7 +252,7 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
     )
     _set_moe_a2a_overlap_overrides(cfg, moe_a2a_overlap=settings.moe_a2a_overlap)
     if settings.cutedsl_fused_grouped_mlp:
-        cfg.model.use_transformer_engine_op_fuser = True
+        cfg.model.use_transformer_engine_op_fuser = False
         cfg.model.moe_mlp_glu_interleave_size = 32
         if settings.moe_a2a_overlap:
             cfg.model.high_priority_a2a_comm_stream = True

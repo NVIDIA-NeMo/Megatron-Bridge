@@ -48,7 +48,7 @@ def _enable_hybridep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:
 
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.high_priority_a2a_comm_stream = True
-    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.use_transformer_engine_op_fuser = False
     cfg.model.moe_mlp_glu_interleave_size = 32
     cfg.model.moe_hybridep_num_sms_preprocessing = 32
 
