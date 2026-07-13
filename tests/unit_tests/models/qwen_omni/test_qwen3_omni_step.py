@@ -861,8 +861,9 @@ def test_forward_step_supports_packed_sequence_with_context_parallel(monkeypatch
         ),
     )
 
-    def _mock_get_batch_on_this_cp_rank(batch, cp_group):
+    def _mock_get_batch_on_this_cp_rank(batch, is_hybrid_cp, cp_group):
         slice_calls.append((batch, cp_group))
+        assert is_hybrid_cp is False
         assert cp_group.size() == 2
         assert batch["input_ids"].shape == (1, 16)
         assert "attention_mask" not in batch
