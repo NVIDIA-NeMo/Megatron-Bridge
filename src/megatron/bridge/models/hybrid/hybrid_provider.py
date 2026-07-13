@@ -32,7 +32,6 @@ from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_s
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_total_layer_count, parse_hybrid_pattern
 from megatron.core.transformer import ModuleSpec
-from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -250,6 +249,8 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
                 hybrid_stack_spec = hybrid_stack_spec()
 
         if self.attention_backend in {AttnBackend.local, "local"}:
+            from megatron.core.transformer.dot_product_attention import DotProductAttention
+
             hybrid_stack_spec = copy.deepcopy(hybrid_stack_spec)
             attention_layer = getattr(hybrid_stack_spec.submodules, "attention_layer", None)
             if attention_layer is not None:
