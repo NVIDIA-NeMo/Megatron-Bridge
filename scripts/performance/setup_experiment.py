@@ -142,9 +142,8 @@ fi
 exit "${{POST_RC}}"
 """
     return run.Script(
-        path="-lc",
-        entrypoint="bash",
-        args=[wrapped_cmd],
+        path="bash",
+        args=["-lc", wrapped_cmd],
         env=script.env,
     )
 
