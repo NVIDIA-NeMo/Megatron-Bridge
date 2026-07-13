@@ -1841,6 +1841,144 @@ def test_nemotron_omni_hf_collate_uses_shared_text_packing(monkeypatch):
     assert batch["total_tokens"] == 8
 
 
+def test_nemotron_omni_hf_collate_packs_heterogeneous_image_rows_at_post_merge_boundaries(monkeypatch):
+    processor = _DynamicNemotronOmniProcessor()
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    batch = collate.nemotron_omni_collate_fn(
+        _heterogeneous_nemotron_examples(),
+        processor,
+        enable_in_batch_packing=True,
+        sequence_length=24,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].tolist() == [
+        [
+            10,
+            11,
+            2,
+            0,
+            20,
+            NEMO_IMG_START_TOKEN_ID,
+            NEMO_IMAGE_TOKEN_ID,
+            NEMO_IMG_END_TOKEN_ID,
+            21,
+            2,
+            0,
+            0,
+            30,
+            NEMO_IMG_START_TOKEN_ID,
+            NEMO_IMAGE_TOKEN_ID,
+            NEMO_IMG_END_TOKEN_ID,
+            32,
+            NEMO_IMG_START_TOKEN_ID,
+            NEMO_IMAGE_TOKEN_ID,
+            NEMO_IMG_END_TOKEN_ID,
+            31,
+            2,
+        ]
+    ]
+    assert batch["attention_mask"] is None
+    assert batch["num_image_tiles"].tolist() == [1, 2, 2]
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 9, 21]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12, 24]
+    assert batch["max_seqlen_q"].item() == 12
+    assert batch["total_tokens"] == 24
+    assert batch["loss_mask"].nonzero(as_tuple=False).tolist() == [[0, 0], [0, 7], [0, 19]]
+    assert batch["labels"][0, 0].item() == 11
+    assert batch["labels"][0, 7].item() == 21
+    assert batch["labels"][0, 19].item() == 31
+    assert torch.all(batch["loss_mask"][0, [3, 10, 11]] == 0)
+    assert torch.all(batch["labels"][0, [3, 10, 11]] == IGNORE_INDEX)
+
+
+def test_nemotron_omni_hf_collate_rejects_packed_post_merge_total_overflow(monkeypatch):
+    processor = _DynamicNemotronOmniProcessor()
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    with pytest.raises(
+        ValueError,
+        match=r"aligned lengths \[4, 8, 12\], and total 24 with sequence_length=23",
+    ):
+        collate.nemotron_omni_collate_fn(
+            _heterogeneous_nemotron_examples(),
+            processor,
+            enable_in_batch_packing=True,
+            sequence_length=23,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
+
+
+def test_nemotron_omni_hf_collate_fixed_packing_matches_pipeline_parallel_merge_width(monkeypatch):
+    from types import SimpleNamespace
+
+    from megatron.core.models.multimodal.llava_model import LLaVAModel
+
+    from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+
+    processor = _DynamicNemotronOmniProcessor()
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+    batch = collate.nemotron_omni_collate_fn(
+        _heterogeneous_nemotron_examples(),
+        processor,
+        enable_in_batch_packing=True,
+        sequence_length=32,
+        pad_to_max_length=True,
+        in_batch_packing_pad_to_multiple_of=4,
+    )
+
+    assert batch["input_ids"].shape == (1, 30)
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 9, 21]
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 12, 32]
+    assert batch["total_tokens"] == 32
+    assert get_packed_seq_params(batch).seq_idx.shape == (1, 32)
+
+    hidden_size = 4
+    pp_model = SimpleNamespace(
+        add_decoder=True,
+        pre_process=True,
+        post_process=True,
+        _language_is_pipeline_parallel=True,
+        _language_max_sequence_length=32,
+        context_parallel_lm=1,
+    )
+    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
+        pp_model,
+        image_embeddings=torch.ones(1, 5, hidden_size),
+        language_embeddings=torch.ones(1, batch["input_ids"].shape[1], hidden_size),
+        input_ids=batch["input_ids"],
+        loss_mask=batch["loss_mask"],
+        labels=batch["labels"],
+        use_inference_kv_cache=False,
+        inference_context=None,
+        image_token_index=NEMO_IMAGE_TOKEN_ID,
+        num_image_tiles=batch["num_image_tiles"],
+        is_packed_dynamic_res=True,
+    )
+
+    assert final_embedding.shape == (32, 1, hidden_size)
+    assert final_labels.shape == final_loss_mask.shape == (1, 32)
+
+
+def test_nemotron_omni_hf_collate_fixed_packing_rejects_misaligned_sequence_length(monkeypatch):
+    processor = _DynamicNemotronOmniProcessor()
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    with pytest.raises(
+        ValueError,
+        match=r"sequence_length to be divisible.*got 30 and 4",
+    ):
+        collate.nemotron_omni_collate_fn(
+            _heterogeneous_nemotron_examples(),
+            processor,
+            enable_in_batch_packing=True,
+            sequence_length=30,
+            pad_to_max_length=True,
+            in_batch_packing_pad_to_multiple_of=4,
+        )
+
+
 def test_nemotron_omni_collate_replaces_audio_placeholder_with_computed_token_count(monkeypatch):
     import megatron.bridge.models.nemotron_omni.nemotron_omni_utils as omni_utils
 
