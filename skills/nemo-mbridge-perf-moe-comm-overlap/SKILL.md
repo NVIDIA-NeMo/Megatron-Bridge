@@ -111,7 +111,7 @@ For a short performance-harness smoke, keep the command shape explicit and vary
 only one overlap knob at a time:
 
 ```bash
-uv run python scripts/performance/bootstrap.py \
+uv run python scripts/performance/run_script.py \
   -m qwen \
   -mr qwen3_30b_a3b \
   --task pretrain \

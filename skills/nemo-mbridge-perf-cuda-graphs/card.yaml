@@ -230,7 +230,7 @@ minimal_example:
   docs_example: docs/training/cuda-graphs.md
   skill_example: skills/nemo-mbridge-perf-cuda-graphs/SKILL.md
   test_path: tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py
-  cli_path: scripts/performance/bootstrap.py
+  cli_path: scripts/performance/run_script.py
 failure_modes:
   - name: missing_te_rng_tracker
     symptom: provider assertion before training starts

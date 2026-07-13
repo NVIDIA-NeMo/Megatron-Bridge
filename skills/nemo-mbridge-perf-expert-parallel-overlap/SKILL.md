@@ -165,7 +165,7 @@ parallelism, dispatcher, and runtime fixed, and vary only the two overlap
 overrides:
 
 ```bash
-uv run python scripts/performance/bootstrap.py \
+uv run python scripts/performance/run_script.py \
   -m qwen \
   -mr qwen3_30b_a3b \
   --task pretrain \

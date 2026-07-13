@@ -78,7 +78,7 @@ cfg.model.recompute_num_layers = 4
 ### Performance harness CLI
 
 ```bash
-uv run python scripts/performance/bootstrap.py \
+uv run python scripts/performance/run_script.py \
   -m llama \
   -mr llama3_8b \
   --task pretrain \

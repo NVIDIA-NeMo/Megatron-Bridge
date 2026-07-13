@@ -66,12 +66,9 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ### Performance recipes (throughput benchmarks)
 
 ```bash
-python scripts/performance/bootstrap.py \
-    --model_family_name <model_family> \
-    --model_recipe_name <model_recipe_name> \
-    --task pretrain \
-    --gpu h100 \
-    --compute_dtype bf16 \
+python scripts/performance/run_script.py \
+    --recipe <model_family> \
+    --gpu_type h100 \
     --num_gpus 64 \
     --data mock
 ```
@@ -418,7 +415,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
 | Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 8 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
-| Benchmark throughput | Perf recipes via `bootstrap.py` | Varies |
+| Benchmark throughput | Perf recipes via `run_script.py` | Varies |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |
 | VLM fine-tuning | `qwen3_vl_8b_sft_config` or `gemma3_vl_*_sft_config` | 4–8 |
 | Diffusion training | `wan_1_3B_pretrain_config` or `flux_12b_pretrain_config` | 8 |
@@ -434,6 +431,6 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
 | Perf recipes root | `src/megatron/bridge/perf_recipes/` |
-| Perf entry point | `scripts/performance/bootstrap.py` |
+| Perf entry point | `scripts/performance/run_script.py` |
 | Perf recipe helpers | `scripts/performance/utils/utils.py` |
 | Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |
