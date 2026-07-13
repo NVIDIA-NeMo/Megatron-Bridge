@@ -283,14 +283,36 @@ def apply_argparse_overrides(config: Any, args: Any) -> Any:
     """Apply argparse values that affect recipe configuration.
 
     Both passes of the runner's self-exec bootstrap call this helper before
-    Hydra overrides so their environment-relevant settings match.
+    Hydra overrides so parallelism and environment-relevant settings match.
     """
     if getattr(args, "nccl_ub", False):
         config.ddp.nccl_ub = True
 
+    # Keep all parallelism overrides together so bootstrap topology and the
+    # final training config resolve the same user input.
+    tensor_model_parallel_size = getattr(args, "tensor_model_parallel_size", None)
+    if tensor_model_parallel_size is not None:
+        config.model.tensor_model_parallel_size = tensor_model_parallel_size
+
+    pipeline_model_parallel_size = getattr(args, "pipeline_model_parallel_size", None)
+    if pipeline_model_parallel_size is not None:
+        config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+
+    context_parallel_size = getattr(args, "context_parallel_size", None)
+    if context_parallel_size is not None:
+        config.model.context_parallel_size = context_parallel_size
+
+    virtual_pipeline_model_parallel_size = getattr(args, "virtual_pipeline_model_parallel_size", -1)
+    if virtual_pipeline_model_parallel_size != -1:
+        config.model.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+
     expert_model_parallel_size = getattr(args, "expert_model_parallel_size", None)
     if expert_model_parallel_size is not None:
         config.model.expert_model_parallel_size = expert_model_parallel_size
+
+    expert_tensor_parallel_size = getattr(args, "expert_tensor_parallel_size", None)
+    if expert_tensor_parallel_size is not None:
+        config.model.expert_tensor_parallel_size = expert_tensor_parallel_size
 
     dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
     num_moe_experts = getattr(config.model, "num_moe_experts", None)

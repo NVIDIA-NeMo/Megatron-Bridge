@@ -149,20 +149,10 @@ def _apply_training_argparse_overrides(config, args):
         if args.diffusion_dataset_path:
             config.dataset.path = args.diffusion_dataset_path
 
-    # Model configuration
+    # Sequence configuration
     # Diffusion models use fixed image/latent dimensions; seq_length is not applicable.
     if args.seq_length and not is_diffusion:
         config.model.seq_length = args.seq_length
-    if args.tensor_model_parallel_size:
-        config.model.tensor_model_parallel_size = args.tensor_model_parallel_size
-    if args.pipeline_model_parallel_size:
-        config.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
-    if args.context_parallel_size:
-        config.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size != -1:
-        config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
-    if args.expert_tensor_parallel_size:
-        config.model.expert_tensor_model_parallel_size = args.expert_tensor_parallel_size
 
     # Logging configuration
     config.logger.log_timers_to_tensorboard = True

@@ -549,17 +549,56 @@ def test_flat_explicit_false_a2a_preserves_legacy_config_and_env_behavior():
     assert recipe.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
 
 
-def test_runner_applies_known_ep_override_to_effective_recipe():
-    """The pre-exec config should mirror run_recipe's argparse EP update."""
+def test_runner_applies_parallelism_overrides_to_effective_recipe():
+    """The pre-exec config should receive every argparse parallelism override."""
     recipe = SimpleNamespace(
-        model=SimpleNamespace(expert_model_parallel_size=8),
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            virtual_pipeline_model_parallel_size=1,
+            expert_model_parallel_size=8,
+            expert_tensor_parallel_size=1,
+        ),
         ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
     )
-    args = SimpleNamespace(expert_model_parallel_size=32)
+    args = SimpleNamespace(
+        tensor_model_parallel_size=2,
+        pipeline_model_parallel_size=4,
+        context_parallel_size=8,
+        virtual_pipeline_model_parallel_size=None,
+        expert_model_parallel_size=32,
+        expert_tensor_parallel_size=16,
+    )
 
     effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
 
+    assert effective_recipe.model.tensor_model_parallel_size == 2
+    assert effective_recipe.model.pipeline_model_parallel_size == 4
+    assert effective_recipe.model.context_parallel_size == 8
+    assert effective_recipe.model.virtual_pipeline_model_parallel_size is None
     assert effective_recipe.model.expert_model_parallel_size == 32
+    assert effective_recipe.model.expert_tensor_parallel_size == 16
+
+
+def test_runner_preserves_recipe_parallelism_when_argparse_values_are_omitted():
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            tensor_model_parallel_size=2,
+            pipeline_model_parallel_size=4,
+            context_parallel_size=8,
+            virtual_pipeline_model_parallel_size=None,
+            expert_model_parallel_size=16,
+            expert_tensor_parallel_size=1,
+        ),
+        ddp=SimpleNamespace(nccl_ub=False),
+    )
+    original_parallelism = vars(recipe.model).copy()
+    args = SimpleNamespace(virtual_pipeline_model_parallel_size=-1)
+
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+
+    assert vars(effective_recipe.model) == original_parallelism
 
 
 def test_runner_applies_env_relevant_argparse_overrides():
