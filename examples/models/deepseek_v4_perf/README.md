@@ -5,7 +5,7 @@ This example reproduces the full 61-layer DeepSeek-V4-Pro MXFP8 performance reci
 ## Prerequisites
 
 - Megatron-Bridge `r0.5.0` with the DeepSeek-V4-Pro performance recipe.
-- NeMo container `nvcr.io/nvidian/nemo:26.06.01.rc3`.
+- NeMo container `nvcr.io/nvidia/nemo:26.06.01`.
 - Megatron-Core commit `9d46c924dce3818f2b5f894f7380712c780d1801` with the compatibility change below.
 - A host environment containing `nemo_run`.
 
