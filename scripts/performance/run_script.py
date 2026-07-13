@@ -103,8 +103,6 @@ def _prepare_perf_recipe(args, cli_overrides: list[str]):
 
 def _run_training(args, cli_overrides: list[str]) -> None:
     """Import the training stack after env bootstrap and run the workload."""
-    import torch
-
     from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
     from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
     from megatron.bridge.training.config import runtime_config_update
@@ -146,10 +144,6 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         forward_step_func = forward_step
 
     pretrain(config=recipe, forward_step_func=forward_step_func)
-
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
 
 
 def main() -> None:

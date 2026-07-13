@@ -191,6 +191,13 @@ def test_training_entrypoints_do_not_self_exec():
         assert "execvpe" not in source
 
 
+def test_training_entrypoints_leave_process_group_lifecycle_to_training():
+    for script_name in ("run_script.py", "run_recipe.py"):
+        source = (_PERF_SCRIPTS_DIR / script_name).read_text()
+        assert "destroy_process_group" not in source
+        assert "torch.distributed.barrier" not in source
+
+
 def test_run_script_defers_training_framework_imports():
     tree = ast.parse((_PERF_SCRIPTS_DIR / "run_script.py").read_text())
     top_level_imports = {alias.name for node in tree.body if isinstance(node, ast.Import) for alias in node.names}

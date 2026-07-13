@@ -278,8 +278,6 @@ def _prepare_recipe(args, cli_overrides: list[str], *, environment_only: bool):
 
 def _run_training(args, cli_overrides: list[str]) -> None:
     """Build the final recipe and run training after environment bootstrap."""
-    import torch
-
     from megatron.bridge.utils.common_utils import get_rank_safe
 
     recipe = _prepare_recipe(args, cli_overrides, environment_only=False)
@@ -319,9 +317,6 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         finetune(config=recipe, forward_step_func=forward_step)
     else:
         raise ValueError("Must specify either --pretrain or --finetune")
-
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
 
 
 def main() -> None:
