@@ -90,7 +90,7 @@ uv run python scripts/performance/setup_experiment.py \
 
 - `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
 - `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
-- `--use_recipes`: Use library recipes. Disabled by default.
+- `--use_recipes`: Use model recipes instead of flat performance recipes. Disabled by default.
 - `-nh/--nemo_home`: Directory to expose as `NEMO_HOME` on the compute node. Defaults to `~/.cache/nemo`.
 - `--detach`: Detach the experiment from the terminal. Pass `true` or `false`. Default `true`.
 - `--max_retries`: Maximum number of retries. Default `2`.
@@ -316,7 +316,7 @@ python scripts/performance/setup_experiment.py \
   --deterministic
 ```
 
-### Using the recipe library directly
+### Using model recipes directly
 
 `apply_determinism_overrides` is also importable for use outside the performance script layer:
 

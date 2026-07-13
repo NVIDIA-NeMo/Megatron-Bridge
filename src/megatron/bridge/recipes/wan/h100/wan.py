@@ -19,7 +19,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -136,7 +136,7 @@ def wan_1_3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -249,7 +249,7 @@ def wan_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -274,7 +274,7 @@ def wan_1_3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     )
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -299,7 +299,7 @@ def wan_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     )
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -319,7 +319,7 @@ def wan_1_3b_text2image_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.weight_decay = 0.001
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -340,7 +340,7 @@ def wan_1_3b_text2video_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.weight_decay = 0.001
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 

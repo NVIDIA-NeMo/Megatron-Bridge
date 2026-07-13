@@ -20,7 +20,7 @@ from megatron.core.distributed import DistributedDataParallelConfig
 from megatron.bridge.diffusion.conversion.flux.flux_bridge import FluxBridge
 from megatron.bridge.diffusion.conversion.flux.flux_hf_pretrained import PreTrainedFlux
 from megatron.bridge.diffusion.data.flux.flux_energon_datamodule import FluxDatasetConfig
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
@@ -147,7 +147,7 @@ def flux_12b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -172,7 +172,7 @@ def flux_12b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     )
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 

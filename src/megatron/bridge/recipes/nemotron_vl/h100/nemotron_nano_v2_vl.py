@@ -24,7 +24,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import VLMLoRA
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -149,7 +149,7 @@ def nemotron_nano_v2_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -273,7 +273,7 @@ def nemotron_nano_v2_vl_12b_peft_2gpu_h100_bf16_config(
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 

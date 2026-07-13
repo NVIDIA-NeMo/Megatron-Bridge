@@ -23,7 +23,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -156,7 +156,7 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -215,7 +215,7 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 

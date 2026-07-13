@@ -23,7 +23,7 @@ import re
 import select
 import shlex
 import sys
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -210,7 +210,7 @@ def explicit_environment_override_names(
     return names
 
 
-def apply_library_target_topology_environment(
+def apply_target_topology_environment(
     config: Any,
     *,
     gpu: str,
@@ -218,10 +218,10 @@ def apply_library_target_topology_environment(
 ) -> None:
     """Adapt only HybridEP topology for the launch target.
 
-    Hardware library exports currently reuse H100 recipe builders on every
-    target. Their model-specific environment remains static and explicit; this
-    compatibility step only translates the final HybridEP EP size to the
-    target GPU's NVLink domain. Explicit ``env_vars`` overrides remain final.
+    Some hardware targets reuse a recipe whose static defaults describe H100.
+    This step changes only the final HybridEP topology for the selected target;
+    model-specific environment stays explicit in the recipe. Explicit
+    ``env_vars`` overrides remain final.
     """
     topology_names = {
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
@@ -263,13 +263,13 @@ def apply_library_target_topology_environment(
             config.env_vars[name] = value
 
 
-def apply_library_feature_environment(
+def apply_feature_environment(
     config: Any,
     *,
     nccl_ub_override: bool | None,
     protected_env_names: set[str] | None = None,
 ) -> None:
-    """Keep library feature flags and their process settings consistent."""
+    """Keep CLI-selected feature flags and their process settings consistent."""
     protected = protected_env_names or set()
     if nccl_ub_override is not True:
         return
@@ -279,11 +279,11 @@ def apply_library_feature_environment(
             config.env_vars[name] = value
 
 
-def apply_library_argparse_overrides(config: Any, args: Any) -> Any:
-    """Apply argparse values that affect library recipe configuration.
+def apply_argparse_overrides(config: Any, args: Any) -> Any:
+    """Apply argparse values that affect recipe configuration.
 
-    Both passes of the library runner's self-exec bootstrap call this helper
-    before Hydra overrides so their effective training configs match.
+    Both passes of the runner's self-exec bootstrap call this helper before
+    Hydra overrides so their environment-relevant settings match.
     """
     if getattr(args, "nccl_ub", False):
         config.ddp.nccl_ub = True
@@ -304,7 +304,7 @@ def apply_library_argparse_overrides(config: Any, args: Any) -> Any:
     return config
 
 
-def finalize_library_config_overrides(config: Any) -> Any:
+def finalize_config_overrides(config: Any) -> Any:
     """Reconcile config invariants after argparse and Hydra overrides.
 
     Hydra has final precedence over primary fields such as ``ddp.nccl_ub`` and
@@ -735,11 +735,11 @@ def get_perf_optimized_recipe(
     return cfg
 
 
-def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
-    """Get the library recipe.
+def build_recipe_config(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
+    """Build a recipe config and set its run output paths.
 
-    Note: Library pretrain recipes no longer accept kwargs. This function calls the recipe
-    without arguments and then configures the output directories on the returned config.
+    Recipe builders no longer accept output-directory kwargs. This function
+    calls the selected builder and then configures those paths on its result.
 
     The old API was: recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
     This set:
@@ -759,8 +759,8 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
 
-    # Library pretrain recipes no longer accept kwargs - call without args
-    # and configure the returned ConfigContainer
+    # Recipe builders no longer accept output path kwargs. Configure the
+    # returned ConfigContainer instead.
     cfg = recipe_builder()
 
     # Set output directories that were previously configured via dir="/nemo_run/" and name=wandb_experiment_name
@@ -776,29 +776,6 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
     cfg.logger.wandb_save_dir = os.path.join(run_output_dir, "wandb")
 
     return cfg
-
-
-def add_library_recipe_environment_variables(
-    *,
-    custom_env_vars: MutableMapping[str, str],
-    config: Any,
-) -> None:
-    """Copy a library recipe's explicit process defaults into the worker environment.
-
-    Args:
-        custom_env_vars: Existing user or cluster environment values to preserve.
-        config: Resolved library recipe configuration.
-
-    Raises:
-        TypeError: If a recipe environment value is not a supported scalar.
-        ValueError: If an environment name is invalid.
-    """
-    for name, value in config.env_vars.items():
-        if not isinstance(name, str) or not name:
-            raise ValueError("Environment variable names must be non-empty strings.")
-        if not isinstance(value, (str, int, float, bool)):
-            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
-        custom_env_vars.setdefault(name, str(value))
 
 
 class _Colors:

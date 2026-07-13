@@ -46,7 +46,7 @@ class _OfflineKimiAutoBridge:
 
 
 class TestPerfConfigIntegration:
-    """Test performance recipe integration with flat perf recipes and library recipes."""
+    """Test performance recipe integration with flat performance and model recipes."""
 
     def test_llama3_8b_flat_perf_config_instantiation(self):
         """Test that a Llama3 8B flat perf recipe can be instantiated."""
@@ -304,11 +304,11 @@ class TestPerfConfigIntegration:
 
         assert variants == [None, "large_scale"]
 
-    def test_get_library_recipe_llama_sets_paths(self):
-        """Test that the library recipe helper sets expected /nemo_run paths."""
-        from utils.utils import get_library_recipe
+    def test_build_recipe_config_llama_sets_paths(self):
+        """Test that the recipe config helper sets expected /nemo_run paths."""
+        from utils.utils import build_recipe_config
 
-        cfg = get_library_recipe(
+        cfg = build_recipe_config(
             model_family_name="llama",
             model_recipe_name="llama3_8b",
             train_task="pretrain",
@@ -321,11 +321,11 @@ class TestPerfConfigIntegration:
         assert cfg.logger.wandb_exp_name == "test_experiment"
         assert cfg.logger.wandb_save_dir == "/nemo_run/test_experiment/wandb"
 
-    def test_get_library_recipe_deepseek_sets_paths(self):
-        """Test that get_library_recipe works with DeepSeek recipes."""
-        from utils.utils import get_library_recipe
+    def test_build_recipe_config_deepseek_sets_paths(self):
+        """Test that build_recipe_config works with DeepSeek recipes."""
+        from utils.utils import build_recipe_config
 
-        cfg = get_library_recipe(
+        cfg = build_recipe_config(
             model_family_name="deepseek",
             model_recipe_name="deepseek_v3",
             train_task="pretrain",

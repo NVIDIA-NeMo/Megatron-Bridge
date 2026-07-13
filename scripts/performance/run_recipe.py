@@ -43,13 +43,13 @@ def _get_diffusion_step(model_family_name: str):
     raise ValueError(f"Unknown diffusion model family: {model_family_name!r}")
 
 
-def set_user_overrides(config, args):
-    """Apply CLI arguments to ConfigContainer fields."""
+def _apply_training_argparse_overrides(config, args):
+    """Apply all training argparse values to ConfigContainer fields."""
     from utils.datasets import create_mock_dataset_config, create_rp2_dataset_config, create_squad_dataset_config
-    from utils.utils import apply_library_argparse_overrides
+    from utils.utils import apply_argparse_overrides
 
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
-    config = apply_library_argparse_overrides(config, args)
+    config = apply_argparse_overrides(config, args)
 
     # Training configuration
     if args.max_steps:
@@ -208,60 +208,83 @@ def set_user_overrides(config, args):
     return config
 
 
-def _get_library_recipe(args):
-    """Resolve the selected library recipe without importing it at module load time."""
-    from utils.utils import get_library_recipe
-
-    return get_library_recipe(
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        train_task=args.task,
-        wandb_experiment_name=args.wandb_experiment_name,
-    )
-
-
-def _process_library_hydra_overrides(recipe, cli_overrides: list[str]):
-    """Apply Hydra overrides using the same ordering in both self-exec passes."""
+def _apply_hydra_overrides(recipe, cli_overrides: list[str]):
+    """Apply Hydra overrides without exposing that implementation in the preparation flow."""
     from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
     return process_config_with_overrides(recipe, cli_overrides=cli_overrides)
 
 
-def _apply_library_recipe_overrides(recipe, cli_overrides: list[str], args):
-    """Apply env-relevant argparse and Hydra overrides before self-exec."""
-    from utils.utils import apply_library_argparse_overrides, finalize_library_config_overrides
+def _apply_recipe_overrides(recipe, args, cli_overrides: list[str], *, environment_only: bool):
+    """Apply argparse and Hydra overrides, with Hydra taking final precedence.
 
-    recipe = apply_library_argparse_overrides(recipe, args)
-    # Determinism owns process environment values that must be installed before
-    # the clean interpreter imports Torch, Transformer Engine, cuBLAS, or NCCL.
-    if getattr(args, "deterministic", False):
-        from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+    The bootstrap pass applies only settings that can change the process
+    environment. The training pass applies the complete CLI surface. This
+    keeps the clean-interpreter bootstrap lightweight while preserving the
+    same ordering for every environment-relevant override.
+    """
+    if environment_only:
+        from utils.utils import apply_argparse_overrides
 
-        apply_determinism_overrides(recipe)
+        recipe = apply_argparse_overrides(recipe, args)
+        # Determinism owns process values that must be installed before the
+        # clean interpreter imports Torch, Transformer Engine, cuBLAS, or NCCL.
+        if getattr(args, "deterministic", False):
+            from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
+            apply_determinism_overrides(recipe)
+    else:
+        recipe = _apply_training_argparse_overrides(recipe, args)
+
     if cli_overrides:
-        recipe = _process_library_hydra_overrides(recipe, cli_overrides)
-    return finalize_library_config_overrides(recipe)
+        if not environment_only:
+            logging.info("Applying %d CLI config override(s)", len(cli_overrides))
+        recipe = _apply_hydra_overrides(recipe, cli_overrides)
+    return recipe
 
 
-def _apply_target_environment(recipe, base_env_vars: dict, cli_overrides: list[str], args) -> None:
-    """Finalize target-dependent recipe environment defaults."""
+def _finalize_recipe(recipe, args, cli_overrides: list[str], base_env_vars: dict):
+    """Reconcile config invariants and target-dependent environment values."""
     from utils.utils import (
-        apply_library_feature_environment,
-        apply_library_target_topology_environment,
+        apply_feature_environment,
+        apply_target_topology_environment,
         explicit_environment_override_names,
+        finalize_config_overrides,
     )
 
+    recipe = finalize_config_overrides(recipe)
     protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
-    apply_library_target_topology_environment(
+    apply_target_topology_environment(
         recipe,
         gpu=args.gpu,
         protected_env_names=protected_env_names,
     )
-    apply_library_feature_environment(
+    apply_feature_environment(
         recipe,
         nccl_ub_override=args.nccl_ub,
         protected_env_names=protected_env_names,
     )
+    return recipe
+
+
+def _prepare_recipe(args, cli_overrides: list[str], *, environment_only: bool):
+    """Build the base recipe, apply user overrides, then finalize it."""
+    from utils.utils import build_recipe_config
+
+    # 1. Base config supplied by the recipe.
+    recipe = build_recipe_config(
+        model_family_name=args.model_family_name,
+        model_recipe_name=args.model_recipe_name,
+        train_task=args.task,
+        wandb_experiment_name=args.wandb_experiment_name,
+    )
+    base_env_vars = dict(recipe.env_vars)
+
+    # 2. User overrides from argparse followed by Hydra.
+    recipe = _apply_recipe_overrides(recipe, args, cli_overrides, environment_only=environment_only)
+
+    # 3. Derived config invariants and target-specific environment values.
+    return _finalize_recipe(recipe, args, cli_overrides, base_env_vars)
 
 
 def _apply_recipe_environment(recipe) -> None:
@@ -273,10 +296,7 @@ def _apply_recipe_environment(recipe) -> None:
 
 def _bootstrap_recipe_environment(args, cli_overrides: list[str]) -> None:
     """Apply the effective recipe env and replace this process with a clean interpreter."""
-    recipe = _get_library_recipe(args)
-    base_env_vars = dict(recipe.env_vars)
-    recipe = _apply_library_recipe_overrides(recipe, cli_overrides, args)
-    _apply_target_environment(recipe, base_env_vars, cli_overrides, args)
+    recipe = _prepare_recipe(args, cli_overrides, environment_only=True)
     _apply_recipe_environment(recipe)
 
     environment = dict(os.environ)
@@ -290,18 +310,7 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
     from megatron.bridge.utils.common_utils import get_rank_safe
 
-    recipe = _get_library_recipe(args)
-    base_env_vars = dict(recipe.env_vars)
-    recipe = set_user_overrides(recipe, args)
-
-    if cli_overrides:
-        logging.info("Applying %d CLI config override(s)", len(cli_overrides))
-        recipe = _process_library_hydra_overrides(recipe, cli_overrides)
-
-    from utils.utils import finalize_library_config_overrides
-
-    recipe = finalize_library_config_overrides(recipe)
-    _apply_target_environment(recipe, base_env_vars, cli_overrides, args)
+    recipe = _prepare_recipe(args, cli_overrides, environment_only=False)
     _apply_recipe_environment(recipe)
 
     if args.dryrun:

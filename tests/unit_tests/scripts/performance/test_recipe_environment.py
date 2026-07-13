@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for launcher-side library recipe environment resolution."""
+"""Tests for launcher-side recipe environment resolution."""
 
 import ast
 import importlib.util
@@ -71,34 +71,11 @@ import run_script
 from utils import utils
 
 
-def _add_environment(config, custom_env_vars):
-    utils.add_library_recipe_environment_variables(custom_env_vars=custom_env_vars, config=config)
-
-
-def test_library_recipe_environment_copies_explicit_values_and_preserves_launcher_values():
-    config = SimpleNamespace(
-        env_vars={
-            "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-            "TORCHINDUCTOR_WORKER_START": "fork",
-            "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
-        },
-    )
-    custom_env_vars = {"NVTE_FWD_LAYERNORM_SM_MARGIN": "48"}
-    original_mapping = custom_env_vars
-
-    _add_environment(config, custom_env_vars)
-
-    assert custom_env_vars is original_mapping
-    assert custom_env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "48"
-    assert custom_env_vars["TORCHINDUCTOR_WORKER_START"] == "fork"
-    assert custom_env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == "1"
-
-
 @pytest.mark.parametrize(
     ("gpu", "ep_size", "expected_ranks", "expected_domain", "expected_mnnvl"),
     [("h100", 32, 8, 8, 0), ("gb200", 32, 32, 72, 1), ("vr200", 64, 64, 72, 1)],
 )
-def test_library_target_topology_adapts_only_hybridep(gpu, ep_size, expected_ranks, expected_domain, expected_mnnvl):
+def test_target_topology_adapts_only_hybridep(gpu, ep_size, expected_ranks, expected_domain, expected_mnnvl):
     config = SimpleNamespace(
         env_vars={
             "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
@@ -109,7 +86,7 @@ def test_library_target_topology_adapts_only_hybridep(gpu, ep_size, expected_ran
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=ep_size),
     )
 
-    utils.apply_library_target_topology_environment(config, gpu=gpu)
+    utils.apply_target_topology_environment(config, gpu=gpu)
 
     assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == expected_ranks
     assert config.env_vars["NVLINK_DOMAIN_SIZE"] == expected_domain
@@ -117,7 +94,7 @@ def test_library_target_topology_adapts_only_hybridep(gpu, ep_size, expected_ran
     assert config.env_vars["MODEL_SPECIFIC"] == 1
 
 
-def test_library_target_topology_removes_disabled_hybridep_values():
+def test_target_topology_removes_disabled_hybridep_values():
     config = SimpleNamespace(
         env_vars={
             "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
@@ -127,22 +104,22 @@ def test_library_target_topology_removes_disabled_hybridep_values():
         model=SimpleNamespace(moe_flex_dispatcher_backend=None, expert_model_parallel_size=8),
     )
 
-    utils.apply_library_target_topology_environment(config, gpu="h100")
+    utils.apply_target_topology_environment(config, gpu="h100")
 
     assert not config.env_vars
 
 
-def test_library_target_topology_rejects_nonpositive_ep_size():
+def test_target_topology_rejects_nonpositive_ep_size():
     config = SimpleNamespace(
         env_vars={},
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=0),
     )
 
     with pytest.raises(ValueError, match="must be positive"):
-        utils.apply_library_target_topology_environment(config, gpu="h100")
+        utils.apply_target_topology_environment(config, gpu="h100")
 
 
-def test_library_nccl_ub_environment_matches_legacy_launcher_behavior():
+def test_nccl_ub_environment_matches_legacy_launcher_behavior():
     config = SimpleNamespace(
         env_vars={
             "NCCL_GRAPH_REGISTER": 0,
@@ -152,7 +129,7 @@ def test_library_nccl_ub_environment_matches_legacy_launcher_behavior():
         ddp=SimpleNamespace(nccl_ub=True),
     )
 
-    utils.apply_library_feature_environment(config, nccl_ub_override=True)
+    utils.apply_feature_environment(config, nccl_ub_override=True)
 
     assert config.env_vars["NCCL_NVLS_ENABLE"] == 1
     assert config.env_vars["NCCL_CTA_POLICY"] == 1
@@ -160,19 +137,19 @@ def test_library_nccl_ub_environment_matches_legacy_launcher_behavior():
     assert config.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
 
 
-def test_library_recipe_nccl_ub_does_not_rewrite_inline_env_without_cli_override():
+def test_recipe_nccl_ub_does_not_rewrite_inline_env_without_cli_override():
     config = SimpleNamespace(
         env_vars={"NCCL_NVLS_ENABLE": 0, "RECIPE_SPECIFIC": 7},
         ddp=SimpleNamespace(nccl_ub=True),
     )
     original_env = config.env_vars.copy()
 
-    utils.apply_library_feature_environment(config, nccl_ub_override=None)
+    utils.apply_feature_environment(config, nccl_ub_override=None)
 
     assert config.env_vars == original_env
 
 
-def test_library_nccl_ub_respects_explicit_environment_overrides():
+def test_nccl_ub_respects_explicit_environment_overrides():
     config = SimpleNamespace(
         env_vars={
             "NCCL_GRAPH_REGISTER": 7,
@@ -182,7 +159,7 @@ def test_library_nccl_ub_respects_explicit_environment_overrides():
         ddp=SimpleNamespace(nccl_ub=True),
     )
 
-    utils.apply_library_feature_environment(
+    utils.apply_feature_environment(
         config,
         nccl_ub_override=True,
         protected_env_names={"NCCL_GRAPH_REGISTER", "NCCL_NVLS_ENABLE", "PYTORCH_CUDA_ALLOC_CONF"},
@@ -206,7 +183,7 @@ def test_explicit_environment_map_protects_target_topology_values():
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=32),
     )
 
-    utils.apply_library_target_topology_environment(config, gpu="gb200", protected_env_names=protected)
+    utils.apply_target_topology_environment(config, gpu="gb200", protected_env_names=protected)
 
     assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert config.env_vars["USE_MNNVL"] == 0
@@ -572,20 +549,20 @@ def test_flat_explicit_false_a2a_preserves_legacy_config_and_env_behavior():
     assert recipe.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
 
 
-def test_library_runner_applies_known_ep_override_to_effective_recipe():
-    """The library pre-exec config should mirror run_recipe's argparse EP update."""
+def test_runner_applies_known_ep_override_to_effective_recipe():
+    """The pre-exec config should mirror run_recipe's argparse EP update."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(expert_model_parallel_size=8),
         ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
     )
     args = SimpleNamespace(expert_model_parallel_size=32)
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
 
     assert effective_recipe.model.expert_model_parallel_size == 32
 
 
-def test_library_runner_applies_env_relevant_argparse_overrides():
+def test_runner_applies_env_relevant_argparse_overrides():
     """NCCL-UB and dispatcher settings must be visible before the runner execs."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -608,7 +585,8 @@ def test_library_runner_applies_env_relevant_argparse_overrides():
         moe_flex_dispatcher_backend="hybridep",
     )
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
 
     assert effective_recipe.ddp.nccl_ub is True
     assert effective_recipe.ddp.average_in_collective is False
@@ -618,7 +596,7 @@ def test_library_runner_applies_env_relevant_argparse_overrides():
     assert effective_recipe.model.moe_shared_expert_overlap is False
 
 
-def test_library_runner_applies_determinism_before_environment_export():
+def test_runner_applies_determinism_before_environment_export():
     """Deterministic env and config must be resolved in the pre-exec pass."""
     recipe = SimpleNamespace(
         env_vars={"RECIPE_ENV": 1},
@@ -639,7 +617,7 @@ def test_library_runner_applies_determinism_before_environment_export():
         moe_flex_dispatcher_backend=-1,
     )
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
 
     assert effective_recipe.model.deterministic_mode is True
     assert effective_recipe.model.cross_entropy_loss_fusion is False
@@ -652,8 +630,8 @@ def test_library_runner_applies_determinism_before_environment_export():
     }
 
 
-def test_library_deterministic_environment_reaches_self_exec(monkeypatch):
-    """The clean library interpreter must start with deterministic process values."""
+def test_deterministic_environment_reaches_self_exec(monkeypatch):
+    """The clean interpreter must start with deterministic process values."""
     deterministic_env = {
         "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
         "NCCL_ALGO": "Ring",
@@ -675,6 +653,10 @@ def test_library_deterministic_environment_reaches_self_exec(monkeypatch):
         ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
     )
     args = SimpleNamespace(
+        model_family_name="qwen",
+        model_recipe_name="qwen3_30b_a3b",
+        task="pretrain",
+        wandb_experiment_name="deterministic-test",
         deterministic=True,
         expert_model_parallel_size=None,
         nccl_ub=False,
@@ -682,8 +664,8 @@ def test_library_deterministic_environment_reaches_self_exec(monkeypatch):
     )
     exec_environments = []
 
-    monkeypatch.setattr(run_recipe, "_get_library_recipe", lambda _args: recipe)
-    monkeypatch.setattr(run_recipe, "_apply_target_environment", lambda *_args: None)
+    monkeypatch.setattr(utils, "build_recipe_config", lambda **_kwargs: recipe)
+    monkeypatch.setattr(run_recipe, "_finalize_recipe", lambda prepared, *_args: prepared)
     monkeypatch.setattr(run_recipe.os, "execvpe", lambda _executable, _argv, env: exec_environments.append(env))
 
     run_recipe._bootstrap_recipe_environment(args, [])
@@ -694,7 +676,7 @@ def test_library_deterministic_environment_reaches_self_exec(monkeypatch):
     assert exec_environment[run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())
 
 
-def test_library_hydra_environment_override_wins_after_deterministic_argparse(monkeypatch):
+def test_hydra_environment_override_wins_after_deterministic_argparse(monkeypatch):
     """Explicit Hydra env values remain final in the deterministic pre-exec pass."""
     recipe = SimpleNamespace(
         env_vars={},
@@ -721,18 +703,19 @@ def test_library_hydra_environment_override_wins_after_deterministic_argparse(mo
         config.env_vars["NCCL_ALGO"] = "Tree"
         return config
 
-    monkeypatch.setattr(run_recipe, "_process_library_hydra_overrides", apply_hydra)
+    monkeypatch.setattr(run_recipe, "_apply_hydra_overrides", apply_hydra)
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(
+    effective_recipe = run_recipe._apply_recipe_overrides(
         recipe,
-        ["env_vars.NCCL_ALGO=Tree"],
         args,
+        ["env_vars.NCCL_ALGO=Tree"],
+        environment_only=True,
     )
 
     assert effective_recipe.env_vars["NCCL_ALGO"] == "Tree"
 
 
-def test_library_runner_disables_flex_dispatcher_consistently():
+def test_runner_disables_flex_dispatcher_consistently():
     """The explicit None backend must clear both flex dispatcher fields."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -750,14 +733,15 @@ def test_library_runner_disables_flex_dispatcher_consistently():
         moe_flex_dispatcher_backend=None,
     )
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
 
     assert effective_recipe.model.moe_token_dispatcher_type == "alltoall"
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
 @pytest.mark.parametrize("dispatcher_override", [-1, "hybridep"])
-def test_library_runner_preserves_dense_dispatcher_fields(dispatcher_override):
+def test_runner_preserves_dense_dispatcher_fields(dispatcher_override):
     """Finalization must not rewrite dense-model dispatcher defaults."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -774,26 +758,31 @@ def test_library_runner_preserves_dense_dispatcher_fields(dispatcher_override):
         moe_flex_dispatcher_backend=dispatcher_override,
     )
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(recipe, [], args)
+    effective_recipe = run_recipe._apply_recipe_overrides(recipe, args, [], environment_only=True)
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
 
     assert effective_recipe.model.moe_token_dispatcher_type is None
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
-def test_library_runner_uses_shared_environment_override_helpers():
-    """Both self-exec passes must use the shared argparse and topology logic."""
+def test_runner_uses_three_stage_recipe_preparation():
+    """Both self-exec passes share base, override, and finalize stages."""
     repo_root = Path(__file__).resolve().parents[4]
     expected_calls = {
         repo_root / "scripts" / "performance" / "run_recipe.py": {
-            "_apply_library_recipe_overrides": {
-                "apply_library_argparse_overrides",
+            "_prepare_recipe": {"build_recipe_config", "_apply_recipe_overrides", "_finalize_recipe"},
+            "_apply_recipe_overrides": {
+                "apply_argparse_overrides",
                 "apply_determinism_overrides",
-                "finalize_library_config_overrides",
+                "_apply_training_argparse_overrides",
+                "_apply_hydra_overrides",
             },
-            "set_user_overrides": {"apply_library_argparse_overrides"},
-            "_apply_target_environment": {
+            "_apply_training_argparse_overrides": {"apply_argparse_overrides"},
+            "_finalize_recipe": {
+                "finalize_config_overrides",
                 "explicit_environment_override_names",
-                "apply_library_target_topology_environment",
+                "apply_target_topology_environment",
+                "apply_feature_environment",
             },
         },
     }
@@ -812,8 +801,8 @@ def test_library_runner_uses_shared_environment_override_helpers():
             assert called_helpers >= expected_helpers
 
 
-def test_library_hydra_ep_override_wins_after_known_ep_override(monkeypatch):
-    """Hydra EP must win after argparse EP, matching the final library runner."""
+def test_hydra_ep_override_wins_after_known_ep_override(monkeypatch):
+    """Hydra EP must win after argparse EP in the final runner config."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(expert_model_parallel_size=8),
         ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
@@ -826,18 +815,19 @@ def test_library_hydra_ep_override_wins_after_known_ep_override(monkeypatch):
         config.model.expert_model_parallel_size = 64
         return config
 
-    monkeypatch.setattr(run_recipe, "_process_library_hydra_overrides", apply_hydra)
+    monkeypatch.setattr(run_recipe, "_apply_hydra_overrides", apply_hydra)
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(
+    effective_recipe = run_recipe._apply_recipe_overrides(
         recipe,
-        ["model.expert_model_parallel_size=64"],
         args,
+        ["model.expert_model_parallel_size=64"],
+        environment_only=True,
     )
 
     assert effective_recipe.model.expert_model_parallel_size == 64
 
 
-def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
+def test_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     """Hydra primary-field precedence must not leave stale coupled settings."""
     recipe = SimpleNamespace(
         model=SimpleNamespace(
@@ -865,13 +855,15 @@ def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
         config.model.moe_flex_dispatcher_backend = None
         return config
 
-    monkeypatch.setattr(run_recipe, "_process_library_hydra_overrides", apply_hydra)
+    monkeypatch.setattr(run_recipe, "_apply_hydra_overrides", apply_hydra)
 
-    effective_recipe = run_recipe._apply_library_recipe_overrides(
+    effective_recipe = run_recipe._apply_recipe_overrides(
         recipe,
-        ["ddp.nccl_ub=false", "model.moe_flex_dispatcher_backend=null"],
         args,
+        ["ddp.nccl_ub=false", "model.moe_flex_dispatcher_backend=null"],
+        environment_only=True,
     )
+    effective_recipe = utils.finalize_config_overrides(effective_recipe)
 
     assert effective_recipe.ddp.nccl_ub is False
     assert effective_recipe.ddp.fsdp_manual_registration is False
@@ -879,10 +871,9 @@ def test_library_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
-def test_library_runner_exports_resolved_recipe_environment_before_exec(monkeypatch):
-    """The original runner exports its explicit env map before self-exec."""
+def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
+    """Recipe preparation has one visible path with exactly three config stages."""
     args = SimpleNamespace(
-        use_recipes=True,
         model_family_name="deepseek",
         model_recipe_name="deepseek_v3_32nodes",
         task="pretrain",
@@ -898,16 +889,49 @@ def test_library_runner_exports_resolved_recipe_environment_before_exec(monkeypa
         env_vars={"TORCHINDUCTOR_WORKER_START": "fork"},
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=64),
     )
+    final_recipe = SimpleNamespace(env_vars={"FINAL": 1})
     calls = []
     cli_overrides = ["model.expert_model_parallel_size=64"]
-    monkeypatch.setattr(run_recipe, "_get_library_recipe", lambda parsed_args: base_recipe)
 
-    def apply_overrides(recipe, overrides, parsed_args):
-        calls.append(("overrides", recipe, overrides, parsed_args))
+    def build_config(**kwargs):
+        calls.append(("base", kwargs))
+        return base_recipe
+
+    def apply_overrides(recipe, parsed_args, overrides, *, environment_only):
+        calls.append(("overrides", recipe, parsed_args, overrides, environment_only))
         return effective_recipe
 
-    def apply_target(recipe, base_env_vars, overrides, parsed_args):
-        calls.append(("target", recipe, base_env_vars, overrides, parsed_args))
+    def finalize(recipe, parsed_args, overrides, base_env_vars):
+        calls.append(("finalize", recipe, parsed_args, overrides, base_env_vars))
+        return final_recipe
+
+    monkeypatch.setattr(utils, "build_recipe_config", build_config)
+    monkeypatch.setattr(run_recipe, "_apply_recipe_overrides", apply_overrides)
+    monkeypatch.setattr(run_recipe, "_finalize_recipe", finalize)
+
+    result = run_recipe._prepare_recipe(args, cli_overrides, environment_only=True)
+
+    assert result is final_recipe
+    assert calls == [
+        (
+            "base",
+            {
+                "model_family_name": "deepseek",
+                "model_recipe_name": "deepseek_v3_32nodes",
+                "train_task": "pretrain",
+                "wandb_experiment_name": "test-experiment",
+            },
+        ),
+        ("overrides", base_recipe, args, cli_overrides, True),
+        ("finalize", effective_recipe, args, cli_overrides, {"TORCHINDUCTOR_WORKER_START": "fork"}),
+    ]
+
+
+def test_runner_exports_resolved_recipe_environment_before_exec(monkeypatch):
+    """The runner exports the prepared recipe environment before self-exec."""
+    args = SimpleNamespace()
+    effective_recipe = SimpleNamespace(env_vars={"TORCHINDUCTOR_WORKER_START": "fork"})
+    calls = []
 
     def apply_environment(recipe):
         calls.append(("environment", recipe))
@@ -915,29 +939,13 @@ def test_library_runner_exports_resolved_recipe_environment_before_exec(monkeypa
     def exec_runner(executable, argv, env):
         calls.append(("exec", executable, argv, env))
 
-    monkeypatch.setattr(run_recipe, "_apply_library_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_recipe, "_apply_target_environment", apply_target)
+    monkeypatch.setattr(run_recipe, "_prepare_recipe", lambda *_args, **_kwargs: effective_recipe)
     monkeypatch.setattr(run_recipe, "_apply_recipe_environment", apply_environment)
     monkeypatch.setattr(run_recipe.os, "execvpe", exec_runner)
 
-    run_recipe._bootstrap_recipe_environment(args, cli_overrides)
+    run_recipe._bootstrap_recipe_environment(args, [])
 
-    assert calls[0] == ("overrides", base_recipe, cli_overrides, args)
-    assert calls[1] == (
-        "target",
-        effective_recipe,
-        {"TORCHINDUCTOR_WORKER_START": "fork"},
-        cli_overrides,
-        args,
-    )
-    assert calls[2] == ("environment", effective_recipe)
-    assert calls[3][0] == "exec"
-    assert calls[3][2][1].endswith("run_recipe.py")
-    assert calls[3][3][run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())
-
-
-def test_library_recipe_environment_rejects_non_scalar_values():
-    config = SimpleNamespace(env_vars={"INVALID": ["value"]})
-
-    with pytest.raises(TypeError, match="must have a scalar value"):
-        _add_environment(config, {})
+    assert calls[0] == ("environment", effective_recipe)
+    assert calls[1][0] == "exec"
+    assert calls[1][2][1].endswith("run_recipe.py")
+    assert calls[1][3][run_recipe.ENV_BOOTSTRAP_MARKER] == str(run_recipe.os.getpid())

@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for explicit hardware library recipe environment settings."""
+"""Tests for explicit hardware recipe environment settings."""
 
 import ast
 import re
@@ -20,7 +20,7 @@ from pathlib import Path
 
 import pytest
 
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 
 
 _CANONICAL_RECIPE_NAME = re.compile(
@@ -63,12 +63,12 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
     mapping = assignments[0].value
     assert isinstance(mapping, ast.Dict)
 
-    result = COMMON_LIBRARY_ENV_VARS.copy()
+    result = COMMON_RECIPE_ENV_VARS.copy()
     common_expansions = 0
     for index, (key, value) in enumerate(zip(mapping.keys, mapping.values)):
         if key is None:
             assert index == 0
-            assert isinstance(value, ast.Name) and value.id == "COMMON_LIBRARY_ENV_VARS"
+            assert isinstance(value, ast.Name) and value.id == "COMMON_RECIPE_ENV_VARS"
             common_expansions += 1
             continue
         result[ast.literal_eval(key)] = ast.literal_eval(value)
@@ -87,8 +87,8 @@ def _explicit_environments():
                 yield path, node.name, _explicit_environment(path, node.name)
 
 
-def test_common_library_environment_is_small_and_universal():
-    assert COMMON_LIBRARY_ENV_VARS == {
+def test_common_recipe_environment_is_small_and_universal():
+    assert COMMON_RECIPE_ENV_VARS == {
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
@@ -99,7 +99,7 @@ def test_common_library_environment_is_small_and_universal():
     }
 
 
-def test_every_supported_hardware_library_recipe_declares_its_environment_inline():
+def test_every_supported_hardware_recipe_declares_its_environment_inline():
     supported = []
     unsupported = []
 
@@ -129,7 +129,7 @@ def test_every_supported_hardware_library_recipe_declares_its_environment_inline
     assert unsupported == ["qwen/h100/qwen3_next.py:qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config"]
 
 
-def test_explicit_library_environment_invariants():
+def test_explicit_recipe_environment_invariants():
     recipes = list(_explicit_environments())
     hybrid_ep_count = 0
     deepseek_v3_environment_recipe_names = set()
@@ -192,7 +192,7 @@ def test_explicit_library_environment_invariants():
         ),
     ],
 )
-def test_representative_library_recipe_environment_is_visible(relative_path, function_name, expected):
+def test_representative_recipe_environment_is_visible(relative_path, function_name, expected):
     environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
 
     assert environment.items() >= expected.items()

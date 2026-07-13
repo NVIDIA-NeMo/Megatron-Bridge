@@ -22,7 +22,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
 )
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
@@ -146,7 +146,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.use_megatron_fsdp = False
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -218,7 +218,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.model.quant_recipe = _deepseek_v4_mxfp8_quant_recipe()
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -288,7 +288,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = True
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -364,7 +364,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dist.enable_megatron_core_experimental = True
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -441,7 +441,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.dist.enable_megatron_core_experimental = True
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 

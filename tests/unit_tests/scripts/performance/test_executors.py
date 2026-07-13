@@ -155,7 +155,7 @@ def test_kubeflow_numa_binding_is_disabled_by_default():
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
 def test_executor_never_supplies_recipe_process_defaults(tmp_path):
-    """Flat and library recipes should supply process settings without executor shadowing."""
+    """Flat performance and model recipes supply process settings without executor shadowing."""
     executor = slurm_executor(
         gpu="h100",
         account="test",

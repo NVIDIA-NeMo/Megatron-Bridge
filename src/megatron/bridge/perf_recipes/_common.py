@@ -93,7 +93,7 @@ def _perf_precision(compute_dtype: str):
     """Return mixed-precision config tuned for perf benchmarks.
 
     Identical to ``scripts/performance/utils/precision.get_precision_config``
-    but importable from the library side.  Always sets
+    but importable from the recipe package. Always sets
     ``grad_reduce_in_fp32=False`` so that callers that replace
     ``cfg.mixed_precision`` after ``_benchmark_common()`` still get the
     benchmark-mode default.

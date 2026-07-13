@@ -191,7 +191,7 @@ def parse_cli_args():
     parser.add_argument(
         "--use_recipes",
         action="store_true",
-        help="Use library recipes. Disabled by default.",
+        help="Use model recipes instead of flat performance recipes. Disabled by default.",
         default=False,
     )
     parser.add_argument(

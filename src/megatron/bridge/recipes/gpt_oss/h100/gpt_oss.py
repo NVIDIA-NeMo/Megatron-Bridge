@@ -21,6 +21,7 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     default_openmathinstruct2_thinking_config,
     default_peft_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
@@ -154,7 +155,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -269,7 +270,7 @@ def gpt_oss_120b_pretrain_64gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -281,7 +282,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -416,7 +417,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -546,7 +547,7 @@ def gpt_oss_120b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -558,7 +559,7 @@ def gpt_oss_20b_sft_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -702,7 +703,7 @@ def gpt_oss_20b_peft_1gpu_h100_bf16_config(
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -841,7 +842,7 @@ def gpt_oss_120b_peft_8gpu_h100_bf16_config(
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -855,7 +856,7 @@ def gpt_oss_20b_peft_1gpu_h100_fp8cs_config(
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -874,7 +875,7 @@ def gpt_oss_20b_pretrain_16gpu_h100_fp8mx_config() -> ConfigContainer:
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -887,7 +888,7 @@ def gpt_oss_20b_sft_8gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -901,7 +902,7 @@ def gpt_oss_20b_peft_1gpu_h100_fp8mx_config(
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
@@ -920,7 +921,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config() ->
     cfg.dataset = default_openmathinstruct2_thinking_config(seq_length=seq_length, enable_offline_packing=True)
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
-        **COMMON_LIBRARY_ENV_VARS,
+        **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
 
