@@ -201,6 +201,8 @@ def build_train_valid_test_data_loaders(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    *,
+    eval_dp_group: torch.distributed.ProcessGroup | None = None,
 ) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build train, validation, and test data loaders.
 
@@ -211,6 +213,9 @@ def build_train_valid_test_data_loaders(
         cfg: The main configuration container.
         train_state: The current training state.
         build_train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data-parallel group used to shard the training dataset.
+        eval_dp_group: Optional data-parallel group used to shard validation and test datasets.
+            Defaults to ``dp_group``.
 
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
@@ -284,9 +289,13 @@ def build_train_valid_test_data_loaders(
 
     maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
 
-    # Resolve DP rank/size from provided data-parallel process group
+    # Resolve train and eval DP ownership from their respective process groups.
     dp_rank = torch.distributed.get_rank(group=dp_group)
     dp_size = torch.distributed.get_world_size(group=dp_group)
+    if eval_dp_group is None:
+        eval_dp_group = dp_group
+    eval_dp_rank = torch.distributed.get_rank(group=eval_dp_group)
+    eval_dp_size = torch.distributed.get_world_size(group=eval_dp_group)
 
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
@@ -327,8 +336,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
+            data_parallel_rank=eval_dp_rank,
+            data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
         )
     elif cfg.validation.eval_iters > 0:
@@ -344,8 +353,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
+            data_parallel_rank=eval_dp_rank,
+            data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
         )
 
@@ -361,8 +370,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
+            data_parallel_rank=eval_dp_rank,
+            data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
         )
 
@@ -386,6 +395,8 @@ def build_train_valid_test_data_iterators(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    *,
+    eval_dp_group: torch.distributed.ProcessGroup | None = None,
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
     """Build train, validation, and test data iterators.
 
@@ -396,6 +407,8 @@ def build_train_valid_test_data_iterators(
         cfg: The main configuration container.
         train_state: The current training state.
         build_train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data-parallel group used to shard the training dataset.
+        eval_dp_group: Optional data-parallel group used to shard validation and test datasets.
 
     Returns:
         A tuple (train_data_iterator, valid_data_iterator, test_data_iterator).
@@ -407,6 +420,7 @@ def build_train_valid_test_data_iterators(
         train_state=train_state,
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
         dp_group=dp_group,
+        eval_dp_group=eval_dp_group,
     )
 
     # Build iterators.
@@ -455,6 +469,8 @@ def setup_data_iterators(
     model_length: int,
     train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    *,
+    eval_dp_group: torch.distributed.ProcessGroup | None = None,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -471,6 +487,8 @@ def setup_data_iterators(
         train_state: The current training state.
         model_length: The number of model chunks (used for virtual pipeline parallelism).
         train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data-parallel group used to shard the training dataset.
+        eval_dp_group: Optional data-parallel group used to shard validation and test datasets.
 
     Returns:
         A tuple (train_data_iterator, valid_data_iterator, test_data_iterator).
@@ -482,6 +500,7 @@ def setup_data_iterators(
         train_state=train_state,
         build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=dp_group,
+        eval_dp_group=eval_dp_group,
     )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator

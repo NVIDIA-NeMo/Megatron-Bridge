@@ -32,7 +32,6 @@ if TYPE_CHECKING:
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
-from modelopt.torch.quantization.utils import is_quantized
 from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
@@ -642,7 +641,7 @@ class AutoBridge(Generic[MegatronModelT]):
         quant_mode: str = "nvfp4",
         cpu: bool = False,
         show_progress: bool = True,
-        conversion_tasks: Optional[List[WeightConversionTask | None]] = None,
+        conversion_tasks: Optional[List[WeightConversionTask]] = None,
         ignore_patterns: Optional[List[str]] = None,
         merge_adapter_weights: bool = True,
     ) -> Iterable["HFWeightTuple"]:
@@ -650,7 +649,8 @@ class AutoBridge(Generic[MegatronModelT]):
 
         Args:
             model: Megatron model instance or list of instances.
-            quant_mode: ModelOpt quantization mode to export. Currently supports ``"nvfp4"``.
+            quant_mode: ModelOpt quantization mode to export. Currently supports
+                ``"nvfp4"`` and ``"w4a16_nvfp4"``.
             cpu: Whether to move exported tensors to CPU before yielding.
             show_progress: Display progress bar during base Hugging Face weight export.
             conversion_tasks: Pre-built conversion tasks. If not provided, tasks will be built
@@ -669,57 +669,27 @@ class AutoBridge(Generic[MegatronModelT]):
             RuntimeError: If a matched quantized Megatron parameter uses a qformat unsupported by
                 ``quant_mode``.
         """
-        from megatron.bridge.models.conversion.modelopt_utils import (
-            build_hf_to_megatron_name_map,
-            collect_modelopt_quant_metadata,
-            get_modelopt_quant_exporter,
-            matches_quant_ignore_pattern,
-            sync_modelopt_quant_metadata,
-        )
-
-        expected_qformat, export_weight = get_modelopt_quant_exporter(quant_mode)
+        from megatron.bridge.models.conversion.modelopt_utils import build_modelopt_export_plan
 
         if not isinstance(model, list):
             model = [model]
         if conversion_tasks is None:
             conversion_tasks = self._model_bridge.build_conversion_tasks(self.hf_pretrained, model)
-
-        hf_to_megatron_name = build_hf_to_megatron_name_map(conversion_tasks)
-        metadata = collect_modelopt_quant_metadata(conversion_tasks)
-
-        pp_group = model_bridge._get_pp_group(model)
-        if pp_group is not None and dist.is_initialized() and dist.get_world_size(group=pp_group) > 1:
-            sync_modelopt_quant_metadata(metadata, pp_group)
-
+        export_tasks = build_modelopt_export_plan(
+            conversion_tasks,
+            model=model,
+            bridge=self._model_bridge,
+            quant_mode=quant_mode,
+            ignore_patterns=ignore_patterns or [],
+        )
         hf_weights = self.export_hf_weights(
             model,
             cpu=cpu,
             show_progress=show_progress,
-            conversion_tasks=conversion_tasks,
+            conversion_tasks=export_tasks,
             merge_adapter_weights=merge_adapter_weights,
         )
-
-        ignore_patterns = ignore_patterns or []
-        for hf_name, tensor in hf_weights:
-            if "_quantizer." in hf_name:
-                continue
-
-            meta = None
-            if hf_name.endswith(".weight") and not matches_quant_ignore_pattern(hf_name, ignore_patterns):
-                megatron_name = hf_to_megatron_name.get(hf_name)
-                if megatron_name is not None:
-                    meta = metadata.get(megatron_name)
-
-            if meta is None:
-                tensor = tensor.detach()
-                yield HFWeightTuple(hf_name, tensor.cpu() if cpu else tensor)
-                continue
-
-            if meta.qformat != expected_qformat:
-                raise RuntimeError(f"Unsupported qformat for ModelOpt {quant_mode} export: {meta.qformat}")
-
-            for quant_name, quant_tensor in export_weight(hf_name, tensor, meta):
-                yield HFWeightTuple(quant_name, quant_tensor.cpu() if cpu else quant_tensor)
+        yield from hf_weights
 
     def export_hf_weights_quant(
         self,
@@ -1078,6 +1048,10 @@ class AutoBridge(Generic[MegatronModelT]):
         )
         model_instance = self._get_model_instance(model)
         quant_tensors = None
+        # Import lazily so Bridge conversion modules can load before ModelOpt
+        # registers its Megatron-Bridge plugin hooks.
+        from modelopt.torch.quantization.utils import is_quantized
+
         if is_quantized(model_instance):
             quant_tensors = {}
 

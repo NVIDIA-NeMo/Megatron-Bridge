@@ -77,7 +77,10 @@ from megatron.bridge.utils.common_utils import (
     print_rank_0,
     warn_rank_0,
 )
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import (
+    is_full_iteration_cuda_graph,
+    validate_cuda_graph_configuration,
+)
 
 
 @dataclass
@@ -1164,6 +1167,10 @@ class ConfigContainer(Container):
             self.ddp.finalize()
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
+
+        # Guard post-construction CUDA graph overrides before MCore post-init can
+        # migrate deprecated scope fields into a different implementation.
+        validate_cuda_graph_configuration(self.model)
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
@@ -1208,12 +1215,31 @@ class ConfigContainer(Container):
             )
             self.validation.eval_micro_batch_size = self.train.micro_batch_size
 
-        # Eval batch size divisibility check
-        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+        # Eval batch size divisibility check. Eval-time CP changes the DP degree,
+        # so validation batch semantics must use the eval layout rather than the
+        # training layout stored in ``self.data_parallel_size``.
+        eval_data_parallel_size = self.data_parallel_size
+        if self.dist.eval_context_parallel_size is not None:
+            model_cfg = self.model
+            eval_world_size = get_world_size_safe()
+            if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
+                eval_world_size = model_cfg.dist_train.language_world_size
+            eval_model_parallel_size = (
+                model_cfg.tensor_model_parallel_size
+                * model_cfg.pipeline_model_parallel_size
+                * self.dist.eval_context_parallel_size
+            )
+            assert eval_world_size % eval_model_parallel_size == 0, (
+                f"world size ({eval_world_size}) is not divisible by eval model parallel size "
+                f"({eval_model_parallel_size})"
+            )
+            eval_data_parallel_size = eval_world_size // eval_model_parallel_size
+
+        eval_dp_product = self.validation.eval_micro_batch_size * eval_data_parallel_size
         assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
             f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
-            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
-            f"{self.data_parallel_size} = {eval_dp_product})"
+            f"eval_micro_batch_size * eval_data_parallel_size ({self.validation.eval_micro_batch_size} * "
+            f"{eval_data_parallel_size} = {eval_dp_product})"
         )
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
@@ -1250,8 +1276,7 @@ class ConfigContainer(Container):
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
-        if self.model.cuda_graph_impl == "none":
-            clear_cuda_graph_modules(self.model)
+        validate_cuda_graph_configuration(self.model)
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
@@ -1259,6 +1284,9 @@ class ConfigContainer(Container):
                 "Gradient accumulation fusion is not supported with ModelOpt/Quantized models. "
                 "Please set model.gradient_accumulation_fusion=False"
             )
+            from megatron.bridge.training.post_training.checkpointing import _validate_modelopt_checkpointing
+
+            _validate_modelopt_checkpointing(self.checkpoint.non_persistent_ckpt_type)
 
         # Checkpoint
         self._validate_hf_checkpoint_export_source()
