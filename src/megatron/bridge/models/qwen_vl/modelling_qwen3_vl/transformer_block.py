@@ -37,6 +37,9 @@ from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 from torch import Tensor, nn
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
+
 
 try:
     import transformer_engine.pytorch as te  # noqa: F401 # pylint: disable=unused-import
@@ -48,9 +51,6 @@ except ImportError:
 te_checkpoint = None
 if HAVE_TE:
     from megatron.core.extensions.transformer_engine import te_checkpoint
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
 
 
 class Qwen3VLVisionTransformerBlock(TransformerBlock):
@@ -188,8 +188,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             layer_idx = 0
 
             while layer_idx < self.num_layers_per_pipeline_rank:
+                chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
                 hidden_states, layer_deepstack_feature_lists, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
+                    custom(layer_idx, chunk_end)
                 )
 
                 layer_idx += self.config.recompute_num_layers
@@ -590,9 +591,8 @@ class Qwen3VLTransformerBlock(TransformerBlock):
             # A method to further reduce memory usage reducing checkpoints.
             layer_idx = 0
             while layer_idx < self.num_layers_per_pipeline_rank:
-                hidden_states, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
-                )
+                chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
+                hidden_states, context = checkpoint_handler(custom(layer_idx, chunk_end))
 
                 layer_idx += self.config.recompute_num_layers
 

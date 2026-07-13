@@ -7,11 +7,12 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Workflow | Data format | Config or provider | Required path fields |
 |----------|-------------|--------------------|----------------------|
 | LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
-| LLM SFT or PEFT from local files | JSONL split files | `FinetuningDatasetConfig` | `dataset_root` |
-| LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `HFTextSFTDatasetProvider` | `maker_name`, `maker_kwargs` |
-| VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | VLM `DatasetProvider` | Provider-specific fields such as `path`, `train_data_path`, or `image_folder` |
+| LLM SFT or PEFT from local files | JSONL split files | `GPTSFTDatasetConfig` | `dataset_root` |
+| LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `GPTSFTDatasetConfig` | `hf_dataset.dataset_name` preset or custom `path_or_dataset`; optional `hf_output_root` |
+| Direct Hugging Face SFT for text, vision, or audio | Source rows processed at runtime | `DirectHFSFTDatasetConfig` | `source.dataset_name` preset or custom `path_or_dataset`; optional `hf_processor_path` |
+| VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | `DirectHFSFTDatasetConfig`, Energon, or a specialized provider | HF source and processor fields, or provider-specific storage fields |
 
-Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, but `FinetuningDatasetConfig` uses `seq_length`.
+Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
 
 ## LLM Pretraining Data
 
@@ -61,20 +62,26 @@ Text SFT and PEFT use a directory containing split files named `training.jsonl`,
   test.jsonl
 ```
 
-The default text SFT dataset expects each JSONL record to contain prompt and answer fields compatible with the configured `prompt_template`. The common input/output format is:
+The default materialized backend accepts `input`/`output` prompt-completion rows. Its explicit preprocessing config tokenizes the two fields without calling a chat template:
 
 ```json
 {"input": "Question: What is Megatron Bridge?", "output": "A PyTorch-native bridge for Megatron-Core workflows."}
 ```
 
-Configure local JSONL data with `FinetuningDatasetConfig.dataset_root`:
+Configure local JSONL data with `GPTSFTDatasetConfig.dataset_root`:
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
-dataset = FinetuningDatasetConfig(
+dataset = GPTSFTDatasetConfig(
     dataset_root="/data/sft_jsonl",
     seq_length=4096,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+        loss_mode="completion",
+    ),
 )
 ```
 
@@ -91,19 +98,26 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
 
 For PEFT, use the PEFT recipe or set `cfg.peft`; the data layout stays the same. `checkpoint.pretrained_checkpoint` is required for the frozen base model, and `checkpoint.load` is used only when resuming adapter checkpoints.
 
+For preparation schemas, offline packing, finite epochs, and a complete knob reference, see the [text-only SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/text-only-sft/README.md).
+
 ## Hugging Face Datasets for SFT and PEFT
 
-`HFTextSFTDatasetProvider` downloads or reads a Hugging Face dataset, converts rows into chat JSONL, and builds the result through the standard SFT dataset builder. This is the text-only Hugging Face path to use when offline packed sequences are needed.
+Select a Hugging Face dataset with `HFDatasetSourceConfig`. A built-in `dataset_name` preset owns the physical Hub path, subset, and schema adapter. This avoids repeating coupled metadata such as the SQuAD path and adapter in every recipe. Bridge never infers a schema from an arbitrary Hub path because one repository can expose multiple subsets and schemas. For a custom source, set `path_or_dataset`; rows already matching the selected chat or prompt-completion schema need no adapter.
 
 ```python
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_datasets import HFTextSFTDatasetProvider
+from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.data.builders import (
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
 
-dataset = HFTextSFTDatasetProvider(
+dataset = GPTSFTDatasetConfig(
     seq_length=512,
-    maker_name="squad",
-    maker_kwargs={"path_or_dataset": "rajpurkar/squad", "split": "train"},
-    val_proportion=0.1,
+    hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+    preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" ", loss_mode="completion"),
+    hf_validation_proportion=0.1,
+    seed=5678,
     do_validation=True,
     do_test=False,
     dataset_kwargs={"pad_to_max_length": True},
@@ -112,19 +126,86 @@ dataset = HFTextSFTDatasetProvider(
 )
 ```
 
+If `hf_output_root` is omitted, the generated JSONL is cached under the NeMo datasets cache for the source. Keep `hf_rewrite=False` when later runs should reuse those files. With builder-managed offline packing, `hf_rewrite=True` regenerates both normalized JSONL and packed artifacts; explicit packed output paths are rejected in this mode to avoid stale data.
+
+> **Deprecated compatibility APIs:** `FinetuningDatasetConfig` and `FinetuningDatasetBuilder` remain only for existing callers. New code must use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
+
 The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_peft_1gpu_h100_bf16_config \
     --dataset llm-finetune \
-    dataset.dataset_name=gsm8k \
+    dataset.hf_dataset.dataset_name=gsm8k \
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
+## Direct Hugging Face SFT Data
+
+`DirectHFSFTDatasetConfig` is the direct source path shared by text, VLM, and audio/omni recipes. Unlike the materialized text-only SFT source above, it does not write reusable SFT JSONL. `DirectHFSFTDatasetBuilder` loads and adapts the source, binds the processor/tokenizer and collator, and repeats examples to the sample counts requested by the iteration schedule. Both backends use the same `ChatSFTPreprocessingConfig` or `PromptCompletionSFTPreprocessingConfig`; only their storage and packing lifecycle differs.
+
+```python
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, DirectHFSFTDatasetConfig
+
+dataset = DirectHFSFTDatasetConfig(
+    seq_length=4096,
+    preprocessing=ChatSFTPreprocessingConfig(loss_mode="assistant"),
+    hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
+    source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        load_kwargs={"data_files": {"train": "/data/chat/training.jsonl"}},
+    ),
+    validation_source=HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="validation",
+        load_kwargs={"data_files": {"validation": "/data/chat/validation.jsonl"}},
+    ),
+    do_test=False,
+    enable_in_batch_packing=True,
+)
+```
+
+Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Collator callables are runtime builder inputs, not serializable config fields.
+
+For paired text that must not use a model chat template, select prompt-completion preprocessing instead. The prompt and completion are tokenized separately, and `loss_mode="completion"` masks the prompt:
+
+```python
+from megatron.bridge.data.builders import PromptCompletionSFTPreprocessingConfig
+
+dataset.preprocessing = PromptCompletionSFTPreprocessingConfig(
+    prompt_column="prompt",
+    completion_column="completion",
+    separator="\n",
+    loss_mode="completion",
+)
+```
+
+Structured multi-turn rows require chat preprocessing; Bridge does not silently flatten them into prompt-completion text.
+
+Known semantic datasets should use their preset name, for example `squad`, `gsm8k`, `openmathinstruct2`, `cord_v2`, `raven`, `rdr`, `medpix`, `cv17`, or `llava_video_178k`. Do not combine `dataset_name` with `path_or_dataset`, `subset`, or `schema_adapter`; a preset owns those coupled fields. `split`, `load_kwargs`, and `adapter_kwargs` remain available for split selection and declarative runtime options such as a video root. Presets validate published split support: `raven`, `rdr`, and `llava_video_178k` are train-only; `medpix` and `squad` have no test split; `gsm8k` has no validation split; and OpenMathInstruct-2 exposes training variants only. Disable unsupported derived validation/test splits or supply explicit compatible sources.
+
+For text chat, `hf_processor_path=None` reuses the training tokenizer only when that tokenizer already defines the intended chat template. Otherwise select a vocabulary-compatible instruction processor explicitly, as above.
+
+### SFT Implementation Layout
+
+The package structure separates declarative construction, runtime storage, source loading, and batch collation:
+
+| Responsibility | Module |
+| --- | --- |
+| Materialized JSONL/offline-packed config and builder | `megatron.bridge.data.builders.gpt_sft` |
+| Direct Hugging Face config and builder | `megatron.bridge.data.builders.direct_hf_sft` |
+| GPT SFT runtime datasets | `megatron.bridge.data.datasets.gpt_sft` |
+| Direct normalized-example runtime dataset | `megatron.bridge.data.datasets.direct_sft` |
+| Hugging Face source loading and schema adapters | `megatron.bridge.data.sources.hf`, `megatron.bridge.data.sources.hf_adapters` |
+| Shared text SFT collators | `megatron.bridge.data.collators.sft` |
+
+The direct runtime dataset is named `DirectSFTDataset` because it receives normalized examples and has no Hugging Face loading responsibility. Source-specific work remains in the builder and source modules.
+
+For hosted datasets, text and multimodal schemas, split sources, in-batch packing, processor selection, and all available knobs, see the [direct Hugging Face SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/direct-hf-sft/README.md).
+
 ## VLM Fine-Tuning Data
 
-VLM recipes usually use a dataset provider instead of `FinetuningDatasetConfig`. The provider owns both the storage format and the processor needed to turn image, video, audio, and text records into batches.
+VLM recipes use either the canonical HF SFT Config + Builder path, Energon, or a specialized compatibility provider. The runtime builder or provider owns the processor needed to turn image, video, audio, and text records into batches.
 
 For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
 

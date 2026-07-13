@@ -83,15 +83,17 @@ def main() -> None:
     # Uncomment and modify as needed:
 
     # === Use your own dataset ===
-    # Replace SQuAD with your custom dataset
-    # Option 1: Simple path override
-    # config.dataset.dataset_root = "/path/to/your/dataset"
+    # Keep the recipe's SQuAD source but select its local materialization directory:
+    # config.dataset.hf_output_root = "/path/to/materialized/squad"
 
-    # Or replace the dataset with FinetuningDatasetConfig for JSONL data
-    # from megatron.bridge.training.config import FinetuningDatasetConfig
-    # config.dataset = FinetuningDatasetConfig(
+    # Or replace the entire dataset config for custom local JSONL data:
+    # from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
+    # config.dataset = GPTSFTDatasetConfig(
     #     dataset_root="/path/to/your/dataset_dir",  # expects training/validation/test jsonl files
     #     seq_length=config.model.seq_length,
+    #     preprocessing=PromptCompletionSFTPreprocessingConfig(
+    #         prompt_column="input", completion_column="output", separator=" "
+    #     ),
     # )
 
     # === Adjust learning rate ===
