@@ -139,10 +139,14 @@ def _script_with_hooks(
     training_cmd = shlex.join(script.to_command(with_entrypoint=True))
     wrapped_cmd = f"""
 set -euo pipefail
+ARTIFACT_DIR="${{NEMO_CLUSTERDIAG_ARTIFACT_DIR:-${{NEMO_CLUSTERDIAG_RUN_DIR:-.}}}}"
+RANK_ID="${{RANK:-${{LOCAL_RANK:-unknown}}}}"
+mkdir -p "${{ARTIFACT_DIR}}/ranks"
+TRAIN_LOG="${{ARTIFACT_DIR}}/ranks/train-rank-${{RANK_ID}}.log"
 
 set +e
-bash -c {shlex.quote(f"{pre_cmds} ; {training_cmd}")}
-TRAIN_RC="$?"
+bash -c {shlex.quote(f"{pre_cmds} ; {training_cmd}")} 2>&1 | tee "${{TRAIN_LOG}}"
+TRAIN_RC="${{PIPESTATUS[0]}}"
 set -e
 
 export NEMO_RUN_TRAINING_EXIT_CODE="${{TRAIN_RC}}"
