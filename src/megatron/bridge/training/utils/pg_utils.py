@@ -44,9 +44,28 @@ def get_pg_collection(model: Union[MegatronModule, list[MegatronModule]]) -> Pro
     except RuntimeError as e:
         # get_attr_wrapped_model raises a RuntimeError with this exact message
         # when the requested attribute does not exist on the wrapped model.
-        if "couldn't find attribute pg_collection" in str(e):
+        if "couldn't find attribute pg_collection" not in str(e):
+            raise
+        # Fall back to the default MPU-based process groups. This pulls the
+        # groups from `megatron.core.parallel_state`, which requires that
+        # torch.distributed and model-parallel state have already been
+        # initialized (e.g. via `initialize_model_parallel`). If they are
+        # not, MPU raises a bare `AssertionError` (e.g. "data parallel group
+        # is not initialized") that gives the caller no actionable context.
+        # Translate it into a clear RuntimeError instead.
+        try:
             return ProcessGroupCollection.use_mpu_process_groups()
-        raise
+        except AssertionError as mpu_err:
+            raise RuntimeError(
+                "get_pg_collection() fell back to the default Megatron MPU process "
+                "groups because the model has no `pg_collection` attribute, but the "
+                "MPU model-parallel state is not initialized "
+                f"(underlying error: {mpu_err}). Ensure torch.distributed is "
+                "initialized and `megatron.core.parallel_state."
+                "initialize_model_parallel(...)` has been called before requesting "
+                "the process group collection, or attach a `pg_collection` to the "
+                "model."
+            ) from mpu_err
 
 
 class DistTrainProcessGroupCollection(ProcessGroupCollection):
