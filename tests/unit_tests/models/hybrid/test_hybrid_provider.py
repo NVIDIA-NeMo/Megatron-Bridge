@@ -176,12 +176,13 @@ class TestHybridModelProvider:
         assert isinstance(spec_call_kwarg, Mock)
         assert spec_call_kwarg.info == "custom spec"
 
-    def test_local_attention_clones_stack_spec_and_uses_mcore_attention(self):
+    @pytest.mark.parametrize("attention_backend", [AttnBackend.local, "local"])
+    def test_local_attention_clones_stack_spec_and_uses_mcore_attention(self, attention_backend):
         provider = HybridModelProvider(
             num_layers=2,
             hidden_size=128,
             num_attention_heads=1,
-            attention_backend=AttnBackend.local,
+            attention_backend=attention_backend,
         )
 
         resolved_spec = provider._resolve_hybrid_stack_spec()
