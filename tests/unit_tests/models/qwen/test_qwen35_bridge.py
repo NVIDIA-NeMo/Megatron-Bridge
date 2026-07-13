@@ -16,12 +16,14 @@
 Unit tests for Qwen3.5 bridge functionality.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.transformers_compat import linear_attention_freq_from_hf
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen35_bridge import Qwen35Bridge, Qwen35MoEBridge
@@ -154,6 +156,28 @@ class TestQwen35DenseBridge:
         assert result.linear_num_key_heads == mock_qwen3_5_config.linear_num_key_heads
         assert result.linear_num_value_heads == mock_qwen3_5_config.linear_num_value_heads
         assert result.experimental_attention_variant == "gated_delta_net"
+
+    def test_provider_bridge_preserves_irregular_layer_types(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
+        """A depth-pruned (irregular) layer_types is preserved, not collapsed to full_attention_interval.
+
+        Depth pruning breaks the regular ``full_attention_interval`` cadence, so collapsing to a single
+        interval places the attention/GDN layers wrong. The provider must receive the exact per-layer
+        pattern from ``layer_types``.
+        """
+        num_layers = mock_qwen3_5_config.num_hidden_layers
+        # Regular cadence has full attention every 4th layer; emulate a pruned model by shifting one
+        # full-attention layer off the cadence (23 -> 22), which a collapse-to-interval would lose.
+        layer_types = ["full_attention" if (i + 1) % 4 == 0 else "linear_attention" for i in range(num_layers)]
+        layer_types[22], layer_types[23] = "full_attention", "linear_attention"
+        mock_qwen3_5_config.layer_types = layer_types
+
+        result = Qwen35Bridge().provider_bridge(mock_pretrained_qwen3_5)
+
+        # 1 = linear_attention (GDN), 0 = full_attention.
+        assert result.linear_attention_freq == [1 if lt == "linear_attention" else 0 for lt in layer_types]
+        # The shifted layers survive: 22 is full attention (0), 23 is linear (1) -- opposite of the cadence.
+        assert result.linear_attention_freq[22] == 0
+        assert result.linear_attention_freq[23] == 1
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_5, mock_qwen3_5_config):
         """Test MLP configuration mapping."""
@@ -777,3 +801,29 @@ class TestQwen35MoEBridge:
             "seq_fc1": "GatedMLPMapping",
             "seq_fc2": "AutoMapping",
         }
+
+
+def test_linear_attention_freq_from_hf_preserves_irregular_layer_types():
+    """linear_attention_freq_from_hf returns the exact per-layer pattern from an explicit layer_types."""
+    # Irregular (depth-pruned) layout: full attention at 3, 7, 10, 11 -- not the regular every-4th cadence.
+    layer_types = (
+        ["linear_attention"] * 3
+        + ["full_attention"]
+        + ["linear_attention"] * 3
+        + ["full_attention"]
+        + ["linear_attention", "linear_attention", "full_attention", "full_attention"]
+    )
+    # layer_types wins even when full_attention_interval is also present (transformers >= 5.5 keeps both).
+    cfg = SimpleNamespace(layer_types=layer_types, full_attention_interval=4)
+    freq = linear_attention_freq_from_hf(cfg)
+    assert freq == [1, 1, 1, 0, 1, 1, 1, 0, 1, 1, 0, 0]
+    assert [i for i, v in enumerate(freq) if v == 0] == [3, 7, 10, 11]
+
+
+def test_linear_attention_freq_from_hf_falls_back_to_interval():
+    """Without layer_types, the integer full_attention_interval (or the default) is returned."""
+    # transformers < 5.5 layout: only the integer interval is present.
+    assert linear_attention_freq_from_hf(SimpleNamespace(full_attention_interval=4)) == 4
+    # Neither field present -> default interval.
+    assert linear_attention_freq_from_hf(SimpleNamespace()) == 4
+    assert linear_attention_freq_from_hf(SimpleNamespace(), default=6) == 6

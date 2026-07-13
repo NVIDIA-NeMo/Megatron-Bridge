@@ -32,7 +32,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     ReplicatedMapping,
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
-from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
+from megatron.bridge.models.conversion.transformers_compat import linear_attention_freq_from_hf
 from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
@@ -60,9 +60,11 @@ def _apply_qwen35_common_config(provider: GPTModelProvider, text_config) -> None
     provider.layernorm_zero_centered_gamma = True
     provider.attention_output_gate = True
     provider.experimental_attention_variant = "gated_delta_net"
-    # full_attention_interval defines how often standard attention appears:
-    # e.g., 4 means every 4th layer is standard attention (3 GDN + 1 Attn)
-    provider.linear_attention_freq = full_attention_interval_from_hf(text_config)
+    # Per-layer attention pattern (1 = GDN / linear_attention, 0 = full_attention). Derived from the
+    # explicit ``layer_types`` list so depth-pruned models keep their irregular layout; falls back to
+    # the ``full_attention_interval`` cadence (e.g. 4 => every 4th layer is standard attention) when
+    # only that is present.
+    provider.linear_attention_freq = linear_attention_freq_from_hf(text_config)
     provider.linear_num_value_heads = getattr(text_config, "linear_num_value_heads", 32)
     provider.rotary_percent = getattr(text_config, "rope_parameters", {}).get("partial_rotary_factor", 0.25)
 

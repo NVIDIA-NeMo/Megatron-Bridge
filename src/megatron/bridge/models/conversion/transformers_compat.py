@@ -221,3 +221,33 @@ def full_attention_interval_from_hf(config, default: int = 4) -> int:
                 return i + 1
 
     return default
+
+
+def linear_attention_freq_from_hf(config, default: int = 4) -> int | list[int]:
+    """Per-layer linear-vs-full attention pattern for a Qwen3-Next-style HuggingFace config.
+
+    Prefers the explicit ``config.layer_types`` list, returning a per-layer pattern in
+    MCore's ``linear_attention_freq`` convention (``1`` = linear_attention / GDN, ``0`` =
+    full_attention). This is the only correct source for *depth-pruned* models, whose
+    surviving layers no longer follow the regular ``full_attention_interval`` cadence, so
+    collapsing to a single interval would place the attention/GDN layers wrong. Falls back
+    to the integer interval when only ``full_attention_interval`` is present.
+
+    Args:
+        config: HuggingFace configuration object (e.g. ``Qwen3NextConfig``).
+        default: Interval to return when neither ``layer_types`` nor
+            ``full_attention_interval`` is present.
+
+    Returns:
+        A per-layer ``list[int]`` when ``layer_types`` is available, otherwise the integer
+        interval at which standard attention layers appear.
+    """
+    layer_types = getattr(config, "layer_types", None)
+    if isinstance(layer_types, (list, tuple)) and layer_types:
+        return [1 if layer_type == "linear_attention" else 0 for layer_type in layer_types]
+
+    interval = getattr(config, "full_attention_interval", None)
+    if interval is not None:
+        return interval
+
+    return default
