@@ -101,6 +101,42 @@ class TestGetPgCollection:
         assert result is mpu_sentinel
         mock_use_mpu.assert_called_once_with()
 
+    def test_mpu_fallback_uninitialized_raises_clear_runtime_error(self):
+        """MPU fallback before model-parallel init ⇒ a clear, actionable RuntimeError.
+
+        When the model has no `pg_collection`, `get_pg_collection` falls back to
+        `ProcessGroupCollection.use_mpu_process_groups()`. If torch.distributed /
+        model-parallel state is not initialized, MPU raises a bare
+        `AssertionError` ("data parallel group is not initialized") with no
+        actionable context. The helper must translate that into a `RuntimeError`
+        that names the cause and how to fix it, chaining the original error.
+        """
+        missing_error = RuntimeError("couldn't find attribute pg_collection on the wrapped model")
+        mpu_assertion = AssertionError("data parallel group is not initialized")
+
+        with (
+            mock.patch(
+                "megatron.bridge.training.utils.pg_utils.get_attr_wrapped_model",
+                side_effect=missing_error,
+            ),
+            mock.patch.object(
+                ProcessGroupCollection,
+                "use_mpu_process_groups",
+                side_effect=mpu_assertion,
+            ),
+        ):
+            with pytest.raises(RuntimeError) as exc_info:
+                get_pg_collection(mock.MagicMock(name="model"))
+
+        message = str(exc_info.value)
+        # The clear error must mention initialization and how to resolve it,
+        # and must preserve the underlying MPU assertion as the cause.
+        assert "initialize_model_parallel" in message
+        assert "data parallel group is not initialized" in message
+        assert exc_info.value.__cause__ is mpu_assertion
+        # The bare AssertionError must NOT leak out to callers.
+        assert not isinstance(exc_info.value, AssertionError)
+
     def test_reraises_runtime_error_when_message_does_not_match(self):
         unrelated_error = RuntimeError("something else went wrong")
 
