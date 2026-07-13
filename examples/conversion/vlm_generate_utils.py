@@ -195,6 +195,7 @@ def process_image_inputs(
     *,
     is_gemma4: bool = False,
     is_kimi: bool = False,
+    is_mistral3: bool = False,
     image_token_id: Optional[int] = None,
 ):
     """Process image + prompt into model inputs.
@@ -215,11 +216,7 @@ def process_image_inputs(
     if is_kimi:
         return _process_kimi_inputs(processor, image_path, prompt, image_token_id)
 
-    if not _HAS_QWEN_VL_UTILS:
-        raise ImportError(
-            "qwen_vl_utils is required for non-Kimi VLM image processing. Install it with: pip install qwen-vl-utils"
-        )
-    return _process_default_inputs(processor, image_path, prompt)
+    return _process_default_inputs(processor, image_path, prompt, allow_raw_prompt=is_mistral3)
 
 
 def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
@@ -239,7 +236,36 @@ def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
     return input_ids, inputs.pixel_values, grid_thws, None, None, None
 
 
-def _process_default_inputs(processor, image_path, prompt):
+def _process_default_inputs(processor, image_path, prompt, *, allow_raw_prompt=False):
+    if getattr(processor, "chat_template", None) is None:
+        if not allow_raw_prompt:
+            raise ValueError("The processor has no chat template and no model-specific raw-prompt fallback")
+        image = load_image(image_path).convert("RGB")
+        image_token = getattr(processor, "image_token", None) or getattr(
+            processor.tokenizer, "image_token", "<|image|>"
+        )
+        if image_token not in prompt:
+            prompt = f"{image_token}\n{prompt}"
+        inputs = processor(
+            text=[prompt],
+            images=[image],
+            padding=True,
+            return_tensors="pt",
+        )
+        return (
+            inputs.input_ids,
+            inputs.get("pixel_values"),
+            inputs.get("image_grid_thw"),
+            inputs.get("image_sizes"),
+            inputs.get("mm_token_type_ids"),
+            inputs.get("image_position_ids"),
+        )
+
+    if not _HAS_QWEN_VL_UTILS:
+        raise ImportError(
+            "qwen_vl_utils is required for chat-template VLM image processing. Install it with: pip install qwen-vl-utils"
+        )
+
     messages = [
         {
             "role": "user",

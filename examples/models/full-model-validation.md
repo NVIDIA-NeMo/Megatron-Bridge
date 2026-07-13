@@ -57,9 +57,9 @@ forward-logit parity.
 | MiniMax | MiniMax-M2.5 | `MiniMaxAI/MiniMax-M2.5` | `f710177d938eff80b684d42c5aa84b382612f21f` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
 | MiniMax | MiniMax-M2.7 | `MiniMaxAI/MiniMax-M2.7` | `d494266a4affc0d2995ba1fa35c8481cbd84294b` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
 | Mistral | Mistral | `mistralai/Mistral-7B-v0.1` | `27d67f1b5f57dc0953326b2601d68371d40ea8da` | 7.2B | text | `examples/models/mistral/mistral` | PASS |
-| Mistral | Ministral 3 3B | `mistralai/Ministral-3-3B-Base-2512` | `6f9c4b12a95b139af68670a6713616b757923735` | 4.3B | vision-language | `examples/models/mistral/ministral3` | BLOCKED |
-| Mistral | Ministral 3 8B | `mistralai/Ministral-3-8B-Base-2512` | `d4883f9b36aa2e5d775730d3fdba3d30de51a8ef` | 8.9B | vision-language | `examples/models/mistral/ministral3` | BLOCKED |
-| Mistral | Ministral 3 14B | `mistralai/Ministral-3-14B-Base-2512` | `5b0ceedbb42dff466ae60b258ba296f32da51384` | 13.9B | vision-language | `examples/models/mistral/ministral3` | BLOCKED |
+| Mistral | Ministral 3 3B | `mistralai/Ministral-3-3B-Base-2512` | `6f9c4b12a95b139af68670a6713616b757923735` | 3.8B | vision-language | `examples/models/mistral/ministral3` | PASS |
+| Mistral | Ministral 3 8B | `mistralai/Ministral-3-8B-Base-2512` | `d4883f9b36aa2e5d775730d3fdba3d30de51a8ef` | 8.9B | vision-language | `examples/models/mistral/ministral3` | PASS |
+| Mistral | Ministral 3 14B | `mistralai/Ministral-3-14B-Base-2512` | `5b0ceedbb42dff466ae60b258ba296f32da51384` | 13.9B | vision-language | `examples/models/mistral/ministral3` | PASS |
 | Xiaomi-MiMo | MiMo | `XiaomiMiMo/MiMo-7B-Base` | `c72df4586cb8bdeebd65f36929cd3385a6566fbe` | 7.8B | text | `examples/models/mimo` | PASS |
 | Xiaomi-MiMo | MiMo-V2-Flash | `XiaomiMiMo/MiMo-V2-Flash` | `1afd314a2406c282e0956375c34a676501c78649` | 309.8B | text | `examples/models/mimo_v2_flash` | TODO |
 | Moonlight | Moonlight | `moonshotai/Moonlight-16B-A3B` | `476b36a473d4467f94469414bef6cee75c9c8172` | 16.0B | text | `examples/conversion` | BLOCKED |

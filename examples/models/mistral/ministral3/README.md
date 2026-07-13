@@ -1,6 +1,7 @@
 # Ministral 3 - Vision Language Model
 
-This directory contains example scripts for Ministral 3 vision-language models.
+This directory contains conversion and inference scripts for the Ministral 3
+3B, 8B, and 14B Base vision-language checkpoints.
 
 For model introduction and architecture details, see the [Ministral 3 documentation](../../../../docs/models/mistral/ministral3.md).
 
@@ -13,73 +14,53 @@ export WORKSPACE=/your/custom/path
 ```
 
 Directory structure:
+
 - `${WORKSPACE}/models/` - Converted checkpoints
 - `${WORKSPACE}/results/` - Training outputs and experiment results
 
-## Checkpoint Conversion
+## Supported Base Checkpoints
 
-### Import HF → Megatron
-To import the HF VL model to your desired Megatron path:
-```bash
-./scripts/conversion/convert.sh import \
-  --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
-  --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16
-```
+Select a checkpoint with `MODEL_SIZE`. The scripts use the following model and
+multi-GPU topology defaults:
 
-### Export Megatron → HF
+| `MODEL_SIZE` | Hugging Face checkpoint | Validated revision | TP | PP |
+|---|---|---|---:|---:|
+| `3B` (default) | `mistralai/Ministral-3-3B-Base-2512` | `6f9c4b12a95b139af68670a6713616b757923735` | 2 | 1 |
+| `8B` | `mistralai/Ministral-3-8B-Base-2512` | `d4883f9b36aa2e5d775730d3fdba3d30de51a8ef` | 2 | 1 |
+| `14B` | `mistralai/Ministral-3-14B-Base-2512` | `5b0ceedbb42dff466ae60b258ba296f32da51384` | 4 | 1 |
+
+`HF_MODEL_ID`, `MODEL_NAME`, `TP`, `PP`, `EP`, `ETP`, and
+`NPROC_PER_NODE` can be overridden when validating a local snapshot or a
+different topology. To reproduce an immutable revision, download that snapshot
+and pass its local path through `HF_MODEL_ID` while setting `MODEL_NAME` to the
+checkpoint name.
+
+## Checkpoint Conversion and Validation
+
+The conversion script runs HF-to-Megatron import, Megatron-to-HF export, and a
+multi-GPU round-trip check that reloads the imported Megatron checkpoint.
+
 ```bash
-./scripts/conversion/convert.sh export \
-  --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
-  --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
-  --hf-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16-hf-export
+MODEL_SIZE=3B bash examples/models/mistral/ministral3/conversion.sh
+MODEL_SIZE=8B bash examples/models/mistral/ministral3/conversion.sh
+MODEL_SIZE=14B bash examples/models/mistral/ministral3/conversion.sh
 ```
 
 ## Inference
 
-### Run Inference on Converted Checkpoint
+The inference script generates from the original HF source, the imported
+Megatron checkpoint, and the exported HF source with the same image and prompt.
 
 ```bash
-uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
-  --hf_model_path mistralai/Ministral-3-3B-Instruct-2512-BF16 \
-  --megatron_model_path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
-  --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
-  --prompt "Describe this image." \
-  --max_new_tokens 100
+MODEL_SIZE=3B bash examples/models/mistral/ministral3/inference.sh
+MODEL_SIZE=8B bash examples/models/mistral/ministral3/inference.sh
+MODEL_SIZE=14B bash examples/models/mistral/ministral3/inference.sh
 ```
 
-Note:
-- `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward.
-- You can also use image URLs: `--image_path="https://example.com/image.jpg"`
-
-See the [inference.sh](inference.sh) script for commands to:
-- Run inference with Hugging Face checkpoints
-- Run inference with imported Megatron checkpoints
-- Run inference with exported Hugging Face checkpoints
-
-**Expected output:**
-```
-...
-Generation step 46
-Generation step 47
-Generation step 48
-Generation step 49
-======== GENERATED TEXT OUTPUT ========
-Image: https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png
-Prompt: Describe this image.
-Generated: <s><s>[SYSTEM_PROMPT]You are Ministral-3-3B-Instruct-2512, a Large Language Model (LLM) created by Mistral AI, a French startup headquartered in Paris.
-You power an AI assistant called Le Chat.
-Your knowledge base was last updated on 2023-10-01.
-The current date is {today}.
-...
-[IMG_END]Describe this image.[/INST]The image presents a comparison table of technical specifications between two NVIDIA GPUs: the **H100 SXM** and the **H100 NVL**.
-
-### **FPU Performance (Floating-Point Operations Per Second)**
-- **FP64**:
-  - H100 SXM: 34 teraFLOPS
-  - H100 NVL: 30 teraFLOPS
-- **FP64 Tensor
-=======================================
-```
+Override `IMAGE_PATH`, `PROMPT`, and `MAX_NEW_TOKENS` to use a different
+image, prompt, or generation length. Base checkpoints do not provide a chat
+template; the shared VLM helper inserts the checkpoint's image token and sends
+the raw completion-style prompt through the processor.
 
 ## Finetune Recipes
 
