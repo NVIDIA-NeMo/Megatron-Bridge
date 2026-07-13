@@ -57,9 +57,9 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PyTorchProfilerPlugin
+    from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
