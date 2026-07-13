@@ -81,29 +81,42 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     * ``--additional_slurm_params`` — Slurm orchestration only.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
+    * ``--custom_bash_cmds`` / ``--custom_post_bash_cmds`` — consumed here to
+      wrap the rank-local command with pre/post hooks.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
       into run_recipe.py's Hydra override parser.
 
-    All of these take a value, passed either as ``--flag value`` (two tokens) or
-    ``--flag=value`` (one token).
+    Most of these take one value, passed either as ``--flag value`` (two tokens)
+    or ``--flag=value`` (one token). Custom hook flags take zero or more values,
+    so all following non-option tokens are skipped.
     """
 
+    multi_value_flags = {"-cb", "--custom_bash_cmds", "--custom_post_bash_cmds"}
+
     def _is_launcher_only(flag: str) -> bool:
-        return flag in ("--additional_slurm_params", "--csp") or flag.startswith("--kubeflow_")
+        return (
+            flag in ("--additional_slurm_params", "--csp", *multi_value_flags)
+            or flag.startswith("--kubeflow_")
+        )
 
     filtered_args = []
-    skip_next = False
+    index = 0
 
-    for arg in argv:
-        if skip_next:
-            skip_next = False
+    while index < len(argv):
+        arg = argv[index]
+        flag = arg.split("=", 1)[0]
+        if flag in multi_value_flags:
+            index += 1
+            while index < len(argv) and not argv[index].startswith("-"):
+                index += 1
             continue
-        if _is_launcher_only(arg.split("=", 1)[0]):
-            skip_next = "=" not in arg
+        if _is_launcher_only(flag):
+            index += 1 if "=" in arg else 2
             continue
         filtered_args.append(arg)
+        index += 1
 
     return filtered_args
 
