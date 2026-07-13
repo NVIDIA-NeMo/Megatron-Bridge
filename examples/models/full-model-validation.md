@@ -23,7 +23,7 @@ forward-logit parity.
 | Family | Architecture / version | Canonical HF checkpoint | Revision | Params | Modality | Example path | Status |
 |---|---|---|---|---:|---|---|---|
 | Bailing | Ling 2.0 (Flash) | `inclusionAI/Ling-flash-2.0` | `18ca64a019b553be57bab50af3207fb2f3675edc` | 100B | text | `examples/models/bailing` | TODO |
-| Bailing | Ling MoE V2 / Bailing (Mini) | `inclusionAI/Ling-mini-2.0` | `920c3fd9916e3d5e543fc4f609e827cad8a32983` | 16B | text | `examples/models/bailing` | BLOCKED |
+| Bailing | Ling MoE V2 / Bailing (Mini) | `inclusionAI/Ling-mini-2.0` | `920c3fd9916e3d5e543fc4f609e827cad8a32983` | 16B | text | `examples/models/bailing` | PASS |
 | DeepSeek | DeepSeek V2 | `deepseek-ai/DeepSeek-V2` | `4461458f186c35188585855f28f77af5661ad489` | 235.7B | text | `examples/conversion` | TODO |
 | DeepSeek | DeepSeek V2 Lite | `deepseek-ai/DeepSeek-V2-Lite` | `604d5664dddd88a0433dbae533b7fe9472482de0` | 15.7B | text | `examples/conversion` | PASS |
 | DeepSeek | DeepSeek V4 Flash | `deepseek-ai/DeepSeek-V4-Flash-Base` | `8855555deef230a27a21a8d6f294b7b7497759b6` | 292.0B | text | `examples/models/deepseek_v4` | TODO |
@@ -56,11 +56,11 @@ forward-logit parity.
 | MiniMax | MiniMax-M2 | `MiniMaxAI/MiniMax-M2` | `757303d492a50514c312788b5247a4f696a4c6a3` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
 | MiniMax | MiniMax-M2.5 | `MiniMaxAI/MiniMax-M2.5` | `f710177d938eff80b684d42c5aa84b382612f21f` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
 | MiniMax | MiniMax-M2.7 | `MiniMaxAI/MiniMax-M2.7` | `d494266a4affc0d2995ba1fa35c8481cbd84294b` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
-| Mistral | Mistral | `mistralai/Mistral-7B-v0.1` | `27d67f1b5f57dc0953326b2601d68371d40ea8da` | 7.2B | text | `examples/conversion` | BLOCKED |
+| Mistral | Mistral | `mistralai/Mistral-7B-v0.1` | `27d67f1b5f57dc0953326b2601d68371d40ea8da` | 7.2B | text | `examples/models/mistral/mistral` | PASS |
 | Mistral | Ministral 3 3B | `mistralai/Ministral-3-3B-Base-2512` | `6f9c4b12a95b139af68670a6713616b757923735` | 4.3B | vision-language | `examples/models/mistral/ministral3` | BLOCKED |
 | Mistral | Ministral 3 8B | `mistralai/Ministral-3-8B-Base-2512` | `d4883f9b36aa2e5d775730d3fdba3d30de51a8ef` | 8.9B | vision-language | `examples/models/mistral/ministral3` | BLOCKED |
 | Mistral | Ministral 3 14B | `mistralai/Ministral-3-14B-Base-2512` | `5b0ceedbb42dff466ae60b258ba296f32da51384` | 13.9B | vision-language | `examples/models/mistral/ministral3` | BLOCKED |
-| Xiaomi-MiMo | MiMo | `XiaomiMiMo/MiMo-7B-Base` | `c72df4586cb8bdeebd65f36929cd3385a6566fbe` | 7.8B | text | `examples/megatron_mimo` | BLOCKED |
+| Xiaomi-MiMo | MiMo | `XiaomiMiMo/MiMo-7B-Base` | `c72df4586cb8bdeebd65f36929cd3385a6566fbe` | 7.8B | text | `examples/models/mimo` | PASS |
 | Xiaomi-MiMo | MiMo-V2-Flash | `XiaomiMiMo/MiMo-V2-Flash` | `1afd314a2406c282e0956375c34a676501c78649` | 309.8B | text | `examples/models/mimo_v2_flash` | TODO |
 | Moonlight | Moonlight | `moonshotai/Moonlight-16B-A3B` | `476b36a473d4467f94469414bef6cee75c9c8172` | 16.0B | text | `examples/conversion` | BLOCKED |
 | Nemotron | Nemotron H | `nvidia/Nemotron-H-4B-Base-8K` | `faba3b731ad7ea5781b9518ae75fb610a94affcf` | 4.5B | text | `examples/conversion` | PASS |

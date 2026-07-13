@@ -265,7 +265,8 @@ def main(
             bridge.save_megatron_model(megatron_model, megatron_save_path)
 
 
-if __name__ == "__main__":
+def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the multi-GPU round-trip example."""
     parser = argparse.ArgumentParser(
         description="Convert between HuggingFace and Megatron-LM model formats on multiple GPUs"
     )
@@ -300,7 +301,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for tensor comparison")
     parser.add_argument("--rtol", type=float, default=1e-5, help="Relative tolerance for tensor comparison")
-    args = parser.parse_args()
+    return parser.parse_args(argv)
+
+
+def _run_cli(argv: list[str] | None = None) -> None:
+    """Run the multi-GPU round-trip example from parsed CLI arguments."""
+    args = _parse_args(argv)
     main(
         args.hf_model_id,
         args.output_dir,
@@ -311,6 +317,7 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        strict=not args.not_strict,
         skip_save=args.skip_save,
         atol=args.atol,
         rtol=args.rtol,
@@ -318,3 +325,7 @@ if __name__ == "__main__":
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
+
+
+if __name__ == "__main__":
+    _run_cli()
