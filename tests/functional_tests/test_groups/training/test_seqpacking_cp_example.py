@@ -45,9 +45,11 @@ def _set_existing_attr(target: object, name: str, value: object) -> None:
 def _make_functional_test_model_small(model: object) -> None:
     # Keep this checkpoint-loading functional test far below runner memory limits.
     # The path under test is CP + sequence packing + pretrained checkpoint loading,
-    # not the full Llama 3.2 1B model shape.
+    # not the full Qwen3 model shape. Two logical Qwen blocks contain four physical
+    # HybridModel layers.
     for name, value in {
-        "num_layers": 2,
+        "num_layers": 4,
+        "hybrid_layer_pattern": "*-*-",
         "hidden_size": 128,
         "ffn_hidden_size": 512,
         "num_attention_heads": 4,
