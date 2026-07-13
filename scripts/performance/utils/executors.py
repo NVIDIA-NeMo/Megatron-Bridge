@@ -356,9 +356,7 @@ def kubeflow_executor(
     # PyTorchJobExecutor inherits the same dataclass fields as KubeflowExecutor,
     # so this reconciliation works identically for either class.
     _kf_fields = set(
-        getattr(executor_cls, "model_fields", None)
-        or getattr(executor_cls, "__dataclass_fields__", {})
-        or {}
+        getattr(executor_cls, "model_fields", None) or getattr(executor_cls, "__dataclass_fields__", {}) or {}
     )
     if _kf_fields:
         if "pod_annotations" not in _kf_fields and kf_kwargs.get("pod_annotations"):

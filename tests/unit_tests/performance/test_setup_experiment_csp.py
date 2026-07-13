@@ -27,6 +27,7 @@ from pathlib import Path
 
 import pytest
 
+
 # scripts/performance uses runtime-style absolute imports (e.g.
 # ``from utils.csp_plugins import ...``); put it on sys.path so the launcher
 # modules import the same way they do when invoked as a script.
@@ -41,12 +42,17 @@ from argument_parser import parse_cli_args  # noqa: E402
 from setup_experiment import build_csp_plugin  # noqa: E402
 from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin  # noqa: E402
 
+
 # Minimal required args for the perf parser (model_family, model_recipe, num_gpus, gpu).
 _REQUIRED_ARGV = [
-    "--model_family_name", "llama",
-    "--model_recipe_name", "llama31_70b",
-    "--num_gpus", "64",
-    "--gpu", "gb200",
+    "--model_family_name",
+    "llama",
+    "--model_recipe_name",
+    "llama31_70b",
+    "--num_gpus",
+    "64",
+    "--gpu",
+    "gb200",
 ]
 
 _EXTENDED_RESOURCES = '{"nvidia.com/r0-p0": "1", "nvidia.com/r1-p0": "1"}'
@@ -62,15 +68,24 @@ def test_runai_args_flow_into_plugin():
     """``--runai_*`` values must reach the RunAIPlugin, not be dropped to defaults."""
     args = _parse(
         [
-            "--csp", "runai",
-            "--runai_extended_resources_json", _EXTENDED_RESOURCES,
-            "--runai_annotations_json", _ANNOTATIONS,
-            "--runai_pvc_claim_name", "nemo-workspace",
-            "--runai_pvc_mount_path", "/cm/shared/nemo-workspace",
-            "--runai_large_shm", "false",
-            "--runai_env_json", _ENV,
-            "--runai_scheduler_name", "runai-scheduler",
-            "--runai_labels_json", '{"project": "bench"}',
+            "--csp",
+            "runai",
+            "--runai_extended_resources_json",
+            _EXTENDED_RESOURCES,
+            "--runai_annotations_json",
+            _ANNOTATIONS,
+            "--runai_pvc_claim_name",
+            "nemo-workspace",
+            "--runai_pvc_mount_path",
+            "/cm/shared/nemo-workspace",
+            "--runai_large_shm",
+            "false",
+            "--runai_env_json",
+            _ENV,
+            "--runai_scheduler_name",
+            "runai-scheduler",
+            "--runai_labels_json",
+            '{"project": "bench"}',
         ]
     )
 
