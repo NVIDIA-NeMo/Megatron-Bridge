@@ -58,6 +58,23 @@ class TestHybridModelProvider:
         mock_fn.assert_called_once_with(local_core_attention=False, remap_te_layernorm=True)
         assert result is mock_spec
 
+    def test_modelopt_spec_preserves_grouped_moe_topology(self):
+        provider = HybridModelProvider(
+            hidden_size=128,
+            num_attention_heads=1,
+            num_moe_experts=4,
+            moe_grouped_gemm=True,
+        )
+        mock_spec = Mock(spec=ModuleSpec)
+        with patch(
+            "megatron.bridge.models.hybrid.hybrid_provider.get_hybrid_stack_modelopt_spec",
+            return_value=mock_spec,
+        ) as mock_fn:
+            result = hybrid_provider.modelopt_hybrid_stack_spec(provider)
+
+        mock_fn.assert_called_once_with(use_default_te_spec=True, moe_grouped_gemm=True)
+        assert result is mock_spec
+
     def test_rejects_mamba_stack_spec_argument(self):
         module_spec = ModuleSpec(module=object)
 
