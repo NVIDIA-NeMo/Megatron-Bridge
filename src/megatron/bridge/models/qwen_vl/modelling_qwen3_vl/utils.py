@@ -684,6 +684,22 @@ class AllGatherVisionEmbeddings(torch.autograd.Function):
         return grad_output, None, None
 
 
+def ensure_requires_grad_for_cp_collective(tensors: Sequence[torch.Tensor]) -> None:
+    """Make every tensor entering a CP collective participate in autograd.
+
+    ``AllGatherVisionEmbeddings.backward`` issues a cp_group all_reduce, and autograd
+    only invokes it for tensors that require grad. Tensors that arrive without grad
+    (0-image placeholders, or the outputs of a fully frozen vision tower) would skip
+    the collective on their rank and deadlock the remaining ranks, so force
+    ``requires_grad`` here. No-op under ``torch.no_grad`` (no rank records backward).
+    """
+    if not torch.is_grad_enabled():
+        return
+    for tensor in tensors:
+        if not tensor.requires_grad:
+            tensor.requires_grad_(True)
+
+
 def preprocess_packed_seqs(
     input_ids: torch.Tensor,
     attention_mask: torch.Tensor,

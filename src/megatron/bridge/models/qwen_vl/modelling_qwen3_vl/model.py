@@ -40,6 +40,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
     PatchMergerSubmodules,
     collapse_thw,
+    ensure_requires_grad_for_cp_collective,
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
@@ -516,7 +517,7 @@ class Qwen3VLModel(MegatronModule):
                     vision_embeds = torch.zeros(
                         (0, self.config.hidden_size),
                         device=vision_data.device,
-                        dtype=torch.bfloat16,
+                        dtype=self.config.params_dtype,
                     )
                     deepstack_feature_lists = []
                     for _ in self.vision_transformer_config.deepstack_visual_indexes:
@@ -524,18 +525,11 @@ class Qwen3VLModel(MegatronModule):
                             torch.zeros(
                                 (0, self.language_model.config.hidden_size),
                                 device=vision_data.device,
-                                dtype=torch.bfloat16,
+                                dtype=self.config.params_dtype,
                             )
                         )
                 if cp_size > 1 and self.config.vision_dp_when_cp:
-                    # Every tensor entering the all_gather must require grad so each CP rank
-                    # runs AllGatherVisionEmbeddings.backward and joins its cp_group all_reduce.
-                    # Otherwise ranks whose tensors carry no grad (0-image placeholders, or a
-                    # fully frozen vision tower) skip the collective and the others hang.
-                    if torch.is_grad_enabled():
-                        for _t in (vision_embeds, *deepstack_feature_lists):
-                            if not _t.requires_grad:
-                                _t.requires_grad_(True)
+                    ensure_requires_grad_for_cp_collective((vision_embeds, *deepstack_feature_lists))
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,

@@ -41,6 +41,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionPatchMerger,
     Qwen3VLVisionRotaryEmbedding,
     collapse_thw,
+    ensure_requires_grad_for_cp_collective,
     expand_thw,
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
@@ -145,6 +146,21 @@ def test_get_rope_index_video_tokens_use_video_grid():
     assert position_ids.shape == (3, 1, input_ids.size(1))
     assert torch.equal(position_ids[:, 0, 2:6], expected_video_positions)
     assert deltas.shape == (1, 1)
+
+
+def test_ensure_requires_grad_for_cp_collective():
+    """Grad mode: no-grad tensors are forced; already-requiring tensors untouched.
+    Under torch.no_grad the helper is a no-op (no rank records a backward)."""
+    plain = torch.zeros(2, 3)
+    empty = torch.zeros(0, 3)
+    already = torch.zeros(2, 3, requires_grad=True)
+    ensure_requires_grad_for_cp_collective((plain, empty, already))
+    assert plain.requires_grad and empty.requires_grad and already.requires_grad
+
+    with torch.no_grad():
+        untouched = torch.zeros(2, 3)
+        ensure_requires_grad_for_cp_collective((untouched,))
+        assert not untouched.requires_grad
 
 
 class TestQwen3VLUtils:
@@ -526,7 +542,8 @@ class TestQwen3VLUtils:
         not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
         reason="Requires at least 2 GPUs",
     )
-    def test_allgather_vision_embeddings_empty_rank(self):
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+    def test_allgather_vision_embeddings_empty_rank(self, dtype):
         """A CP rank with 0 tokens (num_images < cp_size) must still participate in the
         backward all_reduce so the collective stays symmetric and does not hang.
 
@@ -550,9 +567,12 @@ class TestQwen3VLUtils:
         ]
         local_seqlen = owner_seqlen if cp_rank == 0 else 0
 
-        input_ = torch.zeros(local_seqlen, hidden_size, dtype=torch.float, device=device, requires_grad=True)
+        input_ = torch.zeros(local_seqlen, hidden_size, dtype=dtype, device=device)
+        ensure_requires_grad_for_cp_collective((input_,))
+        assert input_.requires_grad
         output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, cp_group)
         assert output.shape == (owner_seqlen, hidden_size)
+        assert output.dtype == dtype
 
         # Rank-dependent upstream gradient again, so the owner rank must see the CP-summed grad.
         rank_weight = float(cp_rank + 1)
@@ -562,7 +582,9 @@ class TestQwen3VLUtils:
         assert input_.grad.shape == (local_seqlen, hidden_size)
         if cp_rank == 0:
             s = sum(r + 1 for r in range(cp_size))  # 3
-            torch.testing.assert_close(input_.grad, torch.full((owner_seqlen, hidden_size), float(s), device=device))
+            torch.testing.assert_close(
+                input_.grad, torch.full((owner_seqlen, hidden_size), float(s), device=device, dtype=dtype)
+            )
 
         self.destroy_parallel_state()
 
@@ -570,7 +592,8 @@ class TestQwen3VLUtils:
         not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
         reason="Requires at least 2 GPUs",
     )
-    def test_allgather_vision_embeddings_frozen_input(self):
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+    def test_allgather_vision_embeddings_frozen_input(self, dtype):
         """A fully frozen vision tower produces embeddings that do not require grad; the
         model forces requires_grad=True before the gather so every CP rank still enters the
         backward collective. A forced no-grad-fn leaf must receive the CP-summed gradient.
@@ -586,16 +609,17 @@ class TestQwen3VLUtils:
         seqlens_on_cp_ranks = [torch.tensor([local_seqlen], dtype=torch.long, device=device) for _ in range(cp_size)]
 
         # Frozen tower output: a plain tensor with no grad_fn and requires_grad=False.
-        input_ = torch.randn(local_seqlen, hidden_size, dtype=torch.float, device=device)
+        input_ = torch.randn(local_seqlen, hidden_size, dtype=dtype, device=device)
         assert not input_.requires_grad
-        input_.requires_grad_(True)  # what the model does right before the gather
+        ensure_requires_grad_for_cp_collective((input_,))  # what the model does right before the gather
+        assert input_.requires_grad
 
         output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, cp_group)
         rank_weight = float(cp_rank + 1)
         (output * rank_weight).sum().backward()
 
         s = float(sum(r + 1 for r in range(cp_size)))  # 3 for cp_size=2
-        torch.testing.assert_close(input_.grad, torch.full((local_seqlen, hidden_size), s, device=device))
+        torch.testing.assert_close(input_.grad, torch.full((local_seqlen, hidden_size), s, device=device, dtype=dtype))
 
         self.destroy_parallel_state()
 
