@@ -110,6 +110,34 @@ def test_bootstrap_exports_flat_recipe_environment_before_exec(monkeypatch):
     assert calls[2][2][1].endswith("run_script.py")
 
 
+def test_bootstrap_exec_preserves_argv_and_environment(monkeypatch):
+    original_argv = [
+        "bootstrap.py",
+        "--wandb_experiment_name",
+        "name with spaces",
+        "+env_vars.EXTRA={nested:value}",
+    ]
+    calls = []
+
+    monkeypatch.setattr(bootstrap.sys, "argv", original_argv)
+    monkeypatch.setenv("BOOTSTRAP_SENTINEL", "preserved")
+    expected_environment = dict(bootstrap.os.environ)
+    monkeypatch.setattr(bootstrap.os, "execvpe", lambda executable, argv, env: calls.append((executable, argv, env)))
+
+    bootstrap._exec_training(bootstrap.ENTRYPOINT_RECIPE)
+
+    assert len(calls) == 1
+    executable, argv, environment = calls[0]
+    assert executable == bootstrap.sys.executable
+    assert argv == [
+        bootstrap.sys.executable,
+        str((_PERF_SCRIPTS_DIR / "run_recipe.py").resolve()),
+        *original_argv[1:],
+    ]
+    assert environment == expected_environment
+    assert environment is not bootstrap.os.environ
+
+
 def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
     from utils.overrides import _set_common_perf_overrides
 
