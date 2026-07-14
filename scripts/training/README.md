@@ -176,8 +176,8 @@ materializing their values in the generated sbatch script. Repeat `--mount HOST`
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.
 
-Use `--submission-dry-run` to render the NeMo-Run experiment without submitting it. For a rank-local
-ConfigContainer dry run, invoke `run_recipe.py` directly:
+Use `--dry-run` (or the explicit `--submission-dry-run` spelling) to render the NeMo-Run experiment without
+submitting it. For a rank-local ConfigContainer dry run, invoke `run_recipe.py` directly:
 
 ```bash
 uv run python scripts/training/run_recipe.py \

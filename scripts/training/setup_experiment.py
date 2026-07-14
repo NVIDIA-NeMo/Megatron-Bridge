@@ -83,7 +83,9 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument(
         "--submission-dry-run",
+        "--dry-run",
         action="store_true",
+        dest="submission_dry_run",
         help="Render the Slurm submission without submitting it.",
     )
     return parser

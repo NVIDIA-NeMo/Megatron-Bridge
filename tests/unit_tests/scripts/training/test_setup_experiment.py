@@ -79,14 +79,14 @@ def test_parser_forwards_training_selection_and_overrides():
     ]
 
 
-@pytest.mark.parametrize("training_option", ["--dry-run", "--dry_run"])
-def test_training_dry_run_is_forwarded_and_submission_dry_run_is_consumed(training_option):
+@pytest.mark.parametrize("submission_option", ["--submission-dry-run", "--dry-run"])
+def test_submission_dry_run_aliases_are_consumed(submission_option):
     module = _load_setup_experiment_module()
 
-    args, training_args = module.parse_args(["--submission-dry-run", training_option])
+    args, training_args = module.parse_args([submission_option, "--dry_run"])
 
     assert args.submission_dry_run is True
-    assert training_args == [training_option]
+    assert training_args == ["--dry_run"]
 
 
 def test_setup_import_does_not_load_training_stack(monkeypatch):
@@ -225,8 +225,9 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
     ("extra_options", "expected_run", "expected_dryrun"),
     [
         ([], [{"detach": True}], 0),
-        (["--dry-run"], [{"detach": True}], 0),
-        (["--submission-dry-run", "--dry-run"], [], 1),
+        (["--dry_run"], [{"detach": True}], 0),
+        (["--submission-dry-run"], [], 1),
+        (["--dry-run"], [], 1),
     ],
 )
 def test_main_keeps_submission_and_training_dry_runs_separate(
@@ -300,7 +301,8 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     assert scripts[0].env == {
         "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
     }
-    expected_training_options = [option for option in extra_options if option != "--submission-dry-run"]
+    submission_options = {"--submission-dry-run", "--dry-run"}
+    expected_training_options = [option for option in extra_options if option not in submission_options]
     assert scripts[0].args == [*training_args, *expected_training_options]
 
 
