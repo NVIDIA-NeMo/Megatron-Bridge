@@ -91,20 +91,26 @@ def build_megatron_mimo_model(
 
 
 def _set_per_module_random_seeds(infra: "MegatronMIMOInfra", *, seed: int) -> None:
-    """Initialise per-module RNG using TP/PP ranks from the rank's grid.
+    """Initialise per-module RNG using TP/PP/EP/ETP ranks from the rank's module.
 
-    Mirrors ``_set_megatron_mimo_random_seeds`` in ``setup_megatron_mimo`` but
-    takes a raw ``seed`` int instead of reading ``cfg.rng.seed``, so callers
-    outside the training loop (conversion CLI) can use it.
+    This takes a raw ``seed`` int instead of reading ``cfg.rng.seed``, so callers
+    outside the training loop (conversion CLI) can use it too.
     """
     current_rank = dist.get_rank()
 
     tp_rank = 0
     pp_rank = 0
-    for grid in infra.module_to_grid_map.values():
+    ep_rank = 0
+    etp_rank = 0
+    for module_name, grid in infra.module_to_grid_map.items():
         if grid.is_current_rank_in_grid():
-            tp_rank = dist.get_group_rank(grid.get_pg(["tp"]), current_rank)
-            pp_rank = dist.get_group_rank(grid.get_pg(["pp"]), current_rank)
+            pg_collection = infra.pg_collections.get(module_name)
+            if pg_collection is None:
+                break
+            tp_rank = dist.get_group_rank(pg_collection.tp, current_rank)
+            pp_rank = dist.get_group_rank(pg_collection.pp, current_rank)
+            ep_rank = dist.get_group_rank(pg_collection.ep, current_rank)
+            etp_rank = dist.get_group_rank(pg_collection.expt_tp, current_rank)
             break
 
     # Different PP stages get different base seeds — matches the standard path.
@@ -114,12 +120,15 @@ def _set_per_module_random_seeds(infra: "MegatronMIMOInfra", *, seed: int) -> No
     torch.manual_seed(pp_seed)
 
     if torch.cuda.device_count() > 0:
-        tensor_parallel.model_parallel_cuda_manual_seed(pp_seed, tp_rank=tp_rank, ep_rank=0, etp_rank=0)
+        tensor_parallel.model_parallel_cuda_manual_seed(pp_seed, tp_rank=tp_rank, ep_rank=ep_rank, etp_rank=etp_rank)
 
 
 def _bridge_parallel_state_globals(local_pg_collection) -> None:
     """Set ``parallel_state`` globals from the rank-local ``ProcessGroupCollection``."""
     from megatron.core import parallel_state as mpu
+
+    if getattr(mpu, "_GLOBAL_MEMORY_BUFFER", None) is None:
+        mpu._set_global_memory_buffer()
 
     mpu._TENSOR_MODEL_PARALLEL_GROUP = local_pg_collection.tp
     mpu._DATA_PARALLEL_GROUP = local_pg_collection.dp
@@ -136,10 +145,22 @@ def _bridge_parallel_state_globals(local_pg_collection) -> None:
         mpu._EXPERT_TENSOR_PARALLEL_GROUP = local_pg_collection.expt_tp
     else:
         mpu._EXPERT_TENSOR_PARALLEL_GROUP = local_pg_collection.tp
+    if getattr(local_pg_collection, "expt_dp", None) is not None:
+        mpu._EXPERT_DATA_PARALLEL_GROUP = local_pg_collection.expt_dp
+    else:
+        mpu._EXPERT_DATA_PARALLEL_GROUP = local_pg_collection.dp
+    if getattr(local_pg_collection, "intra_expt_dp", None) is not None:
+        mpu._INTRA_PARTIAL_EXPERT_DATA_PARALLEL_GROUP = local_pg_collection.intra_expt_dp
+    else:
+        mpu._INTRA_PARTIAL_EXPERT_DATA_PARALLEL_GROUP = mpu._EXPERT_DATA_PARALLEL_GROUP
     if getattr(local_pg_collection, "tp_ep", None) is not None:
         mpu._EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP = local_pg_collection.tp_ep
+    else:
+        mpu._EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP = mpu._EXPERT_TENSOR_PARALLEL_GROUP
     if getattr(local_pg_collection, "tp_ep_pp", None) is not None:
         mpu._EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP = local_pg_collection.tp_ep_pp
+    else:
+        mpu._EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP = mpu._EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP
     if getattr(local_pg_collection, "cp", None) is not None:
         mpu._CONTEXT_PARALLEL_GROUP = local_pg_collection.cp
     else:

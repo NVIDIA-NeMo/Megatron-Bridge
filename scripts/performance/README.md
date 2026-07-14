@@ -103,7 +103,7 @@ uv run python scripts/performance/setup_experiment.py \
 - `-ms/--max_steps`: Maximum number of training steps.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
-- `-sl/--seq_length`: Sequence length.
+- `-sl/--seq_length`: Override model sequence length and the LLM dataset sequence length.
 
 ##### Optimizer arguments
 
