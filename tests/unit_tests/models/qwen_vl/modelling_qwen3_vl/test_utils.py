@@ -163,6 +163,43 @@ def test_ensure_requires_grad_for_cp_collective():
         assert not untouched.requires_grad
 
 
+@pytest.mark.parametrize("cp_rank", [0, 1])
+def test_allgather_vision_embeddings_backward_mocked_collectives(cp_rank, monkeypatch):
+    """Verify backward = reduce-scatter (sum across CP ranks, then slice this rank's
+    range) without a process group, by stubbing the collectives. The injected peer
+    gradient varies per row, so a wrong slice offset changes the result, and dropping
+    the all_reduce loses the peer contribution entirely.
+    """
+    hidden_size = 4
+    seqlens_on_cp_ranks = [torch.tensor([2]), torch.tensor([3])]
+    total = int(sum(s.sum() for s in seqlens_on_cp_ranks))
+    peer_grad = torch.arange(total, dtype=torch.float).unsqueeze(1).expand(total, hidden_size)
+    fake_group = object()
+
+    def fake_all_gather(outputs, inp, group=None):
+        assert group is fake_group
+        outputs[cp_rank].copy_(inp)
+        outputs[1 - cp_rank].fill_(7.0)
+
+    def fake_all_reduce(tensor, group=None):
+        assert group is fake_group
+        tensor.add_(peer_grad)
+
+    monkeypatch.setattr(torch.distributed, "all_gather", fake_all_gather)
+    monkeypatch.setattr(torch.distributed, "all_reduce", fake_all_reduce)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda group=None: cp_rank)
+
+    local_seqlen = int(seqlens_on_cp_ranks[cp_rank].sum())
+    input_ = torch.randn(local_seqlen, hidden_size, requires_grad=True)
+    output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, fake_group)
+    assert output.shape == (total, hidden_size)
+    output.sum().backward()
+
+    start = int(sum(s.sum() for s in seqlens_on_cp_ranks[:cp_rank]))
+    expected = (torch.ones(total, hidden_size) + peer_grad)[start : start + local_seqlen]
+    torch.testing.assert_close(input_.grad, expected)
+
+
 class TestQwen3VLUtils:
     """Test suite for Qwen3VL utility functions."""
 
