@@ -107,6 +107,7 @@ def _load_recipe_runner_module():
     config_module = types.ModuleType("megatron.bridge.training.config")
     config_module.ConfigContainer = object
     config_module.TokenizerConfig = TokenizerConfig
+    config_module.apply_environment_variables = Mock(name="apply_environment_variables")
 
     omegaconf_module = types.ModuleType("megatron.bridge.training.utils.omegaconf_utils")
     omegaconf_module.process_config_with_overrides = lambda config, cli_overrides=None: config
