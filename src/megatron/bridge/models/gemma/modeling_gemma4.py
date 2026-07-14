@@ -668,7 +668,9 @@ class Gemma4DenseTransformerLayer(TransformerLayer):
         hidden_states: Tensor,
         inference_context: Optional[BaseInferenceContext] = None,
         padding_mask: Optional[Tensor] = None,
+        packed_seq_params: Optional[PackedSeqParams] = None,
     ) -> Tensor:
+        del packed_seq_params  # Accepted for TransformerLayer.forward compatibility; unused here.
         pre_mlp_layernorm_output = self._forward_pre_mlp_layernorm(hidden_states)
         if isinstance(pre_mlp_layernorm_output, tuple):
             pre_mlp_layernorm_output, residual = pre_mlp_layernorm_output
@@ -1286,9 +1288,10 @@ class Gemma4TransformerLayer(TransformerLayer):
         hidden_states: Tensor,
         inference_context: BaseInferenceContext | None = None,
         padding_mask: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
     ) -> Tensor:
         """Run HF's separate shared-expert, routed-expert, and router inputs."""
-        del inference_context
+        del inference_context, packed_seq_params
         residual = hidden_states.float() if self.config.fp32_residual_connection else hidden_states
         expert_input = _gemma4_rms_norm(
             residual,
