@@ -2097,3 +2097,20 @@ class TestGemma4OutputHelpers:
 
         torch.testing.assert_close(out, 2.0 * torch.tanh(logits / 2.0))
         assert bias is None
+
+
+def test_forward_mlp_overrides_accept_packed_seq_params():
+    """Regression: TransformerLayer.forward passes packed_seq_params to _forward_mlp.
+
+    Both Gemma 4 transformer layers inherit TransformerLayer.forward, which forwards
+    a packed_seq_params keyword to _forward_mlp. The overrides must accept it or the
+    layer forward pass raises TypeError (see the gemma4_vl finetune recipe failure).
+    """
+    import inspect
+
+    for layer_cls in (Gemma4DenseTransformerLayer, Gemma4TransformerLayer):
+        params = inspect.signature(layer_cls._forward_mlp).parameters
+        assert "packed_seq_params" in params, (
+            f"{layer_cls.__name__}._forward_mlp must accept packed_seq_params"
+        )
+        assert params["packed_seq_params"].default is None
