@@ -35,6 +35,7 @@ bridge-tech-details.md
 
 models/README.md
 models/bailing/index.md
+models/bert/index.md
 models/deepseek/index.md
 models/falcon/index.md
 models/gemma/index.md

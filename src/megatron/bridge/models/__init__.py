@@ -16,6 +16,9 @@
 from megatron.bridge.models.bailing import (
     BailingMoeV2Bridge,
 )
+from megatron.bridge.models.bert import (
+    BertModelProvider,
+)
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -196,6 +199,7 @@ __all__ = [
     "RowParallelMapping",
     "AutoMapping",
     "BailingMoeV2Bridge",
+    "BertModelProvider",
     # DeepSeek Models
     "DeepSeekV2Bridge",
     "DeepSeekV3Bridge",
