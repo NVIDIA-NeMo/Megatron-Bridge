@@ -146,6 +146,7 @@ class TestBertBridge:
         for megatron_param, expected_hf_param in cases.items():
             mapping = registry.megatron_to_hf_lookup(megatron_param)
             assert mapping is not None, f"no mapping found for {megatron_param}"
+            assert mapping.hf_param == expected_hf_param
             assert expected_hf_param in hf_param_names
 
     def test_mapping_registry_covers_all_unique_hf_parameters(self):
