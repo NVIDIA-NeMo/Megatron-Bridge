@@ -144,7 +144,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--offline-packing",
         "--offline_packing",
         action="store_true",
-        dest="offline_packing",
+        dest="enable_offline_packing",
         help="Enable offline sequence packing for a text SFT dataset.",
     )
     data.add_argument(
@@ -177,7 +177,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--media-root",
         "--media_root",
         dest="media_root",
-        help="Root directory for resolving relative image and video paths.",
+        help="Root directory containing the LLaVA-Video assets.",
     )
     data.add_argument(
         "--hf-processor-path",
@@ -337,7 +337,7 @@ def _validate_dataset_options(args: argparse.Namespace) -> None:
     selected_options = [
         option
         for option, is_selected in (
-            ("--offline-packing", args.offline_packing),
+            ("--offline-packing", args.enable_offline_packing),
             ("--dataset-path", bool(args.dataset_paths)),
             ("--dataset-cache", args.dataset_cache is not None),
             ("--dataset-root", args.dataset_root is not None),
@@ -355,7 +355,7 @@ def _validate_dataset_options(args: argparse.Namespace) -> None:
         return
 
     selection = DATASETS[args.dataset]
-    if args.offline_packing and not selection.supports_offline_packing:
+    if args.enable_offline_packing and not selection.supports_offline_packing:
         raise ValueError(f"Dataset '{args.dataset}' does not support --offline-packing.")
     if (args.dataset_paths or args.dataset_cache is not None) and not selection.indexed_data:
         raise ValueError("--dataset-path and --dataset-cache are used only by megatron-indexed.")
@@ -365,8 +365,8 @@ def _validate_dataset_options(args: argparse.Namespace) -> None:
         args.dataset != "local-vlm"
     ):
         raise ValueError("Local VLM split paths are used only by local-vlm.")
-    if args.media_root is not None and args.dataset not in {"local-vlm", "llava-video-178k"}:
-        raise ValueError("--media-root is used only by local-vlm and llava-video-178k.")
+    if args.media_root is not None and args.dataset != "llava-video-178k":
+        raise ValueError("--media-root is used only by llava-video-178k.")
     if args.hf_processor_path is not None and selection.modality != "vlm":
         raise ValueError("--hf-processor-path is used only by VLM datasets.")
     if selection.modality == "vlm" and STEP_MODALITIES.get(args.step_func.lower()) != "vlm":
@@ -389,7 +389,7 @@ def _apply_dataset(
     recipe = apply_public_dataset_override(
         recipe,
         dataset_name=args.dataset,
-        offline_packing=args.offline_packing,
+        enable_offline_packing=args.enable_offline_packing,
         seq_length=args.seq_length,
         dataset_root=args.dataset_root,
         train_data_path=args.train_data_path,

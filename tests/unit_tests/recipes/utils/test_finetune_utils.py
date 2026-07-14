@@ -83,15 +83,15 @@ class TestDefaultOpenmathinstruct2Config:
         assert cfg.enable_offline_packing is False
         assert cfg.offline_packing_specs is None
 
-    def test_packed_sequence_request_enables_offline_packing(self):
-        cfg = default_openmathinstruct2_config(packed_sequence=True)
+    def test_enable_offline_packing_creates_packing_specs(self):
+        cfg = default_openmathinstruct2_config(enable_offline_packing=True)
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None
         assert cfg.offline_packing_specs.packed_sequence_size == 4096
         assert cfg.dataset_kwargs is None
 
     def test_pad_seq_to_mult_applies_to_packing(self):
-        cfg = default_openmathinstruct2_config(packed_sequence=True, pad_seq_to_mult=4)
+        cfg = default_openmathinstruct2_config(enable_offline_packing=True, pad_seq_to_mult=4)
         assert cfg.offline_packing_specs.pad_seq_to_mult == 4
 
 
@@ -153,15 +153,15 @@ class TestDefaultGsm8kConfig:
         assert cfg.enable_offline_packing is False
         assert cfg.offline_packing_specs is None
 
-    def test_packed_sequence_request_enables_offline_packing(self):
-        cfg = default_gsm8k_config(packed_sequence=True)
+    def test_enable_offline_packing_creates_packing_specs(self):
+        cfg = default_gsm8k_config(enable_offline_packing=True)
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None
         assert cfg.offline_packing_specs.packed_sequence_size == 2048
         assert cfg.dataset_kwargs is None
 
     def test_pad_seq_to_mult_applies_to_packing(self):
-        cfg = default_gsm8k_config(packed_sequence=True, pad_seq_to_mult=4)
+        cfg = default_gsm8k_config(enable_offline_packing=True, pad_seq_to_mult=4)
         assert cfg.offline_packing_specs.pad_seq_to_mult == 4
 
 
@@ -184,8 +184,8 @@ class TestDefaultSquadConfig:
         assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
         assert cfg.preprocessing.separator == " "
 
-    def test_packed_sequence_request_enables_offline_packing(self):
-        cfg = default_squad_config(seq_length=512, packed_sequence=True)
+    def test_enable_offline_packing_creates_packing_specs(self):
+        cfg = default_squad_config(seq_length=512, enable_offline_packing=True)
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None
         assert cfg.offline_packing_specs.packed_sequence_size == 512
@@ -246,7 +246,7 @@ class TestDefaultOpenmathinstruct2ThinkingConfig:
     """Test cases for default_openmathinstruct2_thinking_packed_config."""
 
     def test_uses_thinking_preset(self):
-        cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, packed_sequence=True)
+        cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, enable_offline_packing=True)
         assert isinstance(cfg, GPTSFTDatasetConfig)
         assert cfg.hf_dataset.dataset_name == "openmathinstruct2_thinking"
         assert cfg.hf_dataset.split is None

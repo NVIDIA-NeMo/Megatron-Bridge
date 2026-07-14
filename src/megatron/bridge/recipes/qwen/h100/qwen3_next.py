@@ -154,8 +154,8 @@ def qwen3_next_80b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # Get base SFT config
     cfg = _sft_common()
 
-    # Override dataset - Qwen3-Next does NOT support packed_sequence
-    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+    # Override dataset - Qwen3-Next does NOT support offline packing
+    cfg.dataset = default_squad_config(seq_length=2048, enable_offline_packing=False, pad_seq_to_mult=1)
 
     # Model config from HuggingFace
     cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-Next-80B-A3B-Instruct").to_megatron_provider(
@@ -195,7 +195,7 @@ def qwen3_next_80b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.train_iters = 1000
     cfg.validation.eval_interval = 30
     cfg.validation.eval_iters = 32
-    cfg.train.global_batch_size = 64  # packed_sequence=False, so use 64
+    cfg.train.global_batch_size = 64  # enable_offline_packing=False, so use 64
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100

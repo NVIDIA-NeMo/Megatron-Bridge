@@ -390,8 +390,8 @@ def nemotron_nano_9b_v2_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.validation.eval_interval = 50
     cfg.validation.eval_iters = 10
 
-    # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
-    # _sft_common already sets seq_length=2048 and packed_sequence=True
+    # Dataset config - enable_offline_packing=True by default (from _sft_common), seq_length=2048
+    # _sft_common already sets seq_length=2048 and enable_offline_packing=True
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -516,7 +516,7 @@ def nemotron_nano_12b_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.validation.eval_interval = 50
     cfg.validation.eval_iters = 10
 
-    # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
+    # Dataset config - enable_offline_packing=True by default (from _sft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -668,7 +668,7 @@ def nemotron_nano_9b_v2_peft_1gpu_h100_bf16_config(
     cfg.validation.eval_interval = 50
     cfg.validation.eval_iters = 10
 
-    # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
+    # Dataset config - enable_offline_packing=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -815,7 +815,7 @@ def nemotron_nano_12b_v2_peft_1gpu_h100_bf16_config(
     cfg.validation.eval_interval = 50
     cfg.validation.eval_iters = 10
 
-    # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
+    # Dataset config - enable_offline_packing=True by default (from _peft_common), seq_length=2048
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2

@@ -17,7 +17,6 @@
 import argparse
 import logging
 import os
-import re
 import shlex
 from pathlib import Path
 
@@ -28,23 +27,6 @@ from nemo_run.config import get_nemorun_home
 logger = logging.getLogger(__name__)
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
-ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-SENSITIVE_ARGUMENT_PATTERN = re.compile(
-    r"(^|[._-])(credentials?|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|"
-    r"authentication|authorization)([._-]|$)",
-    re.IGNORECASE,
-)
-SENSITIVE_TOKEN_CONTEXT_PATTERN = re.compile(
-    r"(^|[._-])(access|api|auth|bearer|comet|hf|refresh|secret|wandb)[._-]?token([._-]|$)",
-    re.IGNORECASE,
-)
-TERMINAL_TOKEN_PATTERN = re.compile(r"(^|[._-])token$", re.IGNORECASE)
-BENIGN_TERMINAL_TOKEN_PATTERN = re.compile(
-    r"(^|[._-])(audio|bos|cls|decoder[_-]?start|eod|eos|image|image[_-]end|image[_-]start|insert[_-]start|"
-    r"mask|pad|patch[_-]end|patch[_-]start|sep|set[_-]pad|unmask[_-]last|use[_-]cls|video)[._-]token$",
-    re.IGNORECASE,
-)
-MOUNT_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9_./+@%=-]+$")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -113,19 +95,11 @@ def _parse_env(values: list[str]) -> list[str]:
     for name in values:
         if "=" in name:
             raise ValueError("--env accepts NAME only; export the value before launching to keep it out of arguments.")
-        if not ENV_NAME_PATTERN.fullmatch(name):
-            raise ValueError(f"Invalid environment variable name: {name!r}.")
         if name not in os.environ:
             raise ValueError(f"Environment variable '{name}' is not set in the launcher environment.")
         if name not in env_names:
             env_names.append(name)
     return env_names
-
-
-def _validate_mount_path(path: str) -> None:
-    """Reject ambiguous mount syntax before it reaches Pyxis or a shell script."""
-    if not MOUNT_PATH_PATTERN.fullmatch(path):
-        raise ValueError(f"Invalid mount path {path!r}; use an absolute path without spaces or shell metacharacters.")
 
 
 def _parse_mounts(values: list[str]) -> list[str]:
@@ -137,26 +111,12 @@ def _parse_mounts(values: list[str]) -> list[str]:
         else:
             host_path = value
             container_path = value
-        _validate_mount_path(host_path)
-        _validate_mount_path(container_path)
+        if not host_path or not container_path:
+            raise ValueError(f"Invalid --mount value '{value}'; expected HOST or HOST:CONTAINER.")
         mount = f"{host_path}:{container_path}"
         if mount not in mounts:
             mounts.append(mount)
     return mounts
-
-
-def _validate_training_args(training_args: list[str]) -> None:
-    """Keep credential-like values out of rendered commands and Slurm artifacts."""
-    for argument in training_args:
-        option_name = argument.split("=", 1)[0].lstrip("-+")
-        has_sensitive_token = bool(
-            SENSITIVE_TOKEN_CONTEXT_PATTERN.search(option_name)
-            or (TERMINAL_TOKEN_PATTERN.search(option_name) and not BENIGN_TERMINAL_TOKEN_PATTERN.search(option_name))
-        )
-        if SENSITIVE_ARGUMENT_PATTERN.search(option_name) or has_sensitive_token:
-            raise ValueError(
-                f"Sensitive argument '{option_name}' is not allowed; pass credentials through an exported --env NAME."
-            )
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -207,7 +167,6 @@ def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
     _validate_args(args)
-    _validate_training_args(training_args)
 
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)

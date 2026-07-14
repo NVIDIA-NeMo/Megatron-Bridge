@@ -340,7 +340,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # --- tokenizer / dataset (real HF tokenizer; SBHD / unpacked) ---
     cfg.tokenizer.tokenizer_model = DEEPSEEK_V4_FLASH_HF_PATH
-    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
+    cfg.dataset = default_squad_config(seq_length=4096, enable_offline_packing=False)
 
     # --- robustness defaults ---
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
@@ -413,7 +413,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # --- tokenizer / dataset (real HF tokenizer; SBHD / unpacked) ---
     cfg.tokenizer.tokenizer_model = DEEPSEEK_V4_FLASH_HF_PATH
-    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=False)
+    cfg.dataset = default_squad_config(seq_length=4096, enable_offline_packing=False)
 
     # --- robustness defaults ---
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)

@@ -283,11 +283,11 @@ def glm45_355b_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for GLM-4.5 355B SFT.
     """
-    # Get base SFT config with packed_sequence=False (not supported for GLM-4.5)
+    # Get base SFT config with enable_offline_packing=False (not supported for GLM-4.5)
     cfg = _sft_common()
 
-    # Override dataset - GLM-4.5 does NOT support packed_sequence
-    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+    # Override dataset - GLM-4.5 does NOT support offline packing
+    cfg.dataset = default_squad_config(seq_length=2048, enable_offline_packing=False, pad_seq_to_mult=1)
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5"
@@ -414,11 +414,11 @@ def glm45_air_106b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for GLM-4.5 Air 106B SFT.
     """
-    # Get base SFT config with packed_sequence=False (not supported for GLM-4.5)
+    # Get base SFT config with enable_offline_packing=False (not supported for GLM-4.5)
     cfg = _sft_common()
 
-    # Override dataset - GLM-4.5 does NOT support packed_sequence
-    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+    # Override dataset - GLM-4.5 does NOT support offline packing
+    cfg.dataset = default_squad_config(seq_length=2048, enable_offline_packing=False, pad_seq_to_mult=1)
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5-Air"
@@ -555,11 +555,11 @@ def glm45_355b_peft_16gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for GLM-4.5 355B PEFT.
     """
-    # Get base PEFT config with packed_sequence=False (not supported for GLM-4.5)
+    # Get base PEFT config with enable_offline_packing=False (not supported for GLM-4.5)
     cfg = _peft_common()
 
-    # Override dataset - GLM-4.5 does NOT support packed_sequence
-    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+    # Override dataset - GLM-4.5 does NOT support offline packing
+    cfg.dataset = default_squad_config(seq_length=2048, enable_offline_packing=False, pad_seq_to_mult=1)
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5"
@@ -695,11 +695,11 @@ def glm45_air_106b_peft_8gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for GLM-4.5 Air 106B PEFT.
     """
-    # Get base PEFT config with packed_sequence=False (not supported for GLM-4.5)
+    # Get base PEFT config with enable_offline_packing=False (not supported for GLM-4.5)
     cfg = _peft_common()
 
-    # Override dataset - GLM-4.5 does NOT support packed_sequence
-    cfg.dataset = default_squad_config(seq_length=2048, packed_sequence=False, pad_seq_to_mult=1)
+    # Override dataset - GLM-4.5 does NOT support offline packing
+    cfg.dataset = default_squad_config(seq_length=2048, enable_offline_packing=False, pad_seq_to_mult=1)
 
     # Model config from HuggingFace
     hf_path = "zai-org/GLM-4.5-Air"

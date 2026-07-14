@@ -172,7 +172,7 @@ def gemma3_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
-    # With packed_sequence=True (default), seq_length is 4096
+    # With enable_offline_packing=True (default), seq_length is 4096
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
@@ -296,7 +296,7 @@ def gemma3_1b_peft_1gpu_h100_bf16_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
-    # With packed_sequence=True (default), seq_length is 4096
+    # With enable_offline_packing=True (default), seq_length is 4096
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length

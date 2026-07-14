@@ -95,13 +95,13 @@ def _text_hf_dataset_config(
 
 
 def default_squad_config(
-    seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1
+    seq_length: int, enable_offline_packing: bool = True, pad_seq_to_mult: int = 1
 ) -> GPTSFTDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
         seq_length: Sequence length for the dataset
-        packed_sequence: Whether to enable offline packed-sequence preparation.
+        enable_offline_packing: Whether to enable offline packed-sequence preparation.
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing
             (set to `2 * context_parallel_size` for THD CP runs).
 
@@ -116,7 +116,7 @@ def default_squad_config(
     """
     dataset_kwargs = {}
     offline_packing_specs = None
-    if packed_sequence:
+    if enable_offline_packing:
         dataset_kwargs["pad_to_max_length"] = True
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
@@ -124,7 +124,7 @@ def default_squad_config(
         source=HFDatasetSourceConfig(dataset_name="squad"),
         preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         seq_length=seq_length,
-        enable_offline_packing=packed_sequence,
+        enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
         dataset_kwargs=dataset_kwargs,
         val_proportion=0.1,
@@ -134,14 +134,14 @@ def default_squad_config(
 
 def default_openmathinstruct2_config(
     seq_length: int = 4096,
-    packed_sequence: bool = False,
+    enable_offline_packing: bool = False,
     pad_seq_to_mult: int = 1,
 ) -> GPTSFTDatasetConfig:
     """Create the default OpenMathInstruct-2 finetuning dataset.
 
     Args:
         seq_length: Maximum sequence length.
-        packed_sequence: Whether to enable offline text SFT packing. This does
+        enable_offline_packing: Whether to enable offline text SFT packing. This does
             not enable VLM in-batch packing.
         pad_seq_to_mult: Sequence-length multiple used by offline packing.
 
@@ -149,14 +149,14 @@ def default_openmathinstruct2_config(
         OpenMathInstruct-2 dataset configuration.
     """
     offline_packing_specs = None
-    if packed_sequence:
+    if enable_offline_packing:
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
         preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         seq_length=seq_length,
-        enable_offline_packing=packed_sequence,
+        enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
         val_proportion=0.05,
         num_workers=2,
@@ -165,7 +165,7 @@ def default_openmathinstruct2_config(
 
 def default_gsm8k_config(
     seq_length: int = 2048,
-    packed_sequence: bool = False,
+    enable_offline_packing: bool = False,
     pad_seq_to_mult: int = 1,
 ) -> GPTSFTDatasetConfig:
     """Create default GSM8K dataset configuration for finetuning recipes.
@@ -175,7 +175,7 @@ def default_gsm8k_config(
 
     Args:
         seq_length: Sequence length for the dataset (default 2048, sufficient for GSM8K)
-        packed_sequence: Whether to enable offline text SFT packing. This does
+        enable_offline_packing: Whether to enable offline text SFT packing. This does
             not enable VLM in-batch packing.
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing.
 
@@ -187,7 +187,7 @@ def default_gsm8k_config(
         - Loads the full DatasetDict so the published test split is used for evaluation
     """
     offline_packing_specs = None
-    if packed_sequence:
+    if enable_offline_packing:
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
@@ -197,7 +197,7 @@ def default_gsm8k_config(
         do_validation=False,
         do_test=True,
         seq_length=seq_length,
-        enable_offline_packing=packed_sequence,
+        enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
         num_workers=2,
     )
@@ -205,7 +205,7 @@ def default_gsm8k_config(
 
 def default_openmathinstruct2_thinking_packed_config(
     seq_length: int = 4096,
-    packed_sequence: bool = False,
+    enable_offline_packing: bool = False,
     pad_seq_to_mult: int = 1,
 ) -> GPTSFTDatasetConfig:
     """Create OpenMathInstruct-2 dataset config with CoT in analysis channel, answer in final channel.
@@ -216,13 +216,13 @@ def default_openmathinstruct2_thinking_packed_config(
 
     Args:
         seq_length: Sequence length (default 4096)
-        packed_sequence: Whether to enable offline text SFT packing. This does
+        enable_offline_packing: Whether to enable offline text SFT packing. This does
             not enable VLM in-batch packing.
         pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs).
     """
     cfg = default_openmathinstruct2_config(
         seq_length=seq_length,
-        packed_sequence=packed_sequence,
+        enable_offline_packing=enable_offline_packing,
         pad_seq_to_mult=pad_seq_to_mult,
     )
     assert cfg.hf_dataset is not None

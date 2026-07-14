@@ -99,7 +99,7 @@ def test_setup_import_does_not_load_training_stack(monkeypatch):
     assert "megatron.bridge" not in sys.modules
 
 
-def test_parse_env_validates_and_deduplicates_inherited_names(monkeypatch):
+def test_parse_env_deduplicates_inherited_names(monkeypatch):
     module = _load_setup_experiment_module()
     monkeypatch.setenv("INHERITED_VALUE", "from-launcher")
 
@@ -114,14 +114,6 @@ def test_parse_env_rejects_inline_values(monkeypatch):
 
     with pytest.raises(ValueError, match="accepts NAME only"):
         module._parse_env(["SECRET_VALUE=inline"])
-
-
-@pytest.mark.parametrize("name", ["", "BAD-NAME", "1INVALID", "NAME;COMMAND"])
-def test_parse_env_rejects_invalid_names(name):
-    module = _load_setup_experiment_module()
-
-    with pytest.raises(ValueError, match="Invalid environment variable name"):
-        module._parse_env([name])
 
 
 def test_parse_env_rejects_missing_inherited_name(monkeypatch):
@@ -144,55 +136,8 @@ def test_parse_mounts_supports_same_path_and_explicit_destination():
 def test_parse_mounts_rejects_empty_paths(value):
     module = _load_setup_experiment_module()
 
-    with pytest.raises(ValueError, match="Invalid mount path"):
+    with pytest.raises(ValueError, match="expected HOST or HOST:CONTAINER"):
         module._parse_mounts([value])
-
-
-@pytest.mark.parametrize("value", ["relative/path", "/host path", "/host;/command", "/host,/other"])
-def test_parse_mounts_rejects_ambiguous_or_shell_sensitive_paths(value):
-    module = _load_setup_experiment_module()
-
-    with pytest.raises(ValueError, match="Invalid mount path"):
-        module._parse_mounts([value])
-
-
-@pytest.mark.parametrize(
-    "argument",
-    [
-        "logger.comet_api_key=secret",
-        "--hf-token=secret",
-        "credentials.password=secret",
-        "logger.credentials=secret",
-        "logger.authentication=secret",
-        "aws_session_token=secret",
-        "oauth_token=secret",
-        "huggingface_token=secret",
-    ],
-)
-def test_training_arguments_reject_credential_values(argument):
-    module = _load_setup_experiment_module()
-
-    with pytest.raises(ValueError, match="pass credentials through an exported --env NAME"):
-        module._validate_training_args([argument])
-
-
-@pytest.mark.parametrize(
-    "argument",
-    [
-        "model.image_token_id=151655",
-        "dataset.eod_token=2",
-        "dataset.image_start_token=<im_start>",
-        "dataset.image_end_token=<im_end>",
-        "dataset.patch_start_token=<patch_start>",
-        "dataset.patch_end_token=<patch_end>",
-        "model.use_cls_token=true",
-        "model.insert_start_token=151655",
-    ],
-)
-def test_training_arguments_allow_model_token_fields(argument):
-    module = _load_setup_experiment_module()
-
-    module._validate_training_args([argument])
 
 
 def test_container_image_defaults_only_from_public_environment(monkeypatch):

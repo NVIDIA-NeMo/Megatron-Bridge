@@ -108,8 +108,8 @@ settings from the selected VLM recipe. `raven`, `rdr`, and `llava-video-178k` de
 validation slices; `cord-v2` and `medpix` use their published validation splits. Pass a VLM forward step explicitly.
 
 For local JSON/JSONL, select `local-vlm` and pass `--train-data-path`; optional split paths are
-`--validation-data-path` and `--test-data-path`. `--media-root` resolves relative image and video paths, while
-`--hf-processor-path` overrides the processor inherited from the VLM recipe.
+`--validation-data-path` and `--test-data-path`. Rows and media paths must already use the selected processor's
+supported conversation schema. `--hf-processor-path` overrides the processor inherited from the VLM recipe.
 
 ## SFT and LoRA checkpoints
 

@@ -274,9 +274,8 @@ def test_gemma2_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     assert cfg.peft is not None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_gemma2_9b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_gemma2_9b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.gemma import gemma2_9b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma2")
@@ -295,10 +294,9 @@ def test_gemma2_9b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyP
 
     cfg = gemma2_9b_sft_config()
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
 
 
 def test_gemma2_9b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):

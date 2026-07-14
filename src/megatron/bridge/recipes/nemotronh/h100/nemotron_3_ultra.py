@@ -149,7 +149,7 @@ def nemotron_3_ultra_sft_192gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_ULTRA_HF_MODEL_ID
     cfg.dataset = default_openmathinstruct2_config(
         seq_length=NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH,
-        packed_sequence=True,
+        enable_offline_packing=True,
     )
     if cfg.dataset.offline_packing_specs is not None:
         cfg.dataset.offline_packing_specs.packed_sequence_size = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH
@@ -250,7 +250,7 @@ def nemotron_3_ultra_peft_32gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_ULTRA_HF_MODEL_ID
     cfg.dataset = default_openmathinstruct2_config(
         seq_length=NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH,
-        packed_sequence=True,
+        enable_offline_packing=True,
     )
     if cfg.dataset.offline_packing_specs is not None:
         cfg.dataset.offline_packing_specs.packed_sequence_size = NEMOTRON_3_ULTRA_OPENMATHINSTRUCT2_SEQ_LENGTH

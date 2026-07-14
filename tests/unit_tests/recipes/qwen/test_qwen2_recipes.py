@@ -235,9 +235,8 @@ def test_qwen2_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch
     assert cfg.peft is not None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_qwen2_7b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_qwen2_7b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.qwen import qwen2_7b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen2")
@@ -246,10 +245,9 @@ def test_qwen2_7b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPa
     cfg = qwen2_7b_sft_config()
     _apply_test_overrides(cfg, "qwen2_7b_sft_config")
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
 
 
 def test_qwen2_7b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):

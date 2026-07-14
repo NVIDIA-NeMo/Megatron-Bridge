@@ -214,7 +214,7 @@ def olmoe_7b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    # Dataset config - packed_sequence=True by default (from _sft_common)
+    # Dataset config - enable_offline_packing=True by default (from _sft_common)
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
@@ -365,7 +365,7 @@ def olmoe_7b_peft_1gpu_h100_bf16_config(
     # Sequence length
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    # Dataset config - packed_sequence=True by default (from _peft_common)
+    # Dataset config - enable_offline_packing=True by default (from _peft_common)
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 

@@ -441,9 +441,8 @@ def test_glm45_air_106b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert hasattr(cfg.model, "mtp_loss_scaling_factor")
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_glm45_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_glm45_sft_offline_packing_is_disabled(monkeypatch: pytest.MonkeyPatch):
+    """Test that unsupported offline packing remains disabled for GLM-4.5."""
     from megatron.bridge.recipes.glm import glm45_355b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
@@ -460,10 +459,9 @@ def test_glm45_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch
 
     cfg = glm45_355b_sft_config()
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is False
+    assert cfg.dataset.offline_packing_specs is None
 
 
 def test_glm45_mtp_configuration(monkeypatch: pytest.MonkeyPatch):

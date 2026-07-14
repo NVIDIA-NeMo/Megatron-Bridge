@@ -858,7 +858,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config() ->
     cfg = gpt_oss_20b_sft_8gpu_h100_bf16_config()
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    cfg.dataset = default_openmathinstruct2_thinking_packed_config(seq_length=seq_length, packed_sequence=True)
+    cfg.dataset = default_openmathinstruct2_thinking_packed_config(seq_length=seq_length, enable_offline_packing=True)
     return cfg
 
 

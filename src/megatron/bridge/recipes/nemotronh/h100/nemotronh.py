@@ -629,7 +629,7 @@ def nemotronh_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length
     seq_length = 8192
     cfg.model.seq_length = seq_length
-    # Dataset config - packed_sequence=True by default (from _sft_common)
+    # Dataset config - enable_offline_packing=True by default (from _sft_common)
     # Override seq_length for NemotronH (uses 8192)
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length

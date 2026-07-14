@@ -1285,7 +1285,7 @@ def llama32_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.train_iters = 1000
     cfg.validation.eval_interval = 30
     cfg.validation.eval_iters = 32
-    cfg.train.global_batch_size = 8  # packed_sequence=True, else 128
+    cfg.train.global_batch_size = 8  # enable_offline_packing=True, else 128
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100

@@ -159,9 +159,9 @@ def _sft_common() -> ConfigContainer:
     # Default sequence length for SFT
     seq_length = 2048
 
-    # Packed sequence is enabled by default for training efficiency
+    # Offline packing is enabled by default for training efficiency
     # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
-    packed_sequence = True
+    enable_offline_packing = True
     pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
 
     # Optimizer and scheduler with lower LR for full SFT
@@ -196,7 +196,9 @@ def _sft_common() -> ConfigContainer:
         ),
         # Dataset config - uses SQuAD with packed sequences by default
         dataset=default_squad_config(
-            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+            seq_length=seq_length,
+            enable_offline_packing=enable_offline_packing,
+            pad_seq_to_mult=pad_seq_to_mult,
         ),
         # Logger config
         logger=LoggerConfig(
@@ -256,9 +258,9 @@ def _peft_common() -> ConfigContainer:
     # Default sequence length for PEFT
     seq_length = 2048
 
-    # Packed sequence is enabled by default for training efficiency
+    # Offline packing is enabled by default for training efficiency
     # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
-    packed_sequence = True
+    enable_offline_packing = True
     pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
 
     # Optimizer and scheduler with higher LR for PEFT (only training adapters)
@@ -293,7 +295,9 @@ def _peft_common() -> ConfigContainer:
         ),
         # Dataset config - uses SQuAD with packed sequences by default
         dataset=default_squad_config(
-            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+            seq_length=seq_length,
+            enable_offline_packing=enable_offline_packing,
+            pad_seq_to_mult=pad_seq_to_mult,
         ),
         # Logger config
         logger=LoggerConfig(

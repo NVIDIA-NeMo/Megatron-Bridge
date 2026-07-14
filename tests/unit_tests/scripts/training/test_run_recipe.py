@@ -239,7 +239,7 @@ def test_named_finetuning_dataset_maps_to_internal_config():
     handles.apply_public_dataset_override.assert_called_once_with(
         config,
         dataset_name="squad",
-        offline_packing=False,
+        enable_offline_packing=False,
         seq_length=None,
         dataset_root=None,
         train_data_path=None,
@@ -259,14 +259,11 @@ def test_named_finetuning_dataset_maps_to_internal_config():
             [
                 "--train-data-path",
                 "/data/vlm.jsonl",
-                "--media-root",
-                "/data/images",
                 "--hf-processor-path",
                 "Qwen/Qwen3-VL-8B-Instruct",
             ],
             {
                 "train_data_path": "/data/vlm.jsonl",
-                "media_root": "/data/images",
                 "hf_processor_path": "Qwen/Qwen3-VL-8B-Instruct",
             },
         ),
@@ -285,7 +282,7 @@ def test_local_dataset_names_replace_the_dataset_provider(public_name, options, 
     handles.apply_public_dataset_override.assert_called_once_with(
         config,
         dataset_name=public_name,
-        offline_packing=False,
+        enable_offline_packing=False,
         seq_length=None,
         dataset_root=expected.get("dataset_root"),
         train_data_path=expected.get("train_data_path"),
@@ -338,7 +335,7 @@ def test_offline_packing_spellings_enable_offline_packing(option):
 
     args, _ = module.parse_args(["--model", "gpt_oss_20b", "--mode", "sft", option])
 
-    assert args.offline_packing is True
+    assert args.enable_offline_packing is True
 
 
 @pytest.mark.parametrize("option", ["--packed-sequence", "--packed_sequence"])
@@ -359,7 +356,7 @@ def test_thinking_dataset_does_not_imply_offline_packing():
     handles.apply_public_dataset_override.assert_called_once_with(
         config,
         dataset_name="openmathinstruct2-thinking",
-        offline_packing=False,
+        enable_offline_packing=False,
         seq_length=None,
         dataset_root=None,
         train_data_path=None,
@@ -433,7 +430,7 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
         ]
     )
 
-    assert handles.apply_public_dataset_override.call_args.kwargs["offline_packing"] is True
+    assert handles.apply_public_dataset_override.call_args.kwargs["enable_offline_packing"] is True
     assert events == ["launcher", "trailing", "cp-invariants", ("packing", 2, 3, 2048)]
 
 
@@ -451,6 +448,29 @@ def test_offline_packing_is_rejected_for_vlm_dataset():
                 "--dataset",
                 "medpix",
                 "--offline-packing",
+            ]
+        )
+
+
+def test_media_root_is_rejected_for_local_vlm():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+
+    with pytest.raises(ValueError, match="used only by llava-video-178k"):
+        module.main(
+            [
+                "--recipe",
+                "qwen3_vl_8b_sft_config",
+                "--mode",
+                "sft",
+                "--dataset",
+                "local-vlm",
+                "--step-func",
+                "vlm_step",
+                "--train-data-path",
+                "/data/vlm.jsonl",
+                "--media-root",
+                "/data/media",
             ]
         )
 

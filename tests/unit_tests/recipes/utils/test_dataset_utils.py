@@ -557,7 +557,7 @@ class TestApplyPublicDatasetOverride:
         result = apply_public_dataset_override(
             config,
             "openmathinstruct2-thinking",
-            offline_packing=True,
+            enable_offline_packing=True,
             seq_length=2048,
             pad_seq_to_mult=4,
         )
@@ -567,7 +567,7 @@ class TestApplyPublicDatasetOverride:
         assert result.dataset.dataset_kwargs is None
 
     def test_local_vlm_uses_explicit_paths_and_inherits_recipe_processor(self):
-        from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+        from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
         config = _make_vlm_config()
         result = apply_public_dataset_override(
@@ -576,18 +576,38 @@ class TestApplyPublicDatasetOverride:
             train_data_path="/data/vlm/train.jsonl",
             validation_data_path="/data/vlm/validation.jsonl",
             test_data_path="/data/vlm/test.jsonl",
-            media_root="/data/vlm/media",
         )
 
-        assert isinstance(result.dataset, PreloadedVLMConversationProvider)
-        assert result.dataset.train_data_path == "/data/vlm/train.jsonl"
-        assert result.dataset.valid_data_path == "/data/vlm/validation.jsonl"
-        assert result.dataset.test_data_path == "/data/vlm/test.jsonl"
-        assert result.dataset.image_folder == "/data/vlm/media"
+        assert isinstance(result.dataset, DirectHFSFTDatasetConfig)
+        assert result.dataset.source.path_or_dataset == "json"
+        assert result.dataset.source.split == "train"
+        assert result.dataset.source.load_kwargs == {"data_files": {"train": "/data/vlm/train.jsonl"}}
+        assert result.dataset.validation_source.load_kwargs == {
+            "data_files": {"validation": "/data/vlm/validation.jsonl"}
+        }
+        assert result.dataset.test_source.load_kwargs == {"data_files": {"test": "/data/vlm/test.jsonl"}}
+        assert result.dataset.do_validation is True
+        assert result.dataset.do_test is True
         assert result.dataset.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
         assert result.dataset.num_workers == 3
         assert result.dataset.persistent_workers is False
         assert result.dataset.enable_in_batch_packing is True
+        result.dataset.validate()
+
+    def test_local_vlm_disables_unconfigured_evaluation_splits(self):
+        config = _make_vlm_config()
+
+        result = apply_public_dataset_override(
+            config,
+            "local-vlm",
+            train_data_path="/data/vlm/train.jsonl",
+        )
+
+        assert result.dataset.validation_source is None
+        assert result.dataset.test_source is None
+        assert result.dataset.do_validation is False
+        assert result.dataset.do_test is False
+        result.dataset.validate()
 
     def test_medpix_selects_existing_hf_vlm_preset(self):
         config = _make_vlm_config()
@@ -624,11 +644,22 @@ class TestApplyPublicDatasetOverride:
         assert result.dataset.source.split == "train[:95%]"
         assert result.dataset.validation_source.split == "train[95%:]"
 
+    def test_media_root_is_rejected_for_local_vlm(self):
+        config = _make_vlm_config()
+
+        with pytest.raises(ValueError, match="used only by llava-video-178k"):
+            apply_public_dataset_override(
+                config,
+                "local-vlm",
+                train_data_path="/data/vlm/train.jsonl",
+                media_root="/data/vlm/media",
+            )
+
     def test_offline_packing_is_rejected_for_vlm_presets(self):
         config = _make_vlm_config()
 
         with pytest.raises(ValueError, match="supported only for text SFT"):
-            apply_public_dataset_override(config, "medpix", offline_packing=True)
+            apply_public_dataset_override(config, "medpix", enable_offline_packing=True)
 
     def test_unknown_public_name_raises(self):
         config = _make_mock_config()
