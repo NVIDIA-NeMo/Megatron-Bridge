@@ -113,7 +113,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.dataset.seq_length = 8192
     cfg.dataset.enable_offline_packing = True
     cfg.dataset.offline_packing_specs.packed_sequence_size = 8192
-    cfg.dataset.dataset_root = "/data"
+    #cfg.dataset.dataset_root = "/data"
     cfg.dataset.dataloader_type = "batch"
     cfg.dataset.data_sharding = True
     cfg.dataset.drop_last = True
@@ -123,7 +123,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.dataset.do_validation = True
     cfg.dataset.do_test = False
     cfg.checkpoint.finetune = True
-    cfg.checkpoint.pretrained_checkpoint = "/ckpt"
+    #cfg.checkpoint.pretrained_checkpoint = "/ckpt"
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.load_optim = False
