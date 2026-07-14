@@ -40,11 +40,9 @@ from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
 
 _APPROVED_PERF_FIELDS = (
-    "model.tensor_model_parallel_size",
     "model.pipeline_model_parallel_size",
     "model.virtual_pipeline_model_parallel_size",
     "model.context_parallel_size",
-    "model.sequence_parallel",
     "model.expert_tensor_parallel_size",
     "model.expert_model_parallel_size",
     "model.moe_token_dispatcher_type",
@@ -143,6 +141,34 @@ def test_pretrain_approved_fields_match_perf_reference(
 
 
 @pytest.mark.unit
+def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
+    """The 8-GPU library recipe needs TP beyond its 16-GPU perf reference."""
+    library_config = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    perf_config = h100_perf_config()
+
+    assert perf_config.model.tensor_model_parallel_size == 1
+    assert perf_config.model.sequence_parallel is False
+    assert perf_config.model.recompute_modules == ["moe", "layernorm"]
+    assert library_config.model.tensor_model_parallel_size == 4
+    assert library_config.model.sequence_parallel is True
+    assert library_config.model.recompute_modules == ["moe", "layernorm"]
+    assert library_config.comm_overlap.tp_comm_overlap is perf_config.comm_overlap.tp_comm_overlap is True
+
+
+@pytest.mark.unit
+def test_gb200_pretrain_recompute_matches_perf_reference() -> None:
+    """The 8-GPU GB200 library retains perf topology and its no-recompute policy."""
+    library_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    perf_config = gb200_perf_config()
+
+    assert library_config.model.tensor_model_parallel_size == perf_config.model.tensor_model_parallel_size == 1
+    assert library_config.model.sequence_parallel is perf_config.model.sequence_parallel is False
+    assert library_config.model.recompute_modules == perf_config.model.recompute_modules is None
+    assert library_config.comm_overlap.tp_comm_overlap is False
+    assert perf_config.comm_overlap.tp_comm_overlap is True
+
+
+@pytest.mark.unit
 @pytest.mark.parametrize(
     ("library_factory", "perf_factory"),
     [
@@ -188,22 +214,21 @@ def test_pretrain_excludes_benchmark_and_convergence_sensitive_overrides(
     assert perf_config.ddp.check_for_nan_in_grad is False
     assert perf_config.rerun_state_machine.check_for_nan_in_loss is False
 
-    assert library_config.comm_overlap.tp_comm_overlap is False
-    assert perf_config.comm_overlap.tp_comm_overlap is True
-
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
-    ("recipe_factory", "dispatcher", "backend", "dispatcher_sms", "learning_rate"),
+    ("recipe_factory", "tp", "sequence_parallel", "dispatcher", "backend", "dispatcher_sms", "learning_rate"),
     [
-        (nemotron_3_nano_sft_8gpu_h100_bf16_config, "flex", "deepep", 16, 5e-6),
-        (nemotron_3_nano_peft_8gpu_h100_bf16_config, "flex", "deepep", 16, 1e-4),
-        (nemotron_3_nano_sft_8gpu_gb200_bf16_config, "alltoall", None, None, 5e-6),
-        (nemotron_3_nano_peft_8gpu_gb200_bf16_config, "alltoall", None, None, 1e-4),
+        (nemotron_3_nano_sft_8gpu_h100_bf16_config, 4, True, "flex", "deepep", 16, 5e-6),
+        (nemotron_3_nano_peft_8gpu_h100_bf16_config, 1, False, "flex", "deepep", 16, 1e-4),
+        (nemotron_3_nano_sft_8gpu_gb200_bf16_config, 1, False, "alltoall", None, None, 5e-6),
+        (nemotron_3_nano_peft_8gpu_gb200_bf16_config, 1, False, "alltoall", None, None, 1e-4),
     ],
 )
 def test_finetune_recipes_retain_safe_execution_defaults(
     recipe_factory: Callable[[], ConfigContainer],
+    tp: int,
+    sequence_parallel: bool,
     dispatcher: str,
     backend: str | None,
     dispatcher_sms: int | None,
@@ -212,11 +237,11 @@ def test_finetune_recipes_retain_safe_execution_defaults(
     """Packed finetuning uses supported dispatch and keeps graphs/recompute disabled."""
     config = recipe_factory()
 
-    assert config.model.tensor_model_parallel_size == 1
+    assert config.model.tensor_model_parallel_size == tp
     assert config.model.pipeline_model_parallel_size == 1
     assert config.model.virtual_pipeline_model_parallel_size is None
     assert config.model.context_parallel_size == 1
-    assert config.model.sequence_parallel is False
+    assert config.model.sequence_parallel is sequence_parallel
     assert config.model.expert_tensor_parallel_size == 1
     assert config.model.expert_model_parallel_size == 8
 

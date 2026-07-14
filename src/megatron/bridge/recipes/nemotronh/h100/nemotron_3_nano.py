@@ -27,20 +27,21 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Nemotron 3 Nano pre-training config for 8 H100 GPUs.
 
-    The TP=1, EP=8 layout and HybridEP dispatcher follow the H100 performance
-    recipe. Selective recompute keeps that topology practical, while scoped
-    CUDA graphs cover only fixed-shape pre-training modules.
+    TP=4 keeps the 8-GPU library recipe within H100 memory while retaining the
+    perf recipe's EP=8 layout and HybridEP dispatcher. Selective recompute keeps
+    that topology practical, while scoped CUDA graphs cover only fixed-shape
+    pre-training modules.
 
     Returns:
         ConfigContainer: H100 BF16 pre-training configuration.
     """
     cfg = _nemotron_3_nano_pretrain_reference_config()
 
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
+    cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
 
@@ -58,8 +59,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
 
-    # TP communication overlap requires TP > 1 and sequence parallelism.
-    cfg.comm_overlap.tp_comm_overlap = False
+    cfg.comm_overlap.tp_comm_overlap = True
 
     return cfg
 
@@ -95,6 +95,9 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _nemotron_3_nano_sft_reference_config()
     _apply_h100_finetune_execution_config(cfg)
+    # Full SFT needs TP=4 to leave room for optimizer state and checkpointing.
+    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.sequence_parallel = True
     return cfg
 
 
