@@ -158,7 +158,7 @@ config = gemma3_1b_peft_config(
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
   --recipe gemma3_1b_sft_config \
   --mode sft \
-  --from /models/gemma-3-1b-it \
+  checkpoint.pretrained_checkpoint=/models/gemma-3-1b-it \
   train.global_batch_size=64 \
   train.train_iters=1000 \
   checkpoint.save=$SAVE_DIR/gemma3_1b_finetune
@@ -169,7 +169,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_r
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
   --recipe gemma3_1b_peft_config \
   --mode lora \
-  --from /models/gemma-3-1b-it \
+  checkpoint.pretrained_checkpoint=/models/gemma-3-1b-it \
   train.global_batch_size=128 \
   checkpoint.save=$SAVE_DIR/gemma3_1b_lora
 ```

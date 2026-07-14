@@ -234,29 +234,6 @@ class TestRecipeRunnerQwen3Omni:
 
         assert events == ["dump", "training"]
 
-    def test_seq_length_shortcut_updates_model_and_dataset(self):
-        """The easy seq-length flag should keep model and dataset lengths aligned."""
-        module, _ = _load_recipe_runner_module()
-        config = SimpleNamespace(
-            train=SimpleNamespace(),
-            validation=SimpleNamespace(),
-            dist=SimpleNamespace(),
-            optimizer=SimpleNamespace(),
-            scheduler=SimpleNamespace(),
-            checkpoint=SimpleNamespace(),
-            dataset=SimpleNamespace(seq_length=1024, sequence_length=1024),
-            model=SimpleNamespace(seq_length=1024),
-            logger=SimpleNamespace(),
-            ddp=SimpleNamespace(nccl_ub=False),
-        )
-        args = SimpleNamespace(seq_length=512, tokenizer_type=None, tokenizer_model=None, vocab_size=32000)
-
-        module.apply_launcher_overrides(config, args)
-
-        assert config.dataset.seq_length == 512
-        assert config.dataset.sequence_length == 512
-        assert config.model.seq_length == 512
-
     def test_sync_model_dataset_sequence_length_accepts_sequence_length_alias(self):
         """Hydra overrides using dataset.sequence_length should still align the model."""
         module, _ = _load_recipe_runner_module()

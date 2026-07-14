@@ -30,7 +30,7 @@ import torch
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
+from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
@@ -242,116 +242,17 @@ def apply_cli_overrides(config: ConfigContainer, cli_overrides: list[str] | None
     return process_config_with_overrides(config, cli_overrides=cli_overrides or None)
 
 
-def apply_tokenizer_override(
-    config: ConfigContainer,
-    *,
-    tokenizer_type: str | None,
-    tokenizer_model: str | None,
-    vocab_size: int,
-) -> ConfigContainer:
-    """Apply tokenizer-related CLI overrides."""
-    if tokenizer_type == "NullTokenizer":
-        config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=vocab_size)
-    elif tokenizer_type == "HuggingFaceTokenizer":
-        if not tokenizer_model:
-            raise ValueError("--tokenizer-model is required when using HuggingFaceTokenizer")
-        config.tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
-    elif tokenizer_type == "SentencePieceTokenizer":
-        if not tokenizer_model:
-            raise ValueError("--tokenizer-model is required for SentencePieceTokenizer")
-        config.tokenizer = TokenizerConfig(tokenizer_type="SentencePieceTokenizer", tokenizer_model=tokenizer_model)
-    return config
-
-
 def _set_if_present(container: object, field_name: str, value: object | None) -> None:
     """Set a dataclass-style field only when both object and value are present."""
     if value is not None and container is not None and hasattr(container, field_name):
         setattr(container, field_name, value)
 
 
-def _get_arg(args: object, name: str, default: object | None = None) -> object | None:
-    """Read an argparse Namespace field without requiring every caller to define it."""
-    return getattr(args, name, default)
-
-
-def apply_launcher_overrides(config: ConfigContainer, args: object) -> ConfigContainer:
-    """Apply easy launcher flags before Hydra-style overrides.
-
-    The generic ``key=value`` overrides remain the most expressive path. These
-    flags cover the common cases users expect from a simple training launcher.
-    """
-    train = getattr(config, "train", None)
-    validation = getattr(config, "validation", None)
-    dist = getattr(config, "dist", None)
-    optimizer = getattr(config, "optimizer", None)
-    scheduler = getattr(config, "scheduler", None)
-    checkpoint = getattr(config, "checkpoint", None)
-    dataset = getattr(config, "dataset", None)
-    model = getattr(config, "model", None)
-    logger_config = getattr(config, "logger", None)
-    ddp = getattr(config, "ddp", None)
-
-    _set_if_present(train, "train_iters", _get_arg(args, "max_steps"))
-    _set_if_present(train, "global_batch_size", _get_arg(args, "global_batch_size"))
-    _set_if_present(train, "micro_batch_size", _get_arg(args, "micro_batch_size"))
-    _set_if_present(train, "eval_interval", _get_arg(args, "eval_interval"))
-    _set_if_present(train, "eval_iters", _get_arg(args, "eval_iters"))
-    _set_if_present(validation, "eval_interval", _get_arg(args, "eval_interval"))
-    _set_if_present(validation, "eval_iters", _get_arg(args, "eval_iters"))
-
-    _set_if_present(dist, "distributed_timeout_minutes", _get_arg(args, "distributed_timeout_minutes"))
-
-    _set_if_present(optimizer, "lr", _get_arg(args, "lr"))
-    _set_if_present(optimizer, "min_lr", _get_arg(args, "min_lr"))
-    _set_if_present(scheduler, "lr_warmup_iters", _get_arg(args, "warmup_iters"))
-    _set_if_present(scheduler, "lr_decay_iters", _get_arg(args, "lr_decay_iters"))
-
-    _set_if_present(checkpoint, "pretrained_checkpoint", _get_arg(args, "pretrained_checkpoint"))
-    _set_if_present(checkpoint, "save", _get_arg(args, "save_dir"))
-    _set_if_present(checkpoint, "load", _get_arg(args, "load_dir"))
-    _set_if_present(checkpoint, "save_interval", _get_arg(args, "save_interval"))
-    _set_if_present(checkpoint, "most_recent_k", _get_arg(args, "most_recent_k"))
-
-    seq_length = _get_arg(args, "seq_length")
-    _set_if_present(dataset, "seq_length", seq_length)
-    _set_if_present(dataset, "sequence_length", seq_length)
-    _set_if_present(model, "seq_length", seq_length)
-    _set_if_present(model, "tensor_model_parallel_size", _get_arg(args, "tensor_model_parallel_size"))
-    if (
-        _get_arg(args, "tensor_model_parallel_size") is not None
-        and model is not None
-        and hasattr(model, "sequence_parallel")
-    ):
-        config.model.sequence_parallel = bool(config.model.tensor_model_parallel_size > 1)
-    _set_if_present(model, "pipeline_model_parallel_size", _get_arg(args, "pipeline_model_parallel_size"))
-    _set_if_present(model, "context_parallel_size", _get_arg(args, "context_parallel_size"))
-    vp_size = _get_arg(args, "virtual_pipeline_model_parallel_size", -1)
-    if vp_size != -1 and model is not None and hasattr(model, "virtual_pipeline_model_parallel_size"):
-        model.virtual_pipeline_model_parallel_size = vp_size
-    _set_if_present(model, "expert_model_parallel_size", _get_arg(args, "expert_model_parallel_size"))
-    _set_if_present(model, "expert_tensor_parallel_size", _get_arg(args, "expert_tensor_parallel_size"))
-
-    save_config_filepath = _get_arg(args, "save_config_filepath")
-    if save_config_filepath is not None and logger_config is not None:
-        config.logger.save_config_filepath = cast(str, save_config_filepath)
-        os.makedirs(os.path.dirname(os.path.abspath(config.logger.save_config_filepath)), exist_ok=True)
-    _set_if_present(logger_config, "log_interval", _get_arg(args, "log_interval"))
-    _set_if_present(logger_config, "wandb_project", _get_arg(args, "wandb_project"))
-    _set_if_present(logger_config, "wandb_entity", _get_arg(args, "wandb_entity"))
-    _set_if_present(logger_config, "wandb_exp_name", _get_arg(args, "wandb_name"))
-    _set_if_present(logger_config, "wandb_save_dir", _get_arg(args, "wandb_dir"))
-
-    config = apply_tokenizer_override(
-        config,
-        tokenizer_type=cast(str | None, _get_arg(args, "tokenizer_type")),
-        tokenizer_model=cast(str | None, _get_arg(args, "tokenizer_model")),
-        vocab_size=cast(int, _get_arg(args, "vocab_size", 32000)),
-    )
-
-    if getattr(ddp, "nccl_ub", False):
+def apply_runtime_environment(config: ConfigContainer) -> ConfigContainer:
+    """Apply environment settings derived from the resolved ConfigContainer."""
+    if getattr(getattr(config, "ddp", None), "nccl_ub", False):
         os.environ["NCCL_NVLS_ENABLE"] = "1"
         os.environ["NCCL_CTA_POLICY"] = "1"
-
     return config
 
 
@@ -468,7 +369,9 @@ def run_config(
         dump_env_rank0()
 
     if dryrun:
-        save_config(config, save_config_filepath or "ConfigContainer.yaml")
+        logger_config = getattr(config, "logger", None)
+        configured_path = getattr(logger_config, "save_config_filepath", None)
+        save_config(config, save_config_filepath or configured_path or "ConfigContainer.yaml")
         return True
 
     if get_rank_safe() == 0:

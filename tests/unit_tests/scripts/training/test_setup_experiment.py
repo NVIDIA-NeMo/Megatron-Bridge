@@ -333,7 +333,7 @@ def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
     module.run.Script = _Script
     module.run.Experiment = _Experiment
     monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
-    sentinel = "benign; echo should-not-run"
+    sentinel = "logger.wandb_exp_name=benign; echo should-not-run"
 
     module.main(
         [
@@ -346,9 +346,8 @@ def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
             "--container-image",
             "image.sqsh",
             "--submission-dry-run",
-            "--wandb-name",
             sentinel,
         ]
     )
 
-    assert scripts[0].args == ["--wandb-name", "'benign; echo should-not-run'"]
+    assert scripts[0].args == ["'logger.wandb_exp_name=benign; echo should-not-run'"]

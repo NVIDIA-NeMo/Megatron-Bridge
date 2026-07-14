@@ -13,7 +13,9 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Hugging Face multimodal](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) through `DirectHFSFTDatasetConfig` + builder |
 | Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
 
-Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
+Python constructors accept `seq_length`. For CLI overrides, `GPTDatasetConfig` exposes Megatron Core's inherited
+`dataset.sequence_length` field, while `GPTSFTDatasetConfig` and `DirectHFSFTDatasetConfig` expose
+`dataset.seq_length` directly.
 
 ## LLM Pretraining Data
 
@@ -45,9 +47,9 @@ The CLI-friendly `data_path` field is converted to Megatron Core's `blend` field
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    --mode pretrain --dataset dclm \
-    --dataset-path /data/dclm/preprocessed_text_document \
-    dataset.seq_length=8192
+    --mode pretrain --dataset megatron-indexed \
+    dataset.data_path=/data/dclm/preprocessed_text_document \
+    dataset.sequence_length=8192
 ```
 
 To create Megatron binary data from JSONL text, use the Megatron-LM `tools/preprocess_data.py` workflow. The DCLM tutorial shows a complete download, merge, shuffle, and preprocessing flow: [DCLM Data Preprocessing Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/dclm/README.md).
@@ -224,7 +226,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Shipped Qwen-VL and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig` and `NemotronOmniEnergonTaskEncoderConfig`; custom model integrations can use `HFEnergonTaskEncoderConfig`. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. `--dataset vlm-energon` never creates a bare encoder config for an unrelated recipe.
+`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Shipped Qwen-VL and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig` and `NemotronOmniEnergonTaskEncoderConfig`; custom model integrations can use `HFEnergonTaskEncoderConfig`. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. Select a recipe that already contains the required Energon task-encoder config; the launcher does not create one for an unrelated recipe.
 
 For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations`. Multimodal content must follow the selected model processor's schema; for example, Qwen-VL accepts an inline typed image with a worker-resolvable path:
 
@@ -237,9 +239,9 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_config \
     --mode lora --step-func vlm_step \
     --dataset local-vlm \
-    --train-data-path /data/vlm/train.jsonl \
-    --validation-data-path /data/vlm/validation.jsonl \
-    --hf-processor-path Qwen/Qwen3-VL-8B-Instruct \
+    dataset.source.load_kwargs.data_files.train=/data/vlm/train.jsonl \
+    dataset.validation_source.load_kwargs.data_files.validation=/data/vlm/validation.jsonl \
+    dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
     dataset.defer_in_batch_packing_to_step=False \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```

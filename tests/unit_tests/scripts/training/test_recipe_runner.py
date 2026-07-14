@@ -83,33 +83,6 @@ def test_load_forward_step_imports_only_selected_module(
     recipe_runner._load_step_function.cache_clear()
 
 
-def test_apply_tokenizer_override_builds_null_tokenizer(recipe_runner: ModuleType) -> None:
-    config = SimpleNamespace(tokenizer=object())
-
-    result = recipe_runner.apply_tokenizer_override(
-        config,
-        tokenizer_type="NullTokenizer",
-        tokenizer_model=None,
-        vocab_size=32000,
-    )
-
-    assert result is config
-    assert config.tokenizer.tokenizer_type == "NullTokenizer"
-    assert config.tokenizer.vocab_size == 32000
-
-
-def test_apply_tokenizer_override_requires_model_path(recipe_runner: ModuleType) -> None:
-    config = SimpleNamespace(tokenizer=object())
-
-    with pytest.raises(ValueError, match="--tokenizer-model is required"):
-        recipe_runner.apply_tokenizer_override(
-            config,
-            tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model=None,
-            vocab_size=32000,
-        )
-
-
 def test_sync_model_dataset_sequence_length_supports_both_dataset_field_names(recipe_runner: ModuleType) -> None:
     for dataset in (SimpleNamespace(seq_length=256), SimpleNamespace(sequence_length=512)):
         config = SimpleNamespace(model=SimpleNamespace(seq_length=1024), dataset=dataset)
@@ -193,21 +166,16 @@ def test_sync_offline_packing_alignment_preserves_stricter_user_multiple(recipe_
     assert packing_specs.pad_seq_to_mult == 10
 
 
-def test_apply_launcher_overrides_can_clear_virtual_pipeline_size(recipe_runner: ModuleType) -> None:
-    config = SimpleNamespace(
-        model=SimpleNamespace(virtual_pipeline_model_parallel_size=4),
-        tokenizer=object(),
-    )
-    args = SimpleNamespace(
-        virtual_pipeline_model_parallel_size=None,
-        tokenizer_type=None,
-        tokenizer_model=None,
-        vocab_size=32000,
-    )
+def test_apply_runtime_environment_uses_resolved_nccl_ub_config(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    config = SimpleNamespace(ddp=SimpleNamespace(nccl_ub=True))
+    monkeypatch.delenv("NCCL_NVLS_ENABLE", raising=False)
+    monkeypatch.delenv("NCCL_CTA_POLICY", raising=False)
 
-    recipe_runner.apply_launcher_overrides(config, args)
-
-    assert config.model.virtual_pipeline_model_parallel_size is None
+    assert recipe_runner.apply_runtime_environment(config) is config
+    assert recipe_runner.os.environ["NCCL_NVLS_ENABLE"] == "1"
+    assert recipe_runner.os.environ["NCCL_CTA_POLICY"] == "1"
 
 
 def test_run_config_dryrun_saves_without_training(recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -228,3 +196,13 @@ def test_run_config_dryrun_saves_without_training(recipe_runner: ModuleType, mon
     assert returned_early is True
     assert events == ["save"]
     train.assert_not_called()
+
+
+def test_run_config_dryrun_uses_logger_save_path(recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
+    config = SimpleNamespace(logger=SimpleNamespace(save_config_filepath="resolved.yaml"))
+    saved_paths: list[str] = []
+    monkeypatch.setattr(recipe_runner, "save_config", lambda _config, path: saved_paths.append(path))
+
+    recipe_runner.run_config(config=config, mode="pretrain", step_func=object(), dryrun=True)
+
+    assert saved_paths == ["resolved.yaml"]

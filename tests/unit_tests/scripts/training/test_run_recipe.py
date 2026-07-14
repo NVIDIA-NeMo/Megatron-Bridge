@@ -48,7 +48,7 @@ def _load_module():
     for name in (
         "apply_cli_overrides",
         "apply_determinism",
-        "apply_launcher_overrides",
+        "apply_runtime_environment",
         "load_forward_step",
         "load_recipe",
         "run_config",
@@ -59,7 +59,7 @@ def _load_module():
         setattr(recipe_runner, name, Mock(name=name))
     recipe_runner.apply_cli_overrides.side_effect = lambda config, _: config
     recipe_runner.apply_determinism.side_effect = lambda config, **_: config
-    recipe_runner.apply_launcher_overrides.side_effect = lambda config, *_args, **_kwargs: config
+    recipe_runner.apply_runtime_environment.side_effect = lambda config: config
     recipe_runner.sync_finetuning_cp_invariants.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda config: config
@@ -203,7 +203,6 @@ def test_model_adapter_modes_select_peft_recipe_and_scheme(mode):
     handles.recipe_runner.load_recipe.assert_called_once_with(
         "gpt_oss_20b_peft_config",
         peft_scheme=mode,
-        seq_length=None,
     )
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "finetune"
 
@@ -217,7 +216,6 @@ def test_full_recipe_uses_only_library_namespace_and_default_llm_step():
     handles.recipe_runner.load_recipe.assert_called_once_with(
         "gpt_oss_20b_pretrain_config",
         peft_scheme=None,
-        seq_length=None,
     )
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
@@ -249,6 +247,7 @@ def test_named_finetuning_dataset_maps_to_internal_config():
         config,
         dataset_name="squad",
         enable_offline_packing=False,
+        pad_seq_to_mult=1,
         seq_length=None,
         dataset_root=None,
         train_data_path=None,
@@ -262,14 +261,12 @@ def test_named_finetuning_dataset_maps_to_internal_config():
 @pytest.mark.parametrize(
     ("public_name", "options", "expected"),
     [
-        ("local-jsonl", ["--dataset-root", "/data/sft"], {"dataset_root": "/data/sft"}),
+        ("local-jsonl", ["dataset.dataset_root=/data/sft"], {"dataset_root": "/data/sft"}),
         (
             "local-vlm",
             [
-                "--train-data-path",
-                "/data/vlm.jsonl",
-                "--hf-processor-path",
-                "Qwen/Qwen3-VL-8B-Instruct",
+                "dataset.source.load_kwargs.data_files.train=/data/vlm.jsonl",
+                "dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct",
             ],
             {
                 "train_data_path": "/data/vlm.jsonl",
@@ -292,6 +289,7 @@ def test_local_dataset_names_replace_the_dataset_provider(public_name, options, 
         config,
         dataset_name=public_name,
         enable_offline_packing=False,
+        pad_seq_to_mult=1,
         seq_length=None,
         dataset_root=expected.get("dataset_root"),
         train_data_path=expected.get("train_data_path"),
@@ -314,37 +312,38 @@ def test_dataset_mode_mismatch_is_rejected(mode, dataset):
         module.main(["--model", "gpt_oss_20b", "--mode", mode, "--dataset", dataset])
 
 
-@pytest.mark.parametrize(
-    ("option", "attribute"),
-    [
-        ("--step-func", "step_func"),
-        ("--step_func", "step_func"),
-        ("--dataset-path", "dataset_paths"),
-        ("--dataset_path", "dataset_paths"),
-        ("--dataset-root", "dataset_root"),
-        ("--dataset_root", "dataset_root"),
-        ("--train-data-path", "train_data_path"),
-        ("--train_data_path", "train_data_path"),
-        ("--save-config", "save_config_filepath"),
-        ("--save_config", "save_config_filepath"),
-    ],
-)
-def test_public_options_accept_only_hyphen_and_underscore_spellings(option, attribute):
+@pytest.mark.parametrize("option", ["--step-func", "--step_func"])
+def test_step_function_option_accepts_hyphen_and_underscore_spellings(option):
     module, _ = _load_module()
 
     args, _ = module.parse_args(["--model", "gpt_oss_20b", "--mode", "pretrain", option, "value"])
 
-    expected = ["value"] if attribute == "dataset_paths" else "value"
-    assert getattr(args, attribute) == expected
+    assert args.step_func == "value"
 
 
-@pytest.mark.parametrize("option", ["--offline-packing", "--offline_packing"])
-def test_offline_packing_spellings_enable_offline_packing(option):
+@pytest.mark.parametrize(
+    "option",
+    [
+        "--seq-length",
+        "--max-steps",
+        "--global-batch-size",
+        "--micro-batch-size",
+        "--dataset-path",
+        "--dataset-root",
+        "--offline-packing",
+        "--train-data-path",
+        "--hf-processor-path",
+        "--tp",
+        "--from",
+        "--wandb-name",
+        "--save-config",
+    ],
+)
+def test_config_container_shortcut_options_are_rejected(option):
     module, _ = _load_module()
 
-    args, _ = module.parse_args(["--model", "gpt_oss_20b", "--mode", "sft", option])
-
-    assert args.enable_offline_packing is True
+    with pytest.raises(SystemExit):
+        module.parse_args(["--model", "gpt_oss_20b", "--mode", "sft", option, "value"])
 
 
 @pytest.mark.parametrize("option", ["--packed-sequence", "--packed_sequence"])
@@ -366,6 +365,7 @@ def test_thinking_dataset_does_not_imply_offline_packing():
         config,
         dataset_name="openmathinstruct2-thinking",
         enable_offline_packing=False,
+        pad_seq_to_mult=1,
         seq_length=None,
         dataset_root=None,
         train_data_path=None,
@@ -390,14 +390,10 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
     handles.recipe_runner.load_recipe.return_value = config
     events = []
 
-    def apply_launcher(current_config, *_args, **_kwargs):
-        events.append("launcher")
-        current_config.model.context_parallel_size = 2
-        current_config.model.tensor_model_parallel_size = 3
-        return current_config
-
     def apply_trailing(current_config, _overrides):
         events.append("trailing")
+        current_config.model.context_parallel_size = 2
+        current_config.model.tensor_model_parallel_size = 3
         current_config.dataset = SimpleNamespace(seq_length=2048)
         return current_config
 
@@ -417,7 +413,6 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
         )
         return current_config
 
-    handles.recipe_runner.apply_launcher_overrides.side_effect = apply_launcher
     handles.recipe_runner.apply_cli_overrides.side_effect = apply_trailing
     handles.recipe_runner.sync_finetuning_cp_invariants.side_effect = sync_cp_invariants
     handles.recipe_runner.sync_offline_packing_alignment.side_effect = finalize
@@ -430,24 +425,22 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
             "sft",
             "--dataset",
             "openmathinstruct2-thinking",
-            "--offline-packing",
-            "--cp",
-            "2",
-            "--tp",
-            "3",
+            "dataset.enable_offline_packing=true",
+            "model.context_parallel_size=2",
+            "model.tensor_model_parallel_size=3",
             "dataset.seq_length=2048",
         ]
     )
 
     assert handles.apply_public_dataset_override.call_args.kwargs["enable_offline_packing"] is True
-    assert events == ["launcher", "trailing", "cp-invariants", ("packing", 2, 3, 2048)]
+    assert events == ["trailing", "cp-invariants", ("packing", 2, 3, 2048)]
 
 
 def test_offline_packing_is_rejected_for_vlm_dataset():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
 
-    with pytest.raises(ValueError, match="does not support --offline-packing"):
+    with pytest.raises(ValueError, match="enable_offline_packing"):
         module.main(
             [
                 "--recipe",
@@ -456,74 +449,35 @@ def test_offline_packing_is_rejected_for_vlm_dataset():
                 "sft",
                 "--dataset",
                 "medpix",
-                "--offline-packing",
-            ]
-        )
-
-
-def test_media_root_is_rejected_for_local_vlm():
-    module, handles = _load_module()
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
-
-    with pytest.raises(ValueError, match="used only by llava-video-178k"):
-        module.main(
-            [
-                "--recipe",
-                "qwen3_vl_8b_sft_config",
-                "--mode",
-                "sft",
-                "--dataset",
-                "local-vlm",
                 "--step-func",
                 "vlm_step",
-                "--train-data-path",
-                "/data/vlm.jsonl",
-                "--media-root",
-                "/data/media",
+                "dataset.enable_offline_packing=true",
             ]
         )
 
 
-@pytest.mark.parametrize(
-    "dataset_options",
-    [
-        ["--offline-packing"],
-        ["--dataset-path", "/data/indexed"],
-        ["--dataset-root", "/data/sft"],
-        ["--train-data-path", "/data/vlm.jsonl"],
-        ["--media-root", "/data/media"],
-        ["--hf-processor-path", "Qwen/Qwen3-VL-8B-Instruct"],
-    ],
-)
-def test_dataset_scoped_options_require_dataset(dataset_options):
+def test_dataset_construction_reads_nested_config_overrides():
     module, handles = _load_module()
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
 
-    with pytest.raises(ValueError, match="require --dataset"):
-        module.main(["--model", "gpt_oss_20b", "--mode", "sft", *dataset_options])
+    module.main(
+        [
+            "--recipe",
+            "qwen3_vl_8b_sft_config",
+            "--mode",
+            "sft",
+            "--dataset",
+            "local-vlm",
+            "--step-func",
+            "vlm_step",
+            "dataset.source.load_kwargs.data_files.train=/data/vlm.jsonl",
+            "dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct",
+        ]
+    )
 
-    handles.recipe_runner.load_recipe.assert_not_called()
-
-
-def test_indexed_options_are_rejected_for_non_indexed_dataset():
-    module, handles = _load_module()
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
-
-    with pytest.raises(ValueError, match="used only by megatron-indexed"):
-        module.main(
-            [
-                "--model",
-                "gpt_oss_20b",
-                "--mode",
-                "sft",
-                "--dataset",
-                "squad",
-                "--dataset-path",
-                "/data/indexed",
-            ]
-        )
-
-    handles.recipe_runner.load_recipe.assert_not_called()
+    assert handles.apply_public_dataset_override.call_args.kwargs["train_data_path"] == "/data/vlm.jsonl"
+    assert handles.apply_public_dataset_override.call_args.kwargs["hf_processor_path"] == "Qwen/Qwen3-VL-8B-Instruct"
 
 
 @pytest.mark.parametrize("step_func", [None, "gpt_step", "LLM_STEP", "audio_lm_step"])
@@ -604,7 +558,7 @@ def test_vlm_step_modality_validation_matches_case_insensitive_loader():
     handles.recipe_runner.load_forward_step.assert_called_once_with("VLM_STEP", mode="finetune")
 
 
-def test_indexed_dataset_paths_are_validated(tmp_path):
+def test_indexed_dataset_path_is_applied_as_config_override(tmp_path):
     module, handles = _load_module()
     prefix = tmp_path / "text_document"
     prefix.with_suffix(".bin").touch()
@@ -620,15 +574,14 @@ def test_indexed_dataset_paths_are_validated(tmp_path):
             "pretrain",
             "--dataset",
             "megatron-indexed",
-            "--dataset-path",
-            str(prefix),
+            f"dataset.data_path={prefix}",
         ]
     )
 
-    assert config.dataset.data_path == [str(prefix)]
+    handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, [f"dataset.data_path={prefix}"])
 
 
-def test_trailing_overrides_are_applied_after_shortcuts():
+def test_config_container_overrides_are_forwarded_directly():
     module, handles = _load_module()
     config = SimpleNamespace()
     handles.recipe_runner.load_recipe.return_value = config
@@ -639,11 +592,14 @@ def test_trailing_overrides_are_applied_after_shortcuts():
             "gpt_oss_20b",
             "--mode",
             "pretrain",
-            "--max-steps",
-            "2",
             "train.train_iters=3",
+            "train.global_batch_size=8",
+            "train.micro_batch_size=1",
         ]
     )
 
-    handles.recipe_runner.apply_launcher_overrides.assert_called_once()
-    handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, ["train.train_iters=3"])
+    handles.recipe_runner.apply_cli_overrides.assert_called_once_with(
+        config,
+        ["train.train_iters=3", "train.global_batch_size=8", "train.micro_batch_size=1"],
+    )
+    handles.recipe_runner.apply_runtime_environment.assert_called_once_with(config)

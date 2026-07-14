@@ -14,8 +14,9 @@ recipe function with `--recipe`, and always pass `--mode pretrain`, `sft`, `lora
 are distinct from data-source selectors. Named presets such as `openmathinstruct2` and `medpix` select specific
 datasets, while `megatron-indexed`, `local-jsonl`, and `local-vlm` select local input formats and `mock` selects
 generated data. Each choice resolves to the corresponding dataset config. Offline packing is selected independently
-with `--offline-packing`; it is not encoded in a dataset name. The default `--step-func` is `llm_step`; pass another
-registered step explicitly for non-LLM recipes.
+with `dataset.enable_offline_packing=true`; it is not encoded in a dataset name. The default `--step-func` is
+`llm_step`; pass another registered step explicitly for non-LLM recipes. Set training and model values directly with
+`ConfigContainer` overrides such as `train.global_batch_size=8` and `model.tensor_model_parallel_size=2`.
 The launcher inherits only explicitly named `--env NAME` values and forwards `--mount HOST` or
 `--mount HOST:CONTAINER` paths. `pretrain` mode runs `pretrain()`; SFT, LoRA, and DoRA run `finetune()`.
 

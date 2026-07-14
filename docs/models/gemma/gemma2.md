@@ -169,7 +169,7 @@ config = gemma2_27b_pretrain_config(
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
 --recipe gemma2_2b_sft_config \
 --mode sft \
---from /models/gemma-2-2b \
+checkpoint.pretrained_checkpoint=/models/gemma-2-2b \
 train.global_batch_size=64 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/gemma2_2b_finetune
@@ -192,7 +192,7 @@ config = gemma2_2b_sft_config(
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
 --recipe gemma2_9b_sft_config \
 --mode sft \
---from /models/gemma-2-9b \
+checkpoint.pretrained_checkpoint=/models/gemma-2-9b \
 train.global_batch_size=64 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/gemma2_9b_finetune
@@ -203,7 +203,7 @@ checkpoint.save=$SAVE_DIR/gemma2_9b_finetune
 uv run python -m torch.distributed.run --nproc-per-node=16 scripts/training/run_recipe.py \
 --recipe gemma2_27b_sft_config \
 --mode sft \
---from /models/gemma-2-27b \
+checkpoint.pretrained_checkpoint=/models/gemma-2-27b \
 train.global_batch_size=64 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/gemma2_27b_finetune
@@ -216,7 +216,7 @@ checkpoint.save=$SAVE_DIR/gemma2_27b_finetune
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
 --recipe gemma2_2b_peft_config \
 --mode lora \
---from /models/gemma-2-2b \
+checkpoint.pretrained_checkpoint=/models/gemma-2-2b \
 train.global_batch_size=128 \
 checkpoint.save=$SAVE_DIR/gemma2_2b_lora
 ```

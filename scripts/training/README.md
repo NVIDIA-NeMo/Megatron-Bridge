@@ -3,7 +3,7 @@
 Megatron Bridge training provides a small public Slurm launcher:
 
 ```bash
-./scripts/training/train.sh [launch options] [training options] [KEY=VALUE overrides]
+./scripts/training/train.sh [launch options] [runner options] [KEY=VALUE overrides]
 ```
 
 `train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` directly through Slurm. The
@@ -48,41 +48,41 @@ requested adapter scheme.
 ```
 
 The default forward step is `llm_step`. Pass `--step-func NAME` explicitly for a recipe that needs another registered
-forward step.
+forward step. Training, model, data, optimizer, scheduler, checkpoint, tokenizer, and logging values are not duplicated
+as launcher flags; set their `ConfigContainer` fields with trailing `KEY=VALUE` overrides.
 
-Pass `--seq-length` (or `--seq_length`) when the selected recipe factory accepts a sequence-length argument.
+## Dataset selection
 
-## Dataset presets
+`--dataset` accepts source selectors and named dataset presets rather than internal dataset config class names.
 
-`--dataset` names the data users intend to train on rather than the internal dataset config class.
-
-| Dataset | Mode | Behavior |
-|---|---|---|
-| `mock` | pretrain | In-memory mock GPT data |
-| `megatron-indexed` | pretrain | Local Megatron `.bin/.idx` data; never falls back to mock |
-| `squad` | sft/lora/dora | Hugging Face SQuAD preset |
-| `openmathinstruct2` | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
-| `openmathinstruct2-thinking` | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
-| `gsm8k` | sft/lora/dora | GSM8K preset |
-| `local-jsonl` | sft/lora/dora | Local prompt-completion JSONL selected by `--dataset-root` |
-| `cord-v2` | sft/lora/dora | CORD-v2 receipt VQA preset |
-| `medpix` | sft/lora/dora | MedPix medical VQA preset |
-| `raven` | sft/lora/dora | RAVEN visual reasoning preset |
-| `rdr` | sft/lora/dora | RDR visual reasoning preset |
-| `llava-video-178k` | sft/lora/dora | LLaVA-Video preset; requires `--media-root` |
-| `local-vlm` | sft/lora/dora | Local VLM JSON/JSONL selected by explicit path flags |
+| Value | Kind | Mode | Behavior |
+|---|---|---|---|
+| `mock` | Source selector | pretrain | In-memory generated GPT data |
+| `megatron-indexed` | Source selector | pretrain | Local Megatron `.bin/.idx` data; never falls back to mock |
+| `local-jsonl` | Source selector | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
+| `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
+| `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
+| `openmathinstruct2` | Named preset | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
+| `openmathinstruct2-thinking` | Named preset | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
+| `gsm8k` | Named preset | sft/lora/dora | GSM8K preset |
+| `cord-v2` | Named preset | sft/lora/dora | CORD-v2 receipt VQA preset |
+| `medpix` | Named preset | sft/lora/dora | MedPix medical VQA preset |
+| `raven` | Named preset | sft/lora/dora | RAVEN visual reasoning preset |
+| `rdr` | Named preset | sft/lora/dora | RDR visual reasoning preset |
+| `llava-video-178k` | Named preset | sft/lora/dora | LLaVA-Video preset; requires `dataset.source.adapter_kwargs.video_root_path` |
 
 ### Megatron indexed data
 
-Any pretraining corpus must first be converted to Megatron indexed data. Select one or more prefixes with:
+Any pretraining corpus must first be converted to Megatron indexed data. Set one prefix or a list of prefixes directly
+on the dataset config:
 
 ```bash
---dataset megatron-indexed --dataset-path /data/dclm/dclm_01_01_text_document
---dataset megatron-indexed --dataset-path /data/dclm
+--dataset megatron-indexed dataset.data_path=/data/dclm/dclm_01_01_text_document
+--dataset megatron-indexed 'dataset.data_path=[/data/dclm/part_1,/data/dclm/part_2]'
 ```
 
-Every selected prefix must have matching `.bin` and `.idx` files. `--dataset-cache` selects the index cache. Missing or
-incomplete data fails before distributed training starts.
+Every selected prefix must have matching `.bin` and `.idx` files. Use `dataset.path_to_cache=/shared/cache` to select
+the index cache.
 
 The launcher does not infer the source corpus from the files. For one preprocessing example, see
 [the DCLM tutorial](../../tutorials/data/dclm/README.md).
@@ -94,11 +94,12 @@ format: chain-of-thought goes to the analysis channel and the answer goes to the
 
 ### Offline packing
 
-Offline packing is a text SFT option, not a dataset name. Add `--offline-packing` to `squad`, either OpenMathInstruct-2
-format, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the selected CP/TP and sequence-parallel
-configuration. Packed training requires `--micro-batch-size 1`. The builder materializes packed data automatically, so
-a separate packing Slurm job is not required. The selected recipe/model must support packed THD sequences; for example,
-GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on shared mounted storage.
+Offline packing is a text SFT option, not a dataset name. Set `dataset.enable_offline_packing=true` for `squad`, either
+OpenMathInstruct-2 format, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
+sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder materializes packed
+data automatically, so a separate packing Slurm job is not required. The selected recipe/model must support packed THD
+sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on
+shared mounted storage.
 
 ### VLM data
 
@@ -106,13 +107,16 @@ The hosted VLM names use the existing Hugging Face dataset adapters and retain t
 settings from the selected VLM recipe. `raven`, `rdr`, and `llava-video-178k` derive deterministic 95/5 train and
 validation slices; `cord-v2` and `medpix` use their published validation splits. Pass a VLM forward step explicitly.
 
-For local JSON/JSONL, select `local-vlm` and pass `--train-data-path`; optional split paths are
-`--validation-data-path` and `--test-data-path`. Rows and media paths must already use the selected processor's
-supported conversation schema. `--hf-processor-path` overrides the processor inherited from the VLM recipe.
+For local JSON/JSONL, select `local-vlm` and set
+`dataset.source.load_kwargs.data_files.train=/path/to/train.jsonl`. Optional split overrides are
+`dataset.validation_source.load_kwargs.data_files.validation` and
+`dataset.test_source.load_kwargs.data_files.test`. Rows and media paths must already use the selected processor's
+supported conversation schema. `dataset.hf_processor_path` overrides the processor inherited from the VLM recipe.
 
 ## SFT and LoRA checkpoints
 
-Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face model directory:
+Set `checkpoint.pretrained_checkpoint` to the pretrained native Megatron checkpoint or local Hugging Face model
+directory:
 
 ```bash
 ./scripts/training/train.sh \
@@ -120,9 +124,10 @@ Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
     --mount /checkpoints \
     --recipe gpt_oss_20b_sft_8gpu_h100_bf16_config \
-    --mode sft --dataset openmathinstruct2-thinking --offline-packing \
-    --micro-batch-size 1 \
-    --from /checkpoints/gpt-oss-20b
+    --mode sft --dataset openmathinstruct2-thinking \
+    dataset.enable_offline_packing=true \
+    train.micro_batch_size=1 \
+    checkpoint.pretrained_checkpoint=/checkpoints/gpt-oss-20b
 ```
 
 ```bash
@@ -131,14 +136,16 @@ Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
     --mount /checkpoints \
     --recipe gpt_oss_20b_peft_1gpu_h100_bf16_config \
-    --mode lora --dataset openmathinstruct2-thinking --offline-packing \
-    --micro-batch-size 1 \
-    --from /checkpoints/gpt-oss-20b
+    --mode lora --dataset openmathinstruct2-thinking \
+    dataset.enable_offline_packing=true \
+    train.micro_batch_size=1 \
+    checkpoint.pretrained_checkpoint=/checkpoints/gpt-oss-20b
 ```
 
 ## Overrides
 
-Common values have flags and every ConfigContainer field can be overridden with trailing `KEY=VALUE` arguments:
+Set every `ConfigContainer` field with trailing `KEY=VALUE` arguments. For example, batch sizes and training duration
+belong under `train`, not `model`:
 
 ```bash
 ./scripts/training/train.sh \
@@ -147,13 +154,15 @@ Common values have flags and every ConfigContainer field can be overridden with 
     --container-image /path/to/container.sqsh \
     --recipe llama32_1b_pretrain_config \
     --mode pretrain --dataset mock \
-    --max-steps 10 --global-batch-size 8 --micro-batch-size 1 \
+    train.train_iters=10 \
+    train.global_batch_size=8 \
+    train.micro_batch_size=1 \
     optimizer.lr=0.0002 \
     scheduler.lr_warmup_iters=1 \
     scheduler.lr_decay_iters=10
 ```
 
-Precedence is recipe defaults, dataset preset, common flags, then trailing ConfigContainer overrides.
+Precedence is recipe defaults, the selected dataset configuration, then trailing `ConfigContainer` overrides.
 
 ## Slurm and containers
 
@@ -182,7 +191,7 @@ submitting it. For a rank-local ConfigContainer dry run, invoke `run_recipe.py` 
 uv run python scripts/training/run_recipe.py \
     --recipe llama32_1b_pretrain_config \
     --mode pretrain --dataset mock \
-    --dry-run --save-config /tmp/config.yaml
+    --dry-run logger.save_config_filepath=/tmp/config.yaml
 ```
 
 ## Rank-local entry point

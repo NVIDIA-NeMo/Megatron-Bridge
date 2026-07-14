@@ -352,17 +352,17 @@ def apply_public_dataset_override(
     if dataset_spec is None:
         raise ValueError(f"Unknown dataset name: '{dataset_name}'. Choose from: {', '.join(PUBLIC_DATASET_NAMES)}")
     if enable_offline_packing and not dataset_spec.supports_offline_packing:
-        raise ValueError("--offline-packing is supported only for text SFT datasets.")
+        raise ValueError("dataset.enable_offline_packing=true is supported only for text SFT datasets.")
     if dataset_root is not None and dataset_name != "local-jsonl":
-        raise ValueError("--dataset-root is used only by local-jsonl.")
+        raise ValueError("dataset.dataset_root is used only by local-jsonl.")
     if any(path is not None for path in (train_data_path, validation_data_path, test_data_path)) and dataset_name != (
         "local-vlm"
     ):
-        raise ValueError("Local VLM split paths are used only by local-vlm.")
+        raise ValueError("Local VLM source overrides are used only by local-vlm.")
     if media_root is not None and dataset_name != "llava-video-178k":
-        raise ValueError("--media-root is used only by llava-video-178k.")
+        raise ValueError("dataset.source.adapter_kwargs.video_root_path is used only by llava-video-178k.")
     if hf_processor_path is not None and dataset_spec.modality != "vlm":
-        raise ValueError("--hf-processor-path is used only by VLM datasets.")
+        raise ValueError("dataset.hf_processor_path is used only by VLM datasets.")
 
     resolved_seq_length = _resolve_seq_length(config, seq_length)
 
@@ -420,7 +420,7 @@ def apply_public_dataset_override(
         )
     elif dataset_name == "local-jsonl":
         if not dataset_root:
-            raise ValueError("local-jsonl requires --dataset-root=<path> to select the local JSONL source.")
+            raise ValueError("local-jsonl requires dataset.dataset_root=<path>.")
         offline_packing_specs = None
         if enable_offline_packing:
             offline_packing_specs = PackedSequenceSpecs(
@@ -446,9 +446,11 @@ def apply_public_dataset_override(
             raise ValueError("local-vlm requires a VLM recipe using DirectHFSFTDatasetConfig.")
         processor_path = hf_processor_path or existing_dataset.hf_processor_path
         if not train_data_path:
-            raise ValueError("local-vlm requires --train-data-path=<json-or-jsonl-path>.")
+            raise ValueError("local-vlm requires dataset.source.load_kwargs.data_files.train=<json-or-jsonl-path>.")
         if not processor_path:
-            raise ValueError("local-vlm requires --hf-processor-path or a processor configured by the VLM recipe.")
+            raise ValueError(
+                "local-vlm requires dataset.hf_processor_path or a processor configured by the VLM recipe."
+            )
         config.dataset = replace(
             existing_dataset,
             seq_length=resolved_seq_length,
@@ -470,13 +472,15 @@ def apply_public_dataset_override(
         processor_path = hf_processor_path or existing_dataset.hf_processor_path
         if not processor_path:
             raise ValueError(
-                f"{dataset_name} requires --hf-processor-path or a processor configured by the VLM recipe."
+                f"{dataset_name} requires dataset.hf_processor_path or a processor configured by the VLM recipe."
             )
 
         adapter_kwargs = None
         if dataset_name == "llava-video-178k":
             if not media_root:
-                raise ValueError("llava-video-178k requires --media-root=<video-root-path>.")
+                raise ValueError(
+                    "llava-video-178k requires dataset.source.adapter_kwargs.video_root_path=<video-root-path>."
+                )
             adapter_kwargs = {"video_root_path": media_root}
 
         source = HFDatasetSourceConfig(

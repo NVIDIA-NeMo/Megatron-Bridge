@@ -70,10 +70,10 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   --mode sft \
   --dataset cord-v2 \
   --step-func vlm_step \
-  --from $MEGATRON_MODEL_PATH \
-  --save-dir $SAVE_DIR/qwen25-vl-3b-sft \
-  --global-batch-size 2 \
-  --max-steps 1000
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-sft \
+  train.global_batch_size=2 \
+  train.train_iters=1000
 ```
 
 Note:
@@ -93,8 +93,8 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   --mode lora \
   --dataset cord-v2 \
   --step-func vlm_step \
-  --from $MEGATRON_MODEL_PATH \
-  --save-dir $SAVE_DIR/qwen25-vl-3b-lora
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora
 ```
 
 Use an SFT recipe with `--mode sft` for full finetuning.
@@ -112,8 +112,8 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
   --mode lora \
   --dataset cord-v2 \
   --step-func vlm_step \
-  --from $MEGATRON_MODEL_PATH \
-  --save-dir $SAVE_DIR/qwen25-vl-3b-lora \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora \
   model.freeze_language_model=True \
   model.freeze_vision_model=False \
   model.freeze_vision_projection=False
@@ -130,7 +130,7 @@ Megatron Bridge supports various vision-language dataset examples which can be u
 | [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `medpix` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
 | [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `raven` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 
-Select built-in datasets with `--dataset cord-v2`, `--dataset medpix`, or `--dataset raven`; the launcher configures their available validation and test splits. For local processor-native conversations, use `--dataset local-vlm --train-data-path PATH` and optional validation and test paths. Custom non-native schemas require a registered `dataset.source.schema_adapter` in Python configuration.
+Select built-in datasets with `--dataset cord-v2`, `--dataset medpix`, or `--dataset raven`; the launcher configures their available validation and test splits. For local processor-native conversations, use `--dataset local-vlm dataset.source.load_kwargs.data_files.train=PATH`; optional validation and test files use the corresponding `dataset.validation_source` and `dataset.test_source` fields. Custom non-native schemas require a registered `dataset.source.schema_adapter` in Python configuration.
 
 
 ## Hugging Face Model Cards

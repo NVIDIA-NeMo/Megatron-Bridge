@@ -16,16 +16,18 @@
 
 Select either a model name with ``--model`` or a complete recipe function with
 ``--recipe``. The public launcher accepts one training mode, a direct dataset
-name, optional convenience flags, and trailing ``KEY=VALUE`` ConfigContainer
-overrides. Slurm resources, containers, mounts, and environment forwarding are
-owned by ``setup_experiment.py``.
+name, runner controls, and trailing ``KEY=VALUE`` ConfigContainer overrides.
+Slurm resources, containers, mounts, and environment forwarding are owned by
+``setup_experiment.py``.
 """
 
 import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Literal
+from typing import Literal, TypeVar, cast
+
+from hydra.core.override_parser.overrides_parser import OverridesParser
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -36,7 +38,7 @@ from recipe_runner import (  # noqa: E402
     STEP_MODALITIES,
     apply_cli_overrides,
     apply_determinism,
-    apply_launcher_overrides,
+    apply_runtime_environment,
     load_forward_step,
     load_recipe,
     run_config,
@@ -56,13 +58,7 @@ TrainMode = Literal["pretrain", "finetune"]
 
 
 DATASETS = PUBLIC_DATASETS
-
-
-def _none_or_int(value: str) -> int | None:
-    """Parse an integer CLI value while accepting ``none``."""
-    if value.lower() == "none":
-        return None
-    return int(value)
+_T = TypeVar("_T")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -90,136 +86,14 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Forward-step registry name; most LLM recipes use the default.",
     )
 
-    recipe_args = parser.add_argument_group("Recipe construction")
-    recipe_args.add_argument("--seq-length", "--seq_length", type=int, dest="seq_length")
-
-    training = parser.add_argument_group("Training")
-    training.add_argument("--max-steps", "--max_steps", type=int, dest="max_steps")
-    training.add_argument("--global-batch-size", "--global_batch_size", type=int, dest="global_batch_size")
-    training.add_argument("--micro-batch-size", "--micro_batch_size", type=int, dest="micro_batch_size")
-    training.add_argument("--eval-interval", "--eval_interval", type=int, dest="eval_interval")
-    training.add_argument("--eval-iters", "--eval_iters", type=int, dest="eval_iters")
-    training.add_argument(
-        "--distributed-timeout-minutes",
-        "--distributed_timeout_minutes",
-        type=int,
-        dest="distributed_timeout_minutes",
-    )
-    training.add_argument("--lr", type=float)
-    training.add_argument("--min-lr", "--min_lr", type=float, dest="min_lr")
-    training.add_argument("--warmup-iters", "--warmup_iters", type=int, dest="warmup_iters")
-    training.add_argument("--lr-decay-iters", "--lr_decay_iters", type=int, dest="lr_decay_iters")
-    training.add_argument("--log-interval", "--log_interval", type=int, dest="log_interval")
-
     data = parser.add_argument_group("Data")
     data.add_argument(
         "--dataset",
         choices=sorted(DATASETS),
         help="Dataset name.",
     )
-    data.add_argument(
-        "--dataset-path",
-        "--dataset_path",
-        action="append",
-        default=[],
-        dest="dataset_paths",
-        help="Indexed dataset prefix or directory; repeat for multiple paths.",
-    )
-    data.add_argument(
-        "--dataset-cache",
-        "--dataset_cache",
-        dest="dataset_cache",
-        help="Directory for dataset index files.",
-    )
-    data.add_argument(
-        "--tokenizer-type",
-        "--tokenizer_type",
-        dest="tokenizer_type",
-        choices=["NullTokenizer", "HuggingFaceTokenizer", "SentencePieceTokenizer"],
-    )
-    data.add_argument("--tokenizer-model", "--tokenizer_model", dest="tokenizer_model")
-    data.add_argument("--vocab-size", "--vocab_size", type=int, default=32000, dest="vocab_size")
-    data.add_argument(
-        "--offline-packing",
-        "--offline_packing",
-        action="store_true",
-        dest="enable_offline_packing",
-        help="Enable offline sequence packing for a text SFT dataset.",
-    )
-    data.add_argument(
-        "--dataset-root",
-        "--dataset_root",
-        dest="dataset_root",
-        help="Directory containing local prompt-completion JSONL splits.",
-    )
-    data.add_argument(
-        "--train-data-path",
-        "--train_data_path",
-        dest="train_data_path",
-        help="Local VLM training JSON or JSONL path.",
-    )
-    data.add_argument(
-        "--validation-data-path",
-        "--validation_data_path",
-        "--valid-data-path",
-        "--valid_data_path",
-        dest="validation_data_path",
-        help="Local VLM validation JSON or JSONL path.",
-    )
-    data.add_argument(
-        "--test-data-path",
-        "--test_data_path",
-        dest="test_data_path",
-        help="Local VLM test JSON or JSONL path.",
-    )
-    data.add_argument(
-        "--media-root",
-        "--media_root",
-        dest="media_root",
-        help="Root directory containing the LLaVA-Video assets.",
-    )
-    data.add_argument(
-        "--hf-processor-path",
-        "--hf_processor_path",
-        dest="hf_processor_path",
-        help="Override the VLM recipe's Hugging Face processor model or path.",
-    )
-
-    parallelism = parser.add_argument_group("Parallelism")
-    parallelism.add_argument("--tp", type=int, dest="tensor_model_parallel_size")
-    parallelism.add_argument("--pp", type=int, dest="pipeline_model_parallel_size")
-    parallelism.add_argument("--cp", type=int, dest="context_parallel_size")
-    parallelism.add_argument(
-        "--vp",
-        type=_none_or_int,
-        default=-1,
-        dest="virtual_pipeline_model_parallel_size",
-    )
-    parallelism.add_argument("--ep", type=int, dest="expert_model_parallel_size")
-    parallelism.add_argument("--etp", type=int, dest="expert_tensor_parallel_size")
-
-    checkpoint = parser.add_argument_group("Checkpointing")
-    checkpoint.add_argument(
-        "--from",
-        "--pretrained-checkpoint",
-        "--pretrained_checkpoint",
-        dest="pretrained_checkpoint",
-        help="Checkpoint used to initialize training.",
-    )
-    checkpoint.add_argument("--save-dir", "--save_dir", dest="save_dir")
-    checkpoint.add_argument("--load-dir", "--load_dir", dest="load_dir")
-    checkpoint.add_argument("--save-interval", "--save_interval", type=int, dest="save_interval")
-    checkpoint.add_argument("--most-recent-k", "--most_recent_k", type=int, dest="most_recent_k")
-
-    logging_args = parser.add_argument_group("Logging")
-    logging_args.add_argument("--wandb-project", "--wandb_project", dest="wandb_project")
-    logging_args.add_argument("--wandb-entity", "--wandb_entity", dest="wandb_entity")
-    logging_args.add_argument("--wandb-name", "--wandb_name", dest="wandb_name")
-    logging_args.add_argument("--wandb-dir", "--wandb_dir", dest="wandb_dir")
-
     runtime = parser.add_argument_group("Runtime")
     runtime.add_argument("--dry-run", "--dry_run", action="store_true", dest="dryrun")
-    runtime.add_argument("--save-config", "--save_config", dest="save_config_filepath")
     runtime.add_argument("--deterministic", action="store_true")
     runtime.add_argument("--dump-env", "--dump_env", action="store_true", dest="dump_env")
     return parser
@@ -235,6 +109,20 @@ def _collect_overrides(parser: argparse.ArgumentParser, values: list[str]) -> li
             parser.error(f"Expected override in KEY=VALUE form, got {value!r}")
         overrides.append(value)
     return overrides
+
+
+def _override_values(cli_overrides: list[str]) -> dict[str, object]:
+    """Return the final parsed value for each Hydra-style config override."""
+    parsed = OverridesParser.create().parse_overrides(overrides=cli_overrides)
+    return {override.get_key_element(): override.value() for override in parsed}
+
+
+def _optional_override(values: dict[str, object], key: str, expected_type: type[_T]) -> _T | None:
+    """Read and type-check a config override used while constructing a dataset."""
+    value = values.get(key)
+    if value is not None and not isinstance(value, expected_type):
+        raise ValueError(f"{key} must be a {expected_type.__name__} value.")
+    return value
 
 
 def _train_mode(mode: PublicMode) -> TrainMode:
@@ -296,77 +184,15 @@ def _load_selected_recipe(args: argparse.Namespace) -> object:
     return load_recipe(
         recipe_name,
         peft_scheme=peft_scheme,
-        seq_length=args.seq_length,
     )
 
 
-def _indexed_prefix(path: Path) -> Path:
-    """Normalize an indexed-data filename to its prefix."""
-    return path.with_suffix("") if path.suffix in {".bin", ".idx"} else path
-
-
-def _resolve_indexed_paths(dataset_name: str, raw_paths: list[str]) -> list[str]:
-    """Validate indexed dataset paths for a named pretraining dataset."""
-    prefixes: list[Path] = []
-    for raw_path in raw_paths:
-        path = Path(raw_path).expanduser()
-        if path.is_dir():
-            prefixes.extend(_indexed_prefix(bin_path) for bin_path in sorted(path.glob("*.bin")))
-        else:
-            prefixes.append(_indexed_prefix(path))
-
-    valid: list[str] = []
-    invalid: list[str] = []
-    for prefix in dict.fromkeys(prefixes):
-        if Path(f"{prefix}.bin").is_file() and Path(f"{prefix}.idx").is_file():
-            valid.append(str(prefix))
-        else:
-            invalid.append(str(prefix))
-
-    if invalid:
-        raise ValueError(f"Indexed dataset prefixes must have matching .bin and .idx files: {', '.join(invalid)}")
-    if not valid:
-        raise ValueError(f"Dataset '{dataset_name}' requires at least one --dataset-path.")
-    return valid
-
-
 def _validate_dataset_options(args: argparse.Namespace) -> None:
-    """Validate public data flags before loading a potentially expensive recipe."""
-    selected_options = [
-        option
-        for option, is_selected in (
-            ("--offline-packing", args.enable_offline_packing),
-            ("--dataset-path", bool(args.dataset_paths)),
-            ("--dataset-cache", args.dataset_cache is not None),
-            ("--dataset-root", args.dataset_root is not None),
-            ("--train-data-path", args.train_data_path is not None),
-            ("--validation-data-path", args.validation_data_path is not None),
-            ("--test-data-path", args.test_data_path is not None),
-            ("--media-root", args.media_root is not None),
-            ("--hf-processor-path", args.hf_processor_path is not None),
-        )
-        if is_selected
-    ]
+    """Validate public dataset selection before loading a potentially expensive recipe."""
     if args.dataset is None:
-        if selected_options:
-            raise ValueError(f"{', '.join(selected_options)} require --dataset.")
         return
 
     selection = DATASETS[args.dataset]
-    if args.enable_offline_packing and not selection.supports_offline_packing:
-        raise ValueError(f"Dataset '{args.dataset}' does not support --offline-packing.")
-    if (args.dataset_paths or args.dataset_cache is not None) and not selection.indexed_data:
-        raise ValueError("--dataset-path and --dataset-cache are used only by megatron-indexed.")
-    if args.dataset_root is not None and args.dataset != "local-jsonl":
-        raise ValueError("--dataset-root is used only by local-jsonl.")
-    if any(path is not None for path in (args.train_data_path, args.validation_data_path, args.test_data_path)) and (
-        args.dataset != "local-vlm"
-    ):
-        raise ValueError("Local VLM split paths are used only by local-vlm.")
-    if args.media_root is not None and args.dataset != "llava-video-178k":
-        raise ValueError("--media-root is used only by llava-video-178k.")
-    if args.hf_processor_path is not None and selection.modality != "vlm":
-        raise ValueError("--hf-processor-path is used only by VLM datasets.")
     if selection.modality == "vlm" and STEP_MODALITIES.get(args.step_func.lower()) != "vlm":
         raise ValueError(f"Dataset '{args.dataset}' requires a VLM-compatible --step-func.")
 
@@ -374,6 +200,7 @@ def _validate_dataset_options(args: argparse.Namespace) -> None:
 def _apply_dataset(
     recipe: object,
     args: argparse.Namespace,
+    cli_overrides: list[str],
 ) -> object:
     """Apply a public dataset selection to a recipe config."""
     if args.dataset is None:
@@ -384,22 +211,41 @@ def _apply_dataset(
     if selection.train_mode != requested_train_mode:
         raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
 
+    values = _override_values(cli_overrides)
+    sequence_lengths = {
+        key: values[key]
+        for key in ("dataset.seq_length", "dataset.sequence_length", "model.seq_length")
+        if key in values
+    }
+    if any(not isinstance(value, int) or isinstance(value, bool) for value in sequence_lengths.values()):
+        raise ValueError("Sequence length must be an int value.")
+    if len(set(sequence_lengths.values())) > 1:
+        raise ValueError(f"Sequence-length overrides disagree: {sequence_lengths}")
+    seq_length = cast(int | None, next(iter(sequence_lengths.values()), None))
+
+    enable_offline_packing = _optional_override(values, "dataset.enable_offline_packing", bool)
+    pad_seq_to_mult = _optional_override(values, "dataset.offline_packing_specs.pad_seq_to_mult", int)
+    if enable_offline_packing and not selection.supports_offline_packing:
+        raise ValueError(f"Dataset '{args.dataset}' does not support dataset.enable_offline_packing=true.")
+    if pad_seq_to_mult is not None and not enable_offline_packing:
+        raise ValueError("dataset.offline_packing_specs.pad_seq_to_mult requires dataset.enable_offline_packing=true.")
+    if pad_seq_to_mult is not None and pad_seq_to_mult < 1:
+        raise ValueError("dataset.offline_packing_specs.pad_seq_to_mult must be greater than zero.")
     recipe = apply_public_dataset_override(
         recipe,
         dataset_name=args.dataset,
-        enable_offline_packing=args.enable_offline_packing,
-        seq_length=args.seq_length,
-        dataset_root=args.dataset_root,
-        train_data_path=args.train_data_path,
-        validation_data_path=args.validation_data_path,
-        test_data_path=args.test_data_path,
-        media_root=args.media_root,
-        hf_processor_path=args.hf_processor_path,
+        enable_offline_packing=bool(enable_offline_packing),
+        pad_seq_to_mult=pad_seq_to_mult if pad_seq_to_mult is not None else 1,
+        seq_length=seq_length,
+        dataset_root=_optional_override(values, "dataset.dataset_root", str),
+        train_data_path=_optional_override(values, "dataset.source.load_kwargs.data_files.train", str),
+        validation_data_path=_optional_override(
+            values, "dataset.validation_source.load_kwargs.data_files.validation", str
+        ),
+        test_data_path=_optional_override(values, "dataset.test_source.load_kwargs.data_files.test", str),
+        media_root=_optional_override(values, "dataset.source.adapter_kwargs.video_root_path", str),
+        hf_processor_path=_optional_override(values, "dataset.hf_processor_path", str),
     )
-    if selection.indexed_data:
-        recipe.dataset.data_path = _resolve_indexed_paths(args.dataset, args.dataset_paths)
-        if args.dataset_cache is not None:
-            recipe.dataset.path_to_cache = args.dataset_cache
     return recipe
 
 
@@ -419,10 +265,10 @@ def main(argv: list[str] | None = None) -> None:
     _validate_dataset_options(args)
 
     recipe = _load_selected_recipe(args)
-    recipe = _apply_dataset(recipe, args)
-    recipe = apply_launcher_overrides(recipe, args)
+    recipe = _apply_dataset(recipe, args, cli_overrides)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
+    recipe = apply_runtime_environment(recipe)
     mode = _train_mode(args.mode)
     recipe = sync_finetuning_cp_invariants(recipe, mode=mode)
     recipe = sync_offline_packing_alignment(recipe)
@@ -434,7 +280,6 @@ def main(argv: list[str] | None = None) -> None:
         mode=mode,
         step_func=forward_step,
         dryrun=args.dryrun,
-        save_config_filepath=args.save_config_filepath,
         dump_environment=args.dump_env,
     )
 

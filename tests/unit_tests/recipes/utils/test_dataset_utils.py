@@ -631,7 +631,7 @@ class TestApplyPublicDatasetOverride:
 
     def test_llava_video_requires_and_forwards_media_root(self):
         config = _make_vlm_config()
-        with pytest.raises(ValueError, match="requires --media-root"):
+        with pytest.raises(ValueError, match="video_root_path"):
             apply_public_dataset_override(config, "llava-video-178k")
 
         result = apply_public_dataset_override(

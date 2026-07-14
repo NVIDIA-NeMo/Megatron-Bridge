@@ -217,7 +217,7 @@ config = glm45_355b_peft_config(
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
 --recipe glm45_air_106b_peft_config \
 --mode lora \
---from /models/glm45-air-106b \
+checkpoint.pretrained_checkpoint=/models/glm45-air-106b \
 train.global_batch_size=128 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_air_lora
@@ -226,7 +226,7 @@ checkpoint.save=$SAVE_DIR/glm45_air_lora
 uv run python -m torch.distributed.run --nnodes=32 --nproc-per-node=8 scripts/training/run_recipe.py \
 --recipe glm45_355b_sft_config \
 --mode sft \
---from /models/glm45-355b \
+checkpoint.pretrained_checkpoint=/models/glm45-355b \
 train.global_batch_size=256 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_355b_full
