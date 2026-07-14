@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import megatron.core
 import pytest
 import torch
 from megatron.core.packed_seq_params import PackedSeqParams
@@ -20,6 +21,7 @@ from megatron.bridge.training.utils.packed_seq_utils import (
     get_packed_seq_cp_partition_indices,
     get_packed_seq_params,
     get_packed_seq_q_cu_seqlens,
+    get_thd_cp_partition_indices,
     repack_mcore_thd_position_ids,
     unpack_mcore_thd_tensor_for_position_ids,
 )
@@ -38,7 +40,45 @@ def test_get_packed_seq_q_cu_seqlens_prefers_padded_boundaries():
     assert physical is actual
 
 
+def test_get_thd_cp_partition_indices_rejects_unsupported_mcore(monkeypatch):
+    monkeypatch.setattr(megatron.core, "__version__", "0.17.1")
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"requires Megatron-Core >= 0\.18\.0.*found 0\.17\.1\. Please upgrade Megatron-Core\.",
+    ):
+        get_thd_cp_partition_indices(
+            torch.tensor([0, 8], dtype=torch.int32),
+            total_tokens=8,
+            cp_group=object(),
+            device=torch.device("cpu"),
+        )
+
+
+def test_get_thd_cp_partition_indices_rejects_pre_feature_mcore_snapshot(monkeypatch):
+    def old_get_batch_on_this_cp_rank(batch, cp_group=None):
+        raise AssertionError("Unsupported MCore API should not be called.")
+
+    monkeypatch.setattr(megatron.core, "__version__", "0.18.0+oldhash")
+    monkeypatch.setattr(
+        "megatron.bridge.training.utils.packed_seq_utils.get_batch_on_this_cp_rank",
+        old_get_batch_on_this_cp_rank,
+    )
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"requires Megatron-Core >= 0\.18\.0.*found 0\.18\.0\+oldhash\. Please upgrade Megatron-Core\.",
+    ):
+        get_thd_cp_partition_indices(
+            torch.tensor([0, 8], dtype=torch.int32),
+            total_tokens=8,
+            cp_group=object(),
+            device=torch.device("cpu"),
+        )
+
+
 def test_get_packed_seq_cp_partition_indices_uses_padded_boundaries(monkeypatch):
+    monkeypatch.setattr(megatron.core, "__version__", "0.18.0")
     actual = torch.tensor([0, 6, 14], dtype=torch.int32)
     padded = torch.tensor([0, 8, 16], dtype=torch.int32)
     seen = {}
