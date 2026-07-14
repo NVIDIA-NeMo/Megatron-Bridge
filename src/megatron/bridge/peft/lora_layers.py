@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import math
-from typing import Any, Literal, Optional, Tuple, Union, cast
+from typing import Any, Literal, Optional, Tuple
 
 import torch
 import torch.nn as nn
@@ -102,12 +102,7 @@ class LoRATopKRouter(AdapterWrapper):
 
 
 class TELinearAdapter(te.Linear):
-    """
-    TELinear + LoRA, maintains ckpts structure (i.e. Linear's weight/bias remain at the same FQN)
-
-    The _init_adapter and forward methods provide the LoRA functionality. We want to be able to
-    use those inside LinearAdapter but also for monkey-patching modules, without repeating the
-    same code -> therefore those are decorated with @staticmethod.
+    """TE Linear with LoRA that preserves the base weight and bias checkpoint keys.
 
     Args:
         orig_linear: The linear module to augment.
@@ -116,8 +111,7 @@ class TELinearAdapter(te.Linear):
         dropout: Dropout probability (default: 0.0).
         dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
         lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
-        lora_dtype: Weight's dtype, by default will use orig_linear's but if they
-                    are quantized weights (e.g. 4bit) needs to be specified explicitly.
+        lora_dtype: Adapter weight dtype. Defaults to the original linear's weight dtype.
     """
 
     def __init__(
@@ -156,8 +150,7 @@ class TELinearAdapter(te.Linear):
         if has_bias:
             self.bias.data.copy_(orig_linear.bias.data)
         # initialize the adapter
-        TELinearAdapter._init_adapter(
-            self,
+        self._init_adapter(
             dim=dim,
             alpha=alpha,
             dropout=dropout,
@@ -176,9 +169,8 @@ class TELinearAdapter(te.Linear):
         self._adapter_enabled = False
 
     @torch.no_grad
-    @staticmethod
     def _init_adapter(
-        obj: Union["TELinearAdapter", nn.Module],
+        self,
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
@@ -186,45 +178,43 @@ class TELinearAdapter(te.Linear):
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
-        """Add LoRA weights to obj. The obj is either a LinearAdapter or an nn.Module (when monkey-patching).
+        """Initialize the LoRA weights and freeze the base parameters.
 
         Args:
-            obj: Input module to adapt (LinearAdapter or nn.Module).
             dim: LoRA's dimension (in_features -> dim -> out_features).
             alpha: LoRA's scaling alpha.
             dropout: Dropout probability (default: 0.0).
             dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
             lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
-            lora_dtype: Weight's dtype, by default will use orig_linear's but if they
-                        are quantized weights (e.g. 4bit) needs to be specified explicitly.
+            lora_dtype: Adapter weight dtype. Defaults to the base weight dtype.
         """
-        obj.dim = dim
-        obj.alpha = alpha
-        obj.scale = alpha / dim
+        self.dim = dim
+        self.alpha = alpha
+        self.scale = alpha / dim
 
         # Freeze original weights
-        device = obj.weight.device
-        obj.weight.requires_grad = False
-        if obj.bias is not None:
-            obj.bias.requires_grad = False
+        device = self.weight.device
+        self.weight.requires_grad = False
+        if self.bias is not None:
+            self.bias.requires_grad = False
 
-        in_features = obj.in_features
-        out_features = obj.out_features
-        dtype = lora_dtype or obj.weight.dtype
+        in_features = self.in_features
+        out_features = self.out_features
+        dtype = lora_dtype or self.weight.dtype
 
-        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
+        self.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
+        self.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
         if lora_A_init_method == "xavier":
-            torch.nn.init.xavier_uniform_(obj.linear_in.weight.data)
+            torch.nn.init.xavier_uniform_(self.linear_in.weight.data)
         else:
-            nn.init.kaiming_uniform_(obj.linear_in.weight.data, a=math.sqrt(5))
-        obj.linear_out.weight.data.fill_(0)
+            nn.init.kaiming_uniform_(self.linear_in.weight.data, a=math.sqrt(5))
+        self.linear_out.weight.data.fill_(0)
         if dropout > 0.0:
-            obj.dropout = nn.Dropout(p=dropout)
+            self.dropout = nn.Dropout(p=dropout)
         else:
-            obj.dropout = nn.Identity()
+            self.dropout = nn.Identity()
         assert dropout_position in ["pre", "post"], dropout_position
-        obj.dropout_position = dropout_position
+        self.dropout_position = dropout_position
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass combining TELinear output with LoRA adaptation.
@@ -508,12 +498,7 @@ class TEFusedLoRALinear(LoRALinear):
 
 
 class LinearAdapter(nn.Linear):
-    """
-    Linear + LoRA, maintains ckpts structure (i.e. Linear's weight/bias remain at the same FQN)
-
-    The _init_adapter and forward methods provide the LoRA functionality. We want to be able to
-    use those inside LinearAdapter but also for monkey-patching modules, without repeating the
-    same code -> therefore those are decorated with @staticmethod.
+    """Linear with LoRA that preserves the base weight and bias checkpoint keys.
 
     Args:
         orig_linear: The linear module to augment.
@@ -522,8 +507,7 @@ class LinearAdapter(nn.Linear):
         dropout: Dropout probability (default: 0.0).
         dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
         lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
-        lora_dtype: Weight's dtype, by default will use orig_linear's but if they
-                   are quantized weights (e.g. 4bit) needs to be specified explicitly.
+        lora_dtype: Adapter weight dtype. Defaults to the original linear's weight dtype.
     """
 
     def __init__(
@@ -560,8 +544,7 @@ class LinearAdapter(nn.Linear):
         if orig_linear.bias is not None:
             self.bias.data.copy_(orig_linear.bias.data)
         # initialize the adapter
-        LinearAdapter._init_adapter(
-            self,
+        self._init_adapter(
             dim=dim,
             alpha=alpha,
             dropout=dropout,
@@ -580,9 +563,8 @@ class LinearAdapter(nn.Linear):
         self._adapter_enabled = False
 
     @torch.no_grad
-    @staticmethod
     def _init_adapter(
-        obj: Union["LinearAdapter", nn.Module],
+        self,
         dim: int = 8,
         alpha: int = 32,
         dropout: float = 0.0,
@@ -590,45 +572,43 @@ class LinearAdapter(nn.Linear):
         lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
         lora_dtype: Optional[torch.dtype] = None,
     ) -> None:
-        """Add LoRA weights to obj. The obj is either a LinearAdapter or an nn.Module (when monkey-patching).
+        """Initialize the LoRA weights and freeze the base parameters.
 
         Args:
-            obj: Input module to adapt (LinearAdapter or nn.Module).
             dim: LoRA's dimension (in_features -> dim -> out_features).
             alpha: LoRA's scaling alpha.
             dropout: Dropout probability (default: 0.0).
             dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
             lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
-            lora_dtype: Weight's dtype, by default will use orig_linear's but if they
-                       are quantized weights (e.g. 4bit) needs to be specified explicitly.
+            lora_dtype: Adapter weight dtype. Defaults to the base weight dtype.
         """
-        obj.dim = dim
-        obj.alpha = alpha
-        obj.scale = alpha / dim
+        self.dim = dim
+        self.alpha = alpha
+        self.scale = alpha / dim
 
         # Freeze original weights
-        device = obj.weight.device
-        obj.weight.requires_grad = False
-        if obj.bias is not None:
-            obj.bias.requires_grad = False
+        device = self.weight.device
+        self.weight.requires_grad = False
+        if self.bias is not None:
+            self.bias.requires_grad = False
 
-        in_features = obj.in_features
-        out_features = obj.out_features
-        dtype = lora_dtype or obj.weight.dtype
+        in_features = self.in_features
+        out_features = self.out_features
+        dtype = lora_dtype or self.weight.dtype
 
-        obj.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        obj.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
+        self.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
+        self.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
         if lora_A_init_method == "xavier":
-            torch.nn.init.xavier_uniform_(obj.linear_in.weight.data)
+            torch.nn.init.xavier_uniform_(self.linear_in.weight.data)
         else:
-            nn.init.kaiming_uniform_(obj.linear_in.weight.data, a=math.sqrt(5))
-        obj.linear_out.weight.data.fill_(0)
+            nn.init.kaiming_uniform_(self.linear_in.weight.data, a=math.sqrt(5))
+        self.linear_out.weight.data.fill_(0)
         if dropout > 0.0:
-            obj.dropout = nn.Dropout(p=dropout)
+            self.dropout = nn.Dropout(p=dropout)
         else:
-            obj.dropout = nn.Identity()
+            self.dropout = nn.Identity()
         assert dropout_position in ["pre", "post"], dropout_position
-        obj.dropout_position = dropout_position
+        self.dropout_position = dropout_position
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass combining Linear output with LoRA adaptation.
@@ -652,243 +632,3 @@ class LinearAdapter(nn.Linear):
         if self.dropout_position == "post":
             lora_res = self.dropout(lora_res)
         return res + lora_res
-
-
-class LinearModuleAdapter(nn.Module):
-    """Add LoRA to an existing linear module without copying or changing its class.
-
-    The original module remains responsible for the base forward. Its direct
-    parameters and buffers are registered on this wrapper under their original
-    names so optimizer and checkpoint FQNs are preserved.
-    """
-
-    def __init__(
-        self,
-        orig_linear: Union[nn.Linear, "te.Linear"],
-        dim: int = 8,
-        alpha: int = 32,
-        dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "pre",
-        lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
-    ) -> None:
-        """Reuse an existing linear's state and initialize LoRA parameters."""
-        super().__init__()
-        self.in_features = orig_linear.in_features
-        self.out_features = orig_linear.out_features
-        self._base_parameter_names = tuple(orig_linear._parameters)
-        self._base_buffer_names = tuple(orig_linear._buffers)
-        self._base_module_names = tuple(orig_linear._modules)
-        for name, parameter in orig_linear._parameters.items():
-            self.register_parameter(name, parameter)
-        for name, buffer in orig_linear._buffers.items():
-            self.register_buffer(name, buffer, persistent=name not in orig_linear._non_persistent_buffers_set)
-        for name, module in orig_linear._modules.items():
-            self.add_module(name, module)
-        object.__setattr__(self, "_base_linear", orig_linear)
-        self._register_base_state_hooks()
-        self._sync_base_state()
-        LinearAdapter._init_adapter(
-            self,
-            dim=dim,
-            alpha=alpha,
-            dropout=dropout,
-            dropout_position=dropout_position,
-            lora_A_init_method=lora_A_init_method,
-            lora_dtype=lora_dtype,
-        )
-        self._adapter_enabled = True
-        self.train(orig_linear.training)
-
-    @property
-    def base_linear(self) -> nn.Module:
-        """Return the wrapped base linear module."""
-        return object.__getattribute__(self, "_base_linear")
-
-    def __getattr__(self, name: str) -> Any:
-        """Delegate non-module attributes to the wrapped linear."""
-        try:
-            return super().__getattr__(name)
-        except AttributeError as error:
-            base_linear = self.__dict__.get("_base_linear")
-            if base_linear is not None:
-                try:
-                    return getattr(base_linear, name)
-                except AttributeError:
-                    pass
-            raise error
-
-    def _sync_base_state(self) -> None:
-        """Keep the delegated module pointed at this wrapper's registered state."""
-        base_linear = object.__getattribute__(self, "_base_linear")
-        for name in self._base_parameter_names:
-            base_linear._parameters[name] = self._parameters[name]
-        for name in self._base_buffer_names:
-            base_linear._buffers[name] = self._buffers[name]
-        for name in self._base_module_names:
-            base_linear._modules[name] = self._modules[name]
-
-    def _register_base_state_hooks(self) -> None:
-        """Run the hidden base module's serialization hooks on this wrapper."""
-        base_linear = object.__getattribute__(self, "_base_linear")
-
-        for base_hook in base_linear._state_dict_pre_hooks.values():
-
-            def state_dict_pre_hook(_module, prefix, keep_vars, hook=base_hook):
-                return hook(base_linear, prefix, keep_vars)
-
-            self.register_state_dict_pre_hook(state_dict_pre_hook)
-
-        for base_hook in base_linear._state_dict_hooks.values():
-
-            def state_dict_hook(_module, state_dict, prefix, local_metadata, hook=base_hook):
-                return hook(base_linear, state_dict, prefix, local_metadata)
-
-            if getattr(base_hook, "_from_public_api", False):
-                self.register_state_dict_post_hook(state_dict_hook)
-            else:
-                self._register_state_dict_hook(state_dict_hook)
-
-        for base_hook in base_linear._load_state_dict_pre_hooks.values():
-            self._register_load_state_dict_pre_hook(base_hook)
-
-        for base_hook in base_linear._load_state_dict_post_hooks.values():
-
-            def load_state_dict_post_hook(_module, incompatible_keys, hook=base_hook):
-                return hook(base_linear, incompatible_keys)
-
-            self.register_load_state_dict_post_hook(load_state_dict_post_hook)
-
-    def _sync_wrapper_state_from_base(self) -> None:
-        """Adopt base state replaced by assignment-style checkpoint loading."""
-        base_linear = object.__getattribute__(self, "_base_linear")
-        for name in self._base_parameter_names:
-            self._parameters[name] = base_linear._parameters[name]
-        for name in self._base_buffer_names:
-            self._buffers[name] = base_linear._buffers[name]
-        for name in self._base_module_names:
-            self._modules[name] = base_linear._modules[name]
-
-    def _apply(self, fn: Any, recurse: bool = True) -> "LinearModuleAdapter":
-        super()._apply(fn, recurse=recurse)
-        self._sync_base_state()
-        return self
-
-    def _save_to_state_dict(self, destination: dict[str, Any], prefix: str, keep_vars: bool) -> None:
-        """Delegate base state serialization while keeping the wrapper's flat FQNs."""
-        self._sync_base_state()
-        self.base_linear._save_to_state_dict(destination, prefix, keep_vars)
-
-    def _load_from_state_dict(
-        self,
-        state_dict: dict[str, Any],
-        prefix: str,
-        local_metadata: dict[str, Any],
-        strict: bool,
-        missing_keys: list[str],
-        unexpected_keys: list[str],
-        error_msgs: list[str],
-    ) -> None:
-        """Delegate base state loading while adapter children load normally."""
-        adapter_module_names = set(self._modules).difference(self._base_module_names)
-        base_state_dict = {}
-        for key, value in state_dict.items():
-            if not key.startswith(prefix):
-                continue
-            local_key = key[len(prefix) :]
-            if local_key.split(".", 1)[0] not in adapter_module_names:
-                base_state_dict[key] = value
-        self.base_linear._load_from_state_dict(
-            base_state_dict,
-            prefix,
-            local_metadata,
-            strict,
-            missing_keys,
-            unexpected_keys,
-            error_msgs,
-        )
-        if local_metadata.get("assign_to_params_buffers", False):
-            self._sync_wrapper_state_from_base()
-        else:
-            self._sync_base_state()
-
-    def train(self, mode: bool = True) -> "LinearModuleAdapter":
-        """Set training mode on both the wrapper and delegated base module."""
-        super().train(mode)
-        self.base_linear.train(mode)
-        return self
-
-    def enable_adapter_layers(self) -> None:
-        """Enable the LoRA contribution."""
-        self._adapter_enabled = True
-
-    def disable_adapter_layers(self) -> None:
-        """Disable the LoRA contribution."""
-        self._adapter_enabled = False
-
-    def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> torch.Tensor | tuple[Any, ...]:
-        """Run the original linear forward and add the LoRA update."""
-        self._sync_base_state()
-        base_result = self.base_linear(x, *args, **kwargs)
-        if not self._adapter_enabled:
-            return cast(torch.Tensor | tuple[Any, ...], base_result)
-        result = cast(torch.Tensor, base_result[0] if isinstance(base_result, tuple) else base_result)
-        lora_input = self.dropout(x) if self.dropout_position == "pre" else x
-        lora_result = self.linear_out(self.linear_in(lora_input)) * self.scale
-        if self.dropout_position == "post":
-            lora_result = self.dropout(lora_result)
-        adapted_result = result + lora_result
-        if isinstance(base_result, tuple):
-            return (adapted_result, *base_result[1:])
-        return adapted_result
-
-
-def patch_linear_module(
-    orig_linear: Union[nn.Linear, "te.Linear"],
-    dim: int = 8,
-    alpha: int = 32,
-    dropout: float = 0.0,
-    dropout_position: Literal["pre", "post"] = "pre",
-    lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-    lora_dtype: Optional[torch.dtype] = None,
-) -> LinearModuleAdapter:
-    """Wrap an nn.Linear or te.Linear without copying its base state.
-
-    This function composes with the original module without copying weights,
-    making it suitable for modules initialized on the meta device.
-
-    The orig_linear might not contain valid weights, for example, the given orig_linear was
-    initialized within a context-manager that uses a "meta" device. Therefore, we cannot copy
-    the weight/bias from the orig_linear to the LinearAdapter, since those have not been allocated.
-
-    The wrapper registers the existing parameters and buffers under their original
-    names and delegates the base forward to the original module.
-
-    Args:
-        orig_linear: The module we add adapter to.
-        dim: LoRA dimension. Defaults to 8.
-        alpha: LoRA alpha scale. Defaults to 32.
-        dropout: Dropout probability. Defaults to 0.0.
-        dropout_position: Location to apply dropout wrt LoRA.
-            Defaults to 'pre' (choices: 'pre', 'post').
-        lora_A_init_method: LoRA_A initialization method. Defaults to 'xavier'.
-        lora_dtype: LoRA weights' dtype. By default will use orig_linear's dtype
-            but orig_linear might use non-trainable dtype (e.g., 4bit), in which case the user must
-            specify the dtype manually. Defaults to None.
-
-    Returns:
-        A composition module with the original linear state and LoRA layers.
-
-    Raises:
-        AssertionError: If orig_linear is not an nn.Linear or te.Linear.
-    """
-    assert isinstance(orig_linear, nn.Linear) or (orig_linear.__class__ == te.Linear)
-    return LinearModuleAdapter(
-        orig_linear,
-        dim=dim,
-        alpha=alpha,
-        dropout=dropout,
-        dropout_position=dropout_position,
-        lora_A_init_method=lora_A_init_method,
-        lora_dtype=lora_dtype,
-    )

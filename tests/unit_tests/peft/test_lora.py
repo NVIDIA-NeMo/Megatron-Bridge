@@ -492,17 +492,6 @@ class TestLoRA:
             def __init__(self):
                 super().__init__()
 
-                # Create a simple weight mock that doesn't have _local_tensor
-                class MockWeightData:
-                    pass
-
-                class MockWeight:
-                    def __init__(self):
-                        self.data = MockWeightData()
-
-                self.weight = MockWeight()
-                self.quant_state = None
-
         # Set the mock_te.Linear to our MockTELinear class
         mock_te.Linear = MockTELinear
 
