@@ -97,7 +97,9 @@ def validate_path(path: str, must_exist: bool = False) -> Path:
     return path_obj
 
 
-def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) -> GeneratedData:
+def transformers_generate(
+    hf_model: str, prompt: str, max_new_tokens: int = 20, trust_remote_code: bool = False
+) -> GeneratedData:
     """
     Generate text from a HuggingFace model using transformers.
 
@@ -112,7 +114,7 @@ def transformers_generate(hf_model: str, prompt: str, max_new_tokens: int = 20) 
     print_rank_0(f"Loading model and tokenizer: {hf_model}")
 
     tokenizer = AutoTokenizer.from_pretrained(hf_model)
-    model = AutoModelForCausalLM.from_pretrained(hf_model, trust_remote_code=True).cuda()
+    model = AutoModelForCausalLM.from_pretrained(hf_model, trust_remote_code=trust_remote_code).cuda()
 
     print_rank_0("Generating text using HF weights...")
     in_tokens = tokenizer(prompt, return_tensors="pt").to(model.device)
@@ -322,6 +324,7 @@ def import_hf_to_megatron(
     megatron_path: str,
     torch_dtype: Optional[str] = None,
     device_map: Optional[str] = None,
+    trust_remote_code: bool = False,
 ) -> None:
     """
     Import a HuggingFace model and save it as a Megatron checkpoint.
@@ -350,7 +353,7 @@ def import_hf_to_megatron(
     AutoBridge.import_ckpt(
         hf_model_id=hf_model,
         megatron_path=megatron_path,
-        trust_remote_code=True,
+        trust_remote_code=trust_remote_code,
         **kwargs,
     )
 
@@ -364,6 +367,7 @@ def export_megatron_to_hf(
     hf_model: str,
     megatron_path: str,
     hf_path: str,
+    trust_remote_code: bool = False,
 ) -> None:
     """
     Export a Megatron checkpoint to HuggingFace format.
@@ -379,7 +383,7 @@ def export_megatron_to_hf(
     checkpoint_path = validate_path(megatron_path, must_exist=True)
     print_rank_0(f"📂 Found Megatron checkpoint: {checkpoint_path}")
 
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=trust_remote_code)
     print_rank_0("📤 Exporting to HuggingFace format...")
     bridge.export_ckpt(
         megatron_path=megatron_path,
@@ -393,7 +397,14 @@ def export_megatron_to_hf(
 
 
 def megatron_generate_from_checkpoint(
-    megatron_path: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
+    megatron_path: str,
+    prompt: str,
+    max_new_tokens: int = 20,
+    tp: int = 1,
+    pp: int = 1,
+    ep: int = 1,
+    etp: int = 1,
+    trust_remote_code: bool = False,
 ) -> GeneratedData:
     """
     Generate text from a Megatron checkpoint.
@@ -445,7 +456,10 @@ def megatron_generate_from_checkpoint(
 
     # Initialize and load the model and tokenizer
     megatron_model = build_and_load_model(str(checkpoint_path), model_provider)
-    tokenizer = load_tokenizer(str(checkpoint_path))
+    # Forward the caller's trust_remote_code choice (default False). If the checkpoint
+    # tokenizer config itself requires remote code, the user must opt in via
+    # --trust-remote-code, matching the setting used at import time.
+    tokenizer = load_tokenizer(str(checkpoint_path), trust_remote_code=trust_remote_code)
 
     generated = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
 
@@ -457,7 +471,14 @@ def megatron_generate_from_checkpoint(
 
 
 def megatron_generate_from_hf(
-    hf_model: str, prompt: str, max_new_tokens: int = 20, tp: int = 1, pp: int = 1, ep: int = 1, etp: int = 1
+    hf_model: str,
+    prompt: str,
+    max_new_tokens: int = 20,
+    tp: int = 1,
+    pp: int = 1,
+    ep: int = 1,
+    etp: int = 1,
+    trust_remote_code: bool = False,
 ) -> GeneratedData:
     """
     Generate text from a Megatron model with weights loaded from HuggingFace using AutoBridge.
@@ -478,7 +499,7 @@ def megatron_generate_from_hf(
     print_rank_0(f"Loading HuggingFace model from: {hf_model}")
 
     # Get model config from HF
-    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=True)
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=trust_remote_code)
     model_provider = bridge.to_megatron_provider(load_weights=True)
 
     # Override parallelisms
@@ -494,7 +515,7 @@ def megatron_generate_from_hf(
     # Initialize and load the model and tokenizer
     megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
     tokenizer_cfg = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=hf_model)
-    tokenizer = build_tokenizer(tokenizer_cfg, trust_remote_code=True)
+    tokenizer = build_tokenizer(tokenizer_cfg, trust_remote_code=trust_remote_code)
 
     generated = megatron_generate(megatron_model, tokenizer, prompt, max_new_tokens)
 
@@ -532,6 +553,16 @@ def parse_cli_args() -> argparse.Namespace:
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
+
+    # Security
+    parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help=(
+            "Allow executing custom tokenizer/model code shipped with the checkpoint or "
+            "HuggingFace repo. Off by default; enable only for sources you trust."
+        ),
+    )
 
     # Generation comparison settings
     parser.add_argument(
@@ -657,22 +688,31 @@ def main():
 
     args = parse_cli_args()
 
-    hf_preconvert = transformers_generate(args.hf_model_id, args.prompt, args.max_new_tokens)
+    hf_preconvert = transformers_generate(args.hf_model_id, args.prompt, args.max_new_tokens, args.trust_remote_code)
 
     megatron_fromhf = megatron_generate_from_hf(
-        args.hf_model_id, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp
+        args.hf_model_id, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp, args.trust_remote_code
     )
 
     # Generate from imported checkpoint
-    import_hf_to_megatron(args.hf_model_id, args.megatron_path, args.torch_dtype, args.device_map)
+    import_hf_to_megatron(
+        args.hf_model_id, args.megatron_path, args.torch_dtype, args.device_map, args.trust_remote_code
+    )
     megatron_fromckpt = megatron_generate_from_checkpoint(
-        args.megatron_path, args.prompt, args.max_new_tokens, args.tp, args.pp, args.ep, args.etp
+        args.megatron_path,
+        args.prompt,
+        args.max_new_tokens,
+        args.tp,
+        args.pp,
+        args.ep,
+        args.etp,
+        args.trust_remote_code,
     )
 
     # Generate from exported checkpoint
     _safe_destroy_distributed()  # Export happens on cpu-only and creates new gloo groups
-    export_megatron_to_hf(args.hf_model_id, args.megatron_path, args.hf_save_path)
-    hf_postconvert = transformers_generate(args.hf_save_path, args.prompt, args.max_new_tokens)
+    export_megatron_to_hf(args.hf_model_id, args.megatron_path, args.hf_save_path, args.trust_remote_code)
+    hf_postconvert = transformers_generate(args.hf_save_path, args.prompt, args.max_new_tokens, args.trust_remote_code)
 
     # Compare results
     compare_generated(

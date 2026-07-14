@@ -27,8 +27,8 @@ from megatron.core.optimizer import OptimizerConfig
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer import MegatronModule, TransformerConfig
 from megatron.core.utils import get_model_config
+from megatron.training.models.base import ModelConfig
 
-from megatron.bridge.models.common import ModelConfig
 from megatron.bridge.models.model_provider import ModelParallelKwargs, ModelProviderMixin
 from megatron.bridge.training.checkpointing import save_checkpoint
 from megatron.bridge.training.config import CheckpointConfig, ConfigContainer, LoggerConfig
@@ -198,6 +198,11 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
     else:
         cfg = _tokenizer_config_from_args(mlm_args)
 
+    hf_tokenizer_kwargs = kwargs.get("hf_tokenizer_kwargs")
+    caller_trusts_remote_code = kwargs.get("trust_remote_code") is True or (
+        isinstance(hf_tokenizer_kwargs, dict) and hf_tokenizer_kwargs.get("trust_remote_code") is True
+    )
+
     for key, val in kwargs.items():
         if hasattr(cfg, key):
             setattr(cfg, key, val)
@@ -206,10 +211,36 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
                 f"Attempting to set a non-existent attribute '{key}' on TokenizerConfig.\nState of TokenizerConfig before attempting this override: {cfg}"
             )
 
+    if getattr(cfg, "trust_remote_code", False) is True and not caller_trusts_remote_code:
+        raise ValueError(
+            "Checkpoint tokenizer config requested trust_remote_code=True. "
+            "Pass trust_remote_code=True to load_tokenizer() only if you trust the checkpoint tokenizer code."
+        )
+
     if cfg.tokenizer_type in HF_BASED_TOKENIZERS and cfg.tokenizer_model == Path():
         cfg.tokenizer_model = Path(checkpoint_path) / "tokenizer"
 
     return build_tokenizer(cfg)
+
+
+def _normalize_moe_dispatcher_sm_config(model_dict: dict[str, Any]) -> None:
+    """Migrate legacy per-backend MoE SM counts when MCore supports the unified field."""
+    unified_key = "moe_flex_dispatcher_num_sms"
+    if not hasattr(TransformerConfig, unified_key):
+        return
+
+    # TODO: remove this guard when MCore dev includes commit 2d7060f44fc9 and Bridge no longer
+    # supports checkpoints saved with the legacy per-backend SM-count fields.
+    if model_dict.get(unified_key) is None:
+        backend = model_dict.get("moe_flex_dispatcher_backend", "deepep")
+        legacy_key = "moe_hybridep_num_sms" if backend == "hybridep" else "moe_deepep_num_sms"
+        legacy_value = model_dict.get(legacy_key)
+        if legacy_value is not None:
+            model_dict[unified_key] = legacy_value
+
+    for legacy_key in ("moe_deepep_num_sms", "moe_hybridep_num_sms"):
+        if legacy_key in model_dict:
+            model_dict[legacy_key] = None
 
 
 def load_model_config(
@@ -250,6 +281,7 @@ def load_model_config(
             model_dict["hybrid_layer_pattern"] = model_dict.pop("hybrid_override_pattern")
         if isinstance(model_dict.get("pipeline_model_parallel_layout"), dict):
             model_dict["pipeline_model_parallel_layout"] = None
+        _normalize_moe_dispatcher_sm_config(model_dict)
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)

@@ -145,6 +145,7 @@ def llama31_405b_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = True
     return cfg
 
+
 llama31_405b_pretrain_256gpu_b300_fp8cs_config = llama31_405b_pretrain_256gpu_gb300_fp8cs_config
 
 llama31_405b_pretrain_256gpu_b300_fp8mx_config = llama31_405b_pretrain_256gpu_gb300_fp8mx_config

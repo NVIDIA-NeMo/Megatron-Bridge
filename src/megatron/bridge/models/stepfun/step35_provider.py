@@ -195,7 +195,8 @@ class Step35ModelProvider(GPTModelProvider):
     * ``sliding_attention_setting``: normalized Megatron-facing shape overrides
       derived from ``attention_other_setting``.
     * ``head_wise_attn_gate``: whether to map HF's per-head ``g_proj`` gate
-      through Megatron-Core's ``attention_output_gate`` path.
+      through native per-head gate rows when MCore supports them. Older MCore
+      versions use the full-head ``attention_output_gate`` layout as a fallback.
 
     These fields are populated from the HF config inside
     ``Step35Bridge.provider_bridge``.

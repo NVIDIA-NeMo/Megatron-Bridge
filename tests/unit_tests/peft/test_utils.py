@@ -350,6 +350,58 @@ class TestGetAdapterAttributes:
         assert not attrs.disable_sequence_parallel_comm  # Should be False when sequence_parallel is True
         assert attrs.base_linear_is_parallel  # Should be True for parallel linear layers
 
+    def test_get_adapter_attributes_te_sequence_parallel_input_regather(self):
+        """Test that input re-gather uses the local TE LayerNorm shard, including with UB overlap."""
+
+        class FakeTELayerNormColumnParallelLinear(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.config = SimpleNamespace(
+                    sequence_parallel=True,
+                    tensor_model_parallel_size=2,
+                    tp_comm_overlap=False,
+                    tp_comm_overlap_disable_qkv=False,
+                )
+                self.in_features = 16
+                self.out_features = 12
+                self.parallel_mode = "column"
+                self.return_layernorm_output = False
+                self.return_layernorm_output_gathered = False
+                self.ub_overlap_ag = False
+                self._tp_group = MockProcessGroup(size=2)
+
+        with (
+            patch.object(peft_utils, "HAVE_TE", True),
+            patch.object(peft_utils, "TECL", (FakeTELayerNormColumnParallelLinear,)),
+            patch.object(
+                peft_utils,
+                "TELayerNormColumnParallelLinear",
+                FakeTELayerNormColumnParallelLinear,
+            ),
+            patch.object(peft_utils, "version", return_value="1.10.0"),
+        ):
+            baseline = FakeTELayerNormColumnParallelLinear()
+            baseline_attrs = get_adapter_attributes_from_linear(baseline)
+            assert baseline.return_layernorm_output
+            assert baseline.return_layernorm_output_gathered
+            assert baseline_attrs.disable_sequence_parallel_comm
+
+            regather = FakeTELayerNormColumnParallelLinear()
+            regather_attrs = get_adapter_attributes_from_linear(regather, sequence_parallel_input_regather=True)
+            assert regather.return_layernorm_output
+            assert not regather.return_layernorm_output_gathered
+            assert not regather_attrs.disable_sequence_parallel_comm
+
+            overlap_regather = FakeTELayerNormColumnParallelLinear()
+            overlap_regather.ub_overlap_ag = True
+            overlap_regather.config.tp_comm_overlap = True
+            overlap_regather_attrs = get_adapter_attributes_from_linear(
+                overlap_regather, sequence_parallel_input_regather=True
+            )
+            assert overlap_regather.return_layernorm_output
+            assert not overlap_regather.return_layernorm_output_gathered
+            assert not overlap_regather_attrs.disable_sequence_parallel_comm
+
     def test_get_adapter_attributes_unsupported_module(self):
         """Test with unsupported module type."""
         linear = nn.Conv2d(3, 3, 3)
@@ -597,6 +649,173 @@ class TestParallelLinearAdapter:
         # Verify scaling is applied
         expected_scale = adapter.alpha / adapter.dim
         assert expected_scale > 0
+
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_uses_mcore_sp_linear(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
+    ):
+        """Eligible adapters should let MCore's linear own the SP gather."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_in.side_effect = lambda x: (torch.cat((x[..., :4], x[..., :4]), dim=0), None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (6, 2)
+        mock_gather.assert_not_called()
+        mock_linear_in.assert_called_once_with(local_input)
+        assert mock_linear_in.sequence_parallel is True
+        mock_linear_out.assert_called_once()
+
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_fallback_uses_external_gather(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
+    ):
+        """A static fallback should retain the existing external gather path."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8), requires_grad=False)
+        mock_linear_in.side_effect = lambda x: (x[..., :4], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_gather.side_effect = lambda x, group: torch.cat((x, x), dim=0)
+
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (6, 2)
+        mock_gather.assert_called_once_with(local_input, group=adapter.tp_group)
+        assert mock_linear_in.sequence_parallel is False
+
+    @patch("megatron.bridge.peft.utils.gather_from_sequence_parallel_region")
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_tp1_fallback(
+        self,
+        mock_row_linear,
+        mock_col_linear,
+        mock_gather,
+        mock_config,
+    ):
+        """TP=1 should keep the existing path instead of re-enabling MCore SP."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_in.side_effect = lambda x: (x[..., :4], None)
+        mock_linear_out = Mock()
+        mock_linear_out.side_effect = lambda x: (x[..., :2], None)
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        mock_gather.side_effect = lambda x, group: x
+
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=1),
+        )
+        local_input = torch.randn(3, 8, requires_grad=True)
+        output = adapter(local_input)
+
+        assert output.shape == (3, 2)
+        mock_gather.assert_called_once_with(local_input, group=adapter.tp_group)
+        assert mock_linear_in.sequence_parallel is False
+
+    @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
+    @patch("megatron.bridge.peft.utils.RowParallelLinear")
+    def test_parallel_linear_adapter_sequence_parallel_input_regather_eligibility_gates(
+        self, mock_row_linear, mock_col_linear, mock_config
+    ):
+        """Only qkv/fc1 SP LoRA without overlapping recompute should be eligible."""
+        mock_config.sequence_parallel = True
+        mock_linear_in = Mock()
+        mock_linear_in.weight = nn.Parameter(torch.ones(4, 8))
+        mock_linear_out = Mock()
+        mock_col_linear.side_effect = [mock_linear_in, mock_linear_out]
+        adapter = ParallelLinearAdapter(
+            in_features=8,
+            out_features=2,
+            dim=4,
+            base_linear_name="decoder.layers.0.self_attention.linear_qkv",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=mock_config,
+            disable_sequence_parallel_comm=False,
+            sequence_parallel_input_regather=True,
+            pg_collection=make_mock_pg_collection(tp_size=2),
+        )
+        x = torch.randn(3, 8, requires_grad=True)
+
+        assert adapter._sequence_parallel_input_regather_eligibility(x) == (True, None)
+
+        mock_linear_in.weight.requires_grad_(False)
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+        mock_linear_in.weight.requires_grad_(True)
+
+        adapter.base_linear_name = "decoder.layers.0.self_attention.linear_proj"
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+        adapter.base_linear_name = "decoder.layers.0.mlp.linear_fc1"
+
+        adapter.input_is_parallel = True
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+        adapter.input_is_parallel = False
+
+        mock_config.recompute_granularity = "selective"
+        mock_config.recompute_modules = ["mlp"]
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
+
+        adapter.base_linear_name = "decoder.layers.0.self_attention.linear_qkv"
+        assert adapter._sequence_parallel_input_regather_eligibility(x) == (True, None)
+
+        mock_config.recompute_granularity = "full"
+        assert not adapter._sequence_parallel_input_regather_eligibility(x)[0]
 
     @patch("megatron.bridge.peft.utils.ColumnParallelLinear")
     @patch("megatron.bridge.peft.utils.RowParallelLinear")
@@ -1746,6 +1965,46 @@ def test_load_peft_adapter_checkpoint_filters_and_loads(monkeypatch) -> None:
     assert calls["load_strategy"] == "strategy"
     assert torch.equal(model[0].loaded_state_dict["adapter.weight"], torch.tensor([4.0]))
     assert model[0].loaded_strict is False
+
+
+def test_load_peft_adapter_checkpoint_builds_default_parallel_strategy(monkeypatch) -> None:
+    model = [_FakeModel()]
+    peft = _FakePeft()
+    pg_collection = make_mock_pg_collection()
+    base_strategy = object()
+    parallel_strategy = object()
+
+    _patch_checkpointing(
+        monkeypatch,
+        lambda model, model_sd_kwargs, ckpt_format, pg_collection=None: {"model": model[0].sharded_state_dict()},
+        lambda state_dict, peft: state_dict,
+    )
+
+    with (
+        patch(
+            "megatron.core.dist_checkpointing.strategies.torch.TorchDistLoadShardedStrategy",
+            return_value=base_strategy,
+        ) as mock_strategy_cls,
+        patch(
+            "megatron.core.dist_checkpointing.strategies.fully_parallel.FullyParallelLoadStrategyWrapper",
+            return_value=parallel_strategy,
+        ) as mock_parallel_wrapper,
+        patch(
+            "megatron.core.dist_checkpointing.load",
+            return_value={"model": {"adapter.weight": torch.tensor([4.0])}},
+        ) as mock_load,
+    ):
+        peft_utils.load_peft_adapter_checkpoint(
+            model,
+            "/adapter",
+            peft=peft,
+            pg_collection=pg_collection,
+        )
+
+    mock_strategy_cls.assert_called_once_with()
+    mock_parallel_wrapper.assert_called_once_with(base_strategy, pg_collection.dp_cp)
+    mock_load.assert_called_once()
+    assert mock_load.call_args.args[1:] == ("/adapter", parallel_strategy)
 
 
 def test_load_peft_adapter_checkpoint_errors_for_missing_model_key(monkeypatch) -> None:

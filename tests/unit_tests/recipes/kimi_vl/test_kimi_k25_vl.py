@@ -34,6 +34,7 @@ from megatron.bridge.recipes.kimi_vl.kimi_k25_vl import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 class _FakeKimiK25VLProvider:
@@ -68,7 +69,7 @@ class _FakeAutoBridge:
 def _patch_autobridge(monkeypatch):
     """Monkeypatch AutoBridge in the kimi_k25_vl recipe module to avoid HF I/O."""
     mod = importlib.import_module("megatron.bridge.recipes.kimi_vl.kimi_k25_vl")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
 
 
 class TestKimiK25VLPipelineLayout:
@@ -202,7 +203,7 @@ class TestKimiK25VLSftConfig:
 
         assert cfg.dataset.sequence_length == 4096
         assert cfg.dataset.num_workers == 8
-        assert cfg.dataset.pack_sequences_in_batch is False
+        assert cfg.dataset.enable_in_batch_packing is False
         assert cfg.dataset.hf_processor_path == "moonshotai/Kimi-K2.5"
         assert cfg.dataset.blend is None
 
@@ -309,7 +310,7 @@ class TestKimiK25VLSftConfig:
                 return _FakeProviderRopeOn()
 
         mod = importlib.import_module("megatron.bridge.recipes.kimi_vl.kimi_k25_vl")
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridgeRopeOn)
+        patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridgeRopeOn)
 
         cfg = kimi_k25_vl_sft_config()
 

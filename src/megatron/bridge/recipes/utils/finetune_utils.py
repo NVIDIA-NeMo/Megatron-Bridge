@@ -14,14 +14,15 @@
 
 """Utility functions for finetuning recipes."""
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors.gsm8k import process_gsm8k_example
-from megatron.bridge.data.hf_processors.openmathinstruct2 import (
-    process_openmathinstruct2_example,
-    process_openmathinstruct2_thinking_packed_example,
+from typing import Any
+
+from megatron.bridge.data.builders import (
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
 )
-from megatron.bridge.data.hf_processors.squad import process_squad_example
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import LoRA
@@ -55,51 +56,78 @@ def default_peft_config(peft_scheme: str | PEFT | None, **kwargs) -> PEFT | None
     raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
 
 
-def default_squad_config(seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1) -> HFDatasetConfig:
+def _text_hf_dataset_config(
+    *,
+    seq_length: int,
+    source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
+    validation_source: HFDatasetSourceConfig | None = None,
+    test_source: HFDatasetSourceConfig | None = None,
+    do_validation: bool = True,
+    do_test: bool = False,
+    enable_offline_packing: bool = False,
+    offline_packing_specs: PackedSequenceSpecs | None = None,
+    dataset_kwargs: dict[str, Any] | None = None,
+    val_proportion: float | None = None,
+    num_workers: int = 2,
+) -> GPTSFTDatasetConfig:
+    """Create an HF-backed text SFT config with optional offline packing."""
+    return GPTSFTDatasetConfig(
+        seq_length=seq_length,
+        hf_dataset=source,
+        hf_validation_dataset=validation_source,
+        hf_test_dataset=test_source,
+        hf_validation_proportion=val_proportion,
+        do_validation=do_validation,
+        do_test=do_test,
+        preprocessing=preprocessing,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        dataset_kwargs=dataset_kwargs,
+        seed=5678,
+        dataloader_type="batch",
+        num_workers=num_workers,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+    )
+
+
+def default_squad_config(
+    seq_length: int, packed_sequence: bool = True, pad_seq_to_mult: int = 1
+) -> GPTSFTDatasetConfig:
     """Create default SQuAD dataset configuration for finetuning recipes.
 
     Args:
         seq_length: Sequence length for the dataset
-        packed_sequence: Whether to enable packed sequences for training efficiency
+        packed_sequence: Whether to enable offline packed-sequence preparation.
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing
             (set to `2 * context_parallel_size` for THD CP runs).
 
     Returns:
-        HFDatasetConfig configured for SQuAD finetuning
+        GPTSFTDatasetConfig configured for SQuAD finetuning
 
     Note:
         Uses consistent settings across all finetuning recipes:
         - SQuAD dataset with appropriate dataloader type
-        - 10% validation split
+        - 10% validation slice
         - Seed 5678 (different from pretrain seed 1234)
-        - Packed sequences when enabled improve training efficiency
     """
+    dataset_kwargs = {}
+    offline_packing_specs = None
     if packed_sequence:
-        # Packed sequence configuration
-        dataset_kwargs = {"pad_to_max_length": True}
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
-    else:
-        # Standard configuration
-        dataset_kwargs = {}
-        packed_sequence_specs = None
+        dataset_kwargs["pad_to_max_length"] = True
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    # Use 'batch' sampler for variable-length finetuning
-    # Samples full global batch to ensure consistent padding across all microbatches
-    dataloader_type = "batch"
-
-    return HFDatasetConfig(
-        dataset_name="rajpurkar/squad",
-        process_example_fn=process_squad_example,
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         seq_length=seq_length,
-        seed=5678,  # Different from pretrain seed
-        dataloader_type=dataloader_type,
-        num_workers=1,
-        do_validation=True,
-        do_test=False,
-        val_proportion=0.1,
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
         dataset_kwargs=dataset_kwargs,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,
+        val_proportion=0.1,
+        num_workers=1,
     )
 
 
@@ -107,31 +135,20 @@ def default_openmathinstruct2_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFDatasetConfig:
+) -> GPTSFTDatasetConfig:
     """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
-    # Create packed sequence specs if needed
-    packed_sequence_specs = None
+    offline_packing_specs = None
     if packed_sequence:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return HFDatasetConfig(
-        dataset_name="nvidia/OpenMathInstruct-2",  # Hugging Face dataset name
-        split="train_1M",  # Default to the 1M subset
-        process_example_fn=process_openmathinstruct2_example,  # Processing function
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
         seq_length=seq_length,
-        seed=5678,
-        memmap_workers=1,
-        # Dataloader config parameters
-        dataloader_type="batch",
-        do_validation=True,
-        do_test=False,
-        val_proportion=0.05,  # 950k train, 50k val
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
+        val_proportion=0.05,
         num_workers=2,
-        data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,  # Rewrite existing processed files
     )
 
 
@@ -139,7 +156,7 @@ def default_gsm8k_config(
     seq_length: int = 2048,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFDatasetConfig:
+) -> GPTSFTDatasetConfig:
     """Create default GSM8K dataset configuration for finetuning recipes.
 
     GSM8K (Grade School Math 8K) is a dataset of 8.5K high quality linguistically diverse
@@ -147,40 +164,30 @@ def default_gsm8k_config(
 
     Args:
         seq_length: Sequence length for the dataset (default 2048, sufficient for GSM8K)
-        packed_sequence: Whether to enable packed sequences for training efficiency
-        pad_seq_to_mult: Optional multiple to pad each sequence to when packing
-            (set to `2 * context_parallel_size` for THD CP runs).
+        packed_sequence: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Optional multiple to pad each sequence to when packing.
 
     Returns:
-        HFDatasetConfig configured for GSM8K finetuning
+        GPTSFTDatasetConfig configured for GSM8K finetuning
 
     Note:
         - GSM8K has 7,473 train and 1,319 test examples
         - Loads the full DatasetDict so the published test split is used for evaluation
-        - Uses 'batch' dataloader type for variable-length finetuning
     """
-    # Create packed sequence specs if needed
-    packed_sequence_specs = None
+    offline_packing_specs = None
     if packed_sequence:
-        packed_sequence_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
-    return HFDatasetConfig(
-        dataset_name="openai/gsm8k",  # Hugging Face dataset name
-        dataset_subset="main",  # 'main' or 'socratic'
-        process_example_fn=process_gsm8k_example,  # Processing function
-        seq_length=seq_length,
-        seed=5678,
-        memmap_workers=1,
-        # Dataloader config parameters
-        dataloader_type="batch",
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="gsm8k"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
         do_validation=False,
         do_test=True,
+        seq_length=seq_length,
+        enable_offline_packing=packed_sequence,
+        offline_packing_specs=offline_packing_specs,
         num_workers=2,
-        data_sharding=True,
-        pin_memory=True,
-        persistent_workers=False,
-        packed_sequence_specs=packed_sequence_specs,
-        rewrite=False,
     )
 
 
@@ -188,26 +195,23 @@ def default_openmathinstruct2_thinking_packed_config(
     seq_length: int = 4096,
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
-) -> HFDatasetConfig:
+) -> GPTSFTDatasetConfig:
     """Create OpenMathInstruct-2 dataset config with CoT in analysis channel, answer in final channel.
 
     Puts generated_solution (minus the trailing \boxed{N}) into the assistant thinking field
     (rendered as <|channel|>analysis) and #### {expected_answer} into the content field
-    (rendered as <|channel|>final). Uses packed sequences for training efficiency.
+    (rendered as <|channel|>final).
 
     Args:
         seq_length: Sequence length (default 4096)
-        packed_sequence: Whether to enable packed sequences for training efficiency
-        pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs)
+        packed_sequence: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs).
     """
-    from megatron.bridge.data.datasets.sft import get_dataset_root
-
     cfg = default_openmathinstruct2_config(
         seq_length=seq_length,
         packed_sequence=packed_sequence,
         pad_seq_to_mult=pad_seq_to_mult,
     )
-    cfg.process_example_fn = process_openmathinstruct2_thinking_packed_example
-    cfg.dataset_kwargs = {"chat": True, "use_hf_tokenizer_chat_template": True}
-    cfg.dataset_root = get_dataset_root("nvidia/OpenMathInstruct-2-gsm8k-analysis-final")
+    assert cfg.hf_dataset is not None
+    cfg.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
     return cfg

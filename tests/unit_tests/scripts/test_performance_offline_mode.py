@@ -92,33 +92,6 @@ def test_parse_cli_args_accepts_offline_flag(import_performance_module):
     assert args.offline is True
 
 
-def test_parse_cli_args_accepts_custom_post_bash_cmds(import_performance_module):
-    """The performance CLI should accept repeatable post-main bash commands."""
-    argument_parser = import_performance_module("scripts.performance.argument_parser")
-
-    parser = argument_parser.parse_cli_args()
-    args = parser.parse_args(
-        [
-            "--model_family_name",
-            "llama",
-            "--model_recipe_name",
-            "llama3_8b",
-            "--num_gpus",
-            "8",
-            "--gpu",
-            "h100",
-            "--custom_post_bash_cmds",
-            "echo",
-            "post-one",
-            "--custom_post_bash_cmds",
-            "echo",
-            "post-two",
-        ]
-    )
-
-    assert args.custom_post_bash_cmds == [["echo", "post-one"], ["echo", "post-two"]]
-
-
 def test_argparse_rejects_hf_token_with_offline(import_performance_module):
     """argparse should reject --hf_token and --offline together at parse time."""
     argument_parser = import_performance_module("scripts.performance.argument_parser")
@@ -228,38 +201,3 @@ def test_slurm_executor_no_state_leakage_between_calls(import_performance_module
     assert "HF_TOKEN" not in second.env_vars
     assert "WANDB_API_KEY" not in second.env_vars
     assert second.env_vars["TRANSFORMERS_OFFLINE"] == "1"
-
-
-def test_slurm_executor_renders_noop_post_hook_by_default(import_performance_module):
-    """Slurm launcher should preserve default behavior with a no-op post hook."""
-    executors = import_performance_module("scripts.performance.utils.executors")
-
-    executor = executors.slurm_executor(
-        gpu="h100",
-        account="test_account",
-        partition="test_partition",
-        log_dir="/tmp/log_dir",
-        nodes=1,
-        num_gpus_per_node=8,
-    )
-
-    assert executor.launcher.template_vars["post_cmds"] == ":"
-    assert "NEMO_RUN_TRAINING_EXIT_CODE" in executor.launcher.template_inline
-    assert 'exit "${POST_RC}"' in executor.launcher.template_inline
-
-
-def test_slurm_executor_renders_custom_post_hooks(import_performance_module):
-    """Slurm launcher should render custom post-main bash commands."""
-    executors = import_performance_module("scripts.performance.utils.executors")
-
-    executor = executors.slurm_executor(
-        gpu="h100",
-        account="test_account",
-        partition="test_partition",
-        log_dir="/tmp/log_dir",
-        nodes=1,
-        num_gpus_per_node=8,
-        custom_post_bash_cmds=[["echo", "first"], ["echo", "second"]],
-    )
-
-    assert executor.launcher.template_vars["post_cmds"] == "echo first ; echo second"

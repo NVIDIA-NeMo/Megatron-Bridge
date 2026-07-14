@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.packed_seq_params import PackedSeqParams
 
 
 @pytest.fixture
@@ -164,6 +165,59 @@ class TestGLM45VModelForward:
 
         model.language_model.embedding.assert_called_once()
         model.language_model.forward.assert_called_once()
+
+    @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.is_transformers_min_version")
+    @patch("transformers.models.glm4v.modeling_glm4v.Glm4vVisionModel")
+    @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.hook_hf_module_setattr_for_tp_grad_sync")
+    @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.Glm4vModel")
+    def test_forward_resets_packed_mrope_per_sequence(
+        self,
+        mock_glm4v_model,
+        mock_hook_hf,
+        mock_vision_cls,
+        mock_version_check,
+        mock_gpt_provider,
+        mock_visual,
+    ):
+        mock_version_check.return_value = True
+        mock_vision_cls._from_config.return_value = mock_visual
+
+        from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
+
+        model = GLM45VModel(config=mock_gpt_provider, pre_process=True, post_process=True)
+        model.language_model.embedding.return_value = torch.randn(8, 1, 4096)
+        row_position_ids = torch.tensor(
+            [
+                [[0, 1, 0], [0, 1, 2]],
+                [[0, 1, 0], [10, 11, 12]],
+                [[0, 1, 0], [20, 21, 22]],
+            ]
+        )
+        model.get_rope_index = Mock(return_value=(row_position_ids, torch.zeros(2, 1)))
+        input_ids = torch.tensor([[10, 11, 0, 0, 20, 21, 22, 0]])
+        mm_token_type_ids = torch.tensor([[0, 1, 0, 0, 0, 2, 2, 0]])
+        packed_seq_params = PackedSeqParams(
+            qkv_format="thd",
+            cu_seqlens_q=torch.tensor([0, 2, 5], dtype=torch.int32),
+            cu_seqlens_q_padded=torch.tensor([0, 4, 8], dtype=torch.int32),
+        )
+
+        model.forward(
+            input_ids=input_ids,
+            mm_token_type_ids=mm_token_type_ids,
+            packed_seq_params=packed_seq_params,
+        )
+
+        rope_input_ids = model.get_rope_index.call_args.args[0]
+        rope_mm_token_type_ids = model.get_rope_index.call_args.kwargs["mm_token_type_ids"]
+        assert rope_input_ids.tolist() == [[10, 11, 0], [20, 21, 22]]
+        assert rope_mm_token_type_ids.tolist() == [[0, 1, 0], [0, 2, 2]]
+        packed_position_ids = model.language_model.forward.call_args.kwargs["position_ids"]
+        assert packed_position_ids.tolist() == [
+            [[0, 1, 0, 0, 0, 1, 2, 0]],
+            [[0, 1, 0, 0, 10, 11, 12, 0]],
+            [[0, 1, 0, 0, 20, 21, 22, 0]],
+        ]
 
     @patch("megatron.bridge.models.glm_vl.modeling_glm_45v.is_transformers_min_version")
     @patch("transformers.models.glm4v.modeling_glm4v.Glm4vVisionModel")

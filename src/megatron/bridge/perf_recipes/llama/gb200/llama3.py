@@ -267,7 +267,7 @@ def llama3_8b_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.seq_length = 16384
     cfg.dataset.seq_length = 16384
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 16384
+    cfg.dataset.offline_packing_specs.packed_sequence_size = 16384
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
@@ -297,7 +297,7 @@ def llama3_8b_sft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     cfg.model.seq_length = 16384
     cfg.dataset.seq_length = 16384
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 16384
+    cfg.dataset.offline_packing_specs.packed_sequence_size = 16384
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.context_parallel_size = 1
@@ -379,7 +379,7 @@ def llama3_70b_sft_32gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB200, BF16, GBS=64, seq_length=2048."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("bf16")
@@ -395,7 +395,7 @@ def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.peft.target_modules = ["linear_qkv"]
     cfg.model.seq_length = 2048
     cfg.dataset.seq_length = 2048
-    cfg.dataset.packed_sequence_specs.packed_sequence_size = 2048
+    cfg.dataset.offline_packing_specs.packed_sequence_size = 2048
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.context_parallel_size = 1
@@ -408,7 +408,7 @@ def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap = False
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
@@ -416,7 +416,7 @@ def llama3_70b_lora_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB200, FP8 current-scaling, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("fp8_cs")
@@ -443,7 +443,7 @@ def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap = False
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
@@ -451,7 +451,7 @@ def llama3_70b_lora_8gpu_gb200_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× GB200, MXFP8, PP=2."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("fp8_mx")
@@ -478,7 +478,7 @@ def llama3_70b_lora_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap = False
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = True
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)

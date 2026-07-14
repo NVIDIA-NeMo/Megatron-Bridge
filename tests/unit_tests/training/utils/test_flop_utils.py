@@ -19,8 +19,14 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
+import torch
 
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations, vit_flops
+from megatron.bridge.training.utils.flop_utils import (
+    accumulate_flops_metadata,
+    num_floating_point_operations,
+    resolve_global_flops_seqlen_stats,
+    vit_flops,
+)
 
 
 @dataclass
@@ -421,6 +427,243 @@ class TestHybridLayerCounting:
         )
         assert flops_swiglu == expected_swiglu, f"SwiGLU: expected {expected_swiglu:.2e} but got {flops_swiglu:.2e}"
 
+    def test_hybrid_attention_term_scales_with_seqlen_squared_sum(self):
+        """Hybrid attention core FLOPs must use Σ L², not only average sequence length."""
+        batch_size = 4
+        seq_len = 1024
+        hidden_size = 1024
+        num_heads = 8
+        kv_channels = 128
+        cfg = MockConfigContainer(
+            model=MockModelConfig(
+                is_hybrid_model=True,
+                hybrid_layer_pattern="*",
+                num_layers=1,
+                hidden_size=hidden_size,
+                seq_length=seq_len,
+                ffn_hidden_size=4096,
+                num_attention_heads=num_heads,
+                num_query_groups=num_heads,
+                kv_channels=kv_channels,
+                vocab_size=32000,
+                gated_linear_unit=False,
+            )
+        )
+        seqlen_sum = batch_size * seq_len
+        sq_base = batch_size * seq_len**2
+        sq_bumped = sq_base + 1_000_000
+
+        flops_base = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_base,
+        )
+        flops_bumped = num_floating_point_operations(
+            cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=sq_bumped,
+        )
+
+        query_projection_size = kv_channels * num_heads
+        expected_delta = 3 * 2 * query_projection_size * (sq_bumped - sq_base)
+        assert flops_bumped - flops_base == expected_delta
+
+
+@pytest.mark.unit
+class TestHybridTransformerParity:
+    """Parity tests for equivalent logical transformer and physical hybrid patterns."""
+
+    @staticmethod
+    def _base_config(**overrides):
+        config = dict(
+            num_layers=4,
+            hidden_size=512,
+            seq_length=256,
+            ffn_hidden_size=1024,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=64,
+            vocab_size=32000,
+            make_vocab_size_divisible_by=128,
+            tensor_model_parallel_size=1,
+            gated_linear_unit=True,
+            mtp_num_layers=0,
+        )
+        config.update(overrides)
+        return config
+
+    def test_dense_physical_pattern_matches_transformer(self):
+        """A physical attention+MLP stack should match the equivalent dense transformer."""
+        batch_size = 2
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**self._base_config()))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **self._base_config(
+                    is_hybrid_model=True,
+                    num_layers=8,
+                    hybrid_layer_pattern="*-" * 4,
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_moe_physical_pattern_matches_transformer(self):
+        """GPT-OSS-style attention+MoE physical layers should not double-count FLOPs."""
+        batch_size = 2
+        moe_config = self._base_config(
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**moe_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    moe_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*E" * 4,
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_hybrid_pattern_routes_to_hybrid_flop_path_without_flag(self):
+        """A hybrid_layer_pattern should be enough to select hybrid FLOP accounting."""
+        batch_size = 2
+        moe_config = self._base_config(
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**moe_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    moe_config
+                    | {
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*E" * 4,
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_mixed_dense_and_moe_physical_pattern_matches_transformer(self):
+        """Hybrid FLOPs should match transformer FLOPs for mixed dense/MoE logical layers."""
+        batch_size = 2
+        mixed_config = self._base_config(
+            num_moe_experts=8,
+            moe_layer_freq=[0, 1, 0, 1],
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+        )
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**mixed_config))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    mixed_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*-*E*-*E",
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_sliding_window_physical_pattern_matches_transformer(self):
+        """Hybrid SWA counting should use physical layer positions in window_attn_skip_freq."""
+        batch_size = 2
+        moe_config = self._base_config(
+            seq_length=1024,
+            num_moe_experts=8,
+            moe_layer_freq=1,
+            moe_router_topk=2,
+            moe_ffn_hidden_size=1024,
+            moe_shared_expert_intermediate_size=256,
+            window_size=(127, 0),
+        )
+        transformer_cfg = MockConfigContainer(
+            model=MockModelConfig(**(moe_config | {"window_attn_skip_freq": [1, 0, 1, 0]}))
+        )
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **(
+                    moe_config
+                    | {
+                        "is_hybrid_model": True,
+                        "num_layers": 8,
+                        "hybrid_layer_pattern": "*E" * 4,
+                        "window_attn_skip_freq": [1, 0, 0, 0, 1, 0, 0, 0],
+                    }
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(transformer_cfg, batch_size=batch_size)
+        hybrid_flops = num_floating_point_operations(hybrid_cfg, batch_size=batch_size)
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
+    def test_dynamic_sequence_lengths_match_transformer(self):
+        """Hybrid attention core FLOPs should use seqlen_squared_sum like transformer FLOPs."""
+        batch_size = 2
+        seqlen_sum = 128 + 640
+        seqlen_squared_sum = 128**2 + 640**2
+        transformer_cfg = MockConfigContainer(model=MockModelConfig(**self._base_config(num_layers=2)))
+        hybrid_cfg = MockConfigContainer(
+            model=MockModelConfig(
+                **self._base_config(
+                    is_hybrid_model=True,
+                    num_layers=4,
+                    hybrid_layer_pattern="*-" * 2,
+                )
+            )
+        )
+
+        transformer_flops = num_floating_point_operations(
+            transformer_cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+        hybrid_flops = num_floating_point_operations(
+            hybrid_cfg,
+            batch_size=batch_size,
+            seqlen_sum=seqlen_sum,
+            seqlen_squared_sum=seqlen_squared_sum,
+        )
+
+        assert hybrid_flops == pytest.approx(transformer_flops)
+
 
 @pytest.mark.unit
 class TestGDNLayerFlops:
@@ -547,6 +790,88 @@ class TestGDNLayerFlops:
         assert flops == int_freq_flops, (
             "List [1,1,0,1,1,0,1,1] should produce the same FLOPs as int freq=3 (equivalent 6/2 split)"
         )
+
+    @pytest.mark.parametrize(
+        ("linear_attention_freq", "last_layer_is_gdn"),
+        [
+            pytest.param(4, False, id="int-last-standard"),
+            pytest.param([1, 1, 1, 0], False, id="list-last-standard"),
+            pytest.param(3, True, id="int-last-gdn"),
+            pytest.param([1, 1, 0, 1], True, id="list-last-gdn"),
+        ],
+    )
+    def test_gdn_mtp_reuses_last_decoder_attention_type(self, linear_attention_freq, last_layer_is_gdn):
+        """Every MTP depth should reuse the final decoder layer's attention type."""
+        batch_size = 1
+        hidden_size = 128
+        seq_length = 32
+        ffn_hidden_size = 256
+        num_attention_heads = 4
+        num_query_groups = 2
+        kv_channels = 32
+        vocab_size = 1024
+        mtp_num_layers = 2
+        linear_key_head_dim = 16
+        linear_value_head_dim = 16
+        linear_num_key_heads = 4
+        linear_num_value_heads = 8
+        linear_conv_kernel_dim = 4
+        model_overrides = {
+            "num_layers": 4,
+            "hidden_size": hidden_size,
+            "seq_length": seq_length,
+            "ffn_hidden_size": ffn_hidden_size,
+            "num_attention_heads": num_attention_heads,
+            "num_query_groups": num_query_groups,
+            "kv_channels": kv_channels,
+            "vocab_size": vocab_size,
+            "gated_linear_unit": False,
+            "linear_attention_freq": linear_attention_freq,
+            "linear_key_head_dim": linear_key_head_dim,
+            "linear_value_head_dim": linear_value_head_dim,
+            "linear_num_key_heads": linear_num_key_heads,
+            "linear_num_value_heads": linear_num_value_heads,
+            "linear_conv_kernel_dim": linear_conv_kernel_dim,
+        }
+        base_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides))
+        mtp_cfg = MockConfigContainer(model=self._qwen35_27b_config(**model_overrides, mtp_num_layers=mtp_num_layers))
+
+        query_projection_size = kv_channels * num_attention_heads
+        key_value_projection_size = kv_channels * num_query_groups
+        dense_mlp = 3 * 2 * hidden_size * (ffn_hidden_size * 2)
+        standard_attention = (
+            3
+            * 2
+            * (
+                hidden_size * (query_projection_size + 2 * key_value_projection_size)
+                + query_projection_size * hidden_size
+                + query_projection_size * seq_length
+            )
+        )
+        qk_dim = linear_key_head_dim * linear_num_key_heads
+        v_dim = linear_value_head_dim * linear_num_value_heads
+        gdn_attention = (
+            3
+            * 2
+            * (
+                hidden_size * (2 * qk_dim + 2 * v_dim + 2 * linear_num_value_heads)
+                + linear_conv_kernel_dim * (2 * qk_dim + v_dim)
+                + linear_num_value_heads * linear_value_head_dim**2 * 4
+                + hidden_size * v_dim
+            )
+        )
+        mtp_aux = 3 * 2 * (3 * hidden_size + 2 * hidden_size**2)
+        extra_logits = 3 * 2 * hidden_size * vocab_size
+        last_attention = gdn_attention if last_layer_is_gdn else standard_attention
+        expected_delta = (
+            batch_size * seq_length * mtp_num_layers * (dense_mlp + last_attention + mtp_aux + extra_logits)
+        )
+
+        actual_delta = num_floating_point_operations(mtp_cfg, batch_size=batch_size) - num_floating_point_operations(
+            base_cfg, batch_size=batch_size
+        )
+
+        assert actual_delta == pytest.approx(expected_delta)
 
     def test_gdn_exact_self_attn_term(self):
         """Verify the GDN self_attn_term matches the expected formula from Megatron-LM."""
@@ -895,10 +1220,7 @@ class TestHybridMtpPatternParsing:
         cfg_inferred = MockConfigContainer(model=MockModelConfig(**(base_cfg | {"mtp_num_layers": None})))
 
         parsed_pattern = SimpleNamespace(main_pattern="M*", mtp_pattern="MM", mtp_num_depths=2)
-        mock_module = MagicMock()
-        mock_module.parse_hybrid_pattern.return_value = parsed_pattern
-
-        with patch("megatron.bridge.training.utils.flop_utils.importlib.import_module", return_value=mock_module):
+        with patch("megatron.bridge.training.utils.flop_utils.parse_hybrid_pattern", return_value=parsed_pattern):
             flops_explicit_zero = num_floating_point_operations(cfg_explicit_zero, batch_size=batch_size)
             flops_inferred = num_floating_point_operations(cfg_inferred, batch_size=batch_size)
 
@@ -1949,3 +2271,333 @@ class TestProviderOverride:
         assert num_floating_point_operations(cfg, batch_size=4) == sentinel * 4
         # Override must have been invoked twice with the right batch_size args.
         assert captured == [1, 4], f"Override call log mismatch: {captured}"
+
+
+class _State:
+    """Minimal stand-in for GlobalState — just an attribute bag."""
+
+
+class TestAccumulateFlopsMetadata:
+    """Unit tests for ``accumulate_flops_metadata``."""
+
+    def test_bshd_no_cu_seqlens_uses_pack_length_squared(self):
+        # Without cu_seqlens, the accumulator falls back to BSHD math —
+        # mbs * seq_len² — matching the pre-existing behavior on dense
+        # pretraining / non-packed paths.
+        state = _State()
+        tokens = torch.zeros(2, 512)
+        accumulate_flops_metadata(state, tokens)
+        assert state._flops_seqlen_sum == 2 * 512
+        assert state._flops_seqlen_sq_sum == 2 * 512**2
+        assert not getattr(state, "_flops_requires_global_reduce", False)
+
+    def test_bshd_fallback_uses_full_sequence_length_for_cp_sliced_tokens(self):
+        # Dense GPT batches are sliced along sequence dimension before the
+        # forward step under context parallelism. FLOPS should still be based on
+        # the full model sequence length, not the CP-local token length.
+        state = _State()
+        tokens = torch.zeros(1, 2048)
+        accumulate_flops_metadata(state, tokens, config_seq_len=4096)
+        assert state._flops_seqlen_sum == 4096
+        assert state._flops_seqlen_sq_sum == 4096**2
+        assert not getattr(state, "_flops_requires_global_reduce", False)
+
+    def test_mock_state_accumulators_start_at_zero(self):
+        state = MagicMock()
+        tokens = torch.zeros(1, 8)
+        accumulate_flops_metadata(state, tokens)
+        assert state._flops_seqlen_sum == 8
+        assert state._flops_seqlen_sq_sum == 64
+
+    def test_thd_cu_seqlens_uses_sum_of_squares(self):
+        # cu_seqlens = [0, 256, 512, 4096] → sub-seq lengths [256, 256, 3584].
+        # THD attention work = 256² + 256² + 3584² = 12,975,488; the BSHD
+        # approximation (1 × 4096²) would be 16,777,216 — much larger.
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens = torch.tensor([0, 256, 512, 4096])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sum == 1 * 4096
+        assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+        assert state._flops_requires_global_reduce
+
+    def test_config_seq_len_does_not_override_thd_cu_seqlens(self):
+        # config_seq_len is only a dense/non-packed fallback. THD still uses
+        # the actual packed tensor length for linear terms and cu_seqlens for
+        # attention work.
+        state = _State()
+        tokens = torch.zeros(1, 2048)
+        cu_seqlens = torch.tensor([0, 512, 2048])
+        accumulate_flops_metadata(state, tokens, config_seq_len=4096, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sum == 2048
+        assert state._flops_seqlen_sq_sum == 512**2 + 1536**2
+        assert state._flops_requires_global_reduce
+
+    def test_thd_padded_cu_seqlens_with_argmin(self):
+        # Offline packed SFT pads cu_seqlens for CUDA graphs; the real
+        # entries end at cu_seqlens_argmin. Pad entries past argmin must be
+        # ignored (here they would otherwise contribute zero-length, but we
+        # exercise the truncation explicitly).
+        state = _State()
+        tokens = torch.zeros(1, 8192)
+        cu_seqlens = torch.tensor([0, 1024, 4096, 8192, 8192, 8192, 8192])
+        argmin = torch.tensor(4)  # real entries [0, 1024, 4096, 8192]
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens, cu_seqlens_argmin=argmin)
+        assert state._flops_seqlen_sq_sum == 1024**2 + 3072**2 + 4096**2
+
+    def test_thd_unpadded_takes_precedence_over_padded(self):
+        # When both cu_seqlens_unpadded and cu_seqlens are present, the
+        # unpadded variant describes the actual sub-sequence boundaries used
+        # by the attention kernel (cu_seqlens_q in PackedSeqParams) and must
+        # be the source of Σᵢ sᵢ².
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens_padded = torch.tensor([0, 4096, 4096, 4096])  # 1 pad-aligned sub-seq
+        cu_seqlens_unpadded = torch.tensor([0, 1000, 3500, 4096])  # 3 real sub-seqs
+        accumulate_flops_metadata(
+            state,
+            tokens,
+            cu_seqlens=cu_seqlens_padded,
+            cu_seqlens_unpadded=cu_seqlens_unpadded,
+        )
+        assert state._flops_seqlen_sq_sum == 1000**2 + 2500**2 + 596**2
+
+    def test_accumulates_additively_across_microbatches(self):
+        # Each call adds to existing accumulators (microbatch loop semantics).
+        state = _State()
+        tokens = torch.zeros(1, 128)
+        cu_a = torch.tensor([0, 32, 128])
+        cu_b = torch.tensor([0, 64, 128])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_a)
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_b)
+        assert state._flops_seqlen_sum == 2 * 128
+        assert state._flops_seqlen_sq_sum == (32**2 + 96**2) + (64**2 + 64**2)
+
+    @pytest.mark.parametrize("vp_size", [1, 2, 10])
+    def test_vpp_accumulates_each_logical_microbatch_once(self, vp_size):
+        # MCore's interleaved schedule calls forward_step once for every
+        # (logical microbatch, model chunk) pair. FLOPS metadata describes the
+        # data, not a model chunk, so only VP stage 0 may contribute it.
+        state = _State()
+        num_microbatches = 4
+        tokens = torch.zeros(1, 128)
+        cu_seqlens = torch.tensor([0, 32, 128])
+
+        for vp_stage in range(vp_size):
+            for _ in range(num_microbatches):
+                accumulate_flops_metadata(
+                    state,
+                    tokens,
+                    vp_stage=vp_stage,
+                    cu_seqlens=cu_seqlens,
+                    num_vision_patches=8,
+                )
+
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state,
+            data_parallel_size=1,
+            vp_size=vp_size,
+            dp_group=None,
+        )
+        assert seqlen_sum == num_microbatches * 128
+        assert seqlen_sq_sum == num_microbatches * (32**2 + 96**2)
+        assert vision == num_microbatches * 8
+
+    def test_tokens_none_is_noop(self):
+        state = _State()
+        accumulate_flops_metadata(state, None)
+        assert not hasattr(state, "_flops_seqlen_sum")
+        assert not hasattr(state, "_flops_seqlen_sq_sum")
+
+    def test_num_vision_patches_int(self):
+        # Vision-patch count is precomputed by the (model-specific) caller and
+        # passed as a model-agnostic scalar.
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(state, tokens, num_vision_patches=32 + 8)
+        assert state._flops_vision_patches == 40
+        assert not getattr(state, "_flops_requires_global_reduce", False)
+
+    def test_num_vision_patches_tensor_accumulates_across_microbatches(self):
+        # A scalar device tensor (no host sync) accumulates correctly.
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(state, tokens, num_vision_patches=torch.tensor(32))
+        accumulate_flops_metadata(state, tokens, num_vision_patches=torch.tensor(8))
+        assert int(state._flops_vision_patches) == 40
+
+    def test_num_vision_patches_none_is_noop(self):
+        state = _State()
+        tokens = torch.zeros(1, 64)
+        accumulate_flops_metadata(state, tokens)
+        assert not hasattr(state, "_flops_vision_patches")
+
+    def test_empty_cu_seqlens_falls_back_to_bshd(self):
+        # Degenerate cu_seqlens (only one element after argmin truncation)
+        # yields no sub-seqs, so the helper must fall back to BSHD rather
+        # than report 0 attention work.
+        state = _State()
+        tokens = torch.zeros(1, 256)
+        cu_seqlens = torch.tensor([0])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sq_sum == 1 * 256**2
+        assert not getattr(state, "_flops_requires_global_reduce", False)
+
+    def test_zero_length_subseq_contributes_zero(self):
+        # A repeated cu_seqlens value yields a zero-length sub-seq. The Σᵢ sᵢ²
+        # computation no longer filters with a boolean mask (which would force a
+        # per-microbatch device sync); zero-length entries must still contribute 0,
+        # giving the same result as if they were dropped.
+        state = _State()
+        tokens = torch.zeros(1, 500)
+        # sub-seq lengths from [0, 100, 100, 500] -> [100, 0, 400]
+        cu_seqlens = torch.tensor([0, 100, 100, 500])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sq_sum == 100**2 + 0 + 400**2
+
+    def test_thd_substantially_smaller_than_bshd_for_short_samples(self):
+        # Regression check on the headline claim: a pack containing many
+        # short samples has dramatically less attention work than the BSHD
+        # approximation would suggest.
+        state = _State()
+        tokens = torch.zeros(1, 8192)
+        # 32 sub-seqs of length 256 → pack length 8192.
+        cu_seqlens = torch.tensor([i * 256 for i in range(33)])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        thd_sq = state._flops_seqlen_sq_sum
+        bshd_sq = 1 * 8192**2
+        # 32 * 256² = 2,097,152 vs 8192² = 67,108,864 → 32× smaller.
+        assert thd_sq == 32 * 256**2
+        assert bshd_sq // thd_sq == 32
+
+    def test_thd_inline_no_host_sync_on_cpu_returns_int(self):
+        # On CPU, _scalar_sum_for_accumulator returns a plain int; the inline THD path
+        # must produce the same Σᵢ sᵢ² as the per-pack analytic value with no buffering.
+        state = _State()
+        tokens = torch.zeros(1, 4096)
+        cu_seqlens = torch.tensor([0, 256, 512, 4096])
+        accumulate_flops_metadata(state, tokens, cu_seqlens=cu_seqlens)
+        assert state._flops_seqlen_sq_sum == 256**2 + 256**2 + 3584**2
+        # No deferred cu records: the sum is computed inline, not buffered.
+        assert getattr(state, "_flops_cu_records", None) is None
+
+
+@pytest.mark.unit
+class TestResolveGlobalFlopsSeqlenStats:
+    """Unit tests for ``resolve_global_flops_seqlen_stats`` (non-distributed paths).
+
+    ``torch.distributed`` is not initialized in unit tests, so the helper takes the
+    extrapolation fallback (``local * data_parallel_size``). The exact all-reduce
+    path is covered by functional/distributed tests.
+    """
+
+    def test_extrapolates_local_by_dp_size(self):
+        state = _State()
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 250_000
+        state._flops_vision_patches = 64
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=None
+        )
+        assert seqlen_sum == 1000 * 4
+        assert seqlen_sq_sum == 250_000 * 4
+        assert vision == 64 * 4
+
+    def test_dp_size_one_returns_local(self):
+        state = _State()
+        state._flops_seqlen_sum = 512
+        state._flops_seqlen_sq_sum = 4096
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=1, dp_group=None
+        )
+        assert (seqlen_sum, seqlen_sq_sum, vision) == (512, 4096, 0)
+
+    def test_vpp_size_does_not_rescale_before_extrapolation(self):
+        # VPP accumulators already represent the executed training step; dividing
+        # by vp_size undercounts reported FLOPS for virtual-pipeline jobs.
+        state = _State()
+        state._flops_seqlen_sum = 1000
+        state._flops_seqlen_sq_sum = 250_000
+        state._flops_vision_patches = 64
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=2, vp_size=4, dp_group=None
+        )
+        assert seqlen_sum == 1000 * 2
+        assert seqlen_sq_sum == 250_000 * 2
+        assert vision == 64 * 2
+
+    def test_no_accumulation_returns_none(self):
+        # Step functions that don't set accumulators → caller falls back to fixed-length.
+        state = _State()
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=8, dp_group=None
+        )
+        assert seqlen_sum is None
+        assert seqlen_sq_sum is None
+        assert vision == 0
+
+    def test_coerces_scalar_tensor_accumulators(self):
+        # forward_step may leave accumulators as scalar tensors (deferred host sync).
+        state = _State()
+        state._flops_seqlen_sum = torch.tensor(800)
+        state._flops_seqlen_sq_sum = torch.tensor(160_000)
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(state, data_parallel_size=2, dp_group=None)
+        assert seqlen_sum == 1600
+        assert seqlen_sq_sum == 320_000
+
+    def test_dp_group_ignored_when_distributed_not_initialized(self):
+        # A non-None dp_group must not trigger a collective when torch.distributed
+        # is not initialized; the helper falls back to extrapolation.
+        assert not torch.distributed.is_initialized()
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+        assert seqlen_sum == 40
+        assert seqlen_sq_sum == 400
+
+    def test_dense_stats_extrapolate_without_all_reduce_when_distributed_initialized(self, monkeypatch):
+        # Dense BSHD stats are identical across DP ranks, so extrapolation is exact.
+        # The helper should not create a tiny NCCL collective unless THD metadata
+        # explicitly requested exact global reduction.
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        all_reduce = MagicMock()
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+
+        seqlen_sum, seqlen_sq_sum, _ = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+
+        all_reduce.assert_not_called()
+        assert seqlen_sum == 40
+        assert seqlen_sq_sum == 400
+
+    def test_thd_stats_use_all_reduce_when_distributed_initialized(self, monkeypatch):
+        # THD packed samples can differ across DP ranks, so a state marked by
+        # accumulate_flops_metadata must take the exact all-reduce path.
+        state = _State()
+        state._flops_seqlen_sum = 10
+        state._flops_seqlen_sq_sum = 100
+        state._flops_requires_global_reduce = True
+
+        def fake_all_reduce(stats, op=None, group=None):
+            stats.mul_(4)
+
+        all_reduce = MagicMock(side_effect=fake_all_reduce)
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "all_reduce", all_reduce)
+        monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+        seqlen_sum, seqlen_sq_sum, vision = resolve_global_flops_seqlen_stats(
+            state, data_parallel_size=4, dp_group=object()
+        )
+
+        all_reduce.assert_called_once()
+        assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)

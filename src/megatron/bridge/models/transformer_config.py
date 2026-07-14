@@ -71,6 +71,17 @@ def _resolve_string_fields(config: MCoreTransformerConfig) -> None:
         config.pipeline_dtype = str_to_dtype(config.pipeline_dtype)
 
 
+def _set_moe_expert_tensor_parallel_default(config: MCoreTransformerConfig) -> None:
+    """Default expert tensor parallelism to one when expert parallelism is enabled.
+
+    Megatron Core resolves an unset expert tensor parallel size to the tensor model
+    parallel size. Bridge MoE configurations instead scale expert layers with expert
+    parallelism by default, while preserving explicit expert tensor parallel values.
+    """
+    if config.expert_tensor_parallel_size is None and config.expert_model_parallel_size > 1:
+        config.expert_tensor_parallel_size = 1
+
+
 @dataclass
 class TransformerConfig(MCoreTransformerConfig):
     """Megatron Core TransformerConfig with deferred post-init.
@@ -115,13 +126,14 @@ class TransformerConfig(MCoreTransformerConfig):
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
+        _set_moe_expert_tensor_parallel_default(self)
         MCoreTransformerConfig.__post_init__(self)
 
         # In-batch packing produces variable-length packed sequences across microbatches,
         # so PP stages must communicate tensor shapes dynamically instead of using static
         # buffers.  Set *after* __post_init__ to avoid the false-positive MoE allgather
         # dispatcher check (irrelevant for non-MoE models).
-        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+        if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
 
     def __deepcopy__(self, memo):
@@ -190,9 +202,10 @@ class MLATransformerConfig(TransformerConfig, MCoreMLATransformerConfig):
             self.pipeline_dtype = self.params_dtype
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
+        _set_moe_expert_tensor_parallel_default(self)
         MCoreMLATransformerConfig.__post_init__(self)
 
-        if getattr(self, "_pack_sequences_in_batch", False) and self.pipeline_model_parallel_size > 1:
+        if getattr(self, "_enable_in_batch_packing", False) and self.pipeline_model_parallel_size > 1:
             self.variable_seq_lengths = True
 
 
@@ -243,6 +256,7 @@ class HeterogeneousTransformerConfig(TransformerConfig, MCoreHeterogeneousTransf
         _resolve_string_fields(self)
         if self.sequence_parallel and self.tensor_model_parallel_size <= 1:
             self.sequence_parallel = False
+        _set_moe_expert_tensor_parallel_default(self)
         MCoreHeterogeneousTransformerConfig.__post_init__(self)
 
     def get_config_for_layer(self, layer_number: int) -> MCoreTransformerConfig:

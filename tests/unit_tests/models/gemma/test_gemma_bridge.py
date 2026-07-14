@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.activations import fast_gelu
 from transformers import GemmaConfig, GemmaForCausalLM, GenerationConfig
 
 from megatron.bridge.models import AutoBridge
@@ -156,6 +157,8 @@ class TestMegatronGemmaBridge:
         assert result.num_attention_heads == gemma_2b_config.num_attention_heads
         assert result.seq_length == gemma_2b_config.max_position_embeddings
         assert result.rotary_base == gemma_2b_config.rope_parameters["rope_theta"]
+        # Gemma runs tanh-approximate GELU (fast_gelu), despite the legacy hidden_act="gelu".
+        assert result.activation_func is fast_gelu
 
     def test_provider_bridge_basic_7b(self, mock_pretrained_gemma_7b, gemma_7b_config):
         """Test basic provider_bridge functionality for Gemma 7B."""

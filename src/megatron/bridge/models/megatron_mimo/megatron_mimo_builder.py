@@ -12,6 +12,9 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
+EXPERT_VIEW_NAME = "expert"
+
+
 def build_hypercomm_grids(
     megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig,
 ) -> Dict[str, "HyperCommGrid"]:
@@ -19,6 +22,11 @@ def build_hypercomm_grids(
 
     Creates grids on ALL ranks (required for consistent collective calls),
     but only ranks in each grid's range will participate in its operations.
+
+    Each grid is built with a dense ``base`` view plus a registered ``expert`` view over the same
+    rank span. Dense process groups (tp/cp/dp/pp) come from the base view; expert-parallel groups
+    (expt_tp/ep/expt_dp) come from the expert view, matching the contract mcore's
+    ``get_mimo_optimizer`` expects.
 
     Args:
         megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig specifying parallelism per module.
@@ -33,24 +41,49 @@ def build_hypercomm_grids(
         shape = [
             parallelism.tensor_model_parallel_size,
             parallelism.context_parallel_size,
-            parallelism.expert_tensor_parallel_size,
-            parallelism.pipeline_model_parallel_size,
             parallelism.data_parallel_size,
+            parallelism.pipeline_model_parallel_size,
         ]
         grid = HyperCommGrid(
             shape=shape,
-            dim_names=["tp", "cp", "ep", "pp", "dp"],
+            dim_names=["tp", "cp", "dp", "pp"],
             rank_offset=parallelism.rank_offset,
             backend="nccl",
         )
-        # Create all standard process groups
-        for dim in ("tp", "cp", "ep", "pp", "dp"):
-            _ = grid.create_pg([dim])
-        _ = grid.create_pg(["dp", "cp"])
-        _ = grid.create_pg(["tp", "pp"])
-        _ = grid.create_pg(["tp", "ep", "pp"])
-        _ = grid.create_pg(["dp", "ep"])
-        _ = grid.create_pg(["tp", "cp", "ep", "pp", "dp"])
+        grid.register_view(
+            EXPERT_VIEW_NAME,
+            shape=[
+                parallelism.expert_tensor_parallel_size,
+                parallelism.expert_model_parallel_size,
+                parallelism.expert_data_parallel_size,
+                parallelism.pipeline_model_parallel_size,
+            ],
+            dim_names=["expt_tp", "ep", "expt_dp", "pp"],
+            shared_dims=["pp"],
+        )
+
+        # Create all required process groups in a stable order on every rank.
+        for dims in (
+            ["tp"],
+            ["cp"],
+            ["pp"],
+            ["dp"],
+            ["dp", "cp"],
+            ["tp", "cp"],
+            ["tp", "pp"],
+            ["tp", "dp", "cp"],
+            ["tp", "cp", "dp", "pp"],
+        ):
+            _ = grid.create_pg(dims)
+
+        for dims in (
+            ["ep"],
+            ["expt_tp"],
+            ["expt_dp"],
+            ["expt_tp", "ep"],
+            ["expt_tp", "ep", "pp"],
+        ):
+            _ = grid.create_pg(dims, view=EXPERT_VIEW_NAME)
 
         grids[module_name] = grid
 
