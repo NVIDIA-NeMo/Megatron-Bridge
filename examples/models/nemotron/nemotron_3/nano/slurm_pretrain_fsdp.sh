@@ -22,8 +22,12 @@
 # Usage:
 #   1. Modify the #SBATCH directives below for your cluster
 #   2. Set CONTAINER_IMAGE to your container path
-#   3. Set PARALLELISM_CONFIGS (use_megatron_fsdp,TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
-#   4. Submit: sbatch slurm_pretrain.sh
+#   3. Set PARALLELISM_CONFIGS (use_megatron_fsdp,num_distributed_optimizer_instances,TP,PP,EP,CP,SP per entry; CP = context parallel size, 1 = disabled)
+#   4. Submit: sbatch slurm_pretrain_fsdp.sh
+#
+#   Checkpoint: FSDP supports checkpointing in fsdp_dtensor format only as of now. In the future, we do
+#               plan to support torch_dist checkpointing format as well.
+#   TODO: Add ckpt conversion details.
 # ==============================================================================
 
 #SBATCH --job-name=nemotron3-pretrain-hsdp
@@ -164,7 +168,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.fp8=e4m3 \
         model.fp8_recipe=mxfp8 \
         ddp.fp8_param_gather=true \
-        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} "
+        checkpoint.save=${WORKSPACE}/results/${MODEL_NAME}_pretrain_fsdp_numdist_${num_distributed_optimizer_instances}_ep${EP}_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} "
 
     if [ "$DATASET_NAME" = "mock" ]; then
         DATASET_CLI_OVERRIDES=""
