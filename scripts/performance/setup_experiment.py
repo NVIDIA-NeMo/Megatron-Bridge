@@ -32,11 +32,21 @@ from nemo_run.config import get_nemorun_home
 
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from utils.executors import kubeflow_executor, slurm_executor
+    from utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
     from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from .utils.executors import kubeflow_executor, slurm_executor
+    from .utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
     from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
@@ -95,6 +105,27 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _build_nemorun_script(
+    *,
+    script_path: str,
+    script_dir: str,
+    args: List[str],
+    kubeflow_namespace: Optional[str],
+    custom_env_vars: Dict[str, str],
+) -> run.Script:
+    """Build the rank-local task and apply optional Kubeflow NUMA binding."""
+    task = run.Script(
+        path=script_path,
+        entrypoint="python",
+        env={"PYTHONPATH": f"{script_dir}:$PYTHONPATH"},
+        args=args,
+    )
+    if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
+        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
+        return _kubeflow_numa_binding_script(task)
+    return task
 
 
 def _build_csp_plugin(csp: str) -> Any:
@@ -724,11 +755,12 @@ def main(
             )
         )
 
-    nemorun_script = run.Script(
-        path=in_container_script_path,
-        entrypoint="python",
-        env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
+    nemorun_script = _build_nemorun_script(
+        script_path=in_container_script_path,
+        script_dir=in_container_script_dir,
         args=_filter_run_script_args(sys.argv[1:]),
+        kubeflow_namespace=kubeflow_namespace,
+        custom_env_vars=custom_env_vars,
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))

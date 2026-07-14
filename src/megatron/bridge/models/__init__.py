@@ -107,6 +107,9 @@ from megatron.bridge.models.mimo_v2_flash import (
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
 )
+from megatron.bridge.models.minimax_m3 import (
+    MiniMaxM3Bridge,
+)
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
     Ministral3Model,
@@ -233,6 +236,7 @@ __all__ = [
     "Ministral3Model",
     "Ministral3ModelProvider",
     "MiniMaxM2Bridge",
+    "MiniMaxM3Bridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",

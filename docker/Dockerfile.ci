@@ -91,8 +91,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
     # image, not the default CUDA include path) and scope the build to the target archs.
     export FLASH_MLA_DISABLE_SM90=1 NVCC_THREADS=16 \
-        CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS}" \
-        CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS}" && \
+        CFLAGS="-I/usr/local/cuda/include/cccl${CFLAGS:+ $CFLAGS} -DNDEBUG" \
+        CXXFLAGS="-I/usr/local/cuda/include/cccl${CXXFLAGS:+ $CXXFLAGS} -DNDEBUG" && \
     # Reinstall nvidia-cutlass-dsl in system site packages
     # uv install can run into non-deterministic install issues
     pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \

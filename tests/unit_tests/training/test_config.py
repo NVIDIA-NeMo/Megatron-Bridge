@@ -1105,6 +1105,27 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_direct_hf_preserves_explicit_fixed_length_padding(self, monkeypatch):
+        """Test explicit fixed-length padding remains enabled without PP or EP."""
+        gpt_model_cfg = create_test_gpt_config(
+            pipeline_model_parallel_size=1,
+            expert_model_parallel_size=1,
+        )
+        dataset_cfg = create_test_direct_hf_sft_dataset_config(sequence_length=512)
+        dataset_cfg.pad_to_max_length = True
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            dataset_config_override=dataset_cfg,
+        )
+
+        try:
+            container.validate()
+            assert dataset_cfg.pad_to_max_length is True
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_direct_hf_seq_length_must_support_cp_and_sp_collate_slicing(self, monkeypatch):
         """Test the sequence cap cannot undo CP/SP-safe collate padding."""
         gpt_model_cfg = create_test_gpt_config(
@@ -1600,6 +1621,47 @@ class TestConfigContainerValidation:
             # check_for_nan_in_loss=True should be allowed
             assert container.rerun_state_machine.check_for_nan_in_loss is True
             container.validate()  # Should pass without error
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("inference_scope", ["layer", "block"])
+    def test_cuda_graph_local_inference_scope_allows_validation(self, inference_scope, monkeypatch):
+        """Test that MCore local inference graphs are not rejected as training scopes."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="local",
+            inference_cuda_graph_scope=inference_scope,
+            use_te_rng_tracker=True,
+        )
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            container.validate()
+            assert container.model.cuda_graph_impl == "local"
+            assert container.model.inference_cuda_graph_scope.name == inference_scope
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_cuda_graph_local_inference_scope_rejects_training_modules(self, monkeypatch):
+        """Test that an inference scope does not bypass local training-scope validation."""
+        gpt_model_cfg = create_test_gpt_config(
+            cuda_graph_impl="local",
+            inference_cuda_graph_scope="block",
+            use_te_rng_tracker=True,
+        )
+        set_cuda_graph_modules(gpt_model_cfg, ["mlp"])
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+        )
+
+        try:
+            with pytest.raises(ValueError, match='cuda_graph_impl="local"'):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
