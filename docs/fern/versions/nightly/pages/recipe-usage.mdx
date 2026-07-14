@@ -298,7 +298,7 @@ module and then each spawn new processes. This results in an infinite loop of pr
 
 ## Recipe environment variables
 
-Library and performance recipes can declare process environment defaults in the top-level `env_vars` mapping. Megatron Bridge applies them before runtime configuration is finalized and before training setup starts:
+Model and performance recipes can declare process environment defaults in the top-level `env_vars` mapping. Megatron Bridge applies them before runtime configuration is finalized and before training setup starts:
 
 ```python
 cfg.env_vars.update(
