@@ -1,7 +1,9 @@
 # Copyright (c) 2023, NVIDIA CORPORATION. All rights reserved.
 from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
     TEDotProductAttention,
     TELayerNormColumnParallelLinear,
+    TENorm,
     TERowParallelLinear,
 )
 from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
@@ -80,11 +82,12 @@ falconh1_stack_spec = ModuleSpec(
             module=FalconH1Layer,
             params={"attn_mask_type": AttnMaskType.causal},
             submodules=FalconH1Submodules(
+                norm=TENorm,
                 # SSM component - complete MambaMixer spec
                 mamba_mixer=ModuleSpec(
                     module=FalconH1MambaMixer,
                     submodules=MambaMixerSubmodules(
-                        in_proj=TELayerNormColumnParallelLinear,
+                        in_proj=TEColumnParallelLinear,
                         out_proj=TERowParallelLinear,
                     ),
                 ),
@@ -92,7 +95,7 @@ falconh1_stack_spec = ModuleSpec(
                 self_attention=ModuleSpec(
                     module=FalconH1SelfAttention,
                     submodules=SelfAttentionSubmodules(
-                        linear_qkv=TELayerNormColumnParallelLinear,
+                        linear_qkv=TEColumnParallelLinear,
                         core_attention=TEDotProductAttention,
                         linear_proj=TERowParallelLinear,
                     ),

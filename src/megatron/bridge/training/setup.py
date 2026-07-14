@@ -28,9 +28,9 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
+from megatron.training.models.base import ModelConfig
 
 from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
-from megatron.training.models.base import ModelConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -235,7 +235,8 @@ def setup(
         tokenizer_vocab_size=tokenizer.vocab_size,
     )
 
-    cfg.dataset.tokenizer = tokenizer
+    if hasattr(cfg.dataset, "tokenizer"):
+        cfg.dataset.tokenizer = tokenizer
 
     # Compute token_dtype_code for sequences_per_dataset support.
     # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
@@ -287,15 +288,19 @@ def setup(
             # Check which checkpoint path has modelopt state
             if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
-            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load):
+                ckpt_step = None
+            elif cfg.checkpoint.load and has_modelopt_state(
+                cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step
+            ):
                 checkpoint_path = cfg.checkpoint.load
+                ckpt_step = cfg.checkpoint.ckpt_step
             else:
                 raise RuntimeError(
                     f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
                     f"or load={cfg.checkpoint.load}"
                 )
 
-            load_modelopt_state(model, checkpoint_path)
+            load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
@@ -395,6 +400,7 @@ def setup(
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=pg_collection.dp,
+        eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")

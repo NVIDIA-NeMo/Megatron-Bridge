@@ -20,14 +20,32 @@ from megatron.core.models.hybrid.hybrid_layer_allocation import (
     get_hybrid_layer_counts,
     parse_hybrid_pattern,
 )
+from megatron.core.utils import get_attr_wrapped_model
 
-from megatron.bridge.data.datasets.packing_utils import calculate_avg_seqlen
+from megatron.bridge.data.packing.algorithms import calculate_avg_seqlen
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 _lora_seq_stats_cache: dict = {}
+
+
+def get_model_chunk_vp_stage(model: torch.nn.Module) -> int | None:
+    """Return the virtual-pipeline stage assigned to a model chunk, if any.
+
+    Args:
+        model: Model chunk, possibly wrapped by mixed precision or DDP.
+
+    Returns:
+        The integer virtual-pipeline stage, or ``None`` for an unchunked model
+        or a model that does not expose the stage.
+    """
+    try:
+        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
+    except RuntimeError:
+        return None
+    return vp_stage if isinstance(vp_stage, int) else None
 
 
 def _accumulator_to_int(value) -> int:
@@ -173,6 +191,7 @@ def accumulate_flops_metadata(
     state,
     tokens: torch.Tensor | None,
     *,
+    vp_stage: int | None = None,
     config_seq_len: int | None = None,
     cu_seqlens: torch.Tensor | None = None,
     cu_seqlens_argmin: torch.Tensor | None = None,
@@ -181,6 +200,11 @@ def accumulate_flops_metadata(
     num_vision_patches: int | torch.Tensor | None = None,
 ) -> None:
     """Accumulate per-microbatch FLOPS metadata onto ``state``.
+
+    Under interleaved pipeline parallelism, the forward step runs once per
+    virtual model chunk for the same logical data microbatch. Only virtual stage
+    0 contributes metadata so model chunking does not multiply the full-model
+    FLOPS estimate. ``None`` and ``0`` both represent the primary/only chunk.
 
     Writes three accumulators consumed by ``train.py`` at end of step:
 
@@ -211,7 +235,7 @@ def accumulate_flops_metadata(
     attention FLOPS by a large factor: actual attention work is Σᵢ sᵢ²,
     not (Σᵢ sᵢ)². Using ``cu_seqlens`` here closes that gap.
     """
-    if tokens is None:
+    if vp_stage not in (None, 0) or tokens is None:
         return
 
     mbs = tokens.shape[0]
@@ -627,20 +651,24 @@ def num_floating_point_operations(
             cfg.model.num_attention_heads if cfg.model.num_query_groups is None else cfg.model.num_query_groups
         )
 
-        is_squad = getattr(getattr(cfg, "dataset", None), "dataset_name", None) in ("squad", "rajpurkar/squad")
+        dataset_cfg = getattr(cfg, "dataset", None)
+        hf_dataset_cfg = getattr(dataset_cfg, "hf_dataset", None)
+        hf_dataset_name = getattr(hf_dataset_cfg, "dataset_name", None) or getattr(
+            hf_dataset_cfg, "path_or_dataset", None
+        )
+        is_squad = getattr(dataset_cfg, "dataset_name", hf_dataset_name) in ("squad", "rajpurkar/squad")
         hf_model_id = getattr(cfg.model, "hf_model_id", None)
         is_llama3_70b = hf_model_id is not None and "Meta-Llama-3-70B" in hf_model_id
-        dataset_cfg = getattr(cfg, "dataset", None)
         packed_specs = (
             getattr(dataset_cfg, "offline_packing_specs", None)
             if getattr(dataset_cfg, "enable_offline_packing", False)
             else None
         )
         packed_data_path = getattr(packed_specs, "packed_train_data_path", None)
-        # If not explicitly set, try to find the file via dataset_root (the FinetuningDatasetBuilder
+        # If not explicitly set, try to find the file via dataset_root (the GPTSFTDatasetBuilder
         # computes this path dynamically, but dataset_root is available from the config).
         if packed_data_path is None and packed_specs is not None:
-            dataset_root = getattr(cfg.dataset, "dataset_root", None)
+            dataset_root = getattr(dataset_cfg, "dataset_root", None) or getattr(dataset_cfg, "hf_output_root", None)
             seq_size = getattr(packed_specs, "packed_sequence_size", None)
             if dataset_root is not None and seq_size is not None:
                 matches = sorted(Path(dataset_root).glob(f"packed/*/training_{seq_size}.npy"))
@@ -940,20 +968,21 @@ def num_floating_point_operations(
         # weighted sum of GDN and standard-attention per-layer costs.
         if experimental_attention_variant == "gated_delta_net":
             linear_attention_freq = cfg.model.linear_attention_freq
+            decoder_num_layers = cfg.model.num_layers
             if linear_attention_freq is None:
                 raise ValueError(
                     "linear_attention_freq must be set when experimental_attention_variant='gated_delta_net'"
                 )
             if isinstance(linear_attention_freq, int):
                 linear_attention_pattern = [
-                    0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(num_layers)
+                    0 if ((i + 1) % linear_attention_freq == 0) else 1 for i in range(decoder_num_layers)
                 ]
             elif isinstance(linear_attention_freq, list):
                 linear_attention_pattern = linear_attention_freq
-                if len(linear_attention_pattern) != num_layers:
+                if len(linear_attention_pattern) != decoder_num_layers:
                     raise ValueError(
                         f"Invalid length of linear_attention_pattern: {len(linear_attention_pattern)}, "
-                        f"expected {num_layers}, "
+                        f"expected {decoder_num_layers}, "
                         f"current linear_attention_freq: {linear_attention_freq}"
                     )
             else:
@@ -961,7 +990,10 @@ def num_floating_point_operations(
                     f"linear_attention_freq must be int or list, got {type(linear_attention_freq).__name__}"
                 )
 
-            num_gdn_layers = sum(linear_attention_pattern)
+            # MTP construction reuses the final decoder layer spec, so each MTP
+            # layer has the same attention type as the final decoder layer.
+            last_layer_is_gdn = linear_attention_pattern[-1] if linear_attention_pattern else 0
+            num_gdn_layers = sum(linear_attention_pattern) + last_layer_is_gdn * mtp_num_layers
             num_standard_attn_layers = num_layers - num_gdn_layers
 
             standard_self_attn_per_layer = self_attn_term / num_layers if num_layers > 0 else 0

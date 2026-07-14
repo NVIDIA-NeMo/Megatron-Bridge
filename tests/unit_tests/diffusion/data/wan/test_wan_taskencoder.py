@@ -101,6 +101,37 @@ def test_encode_sample_no_context_parallel(monkeypatch):
     assert out.__subflavors__ == sample["__subflavors__"]
 
 
+def test_batch_context_matches_padded_kv_length_with_cp(monkeypatch):
+    monkeypatch.setattr(parallel_state, "get_context_parallel_world_size", lambda: 3, raising=False)
+
+    from megatron.energon.task_encoder.base import WorkerConfig
+
+    class _FakeWorkerCfg:
+        def worker_seed(self):
+            return 789
+
+        active_worker_sample_index = 0
+
+    monkeypatch.setattr(WorkerConfig, "active_worker_config", _FakeWorkerCfg(), raising=False)
+
+    encoder = WanTaskEncoder(seq_length=43008, patch_temporal=1, patch_spatial=2, packing_buffer_size=200)
+    encoded = encoder.encode_sample(
+        {
+            "__key__": "k",
+            "__restore_key__": "rk",
+            "__subflavors__": [],
+            "json": {"meta": 1},
+            "pth": torch.randn(16, 1, 4, 6),
+            "pickle": torch.randn(226, 4096),
+        }
+    )
+    batch = encoder.batch([encoded])
+
+    assert encoded.seq_len_q.item() == 6
+    assert encoded.seq_len_q_padded.item() == 6
+    assert batch["context_embeddings"].shape[0] == batch["seq_len_kv_padded"].sum().item()
+
+
 def test_batch_with_packing_buffer_size(monkeypatch):
     # Force CP world size 1
     monkeypatch.setattr(parallel_state, "get_context_parallel_world_size", lambda: 1, raising=False)

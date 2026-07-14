@@ -6,7 +6,6 @@ This module provides the setup logic for MegatronMIMO training, mirroring the st
 
 Key components:
 - setup_megatron_mimo(): MegatronMIMO-specific setup helper (analogous to setup())
-- _set_megatron_mimo_random_seeds(): Per-module TP/PP seed initialization
 - _update_megatron_mimo_model_config_funcs(): Model config hooks (analogous to _update_model_config_funcs)
 - MegatronMIMOSetupOutput: Dataclass containing all setup outputs
 """

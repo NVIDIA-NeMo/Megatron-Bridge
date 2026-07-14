@@ -114,7 +114,7 @@ CMD="${CMD} optimizer.lr=${LR}"
 CMD="${CMD} optimizer.min_lr=${MIN_LR}"
 CMD="${CMD} scheduler.lr_warmup_iters=${LR_WARMUP_ITERS}"
 CMD="${CMD} checkpoint.save=${SAVE_DIR}"
-CMD="${CMD} dataset.maker_name=make_${DATASET_NAME}_dataset"
+CMD="${CMD} dataset.source.dataset_name=${DATASET_NAME}"
 CMD="${CMD} dataset.seq_length=${SEQ_LENGTH}"
 
 echo "Running training..."

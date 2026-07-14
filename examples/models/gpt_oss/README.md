@@ -207,7 +207,7 @@ Findings from hyperparameter tuning on GPT-OSS 20B × OpenMathInstruct-2:
 - **Analysis channel format**: Use `generated_solution` from OpenMathInstruct-2 as the `analysis` channel and put only the final answer in `final`, rather than mixing both in `final`. This should be better theoretically since it matches what the channel architecture is designed for — the model reasons freely in `analysis` and commits to the final answer in `final`.
   - Plain: `<|start|>assistant<|channel|>final<|message|>{CoT} #### N<|end|>`
   - Analysis: `<|start|>assistant<|channel|>analysis<|message|>{CoT}<|end|>` + `<|start|>assistant<|channel|>final<|message|>#### N<|end|>`
-- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `pack_sft_data.py`).
+- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `prepare_gpt_sft_packed_data.py`).
 - **Hyperparameters** — strict-match improved **86.05% → 93.6%** by:
   - `global_batch_size`: 8 → 128
   - `train_iters`: 1 full epoch

@@ -31,6 +31,8 @@ RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
+GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
+GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
 
@@ -57,6 +59,16 @@ def test_training_readme_recipes_exist():
     assert not missing, f"README references nonexistent recipes: {missing}"
 
 
+def test_gemma3_vl_readme_recipes_are_exported():
+    """Every Gemma3-VL recipe advertised in its README is a launcher-visible alias."""
+    documented = set(re.findall(r"`(gemma3_vl_\w+_config)`", _read(GEMMA3_VL_README)))
+    assert documented, "no Gemma3-VL recipe configs documented"
+
+    exported = set(re.findall(r"as\s+(gemma3_vl_\w+_config)", _read(GEMMA3_VL_RECIPES)))
+    missing = sorted(documented - exported)
+    assert not missing, f"Gemma3-VL README references unexported recipes: {missing}"
+
+
 def test_llama_readme_conversion_path_exists():
     """The conversion script path in the llama tutorial resolves to a real file (bug 3)."""
     text = _read(LLAMA_README)
@@ -70,7 +82,7 @@ def test_llama_readme_gptdataset_field_name():
     # Source anchor: the dataset config key is `sequence_length` (see training/config.py).
     assert '"sequence_length"' in _read(TRAINING_CONFIG), "sequence_length not found in config source"
     text = _read(LLAMA_README)
-    # Scope to the GPTDatasetConfig block only (the FinetuningDatasetConfig block
+    # Scope to the GPTDatasetConfig block only (the GPTSFTDatasetConfig block
     # legitimately uses `seq_length`).
     m = re.search(r"#\s*GPTDatasetConfig\b(.*?)(?:\n\s*\n)", text, re.DOTALL)
     assert m, "could not locate GPTDatasetConfig YAML block"

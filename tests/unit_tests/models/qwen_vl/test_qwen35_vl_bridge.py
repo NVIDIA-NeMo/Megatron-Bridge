@@ -369,6 +369,17 @@ class TestQwen35VLMoEBridgeMappingRegistry:
         assert any("experts" in n for n in names), "Should contain expert MLPs"
         assert any("shared_expert" in n for n in names), "Should contain shared experts"
 
+    def test_moe_expert_mappings_wiring(self, bridge):
+        # The VL MoE bridge reuses Qwen35MoEBridge._get_moe_lm_mappings; fused-vs-per-expert layout
+        # selection is covered in test_qwen35_bridge. Here we only verify the VL wiring: sequential
+        # (non-grouped) routed-expert mappings, used when moe_grouped_gemm=False (e.g. ModelOpt pruning),
+        # are emitted with the language_model prefix.
+        mappings = bridge.mapping_registry().mappings
+        seq_fc1 = next(
+            m for m in mappings if getattr(m, "megatron_param", "").endswith("local_experts.*.linear_fc1.weight")
+        )
+        assert seq_fc1.megatron_param.startswith("language_model.decoder.")
+
     def test_mapping_registry_has_gdn_mappings(self, bridge):
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("in_proj" in n for n in names)
