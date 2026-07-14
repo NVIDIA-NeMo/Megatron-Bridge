@@ -203,7 +203,7 @@ def default_gsm8k_config(
     )
 
 
-def default_openmathinstruct2_thinking_packed_config(
+def default_openmathinstruct2_thinking_config(
     seq_length: int = 4096,
     enable_offline_packing: bool = False,
     pad_seq_to_mult: int = 1,

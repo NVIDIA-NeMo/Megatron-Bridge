@@ -18,7 +18,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.finetune_utils import (
-    default_openmathinstruct2_thinking_packed_config,
+    default_openmathinstruct2_thinking_config,
     default_peft_config,
 )
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
@@ -858,7 +858,7 @@ def gpt_oss_20b_sft_8gpu_h100_bf16_openmathinstruct2_thinking_packed_config() ->
     cfg = gpt_oss_20b_sft_8gpu_h100_bf16_config()
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    cfg.dataset = default_openmathinstruct2_thinking_packed_config(seq_length=seq_length, enable_offline_packing=True)
+    cfg.dataset = default_openmathinstruct2_thinking_config(seq_length=seq_length, enable_offline_packing=True)
     return cfg
 
 

@@ -24,7 +24,7 @@ from megatron.bridge.data.builders import (
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
-    default_openmathinstruct2_thinking_packed_config,
+    default_openmathinstruct2_thinking_config,
     default_squad_config,
 )
 
@@ -243,10 +243,10 @@ class TestConfigDifferences:
 
 @pytest.mark.unit
 class TestDefaultOpenmathinstruct2ThinkingConfig:
-    """Test cases for default_openmathinstruct2_thinking_packed_config."""
+    """Test cases for default_openmathinstruct2_thinking_config."""
 
     def test_uses_thinking_preset(self):
-        cfg = default_openmathinstruct2_thinking_packed_config(seq_length=4096, enable_offline_packing=True)
+        cfg = default_openmathinstruct2_thinking_config(seq_length=4096, enable_offline_packing=True)
         assert isinstance(cfg, GPTSFTDatasetConfig)
         assert cfg.hf_dataset.dataset_name == "openmathinstruct2_thinking"
         assert cfg.hf_dataset.split is None

@@ -32,7 +32,7 @@ from megatron.bridge.data.sources.hf import hf_dataset_supports_split
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
-    default_openmathinstruct2_thinking_packed_config,
+    default_openmathinstruct2_thinking_config,
     default_squad_config,
 )
 from megatron.bridge.training.config import (
@@ -407,7 +407,7 @@ def apply_public_dataset_override(
             pad_seq_to_mult=pad_seq_to_mult,
         )
     elif dataset_name == "openmathinstruct2-thinking":
-        config.dataset = default_openmathinstruct2_thinking_packed_config(
+        config.dataset = default_openmathinstruct2_thinking_config(
             seq_length=resolved_seq_length,
             enable_offline_packing=enable_offline_packing,
             pad_seq_to_mult=pad_seq_to_mult,
