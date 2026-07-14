@@ -52,8 +52,6 @@ _APPROVED_PERF_FIELDS = (
     "model.moe_hybridep_num_blocks_permute",
     "model.moe_hybridep_num_blocks_unpermute",
     "model.moe_hybridep_num_sms_preprocessing",
-    "model.cuda_graph_impl",
-    "model.use_te_rng_tracker",
     "model.recompute_granularity",
     "model.recompute_modules",
     "model.transformer_impl",
@@ -64,10 +62,8 @@ _APPROVED_PERF_FIELDS = (
     "model.masked_softmax_fusion",
     "model.use_fused_weighted_squared_relu",
     "model.cross_entropy_loss_fusion",
-    "model.cuda_graph_warmup_steps",
     "model.fine_grained_activation_offloading",
     "model.offload_modules",
-    "rng.te_rng_tracker",
     "ddp.overlap_grad_reduce",
     "ddp.overlap_param_gather",
     "ddp.use_distributed_optimizer",
@@ -136,7 +132,6 @@ def test_pretrain_approved_fields_match_perf_reference(
 
     for field in _APPROVED_PERF_FIELDS:
         assert _get_field(library_config, field) == _get_field(perf_config, field), field
-    assert cuda_graph_module_names(library_config.model) == cuda_graph_module_names(perf_config.model)
     assert _flex_dispatcher_num_sms(library_config) == _flex_dispatcher_num_sms(perf_config) == 16
 
 
@@ -152,7 +147,16 @@ def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
     assert library_config.model.tensor_model_parallel_size == 4
     assert library_config.model.sequence_parallel is True
     assert library_config.model.recompute_modules == ["moe", "layernorm"]
-    assert library_config.comm_overlap.tp_comm_overlap is perf_config.comm_overlap.tp_comm_overlap is True
+    assert library_config.comm_overlap.tp_comm_overlap is False
+    assert perf_config.comm_overlap.tp_comm_overlap is True
+    assert perf_config.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(perf_config.model) == ["attn", "mamba"]
+    assert perf_config.model.use_te_rng_tracker is True
+    assert perf_config.rng.te_rng_tracker is True
+    assert library_config.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(library_config.model) == []
+    assert library_config.model.use_te_rng_tracker is False
+    assert library_config.rng.te_rng_tracker is False
 
 
 @pytest.mark.unit
@@ -166,6 +170,20 @@ def test_gb200_pretrain_recompute_matches_perf_reference() -> None:
     assert library_config.model.recompute_modules == perf_config.model.recompute_modules is None
     assert library_config.comm_overlap.tp_comm_overlap is False
     assert perf_config.comm_overlap.tp_comm_overlap is True
+    assert library_config.model.cuda_graph_impl == perf_config.model.cuda_graph_impl == "transformer_engine"
+    assert (
+        cuda_graph_module_names(library_config.model)
+        == cuda_graph_module_names(perf_config.model)
+        == [
+            "attn",
+            "mamba",
+            "moe_router",
+            "moe_preprocess",
+        ]
+    )
+    assert library_config.model.use_te_rng_tracker is perf_config.model.use_te_rng_tracker is True
+    assert library_config.rng.te_rng_tracker is perf_config.rng.te_rng_tracker is True
+    assert library_config.model.cuda_graph_warmup_steps == perf_config.model.cuda_graph_warmup_steps == 3
 
 
 @pytest.mark.unit

@@ -76,7 +76,7 @@ class TestNemotron3NanoPretrain:
 
         # Check comm overlap
         assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_overlap is False
         assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
         # Check precision

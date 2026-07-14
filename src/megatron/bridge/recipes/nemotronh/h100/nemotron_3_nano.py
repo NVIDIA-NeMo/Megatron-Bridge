@@ -21,7 +21,6 @@ from megatron.bridge.recipes.nemotronh._nemotron_3_nano import (
     _nemotron_3_nano_sft_reference_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
@@ -29,8 +28,8 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     TP=4 keeps the 8-GPU library recipe within H100 memory while retaining the
     perf recipe's EP=8 layout and HybridEP dispatcher. Selective recompute keeps
-    that topology practical, while scoped CUDA graphs cover only fixed-shape
-    pre-training modules.
+    that topology practical. CUDA graphs and TP communication overlap remain
+    disabled to preserve post-optimizer memory headroom on 80 GB H100s.
 
     Returns:
         ConfigContainer: H100 BF16 pre-training configuration.
@@ -54,12 +53,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe", "layernorm"]
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    set_cuda_graph_modules(cfg.model, ["attn", "mamba"])
-    cfg.model.use_te_rng_tracker = True
-    cfg.rng.te_rng_tracker = True
-
-    cfg.comm_overlap.tp_comm_overlap = True
+    cfg.comm_overlap.tp_comm_overlap = False
 
     return cfg
 
