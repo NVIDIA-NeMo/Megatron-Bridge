@@ -54,24 +54,26 @@ For checkpoint conversion, inference, finetuning recipes, and step-by-step train
 
 ### Text-only pretraining
 
-The Qwen3.5 35B-A3B recipe can pretrain only the language-model component of
-the unified model. It derives the registered language-model provider from the
-nested Hugging Face `text_config`; no vision model, projection, processor, or
-multimodal dataset is created.
+The Qwen3.5 9B and 35B-A3B recipes can pretrain only the language-model
+component of the unified models. They derive the registered language-model
+provider from the nested Hugging Face `text_config`; no vision model,
+projection, processor, or multimodal dataset is created.
 
 ```python
-from megatron.bridge.recipes.qwen import qwen35_35b_a3b_pretrain_config
+from megatron.bridge.recipes.qwen import qwen35_9b_pretrain_config
 
-config = qwen35_35b_a3b_pretrain_config()
+config = qwen35_9b_pretrain_config()
 ```
 
-The canonical alias selects the eight-GPU GB200 BF16 library recipe,
-`qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config`. It uses the Qwen3.5-VL GB200
-topology and applicable performance settings while retaining library-recipe
-training, evaluation, logging, checkpointing, and correctness defaults. The
-text-only recipe uses learned routing and fixed-length text batches; it does
-not create or freeze any vision components. Set `config.dataset.blend` (or
-`config.dataset.data_path`) to use a prepared Megatron indexed text dataset.
+The canonical aliases select eight-GPU GB200 BF16 library recipes. The dense
+9B recipe, `qwen35_9b_pretrain_8gpu_gb200_bf16_config`, uses the same data
+parallel topology as the Llama 3 8B GB200 performance recipe, with
+module-scoped CUDA graphs so library correctness checks remain enabled. The MoE recipe,
+`qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config`, uses the applicable Qwen3.5-VL
+GB200 HybridEP settings with learned routing. Both retain library-recipe
+training, evaluation, logging, checkpointing, and correctness defaults. Set
+`config.dataset.blend` (or `config.dataset.data_path`) to use a prepared
+Megatron indexed text dataset.
 
 ## Hugging Face Model Cards
 

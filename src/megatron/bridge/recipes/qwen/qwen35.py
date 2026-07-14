@@ -17,8 +17,11 @@
 from __future__ import annotations
 
 from megatron.bridge.recipes.qwen.gb200.qwen35 import (
+    qwen35_9b_pretrain_8gpu_gb200_bf16_config as qwen35_9b_pretrain_config,
+)
+from megatron.bridge.recipes.qwen.gb200.qwen35 import (
     qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config as qwen35_35b_a3b_pretrain_config,
 )
 
 
-__all__ = ["qwen35_35b_a3b_pretrain_config"]
+__all__ = ["qwen35_9b_pretrain_config", "qwen35_35b_a3b_pretrain_config"]
