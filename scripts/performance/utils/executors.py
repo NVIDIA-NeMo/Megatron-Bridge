@@ -14,6 +14,7 @@
 
 import logging
 import os
+import shlex
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -25,6 +26,53 @@ from nemo_run.core.execution.launcher import SlurmTemplate
 DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
+
+KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
+
+
+def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
+    """Wrap a task with per-rank GPU-local NUMA binding without dropping task metadata."""
+    training_command = shlex.join(task.to_command(with_entrypoint=True))
+    return run.Script(
+        env=task.env.copy(),
+        metadata=task.metadata.copy(),
+        inline=f"""
+set -euo pipefail
+
+: "${{LOCAL_RANK:?LOCAL_RANK must be set by torchrun}}"
+command -v nvidia-smi >/dev/null || {{ echo "[numactl_local] nvidia-smi not found" >&2; exit 1; }}
+command -v numactl >/dev/null || {{ echo "[numactl_local] numactl not found" >&2; exit 1; }}
+
+PCI_BUS=$(nvidia-smi -i "$LOCAL_RANK" --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null \
+    | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]' | sed -E 's/^00000000:/0000:/') || PCI_BUS=""
+NUMA_FILE="/sys/bus/pci/devices/$PCI_BUS/numa_node"
+
+if [[ -z "$PCI_BUS" || ! -r "$NUMA_FILE" ]]; then
+    echo "[numactl_local] cannot resolve NUMA file for local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS" >&2
+    exit 1
+fi
+
+NUMA_NODE=$(<"$NUMA_FILE")
+if [[ ! "$NUMA_NODE" =~ ^[0-9]+$ ]]; then
+    echo "[numactl_local] invalid NUMA node for local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE" >&2
+    exit 1
+fi
+
+echo "[numactl_local] host=$(hostname) rank=${{RANK:-unknown}} local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE"
+exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command}
+""",
+    )
+
+
+def _kubeflow_numa_binding_enabled(env_vars: Dict[str, str]) -> bool:
+    """Return whether the opt-in Kubeflow NUMA wrapper is enabled."""
+    return str(env_vars.get(KUBEFLOW_NUMA_BINDING_ENV, "")).lower() in {
+        "1",
+        "on",
+        "true",
+        "yes",
+    }
+
 
 # NOTE: If you update this template,
 # PLEASE test it by submitting a job to GPU/node/cluster and verifying the sbatch and bash scripts.
