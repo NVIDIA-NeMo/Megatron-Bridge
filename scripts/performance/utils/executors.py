@@ -81,7 +81,19 @@ INLINE_TEMPLATE = r"""
 set -euo pipefail
 
 # NOTE: DO NOT change the single quotes to double quotes.
+set +e
 bash -c '{{ pre_cmds }} {{ command }}'
+TRAIN_RC="$?"
+set -e
+
+export NEMO_RUN_TRAINING_EXIT_CODE="${TRAIN_RC}"
+POST_RC=0
+bash -c '{{ post_cmds }}' || POST_RC="$?"
+
+if [ "${TRAIN_RC}" -ne 0 ]; then
+    exit "${TRAIN_RC}"
+fi
+exit "${POST_RC}"
 """
 
 PERF_ENV_VARS = {
@@ -116,6 +128,7 @@ def slurm_executor(
     wandb_key: str = None,
     network: str = None,
     custom_bash_cmds: List[List[str]] = None,
+    custom_post_bash_cmds: List[List[str]] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -133,6 +146,7 @@ def slurm_executor(
                 #SBATCH --constraint=gpu
     """
     custom_bash_cmds = [] if custom_bash_cmds is None else [" ".join(cmd) for cmd in custom_bash_cmds]
+    custom_post_bash_cmds = [] if custom_post_bash_cmds is None else [" ".join(cmd) for cmd in custom_post_bash_cmds]
     mounts = []
     # Explicitly request GPU resources to ensure proper allocation
     # Without --gres=gpu:N, some clusters only allocate 1 GPU regardless of ntasks_per_node
@@ -194,7 +208,10 @@ def slurm_executor(
 
     launcher = SlurmTemplate(
         template_inline=INLINE_TEMPLATE,
-        template_vars={"pre_cmds": " ; ".join(custom_bash_cmds)},
+        template_vars={
+            "pre_cmds": " ; ".join(custom_bash_cmds),
+            "post_cmds": " ; ".join(custom_post_bash_cmds) or ":",
+        },
     )
 
     executor = run.SlurmExecutor(

@@ -34,8 +34,10 @@ except ImportError:
     HAS_NEMO_RUN = False
 
 if HAS_NEMO_RUN:
+    from argument_parser import parse_cli_args
     from setup_experiment import _build_nemorun_script
     from utils.executors import (
+        INLINE_TEMPLATE,
         KUBEFLOW_NUMA_BINDING_ENV,
         PERF_ENV_VARS,
         _kubeflow_numa_binding_enabled,
@@ -137,3 +139,78 @@ def test_kubeflow_numa_binding_is_disabled_by_default():
     """Normal Kubeflow jobs must retain the unmodified Torchrun launcher."""
     assert not _kubeflow_numa_binding_enabled({})
     assert not _kubeflow_numa_binding_enabled({KUBEFLOW_NUMA_BINDING_ENV: "0"})
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_parser_accepts_repeatable_post_hooks():
+    args = parse_cli_args().parse_args(
+        [
+            "--model_family_name",
+            "llama",
+            "--model_recipe_name",
+            "llama3_8b",
+            "--num_gpus",
+            "8",
+            "--gpu",
+            "h100",
+            "--custom_post_bash_cmds",
+            "echo",
+            "post-one",
+            "--custom_post_bash_cmds",
+            "echo",
+            "post-two",
+        ]
+    )
+
+    assert args.custom_post_bash_cmds == [["echo", "post-one"], ["echo", "post-two"]]
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_slurm_executor_preserves_training_status_and_defaults_to_noop_post_hook(tmp_path):
+    executor = slurm_executor(
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
+    )
+
+    assert executor.launcher.template_vars["post_cmds"] == ":"
+    assert "NEMO_RUN_TRAINING_EXIT_CODE" in INLINE_TEMPLATE
+    assert 'exit "${TRAIN_RC}"' in INLINE_TEMPLATE
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_slurm_executor_renders_custom_post_hooks(tmp_path):
+    executor = slurm_executor(
+        gpu="h100",
+        account="test",
+        partition="test",
+        log_dir=str(tmp_path),
+        nodes=1,
+        num_gpus_per_node=8,
+        custom_post_bash_cmds=[["echo", "first"], ["echo", "second"]],
+    )
+
+    assert executor.launcher.template_vars["post_cmds"] == "echo first ; echo second"
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_kubeflow_script_wraps_pre_and_post_hooks():
+    task = _build_nemorun_script(
+        script_path="/opt/Megatron-Bridge/scripts/performance/run_script.py",
+        script_dir="/opt/Megatron-Bridge/scripts/performance",
+        args=["--max_steps", "10"],
+        kubeflow_namespace="nemo-ci",
+        custom_env_vars={},
+        custom_bash_cmds=[["bash", "/hooks/pre.sh"]],
+        custom_post_bash_cmds=[["bash", "/hooks/post.sh"]],
+    )
+
+    wrapped = task.args[0]
+    assert task.entrypoint == "bash"
+    assert "bash /hooks/pre.sh" in wrapped
+    assert "bash /hooks/post.sh" in wrapped
+    assert "NEMO_RUN_TRAINING_EXIT_CODE" in wrapped
+    assert 'exit "${TRAIN_RC}"' in wrapped

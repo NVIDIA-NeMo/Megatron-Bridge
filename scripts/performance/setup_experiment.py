@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import shlex
 import sys
 import tempfile
 import time
@@ -114,8 +115,10 @@ def _build_nemorun_script(
     args: List[str],
     kubeflow_namespace: Optional[str],
     custom_env_vars: Dict[str, str],
+    custom_bash_cmds: Optional[List[List[str]]] = None,
+    custom_post_bash_cmds: Optional[List[List[str]]] = None,
 ) -> run.Script:
-    """Build the rank-local task and apply optional Kubeflow NUMA binding."""
+    """Build a rank-local task with optional Kubeflow NUMA binding and hooks."""
     task = run.Script(
         path=script_path,
         entrypoint="python",
@@ -124,8 +127,52 @@ def _build_nemorun_script(
     )
     if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
         logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
-        return _kubeflow_numa_binding_script(task)
+        task = _kubeflow_numa_binding_script(task)
+    if kubeflow_namespace and (custom_bash_cmds or custom_post_bash_cmds):
+        task = _script_with_hooks(task, custom_bash_cmds, custom_post_bash_cmds)
     return task
+
+
+def _shell_join_commands(commands: Optional[List[List[str]]]) -> str:
+    """Render repeated command-token lists as one shell command sequence."""
+    if not commands:
+        return ":"
+    return " ; ".join(shlex.join(command) for command in commands)
+
+
+def _script_with_hooks(
+    script: run.Script,
+    custom_bash_cmds: Optional[List[List[str]]],
+    custom_post_bash_cmds: Optional[List[List[str]]],
+) -> run.Script:
+    """Wrap a script with pre/post hooks while preserving its training exit code."""
+    pre_cmds = _shell_join_commands(custom_bash_cmds)
+    post_cmds = _shell_join_commands(custom_post_bash_cmds)
+    training_cmd = shlex.join(script.to_command(with_entrypoint=True))
+    wrapped_cmd = f"""
+set -euo pipefail
+
+set +e
+bash -c {shlex.quote(f"{pre_cmds} ; {training_cmd}")}
+TRAIN_RC="$?"
+set -e
+
+export NEMO_RUN_TRAINING_EXIT_CODE="${{TRAIN_RC}}"
+POST_RC=0
+bash -c {shlex.quote(post_cmds)} || POST_RC="$?"
+
+if [ "${{TRAIN_RC}}" -ne 0 ]; then
+    exit "${{TRAIN_RC}}"
+fi
+exit "${{POST_RC}}"
+"""
+    return run.Script(
+        path="-lc",
+        entrypoint="bash",
+        args=[wrapped_cmd],
+        env=script.env.copy(),
+        metadata=script.metadata.copy(),
+    )
 
 
 def _build_csp_plugin(csp: str) -> Any:
@@ -478,6 +525,7 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
+    custom_post_bash_cmds: List[List[str]],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
@@ -681,6 +729,7 @@ def main(
             custom_env_vars=custom_env_vars,
             custom_srun_args=custom_srun_args,
             custom_bash_cmds=custom_bash_cmds,
+            custom_post_bash_cmds=custom_post_bash_cmds,
             gres=gres,
             hf_token=hf_token,
             offline=offline,
@@ -761,6 +810,8 @@ def main(
         args=_filter_run_script_args(sys.argv[1:]),
         kubeflow_namespace=kubeflow_namespace,
         custom_env_vars=custom_env_vars,
+        custom_bash_cmds=custom_bash_cmds,
+        custom_post_bash_cmds=custom_post_bash_cmds,
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
@@ -1043,6 +1094,7 @@ if __name__ == "__main__":
         custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
+        custom_post_bash_cmds=args.custom_post_bash_cmds,
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
