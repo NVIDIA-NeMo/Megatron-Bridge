@@ -17,6 +17,7 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from transformers import Qwen3NextForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -32,7 +33,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
 
 
-@MegatronModelBridge.register_bridge(source="Qwen3NextForCausalLM", target=GPTModel, model_type="qwen3_next")
+@MegatronModelBridge.register_bridge(source=Qwen3NextForCausalLM, target=GPTModel, model_type="qwen3_next")
 class Qwen3NextBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3-Next Causal LM.

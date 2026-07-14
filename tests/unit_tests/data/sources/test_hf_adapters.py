@@ -140,7 +140,7 @@ def test_llava_video_adapter_normalizes_turns(tmp_path):
     assert len(adapted) == 1
     assert adapted[0]["conversation"][0]["content"][0] == {
         "type": "video",
-        "video": str(tmp_path / "clip.mp4"),
+        "path": str(tmp_path / "clip.mp4"),
     }
     assert adapted[0]["conversation"][0]["content"][1]["text"] == "What happens?"
 

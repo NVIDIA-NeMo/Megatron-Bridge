@@ -14,6 +14,9 @@
 
 """Qwen VL collator implementations."""
 
+from collections.abc import Mapping
+from typing import Any
+
 import torch
 import torch.nn.functional as F
 
@@ -50,6 +53,45 @@ except ImportError:
     HAVE_QWEN_VL_UTILS = False
 
 
+def _normalize_qwen_video_paths(example: dict[str, Any]) -> dict[str, Any]:
+    """Map path-based video parts to the inline schema expected by Qwen processors."""
+    conversation = example.get("conversation")
+    if not isinstance(conversation, list):
+        return example
+
+    normalized_conversation = []
+    example_changed = False
+    for turn in conversation:
+        if not isinstance(turn, Mapping) or not isinstance(turn.get("content"), list):
+            normalized_conversation.append(turn)
+            continue
+
+        normalized_content = []
+        turn_changed = False
+        for part in turn["content"]:
+            if isinstance(part, Mapping) and part.get("type") == "video" and "video" not in part and "path" in part:
+                normalized_part = dict(part)
+                normalized_part["video"] = normalized_part.pop("path")
+                normalized_content.append(normalized_part)
+                turn_changed = True
+            else:
+                normalized_content.append(part)
+
+        if turn_changed:
+            normalized_turn = dict(turn)
+            normalized_turn["content"] = normalized_content
+            normalized_conversation.append(normalized_turn)
+            example_changed = True
+        else:
+            normalized_conversation.append(turn)
+
+    if not example_changed:
+        return example
+    normalized_example = dict(example)
+    normalized_example["conversation"] = normalized_conversation
+    return normalized_example
+
+
 def qwen2_5_collate_fn(
     examples: list,
     processor,
@@ -69,6 +111,7 @@ def qwen2_5_collate_fn(
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
+    examples = [_normalize_qwen_video_paths(example) for example in examples]
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,

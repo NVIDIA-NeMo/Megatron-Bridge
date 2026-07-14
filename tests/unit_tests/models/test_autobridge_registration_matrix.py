@@ -117,7 +117,6 @@ STRING_REGISTRATIONS = {
     "NemotronH_Nano_VL_V2",
     "NemotronLabsDiffusionModel",
     "Qwen3ASRForConditionalGeneration",
-    "Qwen3NextForCausalLM",
     "Qwen3_5ForCausalLM",
     "Qwen3_5ForConditionalGeneration",
     "Qwen3_5MoeForCausalLM",
