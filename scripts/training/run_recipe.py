@@ -92,7 +92,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     recipe_args = parser.add_argument_group("Recipe construction")
     recipe_args.add_argument("--seq-length", "--seq_length", type=int, dest="seq_length")
-    recipe_args.add_argument("--hf-path", "--hf_path", dest="hf_path")
 
     training = parser.add_argument_group("Training")
     training.add_argument("--max-steps", "--max_steps", type=int, dest="max_steps")
@@ -298,7 +297,6 @@ def _load_selected_recipe(args: argparse.Namespace) -> object:
         recipe_name,
         peft_scheme=peft_scheme,
         seq_length=args.seq_length,
-        hf_path=args.hf_path,
     )
 
 

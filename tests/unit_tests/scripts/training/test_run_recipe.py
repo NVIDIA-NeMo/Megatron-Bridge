@@ -131,7 +131,18 @@ def _load_module():
 
 @pytest.mark.parametrize(
     "option",
-    ["--task", "--source", "--family", "--domain", "--data", "--use-recipes", "--step", "--set"],
+    [
+        "--task",
+        "--source",
+        "--family",
+        "--domain",
+        "--data",
+        "--use-recipes",
+        "--step",
+        "--set",
+        "--hf-path",
+        "--hf_path",
+    ],
 )
 def test_removed_selection_options_are_rejected(option):
     module, _ = _load_module()
@@ -193,7 +204,6 @@ def test_model_adapter_modes_select_peft_recipe_and_scheme(mode):
         "gpt_oss_20b_peft_config",
         peft_scheme=mode,
         seq_length=None,
-        hf_path=None,
     )
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "finetune"
 
@@ -208,7 +218,6 @@ def test_full_recipe_uses_only_library_namespace_and_default_llm_step():
         "gpt_oss_20b_pretrain_config",
         peft_scheme=None,
         seq_length=None,
-        hf_path=None,
     )
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 

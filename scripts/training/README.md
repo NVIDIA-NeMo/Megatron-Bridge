@@ -50,8 +50,7 @@ requested adapter scheme.
 The default forward step is `llm_step`. Pass `--step-func NAME` explicitly for a recipe that needs another registered
 forward step.
 
-Pass `--hf-path` (or `--hf_path`) when the selected recipe factory accepts an alternate Hugging Face model path, and
-`--seq-length` (or `--seq_length`) when it accepts a sequence-length argument.
+Pass `--seq-length` (or `--seq_length`) when the selected recipe factory accepts a sequence-length argument.
 
 ## Dataset presets
 

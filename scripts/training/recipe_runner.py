@@ -107,7 +107,6 @@ def _recipe_kwargs_for_signature(
     *,
     peft_scheme: str | None,
     seq_length: int | None = None,
-    hf_path: str | None = None,
 ) -> dict[str, object]:
     """Build kwargs accepted by a recipe function."""
     try:
@@ -118,12 +117,10 @@ def _recipe_kwargs_for_signature(
         accepts_peft = "peft" in params or has_var_keyword
         accepts_peft_scheme = "peft_scheme" in params
         accepts_seq_length = "seq_length" in params or has_var_keyword
-        accepts_hf_path = "hf_path" in params or has_var_keyword
     except (ValueError, TypeError):
         accepts_peft = True
         accepts_peft_scheme = False
         accepts_seq_length = False
-        accepts_hf_path = False
 
     kwargs: dict[str, object] = {}
     if peft_scheme is not None:
@@ -139,8 +136,6 @@ def _recipe_kwargs_for_signature(
             )
     if accepts_seq_length and seq_length is not None:
         kwargs["seq_length"] = seq_length
-    if accepts_hf_path and hf_path is not None:
-        kwargs["hf_path"] = hf_path
     return kwargs
 
 
@@ -149,14 +144,12 @@ def _load_with_optional_kwargs(
     *,
     peft_scheme: str | None,
     seq_length: int | None = None,
-    hf_path: str | None = None,
 ) -> ConfigContainer:
     """Call a recipe function with only the optional kwargs it accepts."""
     kwargs = _recipe_kwargs_for_signature(
         config_builder,
         peft_scheme=peft_scheme,
         seq_length=seq_length,
-        hf_path=hf_path,
     )
     return config_builder(**kwargs)
 
@@ -208,7 +201,6 @@ def load_recipe(
     recipe_name: str,
     peft_scheme: str | None = None,
     seq_length: int | None = None,
-    hf_path: str | None = None,
 ) -> ConfigContainer:
     """Load a recipe from the library recipe package."""
     config_builder = find_library_recipe(recipe_name)
@@ -218,7 +210,6 @@ def load_recipe(
         config_builder,
         peft_scheme=peft_scheme,
         seq_length=seq_length,
-        hf_path=hf_path,
     )
 
 
