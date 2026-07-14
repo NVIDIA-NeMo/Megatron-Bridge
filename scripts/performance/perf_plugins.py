@@ -294,6 +294,8 @@ class PerfEnvPlugin(Plugin):
         """Set model-specific environment variables"""
         if model_family_name in ["deepseek"]:
             executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
+        if model_family_name == "nemodiag":
+            executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
 
         if workload_base_config.cuda_graph_impl == "full_iteration" or (
             workload_base_config.cuda_graph_impl == "local"
@@ -333,6 +335,9 @@ class PerfEnvPlugin(Plugin):
                 if compute_dtype == "fp8_cs":
                     del_cudnn_ln = False
             if model_family_name == "deepseek":
+                if compute_dtype == "fp8_mx":
+                    del_cudnn_ln = False
+            if model_family_name == "nemodiag":
                 if compute_dtype == "fp8_mx":
                     del_cudnn_ln = False
             if model_family_name == "kimi":

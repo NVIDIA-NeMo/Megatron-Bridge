@@ -19,6 +19,7 @@ from typing import List, Optional
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.perf_recipes.nemodiag.common import set_nemodiag_v0_pipeline_model_parallel_layout
 from megatron.bridge.recipes.deepseek.deepseek_v3 import set_deepseek_v3_pipeline_model_parallel_layout
 from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
@@ -493,6 +494,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
     ):
         set_deepseek_v3_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
+    if model_recipe_name == "nemodiag_v0" and (
+        pp_size is not None or vp_size != -1 or pipeline_model_parallel_layout is not None
+    ):
+        set_nemodiag_v0_pipeline_model_parallel_layout(recipe.model, layout=pipeline_model_parallel_layout)
     if model_recipe_name == "kimi_k2":
         if pp_size is not None or vp_size != -1:
             if not isinstance(recipe.model.pipeline_model_parallel_layout, str):
