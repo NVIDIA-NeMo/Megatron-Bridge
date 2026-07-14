@@ -122,8 +122,11 @@ class MultiLoRALinear(AdapterWrapper):
         self.tokens_per_adapter: Optional[torch.Tensor] = None
         device = next(to_wrap.parameters()).device
         dtype = next(to_wrap.parameters()).dtype
-        self.alpha_values = torch.ones(n_adapters, dtype=dtype, device=device)
-        self.rank_values = torch.full((n_adapters,), dim, dtype=dtype, device=device)
+        # Non-persistent: slot lifecycle is externally managed, not checkpointed.
+        self.register_buffer("alpha_values", torch.ones(n_adapters, dtype=dtype, device=device), persistent=False)
+        self.register_buffer(
+            "rank_values", torch.full((n_adapters,), dim, dtype=dtype, device=device), persistent=False
+        )
 
     def forward(self, x: torch.Tensor, *args: Any, **kwargs: Any) -> Tuple[torch.Tensor, Optional[torch.Tensor]]:
         linear_output, bias, layernorm_output = self.base_linear_forward(x, *args, **kwargs)
@@ -381,6 +384,10 @@ def expose_adapter_slot(model, idx: int):
       that don't contain the slot index, so saving from slot ``A`` and loading into
       slot ``B`` produces matching keys.
 
+    Export contract: tensors are exported max-rank padded with ``.dim == max_rank``,
+    so the exposed ``.alpha`` is set to ``alpha * max_rank / rank`` — consumers
+    computing ``alpha / dim`` apply the slot's runtime scaling. Restored on exit.
+
     ``MultiLoRALinear`` is handled via the
     common ``.adapters`` ModuleList — duck-typed rather than ``isinstance``-checked
     so future multi-LoRA module types are picked up automatically.
@@ -391,10 +398,14 @@ def expose_adapter_slot(model, idx: int):
     def _ctx():
         modules = list(_iter_multi_lora_modules(model))
         saved = {}
+        saved_alphas = {}
         for m in modules:
             if "adapters" in m._modules:
                 saved[id(m)] = m._modules.pop("adapters")
-                m.adapter = saved[id(m)][idx]
+                adapter = saved[id(m)][idx]
+                saved_alphas[id(m)] = adapter.alpha
+                adapter.alpha = float(m.alpha_values[idx]) * m.max_rank / float(m.rank_values[idx])
+                m.adapter = adapter
 
         # try/finally: an exception in the body (e.g. an export/save error, which
         # happens on the weight-push path) must still restore the ModuleList,
@@ -408,6 +419,7 @@ def expose_adapter_slot(model, idx: int):
                     if "adapter" in m._modules:
                         del m._modules["adapter"]
                     m._modules["adapters"] = saved[id(m)]
+                    saved[id(m)][idx].alpha = saved_alphas[id(m)]
 
     return _ctx()
 
