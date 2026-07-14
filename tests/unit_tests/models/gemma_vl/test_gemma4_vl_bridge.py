@@ -794,6 +794,14 @@ def test_megatron_to_hf_config_nests_dense_architecture_fields():
     assert hf_config["eos_token_id"] == [1, 106]
 
 
+def test_megatron_to_hf_config_nests_serialized_dense_window_size():
+    provider = Gemma4DenseVLProvider(window_size=[511, 0])
+
+    hf_config = Gemma4VLBridge.megatron_to_hf_config(provider)
+
+    assert hf_config["text_config"]["sliding_window"] == 512
+
+
 def test_megatron_to_hf_config_nests_moe_architecture_fields():
     provider = Gemma4VLModelProvider(
         attention_k_eq_v=True,

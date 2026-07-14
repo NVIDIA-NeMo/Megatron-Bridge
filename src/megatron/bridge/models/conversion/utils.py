@@ -24,6 +24,21 @@ from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
 
 
+def mcore_to_hf_window_size(window_size: int | list[int] | tuple[int, int] | None) -> int | None:
+    """Convert an MCore inclusive attention window to the Hugging Face token count.
+
+    MCore represents a causal sliding window as ``(left, right)``, where the
+    current token is included in the Hugging Face window size. Checkpoint YAML
+    reloads tuples as lists, so both sequence types are accepted. Providers that
+    already store the Hugging Face scalar representation pass through unchanged.
+    """
+    if isinstance(window_size, (list, tuple)):
+        if len(window_size) != 2:
+            raise ValueError(f"Expected a two-element MCore window, got {window_size!r}")
+        return window_size[0] + 1
+    return window_size
+
+
 def unwrap_model(model, module_instances=None):
     """Unwrap a model (or list of models) to the underlying module.
     Extends ``megatron.core.utils.unwrap_model`` with awareness of ``MegatronFSDP``.
