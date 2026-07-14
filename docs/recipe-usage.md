@@ -32,7 +32,7 @@ For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
 The benefit of providing the full recipe through a pythonic structure is that it is agnostic to any configuration approach that a user may prefer, whether that's YAML, `argparse` or something else. In other words, the user may override the recipe however they see fit.
 
-The following sections detail a few different ways to override the configuration recipe. For a generic recipe launcher, see [`scripts/training/run_recipe.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/run_recipe.py).
+The following sections detail a few different ways to override the configuration recipe. For the public Slurm launcher and its rank-local recipe runner, see [`scripts/training/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/README.md).
 
 
 ### Python
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/launch_with_nemo_run.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/launch_with_nemo_run.py).
+For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/setup_experiment.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/setup_experiment.py).
 
 #### Plugins
 

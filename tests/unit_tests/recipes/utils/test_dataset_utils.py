@@ -19,7 +19,9 @@ import pytest
 from megatron.bridge.recipes.utils.dataset_utils import (
     DATASET_TYPES,
     LLM_FINETUNE_PRESETS,
+    PUBLIC_DATASET_NAMES,
     apply_dataset_override,
+    apply_public_dataset_override,
     extract_and_remove_override,
     get_blend_fields_from_data_paths,
     infer_mode_from_dataset,
@@ -480,6 +482,60 @@ class TestApplyDatasetOverride:
 
 
 # ---------------------------------------------------------------------------
+# Tests for apply_public_dataset_override
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+class TestApplyPublicDatasetOverride:
+    """Test cases for public launcher dataset names."""
+
+    def test_squad_public_name_selects_squad_preset(self):
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
+
+        config = _make_mock_config()
+        overrides = ["train.train_iters=10"]
+        result = apply_public_dataset_override(config, "squad", seq_length=2048, cli_overrides=overrides)
+
+        assert isinstance(result.dataset, GPTSFTDatasetConfig)
+        assert result.dataset.hf_dataset.dataset_name == "squad"
+        assert overrides == ["train.train_iters=10"]
+
+    def test_local_jsonl_public_name_uses_local_source_override(self):
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
+
+        config = _make_mock_config()
+        overrides = ["dataset.dataset_root=/data/sft", "train.train_iters=10"]
+        result = apply_public_dataset_override(config, "local-jsonl", seq_length=2048, cli_overrides=overrides)
+
+        assert isinstance(result.dataset, GPTSFTDatasetConfig)
+        assert result.dataset.dataset_root == "/data/sft"
+        assert overrides == ["train.train_iters=10"]
+
+    def test_openmathinstruct2_thinking_public_name_enables_packing(self):
+        from megatron.bridge.data.builders import GPTSFTDatasetConfig
+
+        config = _make_mock_config()
+        result = apply_public_dataset_override(
+            config,
+            "openmathinstruct2-thinking",
+            seq_length=2048,
+            pad_seq_to_mult=4,
+        )
+
+        assert isinstance(result.dataset, GPTSFTDatasetConfig)
+        assert result.dataset.hf_dataset.dataset_name == "openmathinstruct2_thinking"
+        assert result.dataset.enable_offline_packing is True
+        assert result.dataset.offline_packing_specs.pad_seq_to_mult == 4
+
+    def test_unknown_public_name_raises(self):
+        config = _make_mock_config()
+
+        with pytest.raises(ValueError, match="Unknown dataset name"):
+            apply_public_dataset_override(config, "llm-finetune")
+
+
+# ---------------------------------------------------------------------------
 # Tests for registry constants
 # ---------------------------------------------------------------------------
 
@@ -506,3 +562,10 @@ class TestRegistryConstants:
     def test_llm_finetune_presets_are_callable(self):
         for name, factory in LLM_FINETUNE_PRESETS.items():
             assert callable(factory), f"Preset '{name}' is not callable"
+
+    def test_public_dataset_names_has_expected_entries(self):
+        assert "squad" in PUBLIC_DATASET_NAMES
+        assert "openmathinstruct2" in PUBLIC_DATASET_NAMES
+        assert "openmathinstruct2-thinking" in PUBLIC_DATASET_NAMES
+        assert "local-jsonl" in PUBLIC_DATASET_NAMES
+        assert "preloaded-vlm" in PUBLIC_DATASET_NAMES

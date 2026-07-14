@@ -29,6 +29,7 @@ from megatron.bridge.data.loaders import get_blend_and_blend_per_split
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
+    default_openmathinstruct2_thinking_packed_config,
     default_squad_config,
 )
 from megatron.bridge.training.config import (
@@ -120,6 +121,20 @@ DATASET_TYPES = [
     "llm-finetune-preloaded",
     "vlm-energon",
     "vlm-hf",
+]
+
+PUBLIC_DATASET_NAMES = [
+    "mock",
+    "dclm",
+    "rp2",
+    "c4",
+    "squad",
+    "squad-packed",
+    "openmathinstruct2",
+    "openmathinstruct2-thinking",
+    "gsm8k",
+    "local-jsonl",
+    "preloaded-vlm",
 ]
 
 LLM_FINETUNE_PRESETS: dict[str, Callable] = {
@@ -266,6 +281,127 @@ def apply_dataset_override(
     if seq_length is not None and hasattr(config, "model") and config.model is not None:
         config.model.seq_length = seq_length
 
+    return config
+
+
+def apply_public_dataset_override(
+    config: ConfigContainer,
+    dataset_name: str,
+    packed_sequence: bool = False,
+    pad_seq_to_mult: int = 1,
+    seq_length: int | None = None,
+    cli_overrides: list[str] | None = None,
+) -> ConfigContainer:
+    """Replace a recipe dataset using a public launcher dataset name.
+
+    Args:
+        config: The recipe config to modify.
+        dataset_name: One of :data:`PUBLIC_DATASET_NAMES`.
+        packed_sequence: Whether to enable packed sequences for SFT datasets.
+        pad_seq_to_mult: Sequence padding multiple for packed SFT datasets.
+        seq_length: Explicit sequence length. Uses the model value when unset.
+        cli_overrides: Mutable Hydra-style overrides consumed by local sources.
+
+    Returns:
+        The modified ConfigContainer.
+    """
+    if dataset_name not in PUBLIC_DATASET_NAMES:
+        raise ValueError(f"Unknown dataset name: '{dataset_name}'. Choose from: {', '.join(PUBLIC_DATASET_NAMES)}")
+
+    if cli_overrides is None:
+        cli_overrides = []
+    resolved_seq_length = _resolve_seq_length(config, seq_length)
+
+    if dataset_name == "mock":
+        config.dataset = MockGPTDatasetConfig(
+            seq_length=resolved_seq_length,
+            random_seed=1234,
+            reset_attention_mask=False,
+            reset_position_ids=False,
+            eod_mask_loss=False,
+            num_dataset_builder_threads=1,
+            split="9999,8,2",
+            data_sharding=True,
+            dataloader_type="single",
+            skip_getting_attention_mask_from_dataset=True,
+        )
+    elif dataset_name in {"dclm", "rp2", "c4"}:
+        config.dataset = GPTDatasetConfig(
+            seq_length=resolved_seq_length,
+            random_seed=1234,
+            reset_attention_mask=False,
+            reset_position_ids=False,
+            eod_mask_loss=False,
+            num_dataset_builder_threads=1,
+            blend=None,
+            blend_per_split=None,
+            split="9999,8,2",
+            data_sharding=True,
+            dataloader_type="single",
+            skip_getting_attention_mask_from_dataset=True,
+        )
+    elif dataset_name in {"squad", "squad-packed"}:
+        config.dataset = default_squad_config(
+            seq_length=resolved_seq_length,
+            packed_sequence=packed_sequence,
+            pad_seq_to_mult=pad_seq_to_mult,
+        )
+    elif dataset_name == "openmathinstruct2":
+        config.dataset = default_openmathinstruct2_config(
+            seq_length=resolved_seq_length,
+            packed_sequence=packed_sequence,
+            pad_seq_to_mult=pad_seq_to_mult,
+        )
+    elif dataset_name == "openmathinstruct2-thinking":
+        config.dataset = default_openmathinstruct2_thinking_packed_config(
+            seq_length=resolved_seq_length,
+            packed_sequence=True,
+            pad_seq_to_mult=pad_seq_to_mult,
+        )
+    elif dataset_name == "gsm8k":
+        config.dataset = default_gsm8k_config(
+            seq_length=resolved_seq_length,
+            packed_sequence=packed_sequence,
+            pad_seq_to_mult=pad_seq_to_mult,
+        )
+    elif dataset_name == "local-jsonl":
+        dataset_root = extract_and_remove_override(cli_overrides, "dataset.dataset_root")
+        if not dataset_root:
+            raise ValueError("local-jsonl requires dataset.dataset_root=<path> to select the local JSONL source.")
+        config.dataset = GPTSFTDatasetConfig(
+            seq_length=resolved_seq_length,
+            dataset_root=dataset_root,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(
+                prompt_column="input",
+                completion_column="output",
+                separator=" ",
+            ),
+            dataloader_type="batch",
+            seed=5678,
+        )
+    else:
+        train_data_path = extract_and_remove_override(cli_overrides, "dataset.train_data_path")
+        valid_data_path = extract_and_remove_override(cli_overrides, "dataset.valid_data_path")
+        test_data_path = extract_and_remove_override(cli_overrides, "dataset.test_data_path")
+        image_folder = extract_and_remove_override(cli_overrides, "dataset.image_folder")
+        hf_processor_path = extract_and_remove_override(cli_overrides, "dataset.hf_processor_path")
+        if not train_data_path or not hf_processor_path:
+            raise ValueError(
+                "preloaded-vlm requires dataset.train_data_path=<path> and dataset.hf_processor_path=<model-or-path>."
+            )
+        config.dataset = PreloadedVLMConversationProvider(
+            seq_length=resolved_seq_length,
+            hf_processor_path=hf_processor_path,
+            train_data_path=train_data_path,
+            valid_data_path=valid_data_path,
+            test_data_path=test_data_path,
+            image_folder=image_folder,
+            dataloader_type="single",
+            num_workers=2,
+        )
+
+    if seq_length is not None and hasattr(config, "model") and config.model is not None:
+        config.model.seq_length = seq_length
     return config
 
 
