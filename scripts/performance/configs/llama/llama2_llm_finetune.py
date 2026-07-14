@@ -123,7 +123,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.dataset.do_validation = True
     cfg.dataset.do_test = False
     cfg.checkpoint.finetune = True
-    cfg.checkpoint.pretrained_checkpoint = "/ckpt
+    cfg.checkpoint.pretrained_checkpoint = "/ckpt"
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.load_optim = False
