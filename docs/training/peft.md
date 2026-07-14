@@ -18,8 +18,8 @@ As language models continue to grow in size, PEFT is gaining popularity for its 
 PEFT is configured as an optional attribute in `ConfigContainer`:
 
 ```python
-from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.peft.lora import LoRA
+from megatron.bridge.training.config import CheckpointConfig, ConfigContainer
 
 config = ConfigContainer(
     # ... other required configurations
@@ -30,14 +30,16 @@ config = ConfigContainer(
         dropout=0.1,
     ),
     checkpoint=CheckpointConfig(
-        pretrained_checkpoint="/path/to/pretrained/checkpoint",  # Required for PEFT
+        pretrained_checkpoint="/checkpoints/base_model",  # Required for PEFT
         save="/path/to/peft/checkpoints",
     ),
 )
 ```
 
 ```{note}
-**Requirements**: PEFT requires `checkpoint.pretrained_checkpoint` to be set to load the base model weights.
+**Requirement:** PEFT requires `checkpoint.pretrained_checkpoint` to load the frozen base model weights before adapters are inserted. This path may be a native Megatron checkpoint base directory, a specific native Megatron `iter_N` directory, or a local Hugging Face full-model directory containing `config.json` and model weight files. A remote Hugging Face model ID is not a checkpoint path; download it locally or convert it to Megatron format first.
+
+When resuming adapter training, keep `checkpoint.pretrained_checkpoint` pointed at the same base model and set `checkpoint.load` to the PEFT adapter checkpoint directory.
 ```
 
 ## Supported PEFT Methods
@@ -160,13 +162,13 @@ Let $A_q = A_k = A_v = A_{qkv}$ (weight tying)
 Then
 
 $$
-\begin{align}
-& [query \quad key \quad value] \\
-= & [W_q x + B_q A_q x \quad W_k x + B_k A_k x \quad W_v x + B_v A_v x] \quad\quad \text{(canonical formulation)} \\
-= & [W_q x + B_q (A_{qkv} x) \quad W_k x + B_k (A_{qkv} x) \quad W_v x + B_v (A_{qkv} x)] \\
-= & [W_q \quad W_k \quad W_v] x + [B_q \quad B_k \quad B_v]A_{qkv} x \\
-= & W_{qkv} x + B_{qkv} A_{qkv} x  \quad\quad \text{(performant formulation)}
-\end{align}
+\begin{aligned}
+[query \quad key \quad value]
+&= [W_q x + B_q A_q x \quad W_k x + B_k A_k x \quad W_v x + B_v A_v x] \quad\quad \text{(canonical formulation)} \\
+&= [W_q x + B_q (A_{qkv} x) \quad W_k x + B_k (A_{qkv} x) \quad W_v x + B_v (A_{qkv} x)] \\
+&= [W_q \quad W_k \quad W_v] x + [B_q \quad B_k \quad B_v]A_{qkv} x \\
+&= W_{qkv} x + B_{qkv} A_{qkv} x  \quad\quad \text{(performant formulation)}
+\end{aligned}
 $$
 
 Note: dimensions of weight matrices are as follows:
@@ -274,10 +276,17 @@ The following parameters define how LoRA is applied to your model. They control 
 
 ```python
 from megatron.bridge.training.config import (
-    ConfigContainer, TrainingConfig, CheckpointConfig
+    CheckpointConfig,
+    ConfigContainer,
+    SchedulerConfig,
+    TrainingConfig,
 )
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.hf_processors.squad import process_squad_example
+from megatron.bridge.data.builders import (
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.peft.lora import LoRA
 from megatron.core.optimizer import OptimizerConfig
 
@@ -302,13 +311,20 @@ config = ConfigContainer(
         lr_warmup_iters=100,
         lr_decay_iters=1000,
     ),
-    dataset=HFDatasetConfig(
-        dataset_name="rajpurkar/squad",
-        process_example_fn=process_squad_example,
+    dataset=GPTSFTDatasetConfig(
         seq_length=512,
+        hf_dataset=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        hf_validation_proportion=0.1,
+        seed=5678,
+        do_validation=True,
+        do_test=False,
+        dataset_kwargs={"pad_to_max_length": True},
+        enable_offline_packing=True,
+        offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=512),
     ),
     checkpoint=CheckpointConfig(
-        pretrained_checkpoint="/path/to/pretrained/model",  # Required
+        pretrained_checkpoint="/checkpoints/base_model",  # Required for PEFT
         save="/path/to/peft/checkpoints",
         save_interval=200,
     ),

@@ -63,6 +63,7 @@ _COMPONENT_KEY_TO_FIELD = {
     "pp": "pipeline_model_parallel_size",
     "dp": "data_parallel_size",
     "cp": "context_parallel_size",
+    "ep": "expert_model_parallel_size",
     "etp": "expert_tensor_parallel_size",
     "rank_offset": "rank_offset",
 }
@@ -71,11 +72,11 @@ _COMPONENT_KEY_TO_FIELD = {
 def _parse_component_spec(raw: str) -> tuple[str, ModuleParallelismConfig]:
     """Parse one ``--component`` flag value into ``(name, ModuleParallelismConfig)``.
 
-    Format: ``<name>=tp=N[,pp=N,dp=N,cp=N,etp=N,rank_offset=N]``.
+    Format: ``<name>=tp=N[,pp=N,dp=N,cp=N,ep=N,etp=N,rank_offset=N]``.
     """
     if "=" not in raw:
         raise ValueError(
-            f"--component value {raw!r} must be of the form 'name=tp=N[,pp=N,dp=N,cp=N,etp=N,rank_offset=N]'"
+            f"--component value {raw!r} must be of the form 'name=tp=N[,pp=N,dp=N,cp=N,ep=N,etp=N,rank_offset=N]'"
         )
     name, _, rest = raw.partition("=")
     name = name.strip()

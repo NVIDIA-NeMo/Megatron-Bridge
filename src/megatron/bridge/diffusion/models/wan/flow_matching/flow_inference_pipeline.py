@@ -119,20 +119,29 @@ class FlowInferencePipeline:  # noqa: D101
         self.param_dtype = inference_cfg.param_dtype
         self.text_len = inference_cfg.text_len
 
+        # Resolve where the non-DiT components (text encoder, tokenizer, VAE, scheduler)
+        # are loaded from. Prefer locally provided directories so inference can run
+        # fully offline (e.g. air-gapped nodes); fall back to the hub `model_id`.
+        t5_dir = t5_checkpoint_dir or model_id
+        vae_dir = vae_checkpoint_dir or model_id
+        # The scheduler config ships in the same diffusers repo as the other
+        # components; prefer any provided local dir, else fall back to model_id.
+        self.scheduler_source = t5_checkpoint_dir or vae_checkpoint_dir or model_id
+
         self.text_encoder = UMT5EncoderModel.from_pretrained(
-            model_id,
+            t5_dir,
             subfolder="text_encoder",
             torch_dtype=inference_cfg.t5_dtype,
         )
         self.tokenizer = AutoTokenizer.from_pretrained(
-            model_id,
+            t5_dir,
             subfolder="tokenizer",
         )
 
         self.vae_stride = inference_cfg.vae_stride
         self.patch_size = inference_cfg.patch_size
         self.vae = AutoencoderKLWan.from_pretrained(
-            model_id,
+            vae_dir,
             subfolder="vae",
             torch_dtype=inference_cfg.param_dtype,
         )
@@ -375,8 +384,8 @@ class FlowInferencePipeline:  # noqa: D101
                 if offload_model:
                     self.text_encoder.cpu()
             else:
-                context = self.text_encoder([prompt], torch.device("cpu"))[0].to(self.device)
-                context_null = self.text_encoder([n_prompt], torch.device("cpu"))[0].to(self.device)
+                context = _encode_text(self.tokenizer, self.text_encoder, "cpu", prompt).to(self.device)
+                context_null = _encode_text(self.tokenizer, self.text_encoder, "cpu", n_prompt).to(self.device)
             context_lens.append(context_max_len)  # all samples have the same context_max_len
             contexts.append(context)
             contexts_null.append(context_null)
@@ -426,7 +435,9 @@ class FlowInferencePipeline:  # noqa: D101
             batch_size_for_schedulers = len(noises)
             schedulers = []
             for _ in range(batch_size_for_schedulers):
-                base_sched = FlowMatchEulerDiscreteScheduler.from_pretrained(self.model_id, subfolder="scheduler")
+                base_sched = FlowMatchEulerDiscreteScheduler.from_pretrained(
+                    self.scheduler_source, subfolder="scheduler"
+                )
                 s = UniPCMultistepScheduler.from_config(base_sched.config, flow_shift=shift)
                 s.set_timesteps(sampling_steps, device=self.device)
 

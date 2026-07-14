@@ -16,7 +16,7 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.vlm_datasets.hf_provider import HFDatasetConversationProvider
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -140,7 +140,7 @@ def _sft_common() -> ConfigContainer:
     before use.
 
     Key differences from pre-training:
-    - Uses HFDatasetConfig with SQuAD as default dataset
+    - Uses GPTSFTDatasetConfig with SQuAD as default dataset
     - Lower learning rate (5e-6) suitable for full fine-tuning
     - Fewer training iterations (1000)
     - Smaller batch sizes
@@ -346,7 +346,7 @@ def _sft_common_vlm() -> ConfigContainer:
     The caller MUST set `cfg.model` and `cfg.dataset.hf_processor_path` before use.
 
     Key differences from LLM SFT (`_sft_common`):
-    - Uses HFDatasetConversationProvider with HuggingFace datasets (e.g., CORD-v2)
+    - Uses DirectHFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
     - Uses NullTokenizer (VLMs use processor instead of tokenizer)
     - DDP config optimized for VLM training (no grad/param overlap)
     - Supports freeze options for language_model, vision_model, vision_projection
@@ -401,18 +401,19 @@ def _sft_common_vlm() -> ConfigContainer:
         use_distributed_optimizer=True,
     )
 
-    # VLM-specific dataset - uses HuggingFace dataset provider
+    # VLM-specific dataset - uses the direct Hugging Face Config + Builder path
     # hf_processor_path must be set by model-specific config
-    cfg.dataset = HFDatasetConversationProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
-        maker_name="make_cord_v2_dataset",
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=True,
+        enable_in_batch_packing=True,
     )
 
     # VLM uses NullTokenizer - actual tokenization is handled by the processor
@@ -448,7 +449,7 @@ def _peft_common_vlm() -> ConfigContainer:
     The caller MUST set `cfg.model` and `cfg.dataset.hf_processor_path` before use.
 
     Key differences from LLM PEFT (`_peft_common`):
-    - Uses HFDatasetConversationProvider with HuggingFace datasets (e.g., CORD-v2)
+    - Uses DirectHFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
     - Uses NullTokenizer (VLMs use processor instead of tokenizer)
     - DDP config optimized for VLM training (no grad/param overlap)
     - Supports freeze options for language_model, vision_model, vision_projection
@@ -504,18 +505,19 @@ def _peft_common_vlm() -> ConfigContainer:
         use_distributed_optimizer=True,
     )
 
-    # VLM-specific dataset - uses HuggingFace dataset provider
+    # VLM-specific dataset - uses the direct Hugging Face Config + Builder path
     # hf_processor_path must be set by model-specific config
-    cfg.dataset = HFDatasetConversationProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
-        maker_name="make_cord_v2_dataset",
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        pack_sequences_in_batch=True,
+        enable_in_batch_packing=True,
     )
 
     # VLM uses NullTokenizer - actual tokenization is handled by the processor

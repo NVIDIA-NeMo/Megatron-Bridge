@@ -356,8 +356,12 @@ class FalconH1Model(LanguageModule):
         if self.share_embeddings_and_output_weights:
             output_weight = self.shared_embedding_or_output_weight()
 
-        if in_inference_mode and inference_context.materialize_only_last_token_logits:
-            hidden_states = hidden_states[-1, :, :].unsqueeze(0)
+        if (
+            in_inference_mode
+            and inference_context is not None
+            and inference_context.config.materialize_only_last_token_logits
+        ):
+            hidden_states = hidden_states[-1:, :, :]
 
         logits, _ = self.output_layer(hidden_states, weight=output_weight, runtime_gather_output=runtime_gather_output)
         logits = logits * self.config.lm_head_multiplier

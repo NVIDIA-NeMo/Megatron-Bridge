@@ -1,0 +1,128 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+"""Doc-consistency regression tests for README drift (NVBug 6366190).
+
+Validates that documented examples in README/tutorial files match the actual
+source tree: recipe names exist, referenced script paths exist, config field
+names are correct, implemented CLI flags are documented, and the bundled
+Megatron-LM tool path is correct.
+
+Deliberately stdlib-only (no torch / megatron import) so it scans source files
+directly and runs anywhere, including without the GPU stack.
+"""
+
+import re
+from pathlib import Path
+
+
+REPO_ROOT = Path(__file__).resolve().parents[3]
+RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
+TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
+LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
+DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
+GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
+GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
+RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
+TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
+
+
+def _read(p: Path) -> str:
+    return p.read_text(encoding="utf-8")
+
+
+def _defined_recipe_names() -> set[str]:
+    """All recipe-config functions defined under src/.../recipes/**."""
+    names: set[str] = set()
+    for py in RECIPES_DIR.rglob("*.py"):
+        for m in re.finditer(r"^def\s+(\w+_config)\s*\(", _read(py), re.MULTILINE):
+            names.add(m.group(1))
+    return names
+
+
+def test_training_readme_recipes_exist():
+    """Every `--recipe NAME` in the training README is a real recipe function (bugs 1, 2)."""
+    defined = _defined_recipe_names()
+    assert defined, "no recipe configs discovered — path assumption wrong"
+    referenced = set(re.findall(r"--recipe\s+(\w+)", _read(TRAINING_README)))
+    missing = sorted(r for r in referenced if r not in defined)
+    assert not missing, f"README references nonexistent recipes: {missing}"
+
+
+def test_gemma3_vl_readme_recipes_are_exported():
+    """Every Gemma3-VL recipe advertised in its README is a launcher-visible alias."""
+    documented = set(re.findall(r"`(gemma3_vl_\w+_config)`", _read(GEMMA3_VL_README)))
+    assert documented, "no Gemma3-VL recipe configs documented"
+
+    exported = set(re.findall(r"as\s+(gemma3_vl_\w+_config)", _read(GEMMA3_VL_RECIPES)))
+    missing = sorted(documented - exported)
+    assert not missing, f"Gemma3-VL README references unexported recipes: {missing}"
+
+
+def test_llama_readme_conversion_path_exists():
+    """The conversion script path in the llama tutorial resolves to a real file (bug 3)."""
+    text = _read(LLAMA_README)
+    assert "examples/conversion/convert_checkpoints.py" in text, "expected examples/conversion path"
+    assert (REPO_ROOT / "examples" / "conversion" / "convert_checkpoints.py").is_file()
+    assert "../../conversion/convert_checkpoints.py" not in text, "stale broken relative path still present"
+
+
+def test_llama_readme_gptdataset_field_name():
+    """The GPTDatasetConfig YAML block uses the canonical field name (bug 4)."""
+    # Source anchor: the dataset config key is `sequence_length` (see training/config.py).
+    assert '"sequence_length"' in _read(TRAINING_CONFIG), "sequence_length not found in config source"
+    text = _read(LLAMA_README)
+    # Scope to the GPTDatasetConfig block only (the GPTSFTDatasetConfig block
+    # legitimately uses `seq_length`).
+    m = re.search(r"#\s*GPTDatasetConfig\b(.*?)(?:\n\s*\n)", text, re.DOTALL)
+    assert m, "could not locate GPTDatasetConfig YAML block"
+    block = m.group(1)
+    assert "sequence_length:" in block, "GPTDatasetConfig block should use sequence_length"
+    assert "seq_length:" not in block, "GPTDatasetConfig block still uses wrong field seq_length"
+
+
+def test_hf_path_flag_documented_if_implemented():
+    """If run_recipe.py implements --hf_path, the README documents it (bug 5)."""
+    if '"--hf_path"' not in _read(RUN_RECIPE):
+        return  # flag not implemented — nothing to document
+    assert "--hf_path" in _read(TRAINING_README), "--hf_path is implemented but not documented in README"
+
+
+def test_dclm_readme_megatron_lm_tool_path():
+    """The DCLM tutorial points at the bundled submodule tool path (bug 6)."""
+    gitmodules = _read(REPO_ROOT / ".gitmodules")
+    assert "3rdparty/Megatron-LM" in gitmodules, "submodule path assumption wrong"
+    text = _read(DCLM_README)
+    assert "3rdparty/Megatron-LM/tools/preprocess_data.py" in text, "expected 3rdparty submodule path"
+    # the bare path (no 3rdparty/ prefix) is broken from /opt/Megatron-Bridge
+    assert not re.search(r"(?<![\w/])Megatron-LM/tools/preprocess_data\.py", text), (
+        "stale bare Megatron-LM path present"
+    )
+
+
+if __name__ == "__main__":
+    # Allow standalone RED-GREEN without pytest/torch:  python3 test_readme_consistency.py
+    import traceback
+
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_") and callable(v)]
+    failed = 0
+    for t in tests:
+        try:
+            t()
+            print(f"PASS  {t.__name__}")
+        except Exception as e:  # noqa: BLE001
+            failed += 1
+            print(f"FAIL  {t.__name__}: {e}")
+            traceback.print_exc()
+    print(f"\n{len(tests) - failed}/{len(tests)} passed")
+    raise SystemExit(1 if failed else 0)

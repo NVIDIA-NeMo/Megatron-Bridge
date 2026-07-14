@@ -17,13 +17,20 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TELayerNormColumnParallelLinear,
+    TENorm,
+)
 
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import (
     FalconH1MambaMixer,
     FalconH1MLP,
     FalconH1SelfAttention,
     SelfAttention,
+    _run_mamba_mixer_with_static_cache_namespace,
 )
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
 
 
@@ -40,6 +47,26 @@ def _minimal_config(**overrides):
     }
     kwargs.update(overrides)
     return FalconH1Config(**kwargs)
+
+
+class _FakeInferenceContext:
+    def __init__(self, *, is_static: bool):
+        self._is_static = is_static
+        self.key_value_memory_dict = {}
+
+    def is_static_batching(self):
+        return self._is_static
+
+
+class _FakeMambaMixer:
+    def __init__(self, *, layer_number: int):
+        self.layer_number = layer_number
+        self.called_layer_numbers = []
+
+    def __call__(self, hidden_states, *, inference_context):
+        self.called_layer_numbers.append(self.layer_number)
+        inference_context.key_value_memory_dict[self.layer_number] = ("mamba-conv", "mamba-ssm")
+        return hidden_states + 1, None
 
 
 def test_config_rejects_invalid_a_init_distribution():
@@ -89,6 +116,60 @@ def test_self_attention_applies_key_multiplier():
     torch.testing.assert_close(scaled_query, query)
     torch.testing.assert_close(scaled_key, torch.tensor([6.0]))
     torch.testing.assert_close(scaled_value, value)
+
+
+def test_parallel_layer_normalizes_once_before_branch_input_multipliers():
+    submodules = falconh1_stack_spec.submodules.falconh1_layer.submodules
+
+    assert submodules.norm is TENorm
+    assert submodules.mamba_mixer.submodules.in_proj is TEColumnParallelLinear
+    assert submodules.self_attention.submodules.linear_qkv is TEColumnParallelLinear
+    assert submodules.mlp.submodules.linear_fc1 is TELayerNormColumnParallelLinear
+
+
+def test_static_mamba_cache_key_is_namespaced_when_layer_uses_attention():
+    context = _FakeInferenceContext(is_static=True)
+    context.key_value_memory_dict[7] = ("attention-key", "attention-value")
+    mixer = _FakeMambaMixer(layer_number=7)
+    hidden_states = torch.zeros(1, 1, 1)
+
+    output, output_bias = _run_mamba_mixer_with_static_cache_namespace(
+        mixer,
+        hidden_states,
+        context,
+        use_attention=True,
+    )
+
+    torch.testing.assert_close(output, torch.ones(1, 1, 1))
+    assert output_bias is None
+    assert mixer.layer_number == 7
+    assert mixer.called_layer_numbers == [("mamba", 7)]
+    assert context.key_value_memory_dict[7] == ("attention-key", "attention-value")
+    assert context.key_value_memory_dict[("mamba", 7)] == ("mamba-conv", "mamba-ssm")
+
+
+@pytest.mark.parametrize(
+    ("is_static", "use_attention", "expected_key"),
+    [
+        (True, False, 7),
+        (False, True, 7),
+    ],
+)
+def test_mamba_cache_key_is_not_namespaced_outside_static_attention_layers(is_static, use_attention, expected_key):
+    context = _FakeInferenceContext(is_static=is_static)
+    mixer = _FakeMambaMixer(layer_number=7)
+
+    _run_mamba_mixer_with_static_cache_namespace(
+        mixer,
+        torch.zeros(1, 1, 1),
+        context,
+        use_attention=use_attention,
+    )
+
+    assert mixer.layer_number == 7
+    assert mixer.called_layer_numbers == [expected_key]
+    assert expected_key in context.key_value_memory_dict
+    assert ("mamba", 7) not in context.key_value_memory_dict
 
 
 def test_mamba_mixer_applies_ssm_multipliers():

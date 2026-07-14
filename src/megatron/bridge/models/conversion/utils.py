@@ -289,6 +289,44 @@ def extract_sort_key(param_name: str):
     return numbers, param_name
 
 
+def moe_experts_stored_packed(hf_pretrained, layers_prefix: str, default: bool = False) -> bool:
+    """Whether a checkpoint stores routed MoE experts *fused* rather than *per-expert*.
+
+    Fused layout keys look like ``{layers_prefix}<L>.mlp.experts.gate_up_proj`` / ``.down_proj`` (a
+    single stacked tensor per projection), while the per-expert layout (what ``save_pretrained``
+    writes) uses ``{layers_prefix}<L>.mlp.experts.<i>.gate_proj|up_proj|down_proj.weight``. Which one a
+    checkpoint uses depends on the transformers version, so the bridge selects mappings accordingly.
+
+    Args:
+        hf_pretrained: The loaded HF model wrapper (its ``state.source`` provides the checkpoint keys).
+        layers_prefix: HF prefix up to and including ``layers.`` (e.g. ``"model.layers."`` for an LLM,
+            ``"model.language_model.layers."`` for a VLM).
+        default: Value returned when the checkpoint keys are unavailable (e.g. building mappings
+            without a loaded checkpoint, as in unit tests) or no routed-expert keys are found.
+
+    Returns:
+        ``True`` if experts are stored fused, ``False`` if per-expert, ``default`` if undetermined.
+
+    Raises:
+        ValueError: if the checkpoint mixes fused and per-expert layouts.
+    """
+    source = getattr(getattr(hf_pretrained, "state", None), "source", None)
+    if source is None or not hasattr(source, "get_all_keys"):
+        return default
+    prefix = re.escape(layers_prefix)
+    per_expert_re = re.compile(rf"^{prefix}\d+\.mlp\.experts\.\d+\.(?:gate|up|down)_proj\.weight$")
+    fused_re = re.compile(rf"^{prefix}\d+\.mlp\.experts\.(?:gate_up_proj|down_proj)$")
+    keys = list(source.get_all_keys())
+    has_per_expert = any(per_expert_re.match(k) for k in keys)
+    has_fused = any(fused_re.match(k) for k in keys)
+    if has_per_expert and has_fused:
+        raise ValueError(
+            f"Checkpoint mixes fused and per-expert MoE expert layouts under {layers_prefix}*.mlp.experts; "
+            "expected a single consistent layout."
+        )
+    return has_fused if (has_fused or has_per_expert) else default
+
+
 def get_causal_lm_class_name_via_auto_map(
     config: PretrainedConfig,
 ) -> str | None:
@@ -309,9 +347,18 @@ def get_causal_lm_class_name_via_auto_map(
 def conform_config_to_reference(
     hf_config_dict: dict[str, object], reference_config: dict[str, object]
 ) -> dict[str, object]:
-    """Return a projected hf_config_dict onto the reference key set, imputing missing keys with reference values."""
+    """Return hf_config_dict projected onto reference keys, filling missing values from reference_config."""
     reference_config_keys = set(reference_config.keys())
-    filtered_config_dict = {key: value for (key, value) in hf_config_dict.items() if key in reference_config_keys}
+    filtered_config_dict = {}
+    for key, value in hf_config_dict.items():
+        if key not in reference_config_keys:
+            continue
+
+        reference_value = reference_config[key]
+        if isinstance(value, dict) and isinstance(reference_value, dict):
+            value = conform_config_to_reference(value, reference_value)
+        filtered_config_dict[key] = value
+
     for key, value in reference_config.items():
         if key not in filtered_config_dict:
             filtered_config_dict[key] = value

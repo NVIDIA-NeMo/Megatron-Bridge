@@ -27,7 +27,7 @@ Megatron Bridge derives model provider settings from Hugging Face configs throug
 ### Supported Model Families
 
 Megatron Bridge supports the following model families through bridge mappings and provider classes:
-- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `MambaModelProvider`
+- **Base Models**: `GPTModelProvider`, `T5ModelProvider`, `HybridModelProvider`
 - **Llama**: Llama2, Llama3, Llama3.1, Llama3.2, CodeLlama, Llama4
 - **Qwen**: Qwen2, Qwen2.5, Qwen3, Qwen3MoE, Qwen2.5VL
 - **DeepSeek**: DeepSeek, DeepSeekV2, DeepSeekV2Lite, DeepSeekV3, Moonlight
@@ -178,7 +178,7 @@ pretrain(cfg, forward_step_func=forward_step)
 
 ### Fine-Tuning Migration Example (SFT/PEFT)
 
-For fine-tuning, use {py:class}`bridge.training.config.FinetuningDatasetConfig` for data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
+For fine-tuning, use {py:class}`bridge.data.builders.GPTSFTDatasetConfig` for local JSONL or Hugging Face source data and set `checkpoint.pretrained_checkpoint` to the base model. Optionally add a `peft` configuration for parameter-efficient training.
 
 #### Before: NeMo 2.0
 ```python
@@ -226,6 +226,7 @@ llm.finetune(
 ```python  
 # Megatron Bridge fine-tuning configuration (with optional PEFT)
 from megatron.bridge.models import GPTModelProvider
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 from megatron.bridge.peft import LoRA
 
 def create_finetune_config():
@@ -238,14 +239,18 @@ def create_finetune_config():
             global_batch_size=128,
             train_iters=500,
         ),
-        # Finetuning dataset instead of pretraining dataset
-        dataset=FinetuningDatasetConfig(
+        # GPT SFT dataset instead of a pretraining dataset
+        dataset=GPTSFTDatasetConfig(
             dataset_root="/path/to/sft/data",
             seq_length=2048,
+            preprocessing=PromptCompletionSFTPreprocessingConfig(
+                prompt_column="input", completion_column="output", separator=" "
+            ),
             do_validation=True,
             do_test=True,
             # Optional: packed sequence support
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=2048,
             ),
         ),
@@ -286,12 +291,12 @@ recipe = llm.llama3_8b.pretrain_recipe(name="my_run", num_nodes=2)
 
 **Megatron Bridge**: Recipes in `megatron.bridge.recipes/`  
 ```python
-from megatron.bridge.recipes.llama.llama3_8b import pretrain_config
-from megatron.bridge.training import pretrain
+from megatron.bridge.recipes.llama import llama3_8b_pretrain_config
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 # Use pre-built recipe
-cfg = pretrain_config()
+cfg = llama3_8b_pretrain_config()
 
 # Customize as needed
 cfg.train.train_iters = 10000
@@ -384,7 +389,7 @@ from megatron.bridge.training.config import (
 )
 from megatron.core.optimizer import OptimizerConfig
 from megatron.bridge.models import GPTModelProvider
-from megatron.bridge.training import pretrain
+from megatron.bridge.training.pretrain import pretrain
 
 def llama3_8b_config(
     # Model/parallelism params
@@ -518,7 +523,7 @@ logger_config = LoggerConfig(log_interval=10)  # was log_every_n_steps
 
 ### Data Configuration Migration
 
-NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses configuration objects: {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.training.config.FinetuningDatasetConfig` for fine-tuning.
+NeMo 2.0 uses `PreTrainingDataModule` and `FineTuningDataModule` classes. Megatron Bridge uses {py:class}`bridge.training.config.GPTDatasetConfig` for pretraining and {py:class}`bridge.data.builders.GPTSFTDatasetConfig` for text fine-tuning.
 
 #### Pretraining Data
 
@@ -610,14 +615,18 @@ data = FineTuningDataModule(
 )
 ```
 
-##### Now: Megatron Bridge FinetuningDatasetConfig
+##### Now: Megatron Bridge GPTSFTDatasetConfig
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig, TrainingConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
+from megatron.bridge.training.config import TrainingConfig
 
-dataset_config = FinetuningDatasetConfig(
+dataset_config = GPTSFTDatasetConfig(
     dataset_root="/path/to/instruction_data",
     seq_length=2048,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input", completion_column="output", separator=" "
+    ),
     do_validation=True,
     do_test=False,
     # Dataloader options (inherited from DataloaderConfig)
@@ -634,7 +643,7 @@ train_config = TrainingConfig(
 **Key differences:**
 - Batch sizes move to `TrainingConfig`
 - Explicit control over finetuning validation/test splits via `do_validation` and `do_test`
-- Dataloader options (`num_workers`, `pin_memory`, etc.) available via `FinetuningDatasetConfig`
+- Dataloader options (`num_workers`, `pin_memory`, etc.) available via `GPTSFTDatasetConfig`
 
 
 ### Tokenizer Migration
@@ -1221,8 +1230,9 @@ result = llm.finetune(
 In Megatron Bridge, training entry points take a single `ConfigContainer` and a `forward_step_func`:
 
 ```python
-from megatron.bridge.training import pretrain, finetune
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.pretrain import pretrain
 
 # Create unified configuration
 cfg = ConfigContainer(
@@ -1285,8 +1295,8 @@ For GPT models, use the provided {py:func}`bridge.training.gpt_step.forward_step
 Use `pretrain()` with `GPTDatasetConfig` for training models from scratch:
 
 ```python
-from megatron.bridge.training import pretrain
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.pretrain import pretrain
 
 config = ConfigContainer(
     model=GPTModelProvider(
@@ -1314,15 +1324,16 @@ pretrain(config, forward_step_func=forward_step)
 
 ### `finetune`
 
-Use `finetune()` with `FinetuningDatasetConfig` for both full fine-tuning (SFT) and parameter-efficient fine-tuning (PEFT):
+Use `finetune()` with `GPTSFTDatasetConfig` for both full fine-tuning (SFT) and parameter-efficient fine-tuning (PEFT):
 
 #### Supervised Fine-Tuning (SFT)
 
 Full fine-tuning without PEFT - all model parameters are updated:
 
 ```python
-from megatron.bridge.training import finetune
 from megatron.bridge.training.gpt_step import forward_step
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 config = ConfigContainer(
     model=GPTModelProvider(),
@@ -1332,9 +1343,12 @@ config = ConfigContainer(
         micro_batch_size=1,
         global_batch_size=128,
     ),
-    dataset=FinetuningDatasetConfig(
+    dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         do_validation=True,
     ),
     checkpoint=CheckpointConfig(
@@ -1363,9 +1377,12 @@ config = ConfigContainer(
         micro_batch_size=1,
         global_batch_size=128,
     ),
-    dataset=FinetuningDatasetConfig(
+    dataset=GPTSFTDatasetConfig(
         dataset_root="/path/to/instruction_data",
         seq_length=4096,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         do_validation=True,
     ),
     checkpoint=CheckpointConfig(
@@ -1610,7 +1627,7 @@ trainer = run.Config(
     callbacks=[
         MegatronCommOverlapCallback(
             tp_comm_overlap=True,
-            ...
+            # Additional callback options can be set here.
         )
     ]
 )

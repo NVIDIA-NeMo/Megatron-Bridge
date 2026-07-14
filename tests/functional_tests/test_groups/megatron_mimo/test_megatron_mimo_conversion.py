@@ -50,7 +50,7 @@ register_allowed_target_prefix(f"{__name__}.")
 
 
 @dataclass
-class _TinyStandardMIMOProvider:
+class TinyStandardMIMOProvider:
     """Tiny modality-aware provider used to test conversion-generated MIMO providers."""
 
     vocab_size: int = 64
@@ -123,7 +123,7 @@ def _parallelism_config() -> MegatronMIMOParallelismConfig:
 
 def _mimo_provider() -> MegatronMIMOProvider:
     return MegatronMIMOProvider.from_standard_provider(
-        standard_provider=_TinyStandardMIMOProvider(),
+        standard_provider=TinyStandardMIMOProvider(),
         megatron_mimo_parallelism_config=_parallelism_config(),
     )
 

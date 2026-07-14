@@ -200,7 +200,9 @@ class GlobalState:
 
                 import wandb
 
-                save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
+                save_dir = self.cfg.logger.wandb_save_dir
+                if not save_dir:
+                    save_dir = os.path.join(self.cfg.checkpoint.save, "wandb") if self.cfg.checkpoint.save else None
 
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
@@ -463,7 +465,7 @@ class GlobalState:
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""
         if self.cfg.train is not None:
-            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal)
+            self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal).__enter__()
 
     def reset_for_restart(self) -> None:
         """Reset GlobalState components for in-process restart.
@@ -471,6 +473,11 @@ class GlobalState:
         This cleans up all stateful components that need to be reinitialized between restart iterations.
         The async calls queue for checkpointing is handled separately in aborting in order to clean up persistent workers.
         """
+        from megatron.bridge.training.utils.checkpoint_utils import read_train_state
+
+        # The top-level tracker is overwritten after every checkpoint. A restart must
+        # not reuse the iteration cached by an earlier invocation in this process.
+        read_train_state.cache_clear()
         self._timers = None
         self._train_state = None
         self._tensorboard_logger = None
@@ -479,6 +486,8 @@ class GlobalState:
         self._comet_logger = None
         self._energy_monitor = None
         self._energy_monitor_created = False
+        if self._signal_handler is not None:
+            self._signal_handler.release()
         self._signal_handler = None
         self._straggler_timer = None
         self._nvrx_straggler_manager = None

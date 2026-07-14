@@ -20,6 +20,7 @@ from megatron.core.datasets.utils import get_blend_from_list
 from megatron.core.rerun_state_machine import RerunDataIterator
 from torch.utils.data import DataLoader
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.samplers import build_pretraining_data_loader
 from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig
 from megatron.bridge.training.state import TrainState
@@ -164,11 +165,44 @@ def build_train_valid_test_datasets(
     return build_train_valid_test_datasets_provider(train_valid_test_num_samples, cfg.dataset)
 
 
+def build_train_valid_test_datasets_for_num_epochs(
+    cfg: ConfigContainer, build_train_valid_test_datasets_provider: Callable
+) -> tuple[Any, Any, Any]:
+    """Build a finite GPT SFT dataset and resolve epoch-based training iterations.
+
+    This cannot use :func:`build_train_valid_test_datasets` because that function
+    requires ``train_iters`` to already be resolved. GPT SFT dataset builders
+    determine dataset sizes from the data source or ``max_train_samples`` and ignore
+    the requested target sample counts, so zero placeholders are sufficient here.
+    """
+    if not isinstance(cfg.dataset, GPTSFTDatasetConfig):
+        raise ValueError(
+            "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
+            "providers may build a requested number of samples instead of exposing their true dataset size."
+        )
+    if cfg.dataset.dataloader_type != "batch":
+        raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
+
+    train_ds, valid_ds, test_ds = build_train_valid_test_datasets_provider([0, 0, 0], cfg.dataset)
+    if train_ds is None:
+        raise ValueError("num_epochs requires a training dataset")
+
+    try:
+        train_dataset_size = len(train_ds)
+    except (TypeError, NotImplementedError) as error:
+        raise ValueError("num_epochs requires a training dataset with a finite length") from error
+
+    cfg._resolve_num_epochs(train_dataset_size)
+    return train_ds, valid_ds, test_ds
+
+
 def build_train_valid_test_data_loaders(
     cfg: ConfigContainer,
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    *,
+    eval_dp_group: torch.distributed.ProcessGroup | None = None,
 ) -> tuple[Optional[DataLoader], Optional[DataLoader], Optional[DataLoader]]:
     """Build train, validation, and test data loaders.
 
@@ -179,6 +213,9 @@ def build_train_valid_test_data_loaders(
         cfg: The main configuration container.
         train_state: The current training state.
         build_train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data-parallel group used to shard the training dataset.
+        eval_dp_group: Optional data-parallel group used to shard validation and test datasets.
+            Defaults to ``dp_group``.
 
     Returns:
         A tuple (train_dataloader, valid_dataloader, test_dataloader).
@@ -218,6 +255,9 @@ def build_train_valid_test_data_loaders(
 
         return train_dataloader, valid_dataloader, test_dataloader
 
+    if cfg.train.num_epochs is not None and cfg.dataset.dataloader_type != "batch":
+        raise ValueError('num_epochs is currently supported only with dataloader_type="batch"')
+
     (train_dataloader, valid_dataloader, test_dataloader) = (None, None, None)
 
     print_rank_0("> building train, validation, and test datasets ...")
@@ -228,8 +268,15 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
+    drop_last = cfg.train.num_epochs is None
+
     # Check that the train dataset has at least one global batch of samples.
-    if cfg.dataset.dataloader_type != "external" and len(train_ds) < cfg.train.global_batch_size:
+    if (
+        train_ds is not None
+        and cfg.dataset.dataloader_type != "external"
+        and drop_last
+        and len(train_ds) < cfg.train.global_batch_size
+    ):
         raise RuntimeError(
             f"Not enough train samples for a single global batch: "
             f"train dataset size ({len(train_ds)}) < global batch size ({cfg.train.global_batch_size})."
@@ -242,9 +289,13 @@ def build_train_valid_test_data_loaders(
 
     maybe_worker_init_fn = worker_init_fn if cfg.train.exit_signal_handler_for_dataloader else None
 
-    # Resolve DP rank/size from provided data-parallel process group
+    # Resolve train and eval DP ownership from their respective process groups.
     dp_rank = torch.distributed.get_rank(group=dp_group)
     dp_size = torch.distributed.get_world_size(group=dp_group)
+    if eval_dp_group is None:
+        eval_dp_group = dp_group
+    eval_dp_rank = torch.distributed.get_rank(group=eval_dp_group)
+    eval_dp_size = torch.distributed.get_world_size(group=eval_dp_group)
 
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
@@ -261,6 +312,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_rank=dp_rank,
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
+        drop_last=drop_last,
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size
@@ -284,8 +336,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
+            data_parallel_rank=eval_dp_rank,
+            data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
         )
     elif cfg.validation.eval_iters > 0:
@@ -301,8 +353,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=valid_ds.collate_fn if hasattr(valid_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
+            data_parallel_rank=eval_dp_rank,
+            data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
         )
 
@@ -318,8 +370,8 @@ def build_train_valid_test_data_loaders(
             collate_fn=test_ds.collate_fn if hasattr(test_ds, "collate_fn") else None,
             pin_memory=cfg.dataset.pin_memory,
             persistent_workers=cfg.dataset.persistent_workers,
-            data_parallel_rank=dp_rank,
-            data_parallel_size=dp_size,
+            data_parallel_rank=eval_dp_rank,
+            data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
         )
 
@@ -343,6 +395,8 @@ def build_train_valid_test_data_iterators(
     train_state: TrainState,
     build_train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    *,
+    eval_dp_group: torch.distributed.ProcessGroup | None = None,
 ) -> tuple[Optional[RerunDataIterator], Optional[RerunDataIterator], Optional[RerunDataIterator]]:
     """Build train, validation, and test data iterators.
 
@@ -353,6 +407,8 @@ def build_train_valid_test_data_iterators(
         cfg: The main configuration container.
         train_state: The current training state.
         build_train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data-parallel group used to shard the training dataset.
+        eval_dp_group: Optional data-parallel group used to shard validation and test datasets.
 
     Returns:
         A tuple (train_data_iterator, valid_data_iterator, test_data_iterator).
@@ -364,6 +420,7 @@ def build_train_valid_test_data_iterators(
         train_state=train_state,
         build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider,
         dp_group=dp_group,
+        eval_dp_group=eval_dp_group,
     )
 
     # Build iterators.
@@ -412,6 +469,8 @@ def setup_data_iterators(
     model_length: int,
     train_valid_test_datasets_provider: Callable,
     dp_group: torch.distributed.ProcessGroup,
+    *,
+    eval_dp_group: torch.distributed.ProcessGroup | None = None,
 ) -> tuple[
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
     Union[Optional[RerunDataIterator], list[Optional[RerunDataIterator]]],
@@ -428,6 +487,8 @@ def setup_data_iterators(
         train_state: The current training state.
         model_length: The number of model chunks (used for virtual pipeline parallelism).
         train_valid_test_datasets_provider: A function to build the datasets.
+        dp_group: Data-parallel group used to shard the training dataset.
+        eval_dp_group: Optional data-parallel group used to shard validation and test datasets.
 
     Returns:
         A tuple (train_data_iterator, valid_data_iterator, test_data_iterator).
@@ -439,6 +500,7 @@ def setup_data_iterators(
         train_state=train_state,
         build_train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=dp_group,
+        eval_dp_group=eval_dp_group,
     )
 
     return train_data_iterator, valid_data_iterator, test_data_iterator

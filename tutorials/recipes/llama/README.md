@@ -11,13 +11,16 @@ uv run python -m torch.distributed.run --nproc_per_node=1 00_quickstart_pretrain
 ```
 
 This runs Llama 3.2 1B pretraining on a single GPU with mock data.
+It uses the Hugging Face architecture configuration for random initialization, so it does not require converting a
+Hugging Face checkpoint to Megatron format first.
 
-For finetuning, you first need a checkpoint in Megatron format. Convert from HuggingFace using the `AutoBridge`:
+For finetuning from pretrained weights, you need a checkpoint in Megatron format. Convert from Hugging Face using
+the `AutoBridge`:
 
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
 ```bash
-uv run python ../../conversion/convert_checkpoints.py import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama32_1b
 ```
@@ -34,13 +37,20 @@ The [01_quickstart_finetune.py](01_quickstart_finetune.py) recipe finetunes Llam
 To plug in your own JSONL dataset, swap the dataset config in that script:
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
-config.dataset = FinetuningDatasetConfig(
+config.dataset = GPTSFTDatasetConfig(
     dataset_root="/path/to/dataset_dir",  # contains training/validation/test jsonl files
     seq_length=config.model.seq_length,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    ),
 )
 ```
+
+See the [text-only SFT dataset tutorial](../../data/text-only-sft/README.md) for supported JSONL schemas, Hugging Face source materialization, offline packing, and all dataset knobs.
 
 ## Configuration
 
@@ -81,7 +91,7 @@ checkpoint:                        # CheckpointConfig
   save_interval: 50
 
 model:                             # Model Provider
-  seq_length: 4096                 # Must match data.sequence_length
+  seq_length: 4096                 # Must match dataset.sequence_length
   tensor_model_parallel_size: 1
   
 optimizer:                         # OptimizerConfig
@@ -118,11 +128,11 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 
 ```yaml
 # Each section maps to a ConfigContainer field
-dataset:                           # FinetuningDatasetConfig
-  data_path: /path/to/finetuning_dataset.jsonl
+dataset:                           # GPTSFTDatasetConfig
+  dataset_root: /path/to/gpt_sft_dataset_dir
   seq_length: 4096
 
-train:                             # TrainingConfig  
+train:                             # TrainingConfig
   train_iters: 100
   global_batch_size: 128
 
@@ -136,7 +146,7 @@ peft:                             # PEFT (LoRA config)
   alpha: 16   # LoRA alpha
 
 model:                            # Model Provider
-  seq_length: 4096                # Must match data.seq_length
+  seq_length: 4096                # Must match dataset.seq_length
   
 optimizer:                        # OptimizerConfig
   lr: 0.0001

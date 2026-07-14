@@ -14,19 +14,36 @@
 
 import copy
 from dataclasses import dataclass
-from typing import Callable
+from typing import Any, Callable
 
 from megatron.core.activations import fast_gelu, squared_relu
-from megatron.core.models.mamba.mamba_layer_specs import mamba_stack_spec
+from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.models.vision.vit_layer_specs import get_vit_layer_with_transformer_engine_spec
 from megatron.core.transformer.spec_utils import get_submodules
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+
+
+def get_language_mlp_submodules(language_spec: Any) -> Any:
+    """Extract the language MLP submodules from a (possibly partial-wrapped) stack spec.
+
+    Walks ``stack_spec -> mlp_layer -> mlp`` via :func:`get_submodules` at every level,
+    so it works whether each level is an object-style spec (``.submodules`` attribute)
+    or a ``functools.partial``-wrapped spec. Used to clone the language MLP spec for the
+    multimodal (vision / sound) projectors; shared with ``nemotron_omni``.
+
+    Returns the MLP submodules (an MCore ``*Submodules`` dataclass, e.g.
+    ``MLPSubmodules``). Typed ``Any`` because ``get_submodules`` is itself dynamically
+    typed (returns ``object``).
+    """
+    language_submodules = get_submodules(language_spec)
+    mlp_layer_submodules = get_submodules(language_submodules.mlp_layer)
+    return get_submodules(mlp_layer_submodules.mlp)
 
 
 @dataclass
-class NemotronVLModelProvider(MambaModelProvider):
+class NemotronVLModelProvider(HybridModelProvider):
     """Configuration provider for Nemotron-VL models.
 
     Inlines NemotronH + NemotronNano12Bv2 defaults directly.
@@ -119,9 +136,9 @@ class NemotronVLModelProvider(MambaModelProvider):
         vision_proj_cfg.ffn_hidden_size = 20480
         vision_proj_cfg.bias_activation_fusion = False
 
-        language_spec = mamba_stack_spec
+        language_spec = hybrid_stack_spec
         vision_spec = get_vit_layer_with_transformer_engine_spec()
-        vision_proj_spec = copy.deepcopy(get_submodules(language_spec.submodules.mlp_layer.submodules.mlp))
+        vision_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
 
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,

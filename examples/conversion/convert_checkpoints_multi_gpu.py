@@ -177,6 +177,7 @@ def export_megatron_to_hf(
     distributed_save: bool = False,
     save_every_n_ranks: int = 1,
     distributed_timeout_minutes: int | None = None,
+    export_weight_dtype: str | None = None,
 ) -> None:
     """Export a distributed Megatron checkpoint to HuggingFace format."""
     _ensure_distributed_initialized(distributed_timeout_minutes)
@@ -216,6 +217,20 @@ def export_megatron_to_hf(
                     model_provider.pipeline_model_parallel_layout = saved_layout
                     print_rank_0(f"  Read pipeline layout from checkpoint ({len(saved_layout)} stages)")
                     break
+        # run_config.yaml serializes an already-finalized layout as an object stub
+        # (the layout data is lost), so fall back to auto-generation like import does.
+        if not isinstance(getattr(model_provider, "pipeline_model_parallel_layout", None), list) and hasattr(
+            bridge._model_bridge, "generate_pipeline_layout"
+        ):
+            hf_config = bridge.hf_pretrained.config
+            num_layers = hf_config.num_hidden_layers
+            mtp = getattr(hf_config, "num_nextn_predict_layers", 0) or 0
+            model_provider.pipeline_model_parallel_layout = bridge._model_bridge.generate_pipeline_layout(
+                num_layers, pp, mtp
+            )
+            print_rank_0(f"  Auto-generated pipeline layout for PP={pp} ({num_layers} layers, {mtp} MTP)")
+    # Capture before finalize() turns the list into a PipelineParallelLayerLayout.
+    resolved_pp_layout = model_provider.pipeline_model_parallel_layout if pp > 1 else None
     model_provider.finalize()
     model_provider.initialize_model_parallel(seed=0)
 
@@ -227,6 +242,10 @@ def export_megatron_to_hf(
         "pipeline_dtype": dtype,
         "params_dtype": dtype,
     }
+    # load_megatron_model rebuilds the provider from the checkpoint's run_config,
+    # which lost the layout the same way — forward the resolved layout explicitly.
+    if isinstance(resolved_pp_layout, list):
+        mp_overrides["pipeline_model_parallel_layout"] = resolved_pp_layout
 
     print_rank_0(f"Loading Megatron checkpoint from: {megatron_path}")
     megatron_model = bridge.load_megatron_model(
@@ -234,7 +253,6 @@ def export_megatron_to_hf(
         mp_overrides=mp_overrides,
         wrap_with_ddp=False,
     )
-    megatron_model = [m.cuda() for m in megatron_model]
 
     print_rank_0(f"Saving HuggingFace model to: {hf_path}")
     bridge.save_hf_pretrained(
@@ -244,6 +262,7 @@ def export_megatron_to_hf(
         strict=strict,
         distributed_save=distributed_save,
         save_every_n_ranks=save_every_n_ranks,
+        weight_dtype=_parse_dtype(export_weight_dtype) if export_weight_dtype else None,
     )
     print_rank_0(f"Export complete: {hf_path}")
 
@@ -304,6 +323,17 @@ def main():
         default=1,
         help="Only every N-th rank writes files (reduces I/O, only with --distributed-save)",
     )
+    export_parser.add_argument(
+        "--export-weight-dtype",
+        choices=sorted(DTYPE_MAP),
+        default=None,
+        help=(
+            "Emit plain weights cast to this dtype. For bridges that recreate a quantized "
+            "source layout on export (e.g. DeepSeek-V4) this also skips the requantization, "
+            "so no *.scale companions are written. Use for SFT products that need exact "
+            "train/inference numerical parity."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.command:
@@ -338,6 +368,7 @@ def main():
             distributed_save=args.distributed_save,
             save_every_n_ranks=args.save_every_n_ranks,
             distributed_timeout_minutes=args.distributed_timeout_minutes,
+            export_weight_dtype=args.export_weight_dtype,
         )
 
 

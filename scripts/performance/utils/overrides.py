@@ -31,7 +31,13 @@ from megatron.bridge.training.utils.omegaconf_utils import (
     create_omegaconf_dict_config,
     parse_hydra_overrides,
 )
-from megatron.bridge.utils.cuda_graph import is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import (
+    cuda_graph_module_names,
+    is_full_iteration_cuda_graph,
+    set_cuda_graph_modules,
+    set_full_iteration_cuda_graph,
+    validate_cuda_graph_configuration,
+)
 from utils.datasets import (
     create_c4_dataset_config,
     create_mock_dataset_config,
@@ -96,16 +102,14 @@ def _set_megatron_fsdp_overrides(recipe: ConfigContainer, use_megatron_fsdp: boo
             logger.warning("Disabling deferring embedding wgrad compute because it cannot work with FSDP together.")
             recipe.comm_overlap.defer_embedding_wgrad_compute = False
 
-    if recipe.optimizer.use_precision_aware_optimizer:
-        recipe.optimizer.use_precision_aware_optimizer = False
-        logger.warning("Disabling precision aware optimizer because it cannot work with FSDP together.")
-
     recipe.checkpoint.load = None
     return recipe
 
 
 def _set_cuda_graph_overrides(
-    recipe: ConfigContainer, cuda_graph_impl: Optional[str] = None, cuda_graph_scope: Optional[str | List[str]] = None
+    recipe: ConfigContainer,
+    cuda_graph_impl: Optional[str] = None,
+    cuda_graph_scope: Optional[str | List[str]] = None,
 ) -> ConfigContainer:
     """Set the CUDA graph overrides."""
     if isinstance(cuda_graph_scope, str):
@@ -115,20 +119,32 @@ def _set_cuda_graph_overrides(
         if cuda_graph_impl != "none":
             recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = True
 
+    if recipe.model.cuda_graph_impl == "none":
+        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+        # Normalize to MCore's current disabled representation: an empty
+        # cuda_graph_modules list and no deprecated cuda_graph_scope value.
+        validate_cuda_graph_configuration(recipe.model, config_name="model")
+        return recipe
+
     if cuda_graph_scope is not None:
-        recipe.model.cuda_graph_scope = cuda_graph_scope
+        if "full_iteration" in cuda_graph_scope:
+            if cuda_graph_scope != ["full_iteration"]:
+                raise ValueError("full_iteration CUDA graph scope cannot be combined with other scopes.")
+            if recipe.model.cuda_graph_impl == "transformer_engine":
+                raise ValueError("full_iteration CUDA graph scope cannot use cuda_graph_impl=transformer_engine.")
+            set_full_iteration_cuda_graph(recipe.model)
+        else:
+            set_cuda_graph_modules(recipe.model, cuda_graph_scope)
 
     # Validate post-override state so we check the effective recipe value,
     # not the raw CLI input (which may be None when the recipe default is used).
     if recipe.model.cuda_graph_impl == "transformer_engine":
         valid_te_scopes = ["attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
-        effective_scope = getattr(recipe.model, "cuda_graph_scope", None)
-        assert effective_scope is not None and all(scope in valid_te_scopes for scope in effective_scope), (
+        effective_scope = cuda_graph_module_names(recipe.model)
+        assert all(scope in valid_te_scopes for scope in effective_scope), (
             f"Invalid cuda graph scope: {effective_scope}. Valid options are: {valid_te_scopes}"
         )
-    elif recipe.model.cuda_graph_impl == "none":
-        recipe.model.cuda_graph_scope = []
-        recipe.rng.te_rng_tracker = recipe.model.use_te_rng_tracker = False
+    validate_cuda_graph_configuration(recipe.model, config_name="model")
 
     if is_full_iteration_cuda_graph(recipe.model):
         recipe.rerun_state_machine.check_for_nan_in_loss = False
@@ -255,6 +271,16 @@ def set_workload_base_configs(cfg: ConfigContainer, settings: WorkloadBaseConfig
         cfg.model.quant_recipe = load_quantization_recipe(settings.te_precision_config_file)
     _set_common_perf_overrides(cfg)
 
+    if settings.fine_grained_activation_offloading is not None:
+        cfg.model.fine_grained_activation_offloading = settings.fine_grained_activation_offloading
+    if settings.offload_modules is not None:
+        cfg.model.offload_modules = settings.offload_modules
+
+    if settings.outer_dp_sharding_strategy is not None:
+        cfg.ddp.outer_dp_sharding_strategy = settings.outer_dp_sharding_strategy
+    if settings.num_distributed_optimizer_instances is not None:
+        cfg.ddp.num_distributed_optimizer_instances = settings.num_distributed_optimizer_instances
+
     if settings.moe_flex_dispatcher_backend is not None:
         apply_flex_dispatcher_backend(cfg.model, settings.moe_flex_dispatcher_backend)
     elif hasattr(cfg.model, "moe_token_dispatcher_type"):
@@ -372,6 +398,10 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.tokenizer = TokenizerConfig(
             tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
         )
+
+    if args.seq_length is not None:
+        recipe.model.seq_length = args.seq_length
+
     # Create dataset configuration based on type
     if args.data == "mock":
         if args.domain == "llm":
@@ -379,7 +409,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             # For vlm models, use the default dataset configuration in model recipe,
             # becuase preprocess of dataset is different for each vlm model.
             recipe.dataset = create_mock_dataset_config(
-                seq_length=args.seq_length or recipe.model.seq_length,
+                seq_length=recipe.model.seq_length,
                 num_workers=recipe.dataset.num_workers,
                 pin_memory=recipe.dataset.pin_memory,
                 persistent_workers=recipe.dataset.persistent_workers,
@@ -389,7 +419,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
-            seq_length=recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
@@ -399,7 +429,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if not args.c4_root:
             raise ValueError("--c4_root is required for c4 dataset")
         recipe.dataset = create_c4_dataset_config(
-            seq_length=recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
             c4_root=args.c4_root,
             train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,
@@ -414,7 +444,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root,
-            seq_length=args.seq_length or recipe.model.seq_length,
+            seq_length=recipe.model.seq_length,
             packed=False,
             pad_seq_to_mult=pad_seq_to_mult,
             num_workers=recipe.dataset.num_workers,
@@ -428,7 +458,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         pad_seq_to_mult = cp_size * 2 if cp_size > 1 else 1
         recipe.dataset = create_squad_dataset_config(
             dataset_root=args.dataset_root,
-            seq_length=args.seq_length or recipe.model.seq_length,
+            seq_length=recipe.model.seq_length,
             packed=True,
             pad_seq_to_mult=pad_seq_to_mult,
             num_workers=recipe.dataset.num_workers,
@@ -436,7 +466,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             persistent_workers=recipe.dataset.persistent_workers,
         )
         if recipe.model.cuda_graph_impl != "none":
-            recipe.dataset.packed_sequence_specs.pad_cu_seqlens = True
+            recipe.dataset.offline_packing_specs.pad_cu_seqlens = True
         recipe.dataset.dataset_kwargs = {"pad_to_max_length": True}
     else:
         raise ValueError(f"Unknown dataset type: {args.data}")
@@ -488,7 +518,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         recipe.model.moe_token_dispatcher_type = "alltoall"
 
     pp_size = getattr(recipe.model, "pipeline_model_parallel_size", 1) or 1
-    if args.task == "lora" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
+    if args.task == "peft" and pp_size > 1 and not recipe.ddp.use_megatron_fsdp:
         recipe.dist.use_tp_pp_dp_mapping = True
 
     if args.deterministic:
@@ -506,11 +536,16 @@ def set_post_overrides(
     compute_dtype: str,
     task: str,
     user_gbs: Optional[int] = None,
-    config_variant: str = "v1",
+    config_variant: str | None = None,
 ) -> ConfigContainer:
     """Set the post overrides."""
     workload_base_config = get_workload_base_config(
-        model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+        model_family_name,
+        model_recipe_name,
+        gpu,
+        compute_dtype,
+        task,
+        config_variant,
     )
 
     if compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
@@ -523,7 +558,7 @@ def set_post_overrides(
 
     dp = int(num_gpus / (tp * pp * cp))
     logger.info(f"DP: {dp}; TP: {tp}; PP: {pp}; CP: {cp}; VP: {vp}")
-    ## NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
+    # NOTE: overlap_param_gather_with_optimizer_step causes NaN grad norm for fp8_mx. Disabling it until the issue is resolved.
     if dp > 1 and pp > 1 and vp > 1 and compute_dtype not in ("fp8_mx", "nvfp4"):
         # Do not enable overlap_param_gather_with_optimizer_step for muon optimizer.
         if recipe.optimizer.optimizer != "dist_muon":
