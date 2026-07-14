@@ -31,6 +31,8 @@ RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
+GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
+GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
 
@@ -55,6 +57,16 @@ def test_training_readme_recipes_exist():
     referenced = set(re.findall(r"--recipe\s+(\w+)", _read(TRAINING_README)))
     missing = sorted(r for r in referenced if r not in defined)
     assert not missing, f"README references nonexistent recipes: {missing}"
+
+
+def test_gemma3_vl_readme_recipes_are_exported():
+    """Every Gemma3-VL recipe advertised in its README is a launcher-visible alias."""
+    documented = set(re.findall(r"`(gemma3_vl_\w+_config)`", _read(GEMMA3_VL_README)))
+    assert documented, "no Gemma3-VL recipe configs documented"
+
+    exported = set(re.findall(r"as\s+(gemma3_vl_\w+_config)", _read(GEMMA3_VL_RECIPES)))
+    missing = sorted(documented - exported)
+    assert not missing, f"Gemma3-VL README references unexported recipes: {missing}"
 
 
 def test_llama_readme_conversion_path_exists():
