@@ -21,7 +21,6 @@ from transformers import AutoConfig
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -31,7 +30,7 @@ _QWEN35_9B_BASE = "Qwen/Qwen3.5-9B-Base"
 _QWEN35_35B_A3B_BASE = "Qwen/Qwen3.5-35B-A3B-Base"
 
 
-def _qwen35_text_provider(model_id: str, architecture: str) -> GPTModelProvider | HybridModelProvider:
+def _qwen35_text_provider(model_id: str, architecture: str) -> GPTModelProvider:
     """Build a language-model provider from a unified Qwen3.5 config."""
     text_config = AutoConfig.from_pretrained(model_id).text_config
     # The nested text config intentionally omits ``architectures``. AutoBridge
