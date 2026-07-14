@@ -268,8 +268,8 @@ class MultiLoRALinear(AdapterWrapper):
     ) -> Dict[str, Any]:
         sharded_sd: Dict[str, Any] = {}
         sharded_sd.update(self.to_wrap.sharded_state_dict(prefix, sharded_offsets, metadata))
-        for k, v in self.adapters.state_dict(prefix=f"{prefix}adapters.").items():
-            sharded_sd[k] = v
+        for i, adapter in enumerate(self.adapters):
+            sharded_sd.update(adapter.sharded_state_dict(f"{prefix}adapters.{i}.", sharded_offsets, metadata))
         return sharded_sd
 
 

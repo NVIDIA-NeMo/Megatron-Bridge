@@ -100,6 +100,12 @@ class _FakeParallelLinearAdapter(nn.Module):
         nn.init.xavier_normal_(self.linear_in.weight)
         nn.init.zeros_(self.linear_out.weight)
 
+    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+        return {
+            f"{prefix}linear_in.weight": ("sharded", self.linear_in.weight),
+            f"{prefix}linear_out.weight": ("sharded", self.linear_out.weight),
+        }
+
 
 def _fake_get_attrs(module: nn.Module, *args, **kwargs) -> AdapterAttributes:
     """Return adapter attributes for a plain ``nn.Linear`` ``to_wrap``."""
@@ -256,6 +262,21 @@ class TestMultiLoRALinearSlots:
         assert "adapters.0.linear_out.weight" in keys
         assert "adapters.1.linear_in.weight" in keys
         assert "adapters.1.linear_out.weight" in keys
+
+    def test_sharded_state_dict_delegates_to_adapter_sharding(self) -> None:
+        layer = _build_multi_lora_linear(n_adapters=2, dim=8)
+        layer.to_wrap.sharded_state_dict = lambda prefix, sharded_offsets, metadata: {f"{prefix}weight": "base"}
+
+        sharded_sd = layer.sharded_state_dict(prefix="decoder.layers.0.linear_proj.")
+
+        assert sharded_sd["decoder.layers.0.linear_proj.weight"] == "base"
+        for i in range(2):
+            entry = sharded_sd[f"decoder.layers.0.linear_proj.adapters.{i}.linear_in.weight"]
+            assert entry[0] == "sharded"
+            assert entry[1] is layer.adapters[i].linear_in.weight
+            entry = sharded_sd[f"decoder.layers.0.linear_proj.adapters.{i}.linear_out.weight"]
+            assert entry[0] == "sharded"
+            assert entry[1] is layer.adapters[i].linear_out.weight
 
 
 # ======================================================================
