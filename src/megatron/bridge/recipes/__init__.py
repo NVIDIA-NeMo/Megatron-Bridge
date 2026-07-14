@@ -53,6 +53,7 @@ from megatron.bridge.recipes.nemotron_omni.h100 import *
 from megatron.bridge.recipes.nemotron_vl import *
 from megatron.bridge.recipes.nemotron_vl.h100 import *
 from megatron.bridge.recipes.nemotronh import *
+from megatron.bridge.recipes.nemotronh.gb200 import *
 from megatron.bridge.recipes.nemotronh.h100 import *
 from megatron.bridge.recipes.olmoe import *
 from megatron.bridge.recipes.olmoe.h100 import *

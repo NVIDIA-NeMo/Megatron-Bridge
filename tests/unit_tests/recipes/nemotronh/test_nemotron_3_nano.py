@@ -19,7 +19,7 @@ Tests cover:
 - Pretrain configuration defaults (parameterless API)
 - SFT configuration (parameterless API for full supervised fine-tuning)
 - PEFT configuration with LoRA and DoRA (peft_scheme parameter)
-- MoE-specific settings (DeepEP, expert parallelism)
+- MoE-specific settings (HybridEP pretraining, DeepEP finetuning, expert parallelism)
 - Parallelism and tokenizer configurations
 """
 
@@ -54,9 +54,9 @@ class TestNemotron3NanoPretrain:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.tensor_model_parallel_size == 1
         assert config.model.pipeline_model_parallel_size == 1
-        assert config.model.sequence_parallel is True
+        assert config.model.sequence_parallel is False
 
         # Check expert parallelism defaults
         assert config.model.expert_tensor_parallel_size == 1
@@ -76,21 +76,21 @@ class TestNemotron3NanoPretrain:
 
         # Check comm overlap
         assert config.comm_overlap is not None
-        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.tp_comm_overlap is False
         assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
 
         # Check precision
         assert config.mixed_precision == "bf16_mixed"
 
-    def test_pretrain_config_deepep_enabled(self):
-        """Test that DeepEP is enabled by default for MoE pretrain."""
+    def test_pretrain_config_hybridep_enabled(self):
+        """Test that HybridEP is enabled by default for MoE pretrain."""
         # Pretrain config uses parameterless API
         config = nemotron_3_nano_pretrain_config()
 
-        # DeepEP should be enabled by default - check MoE dispatcher settings
+        # HybridEP should be enabled by default - check MoE dispatcher settings
         assert config.model.moe_token_dispatcher_type == "flex"
         assert config.model.moe_shared_expert_overlap is False
-        assert config.model.moe_flex_dispatcher_backend == "deepep"
+        assert config.model.moe_flex_dispatcher_backend == "hybridep"
 
     def test_pretrain_config_moe_kernel_settings(self):
         """Test MoE kernel settings for pretrain config."""
@@ -167,11 +167,12 @@ class TestNemotron3NanoSft:
         assert config.mixed_precision == "bf16_mixed"
 
     def test_sft_config_deepep_settings(self):
-        """Test that SFT config has correct DeepEP/MoE dispatcher settings."""
+        """Test that SFT config retains the established DeepEP dispatcher."""
         config = nemotron_3_nano_sft_config()
 
         # Check MoE dispatcher settings
-        assert config.model.moe_token_dispatcher_type is not None
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "deepep"
 
     def test_sft_config_custom_parallelism(self):
         """Test SFT config with custom parallelism applied after creation."""
@@ -296,7 +297,8 @@ class TestNemotron3NanoPeft:
         config = nemotron_3_nano_peft_config()
 
         # Check MoE dispatcher settings exist
-        assert config.model.moe_token_dispatcher_type is not None
+        assert config.model.moe_token_dispatcher_type == "flex"
+        assert config.model.moe_flex_dispatcher_backend == "deepep"
 
     def test_peft_config_custom_parallelism(self):
         """Test PEFT config with custom parallelism applied after creation."""
