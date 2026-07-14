@@ -113,6 +113,15 @@ except ImportError:
     HAS_PAGED_STASHING = False
 
 
+# For Optimizer CUDA graph support
+try:
+    from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+    HAS_OPTIMIZER_CUDA_GRAPH = True
+except ImportError:
+    HAS_OPTIMIZER_CUDA_GRAPH = False
+
+
 def train(
     forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
@@ -305,8 +314,17 @@ def train(
     )
     if is_full_iteration_cuda_graph(config.model):
         forward_backward_func = FullCudaGraphWrapper(
-            forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+            forward_backward_func,
+            cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps,
+            use_single_mempool=config.model.cuda_graph_use_single_mempool,
         )
+    if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
+        optimizer.step = OptimizerCudaGraphWrapper(
+            optimizer.step,
+            cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps,
+            use_single_mempool=config.model.cuda_graph_use_single_mempool,
+        )
+
     # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
     # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
     if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
@@ -1632,6 +1650,11 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Explicitly delete optimizer CUDA graph
+    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
+        del OptimizerCudaGraphWrapper.cuda_graph
+        OptimizerCudaGraphWrapper.cuda_graph = None
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
