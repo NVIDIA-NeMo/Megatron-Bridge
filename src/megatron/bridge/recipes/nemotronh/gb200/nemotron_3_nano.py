@@ -58,6 +58,10 @@ def _apply_gb200_finetune_execution_config(cfg: ConfigContainer) -> None:
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Return the Nemotron 3 Nano pre-training config for 8 GB200 GPUs.
 
+    The perf recipe's scoped CUDA graphs retain too much memory for the
+    library recipe's native cross-entropy workspace at micro-batch size two,
+    so the general-training recipe remains in eager mode.
+
     Returns:
         ConfigContainer: GB200 BF16 pre-training configuration.
     """
@@ -70,10 +74,10 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_num_sms = 16
     cfg.model.moe_shared_expert_overlap = False
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
-    cfg.model.use_te_rng_tracker = True
-    cfg.rng.te_rng_tracker = True
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
 
     return cfg
 

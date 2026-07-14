@@ -160,8 +160,8 @@ def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
 
 
 @pytest.mark.unit
-def test_gb200_pretrain_recompute_matches_perf_reference() -> None:
-    """The 8-GPU GB200 library retains perf topology and its no-recompute policy."""
+def test_gb200_pretrain_uses_memory_safe_execution_config() -> None:
+    """The 8-GPU GB200 library retains topology but excludes graph memory."""
     library_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
     perf_config = gb200_perf_config()
 
@@ -170,20 +170,20 @@ def test_gb200_pretrain_recompute_matches_perf_reference() -> None:
     assert library_config.model.recompute_modules == perf_config.model.recompute_modules is None
     assert library_config.comm_overlap.tp_comm_overlap is False
     assert perf_config.comm_overlap.tp_comm_overlap is True
-    assert library_config.model.cuda_graph_impl == perf_config.model.cuda_graph_impl == "transformer_engine"
-    assert (
-        cuda_graph_module_names(library_config.model)
-        == cuda_graph_module_names(perf_config.model)
-        == [
-            "attn",
-            "mamba",
-            "moe_router",
-            "moe_preprocess",
-        ]
-    )
-    assert library_config.model.use_te_rng_tracker is perf_config.model.use_te_rng_tracker is True
-    assert library_config.rng.te_rng_tracker is perf_config.rng.te_rng_tracker is True
-    assert library_config.model.cuda_graph_warmup_steps == perf_config.model.cuda_graph_warmup_steps == 3
+    assert perf_config.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(perf_config.model) == [
+        "attn",
+        "mamba",
+        "moe_router",
+        "moe_preprocess",
+    ]
+    assert perf_config.model.use_te_rng_tracker is True
+    assert perf_config.rng.te_rng_tracker is True
+    assert perf_config.model.cuda_graph_warmup_steps == 3
+    assert library_config.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(library_config.model) == []
+    assert library_config.model.use_te_rng_tracker is False
+    assert library_config.rng.te_rng_tracker is False
 
 
 @pytest.mark.unit
