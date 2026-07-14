@@ -2110,7 +2110,5 @@ def test_forward_mlp_overrides_accept_packed_seq_params():
 
     for layer_cls in (Gemma4DenseTransformerLayer, Gemma4TransformerLayer):
         params = inspect.signature(layer_cls._forward_mlp).parameters
-        assert "packed_seq_params" in params, (
-            f"{layer_cls.__name__}._forward_mlp must accept packed_seq_params"
-        )
+        assert "packed_seq_params" in params, f"{layer_cls.__name__}._forward_mlp must accept packed_seq_params"
         assert params["packed_seq_params"].default is None
