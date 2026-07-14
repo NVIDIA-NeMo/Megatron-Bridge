@@ -85,12 +85,13 @@ class _FakeParallelLinearAdapter(nn.Module):
         *,
         alpha: float | None = None,
         input_is_parallel: bool = False,
-        **_: object,
+        **extra_kwargs: object,
     ) -> None:
         super().__init__()
         self.dim = dim
         self.alpha = alpha if alpha is not None else dim
         self.base_linear_name = base_linear_name
+        self.extra_kwargs = extra_kwargs
         # Attributes the bridge export path reads off the exposed `.adapter`.
         self.input_is_parallel = input_is_parallel
         self.base_linear_is_parallel = True
@@ -164,6 +165,18 @@ class TestMultiLoRALinearSlots:
         assert layer.tokens_per_adapter is None
         assert torch.equal(layer.alpha_values, torch.ones(3))
         assert torch.equal(layer.rank_values, torch.full((3,), 8.0))
+
+    def test_constructor_forwards_wrapped_module_runtime_config(self) -> None:
+        """Adapter construction mirrors the single-LoRA path (LoRA.transform)."""
+        base = nn.Linear(16, 32)
+        base.config = object()
+
+        layer = MultiLoRALinear(to_wrap=base, n_adapters=2, dim=8, alpha=16, full_name="linear_proj")
+
+        for adapter in layer.adapters:
+            assert adapter.extra_kwargs["model_parallel_config"] is base.config
+            assert adapter.extra_kwargs["disable_tensor_parallel_comm"] is False
+            assert adapter.extra_kwargs["base_linear_is_parallel"] is True
 
     def test_init_adapter_slot_sets_rank_alpha_and_masks(self) -> None:
         layer = _build_multi_lora_linear(dim=8)

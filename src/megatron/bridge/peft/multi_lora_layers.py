@@ -94,6 +94,7 @@ class MultiLoRALinear(AdapterWrapper):
 
         # ModuleList of ParallelLinearAdapters gives per-adapter optimizer state
         # isolation, clean checkpoint serialization, and bridge export compatibility.
+        # Adapter kwargs mirror the single-LoRA path (LoRA.transform).
         self.adapters = nn.ModuleList(
             [
                 ParallelLinearAdapter(
@@ -106,7 +107,10 @@ class MultiLoRALinear(AdapterWrapper):
                     input_is_parallel=attrs.input_is_parallel,
                     column_init_method=column_init_method,
                     row_init_method=row_init_method,
+                    model_parallel_config=getattr(to_wrap, "config", None),
+                    disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
+                    base_linear_is_parallel=attrs.base_linear_is_parallel,
                     a2a_experimental=a2a_experimental,
                     dropout=dropout,
                     dropout_position=dropout_position,
