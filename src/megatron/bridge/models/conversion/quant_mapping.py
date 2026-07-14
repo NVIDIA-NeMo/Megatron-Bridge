@@ -16,7 +16,12 @@ import re
 
 import torch
 
-from megatron.bridge.models.conversion.param_mapping import MegatronParamMapping, QKVMapping, ReplicatedMapping
+from megatron.bridge.models.conversion.param_mapping import (
+    MegatronParamMapping,
+    QKVGMapping,
+    QKVMapping,
+    ReplicatedMapping,
+)
 
 
 class AmaxMapping(ReplicatedMapping):
@@ -76,6 +81,42 @@ class AmaxFanoutMapping(AmaxMapping):
         new_mapping = type(self)(resolved_megatron_param, resolved_hf_targets)
         new_mapping.allow_hf_name_mismatch = self.allow_hf_name_mismatch
         return new_mapping
+
+
+class _DerivedAmaxMapping(AmaxMapping):
+    """Resolve amax names through the original wildcard weight mapping.
+
+    Some weight mappings transform wildcard captures instead of copying them
+    positionally. Keep that transformation when deriving quantizer-buffer names
+    by resolving the weight mapping first, then deriving a concrete amax mapping.
+    """
+
+    def __init__(self, source_mapping: MegatronParamMapping, mapped_name: str) -> None:
+        self.source_mapping = source_mapping
+        self.mapped_name = mapped_name
+        megatron_param = source_mapping.megatron_param.removesuffix(".weight") + mapped_name
+        if isinstance(source_mapping.hf_param, dict):
+            hf_param = {
+                key: (value.removesuffix(".weight") + mapped_name if value.endswith(".weight") else value)
+                for key, value in source_mapping.hf_param.items()
+            }
+        else:
+            hf_param = source_mapping.hf_param.removesuffix(".weight") + mapped_name
+        super().__init__(megatron_param, hf_param)
+
+    def _validate_patterns(self) -> None:
+        """The source mapping owns wildcard validation and resolution."""
+        return
+
+    def resolve(self, captures: tuple[str, ...]) -> MegatronParamMapping:
+        resolved_source = self.source_mapping.resolve(captures)
+        resolved_mappings = convert_to_amax_map([resolved_source], self.mapped_name)
+        if len(resolved_mappings) != 1 or isinstance(resolved_mappings[0], _DerivedAmaxMapping):
+            raise ValueError(
+                f"Weight mapping {type(self.source_mapping).__name__}.resolve() did not produce "
+                f"one concrete mapping for captures {captures}"
+            )
+        return resolved_mappings[0]
 
 
 class MoeAmaxFanoutMapping(AmaxMapping):
@@ -277,7 +318,7 @@ def derive_kv_bmm_amax_map(mappings: list[MegatronParamMapping]) -> list[Megatro
     derived_mappings = []
 
     for mapping in mappings:
-        if not isinstance(mapping, QKVMapping):
+        if not isinstance(mapping, (QKVGMapping, QKVMapping)):
             continue
         if mapping.allow_hf_name_mismatch:
             # Shared/tied-KV bridges may intentionally omit an HF projection.
@@ -325,17 +366,23 @@ def convert_to_amax_map(
 
     Note:
         Mappings ending in '.weight' become regular amax mappings. MoE expert
-        mappings ending in '.weight*' become fanout mappings because Megatron
-        stores a shared expert amax while HF stores per-expert amax names.
+        mappings ending in '.weight*' become fanout mappings when their HF names
+        contain one additional expert wildcard. Other layouts cannot be represented
+        by the shared-expert fanout mapping and are skipped.
     """
     extended_mapping = []
 
     for mapping in mappings:
         if mapping.megatron_param.endswith(".weight*"):
-            new_megatron_param = mapping.megatron_param[: -len(".weight*")] + mapped_name
+            new_megatron_param = mapping.megatron_param.removesuffix(".weight*") + mapped_name
             hf_patterns = _convert_hf_weight_names(mapping.hf_param, mapped_name)
+            megatron_wildcards = mapping._count_wildcard_groups(new_megatron_param)
 
-            if hf_patterns:
+            if hf_patterns and all(
+                MoeAmaxFanoutMapping._EXPERT_WILDCARD_RE.search(pattern)
+                and mapping._count_wildcard_groups(pattern) == megatron_wildcards + 1
+                for pattern in hf_patterns
+            ):
                 extended_mapping.append(
                     MoeAmaxFanoutMapping(
                         megatron_param=new_megatron_param,
@@ -348,20 +395,18 @@ def convert_to_amax_map(
             continue
 
         new_megatron_param = mapping.megatron_param.removesuffix(".weight") + mapped_name
-
         if isinstance(mapping.hf_param, dict):
-            # For dict-based hf_param (e.g., QKVMapping, GatedMLPMapping)
             new_hf_param = {
                 key: (value.removesuffix(".weight") + mapped_name if value.endswith(".weight") else value)
                 for key, value in mapping.hf_param.items()
             }
-        elif isinstance(mapping.hf_param, str):
-            if mapping.hf_param.endswith(".weight"):
-                new_hf_param = mapping.hf_param.removesuffix(".weight") + mapped_name
-            else:
-                continue
+        elif isinstance(mapping.hf_param, str) and mapping.hf_param.endswith(".weight"):
+            new_hf_param = mapping.hf_param.removesuffix(".weight") + mapped_name
         else:
-            print(f"Unknown hf_param type: {type(mapping.hf_param)}")
+            continue
+
+        if "*" in new_megatron_param:
+            extended_mapping.append(_DerivedAmaxMapping(mapping, mapped_name))
             continue
 
         # Amax tensors are small scalars and should not be TP-sharded. Always map

@@ -287,25 +287,25 @@ def test_qwen25_vl_72b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen25_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     patch_recipe_module_global(monkeypatch, _qwen25_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen25_vl_module.qwen25_vl_3b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_qwen25_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     patch_recipe_module_global(monkeypatch, _qwen25_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen25_vl_module.qwen25_vl_3b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_qwen25_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):

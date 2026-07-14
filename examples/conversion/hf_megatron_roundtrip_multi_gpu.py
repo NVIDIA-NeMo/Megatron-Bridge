@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -93,6 +93,8 @@ def main(
     trust_remote_code: bool | None = None,
     strict: bool = False,
     skip_save: bool = False,
+    atol: float = 1e-1,
+    rtol: float = 1e-5,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     if os.environ.get("WORLD_SIZE") is None:
@@ -209,11 +211,21 @@ def main(
             elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+                match = torch.allclose(
+                    compare_param,
+                    compare_original.to(compare_param.device),
+                    atol=atol,
+                    rtol=rtol,
+                )
 
             # --- Case 3: regular param → direct allclose ---
             else:
-                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+                match = torch.allclose(
+                    compare_param,
+                    compare_original.to(compare_param.device),
+                    atol=atol,
+                    rtol=rtol,
+                )
 
             all_match = all_match and match
             table.add_row(
@@ -286,6 +298,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--skip-save", action="store_true", help="Skip saving the model after comparison (verification only)"
     )
+    parser.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for tensor comparison")
+    parser.add_argument("--rtol", type=float, default=1e-5, help="Relative tolerance for tensor comparison")
     args = parser.parse_args()
     main(
         args.hf_model_id,
@@ -298,6 +312,8 @@ if __name__ == "__main__":
         args.megatron_load_path,
         args.trust_remote_code,
         skip_save=args.skip_save,
+        atol=args.atol,
+        rtol=args.rtol,
     )
 
     if torch.distributed.is_initialized():

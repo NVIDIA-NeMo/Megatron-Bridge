@@ -85,9 +85,12 @@ The image is a table comparing the technical specifications of two
 
 - See: [bridge.recipes.gemma3_vl](../../../../docs/apidocs/bridge/bridge.recipes.gemma3_vl.md)
 - Available recipes:
-  - `gemma3_vl_4b_finetune_config`: Finetuning for 4B VL model with PEFT support
-  - `gemma3_vl_12b_finetune_config`: Finetuning for 12B VL model with PEFT support
-  - `gemma3_vl_27b_finetune_config`: Finetuning for 27B VL model with PEFT support
+  - `gemma3_vl_4b_sft_config`: Full-parameter SFT for the 4B VL model
+  - `gemma3_vl_4b_peft_config`: PEFT for the 4B VL model
+  - `gemma3_vl_12b_sft_config`: Full-parameter SFT for the 12B VL model
+  - `gemma3_vl_12b_peft_config`: PEFT for the 12B VL model
+  - `gemma3_vl_27b_sft_config`: Full-parameter SFT for the 27B VL model
+  - `gemma3_vl_27b_peft_config`: PEFT for the 27B VL model
 
 Before training, ensure the following environment variables are set:
 1. `SAVE_DIR`: checkpoint and log saving directory

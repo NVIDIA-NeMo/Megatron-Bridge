@@ -17,6 +17,11 @@ from unittest.mock import patch
 
 import pytest
 import torch
+from megatron.core.extensions.transformer_engine import (
+    TEColumnParallelLinear,
+    TELayerNormColumnParallelLinear,
+    TENorm,
+)
 
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import (
     FalconH1MambaMixer,
@@ -25,6 +30,7 @@ from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer import (
     SelfAttention,
     _run_mamba_mixer_with_static_cache_namespace,
 )
+from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_layer_specs import falconh1_stack_spec
 from megatron.bridge.models.falcon_h1.modeling_falconh1.falconh1_model import FalconH1Config
 
 
@@ -110,6 +116,15 @@ def test_self_attention_applies_key_multiplier():
     torch.testing.assert_close(scaled_query, query)
     torch.testing.assert_close(scaled_key, torch.tensor([6.0]))
     torch.testing.assert_close(scaled_value, value)
+
+
+def test_parallel_layer_normalizes_once_before_branch_input_multipliers():
+    submodules = falconh1_stack_spec.submodules.falconh1_layer.submodules
+
+    assert submodules.norm is TENorm
+    assert submodules.mamba_mixer.submodules.in_proj is TEColumnParallelLinear
+    assert submodules.self_attention.submodules.linear_qkv is TEColumnParallelLinear
+    assert submodules.mlp.submodules.linear_fc1 is TELayerNormColumnParallelLinear
 
 
 def test_static_mamba_cache_key_is_namespaced_when_layer_uses_attention():
