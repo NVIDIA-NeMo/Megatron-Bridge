@@ -138,8 +138,12 @@ def validate_cuda_graph_configuration(config: Any, *, config_name: str = "model"
         clear_cuda_graph_modules(config)
         return
 
-    if cuda_graph_impl == "local" and not is_full_iteration_cuda_graph(config):
-        graph_modules = cuda_graph_module_names(config)
+    graph_modules = cuda_graph_module_names(config)
+    inference_scopes = _member_names(getattr(config, "inference_cuda_graph_scope", None))
+    is_local_inference_graph = (
+        cuda_graph_impl == "local" and not graph_modules and bool(inference_scopes & {"layer", "block"})
+    )
+    if cuda_graph_impl == "local" and not is_full_iteration_cuda_graph(config) and not is_local_inference_graph:
         modules_msg = f" with scopes {graph_modules}" if graph_modules else ""
         raise ValueError(
             f'Megatron Bridge supports {config_name}.cuda_graph_impl="local" only for '

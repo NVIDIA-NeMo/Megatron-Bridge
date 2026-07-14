@@ -45,6 +45,7 @@ from megatron.bridge.models.conversion.model_bridge import (
 from megatron.bridge.models.conversion.utils import get_causal_lm_class_name_via_auto_map
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
+from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
@@ -55,7 +56,9 @@ logger = logging.getLogger(__name__)
 MegatronModelT = TypeVar("MegatronModelT", bound=MegatronModule)
 DataclassT = TypeVar("DataclassT")
 
-# Supported HuggingFace architecture suffixes for causal generation models
+# Supported HuggingFace architecture suffixes for causal generation models, plus a
+# small allowlist of non-causal architectures (e.g. masked/encoder-only LMs) that are
+# handled via a different hf_pretrained wrapper. See _resolve_pretrained_wrapper_cls.
 SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "ForCausalLM",
     "ForConditionalGeneration",
@@ -64,7 +67,13 @@ SUPPORTED_HF_ARCHITECTURES: tuple[str, ...] = (
     "Qwen2_5OmniModel",
     "NemotronLabsDiffusionModel",
     "LLaDAModelLM",  # trust_remote_code class for GSAI-ML LLaDA1.5 (masked-diffusion LLM)
+    "ForMaskedLM",  # encoder-only masked LMs (e.g. BertForMaskedLM), loaded via PreTrainedMaskedLM
 )
+
+# hf_pretrained wrapper types that carry both a config and (optionally) loaded weights.
+# Used for isinstance checks that should accept any such wrapper, regardless of which
+# HF Auto* class it loads the underlying model with.
+_PRETRAINED_WRAPPER_TYPES: tuple[type, ...] = (PreTrainedCausalLM, PreTrainedMaskedLM)
 
 # Mapping from non-standard HF architecture names to their actual transformers class names.
 # Some HF model configs report architecture names that don't follow the standard
@@ -185,6 +194,22 @@ def _model_omits_mtp(model_config: Any) -> bool:
 SUPPORTED_HF_ARCHITECTURES_DISPLAY = " or ".join(f"'{s}'" for s in SUPPORTED_HF_ARCHITECTURES)
 
 
+def _resolve_pretrained_wrapper_cls(config: Any) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM]:
+    """Select the hf_pretrained wrapper class for a model's architecture.
+
+    Masked/encoder-only LMs (``*ForMaskedLM``) are loaded through
+    :class:`PreTrainedMaskedLM`, which uses ``AutoModelForMaskedLM``. This matters
+    because ``AutoModelForCausalLM`` (used by :class:`PreTrainedCausalLM`) resolves
+    some masked-LM config classes (e.g. ``BertConfig``) to an unrelated causal-LM
+    class instead of raising, silently loading the wrong architecture. All other
+    supported architectures continue to use :class:`PreTrainedCausalLM`.
+    """
+    architectures = getattr(config, "architectures", None) or []
+    if any(arch.endswith("ForMaskedLM") for arch in architectures):
+        return PreTrainedMaskedLM
+    return PreTrainedCausalLM
+
+
 def _drop_readonly_config_properties(
     config_dict: dict[str, object], config_type: Type[PretrainedConfig]
 ) -> dict[str, object]:
@@ -216,8 +241,8 @@ class AutoBridge(Generic[MegatronModelT]):
     - Megatron → HuggingFace: For saving trained models in HF format
 
     Args:
-        hf_pretrained: Either a PreTrainedCausalLM instance with loaded model,
-            or a PretrainedConfig for configuration-only operations
+        hf_pretrained: Either a PreTrainedCausalLM or PreTrainedMaskedLM instance
+            with loaded model, or a PretrainedConfig for configuration-only operations
 
     Example:
         >>> # Load and convert a model to Megatron format
@@ -245,10 +270,12 @@ class AutoBridge(Generic[MegatronModelT]):
         a MegatronModelBridge subclass.
     """
 
-    def __init__(self, hf_pretrained: PreTrainedCausalLM | PretrainedConfig):
-        if not isinstance(hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
-            raise ValueError("hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance")
-        self.hf_pretrained: PreTrainedCausalLM | PretrainedConfig = hf_pretrained
+    def __init__(self, hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig):
+        if not isinstance(hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
+            raise ValueError(
+                "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance"
+            )
+        self.hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig = hf_pretrained
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
@@ -478,8 +505,9 @@ class AutoBridge(Generic[MegatronModelT]):
                     if key not in kwargs["rope_scaling"]:
                         kwargs["rope_scaling"][key] = value
 
+        wrapper_cls = _resolve_pretrained_wrapper_cls(config)
         try:
-            return cls(PreTrainedCausalLM.from_pretrained(path, **kwargs))
+            return cls(wrapper_cls.from_pretrained(path, **kwargs))
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 
@@ -509,7 +537,11 @@ class AutoBridge(Generic[MegatronModelT]):
         """
         try:
             config = safe_load_config_with_retry(path, trust_remote_code=trust_remote_code)
-            return cls.supports(config)
+            # Reuse the same registry check as from_hf_pretrained (allowlisted
+            # architecture suffix *and* a registered MegatronModelBridge) so this
+            # preflight can't report True for a model that would then fail to load.
+            cls._validate_config(config, str(path))
+            return True
         except Exception:
             return False
 
@@ -555,13 +587,16 @@ class AutoBridge(Generic[MegatronModelT]):
             ... )
         """
         if hf_path is None:
-            if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-                raise ValueError("hf_path is required when hf_pretrained is not a PreTrainedCausalLM instance")
+            if not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
+                raise ValueError(
+                    "hf_path is required when hf_pretrained is not a PreTrainedCausalLM or PreTrainedMaskedLM instance"
+                )
             pre_trained = self.hf_pretrained
         else:
             # Preserve trust_remote_code setting from the original bridge instance
             trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
-            pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
+            wrapper_cls = self._pretrained_wrapper_cls
+            pre_trained = wrapper_cls.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
         bridge = self._model_bridge
         bridge.load_weights_hf_to_megatron(pre_trained, model, allowed_mismatched_params=allowed_mismatched_params)
         # Get unquantized_state_dict from the bridge instance that was used for optimizer reload
@@ -923,7 +958,21 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        if not isinstance(self.hf_pretrained, (PreTrainedCausalLM, PretrainedConfig)):
+        # Some bridges (e.g. the language-model-only bridge of a multimodal model) cannot
+        # produce a valid standalone Hugging Face checkpoint; gate the export on the
+        # resolved bridge's capability flag. Resolving the bridge needs a concrete,
+        # registered architecture: a config-only save from a bare ``PretrainedConfig`` has
+        # none, so treat an unresolvable bridge as "nothing to gate" and fall through to the
+        # normal config-only path instead of failing here.
+        try:
+            model_bridge = self._model_bridge
+        except (ValueError, NotImplementedError):
+            model_bridge = None
+        if model_bridge is not None and not model_bridge.SUPPORTS_HF_PRETRAINED_EXPORT:
+            raise NotImplementedError(
+                f"{type(model_bridge).__name__} does not support standalone Hugging Face checkpoint export."
+            )
+        if not isinstance(self.hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
             raise ValueError("save_hf_pretrained requires a pretrained HuggingFace model or config.")
         is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)
 
@@ -1602,7 +1651,7 @@ class AutoBridge(Generic[MegatronModelT]):
         provider: ModelProviderMixin = self._model_bridge.provider_bridge(provider_input)
 
         if load_weights:
-            if hf_path is None and not isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            if hf_path is None and not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
                 raise ValueError(
                     "AutoBridge.from_hf_config() does not include weights. "
                     "Pass load_weights=False for random initialization or provide hf_path to load weights."
@@ -1616,7 +1665,8 @@ class AutoBridge(Generic[MegatronModelT]):
             else:
                 # Load from specified path
                 trust_remote_code = getattr(self.hf_pretrained, "trust_remote_code", False)
-                pre_trained = PreTrainedCausalLM.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
+                wrapper_cls = self._pretrained_wrapper_cls
+                pre_trained = wrapper_cls.from_pretrained(hf_path, trust_remote_code=trust_remote_code)
                 provider.register_pre_wrap_hook(partial(self._model_bridge.load_weights_hf_to_megatron, pre_trained))
 
         hf_identifier: str | None = None
@@ -1711,11 +1761,13 @@ class AutoBridge(Generic[MegatronModelT]):
             megatron_model = [megatron_model]
 
         if hf_path is None:
-            if not isinstance(self.hf_pretrained, PreTrainedCausalLM):
-                raise ValueError("hf_path is required when hf_pretrained is not a PreTrainedCausalLM instance")
+            if not isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
+                raise ValueError(
+                    "hf_path is required when hf_pretrained is not a PreTrainedCausalLM or PreTrainedMaskedLM instance"
+                )
             pre_trained = self.hf_pretrained
         else:
-            pre_trained = PreTrainedCausalLM.from_pretrained(hf_path)
+            pre_trained = self._pretrained_wrapper_cls.from_pretrained(hf_path)
 
         return self._model_bridge.build_conversion_tasks(pre_trained, megatron_model)
 
@@ -1743,7 +1795,7 @@ class AutoBridge(Generic[MegatronModelT]):
     def _model_bridge(self) -> "MegatronModelBridge":
         hf_config = getattr(self.hf_pretrained, "hf_config", None)
         if hf_config is None:
-            if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
                 hf_config = self.hf_pretrained.config
             else:
                 hf_config = self.hf_pretrained
@@ -1753,8 +1805,21 @@ class AutoBridge(Generic[MegatronModelT]):
         return bridge
 
     @property
-    def _provider_bridge_input(self) -> PreTrainedCausalLM:
+    def _pretrained_wrapper_cls(self) -> Type[PreTrainedCausalLM] | Type[PreTrainedMaskedLM]:
+        """The hf_pretrained wrapper class matching this bridge's current instance.
+
+        Falls back to resolving from the current config when ``hf_pretrained`` is a
+        bare ``PretrainedConfig`` (i.e. the bridge was built with ``from_hf_config``).
+        """
+        if isinstance(self.hf_pretrained, PreTrainedMaskedLM):
+            return PreTrainedMaskedLM
         if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+            return PreTrainedCausalLM
+        return _resolve_pretrained_wrapper_cls(self.hf_pretrained)
+
+    @property
+    def _provider_bridge_input(self) -> PreTrainedCausalLM | PreTrainedMaskedLM | _ConfigOnlyPretrainedShim:
+        if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
             return self.hf_pretrained
         return self._config_only_pretrained
 
@@ -1774,7 +1839,7 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             ValueError: If no CausalLM architecture is found or cannot be resolved.
         """
-        if isinstance(self.hf_pretrained, PreTrainedCausalLM):
+        if isinstance(self.hf_pretrained, _PRETRAINED_WRAPPER_TYPES):
             config = self.hf_pretrained.config
         else:
             config = self.hf_pretrained
@@ -1797,10 +1862,11 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if not causal_lm_arch:
             raise ValueError(
-                f"\n✗ No CausalLM architecture found\n\n"
+                f"\n✗ No supported architecture found\n\n"
                 f"Model architectures: {architectures}\n\n"
                 f"None of the architectures end with {SUPPORTED_HF_ARCHITECTURES_DISPLAY}.\n"
-                f"This bridge only supports causal language models.\n"
+                f"This bridge only supports causal language models and the allowlisted non-causal "
+                f"architectures above (e.g. masked LMs).\n"
                 f"For other model types, use a different bridge class."
             )
 

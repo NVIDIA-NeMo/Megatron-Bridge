@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
+from megatron.bridge.recipes.minimax.h100.minimax_m3 import *  # noqa: F403
 
 
-__all__ = ["PreTrainedCausalLM", "PreTrainedMaskedLM"]
+__all__ = [
+    "minimax_m3_pretrain_256gpu_h100_bf16_config",
+    "minimax_m3_sft_128gpu_h100_bf16_config",
+]
