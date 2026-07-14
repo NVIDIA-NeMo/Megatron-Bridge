@@ -18,7 +18,6 @@ import ast
 import sys
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import Mock
 
 
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
@@ -47,7 +46,6 @@ def test_setup_experiment_uses_run_script_for_every_perf_workload():
     argument_parser_source = (_PERF_SCRIPTS_DIR / "argument_parser.py").read_text()
     assert "--require-env-bootstrap" not in setup_source
     assert "--require-env-bootstrap" not in argument_parser_source
-    assert "in_container_training_script_dir" in setup_source
     assert not (_PERF_SCRIPTS_DIR / "run_script_with_env.py").exists()
 
 
@@ -137,63 +135,6 @@ def test_run_script_ignores_stale_bootstrap_marker(monkeypatch):
     run_script.main()
 
     assert calls == [args]
-
-
-def test_run_script_delegates_training_to_shared_recipe_runner(monkeypatch):
-    args = SimpleNamespace(
-        model_recipe_name="qwen3_vl_30b_a3b",
-        task="pretrain",
-        num_gpus=8,
-        gpu="h100",
-        compute_dtype="bf16",
-        config_variant=None,
-        domain="qwen3vl",
-        dryrun=True,
-        save_config_filepath="/tmp/config.yaml",
-        dump_env=True,
-    )
-    recipe = SimpleNamespace()
-    final_recipe = SimpleNamespace()
-    forward_step = object()
-    runner = SimpleNamespace(
-        load_perf_recipe_by_name=Mock(return_value=recipe),
-        load_forward_step=Mock(return_value=forward_step),
-        run_config=Mock(),
-    )
-    apply_overrides = Mock(return_value=final_recipe)
-
-    monkeypatch.setattr(run_script, "_load_recipe_runner", lambda: runner)
-    monkeypatch.setattr(run_script, "_apply_perf_recipe_overrides", apply_overrides)
-
-    run_script._run_training(args, ["model.num_layers=1"])
-
-    runner.load_perf_recipe_by_name.assert_called_once_with(
-        model_recipe_name="qwen3_vl_30b_a3b",
-        task="pretrain",
-        num_gpus=8,
-        gpu="h100",
-        precision="bf16",
-        config_variant=None,
-    )
-    apply_overrides.assert_called_once_with(recipe, ["model.num_layers=1"], args)
-    runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
-    runner.run_config.assert_called_once_with(
-        config=final_recipe,
-        mode="pretrain",
-        step_func=forward_step,
-        dryrun=True,
-        save_config_filepath="/tmp/config.yaml",
-        barrier_before_destroy=True,
-        dryrun_num_gpus=8,
-        dump_environment=True,
-    )
-
-
-def test_run_script_maps_perf_domains_to_shared_step_names():
-    assert run_script._step_function_name("llm") == "llm_step"
-    assert run_script._step_function_name("vlm") == "vlm_step"
-    assert run_script._step_function_name("qwen3vl") == "qwen3_vl_step"
-    assert run_script._step_function_name("diffusion") == "wan_step"
 
 
 def test_run_script_defers_training_framework_imports():

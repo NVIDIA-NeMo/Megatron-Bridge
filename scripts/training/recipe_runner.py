@@ -24,21 +24,13 @@ import os
 import pkgutil
 import re
 from collections.abc import Callable
-from typing import Literal, cast
+from typing import cast
 
 import torch
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.recipes.utils.naming import (
-    recipe_function_name,
-    recipe_variant_suffix,
-)
-from megatron.bridge.training.config import (
-    ConfigContainer,
-    TokenizerConfig,
-    runtime_config_update,
-)
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
@@ -52,20 +44,7 @@ SENSITIVE_ENV_VAR_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-RecipeSource = Literal["auto", "recipes", "perf_recipes"]
-
 StepFunctionEntry = Callable | tuple[str, str]
-
-PRECISION_ALIASES = {
-    "bf16": "bf16",
-    "fp8_cs": "fp8cs",
-    "fp8cs": "fp8cs",
-    "fp8_mx": "fp8mx",
-    "fp8mx": "fp8mx",
-    "fp8_sc": "fp8sc",
-    "fp8sc": "fp8sc",
-    "nvfp4": "nvfp4",
-}
 
 STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "audio_lm_step": ("megatron.bridge.training.audio_lm_step", "forward_step"),
@@ -127,7 +106,6 @@ def _recipe_kwargs_for_signature(
     config_builder: Callable,
     *,
     peft_scheme: str | None,
-    packed_sequence: bool = False,
     seq_length: int | None = None,
     hf_path: str | None = None,
 ) -> dict[str, object]:
@@ -139,13 +117,11 @@ def _recipe_kwargs_for_signature(
 
         accepts_peft = "peft" in params or has_var_keyword
         accepts_peft_scheme = "peft_scheme" in params
-        accepts_packed_sequence = "packed_sequence" in params or has_var_keyword
         accepts_seq_length = "seq_length" in params or has_var_keyword
         accepts_hf_path = "hf_path" in params or has_var_keyword
     except (ValueError, TypeError):
         accepts_peft = True
         accepts_peft_scheme = False
-        accepts_packed_sequence = False
         accepts_seq_length = False
         accepts_hf_path = False
 
@@ -155,8 +131,12 @@ def _recipe_kwargs_for_signature(
             kwargs["peft_scheme"] = peft_scheme
         elif accepts_peft:
             kwargs["peft"] = peft_scheme
-    if accepts_packed_sequence and packed_sequence:
-        kwargs["packed_sequence"] = packed_sequence
+        elif peft_scheme.lower() != "lora":
+            builder_name = getattr(config_builder, "__name__", repr(config_builder))
+            raise ValueError(
+                f"Recipe '{builder_name}' does not accept a configurable PEFT scheme; "
+                f"--mode {peft_scheme} is unsupported."
+            )
     if accepts_seq_length and seq_length is not None:
         kwargs["seq_length"] = seq_length
     if accepts_hf_path and hf_path is not None:
@@ -168,7 +148,6 @@ def _load_with_optional_kwargs(
     config_builder: Callable,
     *,
     peft_scheme: str | None,
-    packed_sequence: bool = False,
     seq_length: int | None = None,
     hf_path: str | None = None,
 ) -> ConfigContainer:
@@ -176,33 +155,10 @@ def _load_with_optional_kwargs(
     kwargs = _recipe_kwargs_for_signature(
         config_builder,
         peft_scheme=peft_scheme,
-        packed_sequence=packed_sequence,
         seq_length=seq_length,
         hf_path=hf_path,
     )
     return config_builder(**kwargs)
-
-
-@functools.lru_cache(maxsize=1)
-def perf_recipe_family_modules() -> tuple[str, ...]:
-    """Return import paths for flat performance recipe family packages."""
-    import megatron.bridge.perf_recipes as perf_recipes
-
-    module_names = [
-        f"{perf_recipes.__name__}.{module_info.name}"
-        for module_info in pkgutil.iter_modules(perf_recipes.__path__)
-        if module_info.ispkg and not module_info.name.startswith("_")
-    ]
-    return tuple(sorted(module_names))
-
-
-def find_perf_recipe(recipe_name: str) -> Callable[[], ConfigContainer] | None:
-    """Find a flat perf recipe function by exported function name."""
-    for module_name in perf_recipe_family_modules():
-        recipe_fn = getattr(importlib.import_module(module_name), recipe_name, None)
-        if callable(recipe_fn):
-            return cast(Callable[[], ConfigContainer], recipe_fn)
-    return None
 
 
 @functools.lru_cache(maxsize=1)
@@ -248,87 +204,21 @@ def find_library_recipe(recipe_name: str, *, model_family_name: str | None = Non
     return None
 
 
-def perf_recipe_variant_suffix(config_variant: str | None) -> str:
-    """Return the function-name suffix used for non-canonical perf variants."""
-    return recipe_variant_suffix(config_variant)
-
-
-def perf_recipe_function_name(
-    *,
-    model_recipe_name: str,
-    task: str,
-    num_gpus: int,
-    gpu: str,
-    precision: str,
-    config_variant: str | None = None,
-) -> str:
-    """Build a flat perf recipe function name from CLI dimensions."""
-    return recipe_function_name(
-        model_recipe_name=model_recipe_name,
-        task=task,
-        num_gpus=num_gpus,
-        gpu=gpu,
-        precision=PRECISION_ALIASES.get(precision.lower(), precision.lower().replace("_", "")),
-        config_variant=config_variant.lower() if config_variant is not None else None,
-    )
-
-
-def load_perf_recipe_by_name(
-    *,
-    model_recipe_name: str,
-    task: str,
-    num_gpus: int,
-    gpu: str,
-    precision: str,
-    config_variant: str | None = None,
-) -> ConfigContainer:
-    """Load a flat perf recipe from ``megatron.bridge.perf_recipes``."""
-    name = perf_recipe_function_name(
-        model_recipe_name=model_recipe_name,
-        task=task,
-        num_gpus=num_gpus,
-        gpu=gpu,
-        precision=precision,
-        config_variant=config_variant,
-    )
-    recipe_fn = find_perf_recipe(name)
-    if recipe_fn is None:
-        searched_modules = ", ".join(perf_recipe_family_modules()) or "none"
-        raise ValueError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
-    return recipe_fn()
-
-
 def load_recipe(
     recipe_name: str,
     peft_scheme: str | None = None,
-    packed_sequence: bool = False,
     seq_length: int | None = None,
     hf_path: str | None = None,
-    source: RecipeSource = "auto",
 ) -> ConfigContainer:
-    """Load a recipe from the library recipe package or flat perf recipe package."""
-    if source in {"auto", "recipes"}:
-        config_builder = find_library_recipe(recipe_name)
-        if config_builder is not None:
-            return _load_with_optional_kwargs(
-                config_builder,
-                peft_scheme=peft_scheme,
-                packed_sequence=packed_sequence,
-                seq_length=seq_length,
-                hf_path=hf_path,
-            )
-
-    if source in {"auto", "perf_recipes"}:
-        recipe_fn = find_perf_recipe(recipe_name)
-        if recipe_fn is not None:
-            return recipe_fn()
-
-    if source == "recipes":
+    """Load a recipe from the library recipe package."""
+    config_builder = find_library_recipe(recipe_name)
+    if config_builder is None:
         raise AttributeError(f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.")
-
-    raise AttributeError(
-        f"Recipe '{recipe_name}' not found in requested source '{source}'. "
-        "Check megatron.bridge.recipes exports or megatron.bridge.perf_recipes flat recipe names."
+    return _load_with_optional_kwargs(
+        config_builder,
+        peft_scheme=peft_scheme,
+        seq_length=seq_length,
+        hf_path=hf_path,
     )
 
 
@@ -393,7 +283,7 @@ def _get_arg(args: object, name: str, default: object | None = None) -> object |
     return getattr(args, name, default)
 
 
-def apply_launcher_overrides(config: ConfigContainer, args: object, *, recipe_source: str) -> ConfigContainer:
+def apply_launcher_overrides(config: ConfigContainer, args: object) -> ConfigContainer:
     """Apply easy launcher flags before Hydra-style overrides.
 
     The generic ``key=value`` overrides remain the most expressive path. These
@@ -467,14 +357,6 @@ def apply_launcher_overrides(config: ConfigContainer, args: object, *, recipe_so
         vocab_size=cast(int, _get_arg(args, "vocab_size", 32000)),
     )
 
-    precision = cast(str, _get_arg(args, "compute_dtype", "bf16"))
-    if (
-        recipe_source == "perf_recipes"
-        and precision.lower() == "bf16"
-        and getattr(optimizer, "optimizer", None) == "adam"
-    ):
-        config.optimizer.use_precision_aware_optimizer = True
-
     if getattr(ddp, "nccl_ub", False):
         os.environ["NCCL_NVLS_ENABLE"] = "1"
         os.environ["NCCL_CTA_POLICY"] = "1"
@@ -489,6 +371,29 @@ def apply_determinism(config: ConfigContainer, *, deterministic: bool) -> Config
         os.environ.setdefault("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "0")
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         apply_determinism_overrides(config)
+    return config
+
+
+def sync_finetuning_cp_invariants(config: ConfigContainer, *, mode: str) -> ConfigContainer:
+    """Apply the loss-reduction settings required by SFT with context parallelism."""
+    if mode != "finetune":
+        return config
+
+    dataset = getattr(config, "dataset", None)
+    is_finetuning_dataset = hasattr(dataset, "enable_offline_packing") or hasattr(dataset, "enable_in_batch_packing")
+    if not is_finetuning_dataset:
+        return config
+
+    model = getattr(config, "model", None)
+    dist = getattr(config, "dist", None)
+    context_parallel_sizes = {getattr(model, "context_parallel_size", 1)}
+    eval_context_parallel_size = getattr(dist, "eval_context_parallel_size", None)
+    if eval_context_parallel_size is not None:
+        context_parallel_sizes.add(eval_context_parallel_size)
+
+    if any(size > 1 for size in context_parallel_sizes):
+        _set_if_present(model, "calculate_per_token_loss", True)
+        _set_if_present(getattr(config, "ddp", None), "average_in_collective", False)
     return config
 
 
@@ -561,8 +466,6 @@ def run_config(
     step_func: Callable,
     dryrun: bool = False,
     save_config_filepath: str | None = None,
-    barrier_before_destroy: bool = False,
-    dryrun_num_gpus: int | None = None,
     dump_environment: bool = False,
 ) -> bool:
     """Run or dry-run a ConfigContainer with the selected training function.
@@ -574,12 +477,6 @@ def run_config(
         dump_env_rank0()
 
     if dryrun:
-        if dryrun_num_gpus is not None:
-            # Validate the requested topology, even when inspecting it from a
-            # smaller local or Slurm allocation.
-            os.environ["WORLD_SIZE"] = str(dryrun_num_gpus)
-            os.environ["RANK"] = "0"
-            runtime_config_update(config)
         save_config(config, save_config_filepath or "ConfigContainer.yaml")
         return True
 
@@ -591,8 +488,6 @@ def run_config(
     train_func(config=config, forward_step_func=step_func)
 
     if torch.distributed.is_initialized():
-        if barrier_before_destroy:
-            torch.distributed.barrier()
         torch.distributed.destroy_process_group()
 
     return False

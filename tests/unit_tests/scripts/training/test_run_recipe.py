@@ -52,6 +52,7 @@ def _load_module():
         "load_forward_step",
         "load_recipe",
         "run_config",
+        "sync_finetuning_cp_invariants",
         "sync_offline_packing_alignment",
         "sync_model_dataset_sequence_length",
     ):
@@ -59,20 +60,12 @@ def _load_module():
     recipe_runner.apply_cli_overrides.side_effect = lambda config, _: config
     recipe_runner.apply_determinism.side_effect = lambda config, **_: config
     recipe_runner.apply_launcher_overrides.side_effect = lambda config, *_args, **_kwargs: config
+    recipe_runner.sync_finetuning_cp_invariants.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda config: config
     recipe_runner.load_forward_step.return_value = object()
 
     dataset_utils = types.ModuleType("megatron.bridge.recipes.utils.dataset_utils")
-    dataset_utils.DATASET_TYPES = [
-        "llm-pretrain",
-        "llm-pretrain-mock",
-        "llm-finetune",
-        "llm-finetune-preloaded",
-        "vlm-energon",
-        "vlm-hf",
-        "vlm-preloaded",
-    ]
     dataset_utils.PUBLIC_DATASETS = {
         "mock": SimpleNamespace(
             train_mode="pretrain", modality="text", supports_offline_packing=False, indexed_data=False
@@ -105,9 +98,7 @@ def _load_module():
             for name in ("cord-v2", "llava-video-178k", "medpix", "raven", "rdr")
         },
     }
-    dataset_utils.apply_dataset_override = Mock(side_effect=lambda config, *_args, **_kwargs: config)
     dataset_utils.apply_public_dataset_override = Mock(side_effect=lambda config, **_kwargs: config)
-    dataset_utils.infer_mode_from_dataset = lambda name: "pretrain" if name.startswith("llm-pretrain") else "finetune"
     stub_modules = {
         "recipe_runner": recipe_runner,
         "megatron": _package("megatron"),
@@ -133,7 +124,6 @@ def _load_module():
                 sys.modules[name] = old_module
 
     return module, SimpleNamespace(
-        apply_dataset_override=dataset_utils.apply_dataset_override,
         apply_public_dataset_override=dataset_utils.apply_public_dataset_override,
         recipe_runner=recipe_runner,
     )
@@ -204,7 +194,6 @@ def test_model_adapter_modes_select_peft_recipe_and_scheme(mode):
         peft_scheme=mode,
         seq_length=None,
         hf_path=None,
-        source="recipes",
     )
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "finetune"
 
@@ -220,7 +209,6 @@ def test_full_recipe_uses_only_library_namespace_and_default_llm_step():
         peft_scheme=None,
         seq_length=None,
         hf_path=None,
-        source="recipes",
     )
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
@@ -233,36 +221,12 @@ def test_full_recipe_rejects_incompatible_mode():
         module.main(["--recipe", "gpt_oss_20b_sft_config", "--mode", "lora"])
 
 
-def test_legacy_dataset_and_peft_flags_remain_compatible():
-    module, handles = _load_module()
-    config = SimpleNamespace()
-    handles.recipe_runner.load_recipe.return_value = config
+@pytest.mark.parametrize("option", ["--peft-scheme", "--peft_scheme"])
+def test_removed_peft_scheme_flags_are_rejected(option):
+    module, _ = _load_module()
 
-    module.main(
-        [
-            "--recipe",
-            "gpt_oss_20b_peft_config",
-            "--peft_scheme",
-            "dora",
-            "--dataset",
-            "llm-finetune",
-        ]
-    )
-
-    handles.recipe_runner.load_recipe.assert_called_once_with(
-        "gpt_oss_20b_peft_config",
-        peft_scheme="dora",
-        seq_length=None,
-        hf_path=None,
-        source="recipes",
-    )
-    handles.apply_dataset_override.assert_called_once_with(
-        config,
-        "llm-finetune",
-        packed_sequence=False,
-        seq_length=None,
-        cli_overrides=[],
-    )
+    with pytest.raises(SystemExit):
+        module.parse_args(["--model", "gpt_oss_20b", "--mode", "lora", option, "dora"])
 
 
 def test_named_finetuning_dataset_maps_to_internal_config():
@@ -368,13 +332,21 @@ def test_public_options_accept_only_hyphen_and_underscore_spellings(option, attr
     assert getattr(args, attribute) == expected
 
 
-@pytest.mark.parametrize("option", ["--packed-sequence", "--packed_sequence"])
-def test_legacy_packed_sequence_spelling_enables_offline_packing(option):
+@pytest.mark.parametrize("option", ["--offline-packing", "--offline_packing"])
+def test_offline_packing_spellings_enable_offline_packing(option):
     module, _ = _load_module()
 
     args, _ = module.parse_args(["--model", "gpt_oss_20b", "--mode", "sft", option])
 
     assert args.offline_packing is True
+
+
+@pytest.mark.parametrize("option", ["--packed-sequence", "--packed_sequence"])
+def test_ambiguous_packed_sequence_flags_are_rejected(option):
+    module, _ = _load_module()
+
+    with pytest.raises(SystemExit):
+        module.parse_args(["--model", "gpt_oss_20b", "--mode", "sft", option])
 
 
 def test_thinking_dataset_does_not_imply_offline_packing():
@@ -423,6 +395,11 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
         current_config.dataset = SimpleNamespace(seq_length=2048)
         return current_config
 
+    def sync_cp_invariants(current_config, *, mode):
+        assert mode == "finetune"
+        events.append("cp-invariants")
+        return current_config
+
     def finalize(current_config):
         events.append(
             (
@@ -436,6 +413,7 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
 
     handles.recipe_runner.apply_launcher_overrides.side_effect = apply_launcher
     handles.recipe_runner.apply_cli_overrides.side_effect = apply_trailing
+    handles.recipe_runner.sync_finetuning_cp_invariants.side_effect = sync_cp_invariants
     handles.recipe_runner.sync_offline_packing_alignment.side_effect = finalize
 
     module.main(
@@ -456,7 +434,7 @@ def test_offline_packing_alignment_is_finalized_after_all_overrides():
     )
 
     assert handles.apply_public_dataset_override.call_args.kwargs["offline_packing"] is True
-    assert events == ["launcher", "trailing", ("packing", 2, 3, 2048)]
+    assert events == ["launcher", "trailing", "cp-invariants", ("packing", 2, 3, 2048)]
 
 
 def test_offline_packing_is_rejected_for_vlm_dataset():
@@ -532,22 +510,27 @@ def test_vlm_dataset_requires_compatible_forward_step(step_func):
 
 
 @pytest.mark.parametrize(
-    ("legacy_name", "mode", "canonical_name", "offline_packing"),
+    "dataset_name",
     [
-        ("squad-packed", "sft", "squad", True),
-        ("preloaded-vlm", "sft", "vlm-preloaded", False),
-        ("dclm", "pretrain", "megatron-indexed", False),
-        ("rp2", "pretrain", "megatron-indexed", False),
-        ("c4", "pretrain", "megatron-indexed", False),
+        "llm-pretrain",
+        "llm-pretrain-mock",
+        "llm-finetune",
+        "llm-finetune-preloaded",
+        "vlm-energon",
+        "vlm-hf",
+        "vlm-preloaded",
+        "squad-packed",
+        "preloaded-vlm",
+        "dclm",
+        "rp2",
+        "c4",
     ],
 )
-def test_renamed_dataset_aliases_are_normalized(legacy_name, mode, canonical_name, offline_packing):
+def test_legacy_dataset_names_are_rejected(dataset_name):
     module, _ = _load_module()
 
-    args, _ = module.parse_args(["--recipe", f"gpt_oss_20b_{mode}_config", "--mode", mode, "--dataset", legacy_name])
-
-    assert args.dataset == canonical_name
-    assert args.offline_packing is offline_packing
+    with pytest.raises(SystemExit):
+        module.parse_args(["--model", "gpt_oss_20b", "--mode", "sft", "--dataset", dataset_name])
 
 
 def test_hf_vlm_dataset_name_is_forwarded():

@@ -126,16 +126,13 @@ DATASET_TYPES = [
     "vlm-hf",
 ]
 
-PublicDatasetMode = Literal["pretrain", "finetune"]
-PublicDatasetModality = Literal["text", "vlm"]
-
 
 @dataclass(frozen=True, kw_only=True)
 class PublicDatasetSpec:
     """Launcher behavior owned by one public dataset name."""
 
-    train_mode: PublicDatasetMode
-    modality: PublicDatasetModality = "text"
+    train_mode: Literal["pretrain", "finetune"]
+    modality: Literal["text", "vlm"] = "text"
     supports_offline_packing: bool = False
     indexed_data: bool = False
     hf_dataset_name: str | None = None
@@ -161,9 +158,6 @@ PUBLIC_DATASETS: dict[str, PublicDatasetSpec] = {
     "rdr": PublicDatasetSpec(train_mode="finetune", modality="vlm", hf_dataset_name="rdr"),
 }
 
-PUBLIC_HF_VLM_DATASETS = {
-    name: spec.hf_dataset_name for name, spec in PUBLIC_DATASETS.items() if spec.hf_dataset_name is not None
-}
 PUBLIC_DATASET_NAMES = list(PUBLIC_DATASETS)
 
 LLM_FINETUNE_PRESETS: dict[str, Callable] = {
@@ -419,13 +413,11 @@ def apply_public_dataset_override(
         if not dataset_root:
             raise ValueError("local-jsonl requires --dataset-root=<path> to select the local JSONL source.")
         offline_packing_specs = None
-        dataset_kwargs = None
         if offline_packing:
             offline_packing_specs = PackedSequenceSpecs(
                 packed_sequence_size=resolved_seq_length,
                 pad_seq_to_mult=pad_seq_to_mult,
             )
-            dataset_kwargs = {"pad_to_max_length": True}
         config.dataset = GPTSFTDatasetConfig(
             seq_length=resolved_seq_length,
             dataset_root=dataset_root,
@@ -436,7 +428,6 @@ def apply_public_dataset_override(
             ),
             enable_offline_packing=offline_packing,
             offline_packing_specs=offline_packing_specs,
-            dataset_kwargs=dataset_kwargs,
             dataloader_type="batch",
             seed=5678,
         )

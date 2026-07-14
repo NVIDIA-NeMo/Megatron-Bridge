@@ -34,56 +34,6 @@ def recipe_runner() -> ModuleType:
     return module
 
 
-def test_perf_recipe_function_name_normalizes_precision_and_variant(recipe_runner: ModuleType) -> None:
-    assert (
-        recipe_runner.perf_recipe_function_name(
-            model_recipe_name="llama3_8b",
-            task="pretrain",
-            num_gpus=8,
-            gpu="h100",
-            precision="fp8_cs",
-            config_variant="large_scale",
-        )
-        == "llama3_8b_pretrain_8gpu_h100_fp8cs_large_scale_config"
-    )
-    assert (
-        recipe_runner.perf_recipe_function_name(
-            model_recipe_name="llama3_8b",
-            task="pretrain",
-            num_gpus=8,
-            gpu="h100",
-            precision="bf16",
-            config_variant="v2",
-        )
-        == "llama3_8b_pretrain_8gpu_h100_bf16_config"
-    )
-    assert (
-        recipe_runner.perf_recipe_function_name(
-            model_recipe_name="llama3_8b",
-            task="pretrain",
-            num_gpus=8,
-            gpu="h100",
-            precision="bf16",
-            config_variant="LARGE_SCALE",
-        )
-        == "llama3_8b_pretrain_8gpu_h100_bf16_large_scale_config"
-    )
-
-
-def test_load_recipe_from_perf_namespace_skips_library_lookup(
-    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    config = object()
-    library_lookup = Mock(side_effect=AssertionError("library lookup must not run"))
-    perf_lookup = Mock(return_value=lambda: config)
-    monkeypatch.setattr(recipe_runner, "find_library_recipe", library_lookup)
-    monkeypatch.setattr(recipe_runner, "find_perf_recipe", perf_lookup)
-
-    assert recipe_runner.load_recipe("unit_perf_config", source="perf_recipes") is config
-    library_lookup.assert_not_called()
-    perf_lookup.assert_called_once_with("unit_perf_config")
-
-
 def test_recipe_builder_type_error_is_not_retried(recipe_runner: ModuleType) -> None:
     builder = Mock(side_effect=TypeError("raised inside recipe"))
 
@@ -95,6 +45,23 @@ def test_recipe_builder_type_error_is_not_retried(recipe_runner: ModuleType) -> 
         )
 
     builder.assert_called_once_with(seq_length=128)
+
+
+def test_recipe_without_configurable_scheme_rejects_dora(recipe_runner: ModuleType) -> None:
+    def lora_only_recipe() -> object:
+        return object()
+
+    with pytest.raises(ValueError, match="--mode dora is unsupported"):
+        recipe_runner._load_with_optional_kwargs(lora_only_recipe, peft_scheme="dora")
+
+
+def test_recipe_without_configurable_scheme_allows_default_lora(recipe_runner: ModuleType) -> None:
+    config = object()
+
+    def lora_only_recipe() -> object:
+        return config
+
+    assert recipe_runner._load_with_optional_kwargs(lora_only_recipe, peft_scheme="lora") is config
 
 
 def test_load_forward_step_imports_only_selected_module(
@@ -151,6 +118,41 @@ def test_sync_model_dataset_sequence_length_supports_both_dataset_field_names(re
         assert config.model.seq_length in {256, 512}
 
 
+@pytest.mark.parametrize(
+    "dataset",
+    [
+        SimpleNamespace(enable_offline_packing=False),
+        SimpleNamespace(enable_in_batch_packing=False),
+    ],
+)
+def test_sync_finetuning_cp_invariants_supports_unpacked_text_and_vlm(
+    recipe_runner: ModuleType, dataset: SimpleNamespace
+) -> None:
+    config = SimpleNamespace(
+        dataset=dataset,
+        model=SimpleNamespace(context_parallel_size=2, calculate_per_token_loss=False),
+        dist=SimpleNamespace(eval_context_parallel_size=None),
+        ddp=SimpleNamespace(average_in_collective=True),
+    )
+
+    assert recipe_runner.sync_finetuning_cp_invariants(config, mode="finetune") is config
+    assert config.model.calculate_per_token_loss is True
+    assert config.ddp.average_in_collective is False
+
+
+def test_sync_finetuning_cp_invariants_does_not_change_pretraining(recipe_runner: ModuleType) -> None:
+    config = SimpleNamespace(
+        dataset=SimpleNamespace(enable_in_batch_packing=False),
+        model=SimpleNamespace(context_parallel_size=2, calculate_per_token_loss=False),
+        dist=SimpleNamespace(eval_context_parallel_size=None),
+        ddp=SimpleNamespace(average_in_collective=True),
+    )
+
+    assert recipe_runner.sync_finetuning_cp_invariants(config, mode="pretrain") is config
+    assert config.model.calculate_per_token_loss is False
+    assert config.ddp.average_in_collective is True
+
+
 def test_sync_offline_packing_alignment_uses_final_train_and_eval_topology(recipe_runner: ModuleType) -> None:
     packing_specs = SimpleNamespace(packed_sequence_size=4096, pad_seq_to_mult=1)
     config = SimpleNamespace(
@@ -163,8 +165,10 @@ def test_sync_offline_packing_alignment_uses_final_train_and_eval_topology(recip
             context_parallel_size=2,
             tensor_model_parallel_size=3,
             sequence_parallel=True,
+            calculate_per_token_loss=False,
         ),
         dist=SimpleNamespace(eval_context_parallel_size=4),
+        ddp=SimpleNamespace(average_in_collective=True),
     )
 
     assert recipe_runner.sync_offline_packing_alignment(config) is config
@@ -201,23 +205,17 @@ def test_apply_launcher_overrides_can_clear_virtual_pipeline_size(recipe_runner:
         vocab_size=32000,
     )
 
-    recipe_runner.apply_launcher_overrides(config, args, recipe_source="recipes")
+    recipe_runner.apply_launcher_overrides(config, args)
 
     assert config.model.virtual_pipeline_model_parallel_size is None
 
 
-def test_run_config_dryrun_validates_target_topology(
-    recipe_runner: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_run_config_dryrun_saves_without_training(recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:
     config = object()
     events: list[str] = []
     train = Mock(name="train")
-    monkeypatch.setattr(recipe_runner, "runtime_config_update", lambda _: events.append("runtime"))
     monkeypatch.setattr(recipe_runner, "save_config", lambda *_: events.append("save"))
     monkeypatch.setitem(recipe_runner.TRAIN_FUNCTIONS, "pretrain", train)
-    monkeypatch.setenv("WORLD_SIZE", "1")
-    monkeypatch.setenv("RANK", "7")
 
     returned_early = recipe_runner.run_config(
         config=config,
@@ -225,11 +223,8 @@ def test_run_config_dryrun_validates_target_topology(
         step_func=object(),
         dryrun=True,
         save_config_filepath="config.yaml",
-        dryrun_num_gpus=8,
     )
 
     assert returned_early is True
-    assert events == ["runtime", "save"]
-    assert recipe_runner.os.environ["WORLD_SIZE"] == "8"
-    assert recipe_runner.os.environ["RANK"] == "0"
+    assert events == ["save"]
     train.assert_not_called()

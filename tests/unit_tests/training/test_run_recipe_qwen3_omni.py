@@ -94,17 +94,6 @@ def _load_recipe_runner_module():
     determinism_utils_module = types.ModuleType("megatron.bridge.recipes.utils.determinism_utils")
     determinism_utils_module.apply_determinism_overrides = Mock(name="apply_determinism_overrides")
 
-    naming_module = types.ModuleType("megatron.bridge.recipes.utils.naming")
-    naming_module.recipe_variant_suffix = lambda config_variant: (
-        "" if config_variant is None or config_variant in {"v1", "v2", "v3"} else f"_{config_variant}"
-    )
-    naming_module.recipe_function_name = (
-        lambda *, model_recipe_name, task, num_gpus, gpu, precision, config_variant=None: (
-            f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{precision}"
-            f"{naming_module.recipe_variant_suffix(config_variant)}_config"
-        )
-    )
-
     finetune_module = types.ModuleType("megatron.bridge.training.finetune")
     finetune_module.finetune = Mock(name="finetune")
 
@@ -118,7 +107,6 @@ def _load_recipe_runner_module():
     config_module = types.ModuleType("megatron.bridge.training.config")
     config_module.ConfigContainer = object
     config_module.TokenizerConfig = TokenizerConfig
-    config_module.runtime_config_update = Mock(name="runtime_config_update")
 
     omegaconf_module = types.ModuleType("megatron.bridge.training.utils.omegaconf_utils")
     omegaconf_module.process_config_with_overrides = lambda config, cli_overrides=None: config
@@ -147,7 +135,6 @@ def _load_recipe_runner_module():
         "megatron.bridge.recipes": recipes_module,
         "megatron.bridge.recipes.utils": recipes_utils_module,
         "megatron.bridge.recipes.utils.determinism_utils": determinism_utils_module,
-        "megatron.bridge.recipes.utils.naming": naming_module,
         "megatron.bridge.training": training_module,
         "megatron.bridge.training.utils": training_utils_module,
         "megatron.bridge.utils": utils_module,
@@ -247,42 +234,6 @@ class TestRecipeRunnerQwen3Omni:
 
         assert events == ["dump", "training"]
 
-    def test_dry_run_uses_target_gpu_count_over_slurm_allocation(self, monkeypatch, tmp_path):
-        """Dry-run topology validation should use the requested target GPU count."""
-        module, _ = _load_recipe_runner_module()
-        config = SimpleNamespace(to_yaml=Mock(), print_yaml=Mock())
-        monkeypatch.setenv("WORLD_SIZE", "1")
-        monkeypatch.setenv("RANK", "7")
-        monkeypatch.setenv("SLURM_NTASKS", "1")
-        monkeypatch.setenv("SLURM_PROCID", "7")
-
-        module.run_config(
-            config=config,
-            mode="pretrain",
-            step_func=object(),
-            dryrun=True,
-            save_config_filepath=str(tmp_path / "config.yaml"),
-            dryrun_num_gpus=8,
-        )
-
-        assert module.os.environ["WORLD_SIZE"] == "8"
-        assert module.os.environ["RANK"] == "0"
-        module.runtime_config_update.assert_called_once_with(config)
-
-    def test_load_recipe_auto_prefers_library_recipe(self):
-        """Auto source resolution should check library recipes before flat perf recipes."""
-
-        module, _ = _load_recipe_runner_module()
-        library_config = object()
-        perf_config = object()
-        module.find_library_recipe = Mock(return_value=lambda: library_config)
-        module.find_perf_recipe = Mock(return_value=lambda: perf_config)
-
-        cfg = module.load_recipe("shared_name_config", source="auto")
-
-        assert cfg is library_config
-        module.find_perf_recipe.assert_not_called()
-
     def test_seq_length_shortcut_updates_model_and_dataset(self):
         """The easy seq-length flag should keep model and dataset lengths aligned."""
         module, _ = _load_recipe_runner_module()
@@ -300,7 +251,7 @@ class TestRecipeRunnerQwen3Omni:
         )
         args = SimpleNamespace(seq_length=512, tokenizer_type=None, tokenizer_model=None, vocab_size=32000)
 
-        module.apply_launcher_overrides(config, args, recipe_source="recipes")
+        module.apply_launcher_overrides(config, args)
 
         assert config.dataset.seq_length == 512
         assert config.dataset.sequence_length == 512

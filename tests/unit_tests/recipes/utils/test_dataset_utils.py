@@ -21,7 +21,6 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     LLM_FINETUNE_PRESETS,
     PUBLIC_DATASET_NAMES,
     PUBLIC_DATASETS,
-    PUBLIC_HF_VLM_DATASETS,
     apply_dataset_override,
     apply_public_dataset_override,
     extract_and_remove_override,
@@ -565,7 +564,7 @@ class TestApplyPublicDatasetOverride:
 
         assert result.dataset.enable_offline_packing is True
         assert result.dataset.offline_packing_specs.pad_seq_to_mult == 4
-        assert result.dataset.dataset_kwargs == {"pad_to_max_length": True}
+        assert result.dataset.dataset_kwargs is None
 
     def test_local_vlm_uses_explicit_paths_and_inherits_recipe_processor(self):
         from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
@@ -605,7 +604,7 @@ class TestApplyPublicDatasetOverride:
         config = _make_vlm_config()
         result = apply_public_dataset_override(config, dataset_name)
 
-        assert result.dataset.source.dataset_name == PUBLIC_HF_VLM_DATASETS[dataset_name]
+        assert result.dataset.source.dataset_name == PUBLIC_DATASETS[dataset_name].hf_dataset_name
         assert result.dataset.source.split == "train[:95%]"
         assert result.dataset.validation_source.split == "train[95%:]"
         assert result.dataset.do_test is False
@@ -673,14 +672,10 @@ class TestRegistryConstants:
         assert "local-jsonl" in PUBLIC_DATASET_NAMES
         assert "local-vlm" in PUBLIC_DATASET_NAMES
         assert "megatron-indexed" in PUBLIC_DATASET_NAMES
-        assert set(PUBLIC_HF_VLM_DATASETS).issubset(PUBLIC_DATASET_NAMES)
         assert "squad-packed" not in PUBLIC_DATASET_NAMES
         assert "preloaded-vlm" not in PUBLIC_DATASET_NAMES
         assert {"dclm", "rp2", "c4"}.isdisjoint(PUBLIC_DATASET_NAMES)
 
     def test_public_dataset_views_are_derived_from_one_registry(self):
         assert PUBLIC_DATASET_NAMES == list(PUBLIC_DATASETS)
-        assert PUBLIC_HF_VLM_DATASETS == {
-            name: spec.hf_dataset_name for name, spec in PUBLIC_DATASETS.items() if spec.hf_dataset_name is not None
-        }
-        assert all(PUBLIC_DATASETS[name].modality == "vlm" for name in PUBLIC_HF_VLM_DATASETS)
+        assert all(spec.modality == "vlm" for spec in PUBLIC_DATASETS.values() if spec.hf_dataset_name is not None)

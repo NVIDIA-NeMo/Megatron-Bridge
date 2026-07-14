@@ -17,6 +17,7 @@
 from typing import Any
 
 from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
@@ -136,11 +137,19 @@ def default_openmathinstruct2_config(
     packed_sequence: bool = False,
     pad_seq_to_mult: int = 1,
 ) -> GPTSFTDatasetConfig:
-    """Create default OpenMathInstruct-2 dataset configuration for finetuning recipes."""
-    dataset_kwargs = {}
+    """Create the default OpenMathInstruct-2 finetuning dataset.
+
+    Args:
+        seq_length: Maximum sequence length.
+        packed_sequence: Whether to enable offline text SFT packing. This does
+            not enable VLM in-batch packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        OpenMathInstruct-2 dataset configuration.
+    """
     offline_packing_specs = None
     if packed_sequence:
-        dataset_kwargs["pad_to_max_length"] = True
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
@@ -149,7 +158,6 @@ def default_openmathinstruct2_config(
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
-        dataset_kwargs=dataset_kwargs,
         val_proportion=0.05,
         num_workers=2,
     )
@@ -167,7 +175,8 @@ def default_gsm8k_config(
 
     Args:
         seq_length: Sequence length for the dataset (default 2048, sufficient for GSM8K)
-        packed_sequence: Whether to enable offline packed-sequence preparation.
+        packed_sequence: Whether to enable offline text SFT packing. This does
+            not enable VLM in-batch packing.
         pad_seq_to_mult: Optional multiple to pad each sequence to when packing.
 
     Returns:
@@ -177,10 +186,8 @@ def default_gsm8k_config(
         - GSM8K has 7,473 train and 1,319 test examples
         - Loads the full DatasetDict so the published test split is used for evaluation
     """
-    dataset_kwargs = {}
     offline_packing_specs = None
     if packed_sequence:
-        dataset_kwargs["pad_to_max_length"] = True
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
@@ -192,7 +199,6 @@ def default_gsm8k_config(
         seq_length=seq_length,
         enable_offline_packing=packed_sequence,
         offline_packing_specs=offline_packing_specs,
-        dataset_kwargs=dataset_kwargs,
         num_workers=2,
     )
 
@@ -210,7 +216,8 @@ def default_openmathinstruct2_thinking_packed_config(
 
     Args:
         seq_length: Sequence length (default 4096)
-        packed_sequence: Whether to enable offline packed-sequence preparation.
+        packed_sequence: Whether to enable offline text SFT packing. This does
+            not enable VLM in-batch packing.
         pad_seq_to_mult: Padding multiple for packing (set to 2*CP for THD CP runs).
     """
     cfg = default_openmathinstruct2_config(
@@ -220,4 +227,5 @@ def default_openmathinstruct2_thinking_packed_config(
     )
     assert cfg.hf_dataset is not None
     cfg.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
+    cfg.preprocessing = ChatSFTPreprocessingConfig()
     return cfg

@@ -16,7 +16,11 @@
 
 import pytest
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    GPTSFTDatasetConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -84,6 +88,7 @@ class TestDefaultOpenmathinstruct2Config:
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None
         assert cfg.offline_packing_specs.packed_sequence_size == 4096
+        assert cfg.dataset_kwargs is None
 
     def test_pad_seq_to_mult_applies_to_packing(self):
         cfg = default_openmathinstruct2_config(packed_sequence=True, pad_seq_to_mult=4)
@@ -153,6 +158,7 @@ class TestDefaultGsm8kConfig:
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None
         assert cfg.offline_packing_specs.packed_sequence_size == 2048
+        assert cfg.dataset_kwargs is None
 
     def test_pad_seq_to_mult_applies_to_packing(self):
         cfg = default_gsm8k_config(packed_sequence=True, pad_seq_to_mult=4)
@@ -245,5 +251,7 @@ class TestDefaultOpenmathinstruct2ThinkingConfig:
         assert cfg.hf_dataset.dataset_name == "openmathinstruct2_thinking"
         assert cfg.hf_dataset.split is None
         assert cfg.hf_validation_proportion == 0.05
+        assert isinstance(cfg.preprocessing, ChatSFTPreprocessingConfig)
         assert cfg.enable_offline_packing is True
         assert cfg.offline_packing_specs is not None
+        assert cfg.dataset_kwargs is None

@@ -40,16 +40,14 @@ from recipe_runner import (  # noqa: E402
     load_forward_step,
     load_recipe,
     run_config,
+    sync_finetuning_cp_invariants,
     sync_model_dataset_sequence_length,
     sync_offline_packing_alignment,
 )
 
 from megatron.bridge.recipes.utils.dataset_utils import (  # noqa: E402
-    DATASET_TYPES,
     PUBLIC_DATASETS,
-    apply_dataset_override,
     apply_public_dataset_override,
-    infer_mode_from_dataset,
 )
 
 
@@ -58,14 +56,6 @@ TrainMode = Literal["pretrain", "finetune"]
 
 
 DATASETS = PUBLIC_DATASETS
-LEGACY_DATASET_ALIASES = {
-    "c4": "megatron-indexed",
-    "dclm": "megatron-indexed",
-    "preloaded-vlm": "vlm-preloaded",
-    "rp2": "megatron-indexed",
-    "squad-packed": "squad",
-}
-LEGACY_DATASETS = frozenset(DATASET_TYPES)
 
 
 def _none_or_int(value: str) -> int | None:
@@ -91,13 +81,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--mode",
         choices=["pretrain", "sft", "lora", "dora"],
         help="Training mode; inferred from a conventional --recipe name when omitted.",
-    )
-    selection.add_argument(
-        "--peft-scheme",
-        "--peft_scheme",
-        choices=["lora", "dora", "none"],
-        dest="peft_scheme",
-        help=argparse.SUPPRESS,
     )
     selection.add_argument(
         "--step-func",
@@ -132,7 +115,7 @@ def _build_parser() -> argparse.ArgumentParser:
     data = parser.add_argument_group("Data")
     data.add_argument(
         "--dataset",
-        choices=sorted(set(DATASETS) | LEGACY_DATASETS | set(LEGACY_DATASET_ALIASES)),
+        choices=sorted(DATASETS),
         help="Dataset name.",
     )
     data.add_argument(
@@ -160,8 +143,6 @@ def _build_parser() -> argparse.ArgumentParser:
     data.add_argument(
         "--offline-packing",
         "--offline_packing",
-        "--packed-sequence",
-        "--packed_sequence",
         action="store_true",
         dest="offline_packing",
         help="Enable offline sequence packing for a text SFT dataset.",
@@ -196,7 +177,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--media-root",
         "--media_root",
         dest="media_root",
-        help="Root for relative local media paths or LLaVA-Video assets.",
+        help="Root directory for resolving relative image and video paths.",
     )
     data.add_argument(
         "--hf-processor-path",
@@ -281,27 +262,12 @@ def _infer_recipe_mode(recipe_name: str) -> PublicMode | None:
     return None
 
 
-def _resolve_compatibility(args: argparse.Namespace) -> None:
-    """Resolve supported legacy spellings and infer an omitted training mode."""
-    original_dataset = args.dataset
-    if original_dataset in LEGACY_DATASET_ALIASES:
-        args.dataset = LEGACY_DATASET_ALIASES[original_dataset]
-        if original_dataset == "squad-packed":
-            args.offline_packing = True
-
-    peft_scheme = None if args.peft_scheme in {None, "none"} else args.peft_scheme
-    if peft_scheme is not None:
-        if args.mode is not None and args.mode != peft_scheme:
-            raise ValueError(f"--peft-scheme {peft_scheme} is incompatible with --mode {args.mode}.")
-        args.mode = peft_scheme
-
+def _infer_mode(args: argparse.Namespace) -> None:
+    """Infer an omitted training mode from the recipe or dataset name."""
     if args.mode is None and args.recipe:
         args.mode = _infer_recipe_mode(args.recipe)
     if args.mode is None and args.dataset is not None:
-        if args.dataset in DATASETS:
-            args.mode = "pretrain" if DATASETS[args.dataset].train_mode == "pretrain" else "sft"
-        elif args.dataset in LEGACY_DATASETS:
-            args.mode = "pretrain" if infer_mode_from_dataset(args.dataset) == "pretrain" else "sft"
+        args.mode = "pretrain" if DATASETS[args.dataset].train_mode == "pretrain" else "sft"
     if args.mode is None:
         raise ValueError("Unable to infer training mode; pass --mode or use a conventional --recipe name.")
 
@@ -333,7 +299,6 @@ def _load_selected_recipe(args: argparse.Namespace) -> object:
         peft_scheme=peft_scheme,
         seq_length=args.seq_length,
         hf_path=args.hf_path,
-        source="recipes",
     )
 
 
@@ -389,30 +354,6 @@ def _validate_dataset_options(args: argparse.Namespace) -> None:
             raise ValueError(f"{', '.join(selected_options)} require --dataset.")
         return
 
-    if args.dataset in LEGACY_DATASETS:
-        if (
-            any(
-                value is not None
-                for value in (
-                    args.dataset_root,
-                    args.train_data_path,
-                    args.validation_data_path,
-                    args.test_data_path,
-                    args.media_root,
-                    args.hf_processor_path,
-                )
-            )
-            or args.dataset_paths
-            or args.dataset_cache is not None
-        ):
-            raise ValueError("Legacy dataset names use trailing dataset.* overrides, not public dataset path flags.")
-        expected_mode = infer_mode_from_dataset(args.dataset)
-        if _train_mode(args.mode) != expected_mode:
-            raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
-        if args.dataset.startswith("vlm-") and STEP_MODALITIES.get(args.step_func.lower()) != "vlm":
-            raise ValueError(f"Dataset '{args.dataset}' requires a VLM-compatible --step-func.")
-        return
-
     selection = DATASETS[args.dataset]
     if args.offline_packing and not selection.supports_offline_packing:
         raise ValueError(f"Dataset '{args.dataset}' does not support --offline-packing.")
@@ -435,20 +376,10 @@ def _validate_dataset_options(args: argparse.Namespace) -> None:
 def _apply_dataset(
     recipe: object,
     args: argparse.Namespace,
-    cli_overrides: list[str],
 ) -> object:
     """Apply a public dataset selection to a recipe config."""
     if args.dataset is None:
         return recipe
-
-    if args.dataset in LEGACY_DATASETS:
-        return apply_dataset_override(
-            recipe,
-            args.dataset,
-            packed_sequence=args.offline_packing,
-            seq_length=args.seq_length,
-            cli_overrides=cli_overrides,
-        )
 
     selection = DATASETS[args.dataset]
     requested_train_mode = _train_mode(args.mode)
@@ -479,7 +410,7 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
     parser = _build_parser()
     args, unknown = parser.parse_known_args(argv)
     cli_overrides = _collect_overrides(parser, unknown)
-    _resolve_compatibility(args)
+    _infer_mode(args)
     return args, cli_overrides
 
 
@@ -490,14 +421,15 @@ def main(argv: list[str] | None = None) -> None:
     _validate_dataset_options(args)
 
     recipe = _load_selected_recipe(args)
-    recipe = _apply_dataset(recipe, args, cli_overrides)
-    recipe = apply_launcher_overrides(recipe, args, recipe_source="recipes")
+    recipe = _apply_dataset(recipe, args)
+    recipe = apply_launcher_overrides(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
+    mode = _train_mode(args.mode)
+    recipe = sync_finetuning_cp_invariants(recipe, mode=mode)
     recipe = sync_offline_packing_alignment(recipe)
     recipe = sync_model_dataset_sequence_length(recipe)
 
-    mode = _train_mode(args.mode)
     forward_step = load_forward_step(args.step_func, mode=mode)
     run_config(
         config=recipe,

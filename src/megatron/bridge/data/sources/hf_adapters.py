@@ -233,7 +233,7 @@ def _llava_video_adapter(example: Mapping[str, Any], kwargs: Mapping[str, Any]) 
             content: list[dict[str, Any]] = []
             if not added_video:
                 video_path = resolve_path(Path(str(video_root_path)) / str(video))
-                content.append({"type": "video", "path": str(video_path)})
+                content.append({"type": "video", "video": str(video_path)})
                 added_video = True
             prompt = value.replace("<image>", "").replace("<video>", "").strip().lstrip("\n").rstrip()
             content.append({"type": "text", "text": prompt})
