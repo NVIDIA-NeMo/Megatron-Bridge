@@ -16,7 +16,7 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 | **GPT-OSS** | [GPT OSS](gpt_oss/gpt-oss.md) |
 | **Kimi** | [Kimi K2](kimi/kimi-k2.md), [Kimi-K2.5-VL](kimi/kimi-k25-vl.md) |
 | **Llama** | [Llama 2](llama/llama2.md), [Llama 3](llama/llama3.md) |
-| **MiniMax** | [MiniMax-M2 / M2.5 / M2.7](minimax/minimax-m2.md) |
+| **MiniMax** | [MiniMax-M2 / M2.5 / M2.7](minimax/minimax-m2.md), [MiniMax-M3](minimax/minimax-m3.md) |
 | **Mistral** | [Mistral](mistral/mistral.md), [Ministral 3](mistral/ministral3.md) |
 | **Xiaomi-MiMo** | [Xiaomi-MiMo](mimo/mimo.md) |
 | **Moonlight** | [Moonlight](moonlight/moonlight.md) |
