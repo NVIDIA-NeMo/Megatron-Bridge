@@ -11,9 +11,10 @@ Use `finetune()` for full SFT and PEFT. The function validates that either `chec
 The public Slurm launcher is `scripts/training/train.sh`, backed by `setup_experiment.py`, which executes
 `run_recipe.py` inside the training container. Select exactly one model stem with `--model` or one complete library
 recipe function with `--recipe`, and always pass `--mode pretrain`, `sft`, `lora`, or `dora`. Public dataset names
-such as `dclm`, `openmathinstruct2`, `local-jsonl`, `preloaded-vlm`, and `mock` resolve to the corresponding dataset
-config. The default `--step-func` is `llm_step`; pass another registered step explicitly for non-LLM recipes. The
-launcher forwards only explicit `--env NAME` or `--env NAME=VALUE` values and `--mount HOST` or
+such as `megatron-indexed`, `openmathinstruct2`, `local-jsonl`, `local-vlm`, `medpix`, and `mock` resolve to the
+corresponding dataset config. Offline packing is selected independently with `--offline-packing`; it is not encoded in
+a dataset name. The default `--step-func` is `llm_step`; pass another registered step explicitly for non-LLM recipes.
+The launcher inherits only explicitly named `--env NAME` values and forwards `--mount HOST` or
 `--mount HOST:CONTAINER` paths. `pretrain` mode runs `pretrain()`; SFT, LoRA, and DoRA run `finetune()`.
 
 ## Checkpoint Source by Workflow

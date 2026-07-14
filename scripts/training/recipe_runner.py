@@ -19,6 +19,7 @@ import functools
 import importlib
 import inspect
 import logging
+import math
 import os
 import pkgutil
 import re
@@ -78,6 +79,20 @@ STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "nemotron_omni_step": ("megatron.bridge.training.nemotron_omni_step", "forward_step"),
     "flux_step": ("megatron.bridge.diffusion.models.flux.flux_step", "FluxForwardStep"),
     "wan_step": ("megatron.bridge.diffusion.models.wan.wan_step", "WanForwardStep"),
+}
+
+STEP_MODALITIES = {
+    "audio_lm_step": "audio",
+    "gpt_step": "text",
+    "llm_step": "text",
+    "vlm_step": "vlm",
+    "qwen3_omni_step": "omni",
+    "qwen3_vl_step": "vlm",
+    "step37_flickr8k_step": "vlm",
+    "llava_step": "vlm",
+    "nemotron_omni_step": "vlm",
+    "flux_step": "diffusion",
+    "wan_step": "diffusion",
 }
 
 TRAIN_FUNCTIONS = {
@@ -254,7 +269,7 @@ def perf_recipe_function_name(
         num_gpus=num_gpus,
         gpu=gpu,
         precision=PRECISION_ALIASES.get(precision.lower(), precision.lower().replace("_", "")),
-        config_variant=config_variant,
+        config_variant=config_variant.lower() if config_variant is not None else None,
     )
 
 
@@ -430,8 +445,8 @@ def apply_launcher_overrides(config: ConfigContainer, args: object, *, recipe_so
     _set_if_present(model, "pipeline_model_parallel_size", _get_arg(args, "pipeline_model_parallel_size"))
     _set_if_present(model, "context_parallel_size", _get_arg(args, "context_parallel_size"))
     vp_size = _get_arg(args, "virtual_pipeline_model_parallel_size", -1)
-    if vp_size != -1:
-        _set_if_present(model, "virtual_pipeline_model_parallel_size", vp_size)
+    if vp_size != -1 and model is not None and hasattr(model, "virtual_pipeline_model_parallel_size"):
+        model.virtual_pipeline_model_parallel_size = vp_size
     _set_if_present(model, "expert_model_parallel_size", _get_arg(args, "expert_model_parallel_size"))
     _set_if_present(model, "expert_tensor_parallel_size", _get_arg(args, "expert_tensor_parallel_size"))
 
@@ -474,6 +489,41 @@ def apply_determinism(config: ConfigContainer, *, deterministic: bool) -> Config
         os.environ.setdefault("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "0")
         os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
         apply_determinism_overrides(config)
+    return config
+
+
+def sync_offline_packing_alignment(config: ConfigContainer) -> ConfigContainer:
+    """Align offline-packed samples to the resolved length and parallel topology."""
+    dataset = getattr(config, "dataset", None)
+    if not getattr(dataset, "enable_offline_packing", False):
+        return config
+
+    packing_specs = getattr(dataset, "offline_packing_specs", None)
+    if packing_specs is None:
+        raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+
+    sequence_length = getattr(dataset, "seq_length", None)
+    if sequence_length is None:
+        sequence_length = getattr(dataset, "sequence_length", None)
+    if sequence_length is not None:
+        packing_specs.packed_sequence_size = sequence_length
+
+    model = getattr(config, "model", None)
+    dist = getattr(config, "dist", None)
+    context_parallel_size = getattr(model, "context_parallel_size", 1)
+    eval_context_parallel_size = getattr(dist, "eval_context_parallel_size", None)
+    context_parallel_sizes = {context_parallel_size}
+    if eval_context_parallel_size is not None:
+        context_parallel_sizes.add(eval_context_parallel_size)
+
+    tensor_parallel_size = getattr(model, "tensor_model_parallel_size", 1)
+    sequence_parallel = bool(getattr(model, "sequence_parallel", False))
+    cp_multiples = [2 * size if size > 1 else 1 for size in context_parallel_sizes]
+    sp_multiples = [
+        size * tensor_parallel_size if sequence_parallel and tensor_parallel_size > 1 else 1
+        for size in context_parallel_sizes
+    ]
+    packing_specs.pad_seq_to_mult = math.lcm(packing_specs.pad_seq_to_mult or 1, *cp_multiples, *sp_multiples)
     return config
 
 

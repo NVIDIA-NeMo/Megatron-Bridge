@@ -99,17 +99,29 @@ def test_setup_import_does_not_load_training_stack(monkeypatch):
     assert "megatron.bridge" not in sys.modules
 
 
-def test_parse_env_inherits_names_and_accepts_explicit_values(monkeypatch):
+def test_parse_env_validates_and_deduplicates_inherited_names(monkeypatch):
     module = _load_setup_experiment_module()
     monkeypatch.setenv("INHERITED_VALUE", "from-launcher")
 
-    env_vars = module._parse_env(["INHERITED_VALUE", "EXPLICIT_VALUE=provided", "EMPTY_VALUE="])
+    env_names = module._parse_env(["INHERITED_VALUE", "INHERITED_VALUE"])
 
-    assert env_vars == {
-        "INHERITED_VALUE": "from-launcher",
-        "EXPLICIT_VALUE": "provided",
-        "EMPTY_VALUE": "",
-    }
+    assert env_names == ["INHERITED_VALUE"]
+
+
+def test_parse_env_rejects_inline_values(monkeypatch):
+    module = _load_setup_experiment_module()
+    monkeypatch.setenv("SECRET_VALUE", "from-launcher")
+
+    with pytest.raises(ValueError, match="accepts NAME only"):
+        module._parse_env(["SECRET_VALUE=inline"])
+
+
+@pytest.mark.parametrize("name", ["", "BAD-NAME", "1INVALID", "NAME;COMMAND"])
+def test_parse_env_rejects_invalid_names(name):
+    module = _load_setup_experiment_module()
+
+    with pytest.raises(ValueError, match="Invalid environment variable name"):
+        module._parse_env([name])
 
 
 def test_parse_env_rejects_missing_inherited_name(monkeypatch):
@@ -132,8 +144,55 @@ def test_parse_mounts_supports_same_path_and_explicit_destination():
 def test_parse_mounts_rejects_empty_paths(value):
     module = _load_setup_experiment_module()
 
-    with pytest.raises(ValueError, match="expected HOST or HOST:CONTAINER"):
+    with pytest.raises(ValueError, match="Invalid mount path"):
         module._parse_mounts([value])
+
+
+@pytest.mark.parametrize("value", ["relative/path", "/host path", "/host;/command", "/host,/other"])
+def test_parse_mounts_rejects_ambiguous_or_shell_sensitive_paths(value):
+    module = _load_setup_experiment_module()
+
+    with pytest.raises(ValueError, match="Invalid mount path"):
+        module._parse_mounts([value])
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "logger.comet_api_key=secret",
+        "--hf-token=secret",
+        "credentials.password=secret",
+        "logger.credentials=secret",
+        "logger.authentication=secret",
+        "aws_session_token=secret",
+        "oauth_token=secret",
+        "huggingface_token=secret",
+    ],
+)
+def test_training_arguments_reject_credential_values(argument):
+    module = _load_setup_experiment_module()
+
+    with pytest.raises(ValueError, match="pass credentials through an exported --env NAME"):
+        module._validate_training_args([argument])
+
+
+@pytest.mark.parametrize(
+    "argument",
+    [
+        "model.image_token_id=151655",
+        "dataset.eod_token=2",
+        "dataset.image_start_token=<im_start>",
+        "dataset.image_end_token=<im_end>",
+        "dataset.patch_start_token=<patch_start>",
+        "dataset.patch_end_token=<patch_end>",
+        "model.use_cls_token=true",
+        "model.insert_start_token=151655",
+    ],
+)
+def test_training_arguments_allow_model_token_fields(argument):
+    module = _load_setup_experiment_module()
+
+    module._validate_training_args([argument])
 
 
 def test_container_image_defaults_only_from_public_environment(monkeypatch):
@@ -174,13 +233,14 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
         ]
     )
 
-    executor = module._build_executor(args, {"HF_TOKEN": "token"}, ["/host:/container"])
+    executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
-    assert executor.env_vars == {"HF_TOKEN": "token"}
+    assert executor.env_vars == {}
     assert executor.container_env == ["HF_TOKEN"]
+    assert executor.additional_parameters == {"export": "HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
 
 
@@ -209,10 +269,11 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
         ]
     )
 
-    executor = module._build_executor(args, {}, [])
+    executor = module._build_executor(args, [], [])
 
     assert executor.kwargs["ntasks_per_node"] == 8
     assert "gpus_per_node" not in executor.kwargs
+    assert executor.additional_parameters == {"export": "NIL"}
 
 
 @pytest.mark.parametrize(
@@ -296,3 +357,51 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     }
     expected_training_options = [option for option in extra_options if option != "--submission-dry-run"]
     assert scripts[0].args == [*training_args, *expected_training_options]
+
+
+def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
+    module = _load_setup_experiment_module()
+    scripts = []
+
+    class _Script:
+        def __init__(self, **kwargs):
+            scripts.append(types.SimpleNamespace(**kwargs))
+
+    class _Experiment:
+        def __init__(self, _name):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = _Script
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    sentinel = "benign; echo should-not-run"
+
+    module.main(
+        [
+            "--gpus-per-node",
+            "1",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--submission-dry-run",
+            "--wandb-name",
+            sentinel,
+        ]
+    )
+
+    assert scripts[0].args == ["--wandb-name", "'benign; echo should-not-run'"]

@@ -20,6 +20,8 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     DATASET_TYPES,
     LLM_FINETUNE_PRESETS,
     PUBLIC_DATASET_NAMES,
+    PUBLIC_DATASETS,
+    PUBLIC_HF_VLM_DATASETS,
     apply_dataset_override,
     apply_public_dataset_override,
     extract_and_remove_override,
@@ -220,6 +222,27 @@ def _make_mock_config(dataset=None, model_seq_length=4096, micro_batch_size=2, g
     config.train.micro_batch_size = micro_batch_size
     config.train.global_batch_size = global_batch_size
     return config
+
+
+def _make_vlm_config(*, do_validation=True, do_test=True):
+    """Return a config backed by the declarative direct-HF VLM provider."""
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
+    from megatron.bridge.data.sft_processing import ChatSFTPreprocessingConfig
+    from megatron.bridge.data.sources.hf import HFDatasetSourceConfig
+
+    dataset = DirectHFSFTDatasetConfig(
+        seq_length=4096,
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
+        preprocessing=ChatSFTPreprocessingConfig(),
+        hf_processor_path="Qwen/Qwen3-VL-8B-Instruct",
+        do_validation=do_validation,
+        do_test=do_test,
+        dataloader_type="single",
+        num_workers=3,
+        persistent_workers=False,
+        enable_in_batch_packing=True,
+    )
+    return _make_mock_config(dataset=dataset)
 
 
 # ---------------------------------------------------------------------------
@@ -490,43 +513,123 @@ class TestApplyDatasetOverride:
 class TestApplyPublicDatasetOverride:
     """Test cases for public launcher dataset names."""
 
+    def test_megatron_indexed_public_name_selects_gpt_dataset_config(self):
+        from megatron.bridge.training.config import GPTDatasetConfig
+
+        config = _make_mock_config()
+        result = apply_public_dataset_override(config, "megatron-indexed", seq_length=2048)
+
+        assert isinstance(result.dataset, GPTDatasetConfig)
+        assert result.dataset.sequence_length == 2048
+        assert result.dataset.blend is None
+        assert result.dataset.blend_per_split is None
+
     def test_squad_public_name_selects_squad_preset(self):
         from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
         config = _make_mock_config()
-        overrides = ["train.train_iters=10"]
-        result = apply_public_dataset_override(config, "squad", seq_length=2048, cli_overrides=overrides)
+        result = apply_public_dataset_override(config, "squad", seq_length=2048)
 
         assert isinstance(result.dataset, GPTSFTDatasetConfig)
         assert result.dataset.hf_dataset.dataset_name == "squad"
-        assert overrides == ["train.train_iters=10"]
 
-    def test_local_jsonl_public_name_uses_local_source_override(self):
+    def test_local_jsonl_public_name_uses_explicit_local_source(self):
         from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
         config = _make_mock_config()
-        overrides = ["dataset.dataset_root=/data/sft", "train.train_iters=10"]
-        result = apply_public_dataset_override(config, "local-jsonl", seq_length=2048, cli_overrides=overrides)
+        result = apply_public_dataset_override(config, "local-jsonl", seq_length=2048, dataset_root="/data/sft")
 
         assert isinstance(result.dataset, GPTSFTDatasetConfig)
         assert result.dataset.dataset_root == "/data/sft"
-        assert overrides == ["train.train_iters=10"]
 
-    def test_openmathinstruct2_thinking_public_name_enables_packing(self):
+    def test_openmathinstruct2_thinking_public_name_does_not_imply_packing(self):
         from megatron.bridge.data.builders import GPTSFTDatasetConfig
 
+        config = _make_mock_config()
+        result = apply_public_dataset_override(config, "openmathinstruct2-thinking", seq_length=2048)
+
+        assert isinstance(result.dataset, GPTSFTDatasetConfig)
+        assert result.dataset.hf_dataset.dataset_name == "openmathinstruct2_thinking"
+        assert result.dataset.enable_offline_packing is False
+        assert result.dataset.offline_packing_specs is None
+
+    def test_offline_packing_is_an_independent_text_dataset_option(self):
         config = _make_mock_config()
         result = apply_public_dataset_override(
             config,
             "openmathinstruct2-thinking",
+            offline_packing=True,
             seq_length=2048,
             pad_seq_to_mult=4,
         )
 
-        assert isinstance(result.dataset, GPTSFTDatasetConfig)
-        assert result.dataset.hf_dataset.dataset_name == "openmathinstruct2_thinking"
         assert result.dataset.enable_offline_packing is True
         assert result.dataset.offline_packing_specs.pad_seq_to_mult == 4
+        assert result.dataset.dataset_kwargs == {"pad_to_max_length": True}
+
+    def test_local_vlm_uses_explicit_paths_and_inherits_recipe_processor(self):
+        from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
+
+        config = _make_vlm_config()
+        result = apply_public_dataset_override(
+            config,
+            "local-vlm",
+            train_data_path="/data/vlm/train.jsonl",
+            validation_data_path="/data/vlm/validation.jsonl",
+            test_data_path="/data/vlm/test.jsonl",
+            media_root="/data/vlm/media",
+        )
+
+        assert isinstance(result.dataset, PreloadedVLMConversationProvider)
+        assert result.dataset.train_data_path == "/data/vlm/train.jsonl"
+        assert result.dataset.valid_data_path == "/data/vlm/validation.jsonl"
+        assert result.dataset.test_data_path == "/data/vlm/test.jsonl"
+        assert result.dataset.image_folder == "/data/vlm/media"
+        assert result.dataset.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
+        assert result.dataset.num_workers == 3
+        assert result.dataset.persistent_workers is False
+        assert result.dataset.enable_in_batch_packing is True
+
+    def test_medpix_selects_existing_hf_vlm_preset(self):
+        config = _make_vlm_config()
+        result = apply_public_dataset_override(config, "medpix")
+
+        assert result.dataset.source.dataset_name == "medpix"
+        assert result.dataset.validation_source is None
+        assert result.dataset.do_validation is True
+        assert result.dataset.do_test is False
+        assert result.dataset.hf_processor_path == "Qwen/Qwen3-VL-8B-Instruct"
+
+    @pytest.mark.parametrize("dataset_name", ["raven", "rdr"])
+    def test_train_only_hf_vlm_presets_get_deterministic_validation_slice(self, dataset_name):
+        config = _make_vlm_config()
+        result = apply_public_dataset_override(config, dataset_name)
+
+        assert result.dataset.source.dataset_name == PUBLIC_HF_VLM_DATASETS[dataset_name]
+        assert result.dataset.source.split == "train[:95%]"
+        assert result.dataset.validation_source.split == "train[95%:]"
+        assert result.dataset.do_test is False
+
+    def test_llava_video_requires_and_forwards_media_root(self):
+        config = _make_vlm_config()
+        with pytest.raises(ValueError, match="requires --media-root"):
+            apply_public_dataset_override(config, "llava-video-178k")
+
+        result = apply_public_dataset_override(
+            config,
+            "llava-video-178k",
+            media_root="/data/llava-video",
+        )
+        assert result.dataset.source.dataset_name == "llava_video_178k"
+        assert result.dataset.source.adapter_kwargs == {"video_root_path": "/data/llava-video"}
+        assert result.dataset.source.split == "train[:95%]"
+        assert result.dataset.validation_source.split == "train[95%:]"
+
+    def test_offline_packing_is_rejected_for_vlm_presets(self):
+        config = _make_vlm_config()
+
+        with pytest.raises(ValueError, match="supported only for text SFT"):
+            apply_public_dataset_override(config, "medpix", offline_packing=True)
 
     def test_unknown_public_name_raises(self):
         config = _make_mock_config()
@@ -568,4 +671,16 @@ class TestRegistryConstants:
         assert "openmathinstruct2" in PUBLIC_DATASET_NAMES
         assert "openmathinstruct2-thinking" in PUBLIC_DATASET_NAMES
         assert "local-jsonl" in PUBLIC_DATASET_NAMES
-        assert "preloaded-vlm" in PUBLIC_DATASET_NAMES
+        assert "local-vlm" in PUBLIC_DATASET_NAMES
+        assert "megatron-indexed" in PUBLIC_DATASET_NAMES
+        assert set(PUBLIC_HF_VLM_DATASETS).issubset(PUBLIC_DATASET_NAMES)
+        assert "squad-packed" not in PUBLIC_DATASET_NAMES
+        assert "preloaded-vlm" not in PUBLIC_DATASET_NAMES
+        assert {"dclm", "rp2", "c4"}.isdisjoint(PUBLIC_DATASET_NAMES)
+
+    def test_public_dataset_views_are_derived_from_one_registry(self):
+        assert PUBLIC_DATASET_NAMES == list(PUBLIC_DATASETS)
+        assert PUBLIC_HF_VLM_DATASETS == {
+            name: spec.hf_dataset_name for name, spec in PUBLIC_DATASETS.items() if spec.hf_dataset_name is not None
+        }
+        assert all(PUBLIC_DATASETS[name].modality == "vlm" for name in PUBLIC_HF_VLM_DATASETS)

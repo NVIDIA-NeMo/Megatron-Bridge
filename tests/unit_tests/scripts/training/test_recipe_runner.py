@@ -57,6 +57,17 @@ def test_perf_recipe_function_name_normalizes_precision_and_variant(recipe_runne
         )
         == "llama3_8b_pretrain_8gpu_h100_bf16_config"
     )
+    assert (
+        recipe_runner.perf_recipe_function_name(
+            model_recipe_name="llama3_8b",
+            task="pretrain",
+            num_gpus=8,
+            gpu="h100",
+            precision="bf16",
+            config_variant="LARGE_SCALE",
+        )
+        == "llama3_8b_pretrain_8gpu_h100_bf16_large_scale_config"
+    )
 
 
 def test_load_recipe_from_perf_namespace_skips_library_lookup(
@@ -138,6 +149,61 @@ def test_sync_model_dataset_sequence_length_supports_both_dataset_field_names(re
 
         assert recipe_runner.sync_model_dataset_sequence_length(config) is config
         assert config.model.seq_length in {256, 512}
+
+
+def test_sync_offline_packing_alignment_uses_final_train_and_eval_topology(recipe_runner: ModuleType) -> None:
+    packing_specs = SimpleNamespace(packed_sequence_size=4096, pad_seq_to_mult=1)
+    config = SimpleNamespace(
+        dataset=SimpleNamespace(
+            enable_offline_packing=True,
+            offline_packing_specs=packing_specs,
+            seq_length=2048,
+        ),
+        model=SimpleNamespace(
+            context_parallel_size=2,
+            tensor_model_parallel_size=3,
+            sequence_parallel=True,
+        ),
+        dist=SimpleNamespace(eval_context_parallel_size=4),
+    )
+
+    assert recipe_runner.sync_offline_packing_alignment(config) is config
+    assert packing_specs.packed_sequence_size == 2048
+    assert packing_specs.pad_seq_to_mult == 24
+
+
+def test_sync_offline_packing_alignment_preserves_stricter_user_multiple(recipe_runner: ModuleType) -> None:
+    packing_specs = SimpleNamespace(packed_sequence_size=1024, pad_seq_to_mult=5)
+    config = SimpleNamespace(
+        dataset=SimpleNamespace(enable_offline_packing=True, offline_packing_specs=packing_specs),
+        model=SimpleNamespace(
+            context_parallel_size=1,
+            tensor_model_parallel_size=2,
+            sequence_parallel=True,
+        ),
+        dist=SimpleNamespace(eval_context_parallel_size=None),
+    )
+
+    recipe_runner.sync_offline_packing_alignment(config)
+
+    assert packing_specs.pad_seq_to_mult == 10
+
+
+def test_apply_launcher_overrides_can_clear_virtual_pipeline_size(recipe_runner: ModuleType) -> None:
+    config = SimpleNamespace(
+        model=SimpleNamespace(virtual_pipeline_model_parallel_size=4),
+        tokenizer=object(),
+    )
+    args = SimpleNamespace(
+        virtual_pipeline_model_parallel_size=None,
+        tokenizer_type=None,
+        tokenizer_model=None,
+        vocab_size=32000,
+    )
+
+    recipe_runner.apply_launcher_overrides(config, args, recipe_source="recipes")
+
+    assert config.model.virtual_pipeline_model_parallel_size is None
 
 
 def test_run_config_dryrun_validates_target_topology(

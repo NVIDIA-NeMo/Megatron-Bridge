@@ -22,6 +22,7 @@ Deliberately stdlib-only (no torch / megatron import) so it scans source files
 directly and runs anywhere, including without the GPU stack.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -61,11 +62,23 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions defined under src/.../recipes/**."""
+    """All recipe-config functions and public aliases under src/.../recipes/**."""
     names: set[str] = set()
     for py in RECIPES_DIR.rglob("*.py"):
-        for m in re.finditer(r"^def\s+(\w+_config)\s*\(", _read(py), re.MULTILINE):
-            names.add(m.group(1))
+        tree = ast.parse(_read(py), filename=str(py))
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
+                names.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    public_name = alias.asname or alias.name.rsplit(".", 1)[-1]
+                    if public_name.endswith("_config"):
+                        names.add(public_name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names.update(
+                    target.id for target in targets if isinstance(target, ast.Name) and target.id.endswith("_config")
+                )
     return names
 
 

@@ -17,6 +17,8 @@
 import argparse
 import logging
 import os
+import re
+import shlex
 from pathlib import Path
 
 import nemo_run as run
@@ -26,6 +28,23 @@ from nemo_run.config import get_nemorun_home
 logger = logging.getLogger(__name__)
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
+ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+SENSITIVE_ARGUMENT_PATTERN = re.compile(
+    r"(^|[._-])(credentials?|secret|password|passwd|api[_-]?key|access[_-]?key|private[_-]?key|"
+    r"authentication|authorization)([._-]|$)",
+    re.IGNORECASE,
+)
+SENSITIVE_TOKEN_CONTEXT_PATTERN = re.compile(
+    r"(^|[._-])(access|api|auth|bearer|comet|hf|refresh|secret|wandb)[._-]?token([._-]|$)",
+    re.IGNORECASE,
+)
+TERMINAL_TOKEN_PATTERN = re.compile(r"(^|[._-])token$", re.IGNORECASE)
+BENIGN_TERMINAL_TOKEN_PATTERN = re.compile(
+    r"(^|[._-])(audio|bos|cls|decoder[_-]?start|eod|eos|image|image[_-]end|image[_-]start|insert[_-]start|"
+    r"mask|pad|patch[_-]end|patch[_-]start|sep|set[_-]pad|unmask[_-]last|use[_-]cls|video)[._-]token$",
+    re.IGNORECASE,
+)
+MOUNT_PATH_PATTERN = re.compile(r"^/[A-Za-z0-9_./+@%=-]+$")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -77,13 +96,7 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         "--env",
         action="append",
         default=[],
-        help="Environment variable as NAME or NAME=VALUE. NAME inherits its launcher value. May be repeated.",
-    )
-    execution.add_argument(
-        "--packager",
-        choices=["none", "git"],
-        default="none",
-        help="Code packaging method for Slurm.",
+        help="Environment variable NAME to inherit into the container. May be repeated.",
     )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument(
@@ -94,21 +107,25 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     return parser
 
 
-def _parse_env(values: list[str]) -> dict[str, str]:
-    """Resolve explicit environment values for the training container."""
-    env_vars: dict[str, str] = {}
-    for value in values:
-        if "=" in value:
-            name, env_value = value.split("=", 1)
-        else:
-            name = value
-            if name not in os.environ:
-                raise ValueError(f"Environment variable '{name}' is not set; pass --env {name}=VALUE instead.")
-            env_value = os.environ[name]
-        if not name:
-            raise ValueError("Environment variable names cannot be empty.")
-        env_vars[name] = env_value
-    return env_vars
+def _parse_env(values: list[str]) -> list[str]:
+    """Validate names inherited by the Slurm job and training container."""
+    env_names: list[str] = []
+    for name in values:
+        if "=" in name:
+            raise ValueError("--env accepts NAME only; export the value before launching to keep it out of arguments.")
+        if not ENV_NAME_PATTERN.fullmatch(name):
+            raise ValueError(f"Invalid environment variable name: {name!r}.")
+        if name not in os.environ:
+            raise ValueError(f"Environment variable '{name}' is not set in the launcher environment.")
+        if name not in env_names:
+            env_names.append(name)
+    return env_names
+
+
+def _validate_mount_path(path: str) -> None:
+    """Reject ambiguous mount syntax before it reaches Pyxis or a shell script."""
+    if not MOUNT_PATH_PATTERN.fullmatch(path):
+        raise ValueError(f"Invalid mount path {path!r}; use an absolute path without spaces or shell metacharacters.")
 
 
 def _parse_mounts(values: list[str]) -> list[str]:
@@ -120,12 +137,26 @@ def _parse_mounts(values: list[str]) -> list[str]:
         else:
             host_path = value
             container_path = value
-        if not host_path or not container_path:
-            raise ValueError(f"Invalid --mount value '{value}'; expected HOST or HOST:CONTAINER.")
+        _validate_mount_path(host_path)
+        _validate_mount_path(container_path)
         mount = f"{host_path}:{container_path}"
         if mount not in mounts:
             mounts.append(mount)
     return mounts
+
+
+def _validate_training_args(training_args: list[str]) -> None:
+    """Keep credential-like values out of rendered commands and Slurm artifacts."""
+    for argument in training_args:
+        option_name = argument.split("=", 1)[0].lstrip("-+")
+        has_sensitive_token = bool(
+            SENSITIVE_TOKEN_CONTEXT_PATTERN.search(option_name)
+            or (TERMINAL_TOKEN_PATTERN.search(option_name) and not BENIGN_TERMINAL_TOKEN_PATTERN.search(option_name))
+        )
+        if SENSITIVE_ARGUMENT_PATTERN.search(option_name) or has_sensitive_token:
+            raise ValueError(
+                f"Sensitive argument '{option_name}' is not allowed; pass credentials through an exported --env NAME."
+            )
 
 
 def _validate_args(args: argparse.Namespace) -> None:
@@ -140,9 +171,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
 
 
-def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: list[str]) -> object:
+def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
     """Build a Slurm NeMo-Run executor."""
-    packager = run.GitArchivePackager(include_submodules=False) if args.packager == "git" else run.Packager()
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
     executor = run.SlurmExecutor(
         account=args.account,
@@ -154,13 +184,16 @@ def _build_executor(args: argparse.Namespace, env_vars: dict[str, str], mounts: 
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
-        packager=packager,
+        packager=run.Packager(),
         **gpu_kwargs,
     )
     executor.container_image = args.container_image
     executor.container_mounts = mounts
-    executor.env_vars = env_vars
-    executor.container_env = sorted(env_vars)
+    # Slurm inherits these values from the launcher environment. NeMo-Run receives
+    # names only so secrets are not materialized into generated sbatch scripts.
+    executor.env_vars = {}
+    executor.container_env = env_names
+    executor.additional_parameters = {"export": ",".join(env_names) if env_names else "NIL"}
     executor.srun_args = ["--mpi=pmix", "--no-container-mount-home", "--container-writable"]
     return executor
 
@@ -174,10 +207,11 @@ def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
     _validate_args(args)
+    _validate_training_args(training_args)
 
-    env_vars = _parse_env(args.env)
+    env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
-    executor = _build_executor(args, env_vars, mounts)
+    executor = _build_executor(args, env_names, mounts)
 
     task = run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
@@ -185,11 +219,16 @@ def main(argv: list[str] | None = None) -> None:
         env={
             "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
         },
-        args=training_args,
+        # NeMo-Run 0.10 joins Script arguments into an sbatch shell command.
+        # Quote each value here so spaces and metacharacters remain one argument.
+        args=[shlex.quote(argument) for argument in training_args],
     )
     experiment_name = args.experiment_name or "training"
-    logger.info("Training command: %s", " ".join(task.to_command()))
-    logger.info("Forwarded environment variables: %s", ", ".join(sorted(env_vars)) or "none")
+    logger.info(
+        "Training command: %s",
+        shlex.join(["python", str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"), *training_args]),
+    )
+    logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
     with run.Experiment(experiment_name) as experiment:

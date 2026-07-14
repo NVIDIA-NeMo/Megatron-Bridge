@@ -60,37 +60,56 @@ Pass `--hf-path` (or `--hf_path`) when the selected recipe factory accepts an al
 | Dataset | Mode | Behavior |
 |---|---|---|
 | `mock` | pretrain | In-memory mock GPT data |
-| `dclm` | pretrain | Preprocessed Megatron `.bin/.idx` data; never falls back to mock |
-| `rp2` | pretrain | Preprocessed Megatron `.bin/.idx` data |
-| `c4` | pretrain | Preprocessed Megatron `.bin/.idx` data |
+| `megatron-indexed` | pretrain | Local Megatron `.bin/.idx` data; never falls back to mock |
 | `squad` | sft/lora/dora | Hugging Face SQuAD preset |
-| `squad-packed` | sft/lora/dora | SQuAD with offline sequence packing |
 | `openmathinstruct2` | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
-| `openmathinstruct2-thinking` | sft/lora/dora | Analysis/final channel format with offline packing |
+| `openmathinstruct2-thinking` | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
 | `gsm8k` | sft/lora/dora | GSM8K preset |
-| `local-jsonl` | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
-| `preloaded-vlm` | sft/lora/dora | Local VLM JSON/JSONL selected by dataset path overrides |
+| `local-jsonl` | sft/lora/dora | Local prompt-completion JSONL selected by `--dataset-root` |
+| `cord-v2` | sft/lora/dora | CORD-v2 receipt VQA preset |
+| `medpix` | sft/lora/dora | MedPix medical VQA preset |
+| `raven` | sft/lora/dora | RAVEN visual reasoning preset |
+| `rdr` | sft/lora/dora | RDR visual reasoning preset |
+| `llava-video-178k` | sft/lora/dora | LLaVA-Video preset; requires `--media-root` |
+| `local-vlm` | sft/lora/dora | Local VLM JSON/JSONL selected by explicit path flags |
 
-### DCLM
+### Megatron indexed data
 
-DCLM must be preprocessed into indexed Megatron data. Select it with one of:
+Any pretraining corpus must first be converted to Megatron indexed data. Select one or more prefixes with:
 
 ```bash
---dataset dclm --dataset-path /data/dclm/dclm_01_01_text_document
---dataset dclm --dataset-path /data/dclm
+--dataset megatron-indexed --dataset-path /data/dclm/dclm_01_01_text_document
+--dataset megatron-indexed --dataset-path /data/dclm
 ```
 
 Every selected prefix must have matching `.bin` and `.idx` files. `--dataset-cache` selects the index cache. Missing or
 incomplete data fails before distributed training starts.
 
-For preprocessing instructions, see [the DCLM tutorial](../../tutorials/data/dclm/README.md).
+The launcher does not infer the source corpus from the files. For one preprocessing example, see
+[the DCLM tutorial](../../tutorials/data/dclm/README.md).
 
 ### OpenMathInstruct-2
 
-The builder downloads/materializes the Hugging Face source and prepares packed data when
-`openmathinstruct2-thinking` is selected. A separate packing Slurm job is not required. For multi-node training, put
-the recipe's dataset cache on shared storage, forward its environment variable with `--env NAME`, and mount the shared
-path explicitly.
+`openmathinstruct2` uses prompt/completion records. `openmathinstruct2-thinking` changes only the semantic output
+format: chain-of-thought goes to the analysis channel and the answer goes to the final channel.
+
+### Offline packing
+
+Offline packing is a text SFT option, not a dataset name. Add `--offline-packing` to `squad`, either OpenMathInstruct-2
+format, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the selected CP/TP and sequence-parallel
+configuration. Packed training requires `--micro-batch-size 1`. The builder materializes packed data automatically, so
+a separate packing Slurm job is not required. The selected recipe/model must support packed THD sequences; for example,
+GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on shared mounted storage.
+
+### VLM data
+
+The hosted VLM names use the existing Hugging Face dataset adapters and retain the processor and in-batch packing
+settings from the selected VLM recipe. `raven`, `rdr`, and `llava-video-178k` derive deterministic 95/5 train and
+validation slices; `cord-v2` and `medpix` use their published validation splits. Pass a VLM forward step explicitly.
+
+For local JSON/JSONL, select `local-vlm` and pass `--train-data-path`; optional split paths are
+`--validation-data-path` and `--test-data-path`. `--media-root` resolves relative image and video paths, while
+`--hf-processor-path` overrides the processor inherited from the VLM recipe.
 
 ## SFT and LoRA checkpoints
 
@@ -102,7 +121,8 @@ Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
     --mount /checkpoints \
     --recipe gpt_oss_20b_sft_8gpu_h100_bf16_config \
-    --mode sft --dataset openmathinstruct2-thinking \
+    --mode sft --dataset openmathinstruct2-thinking --offline-packing \
+    --micro-batch-size 1 \
     --from /checkpoints/gpt-oss-20b
 ```
 
@@ -112,7 +132,8 @@ Use `--from` for the pretrained native Megatron checkpoint or local Hugging Face
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
     --mount /checkpoints \
     --recipe gpt_oss_20b_peft_1gpu_h100_bf16_config \
-    --mode lora --dataset openmathinstruct2-thinking \
+    --mode lora --dataset openmathinstruct2-thinking --offline-packing \
+    --micro-batch-size 1 \
     --from /checkpoints/gpt-oss-20b
 ```
 
@@ -148,8 +169,8 @@ Required Slurm arguments are:
 ```
 
 Set `CONTAINER_IMAGE` to avoid repeating `--container-image`. On clusters that allocate whole GPU nodes implicitly, pass `--no-gpu-resource-request` to omit the explicit Slurm GPU request while retaining one task per requested GPU. Environment variables and filesystem paths are never
-forwarded implicitly. Repeat `--env NAME` to forward a variable from the login-node environment, or use
-`--env NAME=VALUE`. Repeat `--mount HOST` for the same host and container path, or use
+forwarded implicitly. Export credentials in the launcher environment, then repeat `--env NAME` to forward names without
+materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
