@@ -51,15 +51,17 @@ class TestParseComponentSpec:
         assert parallelism.tensor_model_parallel_size == 2
         # Other dims should keep their dataclass defaults.
         assert parallelism.pipeline_model_parallel_size == 1
+        assert parallelism.expert_model_parallel_size == 1
         assert parallelism.data_parallel_size is None
 
     def test_all_dims(self, cli):
-        name, parallelism = cli._parse_component_spec("vision=tp=2,pp=2,dp=4,cp=1,etp=1,rank_offset=4")
+        name, parallelism = cli._parse_component_spec("vision=tp=2,pp=2,dp=4,cp=1,ep=3,etp=1,rank_offset=4")
         assert name == "vision"
         assert parallelism.tensor_model_parallel_size == 2
         assert parallelism.pipeline_model_parallel_size == 2
         assert parallelism.data_parallel_size == 4
         assert parallelism.context_parallel_size == 1
+        assert parallelism.expert_model_parallel_size == 3
         assert parallelism.expert_tensor_parallel_size == 1
         assert parallelism.rank_offset == 4
 
@@ -94,6 +96,17 @@ class TestBuildParallelismConfig:
         # Auto-filled: offset advances past the user's component.
         assert vis.data_parallel_size == 1
         assert vis.rank_offset == 1
+
+    def test_auto_fill_uses_dense_model_parallel_size(self, cli):
+        """EP/ETP refactor the same ranks and do not multiply the dense rank span."""
+        config = cli._build_parallelism_config(["language=tp=2,ep=2,etp=2", "vision=tp=1"], world_size=4)
+        lang = config.module_parallelisms["language"]
+        vis = config.module_parallelisms["vision"]
+
+        assert lang.data_parallel_size == 1
+        assert lang.rank_offset == 0
+        assert vis.data_parallel_size == 2
+        assert vis.rank_offset == 2
 
     def test_explicit_non_uniform_layout_skips_auto_fill(self, cli):
         """Explicit ``dp`` + ``rank_offset`` layouts may use uneven rank counts."""
