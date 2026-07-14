@@ -13,7 +13,10 @@
 # limitations under the License.
 
 # Qwen3.5 GB200 models
-from .gb200.qwen35 import qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config
+from .gb200.qwen35 import (
+    qwen35_9b_pretrain_8gpu_gb200_bf16_config,
+    qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config,
+)
 
 # Qwen2 models
 from .qwen2 import (
@@ -91,7 +94,7 @@ from .qwen3_next import (
 )
 
 # Qwen3.5 text models
-from .qwen35 import qwen35_35b_a3b_pretrain_config
+from .qwen35 import qwen35_9b_pretrain_config, qwen35_35b_a3b_pretrain_config
 
 
 __all__ = [
@@ -160,6 +163,8 @@ __all__ = [
     "qwen3_next_80b_a3b_sft_config",
     "qwen3_next_80b_a3b_peft_config",
     # Qwen3.5 text models
+    "qwen35_9b_pretrain_config",
+    "qwen35_9b_pretrain_8gpu_gb200_bf16_config",
     "qwen35_35b_a3b_pretrain_config",
     "qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config",
 ]
