@@ -45,7 +45,11 @@ from megatron.bridge.training.checkpointing import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
+from megatron.bridge.training.optim import (
+    setup_optimizer,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+    use_memory_efficient_fp32_optimizer_state_loading,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -289,9 +293,7 @@ def setup(
             if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
                 ckpt_step = None
-            elif cfg.checkpoint.load and has_modelopt_state(
-                cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step
-            ):
+            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step):
                 checkpoint_path = cfg.checkpoint.load
                 ckpt_step = cfg.checkpoint.ckpt_step
             else:
@@ -336,15 +338,17 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_manager.load(
-            CheckpointLoadContext(
-                state=state,
-                model=model,
-                optimizer=optimizer,
-                opt_param_scheduler=scheduler,
-                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim else None
+        with use_memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
+            checkpoint_manager.load(
+                CheckpointLoadContext(
+                    state=state,
+                    model=model,
+                    optimizer=optimizer,
+                    opt_param_scheduler=scheduler,
+                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+                )
             )
-        )
         # Workaround for upstream mcore: reload_model_params() only refreshes the
         # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
         # clones and level-3 FP32 working copies retain their random init.  Without

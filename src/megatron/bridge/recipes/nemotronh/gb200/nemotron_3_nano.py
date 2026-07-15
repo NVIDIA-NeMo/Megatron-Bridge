@@ -1,0 +1,119 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""GB200 library recipes for Nemotron 3 Nano."""
+
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.nemotronh._nemotron_3_nano import (
+    _nemotron_3_nano_peft_reference_config,
+    _nemotron_3_nano_pretrain_reference_config,
+    _nemotron_3_nano_sft_reference_config,
+)
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
+
+
+def _apply_gb200_topology(cfg: ConfigContainer) -> None:
+    """Apply the GB200 model-parallel topology without changing training semantics."""
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+
+    cfg.model.moe_router_force_load_balancing = False
+
+    # TP communication overlap requires TP > 1 and sequence parallelism.
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.tp_comm_overlap = False
+
+
+def _apply_gb200_finetune_execution_config(cfg: ConfigContainer) -> None:
+    """Apply safe GB200 packed-finetuning execution settings."""
+    _apply_gb200_topology(cfg)
+
+    # The GB200 perf reference covers fixed-shape pretraining only, while
+    # DeepEP is unsupported on compute capability 10. Use the correctness-first
+    # fallback until HybridEP is validated with packed finetuning.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+
+
+def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the Nemotron 3 Nano pre-training config for 8 GB200 GPUs.
+
+    The perf recipe's scoped CUDA graphs retain too much memory for the
+    library recipe's native cross-entropy workspace at micro-batch size two,
+    so the general-training recipe remains in eager mode.
+
+    Returns:
+        ConfigContainer: GB200 BF16 pre-training configuration.
+    """
+    cfg = _nemotron_3_nano_pretrain_reference_config()
+    _apply_gb200_topology(cfg)
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_shared_expert_overlap = False
+
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+
+    return cfg
+
+
+def nemotron_3_nano_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the Nemotron 3 Nano SFT config for 8 GB200 GPUs.
+
+    Packed SFT remains in eager mode because CUDA graphs require static input
+    shapes. The optimizer, schedule, data, and routing policy remain unchanged.
+
+    Returns:
+        ConfigContainer: GB200 BF16 SFT configuration.
+    """
+    cfg = _nemotron_3_nano_sft_reference_config()
+    _apply_gb200_finetune_execution_config(cfg)
+    return cfg
+
+
+def nemotron_3_nano_peft_8gpu_gb200_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return the Nemotron 3 Nano PEFT config for 8 GB200 GPUs.
+
+    Args:
+        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+
+    Returns:
+        ConfigContainer: GB200 BF16 PEFT configuration.
+    """
+    cfg = _nemotron_3_nano_peft_reference_config(peft_scheme=peft_scheme)
+    _apply_gb200_finetune_execution_config(cfg)
+    return cfg
+
+
+__all__ = [
+    "nemotron_3_nano_peft_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_sft_8gpu_gb200_bf16_config",
+]
