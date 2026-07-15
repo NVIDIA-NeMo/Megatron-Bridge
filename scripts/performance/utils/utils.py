@@ -27,6 +27,12 @@ from dataclasses import dataclass, fields
 from pathlib import Path
 
 
+try:
+    from utils.workload_metadata import WORKLOAD_BASE_CONFIGS
+except ImportError:
+    from .workload_metadata import WORKLOAD_BASE_CONFIGS
+
+
 logger = logging.getLogger(__name__)
 
 # Default timeout for interactive config variant selection (in seconds)
@@ -67,6 +73,18 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
     ("qwen3_30b_a3b", "pretrain", "gb300", "fp8cs", None): 8,
     ("qwen3_30b_a3b", "pretrain", "h100", "bf16", None): 16,
     ("qwen3_30b_a3b", "pretrain", "h100", "fp8cs", None): 16,
+}
+
+_LAUNCHER_WORKLOAD_FIELDS = {
+    "num_gpus",
+    "tensor_model_parallel_size",
+    "pipeline_model_parallel_size",
+    "context_parallel_size",
+    "virtual_pipeline_model_parallel_size",
+    "expert_model_parallel_size",
+    "expert_tensor_parallel_size",
+    "global_batch_size",
+    "micro_batch_size",
 }
 
 
@@ -220,7 +238,7 @@ def find_perf_recipe(recipe_name: str) -> Callable | None:
 @functools.lru_cache(maxsize=1)
 def flat_perf_recipe_names() -> tuple[str, ...]:
     """Return flat perf recipe names without importing recipe family modules."""
-    names = set()
+    names = set(WORKLOAD_BASE_CONFIGS)
     if _PERF_RECIPES_ROOT.exists():
         for path in _PERF_RECIPES_ROOT.rglob("*.py"):
             names.update(_PERF_RECIPE_DEF_PATTERN.findall(path.read_text()))
@@ -373,6 +391,39 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
     )
 
 
+def _workload_base_config_from_metadata(recipe_name: str) -> WorkloadBaseConfig | None:
+    metadata = WORKLOAD_BASE_CONFIGS.get(recipe_name)
+    if metadata is None:
+        return None
+    return WorkloadBaseConfig(**metadata)
+
+
+def _get_launcher_workload_base_config(
+    model_family_name: str,
+    model_recipe_name: str,
+    gpu: str,
+    compute_dtype: str,
+    task: str,
+    config_variant: str | None = None,
+) -> WorkloadBaseConfig:
+    """Return import-free workload metadata for launcher-side configuration."""
+    del model_family_name
+    recipe_name = _first_matching_perf_recipe_name(
+        model_recipe_name=model_recipe_name,
+        task=task,
+        gpu=gpu,
+        precision=compute_dtype,
+        config_variant=config_variant,
+    )
+    metadata_config = _workload_base_config_from_metadata(recipe_name)
+    if metadata_config is not None:
+        return metadata_config
+    raise ValueError(
+        f"Missing lightweight metadata for perf recipe {recipe_name!r}. "
+        "Update scripts/performance/utils/workload_metadata.py before using this recipe from the launcher."
+    )
+
+
 def get_workload_base_config(
     model_family_name: str,
     model_recipe_name: str,
@@ -409,7 +460,7 @@ def get_exp_name_config(
     config_variant: str | None = None,
 ) -> str:
     """Get the experiment name from the flat perf recipe and user overrides."""
-    base_config = get_workload_base_config(
+    base_config = _get_launcher_workload_base_config(
         model_family_name,
         model_recipe_name,
         gpu,
@@ -618,7 +669,7 @@ def _display_config_variants(
         _emit(f"  {c.DIM}{'-' * 76}{c.RESET}")
 
         try:
-            config = get_workload_base_config(
+            config = _get_launcher_workload_base_config(
                 model_family_name,
                 model_recipe_name,
                 gpu,
@@ -627,6 +678,8 @@ def _display_config_variants(
                 variant,
             )
             for field in fields(config):
+                if field.name not in _LAUNCHER_WORKLOAD_FIELDS:
+                    continue
                 value = getattr(config, field.name)
                 if value is not None:
                     if field.name in highlight_fields:

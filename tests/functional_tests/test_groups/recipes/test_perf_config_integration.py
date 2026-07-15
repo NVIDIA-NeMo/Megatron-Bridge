@@ -158,9 +158,18 @@ class TestPerfConfigIntegration:
         assert cfg.global_batch_size == recipe.train.global_batch_size
         assert cfg.tensor_model_parallel_size == recipe.model.tensor_model_parallel_size
 
-    def test_generated_workload_metadata_is_not_required(self):
-        """Test that removed perf configs do not leave a generated metadata mirror."""
-        assert not (SCRIPTS_PERF_PATH / "utils" / "workload_metadata.py").exists()
+    def test_lightweight_metadata_covers_all_flat_perf_recipes(self):
+        """Require launcher metadata for every numeric-GPU flat recipe."""
+        from utils.utils import flat_perf_recipe_names
+        from utils.workload_metadata import WORKLOAD_BASE_CONFIGS
+
+        numeric_gpu_recipes = {
+            name
+            for name in flat_perf_recipe_names()
+            if any(part.removesuffix("gpu").isdigit() for part in name.split("_") if part.endswith("gpu"))
+        }
+
+        assert set(WORKLOAD_BASE_CONFIGS) == numeric_gpu_recipes
 
     def test_unsupported_config_variant_errors(self):
         """Test that unknown workload variants are not silently collapsed to default."""
