@@ -24,10 +24,19 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
-from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
-from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
+from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
+    NemotronOmniBridge,
+    NemotronOmniLlavaBridge,
+)
+from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
+    NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+    NEMOTRON_OMNI_LLAVA_CONTRACT,
+    NemotronOmniLlavaModelProvider,
+    NemotronOmniModelProvider,
+)
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
+from megatron.bridge.training.config import ConfigContainer
 
 
 class _DictConfig(SimpleNamespace):
@@ -69,6 +78,7 @@ def _mock_omni_hf_config():
         ssm_state_size=16,
         residual_in_fp32=False,
         moe_intermediate_size=384,
+        moe_latent_size=128,
         moe_shared_expert_intermediate_size=768,
         n_routed_experts=8,
         num_experts_per_tok=2,
@@ -111,6 +121,10 @@ def test_public_nemotron_omni_architecture_is_registered():
     assert AutoBridge.supports(hf_config)
     assert isinstance(get_model_bridge("NemotronH_Nano_Omni_Reasoning_V3", hf_config=hf_config), NemotronOmniBridge)
 
+    hf_config.architectures = ["NemotronH_Super_Omni_Reasoning_V3"]
+    assert AutoBridge.supports(hf_config)
+    assert isinstance(get_model_bridge("NemotronH_Super_Omni_Reasoning_V3", hf_config=hf_config), NemotronOmniBridge)
+
 
 def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     hf_config = _mock_omni_hf_config()
@@ -120,6 +134,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     provider = NemotronOmniBridge().provider_bridge(hf_pretrained)
 
     assert isinstance(provider, NemotronOmniModelProvider)
+    assert provider.nemotron_omni_contract == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
     assert provider.has_sound is True
     assert provider.language_model_type == "nemotron6-moe"
     assert provider.hidden_size == 256
@@ -143,6 +158,8 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
+    serialized = ConfigContainer._convert_value_to_dict(provider)
+    assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
 
 
 def test_nemotron_omni_provider_rejects_static_resolution():
@@ -193,10 +210,73 @@ def test_nemotron_omni_mapping_registry_includes_sound_mappings():
     registry = NemotronOmniBridge().mapping_registry()
     names = _mapping_names(registry)
 
-    assert any("llava_model.sound_projection" in name for name in names)
+    assert any("sound_projection" in name for name in names)
     assert any("sound_projection.linear1.weight" in name for name in names)
-    assert any("llava_model.sound_model.encoder.**" in name for name in names)
+    assert any("sound_model.encoder.**" in name for name in names)
     assert any("sound_encoder.encoder.**" in name for name in names)
+    assert all(not name.startswith("llava_model.") for name in names)
+
+
+def test_canonical_bridge_maps_super_mtp_config():
+    hf_config = _mock_omni_hf_config()
+    hf_config.architectures = ["NemotronH_Super_Omni_Reasoning_V3"]
+    hf_config.llm_config.mtp_hybrid_override_pattern = "*E"
+    hf_config.llm_config.num_nextn_predict_layers = 1
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = hf_config
+
+    provider = NemotronOmniBridge().provider_bridge(hf_pretrained)
+
+    assert isinstance(provider, NemotronOmniModelProvider)
+    assert provider.hybrid_layer_pattern == "MEME"
+    assert provider.moe_latent_size == 128
+    assert provider.mtp_hybrid_override_pattern == "*E"
+    assert provider.mtp_num_layers == 1
+    assert isinstance(
+        get_model_bridge("NemotronH_Super_Omni_Reasoning_V3", hf_config=hf_config),
+        NemotronOmniBridge,
+    )
+
+
+def test_canonical_mapping_registry_uses_top_level_model_names():
+    bridge = NemotronOmniBridge()
+    bridge.hf_config = _mock_omni_hf_config()
+    bridge.hf_config.llm_config.mtp_hybrid_override_pattern = "*E"
+    registry = bridge.mapping_registry()
+
+    embedding = registry.megatron_to_hf_lookup("language_model.embedding.word_embeddings.weight")
+    vision = registry.megatron_to_hf_lookup("vision_model.embedder.weight")
+    projector = registry.megatron_to_hf_lookup("vision_projection.encoder.linear_fc1.weight")
+    mtp_projection = registry.megatron_to_hf_lookup("language_model.mtp.layers.0.eh_proj.weight")
+    mtp_expert = registry.megatron_to_hf_lookup(
+        "language_model.mtp.layers.0.mtp_model_layer.layers.1.mlp.experts.linear_fc1.weight3"
+    )
+    reverse_mtp_qkv = registry.hf_to_megatron_lookup("mtp.layers.1.mixer.q_proj.weight")
+
+    assert embedding.hf_param == "language_model.backbone.embeddings.weight"
+    assert vision.hf_param == ("vision_model.radio_model.model.patch_generator.embedder.weight")
+    assert projector.hf_param == "mlp1.1.weight"
+    assert mtp_projection.hf_param == "mtp.layers.0.eh_proj.weight"
+    assert mtp_expert.hf_param == "mtp.layers.1.mixer.experts.3.up_proj.weight"
+    assert (
+        reverse_mtp_qkv.megatron_param
+        == "language_model.mtp.layers.0.mtp_model_layer.layers.1.self_attention.linear_qkv.weight"
+    )
+    assert all(not mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
+
+
+def test_llava_bridge_retains_legacy_wrapper_namespace():
+    hf_pretrained = Mock(spec=PreTrainedCausalLM)
+    hf_pretrained.config = _mock_omni_hf_config()
+
+    provider = NemotronOmniLlavaBridge().provider_bridge(hf_pretrained)
+    registry = NemotronOmniLlavaBridge().mapping_registry()
+
+    assert isinstance(provider, NemotronOmniLlavaModelProvider)
+    assert provider.nemotron_omni_contract == NEMOTRON_OMNI_LLAVA_CONTRACT
+    serialized = ConfigContainer._convert_value_to_dict(provider)
+    assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_LLAVA_CONTRACT
+    assert any(mapping.megatron_param.startswith("llava_model.") for mapping in registry.mappings)
 
 
 def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
@@ -246,7 +326,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
 def test_nemotron_omni_freeze_sound_modules_without_stdout(monkeypatch, capsys):
     monkeypatch.setattr(NemotronVLModel, "freeze", lambda self, **_: None)
 
-    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    model = NemotronOmniLlavaModel.__new__(NemotronOmniLlavaModel)
     model.llava_model = SimpleNamespace(
         sound_model=nn.Linear(4, 4),
         sound_projection=nn.Linear(4, 4),
