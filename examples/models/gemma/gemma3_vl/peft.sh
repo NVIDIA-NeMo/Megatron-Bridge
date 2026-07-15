@@ -44,8 +44,8 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Running LoRA finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_peft_config \
-        --step_func vlm_step \
-        --peft_scheme lora \
+        --step-func vlm_step \
+        --mode lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \
         train.train_iters=$TRAIN_ITERS \

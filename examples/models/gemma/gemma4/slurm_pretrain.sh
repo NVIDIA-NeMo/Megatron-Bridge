@@ -223,7 +223,7 @@ TRAIN_LOG_DIR=${TRAIN_LOG_DIR:-${GEMMA4_LOG_ROOT:?'Error: set GEMMA4_LOG_ROOT to
 rm -rf "$TRAIN_LOG_DIR" && mkdir -p "$TRAIN_LOG_DIR"
 
 if [ -n "$TRAIN_DATA_PATH" ]; then
-    DATASET_TYPE="llm-pretrain"
+    DATASET_TYPE="megatron-indexed"
     DATA_OVERRIDES=(
         "dataset.blend=[[$TRAIN_DATA_PATH],null]"
         "tokenizer.tokenizer_type=HuggingFaceTokenizer"
@@ -231,7 +231,7 @@ if [ -n "$TRAIN_DATA_PATH" ]; then
     )
 else
     echo "  WARNING: TRAIN_DATA_PATH not set, using mock data."
-    DATASET_TYPE="llm-pretrain-mock"
+    DATASET_TYPE="mock"
     DATA_OVERRIDES=()
 fi
 
@@ -249,7 +249,7 @@ $TORCHRUN_BIN \
     "checkpoint.save=$SAVE_DIR" \
     "train.train_iters=$TRAIN_ITERS" \
     "model.seq_length=$SEQ_LENGTH" \
-    "dataset.seq_length=$SEQ_LENGTH" \
+    "dataset.sequence_length=$SEQ_LENGTH" \
     "${DATA_OVERRIDES[@]}"
 
 echo ""

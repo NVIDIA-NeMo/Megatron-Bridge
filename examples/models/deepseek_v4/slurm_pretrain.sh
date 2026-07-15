@@ -110,7 +110,7 @@ fi
 if [ "$DATASET_NAME" = "mock" ]; then
     DATASET_TYPE=mock
 else
-    DATASET_TYPE=llm-pretrain
+    DATASET_TYPE=megatron-indexed
 fi
 
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
@@ -203,7 +203,7 @@ CMD="uv run --no-sync python -m torch.distributed.run \
     /opt/Megatron-Bridge/scripts/training/run_recipe.py \
     --recipe $RECIPE_NAME \
     --dataset $DATASET_TYPE \
-    --step_func gpt_step \
+    --step-func gpt_step \
     $CLI_OVERRIDES"
 
 echo "======================================"

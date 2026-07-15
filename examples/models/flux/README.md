@@ -176,7 +176,7 @@ Use the prepared path as `dataset.path` for pretraining or fine-tuning (see [§4
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe flux_12b_pretrain_config \
-  --step_func flux_step \
+  --step-func flux_step \
   dataset.path=/path/to/GRIT/grit_wds/
 ```
 
@@ -195,7 +195,7 @@ From the **Megatron-Bridge repository root**:
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe flux_12b_pretrain_config \
-  --step_func flux_step
+  --step-func flux_step
 ```
 
 **Real data (WebDataset path):** Set `dataset.path` so the recipe uses real data instead of mock:
@@ -203,7 +203,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe flux_12b_pretrain_config \
-  --step_func flux_step \
+  --step-func flux_step \
   dataset.path=${WORKSPACE}/data/my_flux_wds/
 ```
 
@@ -212,7 +212,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe flux_12b_pretrain_config \
-  --step_func flux_step \
+  --step-func flux_step \
   dataset.path=${WORKSPACE}/data/my_flux_wds/ \
   train.train_iters=10000 \
   train.global_batch_size=16 \
@@ -234,7 +234,7 @@ Run FLUX fine-tuning with the generic **run_recipe** script. Set the pretrained 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe flux_12b_sft_config \
-  --step_func flux_step \
+  --step-func flux_step \
   checkpoint.pretrained_checkpoint=${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000
 ```
 
@@ -243,7 +243,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe flux_12b_sft_config \
-  --step_func flux_step \
+  --step-func flux_step \
   checkpoint.pretrained_checkpoint=${WORKSPACE}/checkpoints/flux/flux.1-dev/iter_0000000 \
   dataset.path=${WORKSPACE}/data/my_flux_wds/ \
   train.global_batch_size=8 \
@@ -266,9 +266,9 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
    Follow [§3 Dataset Preparation](#3-dataset-preparation): GRIT clone → `grit-20m/*.parquet` → `img2dataset` → `prepare_energon_dataset_flux.py` → `energon prepare` → use the resulting directory as `dataset.path`.
 
 4. **Pretraining**  
-   Run `scripts/training/run_recipe.py --recipe flux_12b_pretrain_config --step_func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
+   Run `scripts/training/run_recipe.py --recipe flux_12b_pretrain_config --step-func flux_step` (optionally with `dataset.path=...` for real data and CLI overrides).
 
 5. **Fine-Tuning**  
-   Run `scripts/training/run_recipe.py --recipe flux_12b_sft_config --step_func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).
+   Run `scripts/training/run_recipe.py --recipe flux_12b_sft_config --step-func flux_step checkpoint.pretrained_checkpoint=<path>` (optionally with `dataset.path=...` and overrides).
 
 For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/flux/flux.py` and `scripts/training/run_recipe.py`.

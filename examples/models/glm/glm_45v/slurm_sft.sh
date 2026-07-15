@@ -136,7 +136,7 @@ CLI_OVERRIDES="\
 # CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
 CMD="uv run --no-sync python scripts/training/run_recipe.py"
 CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
-CMD="$CMD --step_func vlm_step"
+CMD="$CMD --step-func vlm_step"
 CMD="$CMD $CLI_OVERRIDES"
 
 echo "Executing command..."

@@ -44,7 +44,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Running full finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_sft_config \
-        --step_func vlm_step \
+        --step-func vlm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \
         train.train_iters=$TRAIN_ITERS \

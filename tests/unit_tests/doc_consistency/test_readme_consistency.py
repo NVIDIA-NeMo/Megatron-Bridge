@@ -35,6 +35,7 @@ DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
+MODEL_EXAMPLES = REPO_ROOT / "examples" / "models"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
 QWEN_OMNI_RECIPE = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "qwen_omni" / "h100" / "qwen3_omni.py"
 QWEN_OMNI_TRAINING_SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_omni" / "local_train_thinker_full.sh"
@@ -54,6 +55,24 @@ VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-prep
 SPHINX_TUTORIAL_LINK_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
+)
+LEGACY_RUN_RECIPE_ARGUMENTS = (
+    "--dry_run",
+    "--dump_env",
+    "--peft-scheme",
+    "--peft_scheme",
+    "--packed-sequence",
+    "--packed_sequence",
+    "--seq-length",
+    "--seq_length",
+    "--step_func",
+    "--dataset llm-pretrain",
+    "--dataset llm-pretrain-mock",
+    "--dataset llm-finetune",
+    "--dataset llm-finetune-preloaded",
+    "--dataset vlm-energon",
+    "--dataset vlm-hf",
+    "--dataset vlm-preloaded",
 )
 
 
@@ -128,6 +147,22 @@ def test_hf_path_flag_documented_if_implemented():
     if '"--hf_path"' not in _read(RUN_RECIPE):
         return  # flag not implemented — nothing to document
     assert "--hf_path" in _read(TRAINING_README), "--hf_path is implemented but not documented in README"
+
+
+def test_model_examples_use_current_run_recipe_arguments():
+    """Model examples that call run_recipe.py must not advertise removed arguments."""
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(MODEL_EXAMPLES.rglob("*")):
+        if path.suffix not in {".md", ".sh"}:
+            continue
+        text = _read(path)
+        if "scripts/training/run_recipe.py" not in text:
+            continue
+        stale_arguments = [argument for argument in LEGACY_RUN_RECIPE_ARGUMENTS if argument in text]
+        if stale_arguments:
+            offenders[str(path.relative_to(REPO_ROOT))] = stale_arguments
+
+    assert not offenders, f"Model examples use removed run_recipe.py arguments: {offenders}"
 
 
 def test_dclm_readme_megatron_lm_tool_path():

@@ -141,8 +141,8 @@ fi
 
 uv run --no-sync python scripts/training/run_recipe.py \
     --recipe "$RECIPE_NAME" \
-    --dataset llm-pretrain \
-    --seq_length "$SEQ_LENGTH" \
+    --dataset megatron-indexed \
+    dataset.sequence_length="$SEQ_LENGTH" \
     checkpoint.save="$SAVE_DIR" \
     checkpoint.save_interval="$SAVE_INTERVAL" \
     train.train_iters="$TRAIN_ITERS" \

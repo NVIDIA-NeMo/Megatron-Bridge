@@ -78,7 +78,7 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "============================================================"
     uv run --no-sync python -m torch.distributed.run --nproc_per_node=${NPROC} scripts/training/run_recipe.py \
         --recipe qwen2_audio_7b_finetune_config \
-        --step_func audio_lm_step \
+        --step-func audio_lm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         checkpoint.save=${WORKSPACE}/exp/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
         checkpoint.save_interval=$SAVE_INTERVAL \

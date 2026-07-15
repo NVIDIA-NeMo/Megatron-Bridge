@@ -37,10 +37,8 @@ export WANDB_MODE=${WANDB_MODE:-disabled}
 uv run python -m torch.distributed.run --standalone --nproc_per_node="${NUM_GPUS}" \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_energon_config \
-  --dataset vlm-energon \
-  --step_func qwen3_vl_step \
-  --peft_scheme lora \
-  --seq_length "${SEQ_LENGTH}" \
+  --step-func qwen3_vl_step \
+  --mode lora \
   checkpoint.pretrained_checkpoint="${PRETRAINED_CHECKPOINT}" \
   checkpoint.load=null \
   checkpoint.save="${OUTPUT_DIR}/checkpoints" \
@@ -50,7 +48,9 @@ uv run python -m torch.distributed.run --standalone --nproc_per_node="${NUM_GPUS
   validation.eval_interval="${EVAL_INTERVAL}" \
   validation.eval_iters="${EVAL_ITERS}" \
   validation.eval_micro_batch_size="${MICRO_BATCH_SIZE}" \
+  model.seq_length="${SEQ_LENGTH}" \
   dataset.path="${ENERGON_PATH}" \
+  dataset.seq_length="${SEQ_LENGTH}" \
   dataset.micro_batch_size="${MICRO_BATCH_SIZE}" \
   dataset.enable_in_batch_packing="${ENABLE_IN_BATCH_PACKING}" \
   logger.log_interval=1

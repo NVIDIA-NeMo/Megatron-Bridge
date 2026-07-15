@@ -265,7 +265,7 @@ CMD=(
     --master_port="${MASTER_PORT}"
     "${ROOT_DIR}/scripts/training/run_recipe.py"
     --recipe "${RECIPE}"
-    --step_func "${STEP_FUNC}"
+    --step-func "${STEP_FUNC}"
     checkpoint.pretrained_checkpoint="${EFFECTIVE_HF_MODEL_PATH}"
     checkpoint.save="${RESULTS_DIR}/${RUN_NAME}"
     checkpoint.save_interval="${SAVE_INTERVAL}"

@@ -228,9 +228,9 @@ fi
 # ------------------------------------------------------------------------------
 # Phase 2: full SFT
 #
-# No --dataset: the recipe ships an unpacked (SBHD) SQuAD config. To use your own
-# data, add 'dataset.hf_dataset.dataset_name=gsm8k' (HF) or pass --dataset llm-finetune-preloaded
-# 'dataset.dataset_root=<path>' -- but never --packed_sequence (DSv4 rejects packed).
+# No --dataset: the recipe ships an unpacked (SBHD) SQuAD config. To use another
+# source, pass `--dataset gsm8k` or `--dataset local-jsonl dataset.dataset_root=<path>`.
+# Do not enable `dataset.enable_offline_packing`; DSv4 rejects packed sequences.
 # ------------------------------------------------------------------------------
 
 CLI_OVERRIDES=" \
@@ -268,7 +268,7 @@ $SRUN_CMD bash -lc "
     cd /opt/Megatron-Bridge
     $TORCHRUN scripts/training/run_recipe.py \
         --recipe $RECIPE_NAME \
-        --step_func gpt_step \
+        --step-func gpt_step \
         $CLI_OVERRIDES
 "
 

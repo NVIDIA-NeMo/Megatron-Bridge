@@ -142,7 +142,7 @@ CLI_OVERRIDES="\
 
 CMD="uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --step_func nemotron_omni_step \
+    --step-func nemotron_omni_step \
     $CLI_OVERRIDES"
 
 echo "Executing command..."

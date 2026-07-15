@@ -172,7 +172,7 @@ echo "[rank ${RANK}] MASTER_ADDR=${MASTER_ADDR} MASTER_PORT=${MASTER_PORT} WORLD
 cd "${MEGATRON_BRIDGE_PATH}"
 uv run --no-sync python scripts/training/run_recipe.py \
     --recipe step35_196b_a11b_pretrain_config \
-    --step_func gpt_step \
+    --step-func gpt_step \
     ${CLI_OVERRIDES}
 EOF
 
