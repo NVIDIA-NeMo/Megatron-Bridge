@@ -167,14 +167,6 @@ def test_nemotron_omni_direct_provider_preserves_legacy_cpe_default():
     assert NemotronOmniModelProvider().radio_interpolate_only_cpe is True
 
 
-def test_nemotron_omni_vision_config_defaults_to_ten_class_tokens():
-    provider = NemotronOmniModelProvider()
-
-    vision_config = provider._build_vision_config(provider)
-
-    assert vision_config.class_token_len == 10
-
-
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():
     registry = NemotronOmniBridge().mapping_registry()
     names = _mapping_names(registry)

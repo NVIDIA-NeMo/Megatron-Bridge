@@ -183,9 +183,6 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         """
         vision_cfg = super()._build_vision_config(language_cfg)
         vision_cfg.pipeline_model_parallel_size = 1
-        # Public Nano Omni checkpoints use ten RADIO class/register tokens;
-        # MCore's generic RADIO fallback is eight when the field is absent.
-        vision_cfg.class_token_len = self.vision_class_token_len or 10
         return vision_cfg
 
     def _build_vision_projection_config(self, language_cfg):
