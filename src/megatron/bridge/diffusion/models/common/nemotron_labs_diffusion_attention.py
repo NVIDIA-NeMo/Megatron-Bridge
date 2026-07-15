@@ -306,6 +306,10 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self._kv_cache_v = None
         self._kv_cache_seq_len = 0
 
+        # DiffuGRPO / BlockJustGRPO asymmetric [noisy | clean] replay metadata
+        # (set per microbatch by the policy worker; None = normal paths).
+        self._asym_meta = None
+
     def set_inference_mode(self, enabled: bool):
         """Enable or disable inference mode. Clears cache on disable."""
         self._inference_mode = enabled
@@ -320,6 +324,50 @@ class NemotronLabsDiffusionAttention(MegatronModule):
         self._kv_cache_k = None
         self._kv_cache_v = None
         self._kv_cache_seq_len = 0
+
+    def set_asymmetric_ar_metadata(
+        self,
+        *,
+        noisy_length: int,
+        clean_length: int,
+        noisy_response_offset: int,
+        prompt_lengths: Tensor,
+        response_lengths: Tensor,
+        noisy_valid_lengths: Tensor,
+        clean_lengths: Tensor,
+    ) -> None:
+        """Enable the asymmetric ``[noisy | clean]`` completion-replay attention.
+
+        The physical microbatch layout is ``[noisy(0..noisy_length) | clean(0..clean_length)]``
+        per row: the noisy segment holds the (partially revealed) masked response canvas and
+        the clean segment holds the real ``prompt + response`` tokens. This generalizes the
+        pretraining ``[xt | x0]`` sbd_block_diff geometry (equal halves, absolute blocks) to
+        unequal halves, response-aligned blocks, and per-row prompt offsets:
+
+        - noisy query in response block ``b``: attends bidirectionally within its own noisy
+          block (M_BD) and to clean tokens strictly before the block, i.e. clean positions
+          ``< prompt_len + b * block_size`` (M_OBC; the prompt acts as block ``-1``);
+        - clean query at position ``j``: fully causal over clean (M_FC);
+        - clean never attends noisy; RoPE positions are the logical ones (noisy position
+          ``i`` maps to ``prompt_len + i - noisy_response_offset``; clean position ``j``
+          maps to ``j``).
+
+        Used by DiffuGRPO / BlockJustGRPO workers; cleared per microbatch via
+        :meth:`clear_asymmetric_ar_metadata`.
+        """
+        self._asym_meta = {
+            "noisy_length": int(noisy_length),
+            "clean_length": int(clean_length),
+            "noisy_response_offset": int(noisy_response_offset),
+            "prompt_lengths": prompt_lengths,
+            "response_lengths": response_lengths,
+            "noisy_valid_lengths": noisy_valid_lengths,
+            "clean_lengths": clean_lengths,
+        }
+
+    def clear_asymmetric_ar_metadata(self) -> None:
+        """Disable the asymmetric replay attention (return to normal paths)."""
+        self._asym_meta = None
 
     def _get_ar_core_attention(self):
         """Lazily build the CP-capable causal TE core on first use (AR/causal path only).
@@ -346,6 +394,12 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             # AR / causal path: supports packed (thd) sequences + context
             # parallelism through TE (causal is no_bias, which TE handles for thd+CP).
             return self._inference_forward(query, key, value, packed_seq_params)
+
+        if self._asym_meta is not None:
+            assert packed_seq_params is None, (
+                "Packed sequence is not supported by the asymmetric [noisy | clean] replay path."
+            )
+            return self._asymmetric_ar_forward(query, key, value)
 
         # Diffusion (sbd_block_diff) path: the mask is a dense post_scale_bias, for
         # which TE has no THD attention kernel, so packed sequences are unsupported
@@ -430,6 +484,109 @@ class NemotronLabsDiffusionAttention(MegatronModule):
             context = scatter_seq_cp(context, cp_group, seq_dim=0)
 
         return context
+
+    def _asymmetric_ar_forward(self, query: Tensor, key: Tensor, value: Tensor) -> Tensor:
+        """SDPA forward for the asymmetric ``[noisy | clean]`` replay layout.
+
+        See :meth:`set_asymmetric_ar_metadata` for the layout and visibility rules.
+        Context parallelism is not supported on this path (run replay with cp=1).
+        """
+        meta = self._asym_meta
+        assert self.cp_size <= 1, (
+            "The asymmetric [noisy | clean] replay path does not support context parallelism; "
+            "run DiffuGRPO/BlockJustGRPO with context_parallel_size=1."
+        )
+
+        # [s, b, np, hn] -> [b, np, s, hn]
+        query = query.transpose(0, 1).transpose(1, 2)
+        key = key.transpose(0, 1).transpose(1, 2)
+        value = value.transpose(0, 1).transpose(1, 2)
+
+        device = query.device
+        batch = query.shape[0]
+        seq = query.shape[2]
+        noisy_len = meta["noisy_length"]
+        clean_len_padded = meta["clean_length"]
+        offset = meta["noisy_response_offset"]
+        assert seq == noisy_len + clean_len_padded, (
+            f"asymmetric replay expects seq == noisy_length + clean_length "
+            f"({noisy_len} + {clean_len_padded}), got {seq}"
+        )
+        block = int(self.block_size)
+        prompt_lengths = meta["prompt_lengths"].to(device=device, dtype=torch.long).view(batch, 1)
+        noisy_valid = meta["noisy_valid_lengths"].to(device=device, dtype=torch.long).view(batch, 1)
+        clean_valid = meta["clean_lengths"].to(device=device, dtype=torch.long).view(batch, 1)
+
+        idx = torch.arange(seq, device=device)
+        is_noisy = idx < noisy_len
+        resp_off = torch.where(is_noisy, (idx - offset).clamp_min(0), idx.new_zeros(())).view(1, seq)
+        clean_pos = torch.where(~is_noisy, idx - noisy_len, idx.new_zeros(())).view(1, seq)
+
+        # Logical RoPE positions: noisy i -> prompt_len + (i - offset); clean j -> j.
+        positions = torch.where(
+            is_noisy.view(1, seq),
+            prompt_lengths + resp_off,
+            clean_pos,
+        )  # [b, seq]
+
+        cos, sin = self.rope_embedding_module(query, positions)
+        cos = cos.unsqueeze(1)
+        sin = sin.unsqueeze(1)
+        query = (query * cos) + (rotate_half(query) * sin)
+        key = (key * cos) + (rotate_half(key) * sin)
+
+        if self.beta is not None:
+            scale = _get_llama_4_attn_scale(positions, self.beta, self.max_position_embeddings)
+            query = query * scale.unsqueeze(1).to(query.dtype)  # [b, 1, seq, 1]
+
+        # Visibility mask [b, 1, seq, seq] (True = attend), generalizing
+        # compute_block_bias's {M_BD, M_OBC, M_FC} to the asymmetric layout.
+        q_noisy = is_noisy.view(1, seq, 1)
+        k_noisy = is_noisy.view(1, 1, seq)
+        q_block = (resp_off // block).view(1, seq, 1)
+        k_block = (resp_off // block).view(1, 1, seq)
+        k_resp_off = resp_off.view(1, 1, seq)
+        q_clean_pos = clean_pos.view(1, seq, 1)
+        k_clean_pos = clean_pos.view(1, 1, seq)
+
+        k_noisy_valid = k_resp_off < noisy_valid.view(batch, 1, 1)
+        k_clean_valid = k_clean_pos < clean_valid.view(batch, 1, 1)
+
+        # M_BD: noisy -> noisy, same response block, valid keys only.
+        block_diag = q_noisy & k_noisy & (q_block == k_block) & k_noisy_valid
+        # M_OBC: noisy block b -> clean positions < prompt_len + b*block (prompt = block -1).
+        obc = (
+            q_noisy
+            & ~k_noisy
+            & (k_clean_pos < (prompt_lengths.view(batch, 1, 1) + q_block * block))
+            & k_clean_valid
+        )
+        # M_FC: clean -> clean, fully causal.
+        fc = ~q_noisy & ~k_noisy & (k_clean_pos <= q_clean_pos)
+        allowed = block_diag | obc | fc
+        # Padding guard: every query keeps at least its own position (avoids
+        # fully-masked rows -> NaN for padded/invalid queries; outputs unused).
+        diag = torch.eye(seq, device=device, dtype=torch.bool).view(1, seq, seq)
+        allowed = (allowed | diag).unsqueeze(1)  # [b, 1, seq, seq]
+
+        n_rep = self.num_attention_heads_per_partition // self.num_query_groups_per_partition
+        key = repeat_kv(key, n_rep)
+        value = repeat_kv(value, n_rep)
+
+        context = F.scaled_dot_product_attention(
+            query,
+            key,
+            value,
+            attn_mask=allowed,
+            dropout_p=0.0,
+            is_causal=False,
+            scale=self.softmax_scale,
+        )
+
+        # [b, np, s, hn] -> [s, b, hp]
+        context = context.transpose(1, 2).transpose(0, 1)
+        new_shape = context.size()[:-2] + (self.hidden_size_per_partition,)
+        return context.contiguous().view(*new_shape)
 
     def _inference_forward(
         self,
