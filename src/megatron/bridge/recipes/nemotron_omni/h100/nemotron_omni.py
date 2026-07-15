@@ -20,13 +20,42 @@ All recipes use ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``)
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
+    HFDatasetSourceConfig,
+    NemotronOmniEnergonTaskEncoderConfig,
+)
 from megatron.bridge.recipes.common import _sft_common_vlm
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
 
 _DEFAULT_HF_PATH = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
+
+
+def _make_nemotron_omni_energon_dataset(micro_batch_size: int) -> EnergonDatasetConfig:
+    """Create the declarative temporal-video Energon config used by Omni recipes."""
+    return EnergonDatasetConfig(
+        path=None,
+        seq_length=4096,
+        micro_batch_size=micro_batch_size,
+        num_workers=2,
+        task_encoder=NemotronOmniEnergonTaskEncoderConfig(
+            hf_processor_path=_DEFAULT_HF_PATH,
+            max_audio_duration=10.0,
+            num_mel_bins=128,
+            visual_keys=("pixel_values",),
+            temporal_patch_size=2,
+            video_fps=1.0,
+            video_nframes=8,
+            use_temporal_video_embedder=True,
+            patch_dim=16,
+            trust_remote_code=True,
+        ),
+        enable_in_batch_packing=False,
+    )
 
 
 def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
@@ -183,11 +212,6 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     Uses ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``).
     """
-    from transformers import AutoProcessor
-
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
-    from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
-
     cfg = _nemotron_omni_base()
 
     # Enable temporal video embedder on the model side
@@ -196,39 +220,13 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.separate_video_embedder = True
     cfg.model.temporal_ckpt_compat = True
 
-    processor = AutoProcessor.from_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True)
-    task_encoder = NemotronOmniTaskEncoder(
-        processor=processor,
-        seq_length=4096,
-        max_audio_duration=10.0,
-        num_mel_bins=128,
-        visual_keys=("pixel_values",),
-        temporal_patch_size=2,
-        video_fps=1.0,
-        video_nframes=8,
-        use_temporal_video_embedder=True,
-        patch_dim=16,
-    )
-
-    cfg.dataset = EnergonProvider(
-        path="",  # Must be set via CLI override: dataset.path=<path>
-        seq_length=4096,
-        micro_batch_size=cfg.train.micro_batch_size,
-        global_batch_size=cfg.train.global_batch_size,
-        num_workers=2,
-        task_encoder=task_encoder,
-        enable_in_batch_packing=False,
-    )
+    cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
 
     return cfg
 
 
 def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """LoRA PEFT recipe on temporal-video Energon path (temporal_patch_dim=2)."""
-    from transformers import AutoProcessor
-
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
-    from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
     from megatron.bridge.peft.lora import LoRA
 
     cfg = _nemotron_omni_base()
@@ -259,29 +257,7 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
 
-    processor = AutoProcessor.from_pretrained(_DEFAULT_HF_PATH, trust_remote_code=True)
-    task_encoder = NemotronOmniTaskEncoder(
-        processor=processor,
-        seq_length=4096,
-        max_audio_duration=10.0,
-        num_mel_bins=128,
-        visual_keys=("pixel_values",),
-        temporal_patch_size=2,
-        video_fps=1.0,
-        video_nframes=8,
-        use_temporal_video_embedder=True,
-        patch_dim=16,
-    )
-
-    cfg.dataset = EnergonProvider(
-        path="",
-        seq_length=4096,
-        micro_batch_size=cfg.train.micro_batch_size,
-        global_batch_size=cfg.train.global_batch_size,
-        num_workers=2,
-        task_encoder=task_encoder,
-        enable_in_batch_packing=False,
-    )
+    cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
 
     return cfg
 

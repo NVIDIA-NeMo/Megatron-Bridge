@@ -409,6 +409,15 @@ class TestMegatronGemma2Bridge:
         assert result.window_size == (gemma2_2b_config.sliding_window - 1, 0)
         assert result.window_size == (4095, 0)
 
+    def test_megatron_to_hf_config_restores_serialized_window(self, mock_pretrained_gemma2_2b):
+        bridge = Gemma2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_gemma2_2b)
+        provider.window_size = [2047, 0]
+
+        config = Gemma2Bridge.megatron_to_hf_config(provider)
+
+        assert config["sliding_window"] == 2048
+
     def test_provider_bridge_query_pre_attn_scalar_variants(self, mock_pretrained_gemma2_27b, gemma2_27b_config):
         """Test query_pre_attn_scalar for 27B model which has different value."""
         bridge = Gemma2Bridge()

@@ -19,8 +19,7 @@ Defines:
     insertion group" travelling from the data preprocess to the model
     forward. Lives on the model side (vs the data side) because it's
     fundamentally part of the ``Step37Model.forward`` input contract; the
-    data subpackage re-exports it via ``data.vlm_datasets.step37_flickr8k.multimodal_utils``
-    for backward compatibility.
+    model-owned Flickr8k data pipeline imports it from this module directly.
   - :class:`ImageInsertEmbedding` — owns ``align_projector``
     (``nn.Linear(encoder.output_dim, hidden_size)``) and provides
     ``insert_features``, which finds each ``<im_start>`` in ``input_ids``,
