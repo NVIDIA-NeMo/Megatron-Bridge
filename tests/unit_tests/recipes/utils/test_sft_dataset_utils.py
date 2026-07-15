@@ -21,6 +21,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
+from megatron.bridge.data.sft_processing import normalize_sft_example
 from megatron.bridge.recipes.utils.dataset_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -182,7 +183,23 @@ class TestDefaultSquadConfig:
         assert cfg.do_validation is True
         assert cfg.do_test is False
         assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
+        assert cfg.preprocessing.prompt_column == "input"
+        assert cfg.preprocessing.completion_column == "output"
         assert cfg.preprocessing.separator == " "
+
+    @pytest.mark.parametrize(
+        ("row", "expected_metadata"),
+        [
+            ({"input": "question", "output": "answer", "id": 7}, {"id": 7}),
+            ({"prompt": "question", "completion": "answer"}, {}),
+        ],
+    )
+    def test_normalizes_legacy_and_canonical_rows(self, row, expected_metadata):
+        cfg = default_squad_config(seq_length=512)
+
+        normalized = normalize_sft_example(row, cfg.preprocessing)
+
+        assert normalized == {"input": "question", "output": "answer", **expected_metadata}
 
     def test_enable_offline_packing_creates_packing_specs(self):
         cfg = default_squad_config(seq_length=512, enable_offline_packing=True)

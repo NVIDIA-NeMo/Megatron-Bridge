@@ -133,7 +133,12 @@ def default_squad_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="squad"),
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        # Preserve compatibility with SQuAD datasets materialized before the
+        # semantic adapter switched from input/output to prompt/completion.
+        # Canonical prompt/completion rows are still accepted by normalization.
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input", completion_column="output", separator=" "
+        ),
         seq_length=seq_length,
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
