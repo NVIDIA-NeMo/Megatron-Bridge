@@ -66,7 +66,7 @@ def set_full_iter_cg_configs(cfg: ConfigContainer) -> None:
     cfg.model.offload_modules = []
     cfg.model.moe_pad_experts_for_cuda_graph_inference = True
     cfg.model.moe_paged_stash = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.moe_expert_rank_capacity_factor = 1.25
     cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.2
     cfg.model.moe_paged_stash_buffer_size_factor_cpu = 1.0
 
@@ -136,6 +136,9 @@ def kimi_k2_pretrain_config_gb200(
     precision_config = get_precision_config(precision)
     cfg.mixed_precision = precision_config
 
+    if cfg.mixed_precision.fp8_recipe == "mxfp8":
+        cfg.model.fp8_output_proj = True
+
     if base_cfg.moe_flex_dispatcher_backend is not None:
         cfg.model.moe_flex_dispatcher_backend = base_cfg.moe_flex_dispatcher_backend
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
@@ -151,8 +154,6 @@ def kimi_k2_pretrain_config_gb200(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -193,8 +194,6 @@ def kimi_k2_pretrain_config_vr200(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -236,8 +235,6 @@ def kimi_k2_pretrain_config_b300(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -279,8 +276,6 @@ def kimi_k2_pretrain_config_b200(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     cfg.comm_overlap.overlap_grad_reduce = True
 
@@ -322,8 +317,6 @@ def kimi_k2_pretrain_config_h100(
 
     set_kimi_k2_common_configs(cfg)
     set_workload_base_configs(cfg, base_cfg)
-    if is_full_iteration_cuda_graph(cfg.model):
-        set_full_iter_cg_configs(cfg)
 
     # Disabling to avoid functional errors. TODO: Test with it enabled and keep it enabled if it works.
     cfg.comm_overlap.overlap_grad_reduce = False
