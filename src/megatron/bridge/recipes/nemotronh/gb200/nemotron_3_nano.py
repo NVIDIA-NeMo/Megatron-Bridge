@@ -16,7 +16,7 @@
 
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
@@ -50,12 +50,12 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
 
-    # The scoped graph configuration exceeds memory at the library recipe's
-    # MBS2, so retain the validated eager execution path.
-    cfg.model.cuda_graph_impl = "none"
-    clear_cuda_graph_modules(cfg.model)
-    cfg.model.use_te_rng_tracker = False
-    cfg.rng.te_rng_tracker = False
+    # Match the validated GB200 performance recipe's TE-scoped graph set.
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
 
     # TP communication overlap requires TP > 1 and sequence parallelism.
     if cfg.comm_overlap is not None:

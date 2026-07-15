@@ -51,10 +51,11 @@ def test_nemotron_3_nano_gb200_pretrain_config() -> None:
     assert config.model.moe_shared_expert_overlap is False
     assert config.model.moe_router_force_load_balancing is False
 
-    assert config.model.cuda_graph_impl == "none"
-    assert cuda_graph_module_names(config.model) == []
-    assert config.model.use_te_rng_tracker is False
-    assert config.rng.te_rng_tracker is False
+    assert config.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(config.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
+    assert config.model.cuda_graph_warmup_steps == 3
+    assert config.model.use_te_rng_tracker is True
+    assert config.rng.te_rng_tracker is True
     assert config.comm_overlap is not None
     assert config.comm_overlap.tp_comm_overlap is False
 
