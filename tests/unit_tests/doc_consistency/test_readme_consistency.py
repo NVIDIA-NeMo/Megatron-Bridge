@@ -35,6 +35,25 @@ GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
+QWEN_OMNI_RECIPE = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "qwen_omni" / "h100" / "qwen3_omni.py"
+QWEN_OMNI_TRAINING_SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_omni" / "local_train_thinker_full.sh"
+LEGACY_VLM_DATASETS = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "vlm_datasets"
+LOCAL_CONVERSATION_SOURCE = REPO_ROOT / "src" / "megatron" / "bridge" / "data" / "sources" / "local_conversation.py"
+HF_MULTIMODAL_README = REPO_ROOT / "tutorials" / "data" / "hf-multimodal" / "README.md"
+DATA_PREPARATION_DOCS = (
+    REPO_ROOT / "docs" / "training" / "data-preparation.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "training" / "data-preparation.mdx",
+)
+QWEN3_VL_README = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "README.md"
+QWEN25_VL_DOCS = (
+    REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
+    REPO_ROOT / "docs" / "fern" / "versions" / "nightly" / "pages" / "models" / "qwen" / "qwen2.5-vl.mdx",
+)
+VALOR_TUTORIAL = REPO_ROOT / "tutorials" / "data" / "valor32k-avqa" / "data-preparation.md"
+SPHINX_TUTORIAL_LINK_DOCS = (
+    REPO_ROOT / "docs" / "training" / "data-preparation.md",
+    REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
+)
 
 
 def _read(p: Path) -> str:
@@ -108,6 +127,71 @@ def test_dclm_readme_megatron_lm_tool_path():
     assert not re.search(r"(?<![\w/])Megatron-LM/tools/preprocess_data\.py", text), (
         "stale bare Megatron-LM path present"
     )
+
+
+def test_vlm_json_script_uses_hf_loader_without_local_provider():
+    """JSON VLM entrypoints should use Direct HF rather than a local provider."""
+    assert not LEGACY_VLM_DATASETS.exists()
+    assert not LOCAL_CONVERSATION_SOURCE.exists()
+    for path in (RUN_RECIPE, QWEN_OMNI_RECIPE, QWEN_OMNI_TRAINING_SCRIPT):
+        text = _read(path)
+        assert "PreloadedVLMConversationProvider" not in text
+        assert "LocalConversationDatasetSourceConfig" not in text
+        assert "vlm-preloaded" not in text
+        assert "vlm-local" not in text
+    assert "DirectHFSFTDatasetConfig" in _read(QWEN_OMNI_RECIPE)
+    assert "HFDatasetSourceConfig" in _read(QWEN_OMNI_RECIPE)
+    assert 'path_or_dataset="json"' in _read(QWEN_OMNI_RECIPE)
+    training_script = _read(QWEN_OMNI_TRAINING_SCRIPT)
+    assert "dataset.source.load_kwargs={data_files:{train:" in training_script
+    assert "dataset.validation_source.load_kwargs={data_files:{validation:" in training_script
+    assert "dataset.test_source.load_kwargs={data_files:{test:" in training_script
+    assert ".load_kwargs.data_files." not in training_script
+    assert "OPTIMIZER_CPU_OFFLOAD=${OPTIMIZER_CPU_OFFLOAD:-True}" in training_script
+    assert "OPTIMIZER_OFFLOAD_FRACTION=${OPTIMIZER_OFFLOAD_FRACTION:-1.0}" in training_script
+    assert 'optimizer.overlap_cpu_optimizer_d2h_h2d="${OVERLAP_CPU_OPTIMIZER_D2H_H2D}"' in training_script
+
+
+def test_hf_multimodal_local_media_docs_use_processor_native_content():
+    """Local JSON examples must not promise removed preloaded media adaptation."""
+    for path in (HF_MULTIMODAL_README, *DATA_PREPARATION_DOCS):
+        text = _read(path)
+        assert '"content": [{"type": "image", "image": "' in text
+        assert '"content": "<image>Describe' not in text
+        assert '"images": ["receipt' not in text
+        assert "top-level media-list schema is not" in text
+
+
+def test_multimodal_model_docs_use_current_launchers_and_conversion_flags():
+    """Model examples should point at current recipes and canonical tutorials."""
+    qwen3 = _read(QWEN3_VL_README)
+    assert "qwen3_vl_8b_peft_config" in qwen3
+    assert "qwen3_vl_8b_finetune_config" not in qwen3
+    assert "--source-dir/path" not in qwen3
+    assert "hf-multimodal/README.md" in qwen3
+    assert "data/energon/README.md" in qwen3
+
+    for path in QWEN25_VL_DOCS:
+        text = _read(path)
+        assert "scripts/training/run_recipe.py" in text
+        assert "qwen25_vl_3b_sft_config" in text
+        assert "qwen25_vl_3b_peft_config" in text
+        assert "finetune_qwen25_vl.py" not in text
+        assert "qwen25_vl_3b_finetune_config" not in text
+        assert "--dataset-type" not in text
+
+    valor = _read(VALOR_TUTORIAL)
+    assert "--hf-model <HF_MODEL_PATH>" in valor
+    assert "--megatron-path /checkpoints/nemotron_omni" in valor
+    assert "--hf_path" not in valor
+    assert "--output_dir /checkpoints/nemotron_omni" not in valor
+
+
+def test_sphinx_docs_link_out_of_tree_tutorials_as_urls():
+    """Sphinx must not treat repository-root tutorials as source documents."""
+    for path in SPHINX_TUTORIAL_LINK_DOCS:
+        relative_tutorial_links = re.findall(r"\]\((?:\.\./)+tutorials/[^)]+\)", _read(path))
+        assert not relative_tutorial_links, f"{path} has out-of-tree Sphinx links: {relative_tutorial_links}"
 
 
 if __name__ == "__main__":

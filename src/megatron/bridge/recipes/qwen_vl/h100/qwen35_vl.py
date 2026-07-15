@@ -25,7 +25,7 @@ from __future__ import annotations
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
+from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -60,7 +60,7 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -69,7 +69,6 @@ def qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -106,7 +105,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -115,7 +114,6 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -153,7 +151,7 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -162,7 +160,6 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -186,6 +183,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
@@ -200,7 +198,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -209,7 +207,6 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -218,6 +215,7 @@ def qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
 
     return cfg
 
@@ -233,6 +231,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
     cfg.model.sequence_parallel = True
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
@@ -247,7 +246,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
         min_lr=3e-5,
     )
 
-    cfg.dataset = MockVLMConversationProvider(
+    cfg.dataset = MockVLMSFTDatasetConfig(
         seq_length=4096,
         hf_processor_path=hf_path,
         prompt="Describe this image.",
@@ -256,7 +255,6 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
-        create_attention_mask=True,
         pad_to_max_length=True,
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -265,6 +263,7 @@ def qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config() -> ConfigContain
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
+    cfg.ddp.average_in_collective = False
 
     return cfg
 

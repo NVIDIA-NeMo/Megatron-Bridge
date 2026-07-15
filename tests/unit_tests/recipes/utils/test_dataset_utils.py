@@ -24,6 +24,7 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     get_blend_fields_from_data_paths,
     infer_mode_from_dataset,
 )
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 @pytest.mark.unit
@@ -279,7 +280,7 @@ class TestInferModeFromDataset:
 
     @pytest.mark.parametrize(
         "dataset_type",
-        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf", "vlm-preloaded"],
+        ["llm-finetune", "llm-finetune-preloaded", "vlm-energon", "vlm-hf"],
     )
     def test_finetune_types(self, dataset_type):
         assert infer_mode_from_dataset(dataset_type) == "finetune"
@@ -391,24 +392,41 @@ class TestApplyDatasetOverride:
 
     # -- VLM energon ----------------------------------------------------------
 
-    def test_vlm_energon_keeps_existing_provider(self):
-        from megatron.bridge.data.energon.energon_provider import EnergonProvider
+    def test_vlm_energon_keeps_existing_declarative_config(self):
+        from megatron.bridge.data.builders import EnergonDatasetConfig, HFEnergonTaskEncoderConfig
 
-        existing = MagicMock(spec=EnergonProvider)
+        existing = EnergonDatasetConfig(
+            path="/data/shards",
+            seq_length=4096,
+            micro_batch_size=2,
+            task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+        )
         config = _make_mock_config(dataset=existing)
         result = apply_dataset_override(config, "vlm-energon")
         assert result.dataset is existing
 
-    def test_vlm_energon_creates_bare_provider_when_missing(self):
-        from megatron.bridge.data.energon.energon_provider import EnergonProvider
+    def test_vlm_energon_applies_explicit_sequence_length_to_dataset_and_model(self):
+        from megatron.bridge.data.builders import EnergonDatasetConfig, HFEnergonTaskEncoderConfig
 
+        existing = EnergonDatasetConfig(
+            path="/data/shards",
+            seq_length=4096,
+            micro_batch_size=2,
+            task_encoder=HFEnergonTaskEncoderConfig(hf_processor_path="org/model"),
+        )
+        config = _make_mock_config(dataset=existing, model_seq_length=4096)
+
+        result = apply_dataset_override(config, "vlm-energon", seq_length=8192)
+
+        assert result.dataset is existing
+        assert result.dataset.seq_length == 8192
+        assert result.model.seq_length == 8192
+
+    def test_vlm_energon_requires_recipe_specific_task_encoder_config(self):
         config = _make_mock_config(dataset=None, micro_batch_size=4, global_batch_size=64)
-        result = apply_dataset_override(config, "vlm-energon", seq_length=4096)
-        assert isinstance(result.dataset, EnergonProvider)
-        assert result.dataset.path == ""
-        assert result.dataset.seq_length == 4096
-        assert result.dataset.micro_batch_size == 4
-        assert result.dataset.global_batch_size == 64
+
+        with pytest.raises(ValueError, match="model-specific task_encoder"):
+            apply_dataset_override(config, "vlm-energon", seq_length=4096)
 
     # -- VLM HF ---------------------------------------------------------------
 
@@ -421,15 +439,24 @@ class TestApplyDatasetOverride:
         assert result.dataset.seq_length == 4096
         assert result.dataset.source.dataset_name == "cord_v2"
 
-    # -- VLM preloaded --------------------------------------------------------
-
-    def test_vlm_preloaded_creates_provider(self):
-        from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
-
+    def test_vlm_hf_accepts_tutorial_json_source_overrides(self):
         config = _make_mock_config()
-        result = apply_dataset_override(config, "vlm-preloaded", seq_length=2048)
-        assert isinstance(result.dataset, PreloadedVLMConversationProvider)
-        assert result.dataset.seq_length == 2048
+        result = apply_dataset_override(config, "vlm-hf", seq_length=1024)
+
+        process_config_with_overrides(
+            result.dataset,
+            cli_overrides=[
+                "source.dataset_name=null",
+                "source.path_or_dataset=json",
+                "source.split=train",
+                "source.load_kwargs={data_files:{train:/tmp/training.jsonl}}",
+            ],
+        )
+
+        assert result.dataset.seq_length == 1024
+        assert result.model.seq_length == 1024
+        assert result.dataset.source.path_or_dataset == "json"
+        assert result.dataset.source.load_kwargs == {"data_files": {"train": "/tmp/training.jsonl"}}
 
     # -- Unknown type ---------------------------------------------------------
 
@@ -468,7 +495,8 @@ class TestRegistryConstants:
         assert "llm-finetune-preloaded" in DATASET_TYPES
         assert "vlm-energon" in DATASET_TYPES
         assert "vlm-hf" in DATASET_TYPES
-        assert "vlm-preloaded" in DATASET_TYPES
+        assert "vlm-local" not in DATASET_TYPES
+        assert "vlm-preloaded" not in DATASET_TYPES
 
     def test_llm_finetune_presets_has_expected_keys(self):
         assert "squad" in LLM_FINETUNE_PRESETS

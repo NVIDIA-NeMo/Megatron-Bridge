@@ -20,6 +20,7 @@ from megatron.bridge.data.builders.direct_hf_sft import (
 )
 from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 pytestmark = pytest.mark.unit
@@ -331,6 +332,27 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
+
+
+def test_hf_json_data_file_can_be_supplied_by_cli_override():
+    config = DirectHFSFTDatasetConfig(
+        seq_length=128,
+        source=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            split="train",
+            load_kwargs={"data_files": {"train": None}},
+        ),
+        do_validation=False,
+        do_test=False,
+    )
+
+    process_config_with_overrides(
+        config,
+        cli_overrides=["source.load_kwargs.data_files.train=/data/training.jsonl"],
+    )
+
+    assert config.source.load_kwargs == {"data_files": {"train": "/data/training.jsonl"}}
+    config.validate()
 
 
 def test_prompt_completion_config_round_trip_is_declarative():
