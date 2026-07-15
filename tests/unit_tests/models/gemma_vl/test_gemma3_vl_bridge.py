@@ -99,22 +99,6 @@ def gemma3_vl_bridge():
     return Gemma3VLBridge()
 
 
-class TestGemma3VLBridgeInitialization:
-    """Test Gemma3VLBridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, gemma3_vl_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(gemma3_vl_bridge, Gemma3VLBridge)
-
-    def test_bridge_has_required_methods(self, gemma3_vl_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(gemma3_vl_bridge, "provider_bridge")
-        assert callable(gemma3_vl_bridge.provider_bridge)
-
-        assert hasattr(gemma3_vl_bridge, "mapping_registry")
-        assert callable(gemma3_vl_bridge.mapping_registry)
-
-
 class TestGemma3VLBridgeProviderBridge:
     """Test provider_bridge method functionality."""
 

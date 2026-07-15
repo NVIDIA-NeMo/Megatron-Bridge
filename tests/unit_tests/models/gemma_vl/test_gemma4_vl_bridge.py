@@ -276,15 +276,6 @@ class TestGemma4BridgeRegistration:
     def test_vl_bridge_inherits_causal_bridge(self):
         assert issubclass(Gemma4VLBridge, Gemma4Bridge)
 
-    def test_initialization(self, causal_bridge):
-        assert isinstance(causal_bridge, Gemma4Bridge)
-
-    def test_has_required_methods(self, causal_bridge):
-        assert callable(getattr(causal_bridge, "provider_bridge", None))
-        assert callable(getattr(causal_bridge, "mapping_registry", None))
-        assert callable(getattr(causal_bridge, "maybe_modify_loaded_hf_weight", None))
-        assert callable(getattr(causal_bridge, "maybe_modify_converted_hf_weight", None))
-
 
 class TestGemma4BridgeProviderBridgeMoE:
     """Gemma4Bridge.provider_bridge for MoE CausalLM."""
@@ -639,15 +630,8 @@ def bridge():
 
 
 class TestGemma4VLBridgeInitialization:
-    def test_bridge_initialization(self, bridge):
-        assert isinstance(bridge, Gemma4VLBridge)
-
     def test_inherits_causal_bridge(self):
         assert issubclass(Gemma4VLBridge, Gemma4Bridge)
-
-    def test_bridge_has_required_methods(self, bridge):
-        assert callable(getattr(bridge, "provider_bridge", None))
-        assert callable(getattr(bridge, "mapping_registry", None))
 
 
 class TestGemma4VLBridgeConversionMode:

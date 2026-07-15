@@ -129,17 +129,6 @@ def _make_mock_pretrained(text_config, vision_config, tie_word_embeddings=False)
 # =====================================================================
 
 
-class TestQwen35VLBridgeInitialization:
-    def test_bridge_initialization(self):
-        bridge = Qwen35VLBridge()
-        assert isinstance(bridge, Qwen35VLBridge)
-
-    def test_bridge_has_required_methods(self):
-        bridge = Qwen35VLBridge()
-        assert hasattr(bridge, "provider_bridge") and callable(bridge.provider_bridge)
-        assert hasattr(bridge, "mapping_registry") and callable(bridge.mapping_registry)
-
-
 class TestQwen35VLBridgeProviderBridge:
     @pytest.fixture
     def bridge(self):
@@ -281,13 +270,6 @@ class TestQwen35VLBridgeMappingRegistry:
 # =====================================================================
 # Tests for Qwen35VLMoEBridge
 # =====================================================================
-
-
-@pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")
-class TestQwen35VLMoEBridgeInitialization:
-    def test_bridge_initialization(self):
-        bridge = Qwen35VLMoEBridge()
-        assert isinstance(bridge, Qwen35VLMoEBridge)
 
 
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")

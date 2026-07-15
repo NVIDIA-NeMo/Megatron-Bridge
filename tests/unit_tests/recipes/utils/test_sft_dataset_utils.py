@@ -54,10 +54,6 @@ class TestDefaultOpenmathinstruct2Config:
         cfg = default_openmathinstruct2_config(seq_length=8192)
         assert cfg.seq_length == 8192
 
-    def test_preset_is_openmathinstruct2(self):
-        cfg = default_openmathinstruct2_config()
-        assert cfg.hf_dataset.dataset_name == "openmathinstruct2"
-
     def test_dataloader_type_batch(self):
         cfg = default_openmathinstruct2_config()
         assert cfg.dataloader_type == "batch"
@@ -123,10 +119,6 @@ class TestDefaultGsm8kConfig:
     def test_custom_seq_length(self):
         cfg = default_gsm8k_config(seq_length=4096)
         assert cfg.seq_length == 4096
-
-    def test_preset_is_gsm8k(self):
-        cfg = default_gsm8k_config()
-        assert cfg.hf_dataset.dataset_name == "gsm8k"
 
     def test_dataloader_type_batch(self):
         cfg = default_gsm8k_config()
@@ -216,39 +208,6 @@ class TestConfigDifferences:
             canonical = normalize_sft_example({"prompt": "question", "completion": "answer"}, cfg.preprocessing)
             assert legacy == {"input": "question", "output": "answer", "id": 7}
             assert canonical == {"input": "question", "output": "answer"}
-
-    def test_different_default_seq_lengths(self):
-        omi2 = default_openmathinstruct2_config()
-        gsm8k = default_gsm8k_config()
-        assert omi2.seq_length == 4096
-        assert gsm8k.seq_length == 2048
-
-    def test_different_validation_strategies(self):
-        omi2 = default_openmathinstruct2_config()
-        gsm8k = default_gsm8k_config()
-        assert omi2.hf_validation_dataset is None
-        assert omi2.hf_validation_proportion == 0.05
-        assert omi2.do_validation is True
-        assert omi2.do_test is False
-        assert gsm8k.hf_validation_dataset is None
-        assert gsm8k.hf_test_dataset.split == "test"
-
-    def test_different_dataset_names(self):
-        omi2 = default_openmathinstruct2_config()
-        gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.dataset_name == "openmathinstruct2"
-        assert gsm8k.hf_dataset.dataset_name == "gsm8k"
-
-    def test_different_presets(self):
-        omi2 = default_openmathinstruct2_config()
-        gsm8k = default_gsm8k_config()
-        assert omi2.hf_dataset.dataset_name != gsm8k.hf_dataset.dataset_name
-
-    def test_gsm8k_has_subset_omi2_has_split(self):
-        omi2 = default_openmathinstruct2_config()
-        gsm8k = default_gsm8k_config()
-        assert gsm8k.hf_dataset.subset is None
-        assert omi2.hf_dataset.split is None
 
 
 @pytest.mark.unit

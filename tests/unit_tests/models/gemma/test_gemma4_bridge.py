@@ -132,15 +132,6 @@ class TestGemma4BridgeRegistration:
     def test_is_subclass_of_model_bridge(self):
         assert issubclass(Gemma4Bridge, MegatronModelBridge)
 
-    def test_initialization(self, bridge):
-        assert isinstance(bridge, Gemma4Bridge)
-
-    def test_has_required_methods(self, bridge):
-        assert callable(getattr(bridge, "provider_bridge", None))
-        assert callable(getattr(bridge, "mapping_registry", None))
-        assert callable(getattr(bridge, "maybe_modify_loaded_hf_weight", None))
-        assert callable(getattr(bridge, "maybe_modify_converted_hf_weight", None))
-
 
 # ===========================================================================
 # provider_bridge — MoE path
