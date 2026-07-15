@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Nemotron Omni bridge.
+"""Nemotron Omni conversion bridges.
 
 Standalone bridge for the Nemotron-3 Omni family (HF architecture
 ``NemotronH_Nano_Omni_Reasoning_V3``). Inherits the language / vision /
@@ -32,6 +32,9 @@ mamba parameter mappings from :class:`NemotronVLBridge` and adds:
   processing / audio files that need to be copied during HF export.
 """
 
+import copy
+from dataclasses import fields
+
 from megatron.core.activations import squared_relu
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -43,9 +46,25 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
+    NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
+    NEMOTRON_OMNI_LLAVA_CONTRACT,
+    NemotronOmniLlavaModelProvider,
     NemotronOmniModelProvider,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
+from megatron.bridge.models.nemotronh.nemotron_h_bridge import NemotronHBridge
+
+
+def _copy_mapping_with_prefixes(mapping, *, megatron_prefix: str, hf_prefix: str):
+    """Copy a mapping while preserving its conversion implementation."""
+
+    copied = copy.copy(mapping)
+    copied.megatron_param = megatron_prefix + mapping.megatron_param
+    if isinstance(mapping.hf_param, str):
+        copied.hf_param = hf_prefix + mapping.hf_param
+    else:
+        copied.hf_param = {key: hf_prefix + value for key, value in mapping.hf_param.items()}
+    return copied
 
 
 @MegatronModelBridge.register_bridge(
@@ -54,8 +73,14 @@ from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBrid
     provider=NemotronOmniModelProvider,
     model_type="NemotronH_Nano_Omni_Reasoning_V3",
 )
+@MegatronModelBridge.register_bridge(
+    source="NemotronH_Super_Omni_Reasoning_V3",
+    target=NemotronOmniModel,
+    provider=NemotronOmniModelProvider,
+    model_type="NemotronH_Super_Omni_Reasoning_V3",
+)
 class NemotronOmniBridge(NemotronVLBridge):
-    """Bridge for Nemotron-3 Omni (MoE LLM + vision + optional sound) models."""
+    """Bridge for the canonical expanded-sequence Nemotron-3 Omni model."""
 
     CONFIG_MAPPING = NemotronVLBridge.CONFIG_MAPPING + [
         # HF public Omni config uses layer_norm_epsilon instead of rms_norm_eps.
@@ -67,6 +92,7 @@ class NemotronOmniBridge(NemotronVLBridge):
         ("ssm_state_size", "mamba_state_dim"),
         ("residual_in_fp32", "fp32_residual_connection"),
         # MoE-specific (only present in Omni configs)
+        ("moe_latent_size", "moe_latent_size"),
         ("moe_shared_expert_intermediate_size", "moe_shared_expert_intermediate_size"),
     ]
 
@@ -128,6 +154,7 @@ class NemotronOmniBridge(NemotronVLBridge):
         # the requested aspect ratio. Keep the provider's historical default
         # unchanged for serialized configurations that explicitly select it.
         provider_kwargs["radio_interpolate_only_cpe"] = False
+        provider_kwargs["nemotron_omni_contract"] = NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
 
         # NemotronH uses squared_relu for MLP layers (HF config: mlp_hidden_act="relu2").
         # The base hf_config_to_provider_kwargs reads "hidden_act" which doesn't exist on
@@ -142,14 +169,16 @@ class NemotronOmniBridge(NemotronVLBridge):
             provider_kwargs["temporal_patch_dim"] = getattr(vision_cfg, "video_temporal_patch_size", 2)
             provider_kwargs["temporal_ckpt_compat"] = True
 
-        return NemotronOmniModelProvider(**provider_kwargs)
+        provider = NemotronOmniModelProvider(**provider_kwargs)
+        provider.mtp_hybrid_override_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
+        return provider
 
     # ------------------------------------------------------------------
     # Parameter mapping
     # ------------------------------------------------------------------
 
-    def mapping_registry(self) -> MegatronMappingRegistry:
-        """Inherit VL mappings and add temporal video, sound projection, and sound encoder mappings."""
+    def _llava_mapping_registry(self) -> MegatronMappingRegistry:
+        """Build mappings for the historical LLaVA wrapper namespace."""
         vl_registry = super().mapping_registry()
         mapping_list = list(vl_registry.mappings)
 
@@ -198,3 +227,55 @@ class NemotronOmniBridge(NemotronVLBridge):
         )
 
         return MegatronMappingRegistry(*mapping_list)
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        """Return top-level media mappings plus prefixed NemotronH mappings."""
+
+        mappings = []
+
+        # Reuse the media mappings, removing LLaVA's wrapper namespace.
+        # Language mappings come from NemotronHBridge so MTP and supported MoE
+        # layouts remain one source of truth.
+        for mapping in self._llava_mapping_registry().mappings:
+            if mapping.megatron_param.startswith("llava_model.language_model."):
+                continue
+            copied = copy.copy(mapping)
+            copied.megatron_param = mapping.megatron_param.removeprefix("llava_model.")
+            mappings.append(copied)
+
+        hf_config = getattr(self, "hf_config", None)
+        llm_config = getattr(hf_config, "llm_config", None)
+        mtp_pattern = getattr(llm_config, "mtp_hybrid_override_pattern", None)
+
+        language_bridge = NemotronHBridge()
+        language_bridge._mtp_layers_per_block = len(mtp_pattern) if mtp_pattern else 0
+        for mapping in language_bridge.mapping_registry().mappings:
+            is_mtp = mapping.megatron_param.startswith("mtp.")
+            mappings.append(
+                _copy_mapping_with_prefixes(
+                    mapping,
+                    megatron_prefix="language_model.",
+                    # The public Omni checkpoint keeps MTP at the top level,
+                    # while the rest of NemotronH lives under language_model.
+                    hf_prefix="" if is_mtp else "language_model.",
+                )
+            )
+
+        return MegatronMappingRegistry(*mappings)
+
+
+class NemotronOmniLlavaBridge(NemotronOmniBridge):
+    """Explicit fallback bridge for the historical collapse/expand model."""
+
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniLlavaModelProvider:
+        provider = super().provider_bridge(hf_pretrained)
+        provider_kwargs = {
+            field.name: getattr(provider, field.name)
+            for field in fields(NemotronOmniLlavaModelProvider)
+            if field.init and hasattr(provider, field.name)
+        }
+        provider_kwargs["nemotron_omni_contract"] = NEMOTRON_OMNI_LLAVA_CONTRACT
+        return NemotronOmniLlavaModelProvider(**provider_kwargs)
+
+    def mapping_registry(self) -> MegatronMappingRegistry:
+        return self._llava_mapping_registry()
