@@ -1391,9 +1391,16 @@ class MegatronModelBridge(
                     else:
                         hf_name = hf_name[:suffix_pos] + ".base_layer" + hf_name[suffix_pos:]
 
-                # Handle tied embeddings case
-                # TODO(yuya): fix this hard coded naming
-                if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
+                # Handle tied embeddings case. Detect via the Megatron-side param
+                # name, which is consistently "...embedding.word_embeddings.weight"
+                # across every bridge (see _should_skip_mtp_duplicate_embedding_export
+                # above for the same convention), rather than the HF-side name: that
+                # varies per bridge, e.g. "model.embed_tokens.weight" for plain LLMs
+                # vs. "model.language_model.embed_tokens.weight" for VLM bridges like
+                # qwen3_vl/qwen35/gemma3_vl/glm_45v/etc. The literal HF-name match
+                # this replaced silently skipped lm_head.weight export for all of
+                # those when embeddings are tied.
+                if embeddings_are_tied and task.global_param_name.endswith("embedding.word_embeddings.weight"):
                     emit_lm_head = isinstance(hf_pretrained, PretrainedConfig)
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()

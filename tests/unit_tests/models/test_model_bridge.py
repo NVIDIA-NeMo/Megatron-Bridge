@@ -413,3 +413,61 @@ def test_stream_weights_megatron_to_hf_transforms_tied_aliases_independently(mon
         "lm_head.weight.scale",
     ]
     assert weights[0].weight.data_ptr() != weights[2].weight.data_ptr()
+
+
+def test_stream_weights_megatron_to_hf_emits_lm_head_for_nested_vlm_embedding_name(monkeypatch):
+    # Regression test: VLM bridges (qwen3_vl, qwen35, gemma3_vl, glm_45v, etc.)
+    # map the tied embedding to a nested HF name like
+    # "model.language_model.embed_tokens.weight" rather than the plain-LLM
+    # "model.embed_tokens.weight". The tied-embedding branch must still detect
+    # this and re-emit lm_head.weight, not just the plain-LLM naming.
+    bridge = DummyBridge()
+    source_tensor = torch.ones(2, 2, requires_grad=True)
+
+    class EmbeddingMapping:
+        def megatron_to_hf(self, weight, module):
+            return {"model.language_model.embed_tokens.weight": weight}
+
+    task = WeightConversionTask(
+        param_name="language_model.embedding.word_embeddings.weight",
+        global_param_name="language_model.embedding.word_embeddings.weight",
+        mapping=EmbeddingMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=source_tensor,
+    )
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "_share_embeddings_and_output_weights",
+        lambda self, *_args, **_kwargs: True,
+    )
+    hf_pretrained = SimpleNamespace(
+        state=SimpleNamespace(
+            source=SimpleNamespace(
+                get_all_keys=lambda: [
+                    "model.language_model.embed_tokens.weight",
+                    "lm_head.weight",
+                ]
+            )
+        )
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            hf_pretrained,
+            cpu=True,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert [weight.param_name for weight in weights] == [
+        "model.language_model.embed_tokens.weight",
+        "lm_head.weight",
+    ]
+    assert weights[0].weight.data_ptr() != weights[1].weight.data_ptr()
