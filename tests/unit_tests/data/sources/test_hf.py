@@ -156,6 +156,17 @@ def test_source_rejects_load_kwargs_that_duplicate_source_fields():
         source.validate()
 
 
+@pytest.mark.parametrize(
+    "data_files",
+    [None, "", [], {}, {"train": None}, {"train": ""}],
+)
+def test_source_rejects_unset_data_files(data_files):
+    source = HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": data_files})
+
+    with pytest.raises(ValueError, match="data_files must contain non-empty paths"):
+        source.validate()
+
+
 def test_named_source_resolves_physical_source_and_declarative_overrides():
     source = HFDatasetSourceConfig(
         dataset_name="raven",

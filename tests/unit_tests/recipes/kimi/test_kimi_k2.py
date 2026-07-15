@@ -165,7 +165,7 @@ class TestKimiK2PretrainConfig:
         """Test dataset configuration."""
         cfg = kimi_k2_pretrain_config()
 
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.dataset.num_workers == 8
         assert cfg.dataset.data_sharding is True
         assert cfg.dataset.split == "9999,8,2"

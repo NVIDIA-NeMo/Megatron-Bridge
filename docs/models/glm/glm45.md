@@ -215,17 +215,18 @@ config = glm45_355b_peft_config(
 ```bash
 # GLM 4.5 Air - LoRA finetuning on single node (8 GPUs)
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
---pretrained-checkpoint /models/glm45-air-106b \
 --recipe glm45_air_106b_peft_config \
---peft_scheme lora \
+--mode lora \
+checkpoint.pretrained_checkpoint=/models/glm45-air-106b \
 train.global_batch_size=128 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_air_lora
 
 # GLM 4.5 355B - Full finetuning (256 GPUs)
 uv run python -m torch.distributed.run --nnodes=32 --nproc-per-node=8 scripts/training/run_recipe.py \
---pretrained-checkpoint /models/glm45-355b \
 --recipe glm45_355b_sft_config \
+--mode sft \
+checkpoint.pretrained_checkpoint=/models/glm45-355b \
 train.global_batch_size=256 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_355b_full
@@ -291,4 +292,3 @@ config = glm45_air_106b_pretrain_config(
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

@@ -138,7 +138,7 @@ CLI_OVERRIDES="\
 CMD="uv run --no-sync python scripts/training/run_recipe.py"
 CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
 CMD="$CMD --step_func vlm_step"
-CMD="$CMD --peft_scheme lora"
+CMD="$CMD --mode lora"
 CMD="$CMD $CLI_OVERRIDES"
 
 echo "Executing command..."

@@ -22,6 +22,7 @@ Deliberately stdlib-only (no torch / megatron import) so it scans source files
 directly and runs anywhere, including without the GPU stack.
 """
 
+import ast
 import re
 from pathlib import Path
 
@@ -34,6 +35,7 @@ DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
 GEMMA3_VL_RECIPES = RECIPES_DIR / "gemma3_vl" / "gemma3_vl.py"
 RUN_RECIPE = REPO_ROOT / "scripts" / "training" / "run_recipe.py"
+MODEL_EXAMPLES = REPO_ROOT / "examples" / "models"
 TRAINING_CONFIG = REPO_ROOT / "src" / "megatron" / "bridge" / "training" / "config.py"
 QWEN_OMNI_RECIPE = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "qwen_omni" / "h100" / "qwen3_omni.py"
 QWEN_OMNI_TRAINING_SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_omni" / "local_train_thinker_full.sh"
@@ -54,6 +56,23 @@ SPHINX_TUTORIAL_LINK_DOCS = (
     REPO_ROOT / "docs" / "training" / "data-preparation.md",
     REPO_ROOT / "docs" / "models" / "qwen" / "qwen2.5-vl.md",
 )
+LEGACY_RUN_RECIPE_ARGUMENTS = (
+    "--dry_run",
+    "--dump_env",
+    "--peft-scheme",
+    "--peft_scheme",
+    "--packed-sequence",
+    "--packed_sequence",
+    "--seq-length",
+    "--seq_length",
+    "--dataset llm-pretrain",
+    "--dataset llm-pretrain-mock",
+    "--dataset llm-finetune",
+    "--dataset llm-finetune-preloaded",
+    "--dataset vlm-energon",
+    "--dataset vlm-hf",
+    "--dataset vlm-preloaded",
+)
 
 
 def _read(p: Path) -> str:
@@ -61,11 +80,23 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions defined under src/.../recipes/**."""
+    """All recipe-config functions and public aliases under src/.../recipes/**."""
     names: set[str] = set()
     for py in RECIPES_DIR.rglob("*.py"):
-        for m in re.finditer(r"^def\s+(\w+_config)\s*\(", _read(py), re.MULTILINE):
-            names.add(m.group(1))
+        tree = ast.parse(_read(py), filename=str(py))
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
+                names.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    public_name = alias.asname or alias.name.rsplit(".", 1)[-1]
+                    if public_name.endswith("_config"):
+                        names.add(public_name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names.update(
+                    target.id for target in targets if isinstance(target, ast.Name) and target.id.endswith("_config")
+                )
     return names
 
 
@@ -98,16 +129,14 @@ def test_llama_readme_conversion_path_exists():
 
 def test_llama_readme_gptdataset_field_name():
     """The GPTDatasetConfig YAML block uses the canonical field name (bug 4)."""
-    # Source anchor: the dataset config key is `sequence_length` (see training/config.py).
-    assert '"sequence_length"' in _read(TRAINING_CONFIG), "sequence_length not found in config source"
+    # Bridge exposes seq_length and copies it to MCore's internal sequence_length during finalization.
+    assert "seq_length: int" in _read(TRAINING_CONFIG), "seq_length not found in config source"
     text = _read(LLAMA_README)
-    # Scope to the GPTDatasetConfig block only (the GPTSFTDatasetConfig block
-    # legitimately uses `seq_length`).
     m = re.search(r"#\s*GPTDatasetConfig\b(.*?)(?:\n\s*\n)", text, re.DOTALL)
     assert m, "could not locate GPTDatasetConfig YAML block"
     block = m.group(1)
-    assert "sequence_length:" in block, "GPTDatasetConfig block should use sequence_length"
-    assert "seq_length:" not in block, "GPTDatasetConfig block still uses wrong field seq_length"
+    assert "seq_length:" in block, "GPTDatasetConfig block should use seq_length"
+    assert "sequence_length:" not in block, "GPTDatasetConfig block still uses internal sequence_length"
 
 
 def test_hf_path_flag_documented_if_implemented():
@@ -115,6 +144,22 @@ def test_hf_path_flag_documented_if_implemented():
     if '"--hf_path"' not in _read(RUN_RECIPE):
         return  # flag not implemented — nothing to document
     assert "--hf_path" in _read(TRAINING_README), "--hf_path is implemented but not documented in README"
+
+
+def test_model_examples_use_current_run_recipe_arguments():
+    """Model examples that call run_recipe.py must not advertise removed arguments."""
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(MODEL_EXAMPLES.rglob("*")):
+        if path.suffix not in {".md", ".sh"}:
+            continue
+        text = _read(path)
+        if "scripts/training/run_recipe.py" not in text:
+            continue
+        stale_arguments = [argument for argument in LEGACY_RUN_RECIPE_ARGUMENTS if argument in text]
+        if stale_arguments:
+            offenders[str(path.relative_to(REPO_ROOT))] = stale_arguments
+
+    assert not offenders, f"Model examples use removed run_recipe.py arguments: {offenders}"
 
 
 def test_dclm_readme_megatron_lm_tool_path():

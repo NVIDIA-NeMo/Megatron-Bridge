@@ -536,6 +536,41 @@ def test_qwen2_5_collate_fn_handles_with_videos(monkeypatch):
     assert "video_grid_thw" not in batch
 
 
+def test_qwen2_5_collate_fn_normalizes_video_path_without_mutating_example(monkeypatch):
+    monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
+    seen_conversations = []
+
+    class _PathCheckingProcessor(_DummyProcessor):
+        def apply_chat_template(self, conversation, tokenize=False, **kwargs):
+            assert conversation[0]["content"][0] == {"type": "video", "video": "/videos/clip.mp4"}
+            return super().apply_chat_template(conversation, tokenize=tokenize, **kwargs)
+
+    def _fake_pvi(conversation):
+        seen_conversations.append(conversation)
+        assert conversation[0]["content"][0] == {"type": "video", "video": "/videos/clip.mp4"}
+        return (None, [[object()]])
+
+    monkeypatch.setattr(qwen_vl_collate, "process_vision_info", _fake_pvi)
+    example = {
+        "conversation": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "video", "path": "/videos/clip.mp4"},
+                    {"type": "text", "text": "What happens?"},
+                ],
+            },
+            {"role": "assistant", "content": [{"type": "text", "text": "An event."}]},
+        ]
+    }
+
+    batch = collate.qwen2_5_collate_fn([example], _PathCheckingProcessor())
+
+    assert seen_conversations
+    assert batch["visual_inputs"].pixel_values_videos is not None
+    assert example["conversation"][0]["content"][0] == {"type": "video", "path": "/videos/clip.mp4"}
+
+
 def test_qwen2_5_collate_fn_preserves_attention_mask_for_mixed_image_text_batch(monkeypatch):
     monkeypatch.setattr(qwen_vl_collate, "HAVE_QWEN_VL_UTILS", True)
 
