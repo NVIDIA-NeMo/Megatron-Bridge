@@ -280,7 +280,11 @@ def run_pretrain_vl_recipe_test(
 
         # Get the HF processor path from the original dataset config before replacing
         hf_processor_path = getattr(config.dataset, "hf_processor_path", None)
-        pack_sequences_in_batch = getattr(config.dataset, "pack_sequences_in_batch", False)
+        enable_in_batch_packing = getattr(config.dataset, "enable_in_batch_packing", False)
+        defer_in_batch_packing_to_step = getattr(config.dataset, "defer_in_batch_packing_to_step", False)
+        pad_to_max_length = getattr(config.dataset, "pad_to_max_length", False)
+        pad_to_multiple_of = getattr(config.dataset, "pad_to_multiple_of", 128)
+        in_batch_packing_pad_to_multiple_of = getattr(config.dataset, "in_batch_packing_pad_to_multiple_of", 1)
 
         # Replace the real dataset with a mock dataset provider for tests
         # MockVLMConversationProvider generates synthetic data and doesn't need a split attribute
@@ -288,7 +292,11 @@ def run_pretrain_vl_recipe_test(
         config.dataset = MockVLMConversationProvider(
             seq_length=test_seq_length,
             hf_processor_path=hf_processor_path,
-            pack_sequences_in_batch=pack_sequences_in_batch,
+            enable_in_batch_packing=enable_in_batch_packing,
+            defer_in_batch_packing_to_step=defer_in_batch_packing_to_step,
+            pad_to_max_length=pad_to_max_length,
+            pad_to_multiple_of=pad_to_multiple_of,
+            in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
         )
 
         if tensor_model_parallel_size is not None:
@@ -312,7 +320,7 @@ def run_pretrain_vl_recipe_test(
                     raise ValueError(f"Attempted to test a foreign attribute ({attribute_name}) in {config.dataset}.")
                 setattr(config.dataset, attribute_name, attribute_value)
 
-        if hasattr(config.dataset, "pack_sequences_in_batch") and config.dataset.pack_sequences_in_batch:
+        if hasattr(config.dataset, "enable_in_batch_packing") and config.dataset.enable_in_batch_packing:
             config.train.micro_batch_size = 2
 
         pretrain(config, vlm_forward_step)

@@ -129,7 +129,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@f8a01cd5ac55a6b669bacc4b222242bfff2c822a",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@2e559f062497bef768dfbe9d7e45548fadeca80a",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -138,17 +138,28 @@ override-dependencies = [
     "langchain>=0.3.28",                                    # To address CVE-2025-65106
     "langchain-core>=0.3.80",                               # To address CVE-2025-65106
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
-    "nvidia-cudnn-frontend==1.23.0",
-    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'"     # Rely on system site packages install
+    # TODO: Remove this cap once huggingface/transformers#46381 is merged and included in a Transformers release.
+    "tokenizers>=0.22.0,<0.23",                             # tokenizers 0.23 renames RobertaProcessing's 'cls' kwarg to 'cls_token'; transformers still passes cls= (breaks CLIPTokenizer)
+    "nvidia-cudnn-frontend==1.24.0",
+    "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
+    "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
 ]
 
 [[tool.uv.index]]
 name = "nvidia"
 url = "https://pypi.nvidia.com"
 
+# flash-mla ships no PyPI wheel and builds against torch/CUDA; provide its metadata so the
+# resolver does not have to build it at lock time. Pin matches 3rdparty/Megatron-LM.
+[[tool.uv.dependency-metadata]]
+name = "flash-mla"
+version = "1.0.0+b7643bd"
+requires-dist = []
+
 [tool.uv.sources]
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
+flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
 
 [project.optional-dependencies]
 recipes = [
@@ -206,6 +217,10 @@ build = ["setuptools", "torch", "pybind11", "Cython>=3.0.0", "numpy", "ninja", "
 # them at test time with scripts/install_diffusion_deps.sh. This group is kept for
 # documentation only; `uv sync --group diffusion` will NOT install them on Linux.
 diffusion = ["imageio", "imageio-ffmpeg", "av"]
+# flash-mla has no PyPI wheel and is built from source by uv (no-build-isolation) during the
+# image's `uv sync --all-groups`. Megatron-LM declares it in the same group, but uv does not
+# install a path dependency's groups, so it is declared here too.
+no_pypi_wheels = ["flash_mla"]
 
 [project.entry-points."nemo_run.cli"]
 lm = "megatron.bridge"

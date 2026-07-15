@@ -39,7 +39,7 @@ Examples:
 
   # Bridge → MLM: recipe + overrides (most common)
   python scripts/translate_mlm_to_bridge.py --reverse \\
-      --recipe llama32_1b_pretrain_config \\
+      --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \\
       --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
 
   # Bridge → MLM: recipe only (all defaults)
@@ -55,6 +55,8 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib
+import pkgutil
 import shlex
 import sys
 import textwrap
@@ -1269,13 +1271,29 @@ def _load_recipe_to_flat_dict(recipe_name: str) -> dict[str, Any]:
     except ImportError:
         _act_to_str = None
 
-    if not hasattr(recipes, recipe_name):
+    recipe_builder = getattr(recipes, recipe_name, None)
+    if recipe_builder is None:
+        for module_info in pkgutil.iter_modules(recipes.__path__):
+            if not module_info.ispkg or module_info.name.startswith("_") or module_info.name == "utils":
+                continue
+            try:
+                h100_module_name = f"{recipes.__name__}.{module_info.name}.h100"
+                h100_module = importlib.import_module(h100_module_name)
+            except ModuleNotFoundError as exc:
+                if exc.name != h100_module_name:
+                    raise
+                continue
+            recipe_builder = getattr(h100_module, recipe_name, None)
+            if recipe_builder is not None:
+                break
+
+    if recipe_builder is None:
         available = [n for n in dir(recipes) if "config" in n]
         raise ValueError(
             f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.\nAvailable (sample): {available[:20]}"
         )
 
-    cfg = getattr(recipes, recipe_name)()
+    cfg = recipe_builder()
 
     def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -1630,8 +1648,8 @@ def main():
           python scripts/translate_mlm_to_bridge.py --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
 
         Examples (Bridge → MLM, --reverse):
-          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config
-          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config \\
+          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
+          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \\
               --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
           python scripts/translate_mlm_to_bridge.py --reverse --args "model.num_layers=32 model.hidden_size=4096"
         """),
@@ -1641,7 +1659,7 @@ def main():
     parser.add_argument(
         "--recipe",
         type=str,
-        help="Bridge recipe name for --reverse (e.g., llama32_1b_pretrain_config). "
+        help="Bridge recipe name for --reverse (e.g., llama32_1b_pretrain_1gpu_h100_bf16_config). "
         "Loads recipe defaults; combine with --args to add overrides on top.",
     )
 

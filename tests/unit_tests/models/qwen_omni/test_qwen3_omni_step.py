@@ -316,8 +316,9 @@ def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, loca
         ),
     )
 
-    def _mock_get_batch_on_this_cp_rank(batch, cp_group):
+    def _mock_get_batch_on_this_cp_rank(batch, is_hybrid_cp, cp_group):
         slice_calls.append((batch, cp_group))
+        assert is_hybrid_cp is False
         assert cp_group.rank() == cp_rank
         assert "attention_mask" not in batch
         assert "_attention_mask_2d" in batch
@@ -445,7 +446,8 @@ def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatc
         ),
     )
 
-    def _mock_get_batch_on_this_cp_rank(batch, cp_group):  # noqa: ARG001
+    def _mock_get_batch_on_this_cp_rank(batch, is_hybrid_cp, cp_group):  # noqa: ARG001
+        assert is_hybrid_cp is False
         return {
             "input_ids": batch["input_ids"][:, :4],
             "position_ids": batch["position_ids"][:, :4],
@@ -636,7 +638,7 @@ def test_forward_step_rejects_packed_sequence_before_model_forward(monkeypatch):
             "dataset": type(
                 "D",
                 (),
-                {"skip_getting_attention_mask_from_dataset": False, "pack_sequences_in_batch": True},
+                {"skip_getting_attention_mask_from_dataset": False, "enable_in_batch_packing": True},
             )(),
             "model": type("M", (), {"pipeline_model_parallel_size": 1, "seq_length": 8})(),
             "rerun_state_machine": type("R", (), {"check_for_nan_in_loss": False, "check_for_spiky_loss": False})(),

@@ -32,6 +32,7 @@ from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region,
 )
+from megatron.core.tensor_parallel.random import is_checkpointing
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
@@ -372,8 +373,8 @@ def load_peft_adapter_checkpoint(
 ) -> None:
     """Load a PEFT adapter checkpoint into an already transformed model."""
     from megatron.core import dist_checkpointing
-    from megatron.core.dist_checkpointing.serialization import get_default_load_sharded_strategy
     from megatron.core.dist_checkpointing.strategies.fully_parallel import FullyParallelLoadStrategyWrapper
+    from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 
     from megatron.bridge.training.checkpointing import apply_peft_adapter_filter_to_state_dict
 
@@ -388,7 +389,7 @@ def load_peft_adapter_checkpoint(
 
     checkpoint_path = str(adapter_checkpoint_path)
     if load_strategy is None:
-        load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+        load_strategy = TorchDistLoadShardedStrategy()
         if pg_collection is None and fully_parallel_load:
             try:
                 pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["dp_cp"])
@@ -494,6 +495,7 @@ def get_adapter_attributes_from_linear(
     m: nn.Module,
     is_expert: bool = False,
     pg_collection: ProcessGroupCollection | None = None,
+    sequence_parallel_input_regather: bool = False,
 ) -> AdapterAttributes:
     """Returns attributes from the base layer as an AdapterAttributes dataclass.
 
@@ -505,6 +507,9 @@ def get_adapter_attributes_from_linear(
 
     Args:
         m: The linear module to analyze (should have a config attribute).
+        is_expert: Whether the linear belongs to an expert module.
+        pg_collection: Optional process-group collection associated with the module.
+        sequence_parallel_input_regather: Whether LoRA-A should re-gather its sequence-parallel input in backward.
 
     Returns:
         AdapterAttributes containing:
@@ -573,11 +578,17 @@ def get_adapter_attributes_from_linear(
             else:
                 ub_overlap_ag = False
             if hasattr(m, "config") and m.config.sequence_parallel and not ub_overlap_ag:
-                m.return_layernorm_output_gathered = True
+                # The adapter's MCore SP linear must own the gather so it can retain the local shard.
+                # Preserve the existing TE optimization for the default path.
+                m.return_layernorm_output_gathered = not sequence_parallel_input_regather
                 te_version = packaging.version.Version(version("transformer-engine"))
-                if te_version >= packaging.version.Version("1.5.0dev") and (
-                    not getattr(m.config, "tp_comm_overlap", False)
-                    or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
+                if (
+                    not sequence_parallel_input_regather
+                    and te_version >= packaging.version.Version("1.5.0dev")
+                    and (
+                        not getattr(m.config, "tp_comm_overlap", False)
+                        or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
+                    )
                 ):
                     # TE 1.5 introduces the option `return_layernorm_output_gathered`, so the all gather
                     # in the forward method is not needed, so disable sp communications
@@ -885,6 +896,8 @@ class ParallelLinearAdapter(nn.Module):
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
         base_linear_is_parallel: Whether the base linear layer uses parallelization (default: True).
+        sequence_parallel_input_regather: Whether eligible LoRA-A projections retain the sequence-local input and
+            re-gather it in backward using MCore's sequence-parallel linear path (default: False).
     """
 
     def __init__(
@@ -907,6 +920,7 @@ class ParallelLinearAdapter(nn.Module):
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        sequence_parallel_input_regather: bool = False,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
 
@@ -927,7 +941,7 @@ class ParallelLinearAdapter(nn.Module):
             is_expert: Whether for expert layers in MoE.
             disable_tensor_parallel_comm: Disable tensor parallel communication.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
-            dropout_recompute: Use recomputation for dropout.
+            sequence_parallel_input_regather: Re-gather eligible LoRA-A sequence-parallel inputs in backward.
         """
         super().__init__()
         self.base_linear_name = base_linear_name
@@ -939,6 +953,8 @@ class ParallelLinearAdapter(nn.Module):
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
         self.base_linear_is_parallel = base_linear_is_parallel
+        self.sequence_parallel_input_regather = sequence_parallel_input_regather
+        self._sequence_parallel_input_regather_fallback_logged = False
         self.use_legacy_shared_expert_adapter_checkpoint = False
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
@@ -1038,6 +1054,58 @@ class ParallelLinearAdapter(nn.Module):
         if not base_linear_is_parallel:
             self.disable_sequence_parallel_comm = True
 
+    def _sequence_parallel_input_regather_eligibility(self, x: torch.Tensor) -> tuple[bool, str | None]:
+        """Return whether the targeted sequence-parallel linear path is safe."""
+        if not self.sequence_parallel_input_regather:
+            return False, None
+        if not self.training or not torch.is_grad_enabled():
+            return False, None
+        if is_checkpointing():
+            return False, None
+        if not self.linear_in.weight.requires_grad:
+            return False, "the LoRA-A weight is frozen"
+        if self.input_is_parallel:
+            return False, "the adapter is row-parallel"
+        if self.disable_sequence_parallel_comm:
+            return False, "sequence-parallel communication is disabled"
+        if _process_group_size(self.tp_group, self.config.tensor_model_parallel_size or 1) <= 1:
+            return False, "tensor parallel size is one"
+        if self.is_expert:
+            return False, "expert adapters use a separate path"
+        if self.use_a2a:
+            return False, "all-to-all adapters use a separate path"
+        if not isinstance(self.activation, nn.Identity):
+            return False, "the adapter activation is not identity"
+        if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+            return False, "CPU activation offload is enabled"
+
+        surface = self.base_linear_name.rsplit(".", maxsplit=1)[-1]
+        if surface not in {"linear_qkv", "linear_fc1"}:
+            return False, f"{surface} is not an eligible column-parallel LoRA surface"
+
+        cuda_graph_impl = getattr(self.config, "cuda_graph_impl", "none")
+        if cuda_graph_impl not in (None, "none"):
+            return False, "CUDA graphs are enabled"
+
+        recompute_granularity = getattr(self.config, "recompute_granularity", None)
+        if recompute_granularity == "full":
+            return False, "full-layer activation recompute already covers the adapter"
+        recompute_modules = getattr(self.config, "recompute_modules", None) or []
+        if recompute_granularity == "selective" and surface == "linear_fc1" and "mlp" in recompute_modules:
+            return False, "selective MLP recompute already covers linear_fc1"
+        return True, None
+
+    def _log_sequence_parallel_input_regather_fallback(self, reason: str | None) -> None:
+        """Log the first static fallback reason at debug level."""
+        if reason is None or self._sequence_parallel_input_regather_fallback_logged:
+            return
+        logger.debug(
+            "LoRA sequence-parallel input re-gather requested for %s but using the existing path: %s",
+            self.base_linear_name,
+            reason,
+        )
+        self._sequence_parallel_input_regather_fallback_logged = True
+
     def _get_activation_fn(self, activation: str) -> nn.Module:
         """Get activation function by name.
 
@@ -1106,16 +1174,28 @@ class ParallelLinearAdapter(nn.Module):
         if self.is_expert:
             x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
 
-        if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
-            # for attention_qkv and linear_fc1
-            # layernorm before lora is impacted by sequence parallel,
-            # hence seq dim need to be gathered right before lora linear layers
-            # this function also handles the backward pass correctly
-            x = gather_from_sequence_parallel_region(x, group=self.tp_group)
+        use_sequence_parallel_input_regather, fallback_reason = self._sequence_parallel_input_regather_eligibility(x)
+        if not self.input_is_parallel:
+            # MCore's SP linear keeps the local input in ctx, launches the
+            # backward all-gather asynchronously before dgrad, and waits only
+            # before wgrad. The baseline path keeps communication external.
+            self.linear_in.sequence_parallel = use_sequence_parallel_input_regather
+        if use_sequence_parallel_input_regather:
+            # ColumnParallelLinear returns output and bias; adapters do not use the bias.
+            x, _ = self.linear_in(x)
+        else:
+            self._log_sequence_parallel_input_regather_fallback(fallback_reason)
+            if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
+                # for attention_qkv and linear_fc1
+                # layernorm before lora is impacted by sequence parallel,
+                # hence seq dim need to be gathered right before lora linear layers
+                # this function also handles the backward pass correctly
+                x = gather_from_sequence_parallel_region(x, group=self.tp_group)
 
-        if self.config.cpu_offloading and self.config.cpu_offloading_activations:
-            x.activation_offloading = True
-        x, _ = self.linear_in(x)  # (@adithyare) ColumnLinear returns output and bias, we are ignoring the bias term.
+            if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+                x.activation_offloading = True
+            # ColumnParallelLinear returns output and bias; adapters do not use the bias.
+            x, _ = self.linear_in(x)
 
         x = self.activation(x)
 

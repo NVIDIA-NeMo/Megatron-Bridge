@@ -13,16 +13,18 @@
 # limitations under the License.
 
 import gc
+import json
 import os
 
 import pytest
 import torch
-from datasets import Dataset, DatasetDict
 
-from megatron.bridge.data.builders.hf_dataset import HFDatasetConfig
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.data.hf_processors.squad import process_squad_example
-from megatron.bridge.recipes.llama.llama3 import llama32_1b_pretrain_config, llama32_1b_sft_config
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_pretrain_1gpu_h100_bf16_config,
+    qwen3_600m_sft_1gpu_h100_bf16_config,
+)
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -56,20 +58,6 @@ def _make_functional_test_model_small(model: object) -> None:
         _set_existing_attr(model, name, value)
 
 
-def _tiny_squad_dataset() -> DatasetDict:
-    examples = [
-        {
-            "id": str(i),
-            "title": "bridge",
-            "context": "Megatron Bridge converts checkpoints and trains models with packed sequence support.",
-            "question": "What supports packed sequences?",
-            "answers": {"text": ["Megatron Bridge"], "answer_start": [0]},
-        }
-        for i in range(16)
-    ]
-    return DatasetDict({"train": Dataset.from_list(examples)})
-
-
 class TestPeftSftExample:
     """Run the PEFT SFT example as a functional test with packed sequences + CP."""
 
@@ -86,17 +74,21 @@ class TestPeftSftExample:
         pretrain_tensorboard_dir = os.path.join(shared_dir, "pretrain_tensorboard")
         sft_checkpoint_dir = os.path.join(shared_dir, "sft_checkpoints")
         sft_tensorboard_dir = os.path.join(shared_dir, "sft_tensorboard")
-        dataset_dir = os.path.join(shared_dir, "dataset")
+        dataset_root = os.path.join(shared_dir, "sft_data")
 
         if torch.distributed.get_rank() == 0:
             os.makedirs(pretrain_checkpoint_dir, exist_ok=True)
             os.makedirs(pretrain_tensorboard_dir, exist_ok=True)
             os.makedirs(sft_checkpoint_dir, exist_ok=True)
             os.makedirs(sft_tensorboard_dir, exist_ok=True)
-            os.makedirs(dataset_dir, exist_ok=True)
+            os.makedirs(dataset_root, exist_ok=True)
+            rows = [{"input": f"Question: {idx} + {idx}? Answer:", "output": str(idx + idx)} for idx in range(32)]
+            with open(os.path.join(dataset_root, "training.jsonl"), "w", encoding="utf-8") as f:
+                for row in rows:
+                    f.write(json.dumps(row) + "\n")
         torch.distributed.barrier()
 
-        pretrain_cfg = llama32_1b_pretrain_config()
+        pretrain_cfg = qwen3_600m_pretrain_1gpu_h100_bf16_config()
         _make_functional_test_model_small(pretrain_cfg.model)
         pretrain_cfg.model.tensor_model_parallel_size = 1
         pretrain_cfg.model.pipeline_model_parallel_size = 1
@@ -114,10 +106,10 @@ class TestPeftSftExample:
         pretrain_cfg.checkpoint.save = pretrain_checkpoint_dir
         pretrain_cfg.checkpoint.load = None
 
-        cfg = llama32_1b_sft_config()
+        cfg = qwen3_600m_sft_1gpu_h100_bf16_config()
         _make_functional_test_model_small(cfg.model)
         cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
-        cfg.tokenizer.tokenizer_model = "meta-llama/Llama-3.2-1B"
+        cfg.tokenizer.tokenizer_model = "gpt2"
         cfg.model.calculate_per_token_loss = True
         cfg.ddp.average_in_collective = False
         cfg.ddp.grad_reduce_in_fp32 = False
@@ -139,27 +131,23 @@ class TestPeftSftExample:
         cfg.logger.log_interval = 1
         cfg.logger.tensorboard_dir = sft_tensorboard_dir
 
-        # Use a small packed SQuAD dataset to exercise THD/context-parallel slicing
-        cfg.dataset = HFDatasetConfig(
-            dataset_name="rajpurkar/squad",
-            dataset_dict=_tiny_squad_dataset(),
-            dataset_root=dataset_dir,
-            process_example_fn=process_squad_example,
+        # Use a small packed local SFT dataset to exercise THD/context-parallel slicing
+        cfg.dataset = GPTSFTDatasetConfig(
+            dataset_root=dataset_root,
             seq_length=256,
             dataloader_type="batch",
             num_workers=1,
             do_validation=False,
             do_test=False,
-            val_proportion=None,
             dataset_kwargs={"pad_to_max_length": True},
             max_train_samples=16,
-            packed_sequence_specs=PackedSequenceSpecs(
+            enable_offline_packing=True,
+            offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
-                tokenizer_model_name="meta-llama/Llama-3.2-1B",
+                tokenizer_model_name="gpt2",
                 num_tokenizer_workers=1,
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),
-            rewrite=False,
         )
 
         cfg.checkpoint.save_interval = cfg.train.train_iters

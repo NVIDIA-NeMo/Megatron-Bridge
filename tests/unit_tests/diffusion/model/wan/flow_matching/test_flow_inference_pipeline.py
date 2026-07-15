@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
+from transformers import UMT5Config, UMT5EncoderModel
 
 from megatron.bridge.diffusion.models.wan.flow_matching.flow_inference_pipeline import (
     FlowInferencePipeline,
@@ -50,6 +51,7 @@ def _make_pipeline(**overrides):
         text_len=512,
         sp_size=1,
         model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers",
+        scheduler_source="Wan-AI/Wan2.1-T2V-14B-Diffusers",
         sample_neg_prompt="",
     )
     defaults.update(overrides)
@@ -408,6 +410,67 @@ class TestSetupModelFromCheckpoint:
 
 
 # ===========================================================================
+# Tests for component checkpoint-dir resolution in __init__
+# ===========================================================================
+class TestComponentDirResolution:
+    """Verify __init__ resolves text encoder / tokenizer / VAE / scheduler from the
+    provided local dirs (falling back to model_id), so inference can run offline.
+    """
+
+    MODEL_ID = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+
+    def _build(self, monkeypatch, **kwargs):
+        # Mock the diffusers/transformers loaders and the heavy Megatron setup so we
+        # can exercise only the directory-resolution logic in __init__.
+        mock_umt5 = MagicMock()
+        mock_tokenizer = MagicMock()
+        mock_vae = MagicMock()
+        monkeypatch.setattr(f"{PIPELINE_MODULE}.UMT5EncoderModel.from_pretrained", mock_umt5)
+        monkeypatch.setattr(f"{PIPELINE_MODULE}.AutoTokenizer.from_pretrained", mock_tokenizer)
+        monkeypatch.setattr(f"{PIPELINE_MODULE}.AutoencoderKLWan.from_pretrained", mock_vae)
+        monkeypatch.setattr(
+            FlowInferencePipeline, "setup_model_from_checkpoint", MagicMock(return_value=_make_mock_model())
+        )
+        monkeypatch.setattr(
+            FlowInferencePipeline, "_select_checkpoint_dir", MagicMock(return_value="/fake/iter_0000000")
+        )
+
+        inference_cfg = MagicMock()
+        inference_cfg.num_train_timesteps = 1000
+        inference_cfg.param_dtype = torch.float32
+        inference_cfg.t5_dtype = torch.float32
+        inference_cfg.text_len = 512
+        inference_cfg.vae_stride = (4, 8, 8)
+        inference_cfg.patch_size = (1, 2, 2)
+        inference_cfg.english_sample_neg_prompt = ""
+
+        pip = FlowInferencePipeline(
+            inference_cfg=inference_cfg, model_id=self.MODEL_ID, checkpoint_dir="/fake", **kwargs
+        )
+        return pip, mock_umt5, mock_tokenizer, mock_vae
+
+    def test_falls_back_to_model_id(self, monkeypatch):
+        pip, mock_umt5, mock_tokenizer, mock_vae = self._build(monkeypatch)
+
+        assert mock_umt5.call_args.args[0] == self.MODEL_ID
+        assert mock_tokenizer.call_args.args[0] == self.MODEL_ID
+        assert mock_vae.call_args.args[0] == self.MODEL_ID
+        assert pip.scheduler_source == self.MODEL_ID
+
+    def test_honors_local_dirs(self, monkeypatch):
+        pip, mock_umt5, mock_tokenizer, mock_vae = self._build(
+            monkeypatch, t5_checkpoint_dir="/local/t5", vae_checkpoint_dir="/local/vae"
+        )
+
+        # Text encoder and tokenizer load from the T5 dir; VAE from the VAE dir.
+        assert mock_umt5.call_args.args[0] == "/local/t5"
+        assert mock_tokenizer.call_args.args[0] == "/local/t5"
+        assert mock_vae.call_args.args[0] == "/local/vae"
+        # Scheduler prefers the T5 dir when provided.
+        assert pip.scheduler_source == "/local/t5"
+
+
+# ===========================================================================
 # Tests for generate
 # ===========================================================================
 class TestGenerate:
@@ -552,4 +615,30 @@ class TestGenerate:
             seed=42,
             offload_model=False,
         )
+        assert isinstance(result, torch.Tensor)
+
+    def test_generate_with_t5_cpu(self, pipeline_for_generate):
+        pip = pipeline_for_generate
+        pip.t5_cpu = True
+        pip.text_encoder = UMT5EncoderModel(
+            UMT5Config(
+                vocab_size=32,
+                d_model=32,
+                d_kv=8,
+                d_ff=64,
+                num_layers=1,
+                num_heads=4,
+                dropout_rate=0.0,
+            )
+        )
+
+        result = pip.generate(
+            prompts=["a cat"],
+            sizes=[(16, 16)],
+            frame_nums=[5],
+            sampling_steps=2,
+            seed=42,
+            offload_model=False,
+        )
+
         assert isinstance(result, torch.Tensor)

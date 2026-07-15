@@ -204,7 +204,6 @@ CMD="uv run --no-sync python -m torch.distributed.run \
     --recipe $RECIPE_NAME \
     --dataset $DATASET_TYPE \
     --step_func gpt_step \
-    --hf_path $HF_CONFIG \
     $CLI_OVERRIDES"
 
 echo "======================================"
