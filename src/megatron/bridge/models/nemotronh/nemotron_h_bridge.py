@@ -186,7 +186,29 @@ class _MTPFlatteningQKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
         self._hf_wc = MegatronParamMapping._count_wildcard_groups(q)  # q/k/v share pattern structure here
 
     def resolve(self, captures: Tuple[str, ...]) -> MegatronParamMapping:
-        # Expect captures from Megatron lookup: (outer, inner)
+        # Reverse lookup starts from one flattened HF layer index. Reconstruct
+        # Megatron's outer MTP depth and inner hybrid-layer index before
+        # returning the concrete QKV mapping.
+        treat_as_hf = (len(captures) == self._hf_wc) and (self._hf_wc != self._megatron_wc)
+        if treat_as_hf:
+            flat = int(captures[0])
+            outer = flat // self._mtp_layers_per_block
+            inner = flat % self._mtp_layers_per_block
+            resolved_megatron = _replace_wildcards(
+                self.megatron_param,
+                (str(outer), str(inner), *captures[1:]),
+            )
+            resolved_q = _replace_wildcards(self.hf_param["q"], captures)
+            resolved_k = _replace_wildcards(self.hf_param["k"], captures)
+            resolved_v = _replace_wildcards(self.hf_param["v"], captures)
+            return QKVMapping(
+                megatron_param=resolved_megatron,
+                q=resolved_q,
+                k=resolved_k,
+                v=resolved_v,
+            )
+
+        # Forward lookup starts from Megatron's (outer, inner) indices.
         if len(captures) < 2:
             raise ValueError(f"Expected (outer, inner) captures for MTP QKV mapping, got {captures}")
         outer = int(captures[0])
