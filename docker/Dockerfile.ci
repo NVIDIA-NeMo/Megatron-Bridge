@@ -86,6 +86,11 @@ ARG UV_CACHE_PRUNE_ARGS
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     --mount=type=cache,target=/root/.cache/uv \
+    # Wheels for no-build-isolation packages are tied to the base image's PyTorch C++ ABI. Scope
+    # the cache to the exact PyTorch, CUDA, and C++ ABI combination to prevent cross-base reuse.
+    TORCH_ABI_CACHE_KEY=$(uv run --no-project --active python -W ignore::FutureWarning -c \
+        'import torch; print(f"{torch.__version__}-{torch.version.cuda}-{int(torch._C._GLIBCXX_USE_CXX11_ABI)}")') && \
+    export UV_CACHE_DIR="/root/.cache/uv/torch-${TORCH_ABI_CACHE_KEY}" && \
     export MAMBA_FORCE_BUILD=TRUE CAUSAL_CONV1D_FORCE_BUILD=TRUE && \
     # flash-mla (Megatron-LM's no_pypi_wheels group) has no PyPI wheel and is built from source by
     # the uv sync below. Point the compilers at the CCCL/libcu++ headers (under cccl/ in this base
@@ -105,6 +110,8 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
         uv sync --locked --only-group build && \
         uv sync --link-mode copy --locked --all-extras --all-groups --no-group diffusion; \
     fi && \
+    # Fail the image build if the extension cannot resolve symbols from the base image's PyTorch.
+    uv run --no-sync python -c "import torch, causal_conv1d_cuda" && \
     # Create symlink for tilelang's libcudart_stub.so to the actual libcudart.so
     # Otherwise, the stub will be called in some cases and fail
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
