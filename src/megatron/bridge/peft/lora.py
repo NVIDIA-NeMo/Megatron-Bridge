@@ -18,7 +18,6 @@ from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
-import transformer_engine.pytorch as te
 from megatron.core import parallel_state
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
@@ -29,7 +28,6 @@ from megatron.bridge.peft.lora_layers import (
     LoRALinear,
     LoRATopKRouter,
     TEFusedLoRALinear,
-    TELinearAdapter,
 )
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
@@ -129,16 +127,14 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter, TELinearAdapter)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         if isinstance(module, adapter_types):
             return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
-            if (isinstance(module, nn.Linear) or (module.__class__ == te.Linear)) and not is_modelopt_linear(module):
-                lora_cls = TELinearAdapter if module.__class__ == te.Linear else LinearAdapter
-
-                return lora_cls(
+            if isinstance(module, nn.Linear) and not is_modelopt_linear(module):
+                return LinearAdapter(
                     module,
                     dim=self.dim,
                     alpha=self.alpha,

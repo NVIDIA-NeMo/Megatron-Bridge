@@ -101,146 +101,6 @@ class LoRATopKRouter(AdapterWrapper):
         return self.to_wrap.routing(logits, *args, **kwargs)
 
 
-class TELinearAdapter(te.Linear):
-    """TE Linear with LoRA that preserves the base weight and bias checkpoint keys.
-
-    Args:
-        orig_linear: The linear module to augment.
-        dim: LoRA's dimension (in_features -> dim -> out_features).
-        alpha: LoRA's scaling alpha.
-        dropout: Dropout probability (default: 0.0).
-        dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
-        lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
-        lora_dtype: Adapter weight dtype. Defaults to the original linear's weight dtype.
-    """
-
-    def __init__(
-        self,
-        orig_linear: "te.Linear",
-        dim: int = 8,
-        alpha: int = 32,
-        dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "pre",
-        lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
-    ) -> None:
-        """Initialize TELinearAdapter by copying from original TELinear and adding LoRA components.
-
-        Args:
-            orig_linear: The original TELinear module to adapt.
-            dim: LoRA rank dimension.
-            alpha: LoRA scaling factor.
-            dropout: Dropout probability.
-            dropout_position: When to apply dropout ('pre' or 'post' LoRA computation).
-            lora_A_init_method: Initialization method for LoRA matrix A.
-            lora_dtype: Data type for LoRA weights.
-        """
-        assert orig_linear.__class__ == te.Linear
-        # TELinear has bias set to empty tensor
-        has_bias = orig_linear.bias is not None and orig_linear.bias.shape[0] != 0
-        super(TELinearAdapter, self).__init__(
-            in_features=orig_linear.in_features,
-            out_features=orig_linear.out_features,
-            bias=has_bias,
-            device=orig_linear.weight.device,
-            params_dtype=orig_linear.weight.dtype,
-        )
-        # copy weights
-        self.weight.data.copy_(orig_linear.weight.data)
-        if has_bias:
-            self.bias.data.copy_(orig_linear.bias.data)
-        # initialize the adapter
-        self._init_adapter(
-            dim=dim,
-            alpha=alpha,
-            dropout=dropout,
-            dropout_position=dropout_position,
-            lora_A_init_method=lora_A_init_method,
-            lora_dtype=lora_dtype,
-        )
-        self._adapter_enabled = True
-
-    def enable_adapter_layers(self) -> None:
-        """Enable the adapter layers, allowing them to contribute to the forward pass output."""
-        self._adapter_enabled = True
-
-    def disable_adapter_layers(self) -> None:
-        """Disable the adapter layers, making the forward pass return only the base module output."""
-        self._adapter_enabled = False
-
-    @torch.no_grad
-    def _init_adapter(
-        self,
-        dim: int = 8,
-        alpha: int = 32,
-        dropout: float = 0.0,
-        dropout_position: Literal["pre", "post"] = "pre",
-        lora_A_init_method: Literal["xavier", "uniform"] = "xavier",
-        lora_dtype: Optional[torch.dtype] = None,
-    ) -> None:
-        """Initialize the LoRA weights and freeze the base parameters.
-
-        Args:
-            dim: LoRA's dimension (in_features -> dim -> out_features).
-            alpha: LoRA's scaling alpha.
-            dropout: Dropout probability (default: 0.0).
-            dropout_position: Where to apply dropout relative to LoRA (choices: ['pre', 'post'], default='pre').
-            lora_A_init_method: Initialization method for lora_A (choices: ['xavier', 'uniform']).
-            lora_dtype: Adapter weight dtype. Defaults to the base weight dtype.
-        """
-        self.dim = dim
-        self.alpha = alpha
-        self.scale = alpha / dim
-
-        # Freeze original weights
-        device = self.weight.device
-        self.weight.requires_grad = False
-        if self.bias is not None:
-            self.bias.requires_grad = False
-
-        in_features = self.in_features
-        out_features = self.out_features
-        dtype = lora_dtype or self.weight.dtype
-
-        self.linear_in = nn.Linear(in_features, dim, bias=False, dtype=dtype, device=device)
-        self.linear_out = nn.Linear(dim, out_features, bias=False, dtype=dtype, device=device)
-        if lora_A_init_method == "xavier":
-            torch.nn.init.xavier_uniform_(self.linear_in.weight.data)
-        else:
-            nn.init.kaiming_uniform_(self.linear_in.weight.data, a=math.sqrt(5))
-        self.linear_out.weight.data.fill_(0)
-        if dropout > 0.0:
-            self.dropout = nn.Dropout(p=dropout)
-        else:
-            self.dropout = nn.Identity()
-        assert dropout_position in ["pre", "post"], dropout_position
-        self.dropout_position = dropout_position
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Forward pass combining TELinear output with LoRA adaptation.
-
-        Args:
-            x: Input tensor.
-
-        Returns:
-            Combined output from original linear layer and LoRA adaptation.
-        """
-        # pylint: disable=C0115,C0116
-        res = super(TELinearAdapter, self).forward(x)
-
-        if not self._adapter_enabled:
-            return res
-
-        if self.dropout_position == "pre":
-            x = self.dropout(x)
-        # LoRA fwd is performed in original precision regardless of FP8 enabled
-        lora_res = self.linear_out(self.linear_in(x))
-        lora_res = lora_res * self.scale
-        if self.dropout_position == "post":
-            lora_res = self.dropout(lora_res)
-        return res + lora_res
-
-
 class TEFusedLoRALinear(LoRALinear):
     """LoRA adapter wrapper using Transformer Engine operation fuser"""
 
@@ -395,29 +255,15 @@ class TEFusedLoRALinear(LoRALinear):
 
         from megatron.bridge.peft.utils import ParallelLinearAdapter
 
-        # Extract params from LoRA adapter
-        linear_in_weight = None
-        linear_out_weight = None
-        lora_dim = None
-        dropout = 0
-        dropout_position = None
-        scale = None
-        if isinstance(self.adapter, (LinearAdapter, TELinearAdapter)):
-            linear_in_weight = self.adapter.linear_in.weight
-            linear_out_weight = self.adapter.linear_out.weight
-            lora_dim = linear_out_weight.size(1)
-            dropout = getattr(self.adapter.dropout, "p", 0.0)
-            dropout_position = self.adapter.dropout_position
-            scale = self.adapter.scale
-        elif isinstance(self.adapter, ParallelLinearAdapter):
-            linear_in_weight = self.adapter.linear_in.weight
-            linear_out_weight = self.adapter.linear_out.weight
-            lora_dim = linear_out_weight.size(1)
-            dropout = getattr(self.adapter.dropout, "p", 0.0)
-            dropout_position = self.adapter.dropout_position
-            scale = self.adapter.alpha / self.adapter.dim
-        else:
+        if not isinstance(self.adapter, ParallelLinearAdapter):
             raise ValueError(f"Unsupported class for LoRA adapter ({self.adapter.__class__.__name__})")
+
+        linear_in_weight = self.adapter.linear_in.weight
+        linear_out_weight = self.adapter.linear_out.weight
+        lora_dim = linear_out_weight.size(1)
+        dropout = getattr(self.adapter.dropout, "p", 0.0)
+        dropout_position = self.adapter.dropout_position
+        scale = self.adapter.alpha / self.adapter.dim
 
         # Ops in LoRA branch
         lora_branch = te.ops.Sequential()
