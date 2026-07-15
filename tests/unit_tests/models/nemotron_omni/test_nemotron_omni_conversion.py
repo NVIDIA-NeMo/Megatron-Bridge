@@ -17,6 +17,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.activations import squared_relu
 from torch import nn
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -138,6 +139,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.sound_projection_hidden_size == 256
     assert provider.sound_config["num_mel_bins"] == 128
     assert provider.dynamic_resolution is True
+    assert provider.radio_interpolate_only_cpe is False
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
@@ -149,6 +151,28 @@ def test_nemotron_omni_provider_rejects_static_resolution():
 
     with pytest.raises(ValueError, match="only supports dynamic_resolution=True"):
         provider.finalize()
+
+
+def test_nemotron_omni_vision_projection_uses_squared_relu():
+    provider = NemotronOmniModelProvider()
+
+    vision_projection_config = provider._build_vision_projection_config(provider)
+    values = torch.tensor([-2.0, 0.0, 3.0])
+
+    assert vision_projection_config.activation_func is squared_relu
+    assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
+
+
+def test_nemotron_omni_direct_provider_preserves_legacy_cpe_default():
+    assert NemotronOmniModelProvider().radio_interpolate_only_cpe is True
+
+
+def test_nemotron_omni_vision_config_defaults_to_ten_class_tokens():
+    provider = NemotronOmniModelProvider()
+
+    vision_config = provider._build_vision_config(provider)
+
+    assert vision_config.class_token_len == 10
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():

@@ -18,7 +18,6 @@ from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import Callable, Literal, Optional
 
-import torch
 from megatron.core import parallel_state
 from megatron.core.activations import fast_gelu, squared_relu
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec
@@ -184,17 +183,19 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         """
         vision_cfg = super()._build_vision_config(language_cfg)
         vision_cfg.pipeline_model_parallel_size = 1
+        # Public Nano Omni checkpoints use ten RADIO class/register tokens;
+        # MCore's generic RADIO fallback is eight when the field is absent.
+        vision_cfg.class_token_len = self.vision_class_token_len or 10
         return vision_cfg
 
     def _build_vision_projection_config(self, language_cfg):
-        """Build vision projection MLP config, overriding activation to ReLU.
+        """Build the vision projection MLP config.
 
-        The HF Nemotron-Omni model uses plain ReLU in its vision projection
-        MLP (mlp1), not the squared_relu used by the language model. Also
-        pin to PP=1 (see :meth:`_build_vision_config`).
+        The HF Nemotron-Omni model uses squared ReLU in its vision projection
+        MLP (mlp1). Also pin to PP=1 (see :meth:`_build_vision_config`).
         """
         vision_proj_cfg = super()._build_vision_projection_config(language_cfg)
-        vision_proj_cfg.activation_func = torch.nn.functional.relu
+        vision_proj_cfg.activation_func = squared_relu
         vision_proj_cfg.pipeline_model_parallel_size = 1
         return vision_proj_cfg
 
