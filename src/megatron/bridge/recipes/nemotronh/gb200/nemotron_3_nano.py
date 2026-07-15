@@ -1,0 +1,76 @@
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""GB200 pretraining recipe for Nemotron 3 Nano."""
+
+from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
+from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
+
+
+def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the Nemotron 3 Nano BF16 pretraining config for eight GB200 GPUs.
+
+    The release-branch recipe retains the established optimizer, scheduler,
+    routing, and BF16 contracts. It applies the validated GB200 TP1/EP8
+    HybridEP topology and uses a 4,096-token sequence length for the paired
+    NeMo-CI convergence workload.
+
+    Returns:
+        GB200 BF16 pretraining configuration.
+    """
+    cfg = nemotron_3_nano_pretrain_config()
+
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    # r0.5.0 uses this field for the HybridEP communication SM budget.
+    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+
+    # The scoped graph configuration exceeds memory at the library recipe's
+    # MBS2, so retain the validated eager execution path.
+    cfg.model.cuda_graph_impl = "none"
+    clear_cuda_graph_modules(cfg.model)
+    cfg.model.use_te_rng_tracker = False
+    cfg.rng.te_rng_tracker = False
+
+    # TP communication overlap requires TP > 1 and sequence parallelism.
+    if cfg.comm_overlap is not None:
+        cfg.comm_overlap.tp_comm_overlap = False
+
+    return cfg
+
+
+# NeMo-CI appends ``_pretrain_config`` to MODEL_RECIPE_NAME. This explicit
+# alias lets the GB200 release case select the hardware recipe without changing
+# the legacy ``nemotron_3_nano_pretrain_config`` default.
+nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config
+
+
+__all__ = [
+    "nemotron_3_nano_gb200_pretrain_config",
+    "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+]
