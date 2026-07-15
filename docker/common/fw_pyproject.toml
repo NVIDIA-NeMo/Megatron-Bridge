@@ -103,7 +103,7 @@ override-dependencies = [
     "nvidia-cusparse-cu12; sys_platform == 'never'",
     "nvidia-cusparselt-cu12; sys_platform == 'never'",
     "nvidia-nccl-cu12; sys_platform == 'never'",
-    "nvidia-cudnn-frontend==1.24.0",
+    "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'", # Rely on system site packages install
     "tensorrt-llm; sys_platform == 'never'",
     "tensorrt; sys_platform == 'never'",
