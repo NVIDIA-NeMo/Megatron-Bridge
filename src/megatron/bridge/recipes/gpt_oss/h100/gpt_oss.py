@@ -17,7 +17,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import (
+from megatron.bridge.recipes.utils.dataset_utils import (
     default_openmathinstruct2_thinking_config,
     default_peft_config,
 )

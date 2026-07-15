@@ -16,21 +16,21 @@
 
 from dataclasses import replace
 from functools import partial
-from typing import Callable, List, Literal, Optional, Tuple, TypeAlias
+from typing import Any, Callable, List, Literal, Optional, Tuple, TypeAlias
 
 from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
 )
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.recipes.utils.finetune_utils import (
-    default_gsm8k_config,
-    default_openmathinstruct2_config,
-    default_openmathinstruct2_thinking_config,
-    default_squad_config,
-)
+from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.dora import DoRA
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (
     ConfigContainer,
     GPTDatasetConfig,
@@ -41,6 +41,194 @@ from megatron.bridge.training.config import (
 _BLEND_TYPE = Optional[Tuple[List[str], Optional[List[float]]]]
 _BLEND_PER_SPLIT_TYPE = Optional[List[Optional[Tuple[List[str], Optional[List[float]]]]]]
 _SPLIT_TYPE = Optional[str]
+
+
+def default_peft_config(peft_scheme: str | PEFT | None, **kwargs: Any) -> PEFT | None:
+    """Create the default PEFT configuration for a finetuning recipe.
+
+    Args:
+        peft_scheme: PEFT scheme (``"lora"``, ``"dora"``), an existing PEFT
+            instance, or ``None`` for full finetuning.
+        **kwargs: Keyword arguments passed to the selected PEFT configuration.
+
+    Returns:
+        A PEFT configuration, or ``None`` for full finetuning.
+
+    Raises:
+        ValueError: If ``peft_scheme`` is not supported.
+    """
+    if peft_scheme is None:
+        return None
+
+    if isinstance(peft_scheme, PEFT):
+        return peft_scheme
+
+    if isinstance(peft_scheme, str):
+        if peft_scheme.lower() == "none":
+            return None
+        if peft_scheme.lower() == "lora":
+            return LoRA(**kwargs)
+        if peft_scheme.lower() == "dora":
+            return DoRA(**kwargs)
+        raise ValueError(f"Unknown PEFT scheme: {peft_scheme}. Supported: 'lora', 'dora', or None")
+
+    raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
+
+
+def _text_hf_dataset_config(
+    *,
+    seq_length: int,
+    source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
+    validation_source: HFDatasetSourceConfig | None = None,
+    test_source: HFDatasetSourceConfig | None = None,
+    do_validation: bool = True,
+    do_test: bool = False,
+    enable_offline_packing: bool = False,
+    offline_packing_specs: PackedSequenceSpecs | None = None,
+    dataset_kwargs: dict[str, Any] | None = None,
+    val_proportion: float | None = None,
+    num_workers: int = 2,
+) -> GPTSFTDatasetConfig:
+    """Create an HF-backed text SFT config with optional offline packing."""
+    return GPTSFTDatasetConfig(
+        seq_length=seq_length,
+        hf_dataset=source,
+        hf_validation_dataset=validation_source,
+        hf_test_dataset=test_source,
+        hf_validation_proportion=val_proportion,
+        do_validation=do_validation,
+        do_test=do_test,
+        preprocessing=preprocessing,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        dataset_kwargs=dataset_kwargs,
+        seed=5678,
+        dataloader_type="batch",
+        num_workers=num_workers,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+    )
+
+
+def default_squad_config(
+    seq_length: int, enable_offline_packing: bool = True, pad_seq_to_mult: int = 1
+) -> GPTSFTDatasetConfig:
+    """Create the default SQuAD dataset configuration for finetuning recipes.
+
+    Args:
+        seq_length: Sequence length for the dataset.
+        enable_offline_packing: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Multiple to pad each sequence to when packing.
+
+    Returns:
+        A dataset configuration for SQuAD finetuning.
+    """
+    dataset_kwargs = {}
+    offline_packing_specs = None
+    if enable_offline_packing:
+        dataset_kwargs["pad_to_max_length"] = True
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        dataset_kwargs=dataset_kwargs,
+        val_proportion=0.1,
+        num_workers=1,
+    )
+
+
+def default_openmathinstruct2_config(
+    seq_length: int = 4096,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the default OpenMathInstruct-2 finetuning dataset.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        An OpenMathInstruct-2 dataset configuration.
+    """
+    offline_packing_specs = None
+    if enable_offline_packing:
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        val_proportion=0.05,
+        num_workers=2,
+    )
+
+
+def default_gsm8k_config(
+    seq_length: int = 2048,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the default GSM8K dataset configuration for finetuning recipes.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        A GSM8K dataset configuration.
+    """
+    offline_packing_specs = None
+    if enable_offline_packing:
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="gsm8k"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
+        do_validation=False,
+        do_test=True,
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        num_workers=2,
+    )
+
+
+def default_openmathinstruct2_thinking_config(
+    seq_length: int = 4096,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the thinking/chat variant of the OpenMathInstruct-2 dataset.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        An OpenMathInstruct-2 thinking dataset configuration.
+    """
+    config = default_openmathinstruct2_config(
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        pad_seq_to_mult=pad_seq_to_mult,
+    )
+    assert config.hf_dataset is not None
+    config.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
+    config.preprocessing = ChatSFTPreprocessingConfig()
+    return config
 
 
 def get_blend_fields_from_data_paths(

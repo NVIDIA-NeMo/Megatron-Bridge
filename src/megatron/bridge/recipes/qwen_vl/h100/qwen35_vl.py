@@ -27,7 +27,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _sft_common_vlm
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer

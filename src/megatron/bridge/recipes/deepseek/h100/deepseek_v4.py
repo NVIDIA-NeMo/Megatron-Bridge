@@ -21,7 +21,7 @@ from megatron.bridge.models.deepseek.deepseek_v4_bridge import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
+from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,

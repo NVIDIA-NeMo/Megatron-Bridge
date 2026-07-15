@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for finetune_utils Hugging Face semantic dataset defaults."""
+"""Tests for Hugging Face semantic dataset defaults."""
 
 import pytest
 
@@ -21,7 +21,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.recipes.utils.finetune_utils import (
+from megatron.bridge.recipes.utils.dataset_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
     default_openmathinstruct2_thinking_config,
