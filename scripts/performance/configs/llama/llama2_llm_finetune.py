@@ -48,13 +48,14 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.model.hidden_size = 8192
     cfg.model.ffn_hidden_size = 28672
     cfg.model.num_layers = 80
     cfg.model.num_attention_heads = 64
     cfg.model.num_query_groups = 8
     cfg.model.kv_channels = 128
-    cfg.model.normalization = "rmsnorm"
+    cfg.model.normalization = "RMSNorm"
     cfg.model.gated_linear_unit = True
     cfg.model.add_bias_linear = False
     cfg.model.bf16 = True
@@ -62,7 +63,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.params_dtype = torch.bfloat16
     cfg.model.fp8_amax_compute_algo = "max"
     cfg.model.fp8_amax_history_len = 4
-    cfg.model.fp8_dot_product_attention = 1
+    cfg.model.fp8_dot_product_attention = True
     cfg.model.num_layers_at_start_in_bf16 = 0
     cfg.model.num_layers_at_end_in_bf16 = 0
     cfg.model.apply_rope_fusion = True
@@ -79,7 +80,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.use_te_rng_tracker = True
     cfg.model.cp_comm_type = "a2a"
     cfg.model.cuda_graph_modules = []
-    cfg.model.cuda_graph_warmup_steps = 1
+    cfg.model.cuda_graph_warmup_steps = 5
     cfg.model.deallocate_pipeline_outputs = True
     cfg.model.disable_parameter_transpose_cache = True
     cfg.model.attention_dropout = 0.0
@@ -88,6 +89,11 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.embedding_init_method_std = 0.02
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = 1
+    cfg.pipeline_dtype = None
+    cfg.mixed_precision.fp8_amax_compute_algo = "max"
+    cfg.mixed_precision.fp8_amax_history_len = 4
+    cfg.mixed_precision.fp8_dot_product_attention = True
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.train.manual_gc = True
     cfg.train.manual_gc_eval = False
     cfg.train.manual_gc_interval = 10000
@@ -112,8 +118,6 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.scheduler.use_checkpoint_opt_param_scheduler = False
     cfg.dataset.seq_length = 8192
     cfg.dataset.enable_offline_packing = True
-    cfg.dataset.offline_packing_specs.packed_sequence_size = 8192
-    #cfg.dataset.dataset_root = "/data"
     cfg.dataset.dataloader_type = "batch"
     cfg.dataset.data_sharding = True
     cfg.dataset.drop_last = True
@@ -123,7 +127,6 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.dataset.do_validation = True
     cfg.dataset.do_test = False
     cfg.checkpoint.finetune = True
-    #cfg.checkpoint.pretrained_checkpoint = "/ckpt"
     cfg.checkpoint.ckpt_format = "torch_dist"
     cfg.checkpoint.fully_parallel_save = True
     cfg.checkpoint.load_optim = False

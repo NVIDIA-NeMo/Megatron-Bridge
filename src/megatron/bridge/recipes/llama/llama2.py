@@ -155,6 +155,7 @@ def llama2_70b_peft_config(
     if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
         peft_cfg.dim = 16
         peft_cfg.alpha = 32
+        peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
@@ -204,10 +205,9 @@ def llama2_70b_peft_config(
     # CUDA Graph
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
-    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.cuda_graph_warmup_steps = 5
 
     # Kernel selections
-    cfg.model.attention_backend = None
     cfg.model.cross_entropy_loss_fusion = False
     cfg.model.cross_entropy_fusion_impl = "native"
 
