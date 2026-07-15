@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 import nemo_run as run
-from arguments import build_parser, conversion_worker_args
+from arguments import build_parser, conversion_worker_args, roundtrip_task_args
 from nemo_run.config import get_nemorun_home
 from torchx.specs.api import AppState
 
@@ -71,7 +71,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--nodes must be at least 1.")
     if args.cpus_per_task is not None and args.cpus_per_task < 1:
         raise ValueError("--cpus-per-task must be at least 1.")
-    if args.distributed_timeout_minutes is not None and args.distributed_timeout_minutes < 1:
+    distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
+    if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
     if any(not value.strip() for value in args.srun_args):
         raise ValueError("--srun-arg values must not be empty.")
@@ -92,6 +93,9 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("Slurm execution requires --account and --partition.")
     elif not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
+
+    if args.command == "roundtrip" and args.device != "gpu":
+        raise ValueError("Round-trip validation requires the GPU backend.")
 
     if args.device == "cpu":
         if args.nodes != 1:
@@ -174,10 +178,15 @@ def _build_executor(
 
 
 def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
-    """Build the in-job conversion task and its unquoted display arguments."""
-    worker_args = conversion_worker_args(args)
+    """Build the in-job conversion or round-trip task and its display arguments."""
+    if args.command == "roundtrip":
+        display_args = roundtrip_task_args(args)
+        relative_task_path = Path("examples/conversion/hf_megatron_roundtrip_multi_gpu.py")
+    else:
+        display_args = conversion_worker_args(args)
+        relative_task_path = Path("scripts/conversion/run_conversion.py")
     repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
-    task_args = worker_args if args.executor == "local" else [shlex.quote(argument) for argument in worker_args]
+    task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
     if args.executor == "local":
         existing_pythonpath = os.environ.get("PYTHONPATH", "")
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM"
@@ -186,12 +195,12 @@ def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
     else:
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM:$PYTHONPATH"
     task = run.Script(
-        path=str(repo_root / "scripts/conversion/run_conversion.py"),
+        path=str(repo_root / relative_task_path),
         entrypoint=sys.executable if args.executor == "local" else "python",
         env={"PYTHONPATH": pythonpath},
         args=task_args,
     )
-    return task, worker_args
+    return task, display_args
 
 
 def _raise_on_failed_tasks(experiment: run.Experiment) -> None:

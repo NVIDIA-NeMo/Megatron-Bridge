@@ -135,3 +135,58 @@ def test_worker_args_disable_distributed_save_for_cpu_export():
     worker_args = module.conversion_worker_args(args)
 
     assert "--no-distributed-save" in worker_args
+
+
+def test_roundtrip_aliases_and_task_args():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "roundtrip",
+            "--gpus-per-node",
+            "8",
+            "--hf-model-id",
+            "hf/model",
+            "--megatron-load-path",
+            "/megatron",
+            "--megatron-save-path",
+            "/megatron-save",
+            "--output-dir",
+            "/hf-output",
+            "--tp",
+            "2",
+            "--pp",
+            "1",
+            "--ep",
+            "4",
+            "--etp",
+            "2",
+            "--trust-remote-code",
+            "--not-strict",
+            "--skip-save",
+        ]
+    )
+
+    assert args.device == "gpu"
+    assert args.hf_model == "hf/model"
+    assert args.megatron_load_path == "/megatron"
+    assert module.roundtrip_task_args(args) == [
+        "--hf-model-id",
+        "hf/model",
+        "--tp",
+        "2",
+        "--pp",
+        "1",
+        "--ep",
+        "4",
+        "--etp",
+        "2",
+        "--megatron-load-path",
+        "/megatron",
+        "--megatron-save-path",
+        "/megatron-save",
+        "--output-dir",
+        "/hf-output",
+        "--trust-remote-code",
+        "--not-strict",
+        "--skip-save",
+    ]

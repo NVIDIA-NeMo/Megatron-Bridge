@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 # Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -53,6 +54,7 @@ from rich.table import Table
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
@@ -80,6 +82,21 @@ IGNORE_PRECISION_PARAMS = [
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
 
+def _configure_slurm_distributed_environment() -> None:
+    """Translate native Slurm task variables into PyTorch distributed variables."""
+    if os.environ.get("WORLD_SIZE") is not None or os.environ.get("SLURM_NTASKS") is None:
+        return
+    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+    os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
+    master_addr = resolve_slurm_master_addr()
+    master_port = resolve_slurm_master_port()
+    if master_addr is not None:
+        os.environ["MASTER_ADDR"] = master_addr
+    if master_port is not None:
+        os.environ["MASTER_PORT"] = str(master_port)
+
+
 @torchrun_main
 def main(
     hf_model_id: str = HF_MODEL_ID,
@@ -97,6 +114,7 @@ def main(
     rtol: float = 1e-5,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
+    _configure_slurm_distributed_environment()
     if os.environ.get("WORLD_SIZE") is None:
         console.print("This script must be launched with torchrun. Please run:")
         console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
@@ -311,6 +329,7 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        strict=not args.not_strict,
         skip_save=args.skip_save,
         atol=args.atol,
         rtol=args.rtol,

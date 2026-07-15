@@ -18,6 +18,42 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(scope="class")
+def llama_megatron_checkpoint(tmp_path_factory):
+    """Create one Megatron checkpoint for the round-trip load-path cases."""
+    repo_root = Path(__file__).resolve().parents[4]
+    checkpoint_path = tmp_path_factory.mktemp("roundtrip") / "megatron_checkpoint"
+    result = subprocess.run(
+        [
+            "python",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
+            "--parallel-mode",
+            "scripts/conversion/run_conversion.py",
+            "import",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "meta-llama/Llama-3.2-1B",
+            "--megatron-path",
+            str(checkpoint_path),
+            "--torch-dtype",
+            "bfloat16",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert result.returncode == 0, (
+        f"Round-trip fixture import failed with return code {result.returncode}\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    return checkpoint_path
+
+
 class TestMultiGPUConversion:
     """
     Test multi-GPU conversion from HuggingFace models with different parallelism configurations.
@@ -25,13 +61,21 @@ class TestMultiGPUConversion:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "tp,pp,test_name",
+        "tp,pp,test_name,use_load_path",
         [
-            (2, 1, "TP"),
-            (1, 2, "PP"),
+            (2, 1, "TP", True),
+            (1, 2, "PP", False),
         ],
     )
-    def test_conversion_parallelism(self, tmp_path, tp, pp, test_name):
+    def test_conversion_parallelism(
+        self,
+        tmp_path,
+        tp,
+        pp,
+        test_name,
+        use_load_path,
+        llama_megatron_checkpoint,
+    ):
         """
         Test model conversion with different parallelism configurations.
 
@@ -46,20 +90,17 @@ class TestMultiGPUConversion:
         test_output_dir = tmp_path / test_name
         test_output_dir.mkdir(exist_ok=True)
 
-        # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration
+        repo_root = Path(__file__).resolve().parents[4]
+        # Run hf_megatron_roundtrip_multi_gpu.py through the public launcher.
         cmd = [
-            "python",
-            "-m",
-            "torch.distributed.run",
-            "--nproc_per_node=2",
-            "--nnodes=1",
-            "-m",
-            "coverage",
-            "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
-            "--parallel-mode",
-            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            str(repo_root / "scripts/conversion/convert.sh"),
+            "roundtrip",
+            "--executor",
+            "local",
+            "--device",
+            "gpu",
+            "--gpus-per-node",
+            "2",
             "--hf-model-id",
             "meta-llama/Llama-3.2-1B",
             "--output-dir",
@@ -69,11 +110,11 @@ class TestMultiGPUConversion:
             "--pp",
             str(pp),
         ]
+        if use_load_path:
+            cmd.extend(["--megatron-load-path", str(llama_megatron_checkpoint)])
 
         try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
-            )
+            result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
 
             # Check that the conversion completed successfully
             if result.returncode != 0:

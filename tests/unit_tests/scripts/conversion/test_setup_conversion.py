@@ -86,6 +86,12 @@ def _parse_export(module, *options):
     )
 
 
+def _parse_roundtrip(module, *options):
+    return module.build_parser(include_execution=True).parse_args(
+        ["roundtrip", "--hf-model-id", "hf/model", "--gpus-per-node", "2", *options]
+    )
+
+
 def test_setup_import_is_lightweight(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -175,6 +181,14 @@ def test_gpu_backend_allows_etp_topology_independent_from_tp():
     module._validate_args(args)
 
 
+def test_roundtrip_rejects_cpu_backend():
+    module = _load_setup_conversion_module()
+    args = _parse_roundtrip(module, "--device", "cpu")
+
+    with pytest.raises(ValueError, match="requires the GPU backend"):
+        module._validate_args(args)
+
+
 def test_local_cpu_executor_uses_one_process_without_launcher():
     module = _load_setup_conversion_module()
     captured = {}
@@ -202,6 +216,43 @@ def test_local_gpu_executor_uses_nemo_run_torchrun():
 
     assert executor.ntasks_per_node == 4
     assert executor.launcher is launcher
+
+
+def test_roundtrip_task_uses_multi_gpu_example():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse_roundtrip(
+        module,
+        "--megatron-load-path",
+        "/checkpoint",
+        "--tp",
+        "2",
+        "--skip-save",
+    )
+    module._validate_args(args)
+
+    task, display_args = module._build_task(args)
+
+    assert task.path == str(REPO_ROOT / "examples/conversion/hf_megatron_roundtrip_multi_gpu.py")
+    task_path = Path(task.path)
+    assert task_path.stat().st_mode & 0o111
+    assert task_path.read_text().startswith("#!/usr/bin/env python3\n")
+    assert task.args == display_args
+    assert task.args == [
+        "--hf-model-id",
+        "hf/model",
+        "--tp",
+        "2",
+        "--pp",
+        "1",
+        "--ep",
+        "1",
+        "--etp",
+        "1",
+        "--megatron-load-path",
+        "/checkpoint",
+        "--skip-save",
+    ]
 
 
 def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):

@@ -9,8 +9,9 @@ Slurm submission and selects one of two conversion backends:
 - `--device gpu`: distributed conversion with one process per GPU and TP, PP,
   EP, and ETP support.
 
-Run `./scripts/conversion/convert.sh import --help` or
-`./scripts/conversion/convert.sh export --help` for the complete CLI.
+Run `./scripts/conversion/convert.sh import --help`,
+`./scripts/conversion/convert.sh export --help`, or
+`./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
 ## Local CPU conversion
 
@@ -76,6 +77,31 @@ cluster may use:
 ```
 
 The `=` form is required when `ARG` begins with `-`.
+
+## Distributed round-trip validation
+
+The `roundtrip` command runs
+`examples/conversion/hf_megatron_roundtrip_multi_gpu.py` through the same
+NeMo Run local or Slurm executor. It compares weights after the Hugging Face →
+Megatron → Hugging Face conversion and requires the GPU backend.
+
+```bash
+./scripts/conversion/convert.sh roundtrip \
+  --executor local \
+  --device gpu \
+  --gpus-per-node 8 \
+  --hf-model-id Qwen/Qwen3-30B-A3B \
+  --megatron-load-path /workspace/models/qwen3-30b-a3b/iter_0000000 \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --trust-remote-code \
+  --skip-save
+```
+
+`--hf-model` and `--hf-model-id` are aliases, as are `--megatron-path` and
+`--megatron-load-path`. Omit the Megatron load path to validate a direct
+in-memory conversion from the Hugging Face model. Omit `--skip-save` to write
+the round-tripped Hugging Face model, optionally under `--output-dir`, and use
+`--megatron-save-path` to also save a Megatron checkpoint.
 
 ## CPU conversion on Slurm
 
