@@ -26,17 +26,23 @@ from megatron.bridge.training.config import ConfigContainer
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return the Nemotron 3 Nano pre-training config for 8 H100 GPUs.
 
-    TP=4 keeps the 8-GPU library recipe within H100 memory while retaining the
-    perf recipe's EP=8 layout and HybridEP dispatcher. Selective recompute keeps
-    that topology practical. CUDA graphs and TP communication overlap remain
-    disabled to preserve post-optimizer memory headroom on 80 GB H100s.
+    TP=8 keeps the perf recipe's PP=1, CP=1, EP=8, ETP=1, HybridEP dispatcher,
+    selective recompute, and native vocab-parallel cross entropy. TP
+    communication overlap is disabled because its persistent userbuffers
+    exhaust checkpoint restore headroom on 80 GB H100s. The compiled native
+    cross-entropy wrapper is disabled because its temporary workspace does not
+    fit after FP32 optimizer state allocation; the underlying native loss is
+    unchanged. Unused CUDA cache is released after each optimizer step so the
+    first lazy MoE metric collective has allocation headroom after checkpoint
+    resume. Validation uses microbatch one without changing its global batch.
+    CUDA graphs remain disabled to preserve general-training headroom.
 
     Returns:
         ConfigContainer: H100 BF16 pre-training configuration.
     """
     cfg = _nemotron_3_nano_pretrain_reference_config()
 
-    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
@@ -51,9 +57,14 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
 
     cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.cross_entropy_loss_fusion = False
 
     cfg.comm_overlap.tp_comm_overlap = False
+    cfg.train.empty_unused_memory_level = 2
+    cfg.validation.eval_micro_batch_size = 1
 
     return cfg
 

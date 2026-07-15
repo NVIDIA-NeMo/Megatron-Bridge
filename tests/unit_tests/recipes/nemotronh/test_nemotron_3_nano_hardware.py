@@ -17,6 +17,7 @@
 from collections.abc import Callable
 
 import pytest
+import torch
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
@@ -52,8 +53,6 @@ _APPROVED_PERF_FIELDS = (
     "model.moe_hybridep_num_blocks_permute",
     "model.moe_hybridep_num_blocks_unpermute",
     "model.moe_hybridep_num_sms_preprocessing",
-    "model.recompute_granularity",
-    "model.recompute_modules",
     "model.transformer_impl",
     "model.attention_backend",
     "model.moe_router_fusion",
@@ -61,7 +60,6 @@ _APPROVED_PERF_FIELDS = (
     "model.moe_grouped_gemm",
     "model.masked_softmax_fusion",
     "model.use_fused_weighted_squared_relu",
-    "model.cross_entropy_loss_fusion",
     "model.fine_grained_activation_offloading",
     "model.offload_modules",
     "ddp.overlap_grad_reduce",
@@ -99,9 +97,14 @@ def _assert_convergence_sensitive_model_contract(config: ConfigContainer) -> Non
     assert config.model.moe_router_num_groups == 1
     assert config.model.moe_router_group_topk == 1
     assert config.model.moe_router_score_function == "sigmoid"
+    assert config.model.moe_router_pre_softmax is False
+    assert config.model.moe_router_topk_limited_devices is None
     assert config.model.moe_router_dtype == "fp32"
     assert config.model.moe_router_enable_expert_bias is True
     assert config.model.moe_router_bias_update_rate == 1e-3
+    assert config.model.moe_enable_routing_replay is False
+    assert config.model.moe_apply_probs_on_input is False
+    assert config.model.moe_shared_expert_gate is False
 
     assert config.model.moe_token_dropping is False
     assert config.model.moe_expert_capacity_factor is None
@@ -137,16 +140,29 @@ def test_pretrain_approved_fields_match_perf_reference(
 
 @pytest.mark.unit
 def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
-    """The 8-GPU library recipe needs TP beyond its 16-GPU perf reference."""
+    """The 8-GPU library needs TP and memory-safe overlap beyond its perf reference."""
     library_config = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
     perf_config = h100_perf_config()
 
     assert perf_config.model.tensor_model_parallel_size == 1
     assert perf_config.model.sequence_parallel is False
+    assert perf_config.model.recompute_granularity == "selective"
     assert perf_config.model.recompute_modules == ["moe", "layernorm"]
-    assert library_config.model.tensor_model_parallel_size == 4
+    assert library_config.model.tensor_model_parallel_size == 8
     assert library_config.model.sequence_parallel is True
-    assert library_config.model.recompute_modules == ["moe", "layernorm"]
+    assert library_config.model.recompute_granularity == perf_config.model.recompute_granularity == "selective"
+    assert library_config.model.recompute_method is perf_config.model.recompute_method is None
+    assert library_config.model.recompute_num_layers is perf_config.model.recompute_num_layers is None
+    assert library_config.model.recompute_modules == perf_config.model.recompute_modules == ["moe", "layernorm"]
+    assert library_config.model.cross_entropy_loss_fusion is False
+    assert perf_config.model.cross_entropy_loss_fusion is True
+    assert library_config.model.cross_entropy_fusion_impl == "native"
+    assert library_config.train.empty_unused_memory_level == 2
+    assert perf_config.train.empty_unused_memory_level == 0
+    assert library_config.validation.eval_micro_batch_size == 1
+    assert perf_config.validation.eval_micro_batch_size is None
+    assert library_config.validation.eval_global_batch_size is perf_config.validation.eval_global_batch_size is None
+    assert library_config.optimizer.optimizer_cpu_offload is perf_config.optimizer.optimizer_cpu_offload is False
     assert library_config.comm_overlap.tp_comm_overlap is False
     assert perf_config.comm_overlap.tp_comm_overlap is True
     assert perf_config.model.cuda_graph_impl == "transformer_engine"
@@ -167,7 +183,15 @@ def test_gb200_pretrain_uses_memory_safe_execution_config() -> None:
 
     assert library_config.model.tensor_model_parallel_size == perf_config.model.tensor_model_parallel_size == 1
     assert library_config.model.sequence_parallel is perf_config.model.sequence_parallel is False
+    assert library_config.model.recompute_granularity is perf_config.model.recompute_granularity is None
+    assert library_config.model.recompute_method is perf_config.model.recompute_method is None
+    assert library_config.model.recompute_num_layers is perf_config.model.recompute_num_layers is None
     assert library_config.model.recompute_modules == perf_config.model.recompute_modules is None
+    assert library_config.model.cross_entropy_loss_fusion is perf_config.model.cross_entropy_loss_fusion is True
+    assert library_config.model.cross_entropy_fusion_impl == "native"
+    assert library_config.train.empty_unused_memory_level is perf_config.train.empty_unused_memory_level == 0
+    assert library_config.validation.eval_micro_batch_size is perf_config.validation.eval_micro_batch_size is None
+    assert library_config.optimizer.optimizer_cpu_offload is False
     assert library_config.comm_overlap.tp_comm_overlap is False
     assert perf_config.comm_overlap.tp_comm_overlap is True
     assert perf_config.model.cuda_graph_impl == "transformer_engine"
@@ -216,6 +240,10 @@ def test_pretrain_excludes_benchmark_and_convergence_sensitive_overrides(
     assert library_config.optimizer.lr == 1.6e-3
     assert library_config.optimizer.min_lr == 1.6e-5
     assert library_config.scheduler.lr_warmup_iters == 333
+    assert library_config.optimizer.main_grads_dtype == torch.float32
+    assert library_config.optimizer.main_params_dtype == torch.float32
+    assert library_config.optimizer.exp_avg_dtype == torch.float32
+    assert library_config.optimizer.exp_avg_sq_dtype == torch.float32
     assert library_config.mixed_precision == "bf16_mixed"
     assert perf_config.mixed_precision.bf16 is True
     assert perf_config.mixed_precision.fp8 is None
@@ -285,6 +313,7 @@ def test_finetune_recipes_retain_safe_execution_defaults(
     assert config.optimizer.lr == learning_rate
     assert config.optimizer.min_lr == 0.0
     assert config.scheduler.lr_warmup_iters == 50
+    assert config.optimizer.optimizer_cpu_offload is False
 
     assert config.ddp.overlap_grad_reduce is True
     assert config.ddp.overlap_param_gather is True

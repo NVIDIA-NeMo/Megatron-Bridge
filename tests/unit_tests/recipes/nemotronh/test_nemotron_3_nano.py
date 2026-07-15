@@ -27,6 +27,7 @@ import os
 import tempfile
 
 import pytest
+import torch
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
@@ -54,7 +55,7 @@ class TestNemotron3NanoPretrain:
         assert isinstance(config.model, HybridModelProvider)
 
         # Check model configuration defaults
-        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.tensor_model_parallel_size == 8
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
 
@@ -101,7 +102,7 @@ class TestNemotron3NanoPretrain:
         assert config.model.moe_router_fusion is False
         assert config.model.moe_permute_fusion is True
         assert config.model.moe_grouped_gemm is True
-        assert config.model.cross_entropy_loss_fusion is True
+        assert config.model.cross_entropy_loss_fusion is False
         assert config.model.cross_entropy_fusion_impl == "native"
 
     def test_pretrain_config_optimizer_settings(self):
@@ -116,8 +117,11 @@ class TestNemotron3NanoPretrain:
 
         # Verify precision settings
         assert config.optimizer.use_precision_aware_optimizer is False
-        assert config.optimizer.main_grads_dtype is not None
-        assert config.optimizer.main_params_dtype is not None
+        assert config.optimizer.main_grads_dtype == torch.float32
+        assert config.optimizer.main_params_dtype == torch.float32
+        assert config.optimizer.exp_avg_dtype == torch.float32
+        assert config.optimizer.exp_avg_sq_dtype == torch.float32
+        assert config.optimizer.optimizer_cpu_offload is False
 
     def test_pretrain_config_checkpoint_settings(self):
         """Test checkpoint settings for pretrain config."""

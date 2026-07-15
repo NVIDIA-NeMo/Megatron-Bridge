@@ -57,6 +57,7 @@ NEMOTRON_3_NANO_PRETRAIN_RECIPES = [
             "hidden_size": 672,
             "num_layers": 3,
             "hybrid_layer_pattern": "M*E",
+            "sequence_parallel": False,
             "num_moe_experts": 16,
             "moe_token_dispatcher_type": "alltoall",
             "moe_shared_expert_overlap": True,

@@ -15,13 +15,18 @@
 """Tests for setup_optimizer in optim.py."""
 
 import builtins
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 import torch
 from megatron.core.optimizer import OptimizerConfig, ParamGroupOverride, ParamKey
 
 from megatron.bridge.training.config import SchedulerConfig
-from megatron.bridge.training.optim import sync_hybrid_device_optimizer_fp32_master_copies
+from megatron.bridge.training.optim import (
+    sync_hybrid_device_optimizer_fp32_master_copies,
+    use_memory_efficient_fp32_optimizer_state_loading,
+)
 
 
 class TestSetupOptimizerMuP:
@@ -155,6 +160,20 @@ class _FakeHDO:
     """Stand-in for HybridDeviceOptimizer used to satisfy the isinstance check."""
 
 
+class _FakeFusedAdam(torch.optim.Optimizer):
+    """CPU stand-in for TE FusedAdam with an observable override loader."""
+
+    def __init__(self, param: torch.Tensor, *, master_weights: bool = False) -> None:
+        super().__init__([param], {"lr": 1e-3})
+        self.master_weights = master_weights
+        self.name_to_dtype_map = {"exp_avg": torch.float32, "exp_avg_sq": torch.float32}
+        self.override_load_calls = 0
+
+    def load_state_dict(self, state_dict: dict) -> None:
+        self.override_load_calls += 1
+        super().load_state_dict(state_dict)
+
+
 class _FakeParamRange:
     def __init__(self, start: int, end: int):
         self.start = start
@@ -168,6 +187,8 @@ class _FakeDistribOpt:
         self.optimizer = inner
         self.model_float16_groups = [[model_param]]
         self.shard_fp32_from_float16_groups = [[shard_main_param]]
+        self.ddp_config = SimpleNamespace(use_megatron_fsdp=False)
+        self.config = SimpleNamespace(use_precision_aware_optimizer=False)
         self._numel = model_param.numel()
 
     def _get_model_param_range_map(self, _param: torch.Tensor) -> dict:
@@ -186,6 +207,152 @@ class _ChainedOpt:
 
     def __init__(self, sub_opts: list[object]) -> None:
         self.chained_optimizers = sub_opts
+
+
+class TestMemoryEfficientFp32OptimizerStateLoading:
+    """Tests for the scoped TE FusedAdam checkpoint-load fast path."""
+
+    @staticmethod
+    def _distributed_optimizer(
+        *,
+        param_dtype: torch.dtype = torch.float32,
+        master_weights: bool = False,
+    ) -> tuple[_FakeDistribOpt, _FakeFusedAdam, torch.Tensor]:
+        param = torch.zeros(4, dtype=param_dtype)
+        inner = _FakeFusedAdam(param, master_weights=master_weights)
+        distributed = _FakeDistribOpt(
+            model_param=torch.zeros(4, dtype=torch.bfloat16),
+            shard_main_param=param,
+            inner=inner,
+        )
+        return distributed, inner, param
+
+    @staticmethod
+    def _state_dict(inner: _FakeFusedAdam, *, dtype: torch.dtype = torch.float32) -> tuple[dict, torch.Tensor]:
+        state_dict = inner.state_dict()
+        exp_avg = torch.ones(4, dtype=dtype)
+        state_dict["state"] = {
+            0: {
+                "exp_avg": exp_avg,
+                "exp_avg_sq": torch.full((4,), 2.0, dtype=dtype),
+            }
+        }
+        return state_dict, exp_avg
+
+    def test_uses_base_loader_without_reallocating_fp32_state(self):
+        """FP32 distributed shards adopt the supplied state tensors directly."""
+        distributed, inner, param = self._distributed_optimizer()
+        state_dict, exp_avg = self._state_dict(inner)
+
+        with (
+            patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam),
+            patch("megatron.bridge.training.optim.torch.cuda.empty_cache") as empty_cache,
+        ):
+            with use_memory_efficient_fp32_optimizer_state_loading(distributed) as patched:
+                inner.load_state_dict(state_dict)
+                empty_cache.assert_not_called()
+
+            assert patched == 1
+            assert inner.override_load_calls == 0
+            assert inner.state[param]["exp_avg"] is exp_avg
+            empty_cache.assert_called_once_with()
+
+            inner.load_state_dict(state_dict)
+
+        assert inner.override_load_calls == 1
+
+    def test_falls_back_for_non_fp32_state(self):
+        """A non-FP32 state dict retains Transformer Engine's loader."""
+        distributed, inner, _ = self._distributed_optimizer()
+        state_dict, _ = self._state_dict(inner, dtype=torch.bfloat16)
+
+        with patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam):
+            with use_memory_efficient_fp32_optimizer_state_loading(distributed) as patched:
+                inner.load_state_dict(state_dict)
+
+        assert patched == 1
+        assert inner.override_load_calls == 1
+
+    def test_falls_back_for_unknown_state_shape(self):
+        """Missing or additional state entries retain Transformer Engine's loader."""
+        distributed, inner, _ = self._distributed_optimizer()
+        state_dict, _ = self._state_dict(inner)
+        state_dict["state"][0]["step"] = torch.tensor(2.0)
+
+        with patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam):
+            with use_memory_efficient_fp32_optimizer_state_loading(distributed) as patched:
+                inner.load_state_dict(state_dict)
+
+        assert patched == 1
+        assert inner.override_load_calls == 1
+
+    @pytest.mark.parametrize(
+        ("param_dtype", "master_weights"),
+        [(torch.bfloat16, False), (torch.float32, True)],
+    )
+    def test_does_not_patch_incompatible_fused_adam(
+        self,
+        param_dtype: torch.dtype,
+        master_weights: bool,
+    ):
+        """Mixed-precision parameters and separate master weights stay on TE's path."""
+        distributed, inner, _ = self._distributed_optimizer(
+            param_dtype=param_dtype,
+            master_weights=master_weights,
+        )
+
+        with patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam):
+            with use_memory_efficient_fp32_optimizer_state_loading(distributed) as patched:
+                pass
+
+        assert patched == 0
+        assert "load_state_dict" not in inner.__dict__
+
+    @pytest.mark.parametrize("incompatible_mode", ["megatron_fsdp", "precision_aware"])
+    def test_does_not_patch_other_distributed_optimizer_modes(self, incompatible_mode: str):
+        """FSDP and precision-aware distributed optimizers retain TE's loader."""
+        distributed, inner, _ = self._distributed_optimizer()
+        if incompatible_mode == "megatron_fsdp":
+            distributed.ddp_config.use_megatron_fsdp = True
+        else:
+            distributed.config.use_precision_aware_optimizer = True
+
+        with patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam):
+            with use_memory_efficient_fp32_optimizer_state_loading(distributed) as patched:
+                pass
+
+        assert patched == 0
+        assert "load_state_dict" not in inner.__dict__
+
+    def test_patches_every_eligible_chained_optimizer(self):
+        """Dense and expert DistributedOptimizers both use the scoped loader."""
+        distributed_optimizers = [self._distributed_optimizer()[0] for _ in range(2)]
+
+        with patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam):
+            with use_memory_efficient_fp32_optimizer_state_loading(_ChainedOpt(distributed_optimizers)) as patched:
+                assert all("load_state_dict" in opt.optimizer.__dict__ for opt in distributed_optimizers)
+
+        assert patched == 2
+        assert all("load_state_dict" not in opt.optimizer.__dict__ for opt in distributed_optimizers)
+
+    def test_restores_original_loader_after_exception(self):
+        """Checkpoint failures cannot leak the temporary loader into training."""
+        distributed, inner, _ = self._distributed_optimizer()
+
+        with patch("transformer_engine.pytorch.optimizers.FusedAdam", _FakeFusedAdam):
+            with pytest.raises(RuntimeError, match="checkpoint failure"):
+                with use_memory_efficient_fp32_optimizer_state_loading(distributed):
+                    raise RuntimeError("checkpoint failure")
+
+        assert "load_state_dict" not in inner.__dict__
+
+    def test_none_optimizer_is_noop(self):
+        """A missing optimizer is a no-op."""
+        with patch("megatron.bridge.training.optim.torch.cuda.empty_cache") as empty_cache:
+            with use_memory_efficient_fp32_optimizer_state_loading(None) as patched:
+                assert patched == 0
+
+        empty_cache.assert_not_called()
 
 
 class TestSyncHybridDeviceOptimizerFp32MasterCopies:
