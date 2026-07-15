@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import importlib.util
+import io
+import logging
 import sys
 import types
 from pathlib import Path
@@ -142,3 +144,25 @@ def test_cpu_worker_rejects_export_weight_dtype():
                 "float32",
             ]
         )
+
+
+def test_worker_logging_replaces_preexisting_configuration(monkeypatch):
+    module, _, _ = _load_run_conversion_module()
+    stream = io.StringIO()
+    root_logger = logging.getLogger()
+    previous_handlers = root_logger.handlers[:]
+    previous_level = root_logger.level
+    root_logger.handlers = [logging.NullHandler()]
+    root_logger.setLevel(logging.WARNING)
+    monkeypatch.setattr(sys, "stderr", stream)
+
+    try:
+        module._configure_logging()
+        module.logger.info("CPU import complete: /checkpoint")
+    finally:
+        for handler in root_logger.handlers:
+            handler.close()
+        root_logger.handlers = previous_handlers
+        root_logger.setLevel(previous_level)
+
+    assert stream.getvalue() == "CPU import complete: /checkpoint\n"

@@ -25,6 +25,11 @@ from arguments import build_parser
 logger = logging.getLogger(__name__)
 
 
+def _configure_logging() -> None:
+    """Configure deterministic logging for the conversion worker CLI."""
+    logging.basicConfig(level=logging.INFO, format="%(message)s", force=True)
+
+
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate worker arguments for direct invocations and submitted jobs."""
     for name in ("tp", "pp", "ep", "etp"):
@@ -109,5 +114,5 @@ def main(argv: list[str] | None = None) -> None:
 
 
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.INFO, format="%(message)s")
+    _configure_logging()
     main()
