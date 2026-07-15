@@ -638,7 +638,7 @@ def _model_merge_row_lengths(
     return expanded_lengths
 
 
-def _pack_multimodal_rows_to_mcore_thd(
+def _pack_omni_rows_to_mcore_thd(
     batch: dict[str, Any],
     post_merge_row_lengths: torch.Tensor,
     *,
@@ -647,30 +647,30 @@ def _pack_multimodal_rows_to_mcore_thd(
     pad_to_multiple_of: int,
     pad_token_id: int,
 ) -> None:
-    """Pack compact Omni rows using their lengths after modality embedding merge."""
+    """Pack compact Omni rows using their lengths after model-side embedding merge."""
     if pad_to_multiple_of < 1:
         raise ValueError("in_batch_packing_pad_to_multiple_of must be >= 1.")
     if pad_to_max_length:
         if sequence_length is None:
-            raise ValueError("pad_to_max_length requires sequence_length for Nemotron Omni multimodal packing.")
+            raise ValueError("pad_to_max_length requires sequence_length for Nemotron Omni packing.")
         if sequence_length % pad_to_multiple_of != 0:
             raise ValueError(
-                "Nemotron Omni fixed-width multimodal packing requires sequence_length to be divisible by "
+                "Nemotron Omni fixed-width packing requires sequence_length to be divisible by "
                 f"in_batch_packing_pad_to_multiple_of; got {sequence_length} and {pad_to_multiple_of}."
             )
 
     tokens = batch["input_ids"]
     attention_mask = batch.get("attention_mask")
     if not isinstance(tokens, torch.Tensor) or tokens.dim() != 2:
-        raise ValueError("Nemotron Omni multimodal packing expects 2D input_ids.")
+        raise ValueError("Nemotron Omni packing expects 2D input_ids.")
     if not isinstance(attention_mask, torch.Tensor) or attention_mask.shape != tokens.shape:
-        raise ValueError("Nemotron Omni multimodal packing requires an attention mask matching input_ids.")
+        raise ValueError("Nemotron Omni packing requires an attention mask matching input_ids.")
 
     active_mask = attention_mask.to(device=tokens.device, dtype=torch.bool)
     compact_lengths = active_mask.sum(dim=1).to(dtype=torch.long)
     positions = torch.arange(tokens.size(1), device=tokens.device).unsqueeze(0)
     if not torch.equal(active_mask, positions < compact_lengths.unsqueeze(1)):
-        raise ValueError("Nemotron Omni multimodal packing requires right-padded input rows.")
+        raise ValueError("Nemotron Omni packing requires right-padded input rows.")
     if bool((compact_lengths == 0).any()):
         raise ValueError("Cannot pack a batch containing an empty Nemotron Omni sequence row.")
 
@@ -678,20 +678,20 @@ def _pack_multimodal_rows_to_mcore_thd(
     if merged_lengths.numel() != tokens.size(0):
         raise ValueError("Post-merge row lengths must contain one entry per Nemotron Omni input row.")
     if bool((merged_lengths < compact_lengths).any()):
-        raise ValueError("Nemotron Omni modality metadata cannot shrink a compact sequence row.")
+        raise ValueError("Nemotron Omni model-merge metadata cannot shrink a compact sequence row.")
 
     padded_merged_lengths = ((merged_lengths + pad_to_multiple_of - 1) // pad_to_multiple_of) * pad_to_multiple_of
     total_merged_length = int(padded_merged_lengths.sum().item())
     if sequence_length is not None and total_merged_length > sequence_length:
         raise ValueError(
-            "Nemotron Omni packed multimodal rows exceed configured sequence_length after modality merge and "
+            "Nemotron Omni packed rows exceed configured sequence_length after model merge and "
             f"alignment: got per-row lengths {merged_lengths.tolist()}, aligned lengths "
             f"{padded_merged_lengths.tolist()}, and total {total_merged_length} with "
             f"sequence_length={sequence_length}."
         )
     if pad_to_max_length:
         assert sequence_length is not None
-        # MCore widens multimodal rows to the model sequence length for pipeline
+        # MCore widens Omni rows to the model sequence length for pipeline
         # parallelism. Make that tail part of the last physical THD segment so
         # its tensor width, padded boundary, total_tokens, and seq_idx agree.
         padded_merged_lengths[-1] += sequence_length - total_merged_length
@@ -709,7 +709,7 @@ def _pack_multimodal_rows_to_mcore_thd(
     for key, pad_value in sequence_pad_values.items():
         tensor = batch.get(key)
         if not isinstance(tensor, torch.Tensor) or tensor.shape != tokens.shape:
-            raise ValueError(f"Nemotron Omni multimodal packing requires '{key}' to match input_ids.")
+            raise ValueError(f"Nemotron Omni packing requires '{key}' to match input_ids.")
         packed_tensors[key] = torch.full(
             (1, compact_total_length),
             pad_value,
@@ -904,9 +904,10 @@ def nemotron_omni_collate_fn(
     pad_token_id = processor.tokenizer.pad_token_id
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id or 0
-    if enable_in_batch_packing and has_modalities:
-        assert post_merge_row_lengths is not None
-        _pack_multimodal_rows_to_mcore_thd(
+    if enable_in_batch_packing:
+        if post_merge_row_lengths is None:
+            post_merge_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
+        _pack_omni_rows_to_mcore_thd(
             batch,
             post_merge_row_lengths,
             sequence_length=sequence_length,

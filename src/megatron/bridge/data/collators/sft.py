@@ -129,6 +129,8 @@ def _build_text_sft_batch(
             pad_token_id=0 if pad_token_id is None else int(pad_token_id),
             ignore_index=ignore_index,
             pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+            packed_sequence_length=max_length,
+            pad_to_packed_sequence_length=pad_to_max_length,
         )
         batch["tokens"] = batch["input_ids"]
         batch["metadata"] = metadata
