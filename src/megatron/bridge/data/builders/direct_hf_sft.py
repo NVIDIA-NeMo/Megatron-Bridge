@@ -81,14 +81,10 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(self.preprocessing)
         self.source.validate()
-        if self.validation_source is not None:
+        if self.do_validation and self.validation_source is not None:
             self.validation_source.validate()
-        if self.test_source is not None:
+        if self.do_test and self.test_source is not None:
             self.test_source.validate()
-        if not self.do_validation and self.validation_source is not None:
-            raise ValueError("validation_source requires do_validation=True.")
-        if not self.do_test and self.test_source is not None:
-            raise ValueError("test_source requires do_test=True.")
         if self.hf_processor_path is not None and not self.hf_processor_path.strip():
             raise ValueError("hf_processor_path must be a non-empty string when set.")
         if self.pad_to_multiple_of <= 0:

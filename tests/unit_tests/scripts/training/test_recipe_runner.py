@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import sys
 from types import ModuleType, SimpleNamespace
 from unittest.mock import Mock
 
@@ -164,6 +165,41 @@ def test_sync_offline_packing_alignment_preserves_stricter_user_multiple(recipe_
     recipe_runner.sync_offline_packing_alignment(config)
 
     assert packing_specs.pad_seq_to_mult == 10
+
+
+@pytest.mark.parametrize("packing_specs", [None, {"pad_seq_to_mult": 3}])
+def test_sync_offline_packing_alignment_materializes_direct_config_overrides(
+    recipe_runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    packing_specs: dict[str, int] | None,
+) -> None:
+    class PackedSequenceSpecs:
+        def __init__(self, *, pad_seq_to_mult: int = 1) -> None:
+            self.packed_sequence_size = -1
+            self.pad_seq_to_mult = pad_seq_to_mult
+
+    packing_module = ModuleType("megatron.bridge.data.packing")
+    packing_module.PackedSequenceSpecs = PackedSequenceSpecs
+    monkeypatch.setitem(sys.modules, "megatron.bridge.data.packing", packing_module)
+    config = SimpleNamespace(
+        dataset=SimpleNamespace(
+            enable_offline_packing=True,
+            offline_packing_specs=packing_specs,
+            seq_length=2048,
+        ),
+        model=SimpleNamespace(
+            context_parallel_size=1,
+            tensor_model_parallel_size=1,
+            sequence_parallel=False,
+        ),
+        dist=SimpleNamespace(eval_context_parallel_size=None),
+    )
+
+    recipe_runner.sync_offline_packing_alignment(config)
+
+    assert isinstance(config.dataset.offline_packing_specs, PackedSequenceSpecs)
+    assert config.dataset.offline_packing_specs.packed_sequence_size == 2048
+    assert config.dataset.offline_packing_specs.pad_seq_to_mult == (3 if packing_specs else 1)
 
 
 def test_apply_runtime_environment_uses_resolved_nccl_ub_config(

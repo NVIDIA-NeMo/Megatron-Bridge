@@ -241,12 +241,13 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     --dataset local-vlm \
     dataset.source.load_kwargs.data_files.train=/data/vlm/train.jsonl \
     dataset.validation_source.load_kwargs.data_files.validation=/data/vlm/validation.jsonl \
+    dataset.do_validation=true \
     dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
     dataset.defer_in_batch_packing_to_step=False \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-The launcher-only `local-vlm` name maps each supplied split path to `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})`; it does not restore the removed `vlm-preloaded` provider. Validation and test are disabled when their explicit paths are omitted. There is no `image_folder` compatibility field and the old placeholder plus top-level media-list schema is not rewritten: encode media using the selected processor's supported conversation schema, use an adapter-owned root where available, or use Energon.
+The `local-vlm` preset supplies override-ready `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` objects; it does not restore the removed `vlm-preloaded` provider. Validation and test are disabled by default. Set their source path together with `dataset.do_validation=true` or `dataset.do_test=true` to enable them. There is no `image_folder` compatibility field and the old placeholder plus top-level media-list schema is not rewritten: encode media using the selected processor's supported conversation schema, use an adapter-owned root where available, or use Energon.
 
 For complete Qwen3-VL preparation and launch commands, see the [Hugging Face multimodal tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) or the [multimodal Energon tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md). [VALOR32K-AVQA](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md) is the larger audio-video example.
 

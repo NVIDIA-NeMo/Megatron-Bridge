@@ -54,6 +54,9 @@ as launcher flags; set their `ConfigContainer` fields with trailing `KEY=VALUE` 
 ## Dataset selection
 
 `--dataset` accepts source selectors and named dataset presets rather than internal dataset config class names.
+Each name selects a `DatasetConfig` preset; the config type selects the existing runtime builder. Trailing
+`dataset.*` overrides are applied directly after preset selection. Use typed fields for source, preprocessing, packing,
+and loader settings; use `dataset.dataset_kwargs={...}` only for extra options consumed by a dataset implementation.
 
 | Value | Kind | Mode | Behavior |
 |---|---|---|---|
@@ -110,8 +113,9 @@ validation slices; `cord-v2` and `medpix` use their published validation splits.
 For local JSON/JSONL, select `local-vlm` and set
 `dataset.source.load_kwargs.data_files.train=/path/to/train.jsonl`. Optional split overrides are
 `dataset.validation_source.load_kwargs.data_files.validation` and
-`dataset.test_source.load_kwargs.data_files.test`. Rows and media paths must already use the selected processor's
-supported conversation schema. `dataset.hf_processor_path` overrides the processor inherited from the VLM recipe.
+`dataset.test_source.load_kwargs.data_files.test`; enable those stages explicitly with `dataset.do_validation=true`
+and `dataset.do_test=true`. Rows and media paths must already use the selected processor's supported conversation
+schema. `dataset.hf_processor_path` overrides the processor inherited from the VLM recipe.
 
 ## SFT and LoRA checkpoints
 

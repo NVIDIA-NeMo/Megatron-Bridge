@@ -25,9 +25,7 @@ import argparse
 import logging
 import sys
 from pathlib import Path
-from typing import Literal, TypeVar, cast
-
-from hydra.core.override_parser.overrides_parser import OverridesParser
+from typing import Literal
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -35,7 +33,6 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from recipe_runner import (  # noqa: E402
-    STEP_MODALITIES,
     apply_cli_overrides,
     apply_determinism,
     apply_runtime_environment,
@@ -48,17 +45,15 @@ from recipe_runner import (  # noqa: E402
 )
 
 from megatron.bridge.recipes.utils.dataset_utils import (  # noqa: E402
-    PUBLIC_DATASETS,
-    apply_public_dataset_override,
+    DATASET_PRESETS,
+    build_dataset_config,
+    dataset_train_mode,
 )
+from megatron.bridge.training.config import ConfigContainer  # noqa: E402
 
 
 PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
-
-
-DATASETS = PUBLIC_DATASETS
-_T = TypeVar("_T")
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -89,8 +84,8 @@ def _build_parser() -> argparse.ArgumentParser:
     data = parser.add_argument_group("Data")
     data.add_argument(
         "--dataset",
-        choices=sorted(DATASETS),
-        help="Dataset name.",
+        choices=sorted(DATASET_PRESETS),
+        help="Dataset config preset or local source selector.",
     )
     runtime = parser.add_argument_group("Runtime")
     runtime.add_argument("--dry-run", "--dry_run", action="store_true", dest="dryrun")
@@ -109,20 +104,6 @@ def _collect_overrides(parser: argparse.ArgumentParser, values: list[str]) -> li
             parser.error(f"Expected override in KEY=VALUE form, got {value!r}")
         overrides.append(value)
     return overrides
-
-
-def _override_values(cli_overrides: list[str]) -> dict[str, object]:
-    """Return the final parsed value for each Hydra-style config override."""
-    parsed = OverridesParser.create().parse_overrides(overrides=cli_overrides)
-    return {override.get_key_element(): override.value() for override in parsed}
-
-
-def _optional_override(values: dict[str, object], key: str, expected_type: type[_T]) -> _T | None:
-    """Read and type-check a config override used while constructing a dataset."""
-    value = values.get(key)
-    if value is not None and not isinstance(value, expected_type):
-        raise ValueError(f"{key} must be a {expected_type.__name__} value.")
-    return value
 
 
 def _train_mode(mode: PublicMode) -> TrainMode:
@@ -150,11 +131,9 @@ def _infer_recipe_mode(recipe_name: str) -> PublicMode | None:
 
 
 def _infer_mode(args: argparse.Namespace) -> None:
-    """Infer an omitted training mode from the recipe or dataset name."""
+    """Infer an omitted training mode from a conventional recipe name."""
     if args.mode is None and args.recipe:
         args.mode = _infer_recipe_mode(args.recipe)
-    if args.mode is None and args.dataset is not None:
-        args.mode = "pretrain" if DATASETS[args.dataset].train_mode == "pretrain" else "sft"
     if args.mode is None:
         raise ValueError("Unable to infer training mode; pass --mode or use a conventional --recipe name.")
 
@@ -175,7 +154,7 @@ def _validate_recipe_mode(recipe_name: str, mode: PublicMode) -> None:
         raise ValueError(f"Mode '{mode}' is incompatible with recipe '{recipe_name}'.")
 
 
-def _load_selected_recipe(args: argparse.Namespace) -> object:
+def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
     """Load the requested library recipe."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
     recipe_name = args.recipe or f"{args.model}_{_recipe_task(args.mode)}_config"
@@ -187,65 +166,15 @@ def _load_selected_recipe(args: argparse.Namespace) -> object:
     )
 
 
-def _validate_dataset_options(args: argparse.Namespace) -> None:
-    """Validate public dataset selection before loading a potentially expensive recipe."""
-    if args.dataset is None:
-        return
-
-    selection = DATASETS[args.dataset]
-    if selection.modality == "vlm" and STEP_MODALITIES.get(args.step_func.lower()) != "vlm":
-        raise ValueError(f"Dataset '{args.dataset}' requires a VLM-compatible --step-func.")
-
-
-def _apply_dataset(
-    recipe: object,
-    args: argparse.Namespace,
-    cli_overrides: list[str],
-) -> object:
+def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
     """Apply a public dataset selection to a recipe config."""
     if args.dataset is None:
         return recipe
 
-    selection = DATASETS[args.dataset]
+    recipe.dataset = build_dataset_config(recipe, args.dataset)
     requested_train_mode = _train_mode(args.mode)
-    if selection.train_mode != requested_train_mode:
+    if dataset_train_mode(recipe.dataset) != requested_train_mode:
         raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
-
-    values = _override_values(cli_overrides)
-    sequence_lengths = {
-        key: values[key]
-        for key in ("dataset.seq_length", "dataset.sequence_length", "model.seq_length")
-        if key in values
-    }
-    if any(not isinstance(value, int) or isinstance(value, bool) for value in sequence_lengths.values()):
-        raise ValueError("Sequence length must be an int value.")
-    if len(set(sequence_lengths.values())) > 1:
-        raise ValueError(f"Sequence-length overrides disagree: {sequence_lengths}")
-    seq_length = cast(int | None, next(iter(sequence_lengths.values()), None))
-
-    enable_offline_packing = _optional_override(values, "dataset.enable_offline_packing", bool)
-    pad_seq_to_mult = _optional_override(values, "dataset.offline_packing_specs.pad_seq_to_mult", int)
-    if enable_offline_packing and not selection.supports_offline_packing:
-        raise ValueError(f"Dataset '{args.dataset}' does not support dataset.enable_offline_packing=true.")
-    if pad_seq_to_mult is not None and not enable_offline_packing:
-        raise ValueError("dataset.offline_packing_specs.pad_seq_to_mult requires dataset.enable_offline_packing=true.")
-    if pad_seq_to_mult is not None and pad_seq_to_mult < 1:
-        raise ValueError("dataset.offline_packing_specs.pad_seq_to_mult must be greater than zero.")
-    recipe = apply_public_dataset_override(
-        recipe,
-        dataset_name=args.dataset,
-        enable_offline_packing=bool(enable_offline_packing),
-        pad_seq_to_mult=pad_seq_to_mult if pad_seq_to_mult is not None else 1,
-        seq_length=seq_length,
-        dataset_root=_optional_override(values, "dataset.dataset_root", str),
-        train_data_path=_optional_override(values, "dataset.source.load_kwargs.data_files.train", str),
-        validation_data_path=_optional_override(
-            values, "dataset.validation_source.load_kwargs.data_files.validation", str
-        ),
-        test_data_path=_optional_override(values, "dataset.test_source.load_kwargs.data_files.test", str),
-        media_root=_optional_override(values, "dataset.source.adapter_kwargs.video_root_path", str),
-        hf_processor_path=_optional_override(values, "dataset.hf_processor_path", str),
-    )
     return recipe
 
 
@@ -262,10 +191,9 @@ def main(argv: list[str] | None = None) -> None:
     """Load, configure, and execute one library recipe."""
     logging.basicConfig(level=logging.INFO)
     args, cli_overrides = parse_args(argv)
-    _validate_dataset_options(args)
 
     recipe = _load_selected_recipe(args)
-    recipe = _apply_dataset(recipe, args, cli_overrides)
+    recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
     recipe = apply_runtime_environment(recipe)

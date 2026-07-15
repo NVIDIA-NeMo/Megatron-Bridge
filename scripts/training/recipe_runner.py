@@ -297,7 +297,15 @@ def sync_offline_packing_alignment(config: ConfigContainer) -> ConfigContainer:
 
     packing_specs = getattr(dataset, "offline_packing_specs", None)
     if packing_specs is None:
-        raise ValueError("offline_packing_specs must be set when enable_offline_packing=True.")
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        packing_specs = PackedSequenceSpecs()
+        dataset.offline_packing_specs = packing_specs
+    elif isinstance(packing_specs, dict):
+        from megatron.bridge.data.packing import PackedSequenceSpecs
+
+        packing_specs = PackedSequenceSpecs(**packing_specs)
+        dataset.offline_packing_specs = packing_specs
 
     sequence_length = getattr(dataset, "seq_length", None)
     if sequence_length is None:

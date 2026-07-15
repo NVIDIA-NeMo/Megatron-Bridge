@@ -13,8 +13,10 @@ The public Slurm launcher is `scripts/training/train.sh`, backed by `setup_exper
 recipe function with `--recipe`, and always pass `--mode pretrain`, `sft`, `lora`, or `dora`. Public dataset names
 are distinct from data-source selectors. Named presets such as `openmathinstruct2` and `medpix` select specific
 datasets, while `megatron-indexed`, `local-jsonl`, and `local-vlm` select local input formats and `mock` selects
-generated data. Each choice resolves to the corresponding dataset config. Offline packing is selected independently
-with `dataset.enable_offline_packing=true`; it is not encoded in a dataset name. The default `--step-func` is
+generated data. Each choice resolves to a dataset config preset, and the config type selects the existing runtime
+builder. Trailing `dataset.*` values override that config directly; the launcher does not translate individual dataset
+fields. Offline packing is selected independently with `dataset.enable_offline_packing=true`; it is not encoded in a
+dataset name. The default `--step-func` is
 `llm_step`; pass another registered step explicitly for non-LLM recipes. Set training and model values directly with
 `ConfigContainer` overrides such as `train.global_batch_size=8` and `model.tensor_model_parallel_size=2`.
 The launcher inherits only explicitly named `--env NAME` values and forwards `--mount HOST` or

@@ -87,7 +87,7 @@ def test_config_validates_source_and_padding():
         config.validate()
 
 
-def test_config_rejects_disabled_explicit_split_sources():
+def test_config_allows_disabled_split_sources_for_later_config_overrides():
     config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
@@ -95,8 +95,7 @@ def test_config_rejects_disabled_explicit_split_sources():
         do_validation=False,
     )
 
-    with pytest.raises(ValueError, match="validation_source requires do_validation"):
-        config.validate()
+    config.validate()
 
 
 @pytest.mark.parametrize("media_type", ["image", "video", "audio"])
