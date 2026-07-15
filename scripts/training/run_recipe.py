@@ -16,15 +16,15 @@
 
 Select either a model name with --model or a complete recipe function with
 --recipe. The public launcher accepts one training mode, a direct dataset name,
-runner controls, and trailing KEY=VALUE ConfigContainer overrides. Slurm
-resources, containers, mounts, and environment forwarding are owned by
-setup_experiment.py.
+runner controls, common convenience arguments, and trailing KEY=VALUE
+ConfigContainer overrides. Slurm resources, containers, mounts, and environment
+forwarding are owned by setup_experiment.py.
 
 Common ConfigContainer overrides
 --------------------------------
-The scripts/performance options on the left are equivalent to the trailing
-overrides on the right. They are documented as a migration aid; this command
-continues to accept the KEY=VALUE form only.
+The convenience options on the left are converted to the ConfigContainer
+overrides on the right. This command accepts both forms. When both forms set
+the same field, the trailing KEY=VALUE override takes precedence.
 
 Training:
   -ms, --max_steps STEPS                 train.train_iters=STEPS
@@ -59,11 +59,11 @@ Checkpointing:
 
 For example:
   run_recipe.py --model gpt_oss_20b --mode pretrain --dataset mock \\
-    dataset.seq_length=8192 train.micro_batch_size=1 \\
-    model.tensor_model_parallel_size=2 model.sequence_parallel=true
+    -sl 8192 -mb 1 -tp 2 model.sequence_parallel=true
 """
 
 import argparse
+import json
 import logging
 import sys
 from pathlib import Path
@@ -96,6 +96,27 @@ from megatron.bridge.training.config import ConfigContainer  # noqa: E402
 
 PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
+
+
+COMMON_OVERRIDE_FIELDS = (
+    ("max_steps", "train.train_iters"),
+    ("global_batch_size", "train.global_batch_size"),
+    ("micro_batch_size", "train.micro_batch_size"),
+    ("seq_length", "dataset.seq_length"),
+    ("tensor_model_parallel_size", "model.tensor_model_parallel_size"),
+    ("pipeline_model_parallel_size", "model.pipeline_model_parallel_size"),
+    ("context_parallel_size", "model.context_parallel_size"),
+    ("virtual_pipeline_model_parallel_size", "model.virtual_pipeline_model_parallel_size"),
+    ("expert_model_parallel_size", "model.expert_model_parallel_size"),
+    ("expert_tensor_parallel_size", "model.expert_tensor_parallel_size"),
+    ("lr", "optimizer.lr"),
+    ("min_lr", "optimizer.min_lr"),
+    ("warmup_iters", "scheduler.lr_warmup_iters"),
+    ("pretrained_checkpoint", "checkpoint.pretrained_checkpoint"),
+    ("save_dir", "checkpoint.save"),
+    ("load_dir", "checkpoint.load"),
+    ("save_interval", "checkpoint.save_interval"),
+)
 
 
 class _HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
@@ -133,6 +154,72 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=sorted(DATASET_PRESETS),
         help="Dataset config preset or local source selector.",
     )
+
+    training = parser.add_argument_group("Common training overrides")
+    training.add_argument("-ms", "--max_steps", type=int, metavar="STEPS", help="Set train.train_iters.")
+    training.add_argument("-gb", "--global_batch_size", type=int, metavar="SIZE", help="Set train.global_batch_size.")
+    training.add_argument("-mb", "--micro_batch_size", type=int, metavar="SIZE", help="Set train.micro_batch_size.")
+
+    sequence_length = parser.add_argument_group("Sequence length override")
+    sequence_length.add_argument(
+        "-sl", "--seq_length", type=int, metavar="LENGTH", help="Set dataset.seq_length and synchronize the model."
+    )
+
+    parallelism = parser.add_argument_group("Common parallelism overrides")
+    parallelism.add_argument(
+        "-tp",
+        "--tensor_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.tensor_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-pp",
+        "--pipeline_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.pipeline_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-cp",
+        "--context_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.context_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-vp",
+        "--virtual_pipeline_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.virtual_pipeline_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-ep",
+        "--expert_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.expert_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-et",
+        "--expert_tensor_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.expert_tensor_parallel_size.",
+    )
+
+    optimization = parser.add_argument_group("Common optimization overrides")
+    optimization.add_argument("--lr", type=float, metavar="VALUE", help="Set optimizer.lr.")
+    optimization.add_argument("--min_lr", type=float, metavar="VALUE", help="Set optimizer.min_lr.")
+    optimization.add_argument("--warmup_iters", type=int, metavar="STEPS", help="Set scheduler.lr_warmup_iters.")
+
+    checkpointing = parser.add_argument_group("Common checkpoint overrides")
+    checkpointing.add_argument("--pretrained_checkpoint", metavar="PATH", help="Set checkpoint.pretrained_checkpoint.")
+    checkpointing.add_argument("--save_dir", metavar="PATH", help="Set checkpoint.save.")
+    checkpointing.add_argument("--load_dir", metavar="PATH", help="Set checkpoint.load.")
+    checkpointing.add_argument("--save_interval", type=int, metavar="STEPS", help="Set checkpoint.save_interval.")
+
     runtime = parser.add_argument_group("Runtime")
     runtime.add_argument("--dry-run", "--dry_run", action="store_true", dest="dryrun")
     runtime.add_argument("--deterministic", action="store_true")
@@ -149,6 +236,18 @@ def _collect_overrides(parser: argparse.ArgumentParser, values: list[str]) -> li
         if "=" not in value:
             parser.error(f"Expected override in KEY=VALUE form, got {value!r}")
         overrides.append(value)
+    return overrides
+
+
+def _common_config_overrides(args: argparse.Namespace) -> list[str]:
+    """Convert common convenience arguments to ConfigContainer overrides."""
+    overrides = []
+    for argument_name, config_field in COMMON_OVERRIDE_FIELDS:
+        value = getattr(args, argument_name)
+        if value is None:
+            continue
+        serialized_value = json.dumps(value) if isinstance(value, str) else str(value)
+        overrides.append(f"{config_field}={serialized_value}")
     return overrides
 
 
@@ -225,10 +324,11 @@ def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigC
 
 
 def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
-    """Parse public arguments and trailing ConfigContainer overrides."""
+    """Parse public arguments and ordered ConfigContainer overrides."""
     parser = _build_parser()
     args, unknown = parser.parse_known_args(argv)
-    cli_overrides = _collect_overrides(parser, unknown)
+    trailing_overrides = _collect_overrides(parser, unknown)
+    cli_overrides = [*_common_config_overrides(args), *trailing_overrides]
     _infer_mode(args)
     return args, cli_overrides
 

@@ -48,8 +48,9 @@ requested adapter scheme.
 ```
 
 The default forward step is `llm_step`. Pass `--step-func NAME` explicitly for a recipe that needs another registered
-forward step. Training, model, data, optimizer, scheduler, checkpoint, tokenizer, and logging values are not duplicated
-as launcher flags; set their `ConfigContainer` fields with trailing `KEY=VALUE` overrides.
+forward step. Common training, sequence-length, parallelism, optimization, and checkpoint fields also have convenience
+flags such as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`.
+Use trailing `KEY=VALUE` overrides for every other `ConfigContainer` field.
 
 ## Dataset selection
 
@@ -148,8 +149,9 @@ directory:
 
 ## Overrides
 
-Set every `ConfigContainer` field with trailing `KEY=VALUE` arguments. For example, batch sizes and training duration
-belong under `train`, not `model`:
+Every `ConfigContainer` field can be set with trailing `KEY=VALUE` arguments. Common fields also accept the convenience
+flags listed by `run_recipe.py --help`. For example, batch sizes and training duration belong under `train`, not
+`model`:
 
 ```bash
 ./scripts/training/train.sh \
@@ -158,15 +160,14 @@ belong under `train`, not `model`:
     --container-image /path/to/container.sqsh \
     --recipe llama32_1b_pretrain_config \
     --mode pretrain --dataset mock \
-    train.train_iters=10 \
-    train.global_batch_size=8 \
-    train.micro_batch_size=1 \
-    optimizer.lr=0.0002 \
-    scheduler.lr_warmup_iters=1 \
+    -ms 10 -gb 8 -mb 1 \
+    --lr 0.0002 --warmup_iters 1 \
     scheduler.lr_decay_iters=10
 ```
 
-Precedence is recipe defaults, the selected dataset configuration, then trailing `ConfigContainer` overrides.
+Precedence is recipe defaults, the selected dataset configuration, common convenience arguments, then trailing
+`ConfigContainer` overrides. A trailing override therefore wins when it targets the same field as a convenience
+argument.
 
 ## Slurm and containers
 

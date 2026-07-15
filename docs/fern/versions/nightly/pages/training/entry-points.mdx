@@ -14,11 +14,14 @@ recipe function with `--recipe`, and always pass `--mode pretrain`, `sft`, `lora
 are distinct from data-source selectors. Named presets such as `openmathinstruct2` and `medpix` select specific
 datasets, while `megatron-indexed`, `local-jsonl`, and `local-vlm` select local input formats and `mock` selects
 generated data. Each choice resolves to a dataset config preset, and the config type selects the existing runtime
-builder. Trailing `dataset.*` values override that config directly; the launcher does not translate individual dataset
-fields. Offline packing is selected independently with `dataset.enable_offline_packing=true`; it is not encoded in a
-dataset name. The default `--step-func` is
-`llm_step`; pass another registered step explicitly for non-LLM recipes. Set training and model values directly with
-`ConfigContainer` overrides such as `train.global_batch_size=8` and `model.tensor_model_parallel_size=2`.
+builder. Trailing `dataset.*` values override that config directly; `--seq_length` is the only dataset-field
+convenience argument. Offline packing is selected independently with `dataset.enable_offline_packing=true`; it is not
+encoded in a dataset name. The default `--step-func` is
+`llm_step`; pass another registered step explicitly for non-LLM recipes. Common values accept convenience arguments
+such as `-gb 8`, `-sl 4096`, and `-tp 2`; `run_recipe.py --help` lists the complete mapping. Every value can also be set
+directly with `ConfigContainer` overrides such as `train.global_batch_size=8` and
+`model.tensor_model_parallel_size=2`. A trailing override takes precedence over a convenience argument for the same
+field.
 The launcher inherits only explicitly named `--env NAME` values and forwards `--mount HOST` or
 `--mount HOST:CONTAINER` paths. `pretrain` mode runs `pretrain()`; SFT, LoRA, and DoRA run `finetune()`.
 

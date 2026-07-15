@@ -316,6 +316,119 @@ def test_help_and_module_docstring_document_common_performance_overrides():
     assert "model.seq_length" in help_text
 
 
+def test_common_convenience_arguments_become_config_overrides():
+    module, _ = _load_module()
+
+    _, overrides = module.parse_args(
+        [
+            "--model",
+            "gpt_oss_20b",
+            "--mode",
+            "pretrain",
+            "--max_steps",
+            "2",
+            "--global_batch_size",
+            "16",
+            "--micro_batch_size",
+            "2",
+            "--seq_length",
+            "4096",
+            "--tensor_model_parallel_size",
+            "2",
+            "--pipeline_model_parallel_size",
+            "4",
+            "--context_parallel_size",
+            "8",
+            "--virtual_pipeline_model_parallel_size",
+            "2",
+            "--expert_model_parallel_size",
+            "4",
+            "--expert_tensor_parallel_size",
+            "2",
+            "--lr",
+            "0.0002",
+            "--min_lr",
+            "0.00002",
+            "--warmup_iters",
+            "10",
+            "--pretrained_checkpoint",
+            "/checkpoints/base model",
+            "--save_dir",
+            "/checkpoints/save",
+            "--load_dir",
+            "/checkpoints/load",
+            "--save_interval",
+            "100",
+        ]
+    )
+
+    assert overrides == [
+        "train.train_iters=2",
+        "train.global_batch_size=16",
+        "train.micro_batch_size=2",
+        "dataset.seq_length=4096",
+        "model.tensor_model_parallel_size=2",
+        "model.pipeline_model_parallel_size=4",
+        "model.context_parallel_size=8",
+        "model.virtual_pipeline_model_parallel_size=2",
+        "model.expert_model_parallel_size=4",
+        "model.expert_tensor_parallel_size=2",
+        "optimizer.lr=0.0002",
+        "optimizer.min_lr=2e-05",
+        "scheduler.lr_warmup_iters=10",
+        'checkpoint.pretrained_checkpoint="/checkpoints/base model"',
+        'checkpoint.save="/checkpoints/save"',
+        'checkpoint.load="/checkpoints/load"',
+        "checkpoint.save_interval=100",
+    ]
+
+
+@pytest.mark.parametrize(
+    ("option", "value", "expected_override"),
+    [
+        ("-ms", "2", "train.train_iters=2"),
+        ("-gb", "16", "train.global_batch_size=16"),
+        ("-mb", "2", "train.micro_batch_size=2"),
+        ("-sl", "4096", "dataset.seq_length=4096"),
+        ("-tp", "2", "model.tensor_model_parallel_size=2"),
+        ("-pp", "4", "model.pipeline_model_parallel_size=4"),
+        ("-cp", "8", "model.context_parallel_size=8"),
+        ("-vp", "2", "model.virtual_pipeline_model_parallel_size=2"),
+        ("-ep", "4", "model.expert_model_parallel_size=4"),
+        ("-et", "2", "model.expert_tensor_parallel_size=2"),
+    ],
+)
+def test_common_short_arguments_become_config_overrides(option, value, expected_override):
+    module, _ = _load_module()
+
+    _, overrides = module.parse_args(["--model", "gpt_oss_20b", "--mode", "pretrain", option, value])
+
+    assert overrides == [expected_override]
+
+
+def test_trailing_config_override_takes_precedence_over_convenience_argument():
+    module, handles = _load_module()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--model",
+            "gpt_oss_20b",
+            "--mode",
+            "pretrain",
+            "--max_steps",
+            "2",
+            "train.train_iters=3",
+        ]
+    )
+
+    handles.recipe_runner.apply_cli_overrides.assert_called_once_with(
+        config,
+        ["train.train_iters=2", "train.train_iters=3"],
+    )
+
+
 @pytest.mark.parametrize(
     "option",
     [
@@ -334,7 +447,7 @@ def test_help_and_module_docstring_document_common_performance_overrides():
         "--save-config",
     ],
 )
-def test_config_container_shortcut_options_are_rejected(option):
+def test_unsupported_config_shortcut_spellings_are_rejected(option):
     module, _ = _load_module()
 
     with pytest.raises(SystemExit):
