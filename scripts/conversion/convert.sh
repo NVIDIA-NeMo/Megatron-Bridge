@@ -42,15 +42,21 @@ if [[ ${expect_executor_value} == true ]]; then
     exit 2
 fi
 
+NEMO_RUN_VERSION=0.10.0
 if [[ -n "${VIRTUAL_ENV:-}" ]]; then
-    UV_ARGS=(--no-project --active --with nemo-run==0.10.0)
+    UV_ARGS=(--no-project --active)
+    if ! "${VIRTUAL_ENV}/bin/python" -c \
+        'import importlib.metadata, sys; raise SystemExit(importlib.metadata.version("nemo-run") != sys.argv[1])' \
+        "${NEMO_RUN_VERSION}" 2>/dev/null; then
+        UV_ARGS+=(--with "nemo-run==${NEMO_RUN_VERSION}")
+    fi
 elif [[ ${executor} == slurm ]]; then
     # The Slurm head-node launcher only needs NeMo Run; model dependencies live
     # in the submitted container.
-    UV_ARGS=(--no-project --with nemo-run==0.10.0)
+    UV_ARGS=(--no-project --with "nemo-run==${NEMO_RUN_VERSION}")
 else
     # Local execution runs the conversion worker in the project environment.
-    UV_ARGS=(--with nemo-run==0.10.0)
+    UV_ARGS=(--with "nemo-run==${NEMO_RUN_VERSION}")
 fi
 
 exec uv run "${UV_ARGS[@]}" python "${SCRIPT_DIR}/setup_conversion.py" "$@"

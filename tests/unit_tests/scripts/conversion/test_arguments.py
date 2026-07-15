@@ -13,6 +13,8 @@
 # limitations under the License.
 
 import importlib.util
+import os
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -32,6 +34,33 @@ def _load_arguments_module():
     return module
 
 
+def _run_shell_launcher_with_fake_active_env(tmp_path: Path, *, has_pinned_nemo_run: bool) -> list[str]:
+    fake_bin = tmp_path / "bin"
+    fake_venv_bin = tmp_path / "venv" / "bin"
+    fake_bin.mkdir(parents=True)
+    fake_venv_bin.mkdir(parents=True)
+    fake_uv = fake_bin / "uv"
+    fake_uv.write_text('#!/usr/bin/env bash\nprintf "%s\\n" "$@"\n')
+    fake_uv.chmod(0o755)
+    fake_python = fake_venv_bin / "python"
+    fake_python.write_text(f"#!/usr/bin/env bash\nexit {0 if has_pinned_nemo_run else 1}\n")
+    fake_python.chmod(0o755)
+    env = os.environ.copy()
+    env["PATH"] = f"{fake_bin}:{env['PATH']}"
+    env["VIRTUAL_ENV"] = str(fake_venv_bin.parent)
+
+    result = subprocess.run(
+        [str(REPO_ROOT / "scripts/conversion/convert.sh"), "import", "--help"],
+        capture_output=True,
+        text=True,
+        env=env,
+        cwd=REPO_ROOT,
+    )
+
+    assert result.returncode == 0, result.stderr
+    return result.stdout.splitlines()
+
+
 def test_cpu_local_import_defaults():
     module = _load_arguments_module()
 
@@ -43,6 +72,20 @@ def test_cpu_local_import_defaults():
     assert args.device == "cpu"
     assert args.srun_args == []
     assert (args.tp, args.pp, args.ep, args.etp) == (1, 1, 1, 1)
+
+
+def test_shell_launcher_reuses_compatible_active_nemo_run(tmp_path):
+    arguments = _run_shell_launcher_with_fake_active_env(tmp_path, has_pinned_nemo_run=True)
+
+    assert arguments[:3] == ["run", "--no-project", "--active"]
+    assert "--with" not in arguments
+
+
+def test_shell_launcher_bootstraps_nemo_run_when_active_version_is_incompatible(tmp_path):
+    arguments = _run_shell_launcher_with_fake_active_env(tmp_path, has_pinned_nemo_run=False)
+
+    assert arguments[:3] == ["run", "--no-project", "--active"]
+    assert arguments[3:5] == ["--with", "nemo-run==0.10.0"]
 
 
 def test_srun_args_are_repeatable():
