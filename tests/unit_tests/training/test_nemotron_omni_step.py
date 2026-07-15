@@ -241,8 +241,9 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
         def stop(self):
             return None
 
-    losses = torch.tensor([[1.0, 2.0]])
-    expanded_loss_mask = torch.tensor([[0.0, 1.0]])
+    losses = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    expanded_loss_mask = torch.tensor([[0.0, 1.0, 0.0], [1.0, 0.0, 0.0]])[:, :2]
+    assert not expanded_loss_mask.is_contiguous()
 
     class _Model:
         def __call__(self, **kwargs):
@@ -288,4 +289,13 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
     output, loss_function = nemotron_omni_step.forward_step(state, iter(()), _Model())
 
     assert output is losses
-    assert loss_function.args[0] is expanded_loss_mask
+    assert torch.equal(loss_function.args[0], expanded_loss_mask)
+    assert loss_function.args[0].is_contiguous()
+
+    monkeypatch.setattr(
+        "megatron.bridge.training.losses.get_rerun_state_machine",
+        lambda: SimpleNamespace(),
+    )
+    loss, num_tokens, _ = loss_function(output)
+    assert loss.item() == 5.0
+    assert num_tokens.item() == 2

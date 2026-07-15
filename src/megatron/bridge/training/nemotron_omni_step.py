@@ -307,6 +307,11 @@ def forward_step(
         else:
             output_tensor = model_output
 
+    # Multimodal expansion can return a strided prefix slice after truncation;
+    # normalize it at the model/step boundary before the shared loss reducer.
+    if loss_mask is not None:
+        loss_mask = loss_mask.contiguous()
+
     loss_function = partial(
         masked_next_token_loss,
         loss_mask,
