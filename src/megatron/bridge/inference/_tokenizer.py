@@ -14,10 +14,11 @@
 
 """Shared HuggingFace tokenizer adapter for MCore text generation.
 
-MCore's ``TextGenerationController`` expects a tokenizer exposing ``eod`` / ``bos`` /
-``vocab_size`` attributes and ``tokenize`` / ``detokenize`` methods. This adapter wraps a
-HuggingFace tokenizer to that interface and is shared by the text-generation scripts and the
-VLM inference controllers (which previously each defined their own near-identical wrapper).
+MCore's inference stack expects a tokenizer exposing ``eod`` / ``bos`` / ``vocab_size``
+attributes and ``tokenize`` / ``detokenize`` methods. Its OpenAI-compatible frontend also uses
+the HuggingFace chat-template interface when available. This adapter wraps a HuggingFace tokenizer
+to those interfaces and is shared by the text-generation scripts and the VLM inference controllers
+(which previously each defined their own near-identical wrapper).
 
 Behavior knobs let call sites preserve their historical semantics exactly:
 - ``set_pad_token``: default the pad token to EOS when unset (text generation).
@@ -47,8 +48,18 @@ class HFTokenizerAdapter:
         if set_pad_token and tokenizer.pad_token is None and tokenizer.eos_token is not None:
             tokenizer.pad_token = tokenizer.eos_token
         self.eod = tokenizer.eos_token_id
+        self.eos_id = tokenizer.eos_token_id
         self.bos = tokenizer.bos_token_id
         self.vocab_size = len(tokenizer) if expose_vocab_size else None
+
+    @property
+    def chat_template(self) -> object | None:
+        """Return the wrapped tokenizer's chat template, when configured."""
+        return getattr(self._tokenizer, "chat_template", None)
+
+    def apply_chat_template(self, conversation: object, **kwargs: object) -> object:
+        """Apply the wrapped HuggingFace tokenizer's chat template."""
+        return self._tokenizer.apply_chat_template(conversation, **kwargs)
 
     def tokenize(self, text: str) -> list[int]:
         """Tokenize text into token ids (no special tokens added)."""
