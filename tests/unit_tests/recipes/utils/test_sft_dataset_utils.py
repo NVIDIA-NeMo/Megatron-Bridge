@@ -187,20 +187,6 @@ class TestDefaultSquadConfig:
         assert cfg.preprocessing.completion_column == "output"
         assert cfg.preprocessing.separator == " "
 
-    @pytest.mark.parametrize(
-        ("row", "expected_metadata"),
-        [
-            ({"input": "question", "output": "answer", "id": 7}, {"id": 7}),
-            ({"prompt": "question", "completion": "answer"}, {}),
-        ],
-    )
-    def test_normalizes_legacy_and_canonical_rows(self, row, expected_metadata):
-        cfg = default_squad_config(seq_length=512)
-
-        normalized = normalize_sft_example(row, cfg.preprocessing)
-
-        assert normalized == {"input": "question", "output": "answer", **expected_metadata}
-
     def test_enable_offline_packing_creates_packing_specs(self):
         cfg = default_squad_config(seq_length=512, enable_offline_packing=True)
         assert cfg.enable_offline_packing is True
@@ -221,8 +207,15 @@ class TestConfigDifferences:
         )
         for cfg in configs:
             assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
+            assert cfg.preprocessing.prompt_column == "input"
+            assert cfg.preprocessing.completion_column == "output"
             assert cfg.preprocessing.separator == " "
             assert cfg.preprocessing.loss_mode == "completion"
+
+            legacy = normalize_sft_example({"input": "question", "output": "answer", "id": 7}, cfg.preprocessing)
+            canonical = normalize_sft_example({"prompt": "question", "completion": "answer"}, cfg.preprocessing)
+            assert legacy == {"input": "question", "output": "answer", "id": 7}
+            assert canonical == {"input": "question", "output": "answer"}
 
     def test_different_default_seq_lengths(self):
         omi2 = default_openmathinstruct2_config()

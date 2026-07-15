@@ -112,6 +112,15 @@ def _text_hf_dataset_config(
     )
 
 
+def _legacy_compatible_prompt_completion_preprocessing() -> PromptCompletionSFTPreprocessingConfig:
+    """Accept legacy input/output materializations and canonical adapter rows."""
+    return PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    )
+
+
 def default_squad_config(
     seq_length: int, enable_offline_packing: bool = True, pad_seq_to_mult: int = 1
 ) -> GPTSFTDatasetConfig:
@@ -133,12 +142,7 @@ def default_squad_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="squad"),
-        # Preserve compatibility with SQuAD datasets materialized before the
-        # semantic adapter switched from input/output to prompt/completion.
-        # Canonical prompt/completion rows are still accepted by normalization.
-        preprocessing=PromptCompletionSFTPreprocessingConfig(
-            prompt_column="input", completion_column="output", separator=" "
-        ),
+        preprocessing=_legacy_compatible_prompt_completion_preprocessing(),
         seq_length=seq_length,
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
@@ -169,7 +173,7 @@ def default_openmathinstruct2_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        preprocessing=_legacy_compatible_prompt_completion_preprocessing(),
         seq_length=seq_length,
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
@@ -199,7 +203,7 @@ def default_gsm8k_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="gsm8k"),
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        preprocessing=_legacy_compatible_prompt_completion_preprocessing(),
         test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
         do_validation=False,
         do_test=True,
