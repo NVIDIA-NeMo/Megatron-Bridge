@@ -281,6 +281,41 @@ def test_step_function_option_accepts_hyphen_and_underscore_spellings(option):
     assert args.step_func == "value"
 
 
+def test_help_and_module_docstring_document_common_performance_overrides():
+    module, _ = _load_module()
+    help_text = module._build_parser().format_help()
+    module_docstring = module.__doc__
+    expected_mappings = (
+        ("--max_steps", "train.train_iters=STEPS"),
+        ("--global_batch_size", "train.global_batch_size=SIZE"),
+        ("--micro_batch_size", "train.micro_batch_size=SIZE"),
+        ("--tensor_model_parallel_size", "model.tensor_model_parallel_size=N"),
+        ("--pipeline_model_parallel_size", "model.pipeline_model_parallel_size=N"),
+        ("--context_parallel_size", "model.context_parallel_size=N"),
+        ("--virtual_pipeline_model_parallel_size", "model.virtual_pipeline_model_parallel_size=N"),
+        ("--expert_model_parallel_size", "model.expert_model_parallel_size=N"),
+        ("--expert_tensor_parallel_size", "model.expert_tensor_parallel_size=N"),
+        ("--lr", "optimizer.lr=VALUE"),
+        ("--min_lr", "optimizer.min_lr=VALUE"),
+        ("--warmup_iters", "scheduler.lr_warmup_iters=STEPS"),
+        ("--pretrained_checkpoint", "checkpoint.pretrained_checkpoint=PATH"),
+        ("--save_dir", "checkpoint.save=PATH"),
+        ("--load_dir", "checkpoint.load=PATH"),
+        ("--save_interval", "checkpoint.save_interval=STEPS"),
+    )
+
+    assert module_docstring is not None
+    for performance_option, config_override in expected_mappings:
+        assert performance_option in module_docstring
+        assert config_override in module_docstring
+        assert performance_option in help_text
+        assert config_override in help_text
+    assert "--seq_length" in help_text
+    assert "dataset.sequence_length=LENGTH" in help_text
+    assert "dataset.seq_length=LENGTH" in help_text
+    assert "model.seq_length" in help_text
+
+
 @pytest.mark.parametrize(
     "option",
     [

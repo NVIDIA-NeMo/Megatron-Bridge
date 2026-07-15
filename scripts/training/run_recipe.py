@@ -14,11 +14,54 @@
 # limitations under the License.
 """Run a Megatron Bridge library recipe in an existing distributed environment.
 
-Select either a model name with ``--model`` or a complete recipe function with
-``--recipe``. The public launcher accepts one training mode, a direct dataset
-name, runner controls, and trailing ``KEY=VALUE`` ConfigContainer overrides.
-Slurm resources, containers, mounts, and environment forwarding are owned by
-``setup_experiment.py``.
+Select either a model name with --model or a complete recipe function with
+--recipe. The public launcher accepts one training mode, a direct dataset name,
+runner controls, and trailing KEY=VALUE ConfigContainer overrides. Slurm
+resources, containers, mounts, and environment forwarding are owned by
+setup_experiment.py.
+
+Common ConfigContainer overrides
+--------------------------------
+The scripts/performance options on the left are equivalent to the trailing
+overrides on the right. They are documented as a migration aid; this command
+continues to accept the KEY=VALUE form only.
+
+Training:
+  -ms, --max_steps STEPS                 train.train_iters=STEPS
+  -gb, --global_batch_size SIZE          train.global_batch_size=SIZE
+  -mb, --micro_batch_size SIZE           train.micro_batch_size=SIZE
+
+Sequence length:
+  -sl, --seq_length LENGTH               dataset.sequence_length=LENGTH  (pretraining)
+                                           dataset.seq_length=LENGTH       (SFT/PEFT)
+
+The selected dataset owns the sequence length. After overrides are applied,
+the runner synchronizes model.seq_length from the dataset field.
+
+Parallelism:
+  -tp, --tensor_model_parallel_size N    model.tensor_model_parallel_size=N
+  -pp, --pipeline_model_parallel_size N  model.pipeline_model_parallel_size=N
+  -cp, --context_parallel_size N         model.context_parallel_size=N
+  -vp, --virtual_pipeline_model_parallel_size N
+                                           model.virtual_pipeline_model_parallel_size=N
+  -ep, --expert_model_parallel_size N    model.expert_model_parallel_size=N
+  -et, --expert_tensor_parallel_size N   model.expert_tensor_parallel_size=N
+
+Optimization:
+  --lr VALUE                             optimizer.lr=VALUE
+  --min_lr VALUE                         optimizer.min_lr=VALUE
+  --warmup_iters STEPS                   scheduler.lr_warmup_iters=STEPS
+
+Checkpointing:
+  --pretrained_checkpoint PATH           checkpoint.pretrained_checkpoint=PATH
+  --save_dir PATH                        checkpoint.save=PATH
+  --load_dir PATH                        checkpoint.load=PATH
+  --save_interval STEPS                  checkpoint.save_interval=STEPS
+
+For example:
+  run_recipe.py --model gpt_oss_20b --mode pretrain --dataset mock \\
+    dataset.sequence_length=8192 train.micro_batch_size=1 \\
+    model.tensor_model_parallel_size=2 model.sequence_parallel=true
 """
 
 import argparse
@@ -56,11 +99,15 @@ PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
 
 
+class _HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    """Preserve the override table while retaining argparse default annotations."""
+
+
 def _build_parser() -> argparse.ArgumentParser:
     """Build the public training parser."""
     parser = argparse.ArgumentParser(
-        description="Run a Megatron Bridge library recipe.",
-        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+        description=__doc__,
+        formatter_class=_HelpFormatter,
         allow_abbrev=False,
     )
 
