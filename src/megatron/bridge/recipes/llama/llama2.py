@@ -15,7 +15,9 @@
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.common import _peft_common, _pretrain_common
+from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -142,10 +144,10 @@ def llama2_70b_peft_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length
-    seq_length = 4096
+    seq_length = 8192
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
-    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+    cfg.dataset.packed_sequence_specs.packed_sequence_size = seq_length
 
     # PEFT config - 70B uses dim=16, alpha=32
     peft_cfg = default_peft_config(peft_scheme)
@@ -156,7 +158,7 @@ def llama2_70b_peft_config(
 
     # Packed sequence settings
     if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+        cfg.dataset.packed_sequence_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Parallelism settings - 70B PEFT uses TP=8
     cfg.model.pipeline_model_parallel_layout = None
