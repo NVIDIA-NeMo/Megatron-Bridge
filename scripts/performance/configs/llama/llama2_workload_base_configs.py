@@ -45,21 +45,18 @@ BASE_LLAMA2_70B_CONFIG_MLPERF = WorkloadBaseConfig(
 LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V1 = replace(
     BASE_LLAMA2_70B_CONFIG_MLPERF,
     num_gpus=4,
-    micro_batch_size=2,
     cuda_graph_impl=None,
     cuda_graph_scope=None,
 )
 
 LLAMA2_70B_LORA_CONFIG_GB200_NVFP4_V1 = replace(
     BASE_LLAMA2_70B_CONFIG_MLPERF,
-    micro_batch_size=2,
     context_parallel_size=2,
 )
 
 LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V2 = replace(
     BASE_LLAMA2_70B_CONFIG_MLPERF,
     cpu_offloading_num_layers=11,
-
 )
 
 LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V3 = replace(

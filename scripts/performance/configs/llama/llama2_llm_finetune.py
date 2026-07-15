@@ -89,7 +89,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.embedding_init_method_std = 0.02
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.microbatch_group_size_per_vp_stage = 1
-    cfg.pipeline_dtype = None
+    cfg.model.pipeline_dtype = None
     cfg.mixed_precision.fp8_amax_compute_algo = "max"
     cfg.mixed_precision.fp8_amax_history_len = 4
     cfg.mixed_precision.fp8_dot_product_attention = True
