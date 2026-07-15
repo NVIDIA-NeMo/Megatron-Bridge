@@ -46,7 +46,7 @@ To import the HF checkpoint to a Megatron path:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/conversion/convert_checkpoints.py import \
+    scripts/conversion/convert.sh import \
     --hf-model "${HF_MODEL}" \
     --megatron-path "${MEGATRON_CKPT_PATH}"
 ```
@@ -58,7 +58,7 @@ logging redirected to `${WORKSPACE}/logs/`.
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/conversion/convert_checkpoints.py export \
+    scripts/conversion/convert.sh export \
     --hf-model "${HF_MODEL}" \
     --megatron-path "${MEGATRON_CKPT_PATH}"
 ```

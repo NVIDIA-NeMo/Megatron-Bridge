@@ -22,7 +22,7 @@ Megatron Bridge supports Hugging Face Gemma checkpoints that use the `gemma` mod
 Gemma uses the common conversion and generation entry points:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model google/gemma-2b \
   --megatron-path /checkpoints/gemma_2b_megatron
 ```

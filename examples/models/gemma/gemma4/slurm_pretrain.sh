@@ -118,7 +118,8 @@ _convert() {
         --nnodes 1 --node_rank 0 \
         --master_addr localhost \
         --master_port "$port" \
-        "$BRIDGE_ROOT/examples/conversion/convert_checkpoints_multi_gpu.py" import \
+        "$BRIDGE_ROOT/scripts/conversion/run_conversion.py" import \
+        --device gpu \
         --hf-model "$HF_MODEL_DIR" \
         --megatron-path "$ckpt_path" \
         --tp $TP_SIZE \

@@ -122,9 +122,9 @@ def test_gemma3_vl_readme_recipes_are_exported():
 def test_llama_readme_conversion_path_exists():
     """The conversion script path in the llama tutorial resolves to a real file (bug 3)."""
     text = _read(LLAMA_README)
-    assert "examples/conversion/convert_checkpoints.py" in text, "expected examples/conversion path"
-    assert (REPO_ROOT / "examples" / "conversion" / "convert_checkpoints.py").is_file()
-    assert "../../conversion/convert_checkpoints.py" not in text, "stale broken relative path still present"
+    assert "scripts/conversion/convert.sh" in text, "expected stable conversion CLI path"
+    assert (REPO_ROOT / "scripts" / "conversion" / "convert.sh").is_file()
+    assert "examples/conversion/convert_checkpoints.py" not in text, "stale example conversion path still present"
 
 
 def test_llama_readme_gptdataset_field_name():

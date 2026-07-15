@@ -924,7 +924,7 @@ class AutoBridge(Generic[MegatronModelT]):
         to ensure the saved model can be loaded properly.
 
         Config-only bridges are supported when created via the auto-config
-        flow in convert_checkpoints.py.
+        flow used by ``scripts/conversion/convert.sh``.
 
         Args:
             model: Megatron model instance or list of instances
@@ -1396,7 +1396,7 @@ class AutoBridge(Generic[MegatronModelT]):
         models or deploying them with HuggingFace inference tools.
 
         Also supports config-only bridges created via the auto-config
-        flow in convert_checkpoints.py.
+        flow used by ``scripts/conversion/convert.sh``.
 
         Args:
             megatron_path: Directory path where the Megatron checkpoint is stored

@@ -45,7 +45,7 @@ environment variables to the GB200 values in this table.
 
 | Workflow | 8xH100 nodes | 4xGB200 nodes |
 | --- | --- | --- |
-| Checkpoint import | 1 node with [conversion.sh](conversion.sh), CPU import path | 6 nodes with [slurm_conversion.sh](slurm_conversion.sh), `TP=1 PP=6 EP=4` |
+| Checkpoint import | 1 node with `convert.sh --device cpu` | 6 nodes with `convert.sh --device gpu`, `TP=1 PP=6 EP=4` |
 | Base inference | 4 nodes, `TP=1 PP=4 EP=8`, `KV_CACHE_BUFFER_SIZE_GB=4` | 3 nodes, `TP=1 PP=3 EP=4` |
 | DCLM pretraining | 48 nodes, `TP=4 PP=12 EP=16`, full uniform recompute with `RECOMPUTE_GRANULARITY=full RECOMPUTE_METHOD=uniform RECOMPUTE_NUM_LAYERS=1 RECOMPUTE_MODULES=""` | 24 nodes, `TP=2 PP=3 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act+mlp+shared_experts` |
 | OpenMath SFT | 48 nodes, `TP=2 PP=12 EP=16`, full uniform recompute with `RECOMPUTE_GRANULARITY=full RECOMPUTE_METHOD=uniform RECOMPUTE_NUM_LAYERS=1 RECOMPUTE_MODULES=""` | 48 nodes, `TP=2 PP=3 EP=32`, selective recompute on `moe+layernorm+core_attn+moe_act` |
@@ -59,13 +59,16 @@ DP and expert DP.
 
 ## Checkpoint Conversion
 
-Use [conversion.sh](conversion.sh) for CPU checkpoint import when the node has
+Use the stable conversion CLI for CPU checkpoint import when the node has
 enough host RAM to materialize Nemotron 3 Ultra, for example an 8xH100 node.
 This is the preferred path when available because it avoids distributed GPU
 memory pressure during import.
 
 ```bash
-bash conversion.sh
+./scripts/conversion/convert.sh import \
+  --executor local --device cpu \
+  --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 \
+  --megatron-path ${WORKSPACE}/models/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16-megatron
 ```
 
 Set these variables for your environment:
@@ -73,28 +76,33 @@ Set these variables for your environment:
 - `WORKSPACE`
 - `HF_HOME`
 - `UV_CACHE_DIR`
-- `HF_MODEL_PATH`
-- `MEGATRON_MODEL_PATH`
 
-Use [slurm_conversion.sh](slurm_conversion.sh) for distributed GPU checkpoint
-import when host RAM is not large enough, for example a 4xGB200 setup with less
-than 1 TB of host RAM. The checked-in distributed example defaults to 6
-8-GPU nodes with `TP=1 PP=6 EP=8`; for 4xGB200, use 6 nodes and set
-`#SBATCH --ntasks-per-node=4`, `#SBATCH --gpus-per-node=4`, and
-`TP=1 PP=6 EP=4`.
+Use the distributed GPU backend when host RAM is not large enough, for example
+a 4xGB200 setup with less than 1 TB of host RAM. This H100 example uses 6
+8-GPU nodes with `TP=1 PP=6 EP=8`; for 4xGB200, use 6 nodes,
+`--gpus-per-node 4`, and `TP=1 PP=6 EP=4`.
 
 ```bash
-sbatch slurm_conversion.sh
+./scripts/conversion/convert.sh import \
+  --executor slurm --device gpu \
+  --nodes 6 --gpus-per-node 8 \
+  --account <YOUR_ACCOUNT> --partition batch --time 04:00:00 \
+  --container-image ${CONTAINER_IMAGE} \
+  --mount <BRIDGE_CHECKOUT>:/opt/Megatron-Bridge \
+  --mount ${WORKSPACE} \
+  --env HF_TOKEN --env HF_HOME \
+  --hf-model nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16 \
+  --megatron-path ${WORKSPACE}/models/nvidia/NVIDIA-Nemotron-3-Ultra-550B-A55B-BF16-megatron \
+  --tp 1 --pp 6 --ep 8 --etp 1 \
+  --distributed-timeout-minutes 30
 ```
 
 Set these variables for your environment:
 
 - `CONTAINER_IMAGE`
-- `CONTAINER_MOUNTS`
-- `WORKDIR`
 - `WORKSPACE`
-- `HF_MODEL_PATH`
-- `MEGATRON_MODEL_PATH`
+- `HF_TOKEN`
+- `HF_HOME`
 
 ## Inference
 

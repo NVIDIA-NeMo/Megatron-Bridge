@@ -20,7 +20,7 @@ the `AutoBridge`:
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama32_1b
 ```

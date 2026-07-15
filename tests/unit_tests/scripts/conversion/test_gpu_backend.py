@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for examples/conversion/convert_checkpoints_multi_gpu.py."""
+"""Unit tests for the distributed GPU conversion backend."""
 
 from __future__ import annotations
 
@@ -23,20 +23,23 @@ import sys
 import pytest
 
 
-_REPO_ROOT = pathlib.Path(__file__).resolve().parents[3]
-_CLI_PATH = _REPO_ROOT / "examples" / "conversion" / "convert_checkpoints_multi_gpu.py"
+_REPO_ROOT = pathlib.Path(__file__).resolve().parents[4]
+_SCRIPT_DIR = _REPO_ROOT / "scripts" / "conversion"
+_CLI_PATH = _SCRIPT_DIR / "gpu_backend.py"
 
 
 @pytest.fixture(scope="module")
 def cli():
     """Load the conversion script as a module under a stable test name."""
-    spec = importlib.util.spec_from_file_location("convert_checkpoints_multi_gpu_under_test", _CLI_PATH)
+    spec = importlib.util.spec_from_file_location("gpu_backend_under_test", _CLI_PATH)
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
+    sys.path.insert(0, str(_SCRIPT_DIR))
     try:
         spec.loader.exec_module(module)
         yield module
     finally:
+        sys.path.remove(str(_SCRIPT_DIR))
         sys.modules.pop(spec.name, None)
 
 
@@ -85,10 +88,11 @@ class TestImportHfToMegatron:
             return FakeBridge()
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
+        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
 
-        cli.import_hf_to_megatron.__wrapped__(
+        cli.import_checkpoint.__wrapped__(
             hf_model="hf",
             megatron_path="/ckpt",
             tp=1,
@@ -97,6 +101,8 @@ class TestImportHfToMegatron:
             etp=1,
             torch_dtype="bfloat16",
             trust_remote_code=True,
+            distributed_timeout_minutes=None,
+            overwrite=False,
         )
 
         save_call = next(call for call in calls if call[0] == "save_megatron_model")
@@ -107,7 +113,7 @@ class TestImportHfToMegatron:
 
 
 class TestExportMegatronToHf:
-    def test_export_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch):
+    def test_export_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch, tmp_path):
         calls = []
 
         class FakeModelShard:
@@ -136,12 +142,15 @@ class TestExportMegatronToHf:
             return FakeBridge()
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
+        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *_args, **_kwargs: None)
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
 
-        cli.export_megatron_to_hf.__wrapped__(
+        checkpoint_path = tmp_path / "iter_0000000"
+        checkpoint_path.mkdir()
+        cli.export_checkpoint.__wrapped__(
             hf_model="hf",
-            megatron_path="/ckpt/iter_0000000",
+            megatron_path=str(checkpoint_path),
             hf_path="/hf-export",
             tp=1,
             pp=1,
@@ -149,11 +158,17 @@ class TestExportMegatronToHf:
             etp=1,
             torch_dtype="bfloat16",
             trust_remote_code=True,
+            strict=True,
+            show_progress=True,
             distributed_save=True,
+            save_every_n_ranks=1,
+            distributed_timeout_minutes=None,
+            export_weight_dtype=None,
+            overwrite=False,
         )
 
         load_call = next(call for call in calls if call[0] == "load_megatron_model")
-        assert load_call[1] == ("/ckpt/iter_0000000",)
+        assert load_call[1] == (str(checkpoint_path),)
         assert load_call[2]["mp_overrides"]["expert_model_parallel_size"] == 2
 
         save_call = next(call for call in calls if call[0] == "save_hf_pretrained")

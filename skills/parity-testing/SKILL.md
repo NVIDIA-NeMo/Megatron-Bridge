@@ -171,7 +171,7 @@ Pitfalls section of the `add-model-support` skill.
 | Forward-pass comparison | `examples/conversion/compare_hf_and_megatron/compare.py` |
 | Text generation | `examples/conversion/hf_to_megatron_generate_text.py` |
 | VLM generation | `examples/conversion/hf_to_megatron_generate_vlm.py` |
-| Checkpoint CLI | `examples/conversion/convert_checkpoints.py` |
+| Checkpoint CLI | `scripts/conversion/convert.sh` |
 | Toy model creator | `examples/conversion/create_hf_toy_model.py` |
 | Verification utility | `src/megatron/bridge/models/conversion/utils.py` |
 | Adapter verification | `examples/conversion/adapter/verify_adapter.py` |
