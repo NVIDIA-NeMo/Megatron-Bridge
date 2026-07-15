@@ -112,6 +112,22 @@ def test_local_executor_rejects_detach():
         module._validate_args(args)
 
 
+def test_local_executor_rejects_srun_args():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--srun-arg=--mpi=pmix")
+
+    with pytest.raises(ValueError, match="only supported by the Slurm executor"):
+        module._validate_args(args)
+
+
+def test_srun_args_reject_empty_values():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--srun-arg= ")
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        module._validate_args(args)
+
+
 def test_cpu_export_rejects_export_weight_dtype():
     module = _load_setup_conversion_module()
     args = _parse_export(module, "--export-weight-dtype", "float32")
@@ -218,6 +234,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
     assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
+    assert executor.kwargs["srun_args"] == []
     assert executor.env_vars == {}
 
 
@@ -246,6 +263,8 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
         "partition",
         "--container-image",
         "image.sqsh",
+        "--srun-arg=--mpi=pmix",
+        "--srun-arg=--container-writable",
         "--ep",
         "4",
     )
@@ -255,6 +274,7 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
 
     assert executor.kwargs["ntasks_per_node"] == 4
     assert executor.kwargs["launcher"] is None
+    assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
 
 
 def test_main_waits_and_builds_local_worker_task(monkeypatch):

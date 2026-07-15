@@ -73,6 +73,8 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--cpus-per-task must be at least 1.")
     if args.distributed_timeout_minutes is not None and args.distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
+    if any(not value.strip() for value in args.srun_args):
+        raise ValueError("--srun-arg values must not be empty.")
     for name in ("tp", "pp", "ep", "etp"):
         if getattr(args, name) < 1:
             raise ValueError(f"--{name} must be at least 1.")
@@ -82,6 +84,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("Local execution supports exactly one node.")
         if args.detach:
             raise ValueError("--detach is only supported by the Slurm executor.")
+        if args.srun_args:
+            raise ValueError("--srun-arg is only supported by the Slurm executor.")
         if args.mount:
             raise ValueError("--mount is only supported by the Slurm executor; mount paths before local execution.")
     elif not args.account or not args.partition:
@@ -160,7 +164,7 @@ def _build_executor(
         container_mounts=mounts,
         container_env=container_env,
         additional_parameters={"export": ",".join(container_env)},
-        srun_args=["--mpi=pmix", "--no-container-mount-home", "--container-writable"],
+        srun_args=args.srun_args,
         **gpu_kwargs,
     )
     # Values are inherited by Slurm and selected by name for the container;

@@ -41,7 +41,28 @@ def test_cpu_local_import_defaults():
 
     assert args.executor == "local"
     assert args.device == "cpu"
+    assert args.srun_args == []
     assert (args.tp, args.pp, args.ep, args.etp) == (1, 1, 1, 1)
+
+
+def test_srun_args_are_repeatable():
+    module = _load_arguments_module()
+
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "import",
+            "--executor",
+            "slurm",
+            "--srun-arg=--mpi=pmix",
+            "--srun-arg=--container-writable",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+        ]
+    )
+
+    assert args.srun_args == ["--mpi=pmix", "--container-writable"]
 
 
 def test_parallelism_aliases_and_export_defaults():

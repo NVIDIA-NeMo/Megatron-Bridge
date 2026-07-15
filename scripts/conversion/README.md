@@ -65,6 +65,18 @@ For export, add `--hf-path`. Distributed Hugging Face saving is enabled by
 default for the GPU backend to avoid gathering the full model on rank zero.
 Use `--no-distributed-save` only when the model fits comfortably on rank zero.
 
+No cluster-specific `srun` flags are added by default. If the target cluster
+requires extra flags, repeat `--srun-arg=ARG`. For example, a Pyxis/Enroot
+cluster may use:
+
+```bash
+--srun-arg=--mpi=pmix \
+--srun-arg=--no-container-mount-home \
+--srun-arg=--container-writable
+```
+
+The `=` form is required when `ARG` begins with `-`.
+
 ## CPU conversion on Slurm
 
 CPU mode submits one task and does not request GPUs or GRES:

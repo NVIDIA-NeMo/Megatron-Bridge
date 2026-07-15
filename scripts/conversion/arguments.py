@@ -71,6 +71,14 @@ def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
         default=[],
         help="Environment variable NAME to inherit; may be repeated. Values are not accepted.",
     )
+    execution.add_argument(
+        "--srun-arg",
+        action="append",
+        default=[],
+        dest="srun_args",
+        metavar="ARG",
+        help="Additional cluster-specific argument passed to srun; may be repeated. Use --srun-arg=--flag.",
+    )
     execution.add_argument("--experiment-name", help="NeMo Run experiment name.")
     execution.add_argument(
         "--submission-dry-run",

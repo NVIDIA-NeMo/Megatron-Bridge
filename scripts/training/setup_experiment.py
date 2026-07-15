@@ -80,6 +80,14 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         default=[],
         help="Environment variable NAME to inherit into the container. May be repeated.",
     )
+    execution.add_argument(
+        "--srun-arg",
+        action="append",
+        default=[],
+        dest="srun_args",
+        metavar="ARG",
+        help="Additional cluster-specific argument passed to srun; may be repeated. Use --srun-arg=--flag.",
+    )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument(
         "--submission-dry-run",
@@ -123,6 +131,8 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate launcher requirements before creating an executor."""
+    if any(not value.strip() for value in args.srun_args):
+        raise ValueError("--srun-arg values must not be empty.")
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
     if args.gpus_per_node is None or args.gpus_per_node < 1:
@@ -156,7 +166,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     executor.env_vars = {}
     executor.container_env = env_names
     executor.additional_parameters = {"export": ",".join(env_names) if env_names else "NIL"}
-    executor.srun_args = ["--mpi=pmix", "--no-container-mount-home", "--container-writable"]
+    executor.srun_args = args.srun_args
     return executor
 
 
