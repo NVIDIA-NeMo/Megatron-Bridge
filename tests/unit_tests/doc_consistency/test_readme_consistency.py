@@ -129,16 +129,14 @@ def test_llama_readme_conversion_path_exists():
 
 def test_llama_readme_gptdataset_field_name():
     """The GPTDatasetConfig YAML block uses the canonical field name (bug 4)."""
-    # Source anchor: the dataset config key is `sequence_length` (see training/config.py).
-    assert '"sequence_length"' in _read(TRAINING_CONFIG), "sequence_length not found in config source"
+    # Bridge exposes seq_length and copies it to MCore's internal sequence_length during finalization.
+    assert "seq_length: int" in _read(TRAINING_CONFIG), "seq_length not found in config source"
     text = _read(LLAMA_README)
-    # Scope to the GPTDatasetConfig block only (the GPTSFTDatasetConfig block
-    # legitimately uses `seq_length`).
     m = re.search(r"#\s*GPTDatasetConfig\b(.*?)(?:\n\s*\n)", text, re.DOTALL)
     assert m, "could not locate GPTDatasetConfig YAML block"
     block = m.group(1)
-    assert "sequence_length:" in block, "GPTDatasetConfig block should use sequence_length"
-    assert "seq_length:" not in block, "GPTDatasetConfig block still uses wrong field seq_length"
+    assert "seq_length:" in block, "GPTDatasetConfig block should use seq_length"
+    assert "sequence_length:" not in block, "GPTDatasetConfig block still uses internal sequence_length"
 
 
 def test_hf_path_flag_documented_if_implemented():

@@ -311,8 +311,8 @@ def test_help_and_module_docstring_document_common_performance_overrides():
         assert performance_option in help_text
         assert config_override in help_text
     assert "--seq_length" in help_text
-    assert "dataset.sequence_length=LENGTH" in help_text
     assert "dataset.seq_length=LENGTH" in help_text
+    assert "dataset.sequence_length" not in help_text
     assert "model.seq_length" in help_text
 
 

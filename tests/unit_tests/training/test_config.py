@@ -3843,7 +3843,7 @@ class TestDatasetSequenceLengthValidation:
     """Tests for dataset sequence length validation with different dataset types."""
 
     def test_custom_dataset_provider_without_seq_length_passes(self, monkeypatch):
-        """Test that custom DatasetProvider without seq_length/sequence_length attributes passes validation."""
+        """Test that a custom DatasetProvider without seq_length passes validation."""
         from dataclasses import dataclass
         from typing import Any, Optional, Tuple
 
@@ -3871,7 +3871,7 @@ class TestDatasetSequenceLengthValidation:
         )
 
         try:
-            # Should pass without trying to access seq_length or sequence_length
+            # Should pass without trying to access seq_length.
             container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)

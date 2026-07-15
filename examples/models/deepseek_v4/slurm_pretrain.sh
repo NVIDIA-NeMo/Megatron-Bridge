@@ -174,7 +174,7 @@ CHECKPOINT_DIR=${WORKSPACE}/results/${RUN_NAME}/checkpoints
 
 CLI_OVERRIDES=" \
     model.seq_length=$SEQ_LENGTH \
-    dataset.sequence_length=$SEQ_LENGTH \
+    dataset.seq_length=$SEQ_LENGTH \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \
     train.micro_batch_size=$MICRO_BATCH_SIZE \

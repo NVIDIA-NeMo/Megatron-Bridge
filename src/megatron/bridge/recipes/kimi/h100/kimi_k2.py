@@ -129,7 +129,7 @@ def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 
     # MoE Token Dispatcher settings

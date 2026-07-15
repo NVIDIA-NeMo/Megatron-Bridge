@@ -135,8 +135,21 @@ class TestDatasetPresets:
         dataset = build_dataset_config(_make_config(model_seq_length=2048), dataset_name)
 
         assert isinstance(dataset, expected_type)
-        assert dataset.sequence_length == 2048
+        assert dataset.seq_length == 2048
         assert dataset_train_mode(dataset) == "pretrain"
+
+    def test_pretraining_seq_length_override_syncs_to_mcore_during_finalize(self):
+        dataset = build_dataset_config(_make_config(model_seq_length=2048), "mock")
+
+        process_config_with_overrides(dataset, cli_overrides=["seq_length=4096"])
+
+        assert dataset.seq_length == 4096
+        assert dataset.sequence_length == 2048
+        serialized = dataset.to_cfg_dict()
+        assert serialized["seq_length"] == 4096
+        assert "sequence_length" not in serialized
+        dataset.finalize()
+        assert dataset.sequence_length == 4096
 
     @pytest.mark.parametrize(
         ("dataset_name", "source_name"),

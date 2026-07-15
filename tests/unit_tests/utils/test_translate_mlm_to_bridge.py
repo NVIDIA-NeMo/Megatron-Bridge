@@ -376,9 +376,9 @@ class TestTranslateSeqLength:
     """Tests for seq-length dual mapping."""
 
     def test_seq_length_maps_to_both(self):
-        """--seq-length maps to both dataset.sequence_length and model.seq_length."""
+        """--seq-length maps to both dataset.seq_length and model.seq_length."""
         r = translate({"seq-length": 4096})
-        assert r.overrides["dataset.sequence_length"] == 4096
+        assert r.overrides["dataset.seq_length"] == 4096
         assert r.overrides["model.seq_length"] == 4096
 
 
@@ -722,14 +722,14 @@ class TestTranslateBridgeToMlmSeqLength:
         r = translate_bridge_to_mlm({"model.seq_length": 4096})
         assert r.mlm_args.get("seq-length") == 4096
 
-    def test_dataset_sequence_length(self):
-        """dataset.sequence_length → --seq-length."""
-        r = translate_bridge_to_mlm({"dataset.sequence_length": 4096})
+    def test_dataset_seq_length(self):
+        """dataset.seq_length → --seq-length."""
+        r = translate_bridge_to_mlm({"dataset.seq_length": 4096})
         assert r.mlm_args.get("seq-length") == 4096
 
     def test_both_seq_length_not_duplicated(self):
         """Both seq_length fields produce only one --seq-length entry."""
-        r = translate_bridge_to_mlm({"model.seq_length": 4096, "dataset.sequence_length": 4096})
+        r = translate_bridge_to_mlm({"model.seq_length": 4096, "dataset.seq_length": 4096})
         count = list(r.mlm_args.keys()).count("seq-length")
         assert count == 1
 
@@ -919,7 +919,7 @@ class TestRoundTripMlmToBridge:
         """--seq-length maps to both dataset and model fields."""
         args, env = parse_raw_args("--seq-length 4096")
         r = translate(args, env)
-        assert r.overrides.get("dataset.sequence_length") == 4096
+        assert r.overrides.get("dataset.seq_length") == 4096
         assert r.overrides.get("model.seq_length") == 4096
 
 
@@ -950,7 +950,7 @@ class TestRoundTripBridgeToMlm:
         assert r.mlm_args.get("num-layers") == 32
 
     def test_bridge_to_mlm_seq_length(self):
-        """dataset.sequence_length → --seq-length."""
-        overrides = parse_bridge_overrides("dataset.sequence_length=4096")
+        """dataset.seq_length → --seq-length."""
+        overrides = parse_bridge_overrides("dataset.seq_length=4096")
         r = translate_bridge_to_mlm(overrides)
         assert r.mlm_args.get("seq-length") == 4096

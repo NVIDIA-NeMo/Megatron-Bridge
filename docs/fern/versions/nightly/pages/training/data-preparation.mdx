@@ -13,9 +13,8 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 | Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Hugging Face multimodal](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) through `DirectHFSFTDatasetConfig` + builder |
 | Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
 
-Python constructors accept `seq_length`. For CLI overrides, `GPTDatasetConfig` exposes Megatron Core's inherited
-`dataset.sequence_length` field, while `GPTSFTDatasetConfig` and `DirectHFSFTDatasetConfig` expose
-`dataset.seq_length` directly.
+All canonical dataset configs expose `seq_length` in Python and through CLI overrides. During finalization,
+`GPTDatasetConfig` copies that value to Megatron Core's internal `sequence_length` field.
 
 ## LLM Pretraining Data
 
@@ -49,7 +48,7 @@ uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_r
     --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
     --mode pretrain --dataset megatron-indexed \
     dataset.data_path=/data/dclm/preprocessed_text_document \
-    dataset.sequence_length=8192
+    dataset.seq_length=8192
 ```
 
 To create Megatron binary data from JSONL text, use the Megatron-LM `tools/preprocess_data.py` workflow. The DCLM tutorial shows a complete download, merge, shuffle, and preprocessing flow: [DCLM Data Preprocessing Tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/dclm/README.md).

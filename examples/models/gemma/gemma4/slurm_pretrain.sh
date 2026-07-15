@@ -249,7 +249,7 @@ $TORCHRUN_BIN \
     "checkpoint.save=$SAVE_DIR" \
     "train.train_iters=$TRAIN_ITERS" \
     "model.seq_length=$SEQ_LENGTH" \
-    "dataset.sequence_length=$SEQ_LENGTH" \
+    "dataset.seq_length=$SEQ_LENGTH" \
     "${DATA_OVERRIDES[@]}"
 
 echo ""

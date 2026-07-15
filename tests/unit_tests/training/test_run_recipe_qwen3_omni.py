@@ -235,7 +235,7 @@ class TestRecipeRunnerQwen3Omni:
         assert events == ["dump", "training"]
 
     def test_sync_model_dataset_sequence_length_accepts_sequence_length_alias(self):
-        """Hydra overrides using dataset.sequence_length should still align the model."""
+        """Hydra overrides using dataset.seq_length should still align the model."""
         module, _ = _load_recipe_runner_module()
         config = SimpleNamespace(
             dataset=SimpleNamespace(sequence_length=256),

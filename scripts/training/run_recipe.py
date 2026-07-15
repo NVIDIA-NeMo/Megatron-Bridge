@@ -32,8 +32,7 @@ Training:
   -mb, --micro_batch_size SIZE           train.micro_batch_size=SIZE
 
 Sequence length:
-  -sl, --seq_length LENGTH               dataset.sequence_length=LENGTH  (pretraining)
-                                           dataset.seq_length=LENGTH       (SFT/PEFT)
+  -sl, --seq_length LENGTH               dataset.seq_length=LENGTH
 
 The selected dataset owns the sequence length. After overrides are applied,
 the runner synchronizes model.seq_length from the dataset field.
@@ -60,7 +59,7 @@ Checkpointing:
 
 For example:
   run_recipe.py --model gpt_oss_20b --mode pretrain --dataset mock \\
-    dataset.sequence_length=8192 train.micro_batch_size=1 \\
+    dataset.seq_length=8192 train.micro_batch_size=1 \\
     model.tensor_model_parallel_size=2 model.sequence_parallel=true
 """
 

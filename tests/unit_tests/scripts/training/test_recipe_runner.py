@@ -84,12 +84,11 @@ def test_load_forward_step_imports_only_selected_module(
     recipe_runner._load_step_function.cache_clear()
 
 
-def test_sync_model_dataset_sequence_length_supports_both_dataset_field_names(recipe_runner: ModuleType) -> None:
-    for dataset in (SimpleNamespace(seq_length=256), SimpleNamespace(sequence_length=512)):
-        config = SimpleNamespace(model=SimpleNamespace(seq_length=1024), dataset=dataset)
+def test_sync_model_dataset_sequence_length_uses_canonical_dataset_field(recipe_runner: ModuleType) -> None:
+    config = SimpleNamespace(model=SimpleNamespace(seq_length=1024), dataset=SimpleNamespace(seq_length=256))
 
-        assert recipe_runner.sync_model_dataset_sequence_length(config) is config
-        assert config.model.seq_length in {256, 512}
+    assert recipe_runner.sync_model_dataset_sequence_length(config) is config
+    assert config.model.seq_length == 256
 
 
 @pytest.mark.parametrize(
