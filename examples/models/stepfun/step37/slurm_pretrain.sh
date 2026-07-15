@@ -136,7 +136,7 @@ export LOCAL_RANK=${SLURM_LOCALID}
 cd "${MEGATRON_BRIDGE_PATH}"
 uv run --no-sync python scripts/training/run_recipe.py \
     --recipe step37_flickr8k_sft_smoke_config \
-    --step-func step37_flickr8k_step \
+    --step_func step37_flickr8k_step \
     ${CLI_OVERRIDES}
 EOF
 

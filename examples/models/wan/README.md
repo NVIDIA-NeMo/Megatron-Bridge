@@ -140,7 +140,7 @@ This recipe leverages sequence packing to maximize throughput. When a batch cont
 
 ### Training mode
 
-WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning. Always pass `--step-func wan_step`; the mode is automatically inferred from the recipe name:
+WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning. Always pass `--step_func wan_step`; the mode is automatically inferred from the recipe name:
 - **pretrain** (recipe contains `pretrain`): logit-normal sampling, higher `logit_std` (1.5), lower `flow_shift` (2.5) — for stability and broad learning
 - **finetune** (recipe contains `finetune`/`sft`/`peft`): uniform sampling, lower `logit_std` (1.0), higher `flow_shift` (3.0) — to refine details and improve quality
 
@@ -149,7 +149,7 @@ WAN uses different flow-matching hyperparameters for pretraining vs fine-tuning.
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe wan_1_3b_pretrain_config \
-  --step-func wan_step
+  --step_func wan_step
 ```
 
 ### WAN 1.3B — Real data (WebDataset path):
@@ -157,7 +157,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
   --recipe wan_1_3b_pretrain_config \
-  --step-func wan_step \
+  --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan
 ```
 
@@ -166,7 +166,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=$NUM_GPUS scripts/training/run_recipe.py \
   --recipe wan_1_3b_pretrain_config \
-  --step-func wan_step \
+  --step_func wan_step \
   dataset.path=${WORKSPACE}/datasets/wan \
   train.global_batch_size=8 \
   train.micro_batch_size=1 \

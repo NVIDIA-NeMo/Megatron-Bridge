@@ -74,7 +74,7 @@ EXP_NAME=<experiment_name>
 
 NVTE_FUSED_ATTN=1 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe wan_1_3b_pretrain_config \
-    --step-func wan_step \
+    --step_func wan_step \
     model.tensor_model_parallel_size=1 \
     model.pipeline_model_parallel_size=1 \
     model.context_parallel_size=4 \

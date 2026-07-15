@@ -137,7 +137,7 @@ CLI_OVERRIDES="\
 # CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
 CMD="uv run --no-sync python scripts/training/run_recipe.py"
 CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
-CMD="$CMD --step-func vlm_step"
+CMD="$CMD --step_func vlm_step"
 CMD="$CMD --mode lora"
 CMD="$CMD $CLI_OVERRIDES"
 

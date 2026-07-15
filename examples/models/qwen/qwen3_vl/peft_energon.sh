@@ -37,7 +37,7 @@ export WANDB_MODE=${WANDB_MODE:-disabled}
 uv run python -m torch.distributed.run --standalone --nproc_per_node="${NUM_GPUS}" \
   scripts/training/run_recipe.py \
   --recipe qwen3_vl_8b_peft_energon_config \
-  --step-func qwen3_vl_step \
+  --step_func qwen3_vl_step \
   --mode lora \
   checkpoint.pretrained_checkpoint="${PRETRAINED_CHECKPOINT}" \
   checkpoint.load=null \

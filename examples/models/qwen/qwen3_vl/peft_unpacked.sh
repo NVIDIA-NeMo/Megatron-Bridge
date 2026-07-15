@@ -45,7 +45,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Running LoRA finetuning with TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_peft_config \
-        --step-func qwen3_vl_step \
+        --step_func qwen3_vl_step \
         --mode lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \
@@ -93,7 +93,7 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Running LoRA finetuning with EP=$EP, TP=$TP, PP=$PP"
     uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
         --recipe ${MODEL_NAME}_peft_config \
-        --step-func qwen3_vl_step \
+        --step_func qwen3_vl_step \
         --mode lora \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         model.seq_length=$SEQ_LENGTH \

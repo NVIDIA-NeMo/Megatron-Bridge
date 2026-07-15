@@ -268,7 +268,7 @@ $SRUN_CMD bash -lc "
     cd /opt/Megatron-Bridge
     $TORCHRUN scripts/training/run_recipe.py \
         --recipe $RECIPE_NAME \
-        --step-func gpt_step \
+        --step_func gpt_step \
         $CLI_OVERRIDES
 "
 

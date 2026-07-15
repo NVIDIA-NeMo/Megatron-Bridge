@@ -101,7 +101,7 @@ CMD="${CMD}export RANK=\$SLURM_PROCID LOCAL_RANK=\$SLURM_LOCALID WORLD_SIZE=\$SL
 CMD="${CMD}uv run --no-sync python scripts/training/run_recipe.py"
 CMD="${CMD} --recipe ${RECIPE}"
 CMD="${CMD} --mode sft"
-CMD="${CMD} --step-func vlm_step"
+CMD="${CMD} --step_func vlm_step"
 CMD="${CMD} checkpoint.pretrained_checkpoint=${PRETRAINED_CHECKPOINT}"
 CMD="${CMD} model.tensor_model_parallel_size=${TP}"
 CMD="${CMD} model.pipeline_model_parallel_size=${PP}"

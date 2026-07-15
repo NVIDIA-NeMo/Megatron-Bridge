@@ -203,7 +203,7 @@ CMD="uv run --no-sync python -m torch.distributed.run \
     /opt/Megatron-Bridge/scripts/training/run_recipe.py \
     --recipe $RECIPE_NAME \
     --dataset $DATASET_TYPE \
-    --step-func gpt_step \
+    --step_func gpt_step \
     $CLI_OVERRIDES"
 
 echo "======================================"

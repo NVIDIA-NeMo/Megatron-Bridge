@@ -65,7 +65,6 @@ LEGACY_RUN_RECIPE_ARGUMENTS = (
     "--packed_sequence",
     "--seq-length",
     "--seq_length",
-    "--step_func",
     "--dataset llm-pretrain",
     "--dataset llm-pretrain-mock",
     "--dataset llm-finetune",
