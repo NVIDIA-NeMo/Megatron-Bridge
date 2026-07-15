@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge training workflows, including configuring offline packed SFT for LLMs and in-batch packing for VLMs with correct context-parallelism constraints. <br>
+Developers and engineers enabling sequence packing or long-context training in Megatron-Bridge, including configuring offline packed SFT for LLMs, in-batch packing for VLMs, and context parallelism constraints. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -30,7 +30,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Analysis] <br>
+**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
 **Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -42,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in the NVSkills-Eval external profile covering sequence packing configuration for LLMs and VLMs. <br>
+Evaluated against 1 internal skill task in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -67,10 +67,15 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+22%) |
-| Discoverability | 1 | 100% (+100%) | 80% (+49%) |
-| Effectiveness | 1 | 94% (+94%) | 87% (+8%) |
-| Efficiency | 1 | 94% (+67%) | 72% (+38%) |
+| Correctness | 1 | 100% (+100%) | 97% (+42%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+69%) |
+| Effectiveness | 1 | 95% (+95%) | 94% (+48%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+77%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>

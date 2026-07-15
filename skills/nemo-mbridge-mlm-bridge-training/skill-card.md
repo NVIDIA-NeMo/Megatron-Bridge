@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers running Megatron-LM or Megatron Bridge training, comparing MLM vs Bridge loss curves, translating MLM CLI arguments to Bridge configuration, or investigating loss-curve divergence after a commit. <br>
+Developers and engineers running Megatron-LM and Megatron Bridge training, comparing MLM vs Bridge loss curves, translating MLM CLI arguments to Bridge config, and investigating training correlation issues. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -26,7 +26,8 @@ Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
 - [Megatron-LM to Megatron Bridge Guide](docs/megatron-lm-to-megatron-bridge.md) <br>
-- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Bridge Training Entry Point (run_recipe.py)](scripts/training/run_recipe.py) <br>
+- [NeMo Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
@@ -42,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task covering positive skill-activation scenarios via NVSkills-Eval (profile: external, environment: astra-sandbox). <br>
+Evaluated against 1 internal skill task (positive activation) in astra-sandbox environment using NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -67,10 +68,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 97% (+78%) |
-| Discoverability | 1 | 100% (+100%) | 97% (+53%) |
-| Effectiveness | 1 | 100% (+95%) | 100% (+91%) |
-| Efficiency | 1 | 94% (+67%) | 96% (+42%) |
+| Correctness | 1 | 100% (+100%) | 97% (+25%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+64%) |
+| Effectiveness | 1 | 100% (+95%) | 100% (+0%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+59%) |
 
 ## Skill Version(s): <br>
 1.0.0+b7643bd (source: pyproject.toml) <br>
