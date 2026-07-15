@@ -1783,7 +1783,7 @@ class _NemotronOmniProcessor:
         if kwargs.get("images") is not None:
             num_patches = [1] * len(kwargs["images"])
             output["num_patches"] = torch.tensor(num_patches, dtype=torch.long)
-            output["pixel_values"] = torch.ones(sum(num_patches), 3, 16, 16)
+            output["pixel_values"] = torch.ones(sum(num_patches), 3, 32, 32)
         return output
 
 
@@ -1798,12 +1798,35 @@ def _zero_assistant_loss_mask(
 
 
 def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
-    proc = _NemotronOmniProcessor(tokenized_rows=[[100, 10, 102, 103, 101, 21, 22, 102, 103]])
+    proc = _NemotronOmniProcessor(
+        tokenized_rows=[
+            [
+                100,
+                NEMO_IMG_START_TOKEN_ID,
+                NEMO_IMAGE_TOKEN_ID,
+                NEMO_IMG_END_TOKEN_ID,
+                10,
+                102,
+                103,
+                101,
+                21,
+                22,
+                102,
+                103,
+            ]
+        ]
+    )
     proc.tokenizer.added_tokens_decoder = {102: "<|im_end|>"}
     examples = [
         {
             "conversation": [
-                {"role": "user", "content": "question"},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": "receipt"},
+                        {"type": "text", "text": "question"},
+                    ],
+                },
                 {"role": "assistant", "content": "answer"},
             ],
         }
@@ -1811,92 +1834,18 @@ def test_nemotron_omni_collate_keeps_chatml_turn_end_token():
 
     batch = collate.nemotron_omni_collate_fn(examples, proc)
 
-    assert batch["loss_mask"].tolist() == [[0.0, 0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 1.0, 0.0]]
-    assert batch["labels"].tolist() == [[-100, -100, -100, -100, 21, 22, 102, 103, -100]]
+    assert batch["loss_mask"][0, -5:].tolist() == [1.0, 1.0, 1.0, 1.0, 0.0]
+    assert batch["labels"][0, -5:].tolist() == [21, 22, 102, 103, -100]
 
 
-def test_nemotron_omni_hf_collate_uses_shared_text_packing(monkeypatch):
-    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
-    proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6], [7, 8, 9]])
-    examples = [
-        {"conversation": [{"role": "user", "content": "row one"}]},
-        {"conversation": [{"role": "user", "content": "row two"}]},
-    ]
+def test_nemotron_omni_collate_rejects_unsupported_visual_keys():
+    proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6]])
 
-    batch = collate.nemotron_omni_collate_fn(
-        examples,
-        proc,
-        enable_in_batch_packing=True,
-        sequence_length=16,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
-
-    assert batch["input_ids"].tolist() == [[5, 6, 0, 0, 7, 8, 9, 0]]
-    assert batch["attention_mask"] is None
-    assert batch["cu_seqlens_q"].tolist() == [0, 2, 5]
-    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
-    assert batch["total_tokens"] == 8
-
-
-def test_nemotron_omni_hf_collate_fixed_text_packing_uses_model_width(monkeypatch):
-    from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
-
-    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
-    proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6], [7, 8, 9]])
-    examples = [
-        {"conversation": [{"role": "user", "content": "row one"}]},
-        {"conversation": [{"role": "user", "content": "row two"}]},
-    ]
-
-    batch = collate.nemotron_omni_collate_fn(
-        examples,
-        proc,
-        enable_in_batch_packing=True,
-        sequence_length=16,
-        pad_to_max_length=True,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
-
-    assert batch["input_ids"].shape == (1, 16)
-    assert batch["input_ids"][0, :8].tolist() == [5, 6, 0, 0, 7, 8, 9, 0]
-    assert batch["cu_seqlens_q"].tolist() == [0, 2, 5]
-    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 16]
-    assert batch["total_tokens"] == 16
-    packed_seq_params = get_packed_seq_params(
-        {
-            key: batch[key]
-            for key in (
-                "cu_seqlens_q",
-                "cu_seqlens_kv",
-                "cu_seqlens_q_padded",
-                "cu_seqlens_kv_padded",
-                "max_seqlen_q",
-                "max_seqlen_kv",
-                "total_tokens",
-            )
-        }
-    )
-    assert packed_seq_params.seq_idx.shape == (1, 16)
-
-
-def test_nemotron_omni_hf_collate_rejects_text_packing_aggregate_overflow(monkeypatch):
-    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
-    proc = _NemotronOmniProcessor(tokenized_rows=[[1, 2, 3, 4, 5], [6, 7, 8, 9, 10]])
-    examples = [
-        {"conversation": [{"role": "user", "content": "row one"}]},
-        {"conversation": [{"role": "user", "content": "row two"}]},
-    ]
-
-    with pytest.raises(
-        ValueError,
-        match=r"aligned lengths \[8, 8\], and total 16 with sequence_length=12",
-    ):
+    with pytest.raises(ValueError, match=r"visual_keys must be exactly \('pixel_values',\)"):
         collate.nemotron_omni_collate_fn(
-            examples,
+            [{"conversation": [{"role": "user", "content": "text"}]}],
             proc,
-            enable_in_batch_packing=True,
-            sequence_length=12,
-            in_batch_packing_pad_to_multiple_of=4,
+            visual_keys=("pixel_values", "image_sizes"),
         )
 
 

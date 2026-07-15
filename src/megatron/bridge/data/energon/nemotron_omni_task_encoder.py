@@ -19,7 +19,10 @@ from dataclasses import dataclass, fields
 from typing import Any, Mapping, Sequence
 
 from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample, HFTaskEncoder
-from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_collate_fn
+from megatron.bridge.models.nemotron_omni.data.collate_fn import (
+    _validate_nemotron_omni_visual_keys,
+    nemotron_omni_collate_fn,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -128,6 +131,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
     ) -> None:
+        _validate_nemotron_omni_visual_keys(visual_keys)
         super().__init__(
             processor=processor,
             seq_length=seq_length,

@@ -165,13 +165,18 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
 
-    def _validate_dynamic_resolution(self) -> None:
+    def _validate_omni_config(self) -> None:
         if self.dynamic_resolution is not True:
             raise ValueError("Nemotron Omni only supports dynamic_resolution=True.")
+        if self.image_token_index is None or self.image_token_index <= 0:
+            raise ValueError(
+                "Nemotron Omni requires a positive image_token_index from the checkpoint configuration; "
+                f"got {self.image_token_index}. Construct the provider through AutoBridge or set it explicitly."
+            )
 
     def finalize(self) -> None:
         """Finalize a dynamic-resolution Nemotron Omni provider."""
-        self._validate_dynamic_resolution()
+        self._validate_omni_config()
         super().finalize()
 
     def _build_vision_config(self, language_cfg):
@@ -237,7 +242,7 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         at construction time -- they can't be added after. This is intentional to
         maintain zero changes to nemotron_vl/.
         """
-        self._validate_dynamic_resolution()
+        self._validate_omni_config()
         language_cfg = copy.deepcopy(self)
 
         vision_cfg = self._build_vision_config(language_cfg)

@@ -43,6 +43,24 @@ CHATML_ASSISTANT_END = "<|im_end|>\n"
 CHATML_OTHER_ROLE_STARTS = {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")}
 VISION_FRAME_SIZE = 512
 PIXEL_SHUFFLE_FACTOR = 2
+_NEMOTRON_OMNI_VISUAL_KEYS = ("pixel_values",)
+
+
+def _validate_nemotron_omni_visual_keys(visual_keys: object = None) -> None:
+    """Validate the model-owned visual input contract retained for API compatibility."""
+    if visual_keys is None:
+        return
+    if isinstance(visual_keys, str):
+        requested_keys = (visual_keys,)
+    else:
+        try:
+            requested_keys = tuple(visual_keys)
+        except TypeError as error:
+            raise ValueError("Nemotron Omni visual_keys must contain only 'pixel_values'.") from error
+    if requested_keys != _NEMOTRON_OMNI_VISUAL_KEYS:
+        raise ValueError(
+            "Nemotron Omni owns its visual input contract; visual_keys must be exactly ('pixel_values',)."
+        )
 
 
 def _pad_text_rows(
@@ -793,7 +811,8 @@ def nemotron_omni_collate_fn(
     patch_dim: int = 16,
 ) -> dict[str, Any]:
     """Build one model-ready Omni batch from either HF or Energon examples."""
-    del start_of_response_token, visual_keys, min_pixels, max_pixels
+    _validate_nemotron_omni_visual_keys(visual_keys)
+    del start_of_response_token, min_pixels, max_pixels
     if not examples:
         raise ValueError("Nemotron Omni collation requires at least one example.")
     if hasattr(processor.image_processor, "max_num_tiles"):

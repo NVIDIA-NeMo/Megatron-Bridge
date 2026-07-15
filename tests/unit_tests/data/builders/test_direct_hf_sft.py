@@ -114,6 +114,26 @@ def test_builder_leaves_multimodal_conversations_to_processor_collators(media_ty
     assert select_direct_hf_sft_collate([row]) is None
 
 
+def test_builder_keeps_text_shaped_nemotron_omni_data_on_model_collator():
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
+
+    assert select_direct_hf_sft_collate([row], processor=processor_type()) is None
+
+
+def test_builder_rejects_text_prompt_completion_for_nemotron_omni():
+    row = {"question": "question", "answer": "answer"}
+    processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
+    preprocessing = PromptCompletionSFTPreprocessingConfig(prompt_column="question", completion_column="answer")
+
+    with pytest.raises(ValueError, match="requires chat preprocessing"):
+        select_direct_hf_sft_collate(
+            [row],
+            preprocessing,
+            processor=processor_type(),
+        )
+
+
 def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(monkeypatch):
     row = {
         "messages": [

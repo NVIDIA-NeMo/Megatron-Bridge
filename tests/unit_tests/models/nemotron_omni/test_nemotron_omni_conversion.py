@@ -153,6 +153,14 @@ def test_nemotron_omni_provider_rejects_static_resolution():
         provider.finalize()
 
 
+@pytest.mark.parametrize("image_token_index", [0, -1])
+def test_nemotron_omni_provider_rejects_nonpositive_image_token_index(image_token_index):
+    provider = NemotronOmniModelProvider(image_token_index=image_token_index)
+
+    with pytest.raises(ValueError, match="requires a positive image_token_index"):
+        provider.finalize()
+
+
 def test_nemotron_omni_vision_projection_uses_squared_relu():
     provider = NemotronOmniModelProvider()
 

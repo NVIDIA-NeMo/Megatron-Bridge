@@ -46,6 +46,7 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
+_NEMOTRON_OMNI_PROCESSOR_TYPE = "NemotronH_Nano_Omni_Reasoning_V3Processor"
 
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
@@ -186,12 +187,18 @@ def select_direct_hf_sft_collate(
     examples: list[dict[str, Any]],
     preprocessing: SFTPreprocessingConfig | None = None,
     collate_impl: CollateFunction | None = None,
+    *,
+    processor: Any | None = None,
 ) -> CollateFunction | None:
     """Select a shared text collator for the explicit preprocessing variant."""
     if collate_impl is not None:
         return collate_impl
     preprocessing = preprocessing or ChatSFTPreprocessingConfig()
     validate_sft_preprocessing_config(preprocessing)
+    if type(processor).__name__ == _NEMOTRON_OMNI_PROCESSOR_TYPE:
+        if not isinstance(preprocessing, ChatSFTPreprocessingConfig):
+            raise ValueError("Nemotron Omni requires chat preprocessing through its model-owned collator.")
+        return None
     if isinstance(preprocessing, ChatSFTPreprocessingConfig):
         if all(is_text_only_chat_example(example) for example in examples):
             return partial(text_chat_collate_fn, loss_mode=preprocessing.loss_mode)
@@ -219,7 +226,12 @@ def build_direct_hf_sft_split(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
-        collate_impl=select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl),
+        collate_impl=select_direct_hf_sft_collate(
+            examples,
+            config.preprocessing,
+            collate_impl,
+            processor=processor,
+        ),
         sequence_length=config.seq_length,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,

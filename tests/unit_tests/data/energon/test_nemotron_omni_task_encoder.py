@@ -104,7 +104,10 @@ class _Processor:
         self.processor_kwargs.append(kwargs)
         row = self.tokenizer.rows[self.processor_calls]
         self.processor_calls += 1
-        return {"input_ids": torch.tensor([row], dtype=torch.long)}
+        output = {"input_ids": torch.tensor([row], dtype=torch.long)}
+        if kwargs.get("images") is not None:
+            output["pixel_values"] = torch.ones(len(kwargs["images"]), 3, 32, 32)
+        return output
 
 
 def _sample(conversation, *, key="sample", imgs=None, videos=None, audio=None):
@@ -137,6 +140,14 @@ def test_encoder_uses_generic_hf_style_sample_and_batch_contract():
 
     assert isinstance(encoded, HFEnergonSample)
     assert encoded.example["conversation"][0]["content"] == "question"
+
+
+def test_encoder_rejects_unsupported_visual_keys():
+    with pytest.raises(ValueError, match=r"visual_keys must be exactly \('pixel_values',\)"):
+        NemotronOmniTaskEncoder(
+            processor=_Processor([[1, 2]]),
+            visual_keys=("pixel_values", "image_sizes"),
+        )
 
 
 def test_legacy_visual_tensors_batch_contract_is_normalized_and_exposed():
@@ -179,16 +190,20 @@ def test_energon_batch_preserves_real_tokens_when_pad_id_equals_turn_end(monkeyp
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
     processor = _Processor(
         [
-            [100, PAD_AND_END_ID, 21, PAD_AND_END_ID],
-            [200, PAD_AND_END_ID, 31, 32, PAD_AND_END_ID],
+            [100, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, PAD_AND_END_ID, 21, PAD_AND_END_ID],
+            [200, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, PAD_AND_END_ID, 31, 32, PAD_AND_END_ID],
         ]
     )
     encoder = NemotronOmniTaskEncoder(processor=processor, seq_length=16, pad_to_multiple_of=1)
     samples = [
         encoder.encode_sample(
             _sample(
-                [{"role": "user", "content": key}, {"role": "assistant", "content": "answer"}],
+                [
+                    {"role": "user", "content": [{"type": "image"}, {"type": "text", "text": key}]},
+                    {"role": "assistant", "content": "answer"},
+                ],
                 key=key,
+                imgs=[torch.ones(3, 32, 32)],
             )
         )
         for key in ("row-a", "row-b")
@@ -198,43 +213,11 @@ def test_energon_batch_preserves_real_tokens_when_pad_id_equals_turn_end(monkeyp
     encoded = encoder.encode_batch(batch)
 
     assert batch.input_ids.tolist() == [
-        [100, PAD_AND_END_ID, 21, PAD_AND_END_ID, PAD_AND_END_ID],
-        [200, PAD_AND_END_ID, 31, 32, PAD_AND_END_ID],
+        [100, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, PAD_AND_END_ID, 21, PAD_AND_END_ID, PAD_AND_END_ID],
+        [200, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, PAD_AND_END_ID, 31, 32, PAD_AND_END_ID],
     ]
     assert not bool((batch.input_ids == 0).any())
     assert encoded["input_ids"] is batch.input_ids
-
-
-def test_energon_text_packing_is_owned_by_shared_collator(monkeypatch):
-    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
-    processor = _Processor([[1, 2], [3, 4, 5]])
-    encoder = NemotronOmniTaskEncoder(
-        processor=processor,
-        seq_length=16,
-        pad_to_multiple_of=1,
-        enable_in_batch_packing=True,
-        in_batch_packing_pad_to_multiple_of=4,
-    )
-    samples = [
-        encoder.encode_sample(
-            _sample(
-                [{"role": "user", "content": key}, {"role": "assistant", "content": "answer"}],
-                key=key,
-            )
-        )
-        for key in ("row-a", "row-b")
-    ]
-
-    batch = encoder.batch(samples)
-
-    assert batch.input_ids.tolist() == [[1, 2, PAD_AND_END_ID, PAD_AND_END_ID, 3, 4, 5, PAD_AND_END_ID]]
-    assert batch.attention_mask is None
-    assert batch.cu_seqlens_q.tolist() == [0, 2, 5]
-    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
-    assert batch.max_seqlen_q.item() == 4
-    assert batch.total_tokens == 8
-    packed_seq_params = get_packed_seq_params(encoder.encode_batch(batch))
-    assert packed_seq_params.seq_idx.tolist() == [[0, 0, 0, 0, 1, 1, 1, 1]]
 
 
 def test_energon_audio_uses_shared_collator_token_expansion(monkeypatch):

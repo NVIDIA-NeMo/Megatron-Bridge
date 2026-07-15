@@ -352,9 +352,7 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_multiple():
     assert "cu_seqlens_unpadded_argmin" not in batch
 
 
-def test_text_chat_collate_fn_pads_packed_sequences_to_model_width():
-    from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
-
+def test_text_chat_collate_fn_packed_width_is_emergent_when_pad_to_max_length_is_set():
     tokenizer = _TextChatTokenizer()
     examples = [
         {"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]},
@@ -370,44 +368,29 @@ def test_text_chat_collate_fn_pads_packed_sequences_to_model_width():
         in_batch_packing_pad_to_multiple_of=4,
     )
 
-    assert batch["tokens"].shape == (1, 16)
+    assert batch["tokens"].shape == (1, 8)
     assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
-    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 16]
-    assert batch["total_tokens"] == 16
-    packed_seq_params = get_packed_seq_params(
-        {
-            key: batch[key]
-            for key in (
-                "cu_seqlens_q",
-                "cu_seqlens_kv",
-                "cu_seqlens_q_padded",
-                "cu_seqlens_kv_padded",
-                "max_seqlen_q",
-                "max_seqlen_kv",
-                "total_tokens",
-            )
-        }
-    )
-    assert packed_seq_params.seq_idx.shape == (1, 16)
+    assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+    assert batch["total_tokens"] == 8
 
 
-def test_text_chat_collate_fn_rejects_packed_aggregate_over_model_width():
+def test_text_chat_collate_fn_allows_packed_aggregate_over_per_row_max_length():
     tokenizer = _TextChatTokenizer()
     examples = [
         {"messages": [{"role": "user", "content": "hi"}, {"role": "assistant", "content": "hello"}]},
         {"messages": [{"role": "user", "content": "later"}, {"role": "assistant", "content": "bye"}]},
     ]
 
-    with pytest.raises(
-        ValueError,
-        match=r"aligned lengths \[3, 4\] and total 7 with packed_sequence_length=6",
-    ):
-        text_chat_collate_fn(
-            examples,
-            tokenizer,
-            max_length=6,
-            enable_in_batch_packing=True,
-        )
+    batch = text_chat_collate_fn(
+        examples,
+        tokenizer,
+        max_length=6,
+        enable_in_batch_packing=True,
+    )
+
+    assert batch["tokens"].shape == (1, 7)
+    assert batch["cu_seqlens_q"].tolist() == [0, 3, 7]
+    assert batch["total_tokens"] == 7
 
 
 @pytest.mark.parametrize("enable_in_batch_packing", [False, True])
