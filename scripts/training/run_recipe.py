@@ -44,7 +44,7 @@ Parallelism:
   -vp, --virtual_pipeline_model_parallel_size N
                                            model.virtual_pipeline_model_parallel_size=N
   -ep, --expert_model_parallel_size N    model.expert_model_parallel_size=N
-  -et, --expert_tensor_parallel_size N   model.expert_tensor_parallel_size=N
+  -etp, --expert_tensor_parallel_size N  model.expert_tensor_parallel_size=N
 
 Optimization:
   --lr VALUE                             optimizer.lr=VALUE
@@ -202,7 +202,7 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Set model.expert_model_parallel_size.",
     )
     parallelism.add_argument(
-        "-et",
+        "-etp",
         "--expert_tensor_parallel_size",
         type=int,
         metavar="N",

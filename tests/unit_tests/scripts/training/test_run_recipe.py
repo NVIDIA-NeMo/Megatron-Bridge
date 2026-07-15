@@ -395,7 +395,7 @@ def test_common_convenience_arguments_become_config_overrides():
         ("-cp", "8", "model.context_parallel_size=8"),
         ("-vp", "2", "model.virtual_pipeline_model_parallel_size=2"),
         ("-ep", "4", "model.expert_model_parallel_size=4"),
-        ("-et", "2", "model.expert_tensor_parallel_size=2"),
+        ("-etp", "2", "model.expert_tensor_parallel_size=2"),
     ],
 )
 def test_common_short_arguments_become_config_overrides(option, value, expected_override):
@@ -445,6 +445,7 @@ def test_trailing_config_override_takes_precedence_over_convenience_argument():
         "--from",
         "--wandb-name",
         "--save-config",
+        "-et",
     ],
 )
 def test_unsupported_config_shortcut_spellings_are_rejected(option):
