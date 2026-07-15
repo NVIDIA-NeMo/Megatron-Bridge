@@ -15,7 +15,7 @@ All scripts dynamically import recipes from `megatron.bridge.recipes`, apply use
 ## Quick Start
 
 For the end-to-end overview of how recipes are structured, overridden, and launched, see the official [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
-For preparing and selecting pretraining, text-only SFT, direct Hugging Face SFT, or Energon data, see the [data tutorial index](../../tutorials/data/README.md).
+For choosing pretraining `.bin`/`.idx`, direct Hugging Face SFT, transitional prepared text SFT, or Energon data, see the [data tutorial index](../../tutorials/data/README.md).
 
 ### Pretrain (single-GPU)
 

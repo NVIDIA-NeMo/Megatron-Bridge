@@ -201,6 +201,26 @@ def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):
     assert adapted[0]["completion"] == "a"
 
 
+def test_json_data_files_use_hugging_face_loader(monkeypatch):
+    calls = []
+
+    def _load_dataset(path, *, split, **kwargs):
+        calls.append((path, split, kwargs))
+        return [{"messages": [{"role": "user", "content": "hello"}]}]
+
+    monkeypatch.setattr(source_module, "load_dataset", _load_dataset)
+    source = HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split="train",
+        load_kwargs={"data_files": {"train": "training.jsonl"}},
+    )
+
+    rows = load_and_adapt_hf_dataset(source)
+
+    assert calls == [("json", "train", {"data_files": {"train": "training.jsonl"}})]
+    assert rows[0]["messages"][0]["content"] == "hello"
+
+
 def test_distributed_source_preparation_materializes_on_rank_zero(monkeypatch):
     source = HFDatasetSourceConfig(path_or_dataset="org/chat")
     calls = []

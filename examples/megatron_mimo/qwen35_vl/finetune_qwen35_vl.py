@@ -415,6 +415,20 @@ def _pad_or_truncate_2d(tensor: torch.Tensor | None, target_len: int, pad_value:
     return torch.cat([tensor, pad], dim=1).contiguous()
 
 
+def _validate_multimodal_truncation(input_ids: torch.Tensor, target_len: int, spec: Qwen35MIMOHFSpec) -> None:
+    if input_ids.size(1) <= target_len:
+        return
+    truncated_ids = input_ids[:, target_len:]
+    truncates_visual_tokens = torch.any(
+        (truncated_ids == spec.image_token_id) | (truncated_ids == spec.video_token_id)
+    )
+    if truncates_visual_tokens:
+        raise ValueError(
+            f"seq_length={target_len} truncates Qwen visual tokens from a batch of length {input_ids.size(1)}. "
+            "Increase --seq-length or reduce the processor's visual resolution budget."
+        )
+
+
 def _normalized_visual_kwargs(batch: dict[str, Any]) -> dict[str, torch.Tensor]:
     visual_inputs = batch.get("visual_inputs")
     if visual_inputs is None:
@@ -568,8 +582,7 @@ def _build_qwen_metadata_batch(
         attention_mask = attention_mask.contiguous()
 
     skipped_tokens = extract_skipped_token_ids(processor)
-    # Imported lazily: importing collate_fn at module load trips a vlm_datasets<->collate_fn
-    # circular import. By call time the package graph is fully initialized.
+    # Imported lazily so text-only ranks do not load the Qwen visual collator.
     from megatron.bridge.models.qwen_vl.data.collate_fn import CHATML_ASSISTANT_END, CHATML_ASSISTANT_START
 
     boundary_config = assistant_mask_boundary_config_from_markers(
@@ -626,6 +639,7 @@ def _adapt_qwen35_hf_batch(
     attention_mask = batch.get("attention_mask")
 
     if pad_to_seq_length:
+        _validate_multimodal_truncation(input_ids, seq_length, spec)
         input_ids = _pad_or_truncate_2d(input_ids, seq_length, spec.pad_token_id)
         labels = _pad_or_truncate_2d(labels, seq_length, -100)
         loss_mask = _pad_or_truncate_2d(loss_mask, seq_length, 0)
@@ -745,8 +759,7 @@ class _Qwen35HFMetadataMimoCollateAdapter:
         seq_length: int,
         pad_to_seq_length: bool,
         batch_spec: MIMOBatchSpec,
-        # Defaults resolved lazily from collate_fn to keep parity with qwen2_5_collate_fn on
-        # visual ranks while avoiding the module-load vlm_datasets<->collate_fn circular import.
+        # Defaults resolve lazily from the model collator only on visual ranks.
         min_pixels: int | None = None,
         max_pixels: int | None = None,
     ) -> None:

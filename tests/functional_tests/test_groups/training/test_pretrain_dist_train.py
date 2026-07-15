@@ -16,7 +16,7 @@ import pytest
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets import MockVLMConversationProvider
+from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig, Qwen3VLModelProvider
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
@@ -121,7 +121,7 @@ class TestPretrainDistTrain:
             overlap_param_gather=False,
         )
 
-        dataset_cfg = MockVLMConversationProvider(
+        dataset_cfg = MockVLMSFTDatasetConfig(
             seq_length=seq_length,
             hf_processor_path=hf_path,
             prompt="Describe this image.",
@@ -130,7 +130,6 @@ class TestPretrainDistTrain:
             data_sharding=True,
             pin_memory=True,
             persistent_workers=False,
-            create_attention_mask=True,
             pad_to_max_length=True,
             num_images=8,
             image_size=(768, 768),
