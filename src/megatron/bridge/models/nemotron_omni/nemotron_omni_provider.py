@@ -310,6 +310,13 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
             temporal_ckpt_compat=self.temporal_ckpt_compat,
         )
 
+        if self.temporal_patch_dim == 1:
+            # Dynamic image batches already express the exact replacement-token
+            # count in num_image_tiles. Vision-less PP stages cannot infer
+            # LLaVAModel's internal is_packed_dynamic_res flag, so make its
+            # label-only expansion use those counts directly as well.
+            llava_model.img_seq_len = 1
+
         model = NemotronOmniModel(llava_model=llava_model)
 
         llava_model.img_start_token_id = self.img_start_token_id

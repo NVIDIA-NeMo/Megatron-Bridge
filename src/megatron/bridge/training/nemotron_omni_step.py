@@ -62,37 +62,37 @@ def get_batch_from_iterator(
     if not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
 
-    # Vision: either raw tensors (HF collate) or container (Energon)
-    if "pixel_values" in batch:
-        required_device_keys.add("pixel_values")
-    if "num_patches" in batch:
-        required_device_keys.add("num_patches")
-    if "visual_inputs" in batch:
-        required_device_keys.add("visual_inputs")
-
-    # Sound
-    if "sound_clips" in batch:
-        required_device_keys.add("sound_clips")
-    if "sound_length" in batch:
-        required_device_keys.add("sound_length")
-
-    # Temporal video embedder
-    if "imgs_sizes" in batch:
-        required_device_keys.add("imgs_sizes")
-    if "num_frames" in batch:
-        required_device_keys.add("num_frames")
-    if "num_image_tiles" in batch:
-        required_device_keys.add("num_image_tiles")
+    if is_first_pp_stage:
+        # The first stage owns the vision and sound encoders.
+        required_device_keys.update(
+            key
+            for key in (
+                "pixel_values",
+                "num_patches",
+                "visual_inputs",
+                "sound_clips",
+                "sound_length",
+                "imgs_sizes",
+                "num_frames",
+                "num_image_tiles",
+            )
+            if key in batch
+        )
 
     if "cu_seqlens_q" in batch:
         required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
         required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
 
-    if is_first_pp_stage:
+    if is_first_pp_stage or is_last_pp_stage:
         input_key = "tokens" if batch.get("tokens") is not None else "input_ids"
-        required_device_keys.update((input_key, "position_ids"))
+        required_device_keys.add(input_key)
+    if is_first_pp_stage:
+        required_device_keys.add("position_ids")
     if is_last_pp_stage:
         required_device_keys.update(("labels", "loss_mask"))
+        if "num_image_tiles" in batch:
+            # LLaVA expands labels around image placeholders on the last stage.
+            required_device_keys.add("num_image_tiles")
 
     _batch_required_keys = {}
     for key, val in batch.items():
@@ -159,16 +159,27 @@ def _build_vision_packed_seq_params(
     )
 
 
+def _uses_packed_sequence_metadata(cfg: ConfigContainer) -> bool:
+    """Return whether every decoder PP stage needs THD boundary metadata."""
+    dataset_cfg = getattr(cfg, "dataset", None)
+    offline_packing_specs = getattr(dataset_cfg, "offline_packing_specs", None)
+    if getattr(dataset_cfg, "enable_offline_packing", False):
+        packed_sequence_size = getattr(offline_packing_specs, "packed_sequence_size", None)
+        return packed_sequence_size is None or packed_sequence_size > 0
+    return bool(getattr(dataset_cfg, "enable_in_batch_packing", False))
+
+
 def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -> tuple:
     """Generate a batch with vision and sound tensors."""
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
-    if (not is_first) and (not is_last):
+    skip_attention_mask = getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True)
+    if (not is_first) and (not is_last) and skip_attention_mask and not _uses_packed_sequence_metadata(cfg):
         return (None,) * 14
 
     batch = get_batch_from_iterator(
         data_iterator,
-        getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
+        skip_attention_mask,
         is_first_pp_stage=is_first,
         is_last_pp_stage=is_last,
     )
@@ -189,12 +200,25 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
 
     vision_packed_seq_params = _build_vision_packed_seq_params(imgs_sizes)
 
-    assert batch.get("tokens") is not None or batch.get("input_ids") is not None
+    input_ids = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
+    if is_first or is_last:
+        assert input_ids is not None
+
+    if input_ids is not None and num_image_tiles is not None and getattr(cfg.model, "temporal_patch_dim", 1) > 1:
+        # The temporal encoder emits one fixed-size embedding block per compact
+        # image/tubelet placeholder. On PP last stages the vision encoder is not
+        # present to normalize this metadata, so derive the same one-tile entries
+        # directly from the row-local placeholders.
+        image_token_index = getattr(cfg.model, "image_token_index", None)
+        if image_token_index is None:
+            raise ValueError("Temporal Nemotron Omni pipeline stages require model.image_token_index.")
+        num_placeholders = int((input_ids == image_token_index).sum().item())
+        num_image_tiles = torch.ones(num_placeholders, dtype=torch.int, device=input_ids.device)
 
     return (
         batch.get("images"),
         batch.get("num_patches"),
-        batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids"),
+        input_ids,
         batch.get("labels"),
         batch.get("loss_mask"),
         batch.get("attention_mask"),
@@ -240,10 +264,11 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
-    # LLaVAModel.forward() requires a non-None images tensor even for audio-only batches
-    if images is None:
+    # Encoder and last stages need an empty image sentinel for text/audio-only
+    # batches. Middle stages may legitimately have no input_ids or image tensor.
+    if images is None and input_ids is not None:
         images = torch.tensor([], dtype=torch.bfloat16, device=input_ids.device).reshape(0, 0, 0)
-    elif images.dtype != torch.bfloat16:
+    elif images is not None and images.dtype != torch.bfloat16:
         images = images.to(dtype=torch.bfloat16)
 
     forward_args = {
@@ -274,7 +299,13 @@ def forward_step(
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss
     with straggler_timer:
-        output_tensor = model(**forward_args)
+        model_output = model(**forward_args)
+        if isinstance(model_output, tuple):
+            output_tensor, model_loss_mask = model_output
+            if model_loss_mask is not None:
+                loss_mask = model_loss_mask
+        else:
+            output_tensor = model_output
 
     loss_function = partial(
         masked_next_token_loss,

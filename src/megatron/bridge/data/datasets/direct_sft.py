@@ -26,6 +26,7 @@ def _collate_kwargs_for_impl(
     collate_kwargs: dict[str, Any],
     *,
     require_packing_support: bool,
+    required_kwargs: set[str] | None = None,
 ) -> dict[str, Any]:
     try:
         parameters = inspect.signature(collate_impl).parameters
@@ -35,6 +36,13 @@ def _collate_kwargs_for_impl(
     if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in parameters.values()):
         return collate_kwargs
 
+    required_kwargs = required_kwargs or set()
+    unsupported_required_kwargs = required_kwargs.difference(parameters)
+    if unsupported_required_kwargs:
+        raise ValueError(
+            f"Collate function {getattr(collate_impl, '__name__', collate_impl)} does not accept configured "
+            f"model_collate_kwargs: {sorted(unsupported_required_kwargs)}."
+        )
     supported_kwargs = {key: value for key, value in collate_kwargs.items() if key in parameters}
     if require_packing_support and "enable_in_batch_packing" not in supported_kwargs:
         raise ValueError(
@@ -68,6 +76,7 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         enable_in_batch_packing: bool = False,
         defer_in_batch_packing_to_step: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
+        model_collate_kwargs: dict[str, Any] | None = None,
     ) -> None:
         assert isinstance(base_examples, list) and len(base_examples) > 0, "base_examples must be a non-empty list"
         self._base_examples = base_examples
@@ -91,11 +100,19 @@ class DirectSFTDataset(torch.utils.data.Dataset):
             "enable_in_batch_packing": enable_in_batch_packing and not defer_in_batch_packing_to_step,
             "in_batch_packing_pad_to_multiple_of": in_batch_packing_pad_to_multiple_of,
         }
-        if explicit_collate_impl:
+        model_collate_kwargs = dict(model_collate_kwargs or {})
+        conflicting_kwargs = collate_kwargs.keys() & model_collate_kwargs.keys()
+        if conflicting_kwargs:
+            raise ValueError(
+                f"model_collate_kwargs cannot override shared sequence settings: {sorted(conflicting_kwargs)}."
+            )
+        collate_kwargs.update(model_collate_kwargs)
+        if explicit_collate_impl or model_collate_kwargs:
             collate_kwargs = _collate_kwargs_for_impl(
                 collate_impl,
                 collate_kwargs,
                 require_packing_support=bool(collate_kwargs["enable_in_batch_packing"]),
+                required_kwargs=set(model_collate_kwargs),
             )
 
         def _bound_collate(batch: list) -> dict[str, torch.Tensor]:

@@ -34,6 +34,7 @@ from megatron.bridge.data.conversation_processing import (
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
+from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import temporal_model_frames
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -128,12 +129,26 @@ def _video_frames(payload: Any, *, video_fps: float, video_nframes: int) -> tupl
 
 
 def _patchify_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> torch.Tensor:
-    """Match the RADIO/CLIP frame normalization used by Omni inference."""
-    from torchvision import transforms
+    """Apply the public normalization kernel on MCore's square temporal canvas.
 
+    The public HF processor preserves video aspect ratio, but pinned MCore's
+    temporal path currently stacks tubelets and pixel-shuffles them as a common
+    square grid. Until MCore supports ragged non-square tubelets, Bridge keeps
+    the required 512-square compatibility canvas while matching HF's
+    antialiased bicubic interpolation and RADIO normalization.
+    """
     _pixel_shuffled_token_count(height=height, width=width, patch_dim=patch_dim)
-    image = frame.resize((width, height))
-    tensor = transforms.ToTensor()(image)
+    image = np.asarray(frame.convert("RGB"), dtype=np.uint8).copy()
+    tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(dtype=torch.float32)
+    if tensor.shape[-2:] != (height, width):
+        tensor = torch.nn.functional.interpolate(
+            tensor,
+            size=(height, width),
+            mode="bicubic",
+            align_corners=False,
+            antialias=True,
+        )
+    tensor = tensor.squeeze(0) / 255.0
     mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
     std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
     tensor = (tensor - mean) / std
@@ -252,7 +267,7 @@ def _prepare_temporal_rows(
                         for frame_start in range(0, len(frames), temporal_patch_size):
                             group = frames[frame_start : frame_start + temporal_patch_size]
                             timestamps = [
-                                f"frame {frame_start + offset + 1} sampled at "
+                                f"{'Frame' if offset == 0 else 'frame'} {frame_start + offset + 1} sampled at "
                                 f"{(frame_start + offset) / sampled_fps:.2f} seconds"
                                 for offset in range(len(group))
                             ]
@@ -260,18 +275,19 @@ def _prepare_temporal_rows(
                             representative_images.append(group[0])
                             row_placeholder_count += 1
                         text_parts.append("\n".join(video_lines))
+                        model_frames = temporal_model_frames(frames, temporal_patch_size)
                         all_patches.extend(
                             _patchify_frame(frame, height=frame_height, width=frame_width, patch_dim=patch_dim)
-                            for frame in frames
+                            for frame in model_frames
                         )
-                        all_sizes.extend([[frame_height, frame_width]] * len(frames))
-                        all_num_frames.append(len(frames))
+                        all_sizes.extend([[frame_height, frame_width]] * len(model_frames))
+                        all_num_frames.append(len(model_frames))
                         tiles_per_frame = _pixel_shuffled_token_count(
                             height=frame_height,
                             width=frame_width,
                             patch_dim=patch_dim,
                         )
-                        all_num_image_tiles.extend([tiles_per_frame] * len(frames))
+                        all_num_image_tiles.extend([tiles_per_frame] * len(model_frames))
                     elif isinstance(item, Mapping) and item.get("type") == "text":
                         text_parts.append(str(item.get("text", "")))
                     elif isinstance(item, str):
@@ -329,11 +345,6 @@ def _prepare_standard_rows(
     processor: Any,
 ) -> tuple[dict[str, Any], list[dict[str, Any]], torch.Tensor | None]:
     """Use the HF processor for text/images while preserving row ownership."""
-    if hasattr(processor.image_processor, "max_num_tiles"):
-        raise ValueError(
-            "Nemotron Omni requires its dynamic-resolution image processor; "
-            "legacy fixed-tile processors are not supported."
-        )
     text_conversations: list[list[dict[str, Any]]] = []
     images_per_example: list[list[Any]] = []
     mask_examples: list[dict[str, Any]] = []
@@ -599,9 +610,9 @@ def _model_merge_row_lengths(
             replacement_counts, dtype=torch.long, device=collapsed_lengths.device
         ).flatten()
     else:
-        # Nemotron Omni's provider fixes RADIO input frames at 512x512 and uses
-        # 2x2 pixel shuffle. Static tiles and temporal tubelets therefore each
-        # replace one compact <image> token with this many model embeddings.
+        # Nemotron Omni's temporal path fixes RADIO input frames at 512x512 and
+        # uses 2x2 pixel shuffle. Each temporal tubelet therefore replaces one
+        # compact <image> token with this many model embeddings.
         tokens_per_image = _pixel_shuffled_token_count(
             height=VISION_FRAME_SIZE,
             width=VISION_FRAME_SIZE,
@@ -785,6 +796,11 @@ def nemotron_omni_collate_fn(
     del start_of_response_token, visual_keys, min_pixels, max_pixels
     if not examples:
         raise ValueError("Nemotron Omni collation requires at least one example.")
+    if hasattr(processor.image_processor, "max_num_tiles"):
+        raise ValueError(
+            "Nemotron Omni requires its dynamic-resolution image processor; "
+            "legacy fixed-tile processors are not supported."
+        )
     if (
         getattr(processor.tokenizer, "pad_token", None) is None
         and getattr(processor.tokenizer, "eos_token", None) is not None

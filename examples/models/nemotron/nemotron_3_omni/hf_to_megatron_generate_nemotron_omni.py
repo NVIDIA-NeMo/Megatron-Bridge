@@ -26,8 +26,9 @@ settings are modality-dependent:
     into [1, total_patches, 3*P*P] and passed through RADIO's packed
     dynamic-resolution path (is_packed_dynamic_res=True in LlavaModel). The
     ``imgs_sizes`` / ``vision_packed_seq_params`` tensors are built from the
-    per-tile shapes, and ``num_image_tiles`` is recomputed by LlavaModel from
-    RADIO output (256 tokens/tile after pixel_shuffle).
+    per-tile shapes. ``num_image_tiles`` carries each tile's exact replacement
+    count to every pipeline stage (256 tokens for a 512x512 tile after
+    pixel_shuffle).
   * Audio / text-only: temporal_patch_dim=1 (the vision encoder is unused).
   * Video (and video+audio): temporal_patch_dim=2,
     separate_video_embedder=True, temporal_ckpt_compat=True so RADIO ViT
@@ -81,6 +82,12 @@ from PIL import Image
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    inference_merged_sequence_length,
+    inference_num_image_tiles,
+    select_inference_next_token,
+    temporal_model_frames,
+)
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
@@ -220,6 +227,8 @@ class SingleBatchIterator:
             self.batch["imgs_sizes"] = kwargs["imgs_sizes"]
         if kwargs.get("num_frames", None) is not None:
             self.batch["num_frames"] = kwargs["num_frames"]
+        if kwargs.get("num_image_tiles", None) is not None:
+            self.batch["num_image_tiles"] = kwargs["num_image_tiles"]
         if kwargs.get("vision_packed_seq_params", None) is not None:
             self.batch["vision_packed_seq_params"] = kwargs["vision_packed_seq_params"]
 
@@ -277,6 +286,8 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         forward_args["imgs_sizes"] = batch["imgs_sizes"]
     if "num_frames" in batch:
         forward_args["num_frames"] = batch["num_frames"]
+    if "num_image_tiles" in batch:
+        forward_args["num_image_tiles"] = batch["num_image_tiles"]
     if "vision_packed_seq_params" in batch:
         forward_args["vision_packed_seq_params"] = batch["vision_packed_seq_params"]
 
@@ -395,12 +406,12 @@ def process_video_inputs(
       processor so that <img>/<image>/</img> wrapper tokens render correctly;
       ``adjust_image_tokens`` then shrinks each wrapper region to one <image>
       token.
-    - ALL video frames are patchified to a [1, total_patches, 3*P*P] tensor,
-      which replaces ``pixel_values`` so RADIO receives pre-patchified
-      dynamic-resolution input.
-    - ``imgs_sizes`` is emitted per (pre-grouping) frame, ``num_frames=[N]``
-      so RADIO's ``_apply_temporal_grouping`` can fuse frame pairs and route
-      them through the trained ``video_embedder``.
+    - All sampled video frames are patchified to a [1, total_patches, 3*P*P]
+      tensor. A single frame is repeated only in this model tensor/metadata so
+      RADIO selects the temporal embedder; the prompt still has one placeholder.
+    - ``imgs_sizes`` and ``num_frames`` describe those model frames so RADIO's
+      ``_apply_temporal_grouping`` can pad incomplete groups, fuse tubelets, and
+      route them through the trained ``video_embedder``.
 
     Returns:
         Tuple of (input_ids, pixel_values, num_patches, imgs_sizes, num_frames).
@@ -422,14 +433,9 @@ def process_video_inputs(
     frames = [pil_image_from_base64(url) for url in image_urls]
     print_rank_0(f"Video: extracted {len(frames)} frames, metadata: {metadata}")
 
-    # RADIO's _apply_temporal_grouping fuses `tps` frames per tubelet. To keep
-    # the math clean and match SFT, round down to a multiple of tps.
-    usable = (len(frames) // tps) * tps
-    if usable == 0:
-        raise ValueError(f"Need at least {tps} frames for temporal video embedder inference; got {len(frames)}")
-    if usable != len(frames):
-        print_rank_0(f"Trimming {len(frames) - usable} trailing frames to match tps={tps}")
-        frames = frames[:usable]
+    if not frames:
+        raise ValueError("Temporal video embedder inference requires at least one sampled frame.")
+    model_frames = temporal_model_frames(frames, tps)
 
     # 2. Build training-style prompt: one <image> per `tps`-frame group, with
     #    per-frame timestamps. Also collect a representative frame per group
@@ -439,7 +445,10 @@ def process_video_inputs(
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
-        ts_parts = [f"frame {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds" for j in range(len(group))]
+        ts_parts = [
+            f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds"
+            for j in range(len(group))
+        ]
         video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
         paired_images.append(group[0])
 
@@ -464,13 +473,12 @@ def process_video_inputs(
     input_ids = proc_output.input_ids
     num_patches = torch.ones(len(paired_images), dtype=torch.long)
 
-    # 4. Replace the HF processor's pixel_values with an ALL-frames patchified
-    #    tensor of shape [1, total_patches, 3*P*P] (dynamic-resolution input).
-    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in frames]
+    # 4. Replace the HF processor's pixels with the model-frame patch tensor.
+    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in model_frames]
     packed_pixel_values = torch.cat(all_patches, dim=0).unsqueeze(0)
 
-    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(frames), dtype=torch.long)
-    num_frames = torch.tensor([len(frames)], dtype=torch.long)
+    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
+    num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
 
     return input_ids, packed_pixel_values, num_patches, imgs_sizes, num_frames
 
@@ -551,19 +559,19 @@ def process_video_audio_inputs(
     frames = [pil_image_from_base64(url) for url in image_urls]
     print_rank_0(f"Video: extracted {len(frames)} frames, metadata: {metadata}")
 
-    usable = (len(frames) // tps) * tps
-    if usable == 0:
-        raise ValueError(f"Need at least {tps} frames for temporal video embedder inference; got {len(frames)}")
-    if usable != len(frames):
-        print_rank_0(f"Trimming {len(frames) - usable} trailing frames to match tps={tps}")
-        frames = frames[:usable]
+    if not frames:
+        raise ValueError("Temporal video embedder inference requires at least one sampled frame.")
+    model_frames = temporal_model_frames(frames, tps)
 
     fps_for_ts = float(metadata.fps) if (metadata and metadata.fps) else float(_VIDEO_FPS)
     paired_images = []
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
-        ts_parts = [f"frame {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds" for j in range(len(group))]
+        ts_parts = [
+            f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds"
+            for j in range(len(group))
+        ]
         video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
         paired_images.append(group[0])
 
@@ -598,10 +606,10 @@ def process_video_audio_inputs(
     )
 
     num_patches = torch.ones(len(paired_images), dtype=torch.long)
-    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in frames]
+    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in model_frames]
     packed_pixel_values = torch.cat(all_patches, dim=0).unsqueeze(0)
-    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(frames), dtype=torch.long)
-    num_frames = torch.tensor([len(frames)], dtype=torch.long)
+    imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
+    num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
 
     return input_ids, packed_pixel_values, num_patches, imgs_sizes, num_frames, sound_clips, sound_length
 
@@ -631,8 +639,8 @@ def main(args) -> None:
     #   runs the packed dynamic-resolution path (is_packed_dynamic_res=True in
     #   LlavaModel). Each HF-processor tile is pre-patchified into a packed
     #   [1, N*patches, 3*P*P] tensor and passed with imgs_sizes /
-    #   vision_packed_seq_params. num_image_tiles is recomputed by LlavaModel
-    #   from RADIO output (256 tokens/tile after pixel_shuffle).
+    #   vision_packed_seq_params. num_image_tiles supplies exact post-shuffle
+    #   replacement counts to PP stages without a vision encoder.
     #
     # Video (and video+audio): temporal_patch_dim=2,
     #   separate_video_embedder=True so RADIO exercises the trained
@@ -642,6 +650,9 @@ def main(args) -> None:
     # Audio / text-only: temporal_patch_dim=1; RADIO is not called.
     is_video_inference = bool(args.video_path)
     is_image_inference = bool(args.image_path) and not is_video_inference
+    image_seq_len = (
+        (_VIDEO_FRAME_H // _VISION_PATCH_DIM) * (_VIDEO_FRAME_W // _VISION_PATCH_DIM) // 4 if is_video_inference else 1
+    )
     if is_video_inference:
         temporal_patch_dim = 2
         separate_video_embedder = True
@@ -733,6 +744,7 @@ def main(args) -> None:
     processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
     img_start_token_id = tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = tokenizer.convert_tokens_to_ids("</img>")
+    image_token_id = tokenizer.convert_tokens_to_ids("<image>")
 
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -742,6 +754,7 @@ def main(args) -> None:
     images = None
     imgs_sizes = None
     num_frames = None
+    num_image_tiles = None
     vision_packed_seq_params = None
 
     if args.video_path and args.audio_path:
@@ -784,6 +797,18 @@ def main(args) -> None:
         )
         if has_img_wrapper_tokens:
             input_ids = adjust_image_tokens(input_ids, num_patches, img_start_token_id, img_end_token_id)
+        num_image_tiles = inference_num_image_tiles(
+            imgs_sizes,
+            patch_dim=_VISION_PATCH_DIM,
+            num_frames=num_frames,
+            temporal_patch_size=temporal_patch_dim,
+        )
+        num_placeholders = int((input_ids == image_token_id).sum().item())
+        if num_image_tiles.numel() != num_placeholders:
+            raise ValueError(
+                "Vision metadata produced "
+                f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
+            )
     pixel_values = None
 
     # Move to GPU
@@ -798,6 +823,8 @@ def main(args) -> None:
         imgs_sizes = imgs_sizes.cuda()
     if num_frames is not None:
         num_frames = num_frames.cuda()
+    if num_image_tiles is not None:
+        num_image_tiles = num_image_tiles.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -832,6 +859,7 @@ def main(args) -> None:
                 sound_length=sound_length,
                 imgs_sizes=imgs_sizes,
                 num_frames=num_frames,
+                num_image_tiles=num_image_tiles,
                 vision_packed_seq_params=vision_packed_seq_params,
             )
 
@@ -841,7 +869,9 @@ def main(args) -> None:
                 model=model,
                 num_microbatches=1,
                 forward_only=True,
-                seq_length=input_ids.size(1),
+                # LLaVA pads PP activations to the configured model width, so
+                # pipeline receive buffers must use that same fixed length.
+                seq_length=model_provider.seq_length,
                 micro_batch_size=1,
                 collect_non_loss_data=True,
             )
@@ -855,11 +885,17 @@ def main(args) -> None:
                 gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
                 dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
                 output = torch.cat(gathered_tensors, dim=2)
-                next_token_ids = torch.argmax(output[:, -1], dim=-1, keepdim=True)
+                merged_sequence_length = inference_merged_sequence_length(
+                    input_ids,
+                    image_token_index=image_token_id,
+                    num_image_tiles=num_image_tiles,
+                    image_seq_len=image_seq_len,
+                )
+                next_token_ids = select_inference_next_token(output, merged_sequence_length)
 
                 if step < 5:
                     print_rank_0(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
-                    logits = output[0, -1, :]
+                    logits = output[0, merged_sequence_length - 1, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
                     top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
                     print_rank_0(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")

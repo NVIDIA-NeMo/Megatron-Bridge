@@ -2154,7 +2154,8 @@ def test_nemotron_omni_video_collate_requires_temporal_embedder():
         collate.nemotron_omni_collate_fn(examples, proc)
 
 
-def test_nemotron_omni_collate_rejects_legacy_fixed_tile_processor():
+@pytest.mark.parametrize("use_temporal_video_embedder", [False, True])
+def test_nemotron_omni_collate_rejects_legacy_fixed_tile_processor(use_temporal_video_embedder):
     proc = _NemotronOmniProcessor(tokenized_rows=[[5, 6]])
     proc.image_processor = type("LegacyImageProcessor", (), {"max_num_tiles": 4})()
 
@@ -2162,6 +2163,7 @@ def test_nemotron_omni_collate_rejects_legacy_fixed_tile_processor():
         collate.nemotron_omni_collate_fn(
             [{"conversation": [{"role": "user", "content": "text"}]}],
             proc,
+            use_temporal_video_embedder=use_temporal_video_embedder,
         )
 
 

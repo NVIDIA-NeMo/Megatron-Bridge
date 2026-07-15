@@ -52,8 +52,10 @@ class _Tokenizer:
 
     def __init__(self, rows: list[list[int]]):
         self.rows = rows
+        self.conversations = []
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
+        self.conversations.append(conversation)
         return "rendered prompt"
 
     def __call__(self, prompts, **kwargs):
@@ -333,9 +335,46 @@ def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
     assert processor.processor_patch_budgets == [1]
     assert processor.processor_kwargs[0]["return_tensors"] is None
     assert processor.image_processor.max_num_patches == 64
+    rendered_video = processor.tokenizer.conversations[0][0]["content"]
+    assert "Frame 1 sampled at 0.00 seconds and frame 2 sampled at 0.50 seconds" in rendered_video
+    assert "Frame 3 sampled at 1.00 seconds" in rendered_video
     assert batch.input_ids.tolist() == [
         [1, IMG_START_ID, 97, IMG_END_ID, IMG_START_ID, 97, IMG_END_ID, 21, PAD_AND_END_ID]
     ]
+
+
+def test_energon_single_frame_video_uses_temporal_embedder_contract(monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    monkeypatch.setattr(
+        omni_collate,
+        "_patchify_frame",
+        lambda frame, *, height, width, patch_dim: torch.ones(2, 3),
+    )
+    processor = _Processor([[1, IMG_START_ID, 97, IMG_END_ID, 21, PAD_AND_END_ID]])
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=32,
+        temporal_patch_size=2,
+        video_fps=2.0,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        pad_to_multiple_of=1,
+    )
+    encoded = encoder.encode_sample(
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            videos=[[Image.new("RGB", (16, 16), color=64)]],
+        )
+    )
+
+    batch = encoder.batch([encoded])
+
+    assert batch.visual_inputs.pixel_values.shape == (1, 4, 3)
+    assert batch.imgs_sizes.tolist() == [[512, 512], [512, 512]]
+    assert batch.num_frames.tolist() == [2]
+    assert "Frame 1 sampled at 0.00 seconds" in processor.tokenizer.conversations[0][0]["content"]
 
 
 def test_energon_raw_video_bytes_remain_one_owned_video_per_sample():
