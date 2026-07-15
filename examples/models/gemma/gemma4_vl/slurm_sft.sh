@@ -139,7 +139,9 @@ if [ -n "$CONTAINER_MOUNTS" ]; then
 fi
 
 $SRUN_CMD bash -c "$CMD"
+RUN_EXIT=$?
 
 echo "======================================"
-echo "Training job finished. EXIT=$?"
+echo "Training job finished. EXIT=$RUN_EXIT"
 echo "======================================"
+exit $RUN_EXIT
