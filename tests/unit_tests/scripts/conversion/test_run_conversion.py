@@ -121,3 +121,24 @@ def test_cpu_worker_rejects_parallelism():
                 "2",
             ]
         )
+
+
+def test_cpu_worker_rejects_export_weight_dtype():
+    module, _, _ = _load_run_conversion_module()
+
+    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+        module.main(
+            [
+                "export",
+                "--device",
+                "cpu",
+                "--hf-model",
+                "hf/model",
+                "--megatron-path",
+                "/checkpoint",
+                "--hf-path",
+                "/hf-export",
+                "--export-weight-dtype",
+                "float32",
+            ]
+        )

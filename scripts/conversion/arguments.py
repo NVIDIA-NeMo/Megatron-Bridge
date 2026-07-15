@@ -82,7 +82,7 @@ def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
     execution.add_argument(
         "--detach",
         action="store_true",
-        help="Return after launching instead of waiting for conversion to finish.",
+        help="Return after submitting a Slurm job instead of waiting for conversion to finish.",
     )
 
 
@@ -222,7 +222,7 @@ Examples:
     export_parser.add_argument(
         "--export-weight-dtype",
         choices=DTYPE_CHOICES,
-        help="Cast exported Hugging Face weights to this dtype.",
+        help="Cast exported Hugging Face weights to this dtype (GPU backend only).",
     )
     return parser
 

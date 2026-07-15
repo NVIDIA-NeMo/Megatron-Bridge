@@ -31,10 +31,22 @@ def _load_setup_conversion_module():
     nemo_run_config = types.ModuleType("nemo_run.config")
     nemo_run_config.get_nemorun_home = lambda: str(Path.home() / ".nemo_run")
     nemo_run.config = nemo_run_config
+    torchx = types.ModuleType("torchx")
+    torchx_specs = types.ModuleType("torchx.specs")
+    torchx_specs_api = types.ModuleType("torchx.specs.api")
+    torchx_specs_api.AppState = types.SimpleNamespace(SUCCEEDED="SUCCEEDED", FAILED="FAILED")
+    torchx.specs = torchx_specs
+    torchx_specs.api = torchx_specs_api
 
-    previous_modules = {name: sys.modules.get(name) for name in ("nemo_run", "nemo_run.config", "arguments")}
-    sys.modules["nemo_run"] = nemo_run
-    sys.modules["nemo_run.config"] = nemo_run_config
+    fake_modules = {
+        "nemo_run": nemo_run,
+        "nemo_run.config": nemo_run_config,
+        "torchx": torchx,
+        "torchx.specs": torchx_specs,
+        "torchx.specs.api": torchx_specs_api,
+    }
+    previous_modules = {name: sys.modules.get(name) for name in (*fake_modules, "arguments")}
+    sys.modules.update(fake_modules)
     sys.path.insert(0, str(SCRIPT_DIR))
     try:
         spec = importlib.util.spec_from_file_location(
@@ -59,6 +71,21 @@ def _parse(module, *options):
     )
 
 
+def _parse_export(module, *options):
+    return module.build_parser(include_execution=True).parse_args(
+        [
+            "export",
+            "--hf-model",
+            "hf/model",
+            "--megatron-path",
+            "/checkpoint",
+            "--hf-path",
+            "/hf-export",
+            *options,
+        ]
+    )
+
+
 def test_setup_import_is_lightweight(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -74,6 +101,30 @@ def test_cpu_backend_rejects_distributed_parallelism():
     args = _parse(module, "--tp", "2")
 
     with pytest.raises(ValueError, match="TP=PP=EP=ETP=1"):
+        module._validate_args(args)
+
+
+def test_local_executor_rejects_detach():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--detach")
+
+    with pytest.raises(ValueError, match="only supported by the Slurm executor"):
+        module._validate_args(args)
+
+
+def test_cpu_export_rejects_export_weight_dtype():
+    module = _load_setup_conversion_module()
+    args = _parse_export(module, "--export-weight-dtype", "float32")
+
+    with pytest.raises(ValueError, match="only supported by the GPU backend"):
+        module._validate_args(args)
+
+
+def test_cpu_export_validates_effective_distributed_save():
+    module = _load_setup_conversion_module()
+    args = _parse_export(module, "--save-every-n-ranks", "2")
+
+    with pytest.raises(ValueError, match="requires --distributed-save"):
         module._validate_args(args)
 
 

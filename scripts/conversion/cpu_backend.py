@@ -60,7 +60,7 @@ def import_checkpoint(
         trust_remote_code: Allow custom Hugging Face repository code.
         overwrite: Delete a non-empty destination before conversion.
     """
-    prepare_output_directory(megatron_path, overwrite=overwrite)
+    prepare_output_directory(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU import: %s -> %s", hf_model, megatron_path)
     AutoBridge.import_ckpt(
@@ -98,7 +98,7 @@ def export_checkpoint(
     if not checkpoint_path.exists():
         raise FileNotFoundError(f"Megatron checkpoint does not exist: {checkpoint_path}")
     config_path = _find_run_config(checkpoint_path)
-    prepare_output_directory(hf_path, overwrite=overwrite)
+    prepare_output_directory(hf_path, overwrite=overwrite, source_paths=[megatron_path, hf_model])
 
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU export: %s -> %s", megatron_path, hf_path)

@@ -14,6 +14,7 @@
 """Utilities shared by CPU and distributed GPU conversion backends."""
 
 import shutil
+from collections.abc import Iterable
 from pathlib import Path
 
 import torch
@@ -44,21 +45,55 @@ def parse_dtype(name: str) -> torch.dtype:
         raise ValueError(f"Unsupported dtype '{name}'. Choose from {sorted(DTYPE_MAP)}.") from None
 
 
-def prepare_output_directory(path: str, *, overwrite: bool) -> Path:
+def validate_output_path(path: str, *, source_paths: Iterable[str]) -> Path:
+    """Reject a conversion destination that overlaps an existing local source.
+
+    Args:
+        path: Destination directory.
+        source_paths: Local or remote source references. Nonexistent paths are
+            treated as remote identifiers and skipped.
+
+    Returns:
+        Destination as a ``Path``.
+
+    Raises:
+        ValueError: If the destination equals, contains, or is contained by a
+            local source path.
+    """
+    output_path = Path(path).expanduser()
+    resolved_output = output_path.resolve()
+    for source in source_paths:
+        source_path = Path(source).expanduser()
+        if not source_path.exists():
+            continue
+        resolved_source = source_path.resolve()
+        if (
+            resolved_output == resolved_source
+            or resolved_output in resolved_source.parents
+            or resolved_source in resolved_output.parents
+        ):
+            raise ValueError(f"Destination {output_path} overlaps conversion source {source_path}.")
+    return output_path
+
+
+def prepare_output_directory(path: str, *, overwrite: bool, source_paths: Iterable[str] = ()) -> Path:
     """Validate and optionally clear a conversion destination.
 
     Args:
         path: Destination directory.
         overwrite: Delete a non-empty destination when true.
+        source_paths: Local or remote source references that must not overlap
+            the destination.
 
     Returns:
         Destination as a ``Path``.
 
     Raises:
         FileExistsError: If the destination is non-empty and overwrite is false.
-        ValueError: If overwrite targets the filesystem root.
+        ValueError: If the destination overlaps a local source or overwrite
+            targets the filesystem root.
     """
-    output_path = Path(path).expanduser()
+    output_path = validate_output_path(path, source_paths=source_paths)
     if not output_path.exists() or not any(output_path.iterdir()):
         return output_path
     if not overwrite:

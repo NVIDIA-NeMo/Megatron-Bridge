@@ -15,11 +15,12 @@
 
 import datetime
 import os
+from collections.abc import Iterable
 from pathlib import Path
 
 import torch
 import yaml
-from utils import parse_dtype, prepare_output_directory
+from utils import parse_dtype, prepare_output_directory, validate_output_path
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
@@ -53,10 +54,12 @@ def _ensure_distributed_initialized(timeout_minutes: int | None) -> None:
     torch.distributed.init_process_group(**kwargs)
 
 
-def _prepare_distributed_output(path: str, *, overwrite: bool) -> None:
+def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Iterable[str] = ()) -> None:
     """Prepare an output directory once and synchronize all ranks."""
+    source_paths = tuple(source_paths)
+    validate_output_path(path, source_paths=source_paths)
     if torch.distributed.get_rank() == 0:
-        prepare_output_directory(path, overwrite=overwrite)
+        prepare_output_directory(path, overwrite=overwrite, source_paths=source_paths)
     torch.distributed.barrier()
 
 
@@ -123,7 +126,7 @@ def import_checkpoint(
         overwrite: Delete a non-empty destination before conversion.
     """
     _ensure_distributed_initialized(distributed_timeout_minutes)
-    _prepare_distributed_output(megatron_path, overwrite=overwrite)
+    _prepare_distributed_output(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     dtype = parse_dtype(torch_dtype)
 
     print_rank_0(f"GPU import: {hf_model} -> {megatron_path}")
@@ -202,7 +205,7 @@ def export_checkpoint(
     _ensure_distributed_initialized(distributed_timeout_minutes)
     if not Path(megatron_path).exists():
         raise FileNotFoundError(f"Megatron checkpoint does not exist: {megatron_path}")
-    _prepare_distributed_output(hf_path, overwrite=overwrite)
+    _prepare_distributed_output(hf_path, overwrite=overwrite, source_paths=[megatron_path, hf_model])
     dtype = parse_dtype(torch_dtype)
 
     print_rank_0(f"GPU export: {megatron_path} -> {hf_path}")

@@ -89,4 +89,5 @@ CPU mode submits one task and does not request GPUs or GRES:
 `--env` accepts names only. Export values in the launcher environment so
 secrets are inherited by Slurm without being materialized in generated job
 scripts. Use `--submission-dry-run` to inspect a rendered job and `--detach`
-when the command should return immediately after launch.
+when a Slurm command should return immediately after submission. Local execution
+always waits so worker failures propagate to the launcher.

@@ -33,6 +33,7 @@ def cli():
     """Load the conversion script as a module under a stable test name."""
     spec = importlib.util.spec_from_file_location("gpu_backend_under_test", _CLI_PATH)
     module = importlib.util.module_from_spec(spec)
+    previous_utils = sys.modules.pop("utils", None)
     sys.modules[spec.name] = module
     sys.path.insert(0, str(_SCRIPT_DIR))
     try:
@@ -41,6 +42,9 @@ def cli():
     finally:
         sys.path.remove(str(_SCRIPT_DIR))
         sys.modules.pop(spec.name, None)
+        sys.modules.pop("utils", None)
+        if previous_utils is not None:
+            sys.modules["utils"] = previous_utils
 
 
 class _FakeProvider:
@@ -71,6 +75,7 @@ class _FakeHfPretrained:
 class TestImportHfToMegatron:
     def test_import_saves_megatron_checkpoint_with_tokenizer_metadata(self, cli, monkeypatch):
         calls = []
+        prepared_outputs = []
 
         class FakeBridge:
             _model_bridge = _FakeModelBridge()
@@ -88,7 +93,11 @@ class TestImportHfToMegatron:
             return FakeBridge()
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
-        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            cli,
+            "_prepare_distributed_output",
+            lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
+        )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
 
@@ -110,11 +119,13 @@ class TestImportHfToMegatron:
         assert "low_memory_save" not in save_call[2]
         assert save_call[2]["hf_tokenizer_path"] == "hf"
         assert save_call[2]["hf_tokenizer_kwargs"] == {"padding_side": "left", "trust_remote_code": True}
+        assert prepared_outputs == [(("/ckpt",), {"overwrite": False, "source_paths": ["hf"]})]
 
 
 class TestExportMegatronToHf:
     def test_export_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch, tmp_path):
         calls = []
+        prepared_outputs = []
 
         class FakeModelShard:
             def cuda(self):
@@ -142,7 +153,11 @@ class TestExportMegatronToHf:
             return FakeBridge()
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
-        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *_args, **_kwargs: None)
+        monkeypatch.setattr(
+            cli,
+            "_prepare_distributed_output",
+            lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
+        )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
 
@@ -174,3 +189,6 @@ class TestExportMegatronToHf:
         save_call = next(call for call in calls if call[0] == "save_hf_pretrained")
         assert save_call[1] == (fake_model, "/hf-export")
         assert save_call[2]["distributed_save"] is True
+        assert prepared_outputs == [
+            (("/hf-export",), {"overwrite": False, "source_paths": [str(checkpoint_path), "hf"]})
+        ]

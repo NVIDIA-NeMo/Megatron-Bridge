@@ -37,10 +37,13 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.command == "export":
         if args.save_every_n_ranks < 1:
             raise ValueError("--save-every-n-ranks must be at least 1.")
-        if args.device == "cpu" and args.distributed_save:
+        distributed_save = args.distributed_save if args.distributed_save is not None else args.device == "gpu"
+        if args.device == "cpu" and distributed_save:
             raise ValueError("--distributed-save is only supported by the GPU backend.")
-        if not args.distributed_save and args.save_every_n_ranks != 1:
+        if not distributed_save and args.save_every_n_ranks != 1:
             raise ValueError("--save-every-n-ranks requires --distributed-save.")
+        if args.device == "cpu" and args.export_weight_dtype is not None:
+            raise ValueError("--export-weight-dtype is only supported by the GPU backend.")
 
 
 def _run_import(args: argparse.Namespace) -> None:

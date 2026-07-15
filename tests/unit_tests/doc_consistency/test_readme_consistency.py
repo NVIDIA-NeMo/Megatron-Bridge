@@ -127,6 +127,31 @@ def test_llama_readme_conversion_path_exists():
     assert "examples/conversion/convert_checkpoints.py" not in text, "stale example conversion path still present"
 
 
+def test_shell_conversion_launcher_is_not_run_through_python():
+    """The stable shell conversion launcher must be invoked as a shell command."""
+    invalid_invocation = re.compile(
+        r"(?:\bpython(?:\d+(?:\.\d+)?)?\b|\btorchrun\b|\$\{?PYTHON\}?)[^\n]*scripts/conversion/convert\.sh"
+    )
+    offenders: list[str] = []
+    for root in (
+        REPO_ROOT / "README.md",
+        REPO_ROOT / "docs",
+        REPO_ROOT / "examples",
+        REPO_ROOT / "scripts",
+        REPO_ROOT / "skills",
+        REPO_ROOT / "tutorials",
+    ):
+        paths = (root,) if root.is_file() else root.rglob("*")
+        for path in paths:
+            if path.suffix not in {".md", ".mdx", ".py", ".sh"}:
+                continue
+            logical_lines = re.sub(r"\\\s*\n\s*", " ", _read(path))
+            if invalid_invocation.search(logical_lines):
+                offenders.append(str(path.relative_to(REPO_ROOT)))
+
+    assert not offenders, f"convert.sh is invoked through Python or torchrun: {offenders}"
+
+
 def test_llama_readme_gptdataset_field_name():
     """The GPTDatasetConfig YAML block uses the canonical field name (bug 4)."""
     # Bridge exposes seq_length and copies it to MCore's internal sequence_length during finalization.

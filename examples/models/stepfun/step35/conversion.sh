@@ -31,8 +31,7 @@ echo "[convert] Log dir:         ${LOG_DIR}"
 
 # Single-rank import: the bridge handles per-expert / per-layer mapping itself,
 # so a single process is enough for the conversion step.
-uv run python -m torch.distributed.run --nproc_per_node=1 \
-    scripts/conversion/convert.sh import \
+./scripts/conversion/convert.sh import \
     --hf-model "${HF_MODEL}" \
     --megatron-path "${MEGATRON_CKPT_PATH}" \
     2>&1 | tee "${LOG_DIR}/convert_step35_megatron.log"
