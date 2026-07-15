@@ -29,6 +29,7 @@ def test_wan_mock_datamodule_build_and_batch_shapes():
         F_latents=4,
         H_latents=8,
         W_latents=6,
+        latent_channels=8,
         patch_spatial=2,
         patch_temporal=1,
         number_packed_samples=2,
@@ -54,6 +55,7 @@ def test_wan_mock_datamodule_build_and_batch_shapes():
 
     # Basic sanity checks on shapes/dtypes
     assert batch["video_latents"].dim() == 3 and batch["video_latents"].shape[1] == 1
+    assert batch["video_latents"].shape[2] == 8 * 1 * 2 * 2
     assert batch["context_embeddings"].dim() == 3 and batch["context_embeddings"].shape[1] == 1
     assert batch["loss_mask"].dim() == 2 and batch["loss_mask"].shape[1] == 1
     assert batch["seq_len_q"].dtype == torch.int32

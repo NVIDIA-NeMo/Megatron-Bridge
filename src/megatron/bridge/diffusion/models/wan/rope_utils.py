@@ -42,18 +42,22 @@ class Wan3DRopeEmbeddings(torch.nn.Module):
         )
         return freqs
 
-    def forward(self, n_head, dim_head, cu_seqlens_q_padded, grid_sizes, device):
+    def forward(self, n_head, dim_head, cu_seqlens_q_padded, grid_sizes, device, grid_frame_offsets=None):
         _, c = n_head, dim_head // 2
 
         # split freqs
         freqs = self.freqs.split([c - 2 * (c // 3), c // 3, c // 3], dim=1)
 
         freqs_real = []
+        if grid_frame_offsets is None:
+            grid_frame_offsets = torch.zeros(len(grid_sizes), dtype=torch.long, device=device)
+
         for i, (f, h, w) in enumerate(grid_sizes.tolist()):
+            frame_offset = int(grid_frame_offsets[i].item())
             seq_len = f * h * w
             freqs_real_i = torch.cat(
                 [
-                    freqs[0][:f].view(f, 1, 1, -1).expand(f, h, w, -1),
+                    freqs[0][frame_offset : frame_offset + f].view(f, 1, 1, -1).expand(f, h, w, -1),
                     freqs[1][:h].view(1, h, 1, -1).expand(f, h, w, -1),
                     freqs[2][:w].view(1, 1, w, -1).expand(f, h, w, -1),
                 ],

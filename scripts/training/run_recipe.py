@@ -101,6 +101,7 @@ import megatron.bridge.recipes as recipes
 
 # Diffusion forward steps: use class instances so they can be passed as forward_step_func
 from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
+from megatron.bridge.diffusion.models.wan.longlive_wan_step import LongLiveWanForwardStep
 from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
 from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
 from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
@@ -131,6 +132,7 @@ STEP_FUNCTIONS: dict[str, Callable] = {
     "llava_step": llava_forward_step,
     "nemotron_omni_step": nemotron_omni_forward_step,
     "flux_step": FluxForwardStep,
+    "longlive_wan_step": LongLiveWanForwardStep,
     "wan_step": WanForwardStep,
 }
 
@@ -182,7 +184,8 @@ def parse_args() -> tuple[argparse.Namespace, list[str]]:
         default="gpt_step",
         choices=sorted(STEP_FUNCTIONS.keys()),
         help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
-        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by recipe name)",
+        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by recipe name), "
+        "longlive_wan_step (LongLive WAN diffusion)",
     )
     parser.add_argument(
         "--peft_scheme",

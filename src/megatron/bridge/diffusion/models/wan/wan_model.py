@@ -181,6 +181,8 @@ class WanModel(VisionModule):
         t: Tensor,
         context: Tensor,
         packed_seq_params: PackedSeqParams = None,
+        self_attention_mask: Tensor | None = None,
+        grid_frame_offsets: Tensor | None = None,
         **kwargs,
     ) -> Tensor:
         """Forward pass.
@@ -191,6 +193,7 @@ class WanModel(VisionModule):
             t Tensor: timesteps
             context List[Tensor]: list of context (text_len, hidden_size)
             packed_seq_params PackedSeqParams: packed sequence parameters
+            grid_frame_offsets Tensor: Optional temporal frame offsets for packed grid segments.
 
         Returns:
             Tensor: output tensor (still patchified) of shape [seq_len, batch_size, hidden_size]
@@ -199,7 +202,6 @@ class WanModel(VisionModule):
         ########## Wan forward ##########
 
         # ============= embedders =============
-
         # run input embedding
         if self.pre_process:
             # x.shape [s, b, c * pF * pH * pW]
@@ -235,20 +237,22 @@ class WanModel(VisionModule):
         n_head, dim_head = self.num_heads, self.config.hidden_size // self.num_heads
         cu_seqlens_q_padded = packed_seq_params["self_attention"].cu_seqlens_q_padded
         rotary_pos_emb = self.rope_embeddings(
-            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device
+            n_head, dim_head, cu_seqlens_q_padded, grid_sizes, t.device, grid_frame_offsets=grid_frame_offsets
         )  # output: rotary_pos_emb.shape [s, b, 1, dim_head]
 
         # run decoder
-        x = self.decoder(
+        decoder_kwargs = dict(
             hidden_states=x,
-            attention_mask=e0,
+            attention_mask=self_attention_mask,
             context=context,
             context_mask=None,
             rotary_pos_emb=rotary_pos_emb,
             rotary_pos_cos=None,
             rotary_pos_sin=None,
+            attention_bias=e0,
             packed_seq_params=packed_seq_params,
         )
+        x = self.decoder(**decoder_kwargs)
 
         # return if not post_process
         if not self.post_process:

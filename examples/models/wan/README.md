@@ -180,6 +180,60 @@ uv run python -m torch.distributed.run --nproc_per_node=$NUM_GPUS scripts/traini
 
 For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/wan.py` and `scripts/training/run_recipe.py`.
 
+### LongLiveWan MVP
+
+LongLiveWan adds a WAN training step for paired clean/noisy teacher forcing. It uses the same offline WAN WebDataset format as the standard recipe: `pth` files contain precomputed video latents and `pickle` files contain text embeddings. This MVP does not run raw-video VAE encoding or online T5 text encoding inside training.
+
+The LongLive step expands each temporal chunk into a clean copy and a noisy copy. Loss is computed only on the
+noisy copy, and the dense teacher-forcing mask lets noisy chunks see previous clean chunks plus their own noisy
+chunk. The 1.3B recipe is kept as a configuration template for the supported `qkv_format=sbhd` and
+`context_parallel_size=1` semantics, but its full text-to-video sequence is larger than the dense-mask limit.
+The primary runnable example below follows the LongLive 2.0 5B TP/SP long-video development path.
+
+For LongLive-style long-video development with sequence parallelism, the 5B SP recipe records the intended
+LongLive AR latent shape `[B, F, C, H, W] = [1, 320, 48, 44, 80]` and uses mock random WAN latents when
+`dataset.path` is unset. It sets TP=4 with sequence parallelism enabled, CP disabled, and `qkv_format=sbhd`,
+but the full latent shape is not a runnable exact LongLive training recipe until Bridge has block-sparse AR
+mask support for the DiT self-attention path.
+The dense-mask LongLive step rejects `qkv_format=thd` and CP for now because THD `cu_seqlens` boundaries would
+prevent noisy chunks from attending to previous clean chunks.
+
+To exercise the TP/SP path today, use this four-GPU smoke test. It keeps the recipe's parallel defaults
+(`tensor_model_parallel_size=4`, `sequence_parallel=True`, `context_parallel_size=1`, and `qkv_format=sbhd`)
+and only reduces the model and latent sizes so the paired sequence fits the dense teacher-forcing mask. When
+`dataset.path` is unset, the command uses mock/synthetic WAN data.
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=4 scripts/training/run_recipe.py \
+  --recipe longlive_wan_5b_sp_long_video_pretrain_config \
+  --step_func longlive_wan_step \
+  model.num_layers=2 \
+  model.hidden_size=512 \
+  model.ffn_hidden_size=1408 \
+  model.num_attention_heads=8 \
+  model.crossattn_emb_size=512 \
+  model.freq_dim=256 \
+  model.seq_length=1280 \
+  model.recompute_granularity=null \
+  dataset.seq_length=1280 \
+  dataset.F_latents=8 \
+  dataset.H_latents=16 \
+  dataset.W_latents=20 \
+  dataset.num_workers=0 \
+  train.train_iters=1 \
+  train.eval_iters=0 \
+  train.global_batch_size=1 \
+  train.micro_batch_size=1 \
+  dataset.global_batch_size=1 \
+  dataset.micro_batch_size=1 \
+  logger.log_interval=1 \
+  checkpoint.save=null \
+  checkpoint.load=null
+```
+
+A successful smoke run initializes tensor model parallelism with size 4, launches tensor ranks 0-3, and
+completes iteration 1 with a finite loss and no skipped or NaN iterations.
+
 ---
 
 ## 4. Inference

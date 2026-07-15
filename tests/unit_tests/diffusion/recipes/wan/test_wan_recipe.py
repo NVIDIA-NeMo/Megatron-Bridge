@@ -17,6 +17,8 @@ import pytest
 from megatron.bridge.diffusion.data.wan.wan_energon_datamodule import WanDatasetConfig
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 from megatron.bridge.diffusion.recipes.wan.wan import (
+    longlive_wan_1_3b_pretrain_config,
+    longlive_wan_5b_sp_long_video_pretrain_config,
     wan_1_3b_pretrain_config,
     wan_1_3b_sft_config,
     wan_1_3b_text2image_pretrain_config,
@@ -170,6 +172,25 @@ class TestWan1_3BText2ImageText2VideoConfigs:
         assert config.optimizer.min_lr == 1e-4
         assert config.optimizer.weight_decay == 0.001
 
+
+class TestLongLiveWan1_3BPretrainConfig:
+    """Tests for the LongLiveWan MVP recipe."""
+
+    def test_longlive_wan_config_reuses_text2video_wan_data_path(self):
+        config = longlive_wan_1_3b_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, WanModelProvider)
+        assert isinstance(config.dataset, WanDatasetConfig)
+        assert config.model.seq_length == 43008
+        assert config.dataset.seq_length == 43008
+        assert config.model.context_parallel_size == 1
+        assert config.model.qkv_format == "sbhd"
+        assert config.model.window_size == (24 * 52 * 30, 0)
+        assert config.model.window_attn_skip_freq is None
+        assert "longlive_wan" in config.checkpoint.save
+        assert "longlive_wan" in config.logger.tensorboard_dir
+
     def test_text2video_overrides(self):
         config = wan_1_3b_text2video_pretrain_config()
 
@@ -180,3 +201,31 @@ class TestWan1_3BText2ImageText2VideoConfigs:
         assert config.optimizer.lr == 1e-4
         assert config.optimizer.min_lr == 1e-4
         assert config.optimizer.weight_decay == 0.001
+
+
+class TestLongLiveWan5BSpLongVideoPretrainConfig:
+    """Tests for the LongLive-style SP long-video recipe."""
+
+    def test_longlive_wan_5b_sp_long_video_uses_train_ar_shape(self):
+        config = longlive_wan_5b_sp_long_video_pretrain_config()
+
+        assert isinstance(config, ConfigContainer)
+        assert isinstance(config.model, WanModelProvider)
+        assert isinstance(config.dataset, WanDatasetConfig)
+        assert config.model.tensor_model_parallel_size == 4
+        assert config.model.sequence_parallel is True
+        assert config.model.context_parallel_size == 1
+        assert config.model.qkv_format == "sbhd"
+        assert config.model.in_channels == 48
+        assert config.model.out_channels == 48
+        assert config.dataset.F_latents == 320
+        assert config.dataset.H_latents == 44
+        assert config.dataset.W_latents == 80
+        assert config.dataset.latent_channels == 48
+        assert config.model.window_size == (24 * 22 * 40, 0)
+        assert config.model.seq_length == 320 * 22 * 40
+        assert config.dataset.seq_length == config.model.seq_length
+        assert config.train.global_batch_size == 1
+        assert config.train.micro_batch_size == 1
+        assert config.optimizer.lr == 1e-5
+        assert "longlive_wan_5b_sp_long_video" in config.checkpoint.save
