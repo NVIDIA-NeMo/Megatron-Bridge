@@ -92,10 +92,14 @@ class _Tokenizer:
 class _Processor:
     def __init__(self, rows: list[list[int]]):
         self.tokenizer = _Tokenizer(rows)
-        self.image_processor = type("ImageProcessor", (), {"max_num_tiles": 4})()
+        self.image_processor = type("ImageProcessor", (), {"max_num_patches": 64})()
         self.processor_calls = 0
+        self.processor_patch_budgets = []
+        self.processor_kwargs = []
 
     def __call__(self, **kwargs):
+        self.processor_patch_budgets.append(self.image_processor.max_num_patches)
+        self.processor_kwargs.append(kwargs)
         row = self.tokenizer.rows[self.processor_calls]
         self.processor_calls += 1
         return {"input_ids": torch.tensor([row], dtype=torch.long)}
@@ -326,6 +330,9 @@ def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
     assert batch.visual_inputs.pixel_values.shape == (1, 6, 3)
     assert batch.imgs_sizes.tolist() == [[512, 512], [512, 512], [512, 512]]
     assert batch.num_frames.tolist() == [3]
+    assert processor.processor_patch_budgets == [1]
+    assert processor.processor_kwargs[0]["return_tensors"] is None
+    assert processor.image_processor.max_num_patches == 64
     assert batch.input_ids.tolist() == [
         [1, IMG_START_ID, 97, IMG_END_ID, IMG_START_ID, 97, IMG_END_ID, 21, PAD_AND_END_ID]
     ]

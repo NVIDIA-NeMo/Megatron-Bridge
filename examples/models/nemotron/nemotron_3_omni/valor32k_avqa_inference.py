@@ -12,8 +12,8 @@ VALOR32K-AVQA inference script for Nemotron Omni.
 Runs audio-visual QA inference on VALOR32K-AVQA test samples using a
 Megatron checkpoint. Outputs predictions and computes accuracy.
 
-Vision backbone uses the temporal video embedder path
-(dynamic_resolution=True, temporal_patch_dim=2, separate_video_embedder=True),
+Vision backbone uses the dynamic-resolution temporal video embedder path
+(``temporal_patch_dim=2``, ``separate_video_embedder=True``),
 matching the shared SFT pipeline in ``nemotron_omni_collate_fn`` with
 use_temporal_video_embedder=True. Frames are pre-patchified into a packed
 [1, total_patches, 3*P*P] tensor with imgs_sizes / num_frames so RADIO ViT
@@ -270,18 +270,16 @@ def process_sample(
     ]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # Run the HF processor on representative frames (one per pair) with
-    # max_num_tiles=1 (or max_num_patches=1) to emit input_ids with proper
-    # <img>/<image>/</img> wrappers. We only consume `input_ids` here --
-    # pixel_values is replaced below with the pre-patchified all-frames tensor.
-    # Different model versions use different attribute names for the tile limit.
-    _tile_attr = "max_num_tiles" if hasattr(processor.image_processor, "max_num_tiles") else "max_num_patches"
-    orig_tiles = getattr(processor.image_processor, _tile_attr)
-    setattr(processor.image_processor, _tile_attr, 1)
+    # Run the dynamic-resolution HF processor on one representative frame per
+    # pair to emit input_ids with proper <img>/<image>/</img> wrappers. Limit
+    # this prepass to its smallest patch budget because its pixels are replaced
+    # by all frames below.
+    original_max_num_patches = processor.image_processor.max_num_patches
+    processor.image_processor.max_num_patches = 1
     try:
         inputs = processor(text=[prompt], images=paired_images, return_tensors="pt")
     finally:
-        setattr(processor.image_processor, _tile_attr, orig_tiles)
+        processor.image_processor.max_num_patches = original_max_num_patches
 
     input_ids = inputs.input_ids
     # One <image> token per tubelet after adjust_image_tokens (matches the
@@ -495,7 +493,6 @@ def main():
     model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = args.etp
     model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.dynamic_resolution = True
     model_provider.temporal_patch_dim = _VIDEO_TEMPORAL_PATCH_SIZE
     model_provider.separate_video_embedder = True
     model_provider.temporal_ckpt_compat = True
@@ -512,7 +509,6 @@ def main():
                 "expert_model_parallel_size": args.ep,
                 "expert_tensor_parallel_size": args.etp,
                 "pipeline_dtype": torch.bfloat16,
-                "dynamic_resolution": True,
                 "temporal_patch_dim": _VIDEO_TEMPORAL_PATCH_SIZE,
                 "separate_video_embedder": True,
                 "temporal_ckpt_compat": True,

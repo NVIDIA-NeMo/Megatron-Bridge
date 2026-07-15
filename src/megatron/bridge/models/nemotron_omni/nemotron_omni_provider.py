@@ -16,7 +16,7 @@ import copy
 from abc import ABC
 from dataclasses import dataclass
 from types import SimpleNamespace
-from typing import Callable, Optional
+from typing import Callable, Literal, Optional
 
 import torch
 from megatron.core import parallel_state
@@ -143,9 +143,14 @@ class NemotronVLModelProvider(HybridModelProvider, ABC):
 class NemotronOmniModelProvider(NemotronVLModelProvider):
     """Provider for Nemotron Omni (VL + sound) models.
 
-    Extends NemotronVLModelProvider with sound-specific fields. When has_sound
-    is False, behaves identically to the VL provider (backward compatible).
+    Extends NemotronVLModelProvider with sound-specific fields and fixes RADIO
+    to the public model's dynamic-resolution input contract.
     """
+
+    # The public Nemotron-3 Omni processor emits variable-resolution images
+    # which Bridge pre-patchifies for RADIO. The inherited static RADIO mode
+    # accepts a different 4D tensor contract and is not an Omni configuration.
+    dynamic_resolution: Literal[True] = True
 
     has_sound: bool = False
     sound_model_type: str = "parakeet"
@@ -160,6 +165,15 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
     temporal_patch_dim: int = 1
     separate_video_embedder: bool = False
     temporal_ckpt_compat: bool = False  # formerly allow_checkpoint_without_temporal_compression
+
+    def _validate_dynamic_resolution(self) -> None:
+        if self.dynamic_resolution is not True:
+            raise ValueError("Nemotron Omni only supports dynamic_resolution=True.")
+
+    def finalize(self) -> None:
+        """Finalize a dynamic-resolution Nemotron Omni provider."""
+        self._validate_dynamic_resolution()
+        super().finalize()
 
     def _build_vision_config(self, language_cfg):
         """Pin vision encoder to PP=1 (Omni training uses PP>1 on the LLM).
@@ -225,6 +239,7 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
         at construction time -- they can't be added after. This is intentional to
         maintain zero changes to nemotron_vl/.
         """
+        self._validate_dynamic_resolution()
         language_cfg = copy.deepcopy(self)
 
         vision_cfg = self._build_vision_config(language_cfg)

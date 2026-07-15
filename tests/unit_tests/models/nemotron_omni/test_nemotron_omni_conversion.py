@@ -15,6 +15,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 import torch
 from torch import nn
 
@@ -140,6 +141,14 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
+
+
+def test_nemotron_omni_provider_rejects_static_resolution():
+    provider = NemotronOmniModelProvider()
+    provider.dynamic_resolution = False
+
+    with pytest.raises(ValueError, match="only supports dynamic_resolution=True"):
+        provider.finalize()
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():

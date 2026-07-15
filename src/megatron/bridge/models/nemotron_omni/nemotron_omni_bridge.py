@@ -122,7 +122,6 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider_kwargs["img_end_token_id"] = 22
         provider_kwargs["tokenizer_type"] = "nemotron6-moe"
         provider_kwargs["use_vision_backbone_fp8_arch"] = False
-        provider_kwargs["dynamic_resolution"] = True
         provider_kwargs["vision_class_token_len"] = 10
 
         # NemotronH uses squared_relu for MLP layers (HF config: mlp_hidden_act="relu2").

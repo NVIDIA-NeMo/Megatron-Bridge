@@ -19,16 +19,17 @@ This script demonstrates inference with Nemotron Omni model
 using Megatron-Bridge. Unlike the InternVL-based Nemotron VL models that rely on
 qwen_vl_utils, this script uses the model's native HF processor with <image> tokens.
 
-Vision backbone config is modality-dependent:
-  * Image: dynamic_resolution=True, temporal_patch_dim=1,
+Nemotron Omni always uses dynamic-resolution RADIO inputs. Temporal vision
+settings are modality-dependent:
+  * Image: temporal_patch_dim=1,
     separate_video_embedder=False. Each HF-processor tile is pre-patchified
     into [1, total_patches, 3*P*P] and passed through RADIO's packed
     dynamic-resolution path (is_packed_dynamic_res=True in LlavaModel). The
     ``imgs_sizes`` / ``vision_packed_seq_params`` tensors are built from the
     per-tile shapes, and ``num_image_tiles`` is recomputed by LlavaModel from
     RADIO output (256 tokens/tile after pixel_shuffle).
-  * Audio / text-only: dynamic_resolution=False, temporal_patch_dim=1.
-  * Video (and video+audio): dynamic_resolution=True, temporal_patch_dim=2,
+  * Audio / text-only: temporal_patch_dim=1 (the vision encoder is unused).
+  * Video (and video+audio): temporal_patch_dim=2,
     separate_video_embedder=True, temporal_ckpt_compat=True so RADIO ViT
     exercises the trained `video_embedder`. The video preprocessing mirrors
     the shared SFT collator (used by `NemotronOmniTaskEncoder` with
@@ -334,7 +335,7 @@ def process_image_inputs(
 
     Uses <image> token directly in the text and the model's own tokenizer/processor.
     Each HF-processor tile is pre-patchified into the packed dynamic-resolution
-    format expected by RADIO when dynamic_resolution=True (temporal_patch_dim=1).
+    format expected by Nemotron Omni's RADIO encoder (temporal_patch_dim=1).
 
     Returns:
         Tuple of (input_ids, packed_pixel_values, num_patches, imgs_sizes).
@@ -390,10 +391,10 @@ def process_video_inputs(
     - Frames are grouped by ``temporal_patch_size`` (pair of consecutive frames
       per <image>) and the prompt uses the training-time format ("frame i sampled
       at t seconds and frame i+1 sampled at t+1 seconds: <image>").
-    - One representative frame per group is fed to the HF processor (with
-      ``max_num_tiles=1``) so that <img>/<image>/</img> wrapper tokens render
-      correctly; ``adjust_image_tokens`` then shrinks each wrapper region down
-      to exactly one <image> token.
+    - One representative frame per group is fed to the dynamic-resolution HF
+      processor so that <img>/<image>/</img> wrapper tokens render correctly;
+      ``adjust_image_tokens`` then shrinks each wrapper region to one <image>
+      token.
     - ALL video frames are patchified to a [1, total_patches, 3*P*P] tensor,
       which replaces ``pixel_values`` so RADIO receives pre-patchified
       dynamic-resolution input.
@@ -449,18 +450,16 @@ def process_video_inputs(
 
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # 3. Process the representative frames to produce input_ids with proper
-    #    <img>...</img> wrappers around each <image>. Force max_num_tiles=1 to
-    #    match the training encoder (adjust_image_tokens then collapses each
-    #    wrapper region back to a single <image> token).
-    orig_tiles = getattr(processor.image_processor, "max_num_tiles", None)
-    if orig_tiles is not None:
-        processor.image_processor.max_num_tiles = 1
+    # 3. Process representative frames to produce input_ids with proper
+    #    <img>...</img> wrappers. Limit this dynamic-resolution prepass to its
+    #    smallest patch budget: its pixels are discarded, and equal shapes let
+    #    the processor tensorize mixed-aspect representative frames safely.
+    original_max_num_patches = processor.image_processor.max_num_patches
+    processor.image_processor.max_num_patches = 1
     try:
         proc_output = processor(text=[text], images=paired_images, return_tensors="pt")
     finally:
-        if orig_tiles is not None:
-            processor.image_processor.max_num_tiles = orig_tiles
+        processor.image_processor.max_num_patches = original_max_num_patches
 
     input_ids = proc_output.input_ids
     num_patches = torch.ones(len(paired_images), dtype=torch.long)
@@ -576,14 +575,12 @@ def process_video_audio_inputs(
 
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    orig_tiles = getattr(processor.image_processor, "max_num_tiles", None)
-    if orig_tiles is not None:
-        processor.image_processor.max_num_tiles = 1
+    original_max_num_patches = processor.image_processor.max_num_patches
+    processor.image_processor.max_num_patches = 1
     try:
         proc_output = processor(text=[text], images=paired_images, audio=[audio_path], return_tensors="pt")
     finally:
-        if orig_tiles is not None:
-            processor.image_processor.max_num_tiles = orig_tiles
+        processor.image_processor.max_num_patches = original_max_num_patches
 
     # Extract raw sound clips and convert to mel spectrogram for BridgeSoundEncoder
     raw_sound_clips = proc_output.pop("sound_clips", None)
@@ -626,35 +623,34 @@ def main(args) -> None:
     ep = args.ep
     etp = args.etp
 
-    # Select vision-backbone config based on input modality.
+    # Select temporal vision settings based on input modality. Nemotron Omni
+    # always keeps RADIO in dynamic-resolution mode, including when vision is
+    # unused for text/audio-only inference.
     #
-    # Image: dynamic_resolution=True with temporal_patch_dim=1 so that RADIO
+    # Image: temporal_patch_dim=1 so that RADIO
     #   runs the packed dynamic-resolution path (is_packed_dynamic_res=True in
     #   LlavaModel). Each HF-processor tile is pre-patchified into a packed
     #   [1, N*patches, 3*P*P] tensor and passed with imgs_sizes /
     #   vision_packed_seq_params. num_image_tiles is recomputed by LlavaModel
     #   from RADIO output (256 tokens/tile after pixel_shuffle).
     #
-    # Video (and video+audio): dynamic_resolution=True, temporal_patch_dim=2,
+    # Video (and video+audio): temporal_patch_dim=2,
     #   separate_video_embedder=True so RADIO exercises the trained
     #   `video_embedder`. The matching data pipeline is in `process_video_inputs`
     #   / `process_video_audio_inputs`.
     #
-    # Audio / text-only: dynamic_resolution=False, temporal_patch_dim=1.
+    # Audio / text-only: temporal_patch_dim=1; RADIO is not called.
     is_video_inference = bool(args.video_path)
     is_image_inference = bool(args.image_path) and not is_video_inference
     if is_video_inference:
-        dynamic_resolution = True
         temporal_patch_dim = 2
         separate_video_embedder = True
         temporal_ckpt_compat = True
     elif is_image_inference:
-        dynamic_resolution = True
         temporal_patch_dim = 1
         separate_video_embedder = False
         temporal_ckpt_compat = False
     else:
-        dynamic_resolution = False
         temporal_patch_dim = 1
         separate_video_embedder = False
         temporal_ckpt_compat = False
@@ -675,7 +671,6 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.dynamic_resolution = dynamic_resolution
         model_provider.temporal_patch_dim = temporal_patch_dim
         model_provider.separate_video_embedder = separate_video_embedder
         model_provider.temporal_ckpt_compat = temporal_ckpt_compat
@@ -683,7 +678,7 @@ def main(args) -> None:
 
         # Load the Megatron model directly. The mp_overrides values are applied to
         # the loaded model_cfg before the model is built (see model_load_save.py),
-        # so the temporal/dynamic-resolution overrides must be passed here -- the
+        # so the temporal overrides must be passed here -- the
         # `model_provider` mutations above only affect the throwaway provider used
         # for parallel-state init, not the model that load_megatron_model builds.
         model = bridge.load_megatron_model(
@@ -694,16 +689,12 @@ def main(args) -> None:
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
                 "pipeline_dtype": torch.bfloat16,
-                "dynamic_resolution": dynamic_resolution,
                 "temporal_patch_dim": temporal_patch_dim,
                 "separate_video_embedder": separate_video_embedder,
                 "temporal_ckpt_compat": temporal_ckpt_compat,
             },
             wrap_with_ddp=False,
         )
-        model[0].module.llava_model.dynamic_resolution = dynamic_resolution
-        if model[0].module.llava_model.vision_model is not None:
-            model[0].module.llava_model.vision_model.dynamic_resolution = dynamic_resolution
     else:
         # Load from HuggingFace and convert to Megatron
         print_rank_0(f"Loading HuggingFace model from: {args.hf_model_path}")
@@ -714,7 +705,6 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
-        model_provider.dynamic_resolution = dynamic_resolution
         model_provider.temporal_patch_dim = temporal_patch_dim
         model_provider.separate_video_embedder = separate_video_embedder
         model_provider.temporal_ckpt_compat = temporal_ckpt_compat

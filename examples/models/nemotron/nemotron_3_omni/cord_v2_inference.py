@@ -265,7 +265,6 @@ def main():
     model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = args.etp
     model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.dynamic_resolution = True
     model_provider.temporal_patch_dim = 1
     model_provider.separate_video_embedder = True
     model_provider.temporal_ckpt_compat = True
@@ -282,7 +281,6 @@ def main():
                 "expert_model_parallel_size": args.ep,
                 "expert_tensor_parallel_size": args.etp,
                 "pipeline_dtype": torch.bfloat16,
-                "dynamic_resolution": True,
                 "temporal_patch_dim": 1,
                 "separate_video_embedder": True,
                 "temporal_ckpt_compat": True,
