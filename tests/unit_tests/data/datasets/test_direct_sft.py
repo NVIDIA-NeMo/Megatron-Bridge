@@ -113,7 +113,7 @@ def test_direct_sft_dataset_rejects_collate_without_packing_support():
 
 
 def test_direct_sft_dataset_requires_registered_or_explicit_collate():
-    with pytest.raises(ValueError, match="No SFT collate function registered"):
+    with pytest.raises(ValueError, match="No VLM collate function is registered"):
         DirectSFTDataset(
             base_examples=[_example()],
             target_length=1,

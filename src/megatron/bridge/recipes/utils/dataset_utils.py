@@ -20,13 +20,12 @@ from typing import Callable, List, Optional, Tuple
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
 from megatron.bridge.recipes.utils.finetune_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -121,7 +120,6 @@ DATASET_TYPES = [
     "llm-finetune-preloaded",
     "vlm-energon",
     "vlm-hf",
-    "vlm-preloaded",
 ]
 
 LLM_FINETUNE_PRESETS: dict[str, Callable] = {
@@ -169,7 +167,7 @@ def apply_dataset_override(
         packed_sequence: Whether to enable packed sequences.
         seq_length: Explicit sequence length (None = use model's or default 4096).
         cli_overrides: Mutable list of Hydra-style CLI overrides. For ``llm-finetune``,
-            ``dataset.hf_dataset.dataset_name`` is extracted and consumed here to select the preset.
+            ``dataset.hf_dataset.dataset_name`` is extracted to select the preset.
 
     Returns:
         The modified ConfigContainer.
@@ -239,20 +237,14 @@ def apply_dataset_override(
         )
 
     elif dataset_type == "vlm-energon":
-        if isinstance(config.dataset, EnergonProvider):
-            logger.info("Recipe already provides EnergonProvider; keeping it (preserves task_encoder).")
-        else:
-            logger.warning(
-                "Creating bare EnergonProvider. task_encoder and image_processor are unset; "
-                "use a recipe that provides them or set via code."
+        if not isinstance(config.dataset, EnergonDatasetConfig):
+            raise ValueError(
+                "vlm-energon requires a recipe that defines EnergonDatasetConfig with a model-specific "
+                "task_encoder config; a generic runtime encoder cannot be inferred."
             )
-            config.dataset = EnergonProvider(
-                path="",
-                seq_length=resolved_seq_length,
-                micro_batch_size=config.train.micro_batch_size,
-                global_batch_size=config.train.global_batch_size,
-                num_workers=2,
-            )
+        if seq_length is not None:
+            config.dataset.seq_length = resolved_seq_length
+        logger.info("Recipe already provides EnergonDatasetConfig; keeping its task-encoder configuration.")
 
     elif dataset_type == "vlm-hf":
         config.dataset = DirectHFSFTDatasetConfig(
@@ -266,17 +258,6 @@ def apply_dataset_override(
             pin_memory=True,
             persistent_workers=False,
             enable_in_batch_packing=False,
-        )
-
-    elif dataset_type == "vlm-preloaded":
-        config.dataset = PreloadedVLMConversationProvider(
-            seq_length=resolved_seq_length,
-            hf_processor_path=None,
-            train_data_path=None,
-            valid_data_path=None,
-            test_data_path=None,
-            dataloader_type="single",
-            num_workers=2,
         )
 
     else:

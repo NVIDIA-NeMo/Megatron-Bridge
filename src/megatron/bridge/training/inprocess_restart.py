@@ -102,13 +102,13 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
                     async_calls_queue.close(abort=True)
                     global_state._async_calls_queue = None
 
-                from megatron.core.dist_checkpointing.strategies.filesystem_async import _results_queue
+                from megatron.core.dist_checkpointing.strategies import filesystem_async
 
-                global _results_queue
-
-                if _results_queue is not None:
-                    _results_queue._manager.shutdown()
-                    del _results_queue
+                if filesystem_async._results_queue is not None:
+                    try:
+                        filesystem_async._results_queue._manager.shutdown()
+                    finally:
+                        filesystem_async._results_queue = None
 
             except Exception:
                 pass
