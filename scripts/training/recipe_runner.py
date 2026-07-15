@@ -342,6 +342,8 @@ def sync_model_dataset_sequence_length(config: ConfigContainer) -> ConfigContain
         return config
 
     dataset_seq_length = getattr(config.dataset, "seq_length", None)
+    if dataset_seq_length is None:
+        dataset_seq_length = getattr(config.dataset, "sequence_length", None)
     if dataset_seq_length is not None and config.model.seq_length != dataset_seq_length:
         config.model.seq_length = dataset_seq_length
     return config

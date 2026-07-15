@@ -255,6 +255,8 @@ class TestDatasetPresets:
 
         assert dataset.source.adapter_kwargs == {"video_root_path": "/data/llava-video"}
         dataset.validate()
+        assert dataset.validation_source is not None
+        assert dataset.validation_source.adapter_kwargs == {"video_root_path": "/data/llava-video"}
 
     def test_vlm_preset_rejects_a_non_direct_hf_recipe(self):
         with pytest.raises(ValueError, match="DirectHFSFTDatasetConfig"):

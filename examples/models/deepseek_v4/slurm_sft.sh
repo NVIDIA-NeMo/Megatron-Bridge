@@ -36,7 +36,7 @@
 #
 # DSv4 sparse attention (CSA/DSA indexer) rejects packed sequences
 # (csa.py asserts packed_seq_params is None), so SFT runs unpacked (SBHD).
-# Do not enable --packed_sequence.
+# Do not enable dataset.enable_offline_packing.
 # ==============================================================================
 
 #SBATCH --job-name=dsv4-sft
