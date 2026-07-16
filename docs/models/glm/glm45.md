@@ -84,19 +84,19 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 ```bash
 # Import GLM 4.5 Air model
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model zai-org/GLM-4.5-Air \
 --megatron-path /models/glm45-air-106b
 
 # Import GLM 4.5 355B model
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model zai-org/GLM-4.5 \
 --megatron-path /models/glm45-355b
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model zai-org/GLM-4.5-Air \
 --megatron-path /results/glm45_air/checkpoints/iter_00001000 \
 --hf-path ./glm45-air-hf-export
@@ -272,7 +272,7 @@ config = glm45_air_106b_pretrain_config(
 ```
 
 ## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Checkpoint import/export: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 
 ## Hugging Face Model Cards

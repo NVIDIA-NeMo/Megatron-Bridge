@@ -41,12 +41,12 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
     --hf-model-id "$GLM47_FLASH_HF" --tp 1 --pp 1 --ep 8
 
 # Import HF -> Megatron checkpoint
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "$GLM47_FLASH_HF" \
     --megatron-path "${WORKSPACE}/models/GLM-4.7-Flash"
 
 # Export Megatron -> HF checkpoint
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "$GLM47_FLASH_HF" \
     --megatron-path "${WORKSPACE}/models/GLM-4.7-Flash/iter_0000000" \
     --hf-path "${WORKSPACE}/models/GLM-4.7-Flash-hf-export"

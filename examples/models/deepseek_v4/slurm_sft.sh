@@ -216,7 +216,8 @@ else
         set -euo pipefail
         export CUDA_DEVICE_MAX_CONNECTIONS=1
         cd /opt/Megatron-Bridge
-        $TORCHRUN examples/conversion/convert_checkpoints_multi_gpu.py import \
+        $TORCHRUN scripts/conversion/run_conversion.py import \
+            --device gpu \
             --hf-model '$HF_MODEL_ID' \
             --megatron-path '$MEGATRON_DIR' \
             --tp $TP --pp $PP --ep $EP \

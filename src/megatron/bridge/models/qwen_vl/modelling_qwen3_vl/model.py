@@ -435,6 +435,7 @@ class Qwen3VLModel(MegatronModule):
                 cp_size=cp_size,
                 cp_rank=cp_rank,
                 device=input_ids.device,
+                cp_group=self.pg_collection.cp,
             )
             if packed_seq_params is not None and cp_size > 1 and input_ids is not None and not legacy_packed_bshd
             else None

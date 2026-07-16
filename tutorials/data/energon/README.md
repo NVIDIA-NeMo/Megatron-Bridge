@@ -72,7 +72,7 @@ export MODEL_ID=Qwen/Qwen3-VL-8B-Instruct
 export WORKSPACE=${WORKSPACE:-/workspace}
 export PRETRAINED_CHECKPOINT="$WORKSPACE/models/Qwen3-VL-8B-Instruct"
 
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model "$MODEL_ID" \
   --megatron-path "$PRETRAINED_CHECKPOINT"
 ```

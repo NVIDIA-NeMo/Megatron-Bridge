@@ -186,6 +186,18 @@ forwarded implicitly. Export credentials in the launcher environment, then repea
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
+No cluster-specific `srun` flags are added by default. Repeat
+`--srun-arg=ARG` for every flag required by the target cluster. For example,
+a Pyxis/Enroot cluster may use:
+
+```bash
+--srun-arg=--mpi=pmix \
+--srun-arg=--no-container-mount-home \
+--srun-arg=--container-writable
+```
+
+The `=` form is required when `ARG` begins with `-`.
+
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.
 
