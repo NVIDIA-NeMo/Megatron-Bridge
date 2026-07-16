@@ -91,7 +91,7 @@ class TestMultiGPUConversion:
         test_output_dir.mkdir(exist_ok=True)
 
         repo_root = Path(__file__).resolve().parents[4]
-        # Run hf_megatron_roundtrip_multi_gpu.py through the public launcher.
+        # Run the scripts/conversion roundtrip worker through the public launcher.
         cmd = [
             str(repo_root / "scripts/conversion/convert.sh"),
             "roundtrip",

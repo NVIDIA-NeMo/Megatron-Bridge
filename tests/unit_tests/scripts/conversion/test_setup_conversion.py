@@ -162,8 +162,41 @@ def test_gpu_backend_validates_parallelism_against_world_size():
     module = _load_setup_conversion_module()
     args = _parse(module, "--device", "gpu", "--gpus-per-node", "4", "--tp", "3")
 
-    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node"):
+    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must equal TP\*PP\*EP"):
         module._validate_args(args)
+
+
+def test_gpu_backend_rejects_replicated_data_parallel_conversion():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "2", "--ep", "2")
+
+    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must equal TP\*PP\*EP"):
+        module._validate_args(args)
+
+
+def test_roundtrip_accepts_exact_multinode_product_topology():
+    module = _load_setup_conversion_module()
+    args = _parse_roundtrip(
+        module,
+        "--executor",
+        "slurm",
+        "--nodes",
+        "12",
+        "--gpus-per-node",
+        "8",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--tp",
+        "2",
+        "--ep",
+        "48",
+    )
+
+    module._validate_args(args)
 
 
 def test_gpu_backend_validates_expert_parallelism_against_world_size():
@@ -176,7 +209,7 @@ def test_gpu_backend_validates_expert_parallelism_against_world_size():
 
 def test_gpu_backend_allows_etp_topology_independent_from_tp():
     module = _load_setup_conversion_module()
-    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "4", "--ep", "4")
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "2", "--ep", "4")
 
     module._validate_args(args)
 
@@ -218,12 +251,12 @@ def test_local_gpu_executor_uses_nemo_run_torchrun():
     assert executor.launcher is launcher
 
 
-def test_roundtrip_task_uses_multi_gpu_example():
+def test_roundtrip_task_uses_conversion_worker():
     module = _load_setup_conversion_module()
     module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
     args = _parse_roundtrip(
         module,
-        "--megatron-load-path",
+        "--megatron-path",
         "/checkpoint",
         "--tp",
         "2",
@@ -233,13 +266,13 @@ def test_roundtrip_task_uses_multi_gpu_example():
 
     task, display_args = module._build_task(args)
 
-    assert task.path == str(REPO_ROOT / "examples/conversion/hf_megatron_roundtrip_multi_gpu.py")
-    task_path = Path(task.path)
-    assert task_path.stat().st_mode & 0o111
-    assert task_path.read_text().startswith("#!/usr/bin/env python3\n")
+    assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
     assert task.args == display_args
     assert task.args == [
-        "--hf-model-id",
+        "roundtrip",
+        "--device",
+        "gpu",
+        "--hf-model",
         "hf/model",
         "--tp",
         "2",
@@ -249,10 +282,38 @@ def test_roundtrip_task_uses_multi_gpu_example():
         "1",
         "--etp",
         "1",
-        "--megatron-load-path",
+        "--megatron-path",
         "/checkpoint",
         "--skip-save",
     ]
+
+
+def test_slurm_roundtrip_task_uses_container_conversion_worker():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse_roundtrip(
+        module,
+        "--executor",
+        "slurm",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--output-dir",
+        "/output path",
+        "--tp",
+        "2",
+    )
+    module._validate_args(args)
+
+    task, display_args = module._build_task(args)
+
+    assert task.path == "/opt/Megatron-Bridge/scripts/conversion/run_conversion.py"
+    assert task.entrypoint == "python"
+    assert task.args != display_args
+    assert task.args == [*display_args[:-1], "'/output path'"]
 
 
 def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):

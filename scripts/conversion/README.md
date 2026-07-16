@@ -42,6 +42,10 @@ The GPU backend uses NeMo Run's torchrun launcher for local execution and
 srun-native tasks for Slurm. Users should not wrap the command in `torchrun`,
 `srun`, or `sbatch`.
 
+The requested topology must satisfy
+`nodes * gpus-per-node == TP * PP * EP`; conversion does not create redundant
+data-parallel replicas. `ETP * EP * PP` must also divide the total GPU count.
+
 ```bash
 export HF_TOKEN="$(<${HOME}/HF_TOKEN)"
 
@@ -80,18 +84,20 @@ The `=` form is required when `ARG` begins with `-`.
 
 ## Distributed round-trip validation
 
-The `roundtrip` command runs
-`examples/conversion/hf_megatron_roundtrip_multi_gpu.py` through the same
-NeMo Run local or Slurm executor. It compares weights after the Hugging Face →
-Megatron → Hugging Face conversion and requires the GPU backend.
+Like `import` and `export`, the `roundtrip` command runs the shared
+`scripts/conversion/run_conversion.py` worker through the NeMo Run local or
+Slurm executor. It compares weights after the Hugging Face → Megatron → Hugging
+Face conversion and requires the GPU backend. The standalone
+`examples/conversion/hf_megatron_roundtrip_multi_gpu.py` example remains
+available for direct `torch.distributed.run` usage.
 
 ```bash
 ./scripts/conversion/convert.sh roundtrip \
   --executor local \
   --device gpu \
   --gpus-per-node 8 \
-  --hf-model-id Qwen/Qwen3-30B-A3B \
-  --megatron-load-path /workspace/models/qwen3-30b-a3b/iter_0000000 \
+  --hf-model Qwen/Qwen3-30B-A3B \
+  --megatron-path /workspace/models/qwen3-30b-a3b/iter_0000000 \
   --tp 1 --pp 1 --ep 8 --etp 1 \
   --trust-remote-code \
   --skip-save
@@ -101,7 +107,10 @@ Megatron → Hugging Face conversion and requires the GPU backend.
 `--megatron-load-path`. Omit the Megatron load path to validate a direct
 in-memory conversion from the Hugging Face model. Omit `--skip-save` to write
 the round-tripped Hugging Face model, optionally under `--output-dir`, and use
-`--megatron-save-path` to also save a Megatron checkpoint.
+`--megatron-save-path` to also save a Megatron checkpoint. Existing non-empty
+destinations are rejected unless `--overwrite` is set, and output paths may not
+overlap either input or each other. For long multi-node conversions, set
+`--distributed-timeout-minutes` to raise the NCCL process-group timeout.
 
 ## CPU conversion on Slurm
 

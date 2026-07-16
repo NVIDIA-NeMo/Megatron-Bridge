@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 import nemo_run as run
-from arguments import build_parser, conversion_worker_args, roundtrip_task_args
+from arguments import build_parser, conversion_worker_args
 from nemo_run.config import get_nemorun_home
 from torchx.specs.api import AppState
 
@@ -110,9 +110,9 @@ def _validate_args(args: argparse.Namespace) -> None:
         if args.gpus_per_node is None or args.gpus_per_node < 1:
             raise ValueError("GPU conversion requires --gpus-per-node of at least 1.")
         world_size = args.nodes * args.gpus_per_node
-        model_parallel_size = args.tp * args.pp
-        if world_size % model_parallel_size != 0:
-            raise ValueError("nodes*gpus-per-node must be divisible by TP*PP.")
+        model_parallel_size = args.tp * args.pp * args.ep
+        if world_size != model_parallel_size:
+            raise ValueError("nodes*gpus-per-node must equal TP*PP*EP.")
         expert_model_parallel_size = args.etp * args.ep * args.pp
         if world_size % expert_model_parallel_size != 0:
             raise ValueError("nodes*gpus-per-node must be divisible by ETP*EP*PP.")
@@ -179,12 +179,8 @@ def _build_executor(
 
 def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
     """Build the in-job conversion or round-trip task and its display arguments."""
-    if args.command == "roundtrip":
-        display_args = roundtrip_task_args(args)
-        relative_task_path = Path("examples/conversion/hf_megatron_roundtrip_multi_gpu.py")
-    else:
-        display_args = conversion_worker_args(args)
-        relative_task_path = Path("scripts/conversion/run_conversion.py")
+    display_args = conversion_worker_args(args)
+    relative_task_path = Path("scripts/conversion/run_conversion.py")
     repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
     task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
     if args.executor == "local":

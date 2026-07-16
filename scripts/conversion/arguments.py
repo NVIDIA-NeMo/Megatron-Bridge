@@ -175,6 +175,58 @@ def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include
     _add_parallelism_arguments(parser, include_distributed_timeout=True)
 
 
+def _add_roundtrip_arguments(parser: argparse.ArgumentParser, *, include_execution: bool) -> None:
+    """Add round-trip arguments to the launcher or in-job worker parser."""
+    if include_execution:
+        _add_execution_arguments(parser, default_device="gpu")
+    else:
+        parser.add_argument("--device", choices=("gpu",), required=True)
+
+    roundtrip = parser.add_argument_group("Round-trip validation")
+    roundtrip.add_argument(
+        "--hf-model",
+        "--hf-model-id",
+        required=True,
+        dest="hf_model",
+        help="Hugging Face model ID or local path.",
+    )
+    roundtrip.add_argument(
+        "--megatron-path",
+        "--megatron-load-path",
+        dest="megatron_load_path",
+        help="Optional Megatron checkpoint to load instead of converting directly from Hugging Face.",
+    )
+    roundtrip.add_argument(
+        "--megatron-save-path",
+        help="Optional destination for saving the Megatron checkpoint.",
+    )
+    roundtrip.add_argument(
+        "--output-dir",
+        help="Parent directory for the round-tripped Hugging Face model.",
+    )
+    roundtrip.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Allow custom code from the Hugging Face model repository.",
+    )
+    roundtrip.add_argument(
+        "--not-strict",
+        action="store_true",
+        help="Allow source and destination checkpoints to have different parameter keys.",
+    )
+    roundtrip.add_argument(
+        "--skip-save",
+        action="store_true",
+        help="Verify round-trip weights without saving the resulting checkpoints.",
+    )
+    roundtrip.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Delete non-empty output destinations before saving.",
+    )
+    _add_parallelism_arguments(parser, include_distributed_timeout=True)
+
+
 def build_parser(*, include_execution: bool) -> argparse.ArgumentParser:
     """Build the conversion argument parser.
 
@@ -204,8 +256,8 @@ Examples:
 
   # Local multi-GPU round-trip validation
   ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
-      --gpus-per-node 8 --hf-model-id Qwen/Qwen3-30B-A3B \\
-      --megatron-load-path /workspace/qwen/iter_0000000 --ep 8 --skip-save
+      --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
+      --megatron-path /workspace/qwen/iter_0000000 --ep 8 --skip-save
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -248,51 +300,12 @@ Examples:
         help="Cast exported Hugging Face weights to this dtype (GPU backend only).",
     )
 
-    if include_execution:
-        roundtrip_parser = subparsers.add_parser(
-            "roundtrip",
-            help="Validate a Hugging Face to Megatron to Hugging Face conversion on GPUs.",
-            allow_abbrev=False,
-        )
-        _add_execution_arguments(roundtrip_parser, default_device="gpu")
-        roundtrip = roundtrip_parser.add_argument_group("Round-trip validation")
-        roundtrip.add_argument(
-            "--hf-model",
-            "--hf-model-id",
-            required=True,
-            dest="hf_model",
-            help="Hugging Face model ID or local path.",
-        )
-        roundtrip.add_argument(
-            "--megatron-path",
-            "--megatron-load-path",
-            dest="megatron_load_path",
-            help="Optional Megatron checkpoint to load instead of converting directly from Hugging Face.",
-        )
-        roundtrip.add_argument(
-            "--megatron-save-path",
-            help="Optional destination for saving the Megatron checkpoint.",
-        )
-        roundtrip.add_argument(
-            "--output-dir",
-            help="Parent directory for the round-tripped Hugging Face model.",
-        )
-        roundtrip.add_argument(
-            "--trust-remote-code",
-            action="store_true",
-            help="Allow custom code from the Hugging Face model repository.",
-        )
-        roundtrip.add_argument(
-            "--not-strict",
-            action="store_true",
-            help="Allow source and destination checkpoints to have different parameter keys.",
-        )
-        roundtrip.add_argument(
-            "--skip-save",
-            action="store_true",
-            help="Verify round-trip weights without saving the resulting checkpoints.",
-        )
-        _add_parallelism_arguments(roundtrip_parser, include_distributed_timeout=False)
+    roundtrip_parser = subparsers.add_parser(
+        "roundtrip",
+        help="Validate a Hugging Face to Megatron to Hugging Face conversion on GPUs.",
+        allow_abbrev=False,
+    )
+    _add_roundtrip_arguments(roundtrip_parser, include_execution=include_execution)
     return parser
 
 
@@ -305,6 +318,40 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     Returns:
         Command-line arguments accepted by ``run_conversion.py``.
     """
+    if args.command == "roundtrip":
+        worker_args = [
+            "roundtrip",
+            "--device",
+            args.device,
+            "--hf-model",
+            args.hf_model,
+            "--tp",
+            str(args.tp),
+            "--pp",
+            str(args.pp),
+            "--ep",
+            str(args.ep),
+            "--etp",
+            str(args.etp),
+        ]
+        if args.megatron_load_path is not None:
+            worker_args.extend(["--megatron-path", args.megatron_load_path])
+        if args.megatron_save_path is not None:
+            worker_args.extend(["--megatron-save-path", args.megatron_save_path])
+        if args.output_dir is not None:
+            worker_args.extend(["--output-dir", args.output_dir])
+        if args.trust_remote_code:
+            worker_args.append("--trust-remote-code")
+        if args.not_strict:
+            worker_args.append("--not-strict")
+        if args.skip_save:
+            worker_args.append("--skip-save")
+        if args.overwrite:
+            worker_args.append("--overwrite")
+        if args.distributed_timeout_minutes is not None:
+            worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
+        return worker_args
+
     worker_args = [
         args.command,
         "--device",
@@ -343,39 +390,3 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         if args.export_weight_dtype is not None:
             worker_args.extend(["--export-weight-dtype", args.export_weight_dtype])
     return worker_args
-
-
-def roundtrip_task_args(args: argparse.Namespace) -> list[str]:
-    """Serialize options for ``hf_megatron_roundtrip_multi_gpu.py``.
-
-    Args:
-        args: Parsed user-facing round-trip launcher arguments.
-
-    Returns:
-        Command-line arguments accepted by the multi-GPU round-trip example.
-    """
-    task_args = [
-        "--hf-model-id",
-        args.hf_model,
-        "--tp",
-        str(args.tp),
-        "--pp",
-        str(args.pp),
-        "--ep",
-        str(args.ep),
-        "--etp",
-        str(args.etp),
-    ]
-    if args.megatron_load_path is not None:
-        task_args.extend(["--megatron-load-path", args.megatron_load_path])
-    if args.megatron_save_path is not None:
-        task_args.extend(["--megatron-save-path", args.megatron_save_path])
-    if args.output_dir is not None:
-        task_args.extend(["--output-dir", args.output_dir])
-    if args.trust_remote_code:
-        task_args.append("--trust-remote-code")
-    if args.not_strict:
-        task_args.append("--not-strict")
-    if args.skip_save:
-        task_args.append("--skip-save")
-    return task_args
