@@ -14,8 +14,8 @@
 # limitations under the License.
 
 # Kimi-K2.5 round-trip verification on 12 Slurm nodes (96 GPUs).
-# Run this wrapper from a Slurm login node; convert.sh submits one job per
-# parallelism configuration and waits for each job by default.
+# Run this wrapper from a Slurm login node; convert.sh submits one job and
+# waits for it by default.
 #
 # Required:
 #   export CONTAINER_IMAGE=/path/to/container.sqsh
@@ -32,15 +32,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
-SLURM_PARTITION="${SLURM_PARTITION:-batch}"
-TIME_LIMIT="${TIME_LIMIT:-08:00:00}"
-NODES=12
-GPUS_PER_NODE=8
-
-HF_MODEL_ID="${HF_MODEL_ID:-moonshotai/Kimi-K2.5}"
-# TP*PP*EP must equal NODES*GPUS_PER_NODE for these data-parallel-free layouts.
-# EP must divide 384 (the number of experts).
-PARALLELISM_CONFIGS=("2,1,48" "2,2,24" "4,1,24")
 
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
@@ -60,19 +51,15 @@ for name in HF_TOKEN HF_HOME UV_CACHE_DIR TORCH_NCCL_AVOID_RECORD_STREAMS NCCL_N
     fi
 done
 
-for config in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP <<< "${config}"
-    echo "Submitting Kimi-K2.5 roundtrip: TP=${TP}, PP=${PP}, EP=${EP}"
-    "${CONVERT_SH}" roundtrip \
-        --executor slurm --device gpu \
-        --nodes "${NODES}" --gpus-per-node "${GPUS_PER_NODE}" \
-        --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION}" --time "${TIME_LIMIT}" \
-        --container-image "${CONTAINER_IMAGE}" \
-        "${MOUNT_ARGS[@]}" \
-        "${ENV_ARGS[@]}" \
-        --experiment-name "kimi-k25-roundtrip-tp${TP}-pp${PP}-ep${EP}" \
-        --hf-model "${HF_MODEL_ID}" \
-        --tp "${TP}" --pp "${PP}" --ep "${EP}" \
-        --trust-remote-code \
-        "$@"
-done
+"${CONVERT_SH}" roundtrip \
+    --executor slurm --device gpu \
+    --nodes 12 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 08:00:00 \
+    --container-image "${CONTAINER_IMAGE}" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    --experiment-name kimi-k25-roundtrip \
+    --hf-model moonshotai/Kimi-K2.5 \
+    --tp 2 --pp 1 --ep 48 --etp 1 \
+    --trust-remote-code \
+    "$@"

@@ -13,21 +13,19 @@ MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversi
 - Context parallelism is **not** supported (TE backends refuse CP + learnable softmax on SWA layers).
 - TP size must be ≤ `min(num_key_value_heads, swa_num_key_value_heads)`.
 
-The conversion sweep uses layouts that keep dequantized expert parameters near 37.85 GB per GPU:
+The conversion example uses a layout that keeps dequantized expert parameters near 37.85 GB per GPU:
 
 | TP | PP | EP | ETP |
 |----|----|----|-----|
 | 2  | 1  | 8  | 2   |
-| 1  | 2  | 8  | 1   |
-| 2  | 2  | 4  | 2   |
 
 ## Checkpoint Conversion
 
 [slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
-submit multiple TP/PP/EP/ETP configs and verify HF ↔ Megatron round-trip
-conversion. Run the wrapper from a Slurm login node; it waits for each job
-before submitting the next config by default. Every config validates weights in
-memory rather than producing another checkpoint.
+submit the recommended `TP=2`, `PP=1`, `EP=8`, `ETP=2` config and verify HF ↔
+Megatron round-trip conversion. Run the wrapper from a Slurm login node; it
+waits for the job by default. Validation happens in memory rather than producing
+another checkpoint.
 
 ### Setup
 
@@ -59,15 +57,10 @@ bash examples/models/mimo_v2_flash/slurm_conversion.sh \
 
 ### Expected output
 
-The Slurm wrapper prints the submitted layout for each config. The public
-round-trip launcher prints a parameter-by-parameter comparison table with ✅ / ❌ in the
-"Matches Original" column, and raises a `ValueError("Weight mismatch
-detected")` on any mismatch. The wrapper exits immediately when a synchronous
-job fails. A successful sweep reaches the third config:
-
-```
-Submitting MiMo-V2-Flash roundtrip: TP=2, PP=2, EP=4, ETP=2
-```
+The public round-trip launcher prints a parameter-by-parameter comparison table
+with ✅ / ❌ in the "Matches Original" column, and raises a
+`ValueError("Weight mismatch detected")` on any mismatch. The wrapper exits
+immediately when the synchronous job fails.
 
 ## Inference
 

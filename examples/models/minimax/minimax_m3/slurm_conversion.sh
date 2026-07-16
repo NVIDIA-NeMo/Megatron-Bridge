@@ -34,16 +34,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
-SLURM_PARTITION="${SLURM_PARTITION:-batch}"
-TIME_LIMIT="${TIME_LIMIT:-00:45:00}"
-NODES=4
-GPUS_PER_NODE=8
-
-HF_MODEL_ID="${HF_MODEL_ID:-MiniMaxAI/MiniMax-M3}"
-TP="${TP:-1}"
-PP="${PP:-1}"
-EP="${EP:-32}"
-ETP="${ETP:-1}"
 
 export HF_HUB_DISABLE_TELEMETRY=1
 export HF_HUB_DISABLE_PROGRESS_BARS=1
@@ -71,13 +61,13 @@ done
 
 "${CONVERT_SH}" roundtrip \
     --executor slurm --device gpu \
-    --nodes "${NODES}" --gpus-per-node "${GPUS_PER_NODE}" \
-    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION}" --time "${TIME_LIMIT}" \
+    --nodes 4 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 00:45:00 \
     --container-image "${CONTAINER_IMAGE}" \
     "${MOUNT_ARGS[@]}" \
     "${ENV_ARGS[@]}" \
     --experiment-name minimax-m3-roundtrip \
-    --hf-model "${HF_MODEL_ID}" \
-    --tp "${TP}" --pp "${PP}" --ep "${EP}" --etp "${ETP}" \
+    --hf-model MiniMaxAI/MiniMax-M3 \
+    --tp 1 --pp 1 --ep 32 --etp 1 \
     --trust-remote-code \
     "$@"

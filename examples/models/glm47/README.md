@@ -102,8 +102,8 @@ bash examples/models/glm47/slurm_conversion.sh
 
 The wrapper uses `convert.sh roundtrip --executor slurm`, submits from the login
 node, and waits for completion by default. The job validates weights in memory
-without producing a new checkpoint. To try a different
-parallelism layout, edit the resource and parallelism variables in the script.
+without producing a new checkpoint. The model, resources, and parallelism
+layout are written directly in the script so the example is self-contained.
 
 ## Slurm Script Configuration
 
@@ -117,7 +117,6 @@ Set the following before running a Slurm wrapper:
 | `CONTAINER_MOUNTS` | Optional comma-separated bind mounts for data or caches; the current checkout is mounted automatically at `/opt/Megatron-Bridge` |
 | `HF_HOME` | HuggingFace cache directory containing the downloaded checkpoint |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
-| `MODEL_NAME` | Model name for Slurm scripts; defaults to `GLM-4.7` |
 | `PROMPT`, `MAX_NEW_TOKENS` | Optional inference prompt and generation length overrides |
 
 Cluster-specific `srun` flags are not hardcoded. Pass them after the conversion

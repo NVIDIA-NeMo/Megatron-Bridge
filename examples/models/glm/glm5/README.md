@@ -2,7 +2,7 @@
 
 Scripts for the GLM-5 family — [GLM-5](https://huggingface.co/zai-org/GLM-5) (`zai-org/GLM-5`) and [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) (`zai-org/GLM-5.1`) — large sparse MoE models with Multi-Latent Attention (MLA) and Dynamic Sparse Attention (DSA).
 
-GLM-5 and GLM-5.1 share the `GlmMoeDsaForCausalLM` architecture and identical MoE / MLA / DSA dimensions, so the same `GLM5Bridge` handles both. To run the GLM-5.1 checkpoint, replace `zai-org/GLM-5` with `zai-org/GLM-5.1` (or set `MODEL_NAME=GLM-5.1` in the slurm scripts).
+GLM-5 and GLM-5.1 share the `GlmMoeDsaForCausalLM` architecture and identical MoE / MLA / DSA dimensions, so the same `GLM5Bridge` handles both. To run the GLM-5.1 checkpoint, replace `zai-org/GLM-5` with `zai-org/GLM-5.1` in the relevant example script.
 
 | Property | Value |
 |---|---|
@@ -68,7 +68,7 @@ export SLURM_ACCOUNT=your_account
 bash examples/models/glm/glm5/slurm_conversion.sh
 ```
 
-Default config (8 nodes, 64 GPUs): `TP=2, EP=32`.
+The script uses 8 nodes (64 GPUs) with `TP=2`, `PP=1`, and `EP=32`.
 
 > **Note:** The round-trip verification step (comparing ~63K weight tensors on rank 0)
 > may hit Lustre I/O contention at this model scale. The HF→Megatron conversion
@@ -84,9 +84,8 @@ Both scripts resolve the HF model from the local cache to avoid `snapshot_downlo
 | `SLURM_ACCOUNT` | Slurm account used for the submitted job |
 | `SLURM_PARTITION` | Slurm partition; defaults to `batch` |
 | `CONTAINER_MOUNTS` | Optional comma-separated bind mounts for shared storage; the current checkout is mounted automatically at `/opt/Megatron-Bridge` |
-| `HF_HOME` | HuggingFace cache directory (must contain the downloaded `zai-org/GLM-5` or `zai-org/GLM-5.1` model) |
+| `HF_HOME` | HuggingFace cache directory containing the downloaded `zai-org/GLM-5` model |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
-| `MODEL_NAME` | HF model name without the `zai-org/` prefix; defaults to `GLM-5`. Set to `GLM-5.1` to run the 5.1 checkpoint. |
 
 Pass any cluster-specific `srun` flags after the wrapper, for example
 `--srun-arg=--mpi=pmix`. The wrapper forwards them to `convert.sh`; no

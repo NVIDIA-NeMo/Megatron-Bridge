@@ -30,7 +30,7 @@ WRAPPER_CASES = [
             "nodes": "8",
             "time": "01:00:00",
             "hf_model": "zai-org/GLM-5",
-            "configs": [("2", "1", "32", None)],
+            "config": ("2", "1", "32", "1"),
             "trust_remote_code": False,
         },
     ),
@@ -40,7 +40,7 @@ WRAPPER_CASES = [
             "nodes": "4",
             "time": "04:00:00",
             "hf_model": "zai-org/GLM-4.7",
-            "configs": [("1", "1", "32", None)],
+            "config": ("1", "1", "32", "1"),
             "trust_remote_code": False,
         },
     ),
@@ -50,7 +50,7 @@ WRAPPER_CASES = [
             "nodes": "12",
             "time": "08:00:00",
             "hf_model": "moonshotai/Kimi-K2.5",
-            "configs": [("2", "1", "48", None), ("2", "2", "24", None), ("4", "1", "24", None)],
+            "config": ("2", "1", "48", "1"),
             "trust_remote_code": True,
         },
     ),
@@ -60,7 +60,7 @@ WRAPPER_CASES = [
             "nodes": "2",
             "time": "04:00:00",
             "hf_model": "XiaomiMiMo/MiMo-V2-Flash",
-            "configs": [("2", "1", "8", "2"), ("1", "2", "8", "1"), ("2", "2", "4", "2")],
+            "config": ("2", "1", "8", "2"),
             "trust_remote_code": True,
         },
     ),
@@ -70,7 +70,7 @@ WRAPPER_CASES = [
             "nodes": "2",
             "time": "04:00:00",
             "hf_model": "MiniMaxAI/MiniMax-M2",
-            "configs": [("2", "1", "8", None), ("1", "2", "8", None), ("2", "2", "4", None)],
+            "config": ("2", "1", "8", "1"),
             "trust_remote_code": True,
         },
     ),
@@ -80,7 +80,7 @@ WRAPPER_CASES = [
             "nodes": "4",
             "time": "00:45:00",
             "hf_model": "MiniMaxAI/MiniMax-M3",
-            "configs": [("1", "1", "32", "1")],
+            "config": ("1", "1", "32", "1"),
             "trust_remote_code": True,
         },
     ),
@@ -141,17 +141,22 @@ def test_slurm_conversion_wrapper_forwards_public_launcher_args(tmp_path, relati
     launcher.write_text('#!/usr/bin/env bash\nprintf "CALL\\n"\nprintf "ARG=%s\\n" "$@"\n')
     launcher.chmod(0o755)
     env = os.environ.copy()
-    for name in ("ETP", "HF_MODEL_ID", "MODEL_NAME", "PP", "TIME_LIMIT", "TP", "EP"):
-        env.pop(name, None)
     env.update(
         {
             "CONTAINER_IMAGE": "/shared/container.sqsh",
             "CONTAINER_MOUNTS": "/shared:/opt/shared",
             "CONVERT_SH": str(launcher),
+            "EP": "99",
+            "ETP": "99",
             "HF_HOME": "/shared/hf-cache",
+            "HF_MODEL_ID": "wrong/model",
             "HF_TOKEN": "token",
+            "MODEL_NAME": "wrong-model",
+            "PP": "99",
             "SLURM_ACCOUNT": "account",
             "SLURM_PARTITION": "batch",
+            "TIME_LIMIT": "99:00:00",
+            "TP": "99",
             "UV_CACHE_DIR": "/shared/uv-cache",
         }
     )
@@ -171,103 +176,46 @@ def test_slurm_conversion_wrapper_forwards_public_launcher_args(tmp_path, relati
     )
 
     calls = _parse_stub_calls(result.stdout)
-    assert len(calls) == len(expected["configs"])
-    for arguments, (tp, pp, ep, etp) in zip(calls, expected["configs"], strict=True):
-        assert arguments[0] == "roundtrip"
-        assert _single_option(arguments, "--executor") == "slurm"
-        assert _single_option(arguments, "--device") == "gpu"
-        assert _single_option(arguments, "--nodes") == expected["nodes"]
-        assert _single_option(arguments, "--gpus-per-node") == "8"
-        assert _single_option(arguments, "--account") == "account"
-        assert _single_option(arguments, "--partition") == "batch"
-        assert _single_option(arguments, "--time") == expected["time"]
-        assert _single_option(arguments, "--container-image") == "/shared/container.sqsh"
-        assert _single_option(arguments, "--hf-model") == expected["hf_model"]
-        assert _single_option(arguments, "--tp") == tp
-        assert _single_option(arguments, "--pp") == pp
-        assert _single_option(arguments, "--ep") == ep
-        assert _option_values(arguments, "--etp") == ([etp] if etp is not None else [])
-        assert _option_values(arguments, "--mount") == [
-            f"{REPO_ROOT}:/opt/Megatron-Bridge",
-            "/shared:/opt/shared",
-        ]
-        assert set(_option_values(arguments, "--env")) >= {
-            "HF_HOME",
-            "HF_TOKEN",
-            "NCCL_NVLS_ENABLE",
-            "TORCH_NCCL_AVOID_RECORD_STREAMS",
-            "UV_CACHE_DIR",
-        }
-        assert ("--trust-remote-code" in arguments) is expected["trust_remote_code"]
-        assert not {
-            "--megatron-path",
-            "--megatron-load-path",
-            "--megatron-save-path",
-            "--output-dir",
-            "--not-strict",
-            "--skip-save",
-            "--overwrite",
-        } & set(arguments)
-        assert "--submission-dry-run" in arguments
-        assert [argument for argument in arguments if argument.startswith("--srun-arg=")] == [
-            "--srun-arg=--mpi=pmix",
-            "--srun-arg=--container-writable",
-        ]
-
-
-@pytest.mark.parametrize(
-    ("relative_script", "overrides", "expected_model", "expected_topology"),
-    [
-        (
-            "examples/models/glm47/slurm_conversion.sh",
-            {"MODEL_NAME": "GLM-4.7-Flash"},
-            "zai-org/GLM-4.7-Flash",
-            ("1", "1", "32", None),
-        ),
-        (
-            "examples/models/minimax/minimax_m3/slurm_conversion.sh",
-            {"TP": "2", "PP": "2", "EP": "8", "ETP": "1"},
-            "MiniMaxAI/MiniMax-M3",
-            ("2", "2", "8", "1"),
-        ),
-    ],
-)
-def test_slurm_conversion_wrapper_preserves_environment_overrides(
-    tmp_path,
-    relative_script,
-    overrides,
-    expected_model,
-    expected_topology,
-):
-    launcher = tmp_path / "convert.sh"
-    launcher.write_text('#!/usr/bin/env bash\nprintf "CALL\\n"\nprintf "ARG=%s\\n" "$@"\n')
-    launcher.chmod(0o755)
-    env = os.environ.copy()
-    for name in ("ETP", "HF_MODEL_ID", "MODEL_NAME", "PP", "TP", "EP"):
-        env.pop(name, None)
-    env.update(
-        {
-            "CONTAINER_IMAGE": "/shared/container.sqsh",
-            "CONTAINER_MOUNTS": "/shared:/shared",
-            "CONVERT_SH": str(launcher),
-            "HF_HOME": "/shared/hf-cache",
-            "SLURM_ACCOUNT": "account",
-            **overrides,
-        }
-    )
-
-    result = subprocess.run(
-        ["bash", str(REPO_ROOT / relative_script), "--submission-dry-run"],
-        check=True,
-        capture_output=True,
-        env=env,
-        text=True,
-    )
-
-    (arguments,) = _parse_stub_calls(result.stdout)
-    tp, pp, ep, etp = expected_topology
-    assert _single_option(arguments, "--hf-model") == expected_model
+    (arguments,) = calls
+    tp, pp, ep, etp = expected["config"]
+    assert arguments[0] == "roundtrip"
+    assert _single_option(arguments, "--executor") == "slurm"
+    assert _single_option(arguments, "--device") == "gpu"
+    assert _single_option(arguments, "--nodes") == expected["nodes"]
+    assert _single_option(arguments, "--gpus-per-node") == "8"
+    assert _single_option(arguments, "--account") == "account"
+    assert _single_option(arguments, "--partition") == "batch"
+    assert _single_option(arguments, "--time") == expected["time"]
+    assert _single_option(arguments, "--container-image") == "/shared/container.sqsh"
+    assert _single_option(arguments, "--hf-model") == expected["hf_model"]
     assert _single_option(arguments, "--tp") == tp
     assert _single_option(arguments, "--pp") == pp
     assert _single_option(arguments, "--ep") == ep
-    assert _option_values(arguments, "--etp") == ([etp] if etp is not None else [])
+    assert _single_option(arguments, "--etp") == etp
+    assert int(expected["nodes"]) * 8 == int(tp) * int(pp) * int(ep)
+    assert _option_values(arguments, "--mount") == [
+        f"{REPO_ROOT}:/opt/Megatron-Bridge",
+        "/shared:/opt/shared",
+    ]
+    assert set(_option_values(arguments, "--env")) >= {
+        "HF_HOME",
+        "HF_TOKEN",
+        "NCCL_NVLS_ENABLE",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS",
+        "UV_CACHE_DIR",
+    }
+    assert ("--trust-remote-code" in arguments) is expected["trust_remote_code"]
+    assert not {
+        "--megatron-path",
+        "--megatron-load-path",
+        "--megatron-save-path",
+        "--output-dir",
+        "--not-strict",
+        "--skip-save",
+        "--overwrite",
+    } & set(arguments)
+    assert "--submission-dry-run" in arguments
+    assert [argument for argument in arguments if argument.startswith("--srun-arg=")] == [
+        "--srun-arg=--mpi=pmix",
+        "--srun-arg=--container-writable",
+    ]

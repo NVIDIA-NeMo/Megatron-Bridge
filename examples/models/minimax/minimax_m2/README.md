@@ -15,10 +15,10 @@ MiniMax-M2 requires **at least 2 nodes (16 GPUs)** for inference and conversion.
 ## Checkpoint Conversion
 
 [slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
-submit multiple TP/PP/EP configs and verify HF ↔ Megatron round-trip
-conversion. Run the wrapper from a Slurm login node; it waits for each job
-before submitting the next config by default. Every config validates weights in
-memory rather than producing another checkpoint.
+submit a fixed `TP=2`, `PP=1`, `EP=8` config and verify HF ↔ Megatron
+round-trip conversion. Run the wrapper from a Slurm login node; it waits for
+the job by default. Validation happens in memory rather than producing another
+checkpoint.
 
 ### Setup
 
@@ -48,14 +48,10 @@ bash examples/models/minimax/minimax_m2/slurm_conversion.sh \
     --srun-arg=--mpi=pmix
 ```
 
-### Expected output (per config)
+### Expected output
 
-```
-Submitting MiniMax-M2 roundtrip: TP=2, PP=1, EP=8
-...
-<parameter comparison table with matches marked ✅>
-Submitting MiniMax-M2 roundtrip: TP=1, PP=2, EP=8
-```
+The round-trip launcher prints a parameter comparison table with successful
+matches marked ✅ and exits nonzero if any converted weight differs.
 
 ## Inference
 

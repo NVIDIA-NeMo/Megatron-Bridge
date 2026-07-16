@@ -13,15 +13,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# GLM-5 / GLM-5.1 round-trip verification on 8 Slurm nodes (64 GPUs).
-# Run this wrapper from a Slurm login node; convert.sh submits one job per
-# parallelism configuration and waits for each job by default.
+# GLM-5 round-trip verification on 8 Slurm nodes (64 GPUs).
+# Run this wrapper from a Slurm login node; convert.sh submits one job and
+# waits for it by default.
 #
 # Required:
 #   export CONTAINER_IMAGE=/path/to/container.sqsh
 #   export SLURM_ACCOUNT=<your-account>
 # Optional:
-#   export MODEL_NAME=GLM-5.1
 #   export CONTAINER_MOUNTS=/shared:/shared,/host/path:/container/path
 #   bash "$0" --srun-arg=--mpi=pmix
 
@@ -33,16 +32,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
-SLURM_PARTITION="${SLURM_PARTITION:-batch}"
-TIME_LIMIT="${TIME_LIMIT:-01:00:00}"
-NODES=8
-GPUS_PER_NODE=8
-
-MODEL_NAME="${MODEL_NAME:-GLM-5}"
-HF_MODEL_ID="${HF_MODEL_ID:-zai-org/${MODEL_NAME}}"
-# TP*PP*EP must equal NODES*GPUS_PER_NODE for these data-parallel-free layouts.
-# EP must divide 256 (the number of routed experts).
-PARALLELISM_CONFIGS=("2,1,32")
 
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
@@ -62,18 +51,14 @@ for name in HF_TOKEN HF_HOME UV_CACHE_DIR TORCH_NCCL_AVOID_RECORD_STREAMS NCCL_N
     fi
 done
 
-for config in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP <<< "${config}"
-    echo "Submitting ${MODEL_NAME} roundtrip: TP=${TP}, PP=${PP}, EP=${EP}"
-    "${CONVERT_SH}" roundtrip \
-        --executor slurm --device gpu \
-        --nodes "${NODES}" --gpus-per-node "${GPUS_PER_NODE}" \
-        --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION}" --time "${TIME_LIMIT}" \
-        --container-image "${CONTAINER_IMAGE}" \
-        "${MOUNT_ARGS[@]}" \
-        "${ENV_ARGS[@]}" \
-        --experiment-name "${MODEL_NAME,,}-roundtrip-tp${TP}-pp${PP}-ep${EP}" \
-        --hf-model "${HF_MODEL_ID}" \
-        --tp "${TP}" --pp "${PP}" --ep "${EP}" \
-        "$@"
-done
+"${CONVERT_SH}" roundtrip \
+    --executor slurm --device gpu \
+    --nodes 8 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 01:00:00 \
+    --container-image "${CONTAINER_IMAGE}" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    --experiment-name glm5-roundtrip \
+    --hf-model zai-org/GLM-5 \
+    --tp 2 --pp 1 --ep 32 --etp 1 \
+    "$@"

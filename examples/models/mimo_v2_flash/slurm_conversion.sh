@@ -14,8 +14,8 @@
 # limitations under the License.
 
 # MiMo-V2-Flash round-trip verification on 2 Slurm nodes (16 GPUs).
-# Run this wrapper from a Slurm login node; convert.sh submits one job per
-# parallelism configuration and waits for each job by default.
+# Run this wrapper from a Slurm login node; convert.sh submits one job and
+# waits for it by default.
 #
 # Required:
 #   export CONTAINER_IMAGE=/path/to/container.sqsh
@@ -32,15 +32,6 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
 CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
-SLURM_PARTITION="${SLURM_PARTITION:-batch}"
-TIME_LIMIT="${TIME_LIMIT:-04:00:00}"
-NODES=2
-GPUS_PER_NODE=8
-
-HF_MODEL_ID="${HF_MODEL_ID:-XiaomiMiMo/MiMo-V2-Flash}"
-# TP*PP and ETP*EP*PP must each divide NODES*GPUS_PER_NODE. Keep ETP=TP
-# when TP>1 so the dequantized expert weights are sharded across ranks.
-PARALLELISM_CONFIGS=("2,1,8,2" "1,2,8,1" "2,2,4,2")
 
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
@@ -60,19 +51,15 @@ for name in HF_TOKEN HF_HOME UV_CACHE_DIR TORCH_NCCL_AVOID_RECORD_STREAMS NCCL_N
     fi
 done
 
-for config in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP ETP <<< "${config}"
-    echo "Submitting MiMo-V2-Flash roundtrip: TP=${TP}, PP=${PP}, EP=${EP}, ETP=${ETP}"
-    "${CONVERT_SH}" roundtrip \
-        --executor slurm --device gpu \
-        --nodes "${NODES}" --gpus-per-node "${GPUS_PER_NODE}" \
-        --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION}" --time "${TIME_LIMIT}" \
-        --container-image "${CONTAINER_IMAGE}" \
-        "${MOUNT_ARGS[@]}" \
-        "${ENV_ARGS[@]}" \
-        --experiment-name "mimo-v2-flash-roundtrip-tp${TP}-pp${PP}-ep${EP}-etp${ETP}" \
-        --hf-model "${HF_MODEL_ID}" \
-        --tp "${TP}" --pp "${PP}" --ep "${EP}" --etp "${ETP}" \
-        --trust-remote-code \
-        "$@"
-done
+"${CONVERT_SH}" roundtrip \
+    --executor slurm --device gpu \
+    --nodes 2 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 04:00:00 \
+    --container-image "${CONTAINER_IMAGE}" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    --experiment-name mimo-v2-flash-roundtrip \
+    --hf-model XiaomiMiMo/MiMo-V2-Flash \
+    --tp 2 --pp 1 --ep 8 --etp 2 \
+    --trust-remote-code \
+    "$@"
