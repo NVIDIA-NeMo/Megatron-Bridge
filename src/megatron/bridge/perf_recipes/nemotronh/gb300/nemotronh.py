@@ -17,6 +17,9 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
     ConfigContainer,
     _apply_nemotron_3_super_perf_defaults,
+    _apply_nemotron_3_ultra_gb300_fsdp_hsdp,
+    _apply_nemotron_3_ultra_gb300_model_configs,
+    _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
@@ -24,6 +27,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     load_quantization_recipe,
     nemotron_3_nano_pretrain_config,
     nemotron_3_super_pretrain_config,
+    nemotron_3_ultra_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
 
@@ -128,6 +132,35 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     _apply_nemotron_3_super_perf_defaults(cfg)
     return cfg
 
+
+def _nemotron_3_ultra_gb300_fp8mx_config(
+    *, num_gpus: int, expert_model_parallel_size: int, global_batch_size: int
+) -> ConfigContainer:
+    """Shared builder for Nemotron 3 Ultra GB300 MXFP8 Megatron-FSDP perf recipes."""
+    cfg = nemotron_3_ultra_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    _apply_nemotron_3_ultra_gb300_model_configs(cfg)
+    # MXFP8 requires router padding for quantization.
+    cfg.model.moe_router_padding_for_quantization = True
+    # GPU-count specific overrides of the canonical (256-GPU / EP64) defaults.
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
+    cfg.train.global_batch_size = global_batch_size
+
+    _apply_nemotron_3_ultra_perf_defaults(cfg)
+    # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
+    _apply_nemotron_3_ultra_gb300_fsdp_hsdp(cfg, num_gpus=num_gpus)
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_v1_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× GB300, MXFP8, Megatron-FSDP (HSDP).
+
+    TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
+    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
+    recompute + fine-grained activation offload of the expert MLP, MTP=2.
+    """
+    return _nemotron_3_ultra_gb300_fp8mx_config(num_gpus=256, expert_model_parallel_size=64, global_batch_size=256)
 
 def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, BF16."""
