@@ -572,6 +572,7 @@ def main(
     kubeflow_extra_resource_limits_json: Optional[str],
     kubeflow_pod_spec_overrides_json: Optional[str],
     kubeflow_container_kwargs_json: Optional[str],
+    kubeflow_spec_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
     deterministic: bool = False,
@@ -730,6 +731,7 @@ def main(
                 json.loads(kubeflow_pod_spec_overrides_json) if kubeflow_pod_spec_overrides_json else None
             ),
             container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
+            spec_kwargs=json.loads(kubeflow_spec_kwargs_json) if kubeflow_spec_kwargs_json else None,
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
@@ -1159,6 +1161,7 @@ if __name__ == "__main__":
         kubeflow_extra_resource_limits_json=args.kubeflow_extra_resource_limits_json,
         kubeflow_pod_spec_overrides_json=args.kubeflow_pod_spec_overrides_json,
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
+        kubeflow_spec_kwargs_json=args.kubeflow_spec_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
         deterministic=args.deterministic,

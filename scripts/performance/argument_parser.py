@@ -681,6 +681,13 @@ def parse_cli_args():
         default=None,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_spec_kwargs_json",
+        type=str,
+        help="JSON-encoded dict of extra fields set on the TrainJob spec (e.g. {'suspend': true}).",
+        required=False,
+        default=None,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_labels_json",
         type=str,
         help="JSON-encoded dict of labels applied to the TrainJob's pods.",

@@ -262,6 +262,7 @@ def kubeflow_executor(
     extra_resource_limits: Optional[Dict[str, str]] = None,
     pod_spec_overrides: Optional[Dict[str, Any]] = None,
     container_kwargs: Optional[Dict[str, Any]] = None,
+    spec_kwargs: Optional[Dict[str, Any]] = None,
     labels: Optional[Dict[str, Any]] = None,
     pod_annotations: Optional[Dict[str, Any]] = None,
 ) -> run.KubeflowExecutor:
@@ -302,6 +303,7 @@ def kubeflow_executor(
         extra_resource_limits: Extra container resource limits.
         pod_spec_overrides: Dict merged into the pod spec.
         container_kwargs: Extra container fields (e.g. ``securityContext``).
+        spec_kwargs: Extra TrainJob spec fields.
         labels: Pod labels.
         pod_annotations: Annotations applied to the trainer pod template metadata
             (e.g. ``networking.gke.io/interfaces`` for GKE RDMA NIC attachment).
@@ -369,6 +371,7 @@ def kubeflow_executor(
         extra_resource_limits=extra_resource_limits or {},
         pod_spec_overrides=pod_spec_overrides or {},
         container_kwargs=container_kwargs or {},
+        spec_kwargs=spec_kwargs or {},
         labels=labels,
         # Mirror the CI-origin labels onto the trainer pods too, so both
         # `kubectl get trainjob -l` and `kubectl get pods -l` resolve the origin.
