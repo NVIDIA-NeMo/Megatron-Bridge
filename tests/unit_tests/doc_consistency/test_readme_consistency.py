@@ -30,6 +30,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
+DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
@@ -107,6 +108,24 @@ def test_training_readme_recipes_exist():
     referenced = set(re.findall(r"--recipe\s+(\w+)", _read(TRAINING_README)))
     missing = sorted(r for r in referenced if r not in defined)
     assert not missing, f"README references nonexistent recipes: {missing}"
+
+
+def test_training_readme_dataset_table_matches_public_presets():
+    """Every public dataset preset is documented once in the launcher README."""
+    tree = ast.parse(_read(DATASET_UTILS), filename=str(DATASET_UTILS))
+    registry = next(
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "DATASET_PRESETS"
+    )
+    assert isinstance(registry, ast.Dict)
+    registered = {key.value for key in registry.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+    documented = set(re.findall(r"^\| `([^`]+)` \|", _read(TRAINING_README), re.MULTILINE))
+
+    assert documented == registered
+    assert "allenai/tulu-3-sft-mixture" in _read(TRAINING_README)
 
 
 def test_gemma3_vl_readme_recipes_are_exported():
