@@ -24,7 +24,7 @@ import torch
 from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoProcessor, AutoTokenizer
 
-from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
+from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
@@ -75,7 +75,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     pad_to_max_length: bool = False
     pad_to_multiple_of: int = 128
     in_batch_packing_pad_to_multiple_of: int = 1
-    model_collate_kwargs: dict[str, Any] = field(default_factory=dict)
 
     def validate(self) -> None:
         """Validate declarative source and dataset settings."""
@@ -95,21 +94,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             raise ValueError("pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
-        validate_declarative_mapping(self.model_collate_kwargs, field_name="model_collate_kwargs")
-        if not all(isinstance(key, str) and key for key in self.model_collate_kwargs):
-            raise ValueError("model_collate_kwargs keys must be non-empty strings.")
-        reserved_collate_kwargs = {
-            "sequence_length",
-            "pad_to_max_length",
-            "pad_to_multiple_of",
-            "enable_in_batch_packing",
-            "in_batch_packing_pad_to_multiple_of",
-        }
-        conflicting_kwargs = reserved_collate_kwargs.intersection(self.model_collate_kwargs)
-        if conflicting_kwargs:
-            raise ValueError(
-                f"model_collate_kwargs cannot override shared sequence settings: {sorted(conflicting_kwargs)}."
-            )
 
     def _inherit_source_adapter_kwargs(self, split_source: HFDatasetSourceConfig) -> None:
         """Fill unset adapter arguments on another split of the training source."""
@@ -238,7 +222,6 @@ def build_direct_hf_sft_split(
         enable_in_batch_packing=config.enable_in_batch_packing,
         defer_in_batch_packing_to_step=config.defer_in_batch_packing_to_step,
         in_batch_packing_pad_to_multiple_of=config.in_batch_packing_pad_to_multiple_of,
-        model_collate_kwargs=config.model_collate_kwargs,
     )
 
 

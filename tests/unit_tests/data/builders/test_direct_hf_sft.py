@@ -3,7 +3,6 @@
 import importlib
 
 import pytest
-import torch
 from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.data.base import DatasetBuildContext
@@ -288,109 +287,6 @@ def test_builder_forwards_runtime_packing_to_collate(monkeypatch):
     }
 
 
-def test_builder_forwards_model_video_collate_settings(monkeypatch):
-    row = {
-        "conversation": [
-            {"role": "user", "content": [{"type": "video", "video": object()}]},
-            {"role": "assistant", "content": "answer"},
-        ]
-    }
-    monkeypatch.setattr(builder_module, "load_and_adapt_hf_dataset", lambda source: [row])
-
-    def _video_collate(
-        examples,
-        processor,
-        *,
-        use_temporal_video_embedder,
-        temporal_patch_size,
-        video_fps,
-    ):
-        del processor
-        assert examples[0]["conversation"][0]["content"][0]["type"] == "video"
-        return {
-            "use_temporal_video_embedder": use_temporal_video_embedder,
-            "temporal_patch_size": temporal_patch_size,
-            "video_fps": video_fps,
-        }
-
-    config = DirectHFSFTDatasetConfig(
-        seq_length=64,
-        source=HFDatasetSourceConfig(path_or_dataset="org/video"),
-        do_validation=False,
-        do_test=False,
-        model_collate_kwargs={
-            "use_temporal_video_embedder": True,
-            "temporal_patch_size": 2,
-            "video_fps": 1.5,
-        },
-    )
-
-    train, _, _ = DirectHFSFTDatasetBuilder(config, collate_impl=_video_collate).build(
-        DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
-    )
-
-    assert train is not None
-    assert train.collate_fn([train[0]]) == {
-        "use_temporal_video_embedder": True,
-        "temporal_patch_size": 2,
-        "video_fps": 1.5,
-    }
-
-
-def test_builder_rejects_unsupported_model_collate_setting(monkeypatch):
-    monkeypatch.setattr(
-        builder_module,
-        "load_and_adapt_hf_dataset",
-        lambda source: [{"conversation": [{"role": "assistant", "content": "answer"}]}],
-    )
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        do_validation=False,
-        do_test=False,
-        model_collate_kwargs={"unknown_setting": True},
-    )
-
-    with pytest.raises(ValueError, match="does not accept configured model_collate_kwargs"):
-        DirectHFSFTDatasetBuilder(config, collate_impl=lambda examples, processor: {}).build(
-            DatasetBuildContext(1, 0, 0, tokenizer=_Tokenizer())
-        )
-
-
-def test_config_rejects_model_collate_override_of_shared_sequence_setting():
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        model_collate_kwargs={"sequence_length": 32},
-    )
-
-    with pytest.raises(ValueError, match="cannot override shared sequence settings"):
-        config.validate()
-
-
-@pytest.mark.parametrize("runtime_value", [torch.tensor(1), object(), lambda: None])
-def test_config_rejects_runtime_model_collate_values(runtime_value):
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        model_collate_kwargs={"runtime_value": runtime_value},
-    )
-
-    with pytest.raises(TypeError, match="must contain only declarative values"):
-        config.validate()
-
-
-def test_config_rejects_non_string_nested_model_collate_keys():
-    config = DirectHFSFTDatasetConfig(
-        seq_length=16,
-        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
-        model_collate_kwargs={"video_options": {1: True}},
-    )
-
-    with pytest.raises(TypeError, match="model_collate_kwargs.video_options keys must be strings"):
-        config.validate()
-
-
 def test_processor_loading_disables_untrusted_remote_code(monkeypatch):
     seen = {}
 
@@ -444,7 +340,6 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
         ),
         do_test=False,
         enable_in_batch_packing=True,
-        model_collate_kwargs={"use_temporal_video_embedder": True},
     )
 
     serialized = ConfigContainer._convert_value_to_dict(config)
@@ -453,7 +348,6 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
     assert isinstance(restored, DirectHFSFTDatasetConfig)
     assert restored.preprocessing.loss_mode == "assistant"
     assert restored.source.load_kwargs == config.source.load_kwargs
-    assert restored.model_collate_kwargs == {"use_temporal_video_embedder": True}
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
