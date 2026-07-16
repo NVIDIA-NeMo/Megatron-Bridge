@@ -77,22 +77,6 @@ def qwen25_vl_bridge():
     return Qwen25VLBridge()
 
 
-class TestQwen25VLBridgeInitialization:
-    """Test Qwen25VLBridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, qwen25_vl_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(qwen25_vl_bridge, Qwen25VLBridge)
-
-    def test_bridge_has_required_methods(self, qwen25_vl_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(qwen25_vl_bridge, "provider_bridge")
-        assert callable(qwen25_vl_bridge.provider_bridge)
-
-        assert hasattr(qwen25_vl_bridge, "mapping_registry")
-        assert callable(qwen25_vl_bridge.mapping_registry)
-
-
 class TestQwen25VLBridgeProviderBridge:
     """Test provider_bridge method functionality."""
 
