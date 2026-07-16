@@ -245,6 +245,12 @@ class PerfEnvPlugin(Plugin):
         executor.env_vars["NCCL_ALGO"] = "Ring"
         executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
         executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+        # Pin the Mamba SSD selective-scan config before the first kernel launch. Without it,
+        # two processes cold-autotune the scan's Triton kernel independently and can pick
+        # different configs -> divergent scan output from iteration 1 (root-caused via the
+        # determinism op-trace). It must be a process-start env var, not a flag: the scan can
+        # autotune before ``deterministic_mode`` applies torch.use_deterministic_algorithms.
+        executor.env_vars["MAMBA_DETERMINISTIC"] = "1"
         logger.info("Deterministic mode enabled")
 
     def _set_num_cuda_device_max_connections(
