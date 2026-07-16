@@ -395,7 +395,7 @@ class Exaone45Model(MegatronModule):
                     attention_mask = split_data_cp_rank(attention_mask, cp_size, 2, cp_rank)
 
             if self.config.sequence_parallel:
-                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings)
+                combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(combined_embeddings, group=self.pg_collection.tp)
                 combined_embeddings = combined_embeddings.contiguous()
         else:
             combined_embeddings = None
