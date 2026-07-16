@@ -28,6 +28,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_pretrain_muon_config,
     deepseek_v4_flash_pretrain_mxfp8_config,
 )
+from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
 
 
@@ -154,7 +155,9 @@ class TestDeepSeekRecipes:
         hf_path = _deepseek_v4_toy_model_path()
 
         def recipe_with_test_model():
-            return config_func(hf_path=hf_path)
+            with pytest.MonkeyPatch.context() as monkeypatch:
+                monkeypatch.setattr(deepseek_v4_h100_module, "DEEPSEEK_V4_FLASH_HF_PATH", hf_path)
+                return config_func()
 
         run_pretrain_recipe_test(
             recipe_with_test_model,

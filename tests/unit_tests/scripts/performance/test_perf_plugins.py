@@ -36,6 +36,7 @@ pytestmark = pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed
 
 if HAS_NEMO_RUN:
     from perf_plugins import PerfEnvPlugin
+    from utils.utils import WorkloadBaseConfig
 
 
 def test_set_determinism_env_vars_writes_three_keys():
@@ -55,3 +56,33 @@ def test_set_determinism_env_vars_writes_three_keys():
     assert executor.env_vars["NCCL_ALGO"] == "Ring"
     assert executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
     assert executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+
+
+def test_nemodiag_mxfp8_environment_preserves_determinism_and_cudnn_layernorm():
+    plugin = PerfEnvPlugin(
+        model_family_name="nemodiag",
+        model_recipe_name="nemodiag_v0",
+        gpu="gb300",
+        compute_dtype="fp8_mx",
+        train_task="pretrain",
+    )
+    executor = MagicMock()
+    executor.env_vars = {
+        "NVTE_NORM_FWD_USE_CUDNN": "1",
+        "NVTE_NORM_BWD_USE_CUDNN": "1",
+    }
+
+    plugin._set_model_specific_environment_variables(
+        MagicMock(),
+        executor,
+        WorkloadBaseConfig(),
+        model_family_name="nemodiag",
+        model_recipe_name="nemodiag_v0",
+        gpu="gb300",
+        compute_dtype="fp8_mx",
+        train_task="pretrain",
+    )
+
+    assert executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == "0"
+    assert executor.env_vars["NVTE_NORM_FWD_USE_CUDNN"] == "1"
+    assert executor.env_vars["NVTE_NORM_BWD_USE_CUDNN"] == "1"

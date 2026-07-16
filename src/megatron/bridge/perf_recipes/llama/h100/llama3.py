@@ -206,7 +206,7 @@ def llama3_70b_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.defer_embedding_wgrad_compute = True
     cfg.comm_overlap.wgrad_deferral_limit = 22
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
@@ -243,7 +243,7 @@ def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
         wgrad_deferral_limit=22,
     )
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
@@ -251,7 +251,7 @@ def llama3_70b_sft_32gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× H100, BF16, PP=4 VP=20, recompute."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("bf16")
@@ -279,7 +279,7 @@ def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap.tp_comm_overlap = False
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)
@@ -287,7 +287,7 @@ def llama3_70b_lora_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
+def llama3_70b_peft_8gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3 70B LoRA: 8× H100, FP8 current-scaling, TP=2 PP=4 VP=20."""
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     cfg.mixed_precision = _perf_precision("fp8_cs")
@@ -311,7 +311,7 @@ def llama3_70b_lora_8gpu_h100_fp8cs_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
-    cfg.dataset.packed_sequence_specs.pad_cu_seqlens = False
+    cfg.dataset.offline_packing_specs.pad_cu_seqlens = False
     cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
 
     _llama_benchmark_common(cfg)

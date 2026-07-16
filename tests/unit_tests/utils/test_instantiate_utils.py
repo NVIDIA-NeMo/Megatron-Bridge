@@ -839,6 +839,29 @@ class TestTargetPrefixValidation:
         config = {"_target_": "torch._C._nn.gelu", "_call_": False}
         assert instantiate(config) is F.gelu
 
+    @pytest.mark.parametrize("field_name", ["collate_impl", "preprocess_fn", "process_example_fn", "hf_filter_lambda"])
+    def test_instantiate_rejects_serialized_callable_config_fields(self, field_name):
+        """Test that configs cannot populate deferred callable hook fields."""
+        config = {
+            field_name: {
+                "_target_": "torch._C._nn.gelu",
+                "_call_": False,
+            },
+        }
+        with pytest.raises(InstantiationException, match="callable config field"):
+            instantiate(config)
+
+    def test_instantiate_allows_targets_under_list_indices(self):
+        """Test that numeric list keys do not break target validation."""
+        config = [
+            {
+                "_target_": "tests.unit_tests.utils.test_instantiate_utils.test_function",
+                "arg1": "item",
+            }
+        ]
+
+        assert instantiate(config) == [{"arg1": "item", "arg2": None, "kwargs": {}}]
+
     def test_instantiate_rejects_unknown_torch_private_target_segments(self):
         """Test that only exact known private torch targets are allowed."""
         config = {"_target_": "torch._C._nn._unsafe_private_symbol"}

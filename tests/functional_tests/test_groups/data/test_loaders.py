@@ -18,10 +18,13 @@ import unittest.mock as mock
 from collections import OrderedDict
 from types import SimpleNamespace
 
+import pytest
 import torch
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.loaders import (
     build_train_valid_test_data_loaders,
+    build_train_valid_test_datasets_for_num_epochs,
     get_blend_and_blend_per_split,
     get_train_valid_test_num_samples,
 )
@@ -296,6 +299,42 @@ class TestDataLoaders:
         assert valid_dataloader is None
         assert test_dataloader is None
 
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size")
+    @mock.patch("torch.distributed.get_rank")
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_uses_eval_dp_group(
+        self, mock_build_datasets, mock_build_loader, mock_get_rank, mock_get_world_size, _mock_broadcast
+    ):
+        cfg = create_simple_test_config()
+        train_ds = mock.MagicMock()
+        train_ds.__len__.return_value = cfg.train.global_batch_size
+        valid_ds = mock.MagicMock()
+        test_ds = mock.MagicMock()
+        mock_build_datasets.return_value = (train_ds, valid_ds, test_ds)
+        train_dp_group = object()
+        eval_dp_group = object()
+
+        mock_get_rank.side_effect = lambda *, group: 1 if group is train_dp_group else 0
+        mock_get_world_size.side_effect = lambda *, group: 2 if group is train_dp_group else 1
+
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=train_dp_group,
+            eval_dp_group=eval_dp_group,
+        )
+
+        train_call, valid_call, test_call = mock_build_loader.call_args_list
+        assert train_call.kwargs["data_parallel_rank"] == 1
+        assert train_call.kwargs["data_parallel_size"] == 2
+        assert valid_call.kwargs["data_parallel_rank"] == 0
+        assert valid_call.kwargs["data_parallel_size"] == 1
+        assert test_call.kwargs["data_parallel_rank"] == 0
+        assert test_call.kwargs["data_parallel_size"] == 1
+
 
 class TestSampleBasedDataLoaders:
     """Tests for sample-based training data loader functionality."""
@@ -382,3 +421,110 @@ class TestSampleBasedDataLoaders:
         assert train_dataloader is not None
         assert valid_dataloader is not None
         assert test_dataloader is not None
+
+
+class TestEpochBasedDataLoaders:
+    """Tests for resolving epoch-based training from a finite dataset."""
+
+    def test_build_datasets_resolves_num_epochs(self):
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = None
+        cfg.train.num_epochs = 0.5
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        train_ds = list(range(100))
+        dataset_provider = mock.Mock(return_value=(train_ds, None, None))
+
+        datasets = build_train_valid_test_datasets_for_num_epochs(cfg, dataset_provider)
+
+        dataset_provider.assert_called_once_with([0, 0, 0], cfg.dataset)
+        assert datasets == (train_ds, None, None)
+        assert cfg.train.train_iters == 2
+
+    def test_build_datasets_rejects_non_batch_dataloader_for_num_epochs(self):
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = None
+        cfg.train.num_epochs = 1.0
+        cfg.dataset = GPTSFTDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            dataloader_type="single",
+        )
+        dataset_provider = mock.Mock()
+
+        with pytest.raises(ValueError, match='dataloader_type="batch"'):
+            build_train_valid_test_datasets_for_num_epochs(cfg, dataset_provider)
+
+        dataset_provider.assert_not_called()
+
+    def test_build_datasets_rejects_missing_train_dataset_for_num_epochs(self):
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = None
+        cfg.train.num_epochs = 1.0
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+
+        with pytest.raises(ValueError, match="num_epochs requires a training dataset"):
+            build_train_valid_test_datasets_for_num_epochs(cfg, mock.Mock(return_value=(None, None, None)))
+
+    def test_build_datasets_rejects_unsized_train_dataset_for_num_epochs(self):
+        class UnsizedDataset:
+            def __len__(self):
+                raise NotImplementedError()
+
+        cfg = create_simple_test_config()
+        cfg.train.train_iters = None
+        cfg.train.num_epochs = 1.0
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+
+        with pytest.raises(ValueError, match="finite length"):
+            build_train_valid_test_datasets_for_num_epochs(cfg, mock.Mock(return_value=(UnsizedDataset(), None, None)))
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
+    def test_epoch_based_loader_allows_dataset_smaller_than_global_batch(
+        self, mock_build_loader, _mock_rank, _mock_world_size, _mock_broadcast
+    ):
+        cfg = create_simple_test_config()
+        cfg.train.num_epochs = 1.0
+        cfg.validation.eval_iters = 0
+        cfg.dataset = GPTSFTDatasetConfig(dataset_root="/tmp/dataset", seq_length=512)
+        train_ds = mock.MagicMock()
+        train_ds.__len__.return_value = 4
+
+        build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=mock.Mock(return_value=(train_ds, None, None)),
+            dp_group=object(),
+        )
+
+        assert mock_build_loader.call_args.kwargs["drop_last"] is False
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
+    def test_epoch_based_single_loader_is_rejected(
+        self, mock_build_loader, _mock_rank, _mock_world_size, _mock_broadcast
+    ):
+        cfg = create_simple_test_config()
+        cfg.train.num_epochs = 1.0
+        cfg.validation.eval_iters = 0
+        cfg.dataset = GPTSFTDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            dataloader_type="single",
+        )
+        train_ds = mock.MagicMock()
+        train_ds.__len__.return_value = 100
+
+        with pytest.raises(ValueError, match='dataloader_type="batch"'):
+            build_train_valid_test_data_loaders(
+                cfg=cfg,
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=mock.Mock(return_value=(train_ds, None, None)),
+                dp_group=object(),
+            )
+
+        mock_build_loader.assert_not_called()

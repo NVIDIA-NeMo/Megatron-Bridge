@@ -24,7 +24,7 @@ import signal
 import time
 from functools import lru_cache, partial
 from queue import Empty
-from typing import Any, Callable, Optional, Pattern, Type
+from typing import Any, Callable, Literal, Optional, Pattern, Type
 
 import numpy as np
 import torch
@@ -873,13 +873,34 @@ def _convert_to_openai_messages(source: dict) -> list[dict]:
         elif source.get("messages"):
             # HuggingFace chat template {"messages": [{"role": "system/user/assistant", "content": ""}]}
             chat = source.get("messages")
+        elif source.get("conversation"):
+            # Processor-ready singular conversation schema.
+            chat = source.get("conversation")
+        else:
+            raise ValueError("Chat rows must contain 'messages', 'conversation', or 'conversations'.")
     else:
         chat = source
 
     return chat
 
 
-def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: Optional[list[Any]] = None) -> dict:
+def _chat_template_input_ids(tokenized_chat: Any) -> list[int]:
+    input_ids = tokenized_chat.get("input_ids") if hasattr(tokenized_chat, "get") else tokenized_chat
+    if isinstance(input_ids, torch.Tensor):
+        input_ids = input_ids.detach().cpu().tolist()
+    if isinstance(input_ids, (list, tuple)) and input_ids and isinstance(input_ids[0], (list, tuple)):
+        if len(input_ids) != 1:
+            raise ValueError("Expected a single tokenized chat sequence from apply_chat_template.")
+        input_ids = input_ids[0]
+    return [int(token_id) for token_id in input_ids]
+
+
+def _chat_preprocess(
+    source: dict,
+    tokenizer: MegatronTokenizer,
+    tool_schemas: dict[str, Any] | list[dict[str, Any]] | None = None,
+    loss_mode: Literal["assistant", "last_turn", "full"] = "assistant",
+) -> dict:
     """
     Preprocess messages to apply chat template and tokenize. Returns a dictionary of tokens.
 
@@ -899,6 +920,7 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
         tokenizer - tokenizer to apply chat templates to
         tool_schemas - Optional tool_schemas to supply to apply_chat_template, these will be superseded
            by tools supplied with the message
+        loss_mode - Assistant-only, final-assistant-turn, or full-sequence loss
 
     Output:
         {
@@ -915,54 +937,40 @@ def _chat_preprocess(source: dict, tokenizer: MegatronTokenizer, tool_schemas: O
     * answer_ids contain tokenized messages with chat template applied for only the assistant's last generated
     output
     """
-    if not hasattr(tokenizer, "_tokenizer") or not hasattr(tokenizer._tokenizer, "apply_chat_template"):
-        raise ValueError(
-            "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
-            "The tokenizer must have a '_tokenizer' attribute with an 'apply_chat_template' method."
+    from megatron.bridge.data.conversation_processing import tokenize_chat_example
+    from megatron.bridge.data.token_utils import extract_skipped_token_ids
+
+    try:
+        tokenized = tokenize_chat_example(
+            source,
+            tokenizer,
+            tool_schemas=tool_schemas,
+            skipped_tokens=extract_skipped_token_ids(tokenizer),
+            loss_mode=loss_mode,
+            return_final_assistant_start=True,
         )
+    except ValueError as error:
+        if str(error).startswith("Chat preprocessing requires"):
+            raise ValueError(
+                "Cannot apply chat template with tokenizer that is not a HuggingFace AutoTokenizer. "
+                "The tokenizer must expose an 'apply_chat_template' method."
+            ) from error
+        if str(error).startswith("Unable to build assistant loss mask"):
+            raise ValueError(
+                "The tokenizer's chat_template does not contain a {% generation %} block and Bridge could not "
+                "infer assistant boundary markers for an assistant-only loss mask. Add a generation block to the "
+                "chat_template or pass AssistantMaskBoundaryConfig explicitly."
+            ) from error
+        raise
+    input_ids = tokenized.input_ids.tolist()
+    mask = tokenized.assistant_mask.tolist()
 
-    chat = _convert_to_openai_messages(source)
-    tools = None
-    if isinstance(source, dict):
-        tools = source.get("tools") or tool_schemas
-    else:
-        tools = tool_schemas
-
-    if getattr(tokenizer, "legacy", False):
-        tokenizer = tokenizer._tokenizer
-
-    # assistant mask only works if chat template has generation keyword
-    template_has_generation_kwd = GENERATION_REGEX.search(tokenizer.chat_template) is not None
-
-    if not template_has_generation_kwd:
-        raise ValueError(
-            "The tokenizer's chat_template does not contain a {% generation %} block, which is required "
-            "for HF's apply_chat_template to produce assistant-only loss masks via "
-            "return_assistant_tokens_mask=True. Without it, the loss mask would silently fall back to "
-            "all-ones (loss computed on the entire conversation including system/user tokens). "
-            "To fix this, either: (1) patch the chat_template to wrap assistant content with "
-            "{% generation %}...{% endgeneration %}, or (2) use the legacy special-tokens preprocessing "
-            "path instead of use_hf_tokenizer_chat_template=True."
-        )
-
-    tokenized_chat = tokenizer.apply_chat_template(
-        chat,
-        tools=tools,
-        tokenize=True,
-        return_dict=True,
-        return_assistant_tokens_mask=True,
-    )
-
-    # Choose the last conversation as answer other history are context by finding the last masked token
-    # which indicates end of context and beginning of answer
-    input_ids = tokenized_chat.get("input_ids")
-    mask = tokenized_chat["assistant_masks"]
-
-    if 0 in mask:
-        # traverse the list backward for first occurrence of masked token
-        context_end_idx = len(mask) - mask[::-1].index(0)
-    else:
-        context_end_idx = len(mask)
+    # Split generation context from the final assistant response using the
+    # rendered turn boundary, never the selected loss policy. Full loss and
+    # skipped control tokens can change mask values without changing the turn.
+    context_end_idx = tokenized.final_assistant_start
+    if context_end_idx is None:
+        context_end_idx = len(input_ids)
 
     context_ids = input_ids[:context_end_idx]
     answer_ids = input_ids[context_end_idx:]

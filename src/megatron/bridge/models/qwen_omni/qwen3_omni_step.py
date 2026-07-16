@@ -28,6 +28,7 @@ from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -203,11 +204,11 @@ def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[st
     if attention_mask is not None and attention_mask.dim() == 2:
         batch = dict(batch)
         batch["_attention_mask_2d"] = batch.pop("attention_mask")
-        batch = get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
         batch["attention_mask"] = batch.pop("_attention_mask_2d")
         return batch
 
-    return get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+    return get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
 
 
 def forward_step(
@@ -232,8 +233,8 @@ def forward_step(
         )
     timers("batch-generator").stop()
 
-    pack_sequences_in_batch = getattr(state.cfg.dataset, "pack_sequences_in_batch", False)
-    if pack_sequences_in_batch:
+    enable_in_batch_packing = getattr(state.cfg.dataset, "enable_in_batch_packing", False)
+    if enable_in_batch_packing:
         raise NotImplementedError("Qwen3-Omni packed sequence support is not implemented yet.")
 
     if pg_collection.cp.size() > 1:
@@ -247,6 +248,24 @@ def forward_step(
             force_to_seq_length=pg_collection.pp.size() > 1 or pg_collection.ep.size() > 1,
             seq_length=getattr(config, "seq_length", getattr(state.cfg.model, "seq_length", None)),
         )
+
+    # Accumulate FLOPS metadata across micro-batches. Qwen3-Omni does not pack
+    # within a batch, so cu_seqlens is absent and the helper falls back to
+    # BSHD math for the attention term. Vision-patch tracking still applies.
+    # Vision-patch count is model-specific (Qwen reports grid_thw = t*h*w per
+    # image/video); compute it here and pass a scalar to the model-agnostic helper.
+    num_vision_patches = None
+    if isinstance(multimodal_inputs, dict):
+        for grid in (multimodal_inputs.get("image_grid_thw"), multimodal_inputs.get("video_grid_thw")):
+            if grid is not None and grid.numel() > 0:
+                patches = grid.prod(dim=-1).sum()
+                num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        vp_stage=get_model_chunk_vp_stage(model),
+        num_vision_patches=num_vision_patches,
+    )
 
     forward_args = {
         "input_ids": tokens,

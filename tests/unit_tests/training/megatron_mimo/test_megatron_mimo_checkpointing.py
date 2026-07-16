@@ -287,7 +287,10 @@ class TestPretrainMegatronMIMOSetup:
 
         with (
             patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, infra)),
-            patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer),
+            patch(
+                "megatron.core.models.mimo.optimizer.get_mimo_optimizer",
+                return_value=mock_optimizer,
+            ) as mock_get_mimo_optimizer,
             patch("megatron.core.num_microbatches_calculator._GLOBAL_NUM_MICROBATCHES_CALCULATOR", None),
             patch("megatron.core.num_microbatches_calculator.init_num_microbatches_calculator"),
             patch("megatron.core.parallel_state._TENSOR_MODEL_PARALLEL_GROUP", None),
@@ -298,6 +301,7 @@ class TestPretrainMegatronMIMOSetup:
             result = setup_megatron_mimo(state=global_state)
 
         mock_create_ckpt_mgr.assert_called_once_with(cfg.checkpoint)
+        mock_get_mimo_optimizer.assert_called_once_with(unwrapped, cfg.optimizer)
         global_state.initialize_async_checkpoint_worker.assert_called_once()
         assert result.checkpoint_manager is mock_mgr_instance
 

@@ -39,7 +39,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.vlm_datasets.hf_dataset_makers import make_cord_v2_dataset
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_and_adapt_hf_dataset
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
@@ -309,7 +309,7 @@ def main():
         tokenizer.pad_token = tokenizer.eos_token
 
     print_rank_0(f"Loading CORD-V2 split={args.split} ...")
-    examples = make_cord_v2_dataset(split=args.split)
+    examples = load_and_adapt_hf_dataset(HFDatasetSourceConfig(dataset_name="cord_v2", split=args.split))
     n = min(args.max_samples, len(examples))
     print_rank_0(f"Running inference on {n}/{len(examples)} samples")
 

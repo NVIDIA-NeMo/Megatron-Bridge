@@ -36,7 +36,6 @@ from megatron.core.utils import get_data_parallel_group_if_dtensor, to_local_if_
 from megatron.bridge.training.config import ConfigContainer, ProfilingConfig, TrainingConfig
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
 from megatron.bridge.training.state import GlobalState, TrainState
-from megatron.bridge.training.utils.flop_utils import num_floating_point_operations
 from megatron.bridge.training.utils.mlflow_utils import _sanitize_mlflow_metrics
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 from megatron.bridge.training.utils.theoretical_memory_utils import report_theoretical_memory
@@ -674,6 +673,7 @@ def training_log(
     global_state: GlobalState,
     history_wct: list,
     model: list[MegatronModule],
+    *,
     pg_collection: Optional[Any] = None,
     log_max_attention_logit: Optional[float] = None,
     loaded_iteration: int = 0,
@@ -1074,62 +1074,33 @@ def training_log(
         elapsed_time = timers("interval-time").elapsed(barrier=True)
         elapsed_time_per_iteration = elapsed_time / total_iterations
 
-        # Calculate GPU utilization
+        # Calculate GPU utilization (interval-average achieved throughput).
+        #
+        # The main training loop folds each step's DP-exact FLOPS (Σ tokens for the
+        # linear terms, Σᵢ sᵢ² for THD attention) into
+        # ``train_state.floating_point_operations_so_far`` every step, so the FLOPS
+        # performed over this logging interval is exactly the delta since the last
+        # log. Dividing that interval total by the *interval* elapsed time (not the
+        # per-iteration average) keeps numerator and denominator over the same window.
+        # This matters for variable-length THD packing: a per-step numerator (the
+        # log-boundary step alone) divided by an interval-averaged time would over- or
+        # under-report whenever that step is heavier/lighter than the interval mean.
+        # Using the cumulative delta is also the single source of truth — it cannot
+        # disagree with ``floating_point_operations_so_far`` and needs no extra reduce.
         num_flops = None
         if hasattr(config.model, "kv_channels") and hasattr(config.model, "num_attention_heads"):
-            # Prefer per-microbatch FLOPS accumulators populated by forward_step
-            # (e.g. vlm_step). They carry the true Σs / Σs² / vision-patches under
-            # variable-length batches; fall back to the fixed-length assumption
-            # (batch_size * seq_length) only when no accumulation happened.
-            # This keeps the per-step TFLOP/s/GPU shown here consistent with the
-            # `floating_point_operations_so_far` accumulated by the main loop.
-            #
-            # VPP correction: forward_step_func is called once per virtual-stage
-            # per microbatch, so the accumulators over-count by vp_size. Divide
-            # them back so the FLOPS formula (which already covers all layers)
-            # receives the correct per-microbatch totals.
-            # Coerce accumulators to int — getattr on MagicMock test doubles
-            # returns a MagicMock (not the default), which breaks numeric ops.
-            local_seqlen_sum = getattr(global_state, "_flops_seqlen_sum", 0)
-            local_seqlen_sq_sum = getattr(global_state, "_flops_seqlen_sq_sum", 0)
-            local_vision_patches = getattr(global_state, "_flops_vision_patches", 0)
-            if not isinstance(local_seqlen_sum, int):
-                local_seqlen_sum = 0
-            if not isinstance(local_seqlen_sq_sum, int):
-                local_seqlen_sq_sum = 0
-            if not isinstance(local_vision_patches, int):
-                local_vision_patches = 0
-            num_vision_patches = local_vision_patches * config.data_parallel_size if local_vision_patches > 0 else 0
-
-            vp_size = getattr(config.model, "virtual_pipeline_model_parallel_size", None)
-            if isinstance(vp_size, int) and vp_size > 1:
-                local_seqlen_sum = local_seqlen_sum // vp_size
-                local_seqlen_sq_sum = local_seqlen_sq_sum // vp_size
-                num_vision_patches = num_vision_patches // vp_size
-
-            if local_seqlen_sum > 0:
-                seqlen_sum = local_seqlen_sum * config.data_parallel_size
-                seqlen_squared_sum = local_seqlen_sq_sum * config.data_parallel_size
-                num_flops = num_floating_point_operations(
-                    config,
-                    batch_size,
-                    seqlen_sum=seqlen_sum,
-                    seqlen_squared_sum=seqlen_squared_sum,
-                    num_vision_patches=num_vision_patches,
-                )
-            elif seq_length is not None:
-                seqlen_sum = batch_size * seq_length
-                seqlen_squared_sum = batch_size * seq_length**2
-                num_flops = num_floating_point_operations(
-                    config,
-                    batch_size,
-                    seqlen_sum=seqlen_sum,
-                    seqlen_squared_sum=seqlen_squared_sum,
-                    num_vision_patches=num_vision_patches,
-                )
-            else:
-                num_flops = num_floating_point_operations(config, batch_size)
-            per_gpu_tf = num_flops / elapsed_time_per_iteration / get_world_size_safe() / 1e12
+            # Coerce to float — floating_point_operations_so_far is a float in
+            # production, but getattr on a MagicMock test double (and an unset anchor)
+            # returns a MagicMock; treat non-numerics as 0 so the math stays valid.
+            flops_so_far = train_state.floating_point_operations_so_far
+            if not isinstance(flops_so_far, (int, float)):
+                flops_so_far = 0.0
+            prev_flops = getattr(global_state, "_flops_at_last_log", 0.0)
+            if not isinstance(prev_flops, (int, float)):
+                prev_flops = flops_so_far
+            num_flops = max(flops_so_far - prev_flops, 0.0)
+            global_state._flops_at_last_log = flops_so_far
+            per_gpu_tf = num_flops / elapsed_time / get_world_size_safe() / 1e12
             print_rank_0(
                 f"Step Time : {elapsed_time_per_iteration:.2f}s GPU utilization: {per_gpu_tf:.1f}MODEL_TFLOP/s/GPU"
             )

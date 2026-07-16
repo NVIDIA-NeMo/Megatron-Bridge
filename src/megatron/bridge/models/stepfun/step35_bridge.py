@@ -22,6 +22,7 @@ from megatron.core.models.gpt.gpt_layer_specs import (
     get_gpt_layer_with_transformer_engine_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
 from transformers import AutoConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -54,6 +55,10 @@ logger = logging.getLogger(__name__)
 # `AutoConfig.from_pretrained("stepfun-ai/Step-3.5-Flash")` would route to a
 # different config class and the bridge resolution below would fail.
 AutoConfig.register("step3p5", Step35Config, exist_ok=True)
+
+
+def _mcore_supports_head_wise_attn_gate() -> bool:
+    return "head_wise_attn_gate" in getattr(MCoreTransformerConfig, "__dataclass_fields__", {})
 
 
 class StackedExpertAutoMapping(AutoMapping):
@@ -133,7 +138,7 @@ class _MTPDenseLayerSpecsList(list):
         return super().__getitem__(idx)
 
 
-def _build_step35_layer_spec(cfg, **kw):
+def build_step35_layer_spec(cfg, **kw):
     """Per-layer spec for Step3.5: dense for layers 0-2 and 45-47, MoE for 3-44.
 
     Also rewrites every main-decoder layer's ModuleSpec to use
@@ -234,6 +239,11 @@ class Step35Bridge(MegatronModelBridge):
         """
         provider = super().provider_bridge(hf_pretrained)
 
+        if getattr(provider, "head_wise_attn_gate", False):
+            # Native head-wise gates and the full-head output gate are mutually
+            # exclusive; MCore without native support needs the output-gate fallback.
+            provider.attention_output_gate = not _mcore_supports_head_wise_attn_gate()
+
         hf_config = hf_pretrained.config
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
         if provider.layer_types is not None and mtp_layer_types:
@@ -333,11 +343,11 @@ class Step35Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            # _build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
+            # build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
             # specs for the main decoder, and wraps layer_specs with _MTPDenseLayerSpecsList
             # so that get_gpt_mtp_block_spec_for_backend picks up a dense spec for MTP layers
             # (45-47 are not in moe_layers_enum).
-            provider.transformer_layer_spec = _build_step35_layer_spec
+            provider.transformer_layer_spec = build_step35_layer_spec
 
         return provider
 
@@ -377,8 +387,8 @@ class Step35Bridge(MegatronModelBridge):
 
         mapping_list.extend(
             [
-                # QKV + per-head gate: merge Q, K, V (GQA-interleaved) and expand
-                # the scalar g_proj rows into MCore's attention_output_gate layout.
+                # QKV + per-head gate: select the native scalar-gate layout or
+                # the expanded attention_output_gate fallback via the provider.
                 QKVGMapping(
                     megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
                     q="model.layers.*.self_attn.q_proj.weight",

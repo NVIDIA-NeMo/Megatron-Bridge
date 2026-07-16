@@ -35,6 +35,7 @@ CONFIG_FILE = "run_config.yaml"
 
 logger = logging.getLogger(__name__)
 _RUNTIME_ONLY_TARGETS = frozenset({"megatron.core.timers.Timers"})
+_RECIPE_CONFIG_TARGET = "megatron.core.quantization.quant_config.RecipeConfig"
 
 
 def file_exists(path: str) -> bool:
@@ -503,6 +504,17 @@ def _sanitize_run_config_object(obj: Any) -> Any:
     if isinstance(obj, dict):
         target = obj.get("_target_")
         if isinstance(target, str) and target in _RUNTIME_ONLY_TARGETS:
+            return None
+        if (
+            target == _RECIPE_CONFIG_TARGET
+            and obj.get("_call_", True) is True
+            and set(obj).issubset({"_target_", "_call_"})
+        ):
+            logger.warning(
+                "Ignoring a legacy quantization recipe whose state was not preserved in run_config.yaml. "
+                "The checkpoint can still be loaded, but the original per-module quantization settings "
+                "must be supplied separately if they are needed."
+            )
             return None
         return {key: _sanitize_run_config_object(value) for key, value in obj.items()}
     if isinstance(obj, list):

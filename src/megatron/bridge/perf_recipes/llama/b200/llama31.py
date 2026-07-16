@@ -137,6 +137,7 @@ llama31_405b_pretrain_256gpu_b200_fp8cs_config = llama31_405b_pretrain_256gpu_gb
 
 llama31_405b_pretrain_256gpu_b200_fp8mx_config = llama31_405b_pretrain_256gpu_gb200_fp8mx_config
 
+
 def llama31_405b_pretrain_256gpu_b200_nvfp4_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 256x B200, NVFP4."""
     cfg = llama31_405b_pretrain_256gpu_gb200_nvfp4_config()
