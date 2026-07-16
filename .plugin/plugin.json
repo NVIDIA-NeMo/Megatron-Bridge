@@ -1,5 +1,0 @@
-{
-  "name": "megatron-bridge",
-  "description": "Megatron-Bridge repository skills (CI/CD, testing, dependency bumps, performance tuning, model onboarding, multi-node Slurm) for Regent agents working on this repo.",
-  "version": "0.1.0"
-}
