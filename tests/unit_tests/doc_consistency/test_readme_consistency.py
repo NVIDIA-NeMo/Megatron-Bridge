@@ -122,9 +122,10 @@ def test_training_readme_dataset_table_matches_public_presets():
     )
     assert isinstance(registry, ast.Dict)
     registered = {key.value for key in registry.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
-    documented = set(re.findall(r"^\| `([^`]+)` \|", _read(TRAINING_README), re.MULTILINE))
+    documented = re.findall(r"^\| `([^`]+)` \|", _read(TRAINING_README), re.MULTILINE)
 
-    assert documented == registered
+    assert len(documented) == len(set(documented))
+    assert set(documented) == registered
     assert "allenai/tulu-3-sft-mixture" in _read(TRAINING_README)
 
 
