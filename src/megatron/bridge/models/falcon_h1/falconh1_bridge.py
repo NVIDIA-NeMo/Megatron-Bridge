@@ -121,9 +121,8 @@ class FalconH1Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.feed_forward.down_proj.weight",
             # Attention output projection
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # Layer norms for TELayerNormColumnParallelLinear layers
-            "decoder.layers.*.mamba_mixer.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            # Shared input norm for parallel Mamba and attention branches
+            "decoder.layers.*.norm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.pre_ff_layernorm.weight",
             "decoder.final_norm.weight": "model.final_layernorm.weight",
             # Embeddings and output

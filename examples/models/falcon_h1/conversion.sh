@@ -22,13 +22,13 @@ HF_MODEL_ID=${HF_MODEL_ID:-tiiuae/${MODEL_NAME}}
 MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-${WORKSPACE}/models/${MODEL_NAME}}
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/${MODEL_NAME}-hf-export}
 
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "$MEGATRON_MODEL_PATH" \
     --torch-dtype bfloat16 \
     --trust-remote-code
 
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "${MEGATRON_MODEL_PATH}/iter_0000000" \
     --hf-path "$HF_EXPORT_PATH" \

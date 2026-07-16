@@ -29,8 +29,8 @@ Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pin
 ## Convert: Import HF → Megatron
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=4 \
-    examples/conversion/convert_checkpoints_multi_gpu.py import \
+./scripts/conversion/convert.sh import \
+    --executor local --device gpu --gpus-per-node 4 \
     --hf-model stepfun-ai/Step-3.7-Flash \
     --megatron-path /path/to/step37_megatron_ckpt \
     --tp 1 --pp 1 --ep 4
@@ -71,8 +71,8 @@ train.global_batch_size=1024
 ## Convert: Export Megatron → HF
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=4 \
-    examples/conversion/convert_checkpoints_multi_gpu.py export \
+./scripts/conversion/convert.sh export \
+    --executor local --device gpu --gpus-per-node 4 \
     --hf-model stepfun-ai/Step-3.7-Flash \
     --megatron-path /path/to/step37_megatron_ckpt \
     --hf-path /path/to/step37_hf_export \

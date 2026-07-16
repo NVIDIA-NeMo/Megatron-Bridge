@@ -41,6 +41,7 @@ from megatron.bridge.training.checkpointing import (
     _load_model_state_dict,
     _record_dataloader_state_dir,
     _save_hf_adapter_weights,
+    _save_hf_weights,
     checkpoint_exists,
     cleanup_old_non_persistent_checkpoint,
     create_checkpoint_manager,
@@ -153,6 +154,22 @@ class TestCheckpointUtilities:
         result = get_checkpoint_tracker_filename("/checkpoints")
         expected = "/checkpoints/latest_checkpointed_iteration.txt"
         assert result == expected
+
+    @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
+    @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
+    def test_save_hf_weights_rejects_unsupported_bridge_before_writing(self, mock_build_bridge, mock_ensure_dir):
+        state = Mock()
+        state.cfg.peft = None
+        state.cfg.checkpoint.hf_source_path = "/hf/source"
+        bridge = mock_build_bridge.return_value
+        bridge._model_bridge.SUPPORTS_HF_PRETRAINED_EXPORT = False
+
+        with pytest.raises(NotImplementedError, match="standalone Hugging Face"):
+            _save_hf_weights(state, [], "/checkpoints/iter_0000001/hf")
+
+        mock_ensure_dir.assert_not_called()
+        bridge.export_hf_weights.assert_not_called()
+        bridge.hf_pretrained.save_artifacts.assert_not_called()
 
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")

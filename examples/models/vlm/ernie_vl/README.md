@@ -23,7 +23,7 @@ export WORKSPACE=/your/custom/path
 ### Import HF → Megatron
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model baidu/ERNIE-4.5-VL-28B-A3B-Instruct \
     --megatron-path ${WORKSPACE}/ERNIE-4.5-VL-28B-A3B-Instruct \
     --torch-dtype bfloat16 \
@@ -33,7 +33,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model baidu/ERNIE-4.5-VL-28B-A3B-Instruct \
     --megatron-path ${WORKSPACE}/ERNIE-4.5-VL-28B-A3B-Instruct/iter_0000000 \
     --hf-path ${WORKSPACE}/ERNIE-4.5-VL-28B-A3B-Instruct-hf-export \

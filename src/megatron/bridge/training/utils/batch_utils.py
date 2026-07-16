@@ -96,7 +96,7 @@ def get_batch_on_this_tp_rank(
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
-        if isinstance(cfg.dataset, GPTSFTDatasetConfig) or cfg.dataset.create_attention_mask:
+        if isinstance(cfg.dataset, GPTSFTDatasetConfig) or getattr(cfg.dataset, "create_attention_mask", False):
             attention_mask = torch.empty(
                 (
                     mbs,

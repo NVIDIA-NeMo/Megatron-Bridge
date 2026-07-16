@@ -87,22 +87,6 @@ def qwen2_audio_bridge():
     return Qwen2AudioBridge()
 
 
-class TestQwen2AudioBridgeInitialization:
-    """Test Qwen2AudioBridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, qwen2_audio_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(qwen2_audio_bridge, Qwen2AudioBridge)
-
-    def test_bridge_has_required_methods(self, qwen2_audio_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(qwen2_audio_bridge, "provider_bridge")
-        assert callable(qwen2_audio_bridge.provider_bridge)
-
-        assert hasattr(qwen2_audio_bridge, "mapping_registry")
-        assert callable(qwen2_audio_bridge.mapping_registry)
-
-
 class TestQwen2AudioBridgeProviderBridge:
     """Test provider_bridge method functionality."""
 

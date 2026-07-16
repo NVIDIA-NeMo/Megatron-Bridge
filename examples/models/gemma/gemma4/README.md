@@ -72,7 +72,7 @@ Gemma 4 E4B has two useful conversion modes:
 
 ```bash
 GEMMA4_CONVERSION_MODE=text \
-uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model google/gemma-4-E4B-it \
     --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it
 ```
@@ -81,7 +81,7 @@ uv run --no-sync python examples/conversion/convert_checkpoints.py import \
 
 ```bash
 GEMMA4_CONVERSION_MODE=audio \
-uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model google/gemma-4-E4B-it \
     --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it-vl
 ```
@@ -89,7 +89,7 @@ uv run --no-sync python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-uv run --no-sync python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model google/gemma-4-E4B-it \
     --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gemma-4-E4B-it-hf-export

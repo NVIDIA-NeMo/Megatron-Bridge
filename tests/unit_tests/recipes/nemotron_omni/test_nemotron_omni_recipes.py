@@ -19,10 +19,13 @@ from typing import Callable
 import pytest
 import torch
 
-from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
-from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS, nemotron_omni_collate_fn
+from megatron.bridge.data.builders import (
+    DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
+    NemotronOmniEnergonTaskEncoderConfig,
+)
+from megatron.bridge.data.collators.registry import resolve_model_collate
+from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_collate_fn
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -73,7 +76,11 @@ def fake_processor(monkeypatch: pytest.MonkeyPatch):
 
     patch_recipe_module_global(monkeypatch, _recipe_module, "AutoBridge", _FakeAutoBridge)
     monkeypatch.setattr(_h100_recipe_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
-    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda *_, **__: processor)
+    monkeypatch.setattr(
+        transformers.AutoProcessor,
+        "from_pretrained",
+        lambda *_, **__: pytest.fail("recipe construction loaded a processor"),
+    )
     return processor
 
 
@@ -137,7 +144,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
     assert cfg.dataset.source.dataset_name == "cord_v2"
-    assert COLLATE_FNS["NemotronH_Nano_Omni_Reasoning_V3Processor"] is nemotron_omni_collate_fn
+    assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.model.temporal_patch_dim == 1
     assert cfg.model.freeze_sound_projection is False
@@ -158,15 +165,15 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.model.freeze_sound_projection is True
 
 
-def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder(fake_processor):
+def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_valor32k_sft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, EnergonProvider)
-    assert cfg.dataset.path == ""
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.path is None
     assert cfg.dataset.enable_in_batch_packing is False
-    assert isinstance(cfg.dataset.task_encoder, NemotronOmniTaskEncoder)
-    assert cfg.dataset.task_encoder.processor is fake_processor
+    assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_HF_ID
     assert cfg.dataset.task_encoder.max_audio_duration == 10.0
     assert cfg.dataset.task_encoder.num_mel_bins == 128
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
@@ -182,8 +189,8 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_valor32k_peft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, EnergonProvider)
-    assert isinstance(cfg.dataset.task_encoder, NemotronOmniTaskEncoder)
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.peft is not None
     assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]

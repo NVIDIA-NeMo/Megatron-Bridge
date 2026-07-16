@@ -63,7 +63,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-Next-80B-A3B-Instruct \
   --megatron-path /checkpoints/qwen3_next_80b_megatron
 ```
@@ -173,7 +173,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-30B-A3B \
   --megatron-path /checkpoints/qwen3_30b_a3b_megatron
 ```
@@ -322,7 +322,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-8B \
   --megatron-path /checkpoints/qwen3_8b_megatron
 ```
@@ -452,7 +452,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen2.5-7B \
   --megatron-path /checkpoints/qwen25_7b_megatron
 ```

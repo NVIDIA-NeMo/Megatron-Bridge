@@ -30,6 +30,19 @@ from megatron.bridge.data.sources.hf_adapters import (
 )
 
 
+def _has_unset_data_file(value: Any) -> bool:
+    """Return whether a declarative ``data_files`` value contains no usable path."""
+    if value is None:
+        return True
+    if isinstance(value, (str, Path)):
+        return not str(value).strip()
+    if isinstance(value, (list, tuple)):
+        return not value or any(_has_unset_data_file(item) for item in value)
+    if isinstance(value, dict):
+        return not value or any(_has_unset_data_file(item) for item in value.values())
+    return False
+
+
 @dataclass(kw_only=True)
 class HFDatasetSourceConfig:
     """Serializable source selection for one Hugging Face dataset split.
@@ -53,6 +66,9 @@ class HFDatasetSourceConfig:
         """Validate declarative source and adapter settings."""
         validate_declarative_mapping(self.load_kwargs, field_name="load_kwargs")
         validate_declarative_mapping(self.adapter_kwargs, field_name="adapter_kwargs")
+        if self.load_kwargs is not None and "data_files" in self.load_kwargs:
+            if _has_unset_data_file(self.load_kwargs["data_files"]):
+                raise ValueError("load_kwargs.data_files must contain non-empty paths.")
         if self.split is not None and (not isinstance(self.split, str) or not self.split.strip()):
             raise ValueError("split must be non-empty when set.")
         has_named_source = self.dataset_name is not None

@@ -251,7 +251,8 @@ Prepare the Energon shards once. For the full walkthrough, see
 
 ```bash
 uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
-  --output_dir ${WORKSPACE}/datasets/valor32k_avqa
+  --data_root ${WORKSPACE}/datasets/valor32k_avqa \
+  --output_dir ${WORKSPACE}/datasets/valor32k_avqa/energon
 ```
 
 | Mode | Script | Recipe |

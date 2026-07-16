@@ -49,6 +49,25 @@ tokenizer = llama.tokenizer  # Loads just tokenizer
 model = llama.model          # Loads model weights
 ```
 
+### PreTrainedMaskedLM
+For encoder-only masked language models (BERT, RoBERTa, etc.)
+
+```python
+from megatron.bridge.models.hf_pretrained import PreTrainedMaskedLM
+
+bert = PreTrainedMaskedLM.from_pretrained("bert-base-uncased")
+
+# Components load on demand, same as PreTrainedCausalLM
+tokenizer = bert.tokenizer
+inputs = bert.encode("The capital of France is [MASK].")
+outputs = bert.model(**inputs)
+```
+
+Unlike `PreTrainedCausalLM`, this class makes no generation-specific assumptions
+(no `generate()`, no `GenerationConfig`) since encoder-only models are not used
+for autoregressive decoding. The model is loaded via `AutoModelForMaskedLM`,
+falling back to `AutoModel` for checkpoints without a registered masked-LM head.
+
 ## Key Features
 
 ### 🔍 Transparent Inspection

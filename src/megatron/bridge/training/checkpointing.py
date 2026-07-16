@@ -883,6 +883,11 @@ def _save_hf_weights(
 
     hf_source = _resolve_hf_source(cfg)
     bridge = _build_auto_bridge_for_save(cfg, hf_source=hf_source)
+    model_bridge = bridge._model_bridge
+    if not model_bridge.SUPPORTS_HF_PRETRAINED_EXPORT:
+        raise NotImplementedError(
+            f"{type(model_bridge).__name__} does not support standalone Hugging Face checkpoint export."
+        )
     distributed_save = bool(getattr(ckpt_cfg, "hf_distributed_save", False))
     save_every_n_ranks = int(getattr(ckpt_cfg, "hf_save_every_n_ranks", 1))
 

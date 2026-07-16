@@ -154,7 +154,7 @@ CLI_OVERRIDES="\
 CMD="cd ${WORKDIR} && mkdir -p ${WORKSPACE}/results ${SAVE_DIR}/wandb ${SAVE_DIR}/tb_logs && \
 export PYTHONPATH=${WORKDIR}/src:${WORKDIR}/3rdparty/Megatron-LM:\${PYTHONPATH:-} && \
 uv run --no-sync python scripts/training/run_recipe.py \
---recipe ${RECIPE_NAME} --peft_scheme ${PEFT_SCHEME} \
+--recipe ${RECIPE_NAME} --mode ${PEFT_SCHEME} \
 ${CLI_OVERRIDES}"
 
 SRUN_CMD="srun --mpi=pmix --no-kill --container-image=${CONTAINER_IMAGE} --no-container-mount-home"

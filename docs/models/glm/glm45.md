@@ -84,19 +84,19 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 ```bash
 # Import GLM 4.5 Air model
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model zai-org/GLM-4.5-Air \
 --megatron-path /models/glm45-air-106b
 
 # Import GLM 4.5 355B model
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model zai-org/GLM-4.5 \
 --megatron-path /models/glm45-355b
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model zai-org/GLM-4.5-Air \
 --megatron-path /results/glm45_air/checkpoints/iter_00001000 \
 --hf-path ./glm45-air-hf-export
@@ -215,17 +215,18 @@ config = glm45_355b_peft_config(
 ```bash
 # GLM 4.5 Air - LoRA finetuning on single node (8 GPUs)
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
---pretrained-checkpoint /models/glm45-air-106b \
 --recipe glm45_air_106b_peft_config \
---peft_scheme lora \
+--mode lora \
+checkpoint.pretrained_checkpoint=/models/glm45-air-106b \
 train.global_batch_size=128 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_air_lora
 
 # GLM 4.5 355B - Full finetuning (256 GPUs)
 uv run python -m torch.distributed.run --nnodes=32 --nproc-per-node=8 scripts/training/run_recipe.py \
---pretrained-checkpoint /models/glm45-355b \
 --recipe glm45_355b_sft_config \
+--mode sft \
+checkpoint.pretrained_checkpoint=/models/glm45-355b \
 train.global_batch_size=256 \
 train.train_iters=1000 \
 checkpoint.save=$SAVE_DIR/glm45_355b_full
@@ -271,7 +272,7 @@ config = glm45_air_106b_pretrain_config(
 ```
 
 ## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Checkpoint import/export: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 
 ## Hugging Face Model Cards
@@ -291,4 +292,3 @@ config = glm45_air_106b_pretrain_config(
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

@@ -92,7 +92,7 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
     cfg.dataset.enable_in_batch_packing = False
     cfg.dataset.hf_processor_path = "moonshotai/Kimi-K2.5"

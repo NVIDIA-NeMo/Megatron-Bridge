@@ -1934,6 +1934,42 @@ class TestGemma4MoEHelpers:
         torch.testing.assert_close(residual, hidden_states)
         torch.testing.assert_close(padding_mask, torch.tensor([[True]]))
 
+    def test_transformer_layer_preserves_packed_moe_batch_semantics(self):
+        calls = []
+
+        class FakeMoE:
+            def forward_with_separate_inputs(self, expert, shared, router, padding_mask=None):
+                calls.append((expert, shared, router, padding_mask))
+                return expert, None
+
+        layer = SimpleNamespace(
+            config=SimpleNamespace(fp32_residual_connection=False, layernorm_epsilon=1e-6),
+            is_moe_layer=True,
+            pre_mlp_layernorm=SimpleNamespace(weight=torch.tensor([2.0, 2.0])),
+            pre_shared_expert_layernorm=SimpleNamespace(weight=torch.tensor([3.0, 3.0])),
+            mlp=FakeMoE(),
+            _forward_post_mlp=lambda output, residual: (output[0], residual),
+        )
+        hidden_states = torch.arange(1, 9, dtype=torch.float32).view(4, 1, 2)
+        padding_mask = torch.tensor([[False, True], [True, False]])
+
+        output, residual = Gemma4TransformerLayer._forward_mlp(
+            layer,
+            hidden_states,
+            padding_mask=padding_mask,
+            packed_seq_params=SimpleNamespace(tokens_per_sample=2),
+        )
+
+        expected_router = hidden_states.view(2, 2, -1).transpose(0, 1).contiguous()
+        normalized = expected_router * torch.pow(expected_router.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
+        expert, shared, router, routed_padding_mask = calls[0]
+        torch.testing.assert_close(expert, normalized * 2.0)
+        torch.testing.assert_close(shared, normalized * 3.0)
+        torch.testing.assert_close(router, expected_router)
+        torch.testing.assert_close(routed_padding_mask, padding_mask)
+        torch.testing.assert_close(output, (normalized * 2.0).transpose(0, 1).reshape(4, 1, 2))
+        torch.testing.assert_close(residual, hidden_states)
+
     def test_topk_router_routing_keeps_probs_when_map_missing(self, monkeypatch):
         routing_probs = torch.ones(2, 3)
 

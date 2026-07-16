@@ -26,7 +26,7 @@ def kimi_k2_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.seq_length = 4096
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
@@ -57,7 +57,7 @@ def kimi_k2_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.seq_length = 4096
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True

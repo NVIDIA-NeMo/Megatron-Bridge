@@ -48,7 +48,7 @@ MEGATRON_CKPT_DIR=${WORKSPACE}/megatron_ckpts/${MODEL_NAME}
 # Convert HF checkpoint to Megatron format if not already done
 if [ ! -d "${MEGATRON_CKPT_DIR}/iter_0000000" ]; then
     echo "Converting HF model to Megatron format..."
-    uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+    ./scripts/conversion/convert.sh import \
         --hf-model ${HF_MODEL} \
         --megatron-path ${MEGATRON_CKPT_DIR}
 fi
