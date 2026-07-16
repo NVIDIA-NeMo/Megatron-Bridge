@@ -78,6 +78,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.recompute_modules = ['core_attn']
     cfg.model.use_transformer_engine_op_fuser = 1
     cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
     cfg.model.cp_comm_type = "a2a"
     cfg.model.cuda_graph_modules = []
     cfg.model.cuda_graph_warmup_steps = 5
@@ -94,6 +95,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.mixed_precision.fp8_amax_history_len = 4
     cfg.mixed_precision.fp8_dot_product_attention = True
     cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.mixed_precision.pipeline_dtype = None
     cfg.train.manual_gc = True
     cfg.train.manual_gc_eval = False
     cfg.train.manual_gc_interval = 10000
@@ -118,6 +120,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.scheduler.use_checkpoint_opt_param_scheduler = False
     cfg.dataset.seq_length = 8192
     cfg.dataset.enable_offline_packing = True
+    cfg.dataset.create_attention_mask = False
     cfg.dataset.dataloader_type = "batch"
     cfg.dataset.data_sharding = True
     cfg.dataset.drop_last = True
