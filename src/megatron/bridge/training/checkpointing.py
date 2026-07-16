@@ -1913,7 +1913,8 @@ def generate_state_dict(
 
     # Optimizer stuff. During load, optimizer sharded-state scaffolding is
     # required even if the next checkpoint should not save optimizer state.
-    include_optimizer_state = ckpt_cfg.save_optim or bool((optim_sd_kwargs or {}).get("is_loading"))
+    is_loading = bool((optim_sd_kwargs or {}).get("is_loading"))
+    include_optimizer_state = ckpt_cfg.save_optim or is_loading
     if include_optimizer_state:
         if optimizer is not None and not getattr(optimizer, "is_stub_optimizer", False):
             if ckpt_cfg.ckpt_format == "torch_dist":
@@ -1935,7 +1936,7 @@ def generate_state_dict(
         state_dict["rerun_state_machine"] = rerun_state
 
     # RNG states.
-    if ckpt_cfg.save_rng:
+    if ckpt_cfg.save_rng or (is_loading and rng_state is not None):
         state_dict["rng_state"] = rng_state
 
     return state_dict
