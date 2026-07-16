@@ -63,7 +63,7 @@ def _load_module():
     dataset_names = {
         *pretraining_datasets,
         "squad",
-        "tulu",
+        "tulu3",
         "openmathinstruct2",
         "openmathinstruct2-thinking",
         "gsm8k",
@@ -234,12 +234,12 @@ def test_named_finetuning_dataset_maps_to_internal_config():
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, [])
 
 
-def test_tulu_dataset_is_listed_in_launcher_help():
+def test_tulu3_dataset_is_listed_in_launcher_help():
     module, _ = _load_module()
 
     help_text = module._build_parser().format_help()
 
-    assert "tulu" in help_text
+    assert "tulu3" in help_text
 
 
 @pytest.mark.parametrize(

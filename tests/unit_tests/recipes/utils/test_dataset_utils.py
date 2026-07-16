@@ -114,7 +114,7 @@ class TestDatasetPresets:
             "mock",
             "megatron-indexed",
             "squad",
-            "tulu",
+            "tulu3",
             "openmathinstruct2",
             "openmathinstruct2-thinking",
             "gsm8k",
@@ -156,7 +156,7 @@ class TestDatasetPresets:
         ("dataset_name", "source_name"),
         [
             ("squad", "squad"),
-            ("tulu", "tulu"),
+            ("tulu3", "tulu3"),
             ("openmathinstruct2", "openmathinstruct2"),
             ("openmathinstruct2-thinking", "openmathinstruct2_thinking"),
             ("gsm8k", "gsm8k"),
@@ -172,8 +172,8 @@ class TestDatasetPresets:
         assert dataset.enable_offline_packing is False
         assert dataset_train_mode(dataset) == "finetune"
 
-    def test_tulu_preset_allows_typed_config_overrides(self):
-        dataset = build_dataset_config(_make_config(model_seq_length=2048), "tulu")
+    def test_tulu3_preset_allows_typed_config_overrides(self):
+        dataset = build_dataset_config(_make_config(model_seq_length=2048), "tulu3")
 
         process_config_with_overrides(
             dataset,

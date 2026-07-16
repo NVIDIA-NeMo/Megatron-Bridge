@@ -201,7 +201,7 @@ def test_named_source_uses_preset_split_and_adapter(monkeypatch):
     assert adapted[0]["original_answers"] == ["2"]
 
 
-def test_tulu_preset_uses_current_native_chat_dataset(monkeypatch):
+def test_tulu3_preset_uses_current_native_chat_dataset(monkeypatch):
     rows = [
         {
             "id": "example-1",
@@ -219,7 +219,7 @@ def test_tulu_preset_uses_current_native_chat_dataset(monkeypatch):
         return rows
 
     monkeypatch.setattr(source_module, "load_dataset", _load_dataset)
-    source = HFDatasetSourceConfig(dataset_name="tulu")
+    source = HFDatasetSourceConfig(dataset_name="tulu3")
 
     resolved = resolve_hf_dataset_source(source)
     adapted = load_and_adapt_hf_dataset(source)

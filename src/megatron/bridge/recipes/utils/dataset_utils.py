@@ -143,7 +143,7 @@ def default_squad_config(
     )
 
 
-def default_tulu_config(
+def default_tulu3_config(
     seq_length: int = 4096,
     enable_offline_packing: bool = False,
     pad_seq_to_mult: int = 1,
@@ -163,7 +163,7 @@ def default_tulu_config(
         offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
 
     return _text_hf_dataset_config(
-        source=HFDatasetSourceConfig(dataset_name="tulu"),
+        source=HFDatasetSourceConfig(dataset_name="tulu3"),
         preprocessing=ChatSFTPreprocessingConfig(),
         seq_length=seq_length,
         enable_offline_packing=enable_offline_packing,
@@ -374,9 +374,9 @@ def _squad_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
     return default_squad_config(seq_length=_resolve_seq_length(config), enable_offline_packing=False)
 
 
-def _tulu_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+def _tulu3_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
     """Build the Tulu 3 chat SFT dataset preset."""
-    return default_tulu_config(seq_length=_resolve_seq_length(config))
+    return default_tulu3_config(seq_length=_resolve_seq_length(config))
 
 
 def _openmathinstruct2_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
@@ -469,7 +469,7 @@ DATASET_PRESETS: dict[str, DatasetPreset] = {
     "mock": _mock_dataset_config,
     "megatron-indexed": _megatron_indexed_dataset_config,
     "squad": _squad_dataset_config,
-    "tulu": _tulu_dataset_config,
+    "tulu3": _tulu3_dataset_config,
     "openmathinstruct2": _openmathinstruct2_dataset_config,
     "openmathinstruct2-thinking": _openmathinstruct2_thinking_dataset_config,
     "gsm8k": _gsm8k_dataset_config,
