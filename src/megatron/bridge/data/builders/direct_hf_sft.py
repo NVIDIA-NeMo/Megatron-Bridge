@@ -25,7 +25,6 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
-from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
 from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
@@ -199,6 +198,8 @@ def build_direct_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
+    from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
+
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
     if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
