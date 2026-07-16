@@ -99,14 +99,16 @@ def load_prompts(
     """Collect prompts from explicit args and/or a line-oriented (optionally JSONL) file."""
     collected = list(prompts or [])
     if prompt_file:
+        file_prompts_collected = 0
         with Path(prompt_file).open("r", encoding="utf-8") as handle:
             for line in handle:
                 raw_prompt = line.rstrip("\n")
                 if not raw_prompt:
                     continue
-                collected.append(_get_prompt_from_json_line(raw_prompt) or raw_prompt)
-                if prompt_file_num_truncate is not None and len(collected) >= prompt_file_num_truncate:
+                if prompt_file_num_truncate is not None and file_prompts_collected >= prompt_file_num_truncate:
                     break
+                collected.append(_get_prompt_from_json_line(raw_prompt) or raw_prompt)
+                file_prompts_collected += 1
     if not collected:
         collected = list(default_prompts)
     return collected
