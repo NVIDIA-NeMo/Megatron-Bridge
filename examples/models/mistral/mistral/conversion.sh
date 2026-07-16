@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,10 +15,8 @@
 
 set -euo pipefail
 
-# Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
-
-HF_MODEL_ID=${HF_MODEL_ID:-inclusionAI/${MODEL_NAME:-Ling-mini-2.0}}
+HF_MODEL_ID=${HF_MODEL_ID:-mistralai/${MODEL_NAME:-Mistral-7B-v0.1}}
 MODEL_NAME=${MODEL_NAME:-${HF_MODEL_ID##*/}}
 MEGATRON_PATH=${MEGATRON_PATH:-${WORKSPACE}/models/${MODEL_NAME}}
 MEGATRON_LOAD_PATH=${MEGATRON_LOAD_PATH:-${MEGATRON_PATH}/iter_0000000}
@@ -27,22 +25,20 @@ ROUNDTRIP_OUTPUT_DIR=${ROUNDTRIP_OUTPUT_DIR:-${WORKSPACE}/models/${MODEL_NAME}-r
 
 TP=${TP:-2}
 PP=${PP:-1}
-EP=${EP:-4}
+EP=${EP:-1}
 ETP=${ETP:-1}
 NPROC_PER_NODE=${NPROC_PER_NODE:-$((TP * PP * EP))}
 
-# Import HF → Megatron
-./scripts/conversion/convert.sh import \
+# Import HF -> Megatron.
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model "$HF_MODEL_ID" \
-    --megatron-path "$MEGATRON_PATH" \
-    --trust-remote-code
+    --megatron-path "$MEGATRON_PATH"
 
-# Export Megatron → HF
-./scripts/conversion/convert.sh export \
+# Export Megatron -> HF.
+uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "$MEGATRON_LOAD_PATH" \
-    --hf-path "$HF_EXPORT_PATH" \
-    --trust-remote-code
+    --hf-path "$HF_EXPORT_PATH"
 
 # Multi-GPU verification of the imported checkpoint and HF export.
 uv run python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" \
@@ -50,5 +46,4 @@ uv run python -m torch.distributed.run --nproc_per_node="$NPROC_PER_NODE" \
     --hf-model-id "$HF_MODEL_ID" \
     --megatron-load-path "$MEGATRON_LOAD_PATH" \
     --output-dir "$ROUNDTRIP_OUTPUT_DIR" \
-    --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP" \
-    --trust-remote-code
+    --tp "$TP" --pp "$PP" --ep "$EP" --etp "$ETP"
