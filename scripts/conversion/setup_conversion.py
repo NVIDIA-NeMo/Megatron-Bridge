@@ -69,8 +69,6 @@ def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
-    if args.cpus_per_task is not None and args.cpus_per_task < 1:
-        raise ValueError("--cpus-per-task must be at least 1.")
     distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
     if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
@@ -156,7 +154,6 @@ def _build_executor(
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=task_count,
-        cpus_per_task=args.cpus_per_task,
         mem=args.mem,
         exclusive=True,
         time=args.time,

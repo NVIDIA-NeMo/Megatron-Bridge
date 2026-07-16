@@ -43,7 +43,6 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         dest="gpus_per_node",
         help="GPUs per node; required for the GPU backend.",
     )
-    execution.add_argument("--cpus-per-task", type=int, help="CPUs allocated to each conversion task.")
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")

@@ -54,7 +54,7 @@ def test_srun_args_are_repeatable():
             "--executor",
             "slurm",
             "--srun-arg=--mpi=pmix",
-            "--srun-arg=--container-writable",
+            "--srun-arg=--cpus-per-task=8",
             "--hf-model",
             "hf/model",
             "--megatron-path",
@@ -62,7 +62,7 @@ def test_srun_args_are_repeatable():
         ]
     )
 
-    assert args.srun_args == ["--mpi=pmix", "--container-writable"]
+    assert args.srun_args == ["--mpi=pmix", "--cpus-per-task=8"]
 
 
 def test_parallelism_aliases_and_export_defaults():

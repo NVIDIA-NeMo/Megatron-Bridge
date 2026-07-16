@@ -117,7 +117,6 @@ CPU mode submits one task and does not request GPUs or GRES:
   --executor slurm \
   --device cpu \
   --nodes 1 \
-  --cpus-per-task 64 \
   --mem 1T \
   --account ACCOUNT \
   --partition CPU_PARTITION \

@@ -338,6 +338,7 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
     assert executor.kwargs["ntasks_per_node"] == 1
+    assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
     assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
@@ -371,7 +372,7 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
         "--container-image",
         "image.sqsh",
         "--srun-arg=--mpi=pmix",
-        "--srun-arg=--container-writable",
+        "--srun-arg=--cpus-per-task=8",
         "--ep",
         "4",
     )
@@ -380,8 +381,9 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
     executor = module._build_executor(args, [], [])
 
     assert executor.kwargs["ntasks_per_node"] == 4
+    assert "cpus_per_task" not in executor.kwargs
     assert executor.kwargs["launcher"] is None
-    assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
+    assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--cpus-per-task=8"]
 
 
 def test_main_waits_and_builds_local_worker_task(monkeypatch):
