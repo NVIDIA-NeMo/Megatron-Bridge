@@ -34,6 +34,7 @@ bridge-tech-details.md
 :hidden:
 
 models/README.md
+models/support-cards/README.md
 models/bailing/index.md
 models/deepseek/index.md
 models/falcon/index.md
