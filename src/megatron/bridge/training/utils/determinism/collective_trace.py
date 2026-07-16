@@ -44,14 +44,14 @@ import contextlib
 import json
 import logging
 import os
-import traceback
+import sys
 from dataclasses import dataclass, field
 from typing import Optional
 
 import torch
 import torch.distributed as dist
 
-from megatron.bridge.training.utils.determinism.signature import signature_to_jsonable, tensor_signature
+from megatron.bridge.training.utils.determinism.signature import finalize_staged, stage_tensor
 
 
 logger = logging.getLogger(__name__)
@@ -63,7 +63,6 @@ class _TraceState:
 
     enabled: bool = False
     active: bool = False
-    force_sync: bool = True
     out_dir: Optional[str] = None
     fh: Optional[object] = None  # open file handle for this rank's stream
     window: Optional[int] = None  # current window id (e.g. training step) for alignment
@@ -91,6 +90,9 @@ class _TraceState:
     # extra (module, attr, original) patches for import-time-captured collective refs
     # (e.g. Megatron mappings.dist_reduce_scatter_func) that bypass the dist.* monkeypatch.
     extra_patches: list = field(default_factory=list)
+    # Deferred (HybridEP-safe) records: each carries GPU scalar reductions instead of host
+    # values. Finalized (.item()'d) and written at the step boundary by flush_pending().
+    pending: list = field(default_factory=list)
 
 
 _S = _TraceState()
@@ -223,76 +225,101 @@ def _group_name(group) -> str:
 
 
 def _caller_tag() -> str:
-    """Cheap call-site tag (first frame outside torch/this file) to aid attribution."""
-    for frame in traceback.extract_stack()[::-1]:
-        fn = frame.filename
-        if "/torch/" in fn or fn.endswith("collective_trace.py") or fn.endswith("op_trace.py"):
-            continue
-        # keep last two path components for brevity
-        short = "/".join(fn.split("/")[-2:])
-        return f"{short}:{frame.lineno}"
+    """Cheap call-site tag (first frame outside torch/this file) to aid attribution.
+
+    Walks frames directly rather than ``traceback.extract_stack()``, which materializes
+    every frame's source line via linecache — wasted work multiplied by ~500K ops/iter at
+    op level, when only ``filename:lineno`` is used.
+    """
+    f = sys._getframe(1)
+    while f is not None:
+        fn = f.f_code.co_filename
+        if "/torch/" not in fn and not fn.endswith(("collective_trace.py", "op_trace.py")):
+            # keep last two path components for brevity
+            return f"{'/'.join(fn.split('/')[-2:])}:{f.f_lineno}"
+        f = f.f_back
     return "?"
 
 
 # ---------------------------------------------------------------------------
-# Record emission
+# Deferred, HybridEP-safe records
+#
+# The old path did tensor.cpu()/.item() + work.wait() INSIDE the iteration to fingerprint
+# each collective. Those host<->device syncs stall a rank while HybridEP's persistent
+# all-gather kernels poll peers -> peers time out ("expecting N got N-2"). Instead we:
+#   1. stage an async GPU reduction — torch.hash_tensor's uint64 result, no .item()
+#      (signature.stage_tensor) — keeping only a tiny GPU scalar, no host copy.
+#   2. stash the record (with those GPU scalars), reserving its alignment key in order.
+#   3. at the STEP boundary (set_active(False)/disable, after the collectives + HybridEP
+#      kernels retire) .item() the scalars and write the JSONL (flush_pending) — safe to sync.
+# Correctness needs the traced collectives to be synchronous, so run with comm overlap OFF
+# (an overlapped async collective's output is not complete at stage time).
 # ---------------------------------------------------------------------------
-def record_event(op_name: str, group_name: str, input_sigs, output_sigs) -> None:
-    """Write one ordered stream record (JSONL) using an already-resolved group name.
+def _staged_sig_list(x):
+    """Staged signature(s) for a tensor or list of tensors (async GPU reductions, no sync).
 
-    Shared by the collective wrappers (group resolved from the process group) and the
-    op-level tracer (``group_name="aten"``). Records interleave in one ordered stream
-    per rank; the diff finds the first divergent ``output`` — which, in execution
-    order, is the root cause (everything before it, including this record's inputs,
-    matched).
+    Runs under ``_suspended`` so that, with op_trace active, the reduction's own tensor ops
+    are NOT recorded as 'aten' events (their dtype/device-dependent count would desync the
+    two jobs' streams — see ``_S.suspend``).
+    """
+    with _suspended():
+        if isinstance(x, (list, tuple)):
+            return [stage_tensor(t) for t in x]
+        return [stage_tensor(x)]
 
-    Args:
-        op_name: Operation name (collective name or ``str(aten_func)``).
-        group_name: Resolved logical group label (e.g. ``"tp"``, ``"dp"``, ``"aten"``).
-        input_sigs: List of input signatures (may be empty for op records).
-        output_sigs: List of output signatures.
+
+def _stash_named(op_name: str, group_name: str, input_staged, output_staged) -> None:
+    """Reserve the alignment key now (execution order) and stash a pending record.
+
+    ``group_name`` is an already-resolved logical label — ``"tp"``/``"dp"``/... for
+    collectives, ``"aten"`` for op records. Both layers stash into the same ordered
+    ``_S.pending`` (shared ``seq_id``), so ops and collectives interleave in one per-rank
+    stream and flush together at the step boundary.
     """
     ckey = (group_name, op_name)
     align_idx = _S.op_counter.get(ckey, 0)
     _S.op_counter[ckey] = align_idx + 1
-
-    record = {
-        "seq_id": _S.seq_id,
-        "window": _S.window,
-        "op": op_name,
-        "group": group_name,
-        # (window, group, op, align_idx) is the cross-process alignment key
-        "align_idx": align_idx,
-        # enclosing layer/module (per-layer attribution); None outside any module scope
-        "scope": _S.scope_stack[-1] if _S.scope_stack else None,
-        "caller": _caller_tag(),
-        "input": [signature_to_jsonable(s) for s in input_sigs],
-        "output": [signature_to_jsonable(s) for s in output_sigs],
-    }
+    _S.pending.append(
+        {
+            "seq_id": _S.seq_id,
+            "window": _S.window,
+            "op": op_name,
+            "group": group_name,
+            # (window, group, op, align_idx) is the cross-process alignment key
+            "align_idx": align_idx,
+            # enclosing layer/module (per-layer attribution); None outside any module scope
+            "scope": _S.scope_stack[-1] if _S.scope_stack else None,
+            "caller": _caller_tag(),
+            "input": input_staged,
+            "output": output_staged,
+        }
+    )
     _S.seq_id += 1
-    if _S.fh is not None:
-        _S.fh.write(json.dumps(record) + "\n")
-        # Flush per record: a determinism debug run may end in a hard crash (NCCL abort),
-        # and a buffered tail would lose exactly the trace the operator launched for.
-        _S.fh.flush()
 
 
-def _emit(op_name: str, group, input_sigs, output_sigs) -> None:
-    """Resolve the process group to a logical name and write a stream record."""
-    record_event(op_name, _group_name(group), input_sigs, output_sigs)
+def _stash(op_name: str, group, input_staged, output_staged) -> None:
+    """Stash a collective record, resolving the process group to a logical name."""
+    _stash_named(op_name, _group_name(group), input_staged, output_staged)
 
 
-def _sig_list(x):
-    """Signature(s) for a tensor or a list of tensors.
+def flush_pending() -> None:
+    """Finalize (``.item()`` the staged GPU scalars) and write all stashed records.
 
-    Sets ``_S.suspend`` so that, when op_trace is also active, the tensor ops this
-    signature computation performs are NOT recorded as 'aten' events (they would
-    desync the two jobs' streams — see ``_S.suspend``).
+    Call at the step boundary (``set_active(False)``/``disable``), where a device->host
+    sync is safe — by then the iteration's collectives and HybridEP kernels have retired.
     """
-    with _suspended():
-        if isinstance(x, (list, tuple)):
-            return [tensor_signature(t) for t in x]
-        return [tensor_signature(x)]
+    if not _S.pending:
+        return
+    for rec in _S.pending:
+        rec["input"] = [finalize_staged(s) for s in rec["input"]]
+        rec["output"] = [finalize_staged(s) for s in rec["output"]]
+        if _S.fh is not None:
+            _S.fh.write(json.dumps(rec) + "\n")
+    if _S.fh is not None:
+        # Flush once per window: a debug run may end in a hard crash (NCCL abort); a
+        # buffered tail would lose exactly the window the operator launched for.
+        _S.fh.flush()
+    _S.pending.clear()
 
 
 @contextlib.contextmanager
@@ -302,7 +329,7 @@ def _suspended():
     Used around the collective wrappers' internal work — the input clone, the actual
     ``orig()`` collective (which dispatches as a C10d ATen op and, being async, would be
     fingerprinted mid-flight → garbage), and the signature computation. None of these
-    are model ops; the collective is represented by its own record from ``_emit``.
+    are model ops; the collective is represented by its own record from ``_stash``.
     """
     prev = _S.suspend
     _S.suspend = True
@@ -313,22 +340,8 @@ def _suspended():
 
 
 # ---------------------------------------------------------------------------
-# Wrappers — capture input (clone in-place sources first), call real, capture output
+# Wrappers — stage async GPU reductions (no mid-iteration sync), stash for drain
 # ---------------------------------------------------------------------------
-def _maybe_sync(work):
-    """For debug runs, wait on async work so the captured output is complete.
-
-    Preserves *values* (what determinism cares about) at the cost of overlap timing.
-    The returned work is handed back to the caller; a second .wait() is a no-op.
-    """
-    if _S.force_sync and work is not None and hasattr(work, "wait"):
-        # Let wait() exceptions propagate: a faulting collective during the debug
-        # window is exactly what the operator wants to see — swallowing it would
-        # record a garbage output buffer and mask the failure.
-        work.wait()
-    return work
-
-
 def _extract_group(args, kwargs):
     """Find the process group whether passed by keyword or positionally.
 
@@ -347,22 +360,26 @@ def _extract_group(args, kwargs):
 
 def _wrap_all_reduce(orig):
     def wrapper(tensor, *args, **kwargs):
-        if not (_S.enabled and _S.active):
+        # Skip when suspended: a deprecated alias (e.g. _reduce_scatter_base) delegates to a
+        # public name we also patched; running orig() under _suspended (below) makes that
+        # nested wrapper hit this guard and NOT re-record — one physical collective, one record.
+        if not (_S.enabled and _S.active) or _S.suspend:
             return orig(tensor, *args, **kwargs)
         group = _extract_group(args, kwargs)
+        # all_reduce is IN-PLACE: the collective overwrites ``tensor`` (possibly on the NCCL
+        # stream), which would race a reduction reading the same buffer. Clone the input
+        # first (GPU-async, no host sync) and stage the clone. Guard the clone: if it OOMs,
+        # skip the input sig but STILL issue the collective — never hang peers. Clone under
+        # _suspended so op_trace (if active) doesn't fingerprint this tracer-internal clone.
         with _suspended():
-            # all_reduce is in-place — clone the input for its signature. Guard the clone:
-            # it is an extra full-size allocation present only in the debug window, and on a
-            # memory-tight run it could OOM. If it does, skip the input signature but STILL
-            # issue the collective — otherwise this rank would never all_reduce while peers
-            # do, hanging the job (the debug tool must not cause the hang it diagnoses).
             try:
-                in_sig = _sig_list(tensor.clone())
+                cloned = tensor.clone()
             except torch.cuda.OutOfMemoryError:
-                in_sig = [None]
+                cloned = None
+        in_sig = _staged_sig_list(cloned) if cloned is not None else [None]
+        with _suspended():
             work = orig(tensor, *args, **kwargs)
-            _maybe_sync(work)
-            _emit("all_reduce", group, in_sig, _sig_list(tensor))
+        _stash("all_reduce", group, in_sig, _staged_sig_list(tensor))
         return work
 
     return wrapper
@@ -373,14 +390,17 @@ def _wrap_out_in(op_name):
 
     def factory(orig):
         def wrapper(output, input, *args, **kwargs):
-            if not (_S.enabled and _S.active):
+            # Skip when suspended so a deprecated alias delegating to a public name we also
+            # patched (e.g. _reduce_scatter_base -> reduce_scatter_tensor) does not double-record.
+            if not (_S.enabled and _S.active) or _S.suspend:
                 return orig(output, input, *args, **kwargs)
             group = _extract_group(args, kwargs)
+            in_sig = _staged_sig_list(input)
             with _suspended():
-                in_sig = _sig_list(input)
                 work = orig(output, input, *args, **kwargs)
-                _maybe_sync(work)
-                _emit(op_name, group, in_sig, _sig_list(output))
+            # The output reduction is enqueued after the (synchronous) collective, so it
+            # reads the completed result. Requires comm overlap OFF (see the deferred note).
+            _stash(op_name, group, in_sig, _staged_sig_list(output))
             return work
 
         return wrapper
@@ -390,14 +410,13 @@ def _wrap_out_in(op_name):
 
 def _wrap_all_to_all(orig):
     def wrapper(output_tensor_list, input_tensor_list, *args, **kwargs):
-        if not (_S.enabled and _S.active):
+        if not (_S.enabled and _S.active) or _S.suspend:
             return orig(output_tensor_list, input_tensor_list, *args, **kwargs)
         group = _extract_group(args, kwargs)
+        in_sig = _staged_sig_list(input_tensor_list)
         with _suspended():
-            in_sig = _sig_list(input_tensor_list)
             work = orig(output_tensor_list, input_tensor_list, *args, **kwargs)
-            _maybe_sync(work)
-            _emit("all_to_all", group, in_sig, _sig_list(output_tensor_list))
+        _stash("all_to_all", group, in_sig, _staged_sig_list(output_tensor_list))
         return work
 
     return wrapper
@@ -418,12 +437,15 @@ _TARGETS = [
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
-def enable(out_dir: str, force_sync: bool = True) -> None:
+def enable(out_dir: str) -> None:
     """Install collective wrappers and open this rank's stream file.
+
+    Signatures are staged as async GPU reductions and drained (``.item()`` + written) at the
+    step boundary — no mid-iteration host sync — so this is HybridEP-safe. Correctness
+    requires the traced collectives to be synchronous: run with comm overlap OFF.
 
     Args:
         out_dir: Directory for per-rank ``.fp`` JSONL streams (shared FS for multi-node).
-        force_sync: Wait on async collectives so captured outputs are complete.
     """
     if _S.enabled:
         logger.warning("collective_trace already enabled; ignoring re-enable")
@@ -451,7 +473,6 @@ def enable(out_dir: str, force_sync: bool = True) -> None:
 
     _S.enabled = True
     _S.active = False
-    _S.force_sync = force_sync
     _S.out_dir = out_dir
     _S.fh = fh
     _S.seq_id = 0
@@ -459,6 +480,7 @@ def enable(out_dir: str, force_sync: bool = True) -> None:
     _S.group_names.clear()
     _S.fallback_names.clear()
     _S.fallback_size_counter.clear()
+    _S.pending.clear()
     logger.info(
         "collective_trace enabled: wrapped %d dist collectives + %d captured refs → %s",
         len(_S.originals),
@@ -505,6 +527,10 @@ def set_active(active: bool, window: Optional[int] = None) -> None:
             tracing multiple iterations so iter-N's ``all_reduce#0`` does not
             collide with iter-(N+1)'s in the alignment key.
     """
+    if not active:
+        # Drain the window we just finished: the iteration's collectives and HybridEP
+        # kernels have retired, so .item()-ing the staged scalars now is safe (no hang).
+        flush_pending()
     _S.active = active
     _S.window = window
     if active:
@@ -520,6 +546,8 @@ def disable() -> None:
     """Restore original collectives and flush/close the stream."""
     if not _S.enabled:
         return
+    # Drain any records still staged (e.g. capture ended without a trailing set_active(False)).
+    flush_pending()
     for attr, orig in _S.originals.items():
         setattr(dist, attr, orig)
     _S.originals.clear()

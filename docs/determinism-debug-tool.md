@@ -41,15 +41,16 @@ layers stack from cheap/coarse to detailed:
 
 Supporting pieces:
 
-- **`signature.py` — the fingerprint.** A 128-bit digest of a tensor's raw
-  bytes, computed **on the tensor's own device** (the bytes are reinterpreted as
-  `int64` lanes and reduced with two integer reductions mixing value and
-  position). Only the two 64-bit results cross the PCIe bus — never the whole
-  tensor. Because integer addition is exact and order-independent, the digest is
-  **identical across processes, GPUs, and topologies** — the property a
-  cross-job key needs. It is bit-exact (distinguishes `-0.0`/`+0.0` and NaN
-  payloads) yet cheap enough (~360× faster than a full-tensor device→host copy +
-  CPU hash) to leave on for every collective at scale.
+- **`signature.py` — the fingerprint.** A 64-bit digest from the PyTorch-native
+  `torch.hash_tensor`, computed **on the tensor's own device** and returned as a
+  `uint64` *tensor* — so the tracer **stages** it (keeps the GPU scalar) and defers
+  the single `.item()` to the step boundary; nothing but an 8-byte scalar crosses
+  the PCIe bus, and never mid-iteration. `hash_tensor` upcasts each element to its
+  64-bit equivalent and **xor-reduces**, so the digest is **order-independent →
+  identical across processes, GPUs, and topologies** — the property a cross-job key
+  needs — and sensitive to single-element (1-ULP) changes. (Trade-off: xor reduction
+  is a strong *screen* for value divergence, not permutation-sensitive or
+  collision-proof; `shape`/`dtype` are compared alongside the digest.)
 - **Logical-coordinate alignment.** Streams are keyed by the *minimal unique
   GPU coordinate* `(pp, tp, cp, dp)`, not physical rank — so the same logical
   GPU lines up between two jobs even when it lands on different nodes. Records

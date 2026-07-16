@@ -14,26 +14,27 @@
 
 """Op-level tracer for cross-process determinism debugging (prototype, layer 2).
 
-This is **layer 2** of the design in
-``scripts/performance/perf_leaderboard/design_determinism_debug_tool.md``: a
-``TorchDispatchMode`` that fingerprints the *output* of every ATen op and writes it
-to the same ordered per-rank stream that ``collective_trace`` writes to. Together they
-form one totally-ordered stream of (ops + collectives) per logical rank.
+This is **layer 2** of the design: a ``TorchDispatchMode`` that fingerprints the
+*output* (and input) of every ATen op and writes it to the same ordered per-rank stream
+that ``collective_trace`` writes to. Together they form one totally-ordered stream of
+(ops + collectives) per logical rank.
 
 Why op-level matters: non-determinism that originates in a *compute* kernel
-(fused cross-entropy backward, ``scatter_add`` in embedding-grad, flash-attn backward)
-is invisible to ``nn.Module`` hooks and to the collective tracer — the collective
-tracer only sees it *downstream*, when the bad gradient reaches a collective. The op
-tracer names the exact ``aten`` op.
+(fused cross-entropy backward, ``scatter_add`` in embedding-grad, a Mamba/attention
+Triton kernel) is invisible to ``nn.Module`` hooks and to the collective tracer — the
+collective tracer only sees it *downstream*, when the bad gradient reaches a collective.
+The op tracer names the exact ``aten`` op.
 
 Root-cause property: in a single totally-ordered stream, **the first op whose output
-diverges is the root cause** — everything earlier matched, so this op's inputs
-matched and the op itself introduced the divergence. Output-only fingerprints are
-therefore sufficient (no need to fingerprint inputs).
+diverges while its inputs matched is the root cause** — everything earlier matched, so
+this op introduced the divergence. Capturing inputs *and* outputs lets the diff make that
+distinction (inputs differ → look upstream; inputs match / output differs → this op).
 
-Cost: fingerprinting every ATen op is expensive (CPU copy + crc per op), so this is a
-separate opt-in layer (``DET_TRACE_OPS``). Use it scoped to the suspect iteration after
-the cheap collective trace has narrowed the region.
+Cost / memory: the naive approach did a full ``.cpu()`` + hash per op — tens of thousands
+of host copies per iteration → host-RAM OOM and serialization. This layer uses the SAME
+deferred, HybridEP-safe signature as ``collective_trace``: an async GPU reduction staged
+per op and drained (``.item()``) at the step boundary. Nothing leaves the GPU except tiny
+scalars, so there is no host copy and no mid-iteration sync. Opt-in (``DET_TRACE_OPS``).
 
 Usage::
 
@@ -42,21 +43,25 @@ Usage::
     op_trace.enable()        # start fingerprinting ATen ops into the same stream
     ct.set_active(True, window=step)
     ...                      # forward/backward
-    ct.set_active(False)
+    ct.set_active(False)     # drains the window (op + collective records)
     op_trace.disable()
     ct.disable()
 
-Limitations (known; see design_determinism_debug_tool.md §10):
-- **Incompatible with CUDA-graph capture.** This mode runs Python per ATen op, which breaks
-  ``torch.cuda.graph`` / TE graphed-callables. Do not set ``DET_TRACE_OPS`` on a run with CUDA
-  graphs enabled (capture will error). The collective-only layer is graph-safe.
-- **Do not combine with ``determinism_debug_enabled`` (the Class-A replay path).** That path
-  reruns the step N times without re-arming capture, so per-replay records would accumulate
-  under one window. Use one debug mode at a time.
-- ``collective_trace.enable(force_sync=True)`` (the default) is required for correctness; with
-  ``force_sync=False`` async collective outputs are fingerprinted before completion.
-- ``"empty"``/``"c10d"`` are substring skips; they reliably catch the empty-family and c10d
-  collective ops in practice but are not a formal op-class check.
+Limitations:
+- **Compares only runs with the SAME op stream.** ``align_idx`` counts every recorded ATen
+  op, so the two jobs must dispatch the same ops in the same order. Same code + same
+  dtype/backend (the intended A/A comparison, incl. cross-topology at identical config)
+  gives that. Comparing runs whose op *decompositions* differ — fp8 vs bf16, or a fused
+  kernel available on one path and decomposed to primitives on the other — shifts
+  ``align_idx`` from that point and can flag a spurious root cause. ``diff_streams`` already
+  refuses mismatched parallel configs; keep dtype/backend identical too.
+- **Incompatible with CUDA-graph capture.** This mode runs Python per ATen op, which
+  breaks ``torch.cuda.graph`` / TE graphed-callables. Do not set ``DET_TRACE_OPS`` on a
+  run with CUDA graphs enabled. The collective-only layer is graph-safe.
+- Op records are staged as async GPU reductions and finalized at the step boundary, so
+  they are only valid once ``collective_trace.set_active(False)`` (or ``disable``) drains
+  the window — same as the collective layer.
+- ``"empty"``/``"c10d"`` are substring skips (empty-family + c10d collective ops).
 """
 
 import logging
@@ -66,73 +71,118 @@ import torch
 from torch.utils._python_dispatch import TorchDispatchMode
 
 from megatron.bridge.training.utils.determinism import collective_trace as ct
-from megatron.bridge.training.utils.determinism.signature import tensor_signature
+from megatron.bridge.training.utils.determinism.signature import stage_tensor
 
 
 logger = logging.getLogger(__name__)
 
 
-def _fingerprint_outputs(out: object) -> list:
-    """Signatures of ALL non-empty tensor outputs of an op (full comparison).
+def _is_inplace(func_name: str) -> bool:
+    """True for ATen ops that MUTATE a buffer — in-place (``aten.add_.Tensor``) or the
+    ``.out`` variants (``aten.add.out``).
+
+    Such ops write a buffer autograd may have saved for backward; their output must be
+    cloned before fingerprinting or the reduction aliases the just-mutated storage and
+    trips the saved-variable version check. In-place ops have a base name ending in ``_``;
+    out-variants have the overload ``out`` (the base doesn't end in ``_``, so check both).
+    """
+    # Normalize both renderings: 'aten.add_.Tensor' and 'aten::add_.Tensor'.
+    parts = func_name.replace("::", ".").split(".")
+    base = parts[1] if len(parts) >= 2 else parts[0]
+    overload = parts[-1] if len(parts) >= 3 else ""
+    return base.endswith("_") or overload == "out"
+
+
+def _collect(obj: object, sigs: list, clone: bool = False) -> None:
+    """Append a staged GPU-reduction signature for every non-empty tensor in ``obj``.
+
+    ``clone=True`` (used for in-place op outputs) copies the tensor first so the
+    fingerprint never aliases an autograd-saved buffer's storage/version counter.
+    """
+    if isinstance(obj, torch.Tensor):
+        if obj.numel() > 0:
+            t = obj.detach()
+            if clone:
+                try:
+                    t = t.clone()
+                except Exception:
+                    pass
+            sigs.append(stage_tensor(t))
+    elif isinstance(obj, (list, tuple)):
+        for x in obj:
+            _collect(x, sigs, clone)
+
+
+def _fingerprint_outputs(out: object, clone: bool = False) -> list:
+    """Staged signatures of ALL non-empty tensor outputs of an op.
 
     Every dtype is fingerprinted, not just float: integer/bool divergences (routing
     indices, masks, argmax results, counts) are real non-determinism and must not be
-    dropped. Empty tensors are skipped (no content to compare). This is heavier but is
-    a complete comparison.
+    dropped. Empty tensors are skipped (no content to compare).
     """
     sigs: list = []
+    _collect(out, sigs, clone=clone)
+    return sigs
 
-    def add(x: object) -> None:
-        if isinstance(x, torch.Tensor) and x.numel() > 0:
-            sigs.append(tensor_signature(x))
 
-    if isinstance(out, torch.Tensor):
-        add(out)
-    elif isinstance(out, (list, tuple)):
-        for x in out:
-            add(x)
+def _fingerprint_inputs(args: tuple, kwargs: dict) -> list:
+    """Staged signatures of the op's INPUT tensors (positional + keyword).
+
+    Together with the output sigs, this lets the diff classify each op:
+      inputs match, output differs -> THIS op introduced the non-determinism (root cause);
+      inputs differ               -> the divergence arrived from upstream (look earlier).
+    Read before the op runs (see ``__torch_dispatch__``) so in-place ops' inputs are the
+    pre-mutation values.
+    """
+    sigs: list = []
+    _collect(args, sigs)
+    for v in kwargs.values():
+        _collect(v, sigs)
     return sigs
 
 
 class OpTraceMode(TorchDispatchMode):
-    """Fingerprint every ATen op's output into the shared collective_trace stream.
+    """Fingerprint every ATen op's input+output into the shared collective_trace stream.
 
-    Honors ``collective_trace`` activation state (``_S.enabled``/``_S.active``) so the
-    same ``set_active(window=...)`` toggles both layers. Signature computation runs
-    while this mode is popped off the dispatch stack (standard ``TorchDispatchMode``
-    behavior), so it does not recurse.
+    Honors ``collective_trace`` activation state (``_S.enabled``/``_S.active``) so the same
+    ``set_active(window=...)`` toggles both layers. Signature computation runs while this
+    mode is popped off the dispatch stack (standard ``TorchDispatchMode`` behavior), so it
+    does not recurse, and under ``no_grad`` so it never extends the autograd graph.
     """
 
     def __torch_dispatch__(self, func, types, args=(), kwargs=None):
         kwargs = kwargs or {}
+        # Record every op EXCEPT: while suspended (tracer-internal ops), "empty" family
+        # (uninitialized memory -> spurious diff), and "c10d" (the collective layer's job).
+        # IN-PLACE ops ARE recorded (they can be the actual non-determinism seed); their
+        # output is cloned and the fingerprint runs under no_grad so it never touches an
+        # autograd-saved buffer's version counter.
+        S = ct._S
+        record = S.enabled and S.active and not S.suspend
+        name = str(func) if record else ""
+        record = record and "empty" not in name and "c10d" not in name
+        inplace = record and _is_inplace(name)
+
+        in_sigs = []
+        if record:
+            # Fingerprint INPUTS *before* the op — required for in-place ops, whose args are
+            # the buffers they mutate; reading them afterwards would capture the post-mutation
+            # value and hide whether the inputs actually matched.
+            with ct._suspended(), torch.no_grad():
+                in_sigs = _fingerprint_inputs(args, kwargs)
+
         out = func(*args, **kwargs)
-        # Skip when suspended: collective_trace sets _S.suspend while computing its own
-        # signatures, so those tracer-internal ops are not recorded as 'aten' events
-        # (recording them would desync the two jobs' streams — see _S.suspend).
-        # Also skip the empty-family ops: torch.empty/empty_like/... return UNINITIALIZED
-        # memory whose contents differ run-to-run by definition (and use_deterministic_
-        # algorithms fills it, so they'd diverge only on the nondet side) — fingerprinting
-        # them yields a spurious "root cause" that is just uninitialized scratch, not the
-        # first op that computes a divergent value.
-        if ct._S.enabled and ct._S.active and not ct._S.suspend:
-            name = str(func)
-            # Skip two op classes that produce spurious divergences at the op level:
-            #   - "empty": uninitialized memory (contents differ run-to-run by definition).
-            #   - "c10d": collective ATen ops. These are the collective-tracer's job — it
-            #     fingerprints them AFTER waiting (_maybe_sync). op_trace sees the async op
-            #     return immediately, so it would fingerprint an in-flight/garbage buffer.
-            #     They also reach here via Megatron paths that bypass the dist.* wrappers
-            #     (so _S.suspend is not set), which is why the wrapper-side guard alone is
-            #     insufficient. Collectives belong to the collective layer, not the op layer.
-            if "empty" not in name and "c10d" not in name:
-                prev = ct._S.suspend
-                ct._S.suspend = True
-                try:
-                    sigs = _fingerprint_outputs(out)
-                    if sigs:
-                        ct.record_event(name, "aten", [], sigs)
-                finally:
-                    ct._S.suspend = prev
+
+        if record:
+            with ct._suspended(), torch.no_grad():
+                # Clone in-place outputs (the mutated buffer) so the reduction never aliases
+                # an autograd-saved tensor. no_grad + detach keeps it off the graph.
+                out_sigs = _fingerprint_outputs(out, clone=inplace)
+                if out_sigs:
+                    # Deferred: stash in+out staged sigs into the shared pending stream;
+                    # the diff classifies the first output divergence (inputs match -> this
+                    # op is the root cause; inputs differ -> upstream, look earlier).
+                    ct._stash_named(name, "aten", in_sigs, out_sigs)
         return out
 
 
@@ -151,7 +201,7 @@ def enable() -> None:
         return
     _active_mode = OpTraceMode()
     _active_mode.__enter__()
-    logger.info("op_trace enabled: fingerprinting ATen op outputs into the shared stream")
+    logger.info("op_trace enabled: fingerprinting ATen op inputs+outputs into the shared stream")
 
 
 def disable() -> None:
