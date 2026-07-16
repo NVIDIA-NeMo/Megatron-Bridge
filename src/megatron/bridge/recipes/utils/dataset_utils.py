@@ -133,7 +133,11 @@ def default_squad_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="squad"),
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
         seq_length=seq_length,
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
@@ -164,7 +168,11 @@ def default_openmathinstruct2_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
         seq_length=seq_length,
         enable_offline_packing=enable_offline_packing,
         offline_packing_specs=offline_packing_specs,
@@ -194,7 +202,11 @@ def default_gsm8k_config(
 
     return _text_hf_dataset_config(
         source=HFDatasetSourceConfig(dataset_name="gsm8k"),
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
         test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
         do_validation=False,
         do_test=True,
