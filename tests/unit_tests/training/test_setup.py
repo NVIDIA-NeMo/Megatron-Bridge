@@ -22,6 +22,7 @@ from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.checkpointing import load_checkpoint
 from megatron.bridge.training.setup import (
     _bind_dataset_provider_context,
     _build_distributed_model,
@@ -45,10 +46,24 @@ def _make_gpt_model_config(**kwargs):
     return GPTModelConfig(**defaults)
 
 
-def _make_checkpoint_source_config(*, load, pretrained_checkpoint=None, required=True):
+def _make_checkpoint_source_config(
+    *,
+    load,
+    pretrained_checkpoint=None,
+    required=True,
+    non_persistent_ckpt_type=None,
+    non_persistent_global_ckpt_dir=None,
+    peft=None,
+):
     return SimpleNamespace(
-        checkpoint=SimpleNamespace(load=load, pretrained_checkpoint=pretrained_checkpoint),
-        peft=None,
+        checkpoint=SimpleNamespace(
+            load=load,
+            pretrained_checkpoint=pretrained_checkpoint,
+            non_persistent_ckpt_type=non_persistent_ckpt_type,
+            non_persistent_global_ckpt_dir=non_persistent_global_ckpt_dir,
+            finetune=False,
+        ),
+        peft=peft,
         _checkpoint_load_required=required,
     )
 
@@ -93,6 +108,41 @@ class TestShouldLoadCheckpoint:
         checkpoint_manager = SimpleNamespace(checkpointing_context={"local_checkpoint_manager": local_manager})
 
         assert _should_load_checkpoint(cfg, checkpoint_manager) is True
+
+    def test_global_non_persistent_checkpoint_reaches_checkpoint_loader(self, tmp_path):
+        load_dir = tmp_path / "checkpoints"
+        non_persistent_dir = load_dir / "non_persistent"
+        non_persistent_dir.mkdir(parents=True)
+        (non_persistent_dir / "latest_train_state.pt").touch()
+        cfg = _make_checkpoint_source_config(
+            load=str(load_dir),
+            required=False,
+            non_persistent_ckpt_type="global",
+        )
+        checkpoint_manager = SimpleNamespace(checkpointing_context={})
+
+        assert _should_load_checkpoint(cfg, checkpoint_manager) is True
+
+    @patch("megatron.bridge.training.checkpointing._load_checkpoint_from_path", return_value=(12, 0))
+    def test_peft_resume_prefers_global_non_persistent_checkpoint(self, mock_load, tmp_path):
+        load_dir = tmp_path / "checkpoints"
+        non_persistent_dir = load_dir / "non_persistent"
+        non_persistent_dir.mkdir(parents=True)
+        (non_persistent_dir / "latest_train_state.pt").touch()
+        pretrained_dir = tmp_path / "pretrained"
+        pretrained_dir.mkdir()
+        (pretrained_dir / "latest_train_state.pt").touch()
+        cfg = _make_checkpoint_source_config(
+            load=str(load_dir),
+            pretrained_checkpoint=str(pretrained_dir),
+            non_persistent_ckpt_type="global",
+            peft=object(),
+        )
+
+        load_checkpoint(SimpleNamespace(cfg=cfg), [], None, None)
+
+        assert mock_load.call_args.args[0] == str(load_dir)
+        assert cfg.checkpoint.finetune is False
 
     @patch("megatron.bridge.training.setup.checkpoint_exists", return_value=False)
     def test_hf_load_reaches_checkpoint_loader_for_targeted_error(self, _mock_exists):
