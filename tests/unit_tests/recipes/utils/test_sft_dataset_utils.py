@@ -21,6 +21,7 @@ from megatron.bridge.data.builders import (
     GPTSFTDatasetConfig,
     PromptCompletionSFTPreprocessingConfig,
 )
+from megatron.bridge.data.sft_processing import normalize_sft_example
 from megatron.bridge.recipes.utils.dataset_utils import (
     default_gsm8k_config,
     default_openmathinstruct2_config,
@@ -182,6 +183,8 @@ class TestDefaultSquadConfig:
         assert cfg.do_validation is True
         assert cfg.do_test is False
         assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
+        assert cfg.preprocessing.prompt_column == "input"
+        assert cfg.preprocessing.completion_column == "output"
         assert cfg.preprocessing.separator == " "
 
     def test_enable_offline_packing_creates_packing_specs(self):
@@ -204,8 +207,15 @@ class TestConfigDifferences:
         )
         for cfg in configs:
             assert isinstance(cfg.preprocessing, PromptCompletionSFTPreprocessingConfig)
+            assert cfg.preprocessing.prompt_column == "input"
+            assert cfg.preprocessing.completion_column == "output"
             assert cfg.preprocessing.separator == " "
             assert cfg.preprocessing.loss_mode == "completion"
+
+            legacy = normalize_sft_example({"input": "question", "output": "answer", "id": 7}, cfg.preprocessing)
+            canonical = normalize_sft_example({"prompt": "question", "completion": "answer"}, cfg.preprocessing)
+            assert legacy == {"input": "question", "output": "answer", "id": 7}
+            assert canonical == {"input": "question", "output": "answer"}
 
     def test_different_default_seq_lengths(self):
         omi2 = default_openmathinstruct2_config()
