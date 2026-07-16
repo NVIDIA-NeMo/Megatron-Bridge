@@ -15,7 +15,9 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 import torch
+from megatron.core.activations import squared_relu
 from torch import nn
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
@@ -137,9 +139,54 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.sound_projection_hidden_size == 256
     assert provider.sound_config["num_mel_bins"] == 128
     assert provider.dynamic_resolution is True
+    assert provider.radio_interpolate_only_cpe is False
     assert provider.separate_video_embedder is True
     assert provider.temporal_patch_dim == 2
     assert provider.temporal_ckpt_compat is True
+
+
+def test_nemotron_omni_provider_rejects_static_resolution():
+    provider = NemotronOmniModelProvider()
+    provider.dynamic_resolution = False
+
+    with pytest.raises(ValueError, match="only supports dynamic_resolution=True"):
+        provider.finalize()
+
+
+@pytest.mark.parametrize("image_token_index", [0, -1])
+def test_nemotron_omni_provider_rejects_nonpositive_image_token_index(image_token_index):
+    provider = NemotronOmniModelProvider(image_token_index=image_token_index)
+
+    with pytest.raises(ValueError, match="requires a positive image_token_index"):
+        provider.finalize()
+
+
+def test_nemotron_omni_provider_rejects_nonpositive_sound_token_index():
+    provider = NemotronOmniModelProvider(image_token_index=18, has_sound=True, sound_context_token_id=0)
+
+    with pytest.raises(ValueError, match="requires a positive sound_context_token_id"):
+        provider.finalize()
+
+
+def test_nemotron_omni_provider_requires_sound_config_when_enabled():
+    provider = NemotronOmniModelProvider(image_token_index=18, has_sound=True, sound_context_token_id=27)
+
+    with pytest.raises(ValueError, match="requires sound_config"):
+        provider.finalize()
+
+
+def test_nemotron_omni_vision_projection_uses_squared_relu():
+    provider = NemotronOmniModelProvider()
+
+    vision_projection_config = provider._build_vision_projection_config(provider)
+    values = torch.tensor([-2.0, 0.0, 3.0])
+
+    assert vision_projection_config.activation_func is squared_relu
+    assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
+
+
+def test_nemotron_omni_direct_provider_preserves_legacy_cpe_default():
+    assert NemotronOmniModelProvider().radio_interpolate_only_cpe is True
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():
@@ -158,6 +205,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
         NemotronOmniTaskBatch,
         NemotronOmniTaskEncoder,
     )
+    from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
     tokens = torch.tensor([[1, 2, 3]])
     labels = torch.tensor([[2, 3, -100]])
@@ -174,7 +222,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
         loss_mask=loss_mask,
         attention_mask=None,
         position_ids=position_ids,
-        visual_tensors={"pixel_values": pixel_values},
+        visual_inputs=GenericVisualInputs(pixel_values=pixel_values),
         cu_seqlens_q=cu_seqlens_q,
         cu_seqlens_kv=cu_seqlens_q,
         max_seqlen_q=max_seqlen_q,
@@ -183,6 +231,7 @@ def test_nemotron_omni_encode_batch_preserves_packed_sequence_metadata():
 
     raw = NemotronOmniTaskEncoder.__new__(NemotronOmniTaskEncoder).encode_batch(batch)
 
+    assert raw["input_ids"] is tokens
     assert raw["tokens"] is tokens
     assert raw["cu_seqlens_q"] is cu_seqlens_q
     assert raw["cu_seqlens_kv"] is cu_seqlens_q
@@ -208,3 +257,24 @@ def test_nemotron_omni_freeze_sound_modules_without_stdout(monkeypatch, capsys):
     assert all(not param.requires_grad for param in model.llava_model.sound_model.parameters())
     assert all(not param.requires_grad for param in model.llava_model.sound_projection.parameters())
     assert capsys.readouterr().out == ""
+
+
+def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    model.llava_model = SimpleNamespace(
+        language_model=nn.Linear(4, 4),
+        vision_model=None,
+        vision_projection=None,
+        sound_model=None,
+        sound_projection=None,
+    )
+
+    model.freeze(
+        freeze_language_model=True,
+        freeze_vision_model=True,
+        freeze_vision_projection=True,
+        freeze_sound_model=True,
+        freeze_sound_projection=True,
+    )
+
+    assert all(not param.requires_grad for param in model.llava_model.language_model.parameters())
