@@ -25,6 +25,7 @@ from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
+from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
 from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
@@ -46,7 +47,6 @@ from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
 logger = logging.getLogger(__name__)
-_NEMOTRON_OMNI_PROCESSOR_TYPE = "NemotronH_Nano_Omni_Reasoning_V3Processor"
 
 CollateFunction = Callable[..., dict[str, torch.Tensor]]
 
@@ -179,9 +179,12 @@ def select_direct_hf_sft_collate(
         return collate_impl
     preprocessing = preprocessing or ChatSFTPreprocessingConfig()
     validate_sft_preprocessing_config(preprocessing)
-    if type(processor).__name__ == _NEMOTRON_OMNI_PROCESSOR_TYPE:
+    processor_type = type(processor).__name__
+    if model_collate_required_for_all_examples(processor_type):
         if not isinstance(preprocessing, ChatSFTPreprocessingConfig):
-            raise ValueError("Nemotron Omni requires chat preprocessing through its model-owned collator.")
+            raise ValueError(
+                f"Processor type '{processor_type}' requires chat preprocessing through its model-owned collator."
+            )
         return None
     if isinstance(preprocessing, ChatSFTPreprocessingConfig):
         if all(is_text_only_chat_example(example) for example in examples):

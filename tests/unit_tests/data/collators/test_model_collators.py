@@ -25,7 +25,7 @@ import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_col
 import megatron.bridge.models.nemotron_vl.data.collate_fn as nemotron_vl_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
-from megatron.bridge.data.collators.registry import resolve_model_collate
+from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples, resolve_model_collate
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -48,6 +48,12 @@ collate = SimpleNamespace(
 def test_model_collate_registry_rejects_unknown_processor():
     with pytest.raises(ValueError, match="No VLM collate function"):
         resolve_model_collate("UnknownProcessor")
+
+
+def test_only_nemotron_omni_requires_model_collate_for_all_examples():
+    assert model_collate_required_for_all_examples("NemotronH_Nano_Omni_Reasoning_V3Processor")
+    assert not model_collate_required_for_all_examples("Qwen3VLProcessor")
+    assert not model_collate_required_for_all_examples("UnknownProcessor")
 
 
 def test_vlm_collate_keeps_qwen_vl_registration():

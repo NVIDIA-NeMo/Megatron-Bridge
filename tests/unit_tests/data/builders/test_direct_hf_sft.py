@@ -120,6 +120,13 @@ def test_builder_keeps_text_shaped_nemotron_omni_data_on_model_collator():
     assert select_direct_hf_sft_collate([row], processor=processor_type()) is None
 
 
+def test_builder_keeps_other_registered_processors_on_generic_text_collator():
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor_type = type("Qwen3VLProcessor", (_Tokenizer,), {})
+
+    assert select_direct_hf_sft_collate([row], processor=processor_type()) is not None
+
+
 def test_builder_rejects_text_prompt_completion_for_nemotron_omni():
     row = {"question": "question", "answer": "answer"}
     processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
