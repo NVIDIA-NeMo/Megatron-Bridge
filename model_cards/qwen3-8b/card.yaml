@@ -8,7 +8,7 @@
 title: qwen3_8b
 model:
   hf_id: Qwen/Qwen3-8B
-  hf_revision: b968826d9c46dd6066d109eabc6255188de91218
+  hf_revision: b968826d9c46dd6066d109eabc6255188de91218  # pragma: allowlist secret
   architecture: Qwen3ForCausalLM
 release: "26.08"
 precision: bf16
