@@ -59,8 +59,8 @@ machines, which are used in different areas such...
 
 [slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to submit
 HF → Megatron → HF validation and verify weight fidelity. Run it from a Slurm
-login node; it waits for the job by default and uses `--skip-save` to avoid
-writing another full checkpoint.
+login node; it waits for the job by default. Round-trip validation runs entirely
+in memory and does not write another full checkpoint.
 
 ```bash
 export CONTAINER_IMAGE=/path/to/container.sqsh

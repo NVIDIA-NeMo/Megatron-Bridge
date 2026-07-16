@@ -97,19 +97,15 @@ available for direct `torch.distributed.run` usage.
   --device gpu \
   --gpus-per-node 8 \
   --hf-model Qwen/Qwen3-30B-A3B \
-  --megatron-path /workspace/models/qwen3-30b-a3b/iter_0000000 \
   --tp 1 --pp 1 --ep 8 --etp 1 \
-  --trust-remote-code \
-  --skip-save
+  --trust-remote-code
 ```
 
-`--hf-model` and `--hf-model-id` are aliases, as are `--megatron-path` and
-`--megatron-load-path`. Omit the Megatron load path to validate a direct
-in-memory conversion from the Hugging Face model. Omit `--skip-save` to write
-the round-tripped Hugging Face model, optionally under `--output-dir`, and use
-`--megatron-save-path` to also save a Megatron checkpoint. Existing non-empty
-destinations are rejected unless `--overwrite` is set, and output paths may not
-overlap either input or each other. For long multi-node conversions, set
+`--hf-model` and `--hf-model-id` are aliases. Round-trip validation converts the
+Hugging Face weights into a distributed Megatron model, exports them back in
+memory, and compares them with the original weights. It does not read or write
+Megatron checkpoints or write a Hugging Face output; use the `import` and
+`export` commands for persistent conversion. For long multi-node validations, set
 `--distributed-timeout-minutes` to raise the NCCL process-group timeout.
 
 ## CPU conversion on Slurm

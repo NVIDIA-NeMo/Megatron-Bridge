@@ -36,8 +36,8 @@ To import the HF VL model to your desired Megatron path:
 
 ### Multi-GPU Round-Trip Validation
 
-Use the shared launcher to load the imported Megatron checkpoint and verify
-the Hugging Face → Megatron → Hugging Face weight round trip:
+Use the shared launcher to verify the in-memory Hugging Face → Megatron →
+Hugging Face weight round trip:
 
 ```bash
 ./scripts/conversion/convert.sh roundtrip \
@@ -45,10 +45,8 @@ the Hugging Face → Megatron → Hugging Face weight round trip:
   --device gpu \
   --gpus-per-node 8 \
   --hf-model-id Qwen/Qwen3.5-35B-A3B \
-  --megatron-load-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
   --tp 1 --pp 1 --ep 8 \
-  --trust-remote-code \
-  --skip-save
+  --trust-remote-code
 ```
 
 See the [conversion.sh](conversion.sh) script for the parallelism selected for

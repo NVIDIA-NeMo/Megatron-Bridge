@@ -95,13 +95,13 @@ distributed GPU backend without requiring users to invoke Python, `torchrun`,
 ./scripts/conversion/convert.sh roundtrip \
   --executor local --device gpu --gpus-per-node 2 \
   --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b/iter_0000000 \
-  --tp 2 --skip-save
+  --tp 2
 ```
 
 Use `--executor slurm` with the required account, partition, container, mount,
-and resource arguments for multi-node round-trip validation. The scripts in
-this directory remain standalone examples for direct
+and resource arguments for multi-node round-trip validation. The launcher
+compares the in-memory HF → Megatron → HF result and does not write a
+checkpoint. The scripts in this directory remain standalone examples for direct
 `torch.distributed.run`, generation, benchmarking, and model comparison.
 
 ### 3. `hf_to_megatron_generate_text.py` - Text Generation

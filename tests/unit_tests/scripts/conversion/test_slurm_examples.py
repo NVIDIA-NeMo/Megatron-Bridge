@@ -185,7 +185,15 @@ def test_slurm_conversion_wrapper_forwards_public_launcher_args(tmp_path, relati
             "UV_CACHE_DIR",
         }
         assert ("--trust-remote-code" in arguments) is expected["trust_remote_code"]
-        assert "--skip-save" in arguments
+        assert not {
+            "--megatron-path",
+            "--megatron-load-path",
+            "--megatron-save-path",
+            "--output-dir",
+            "--not-strict",
+            "--skip-save",
+            "--overwrite",
+        } & set(arguments)
         assert "--submission-dry-run" in arguments
         assert [argument for argument in arguments if argument.startswith("--srun-arg=")] == [
             "--srun-arg=--mpi=pmix",

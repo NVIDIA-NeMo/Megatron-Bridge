@@ -80,5 +80,4 @@ done
     --hf-model "${HF_MODEL_ID}" \
     --tp "${TP}" --pp "${PP}" --ep "${EP}" --etp "${ETP}" \
     --trust-remote-code \
-    --skip-save \
     "$@"

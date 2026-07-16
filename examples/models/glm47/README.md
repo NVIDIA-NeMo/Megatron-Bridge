@@ -101,8 +101,8 @@ bash examples/models/glm47/slurm_conversion.sh
 ```
 
 The wrapper uses `convert.sh roundtrip --executor slurm`, submits from the login
-node, waits for completion by default, and uses `--skip-save` because this job
-validates weights rather than producing a new checkpoint. To try a different
+node, and waits for completion by default. The job validates weights in memory
+without producing a new checkpoint. To try a different
 parallelism layout, edit the resource and parallelism variables in the script.
 
 ## Slurm Script Configuration

@@ -71,5 +71,4 @@ done
     --experiment-name glm47-roundtrip-tp${TP}-pp${PP}-ep${EP} \
     --hf-model "${HF_MODEL_ID}" \
     --tp "${TP}" --pp "${PP}" --ep "${EP}" \
-    --skip-save \
     "$@"

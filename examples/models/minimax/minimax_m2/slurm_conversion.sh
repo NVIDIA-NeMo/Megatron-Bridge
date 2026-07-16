@@ -74,6 +74,5 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         --hf-model "${HF_MODEL_ID}" \
         --tp "${TP}" --pp "${PP}" --ep "${EP}" \
         --trust-remote-code \
-        --skip-save \
         "$@"
 done

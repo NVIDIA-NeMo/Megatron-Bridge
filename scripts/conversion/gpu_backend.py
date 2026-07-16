@@ -83,41 +83,6 @@ def _prepare_distributed_output(path: str, *, overwrite: bool, source_paths: Ite
     torch.distributed.barrier()
 
 
-def _prepare_roundtrip_outputs(
-    hf_path: str,
-    megatron_path: str | None,
-    *,
-    overwrite: bool,
-    source_paths: Iterable[str],
-) -> None:
-    """Validate and prepare round-trip destinations without partial deletion."""
-    output_paths = [Path(hf_path).expanduser()]
-    if megatron_path is not None:
-        output_paths.append(Path(megatron_path).expanduser())
-    resolved_outputs = [path.resolve() for path in output_paths]
-    for index, output_path in enumerate(resolved_outputs):
-        for other_path in resolved_outputs[index + 1 :]:
-            if output_path == other_path or output_path in other_path.parents or other_path in output_path.parents:
-                raise ValueError(
-                    f"Round-trip destinations overlap: {output_paths[index]} and {output_paths[index + 1]}."
-                )
-
-    source_paths = tuple(source_paths)
-    for output_path in output_paths:
-        validated_path = validate_output_path(str(output_path), source_paths=source_paths)
-        if not validated_path.exists() or not any(validated_path.iterdir()):
-            continue
-        if not overwrite:
-            raise FileExistsError(f"Destination is not empty: {validated_path}. Pass --overwrite to replace it.")
-        if validated_path.resolve() == Path("/"):
-            raise ValueError("Refusing to overwrite the filesystem root.")
-
-    if torch.distributed.get_rank() == 0:
-        for output_path in output_paths:
-            prepare_output_directory(str(output_path), overwrite=overwrite, source_paths=source_paths)
-    torch.distributed.barrier()
-
-
 def _maybe_generate_pipeline_layout(bridge: AutoBridge, model_provider: GPTModelProvider, pp: int) -> bool:
     """Generate a bridge-specific pipeline layout when the model requires one."""
     if pp <= 1 or not hasattr(bridge._model_bridge, "generate_pipeline_layout"):
@@ -435,54 +400,25 @@ def export_checkpoint(
 def roundtrip_checkpoint(
     *,
     hf_model: str,
-    megatron_load_path: str | None,
-    megatron_save_path: str | None,
-    output_dir: str | None,
     tp: int,
     pp: int,
     ep: int,
     etp: int,
     trust_remote_code: bool,
-    strict: bool,
-    skip_save: bool,
-    overwrite: bool,
     distributed_timeout_minutes: int | None,
 ) -> None:
     """Validate a Hugging Face to Megatron to Hugging Face round trip.
 
     Args:
         hf_model: Hugging Face model ID or local path.
-        megatron_load_path: Optional Megatron checkpoint to validate instead of
-            converting directly from Hugging Face.
-        megatron_save_path: Optional destination for the converted Megatron checkpoint.
-        output_dir: Optional parent directory for the exported Hugging Face model.
         tp: Tensor parallelism size.
         pp: Pipeline parallelism size.
         ep: Expert parallelism size.
         etp: Expert tensor parallelism size.
         trust_remote_code: Allow custom Hugging Face repository code.
-        strict: Require source and destination parameter keys to match when saving.
-        skip_save: Verify weights without writing either output checkpoint.
-        overwrite: Delete non-empty output destinations before saving.
         distributed_timeout_minutes: Process-group timeout in minutes.
     """
     _ensure_distributed_initialized(distributed_timeout_minutes)
-    if megatron_load_path is not None and not Path(megatron_load_path).exists():
-        raise FileNotFoundError(f"Megatron checkpoint does not exist: {megatron_load_path}")
-
-    model_name = hf_model.rstrip("/").split("/")[-1]
-    hf_path = str(Path(output_dir) / model_name) if output_dir else model_name
-    if not skip_save:
-        source_paths = [hf_model]
-        if megatron_load_path is not None:
-            source_paths.append(megatron_load_path)
-        _prepare_roundtrip_outputs(
-            hf_path,
-            megatron_save_path,
-            overwrite=overwrite,
-            source_paths=source_paths,
-        )
-
     dtype = torch.bfloat16
     print_rank_0(f"GPU round trip: {hf_model}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype=bfloat16")
@@ -492,49 +428,11 @@ def roundtrip_checkpoint(
         torch_dtype=dtype,
     )
 
-    if megatron_load_path is None:
-        model_provider = bridge.to_megatron_provider(load_weights=True)
-        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-        _maybe_generate_pipeline_layout(bridge, model_provider, pp)
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-        megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
-    else:
-        model_provider = bridge.to_megatron_provider(load_weights=False)
-        _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
-        _maybe_restore_pipeline_layout(bridge, model_provider, megatron_load_path, pp)
-        resolved_pipeline_layout = model_provider.pipeline_model_parallel_layout
-        model_provider.finalize()
-        model_provider.initialize_model_parallel(seed=0)
-
-        model_parallel_overrides: dict[str, object] = {
-            "tensor_model_parallel_size": tp,
-            "pipeline_model_parallel_size": pp,
-            "expert_model_parallel_size": ep,
-            "expert_tensor_parallel_size": etp,
-            "pipeline_dtype": dtype,
-            "params_dtype": dtype,
-        }
-        if isinstance(resolved_pipeline_layout, list):
-            model_parallel_overrides["pipeline_model_parallel_layout"] = resolved_pipeline_layout
-        megatron_model = bridge.load_megatron_model(
-            megatron_load_path,
-            mp_overrides=model_parallel_overrides,
-            wrap_with_ddp=False,
-        )
-
+    model_provider = bridge.to_megatron_provider(load_weights=True)
+    _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
+    _maybe_generate_pipeline_layout(bridge, model_provider, pp)
+    model_provider.finalize()
+    model_provider.initialize_model_parallel(seed=0)
+    megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
     _verify_roundtrip_weights(bridge, megatron_model)
-    if skip_save:
-        print_rank_0("--skip-save: skipping Hugging Face and Megatron checkpoint writes")
-        return
-
-    print_rank_0(f"Saving Hugging Face checkpoint in {hf_path}")
-    bridge.save_hf_pretrained(megatron_model, hf_path, strict=strict)
-    if megatron_save_path is not None:
-        print_rank_0(f"Saving Megatron checkpoint in {megatron_save_path}")
-        bridge.save_megatron_model(
-            megatron_model,
-            megatron_save_path,
-            hf_tokenizer_path=hf_model,
-            hf_tokenizer_kwargs=_hf_tokenizer_kwargs(bridge, trust_remote_code=trust_remote_code),
-        )
+    print_rank_0("GPU round-trip validation complete")

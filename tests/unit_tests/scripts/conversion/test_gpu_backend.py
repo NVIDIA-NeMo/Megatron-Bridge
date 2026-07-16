@@ -347,10 +347,10 @@ class TestRoundtrip:
                 return _FakeProvider(calls)
 
             def save_hf_pretrained(self, *args, **kwargs):
-                raise AssertionError("--skip-save must not write a Hugging Face checkpoint")
+                raise AssertionError("roundtrip validation must not write a Hugging Face checkpoint")
 
             def save_megatron_model(self, *args, **kwargs):
-                raise AssertionError("--skip-save must not write a Megatron checkpoint")
+                raise AssertionError("roundtrip validation must not write a Megatron checkpoint")
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", initialized_timeouts.append)
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
@@ -359,17 +359,11 @@ class TestRoundtrip:
 
         cli.roundtrip_checkpoint.__wrapped__(
             hf_model="hf/model",
-            megatron_load_path=None,
-            megatron_save_path="/unused-megatron",
-            output_dir="/unused-hf",
             tp=1,
             pp=1,
             ep=2,
             etp=1,
             trust_remote_code=True,
-            strict=True,
-            skip_save=True,
-            overwrite=False,
             distributed_timeout_minutes=45,
         )
 
@@ -377,86 +371,6 @@ class TestRoundtrip:
         assert provider_call[2] == {"load_weights": True}
         assert verified_models == [["megatron-model"]]
         assert initialized_timeouts == [45]
-
-    def test_loaded_roundtrip_verifies_and_saves_both_formats(self, cli, monkeypatch, tmp_path):
-        calls = []
-        verified_models = []
-
-        class FakeModelShard:
-            def cuda(self):
-                raise AssertionError("roundtrip should not force loaded checkpoint shards to CUDA")
-
-        fake_model = [FakeModelShard()]
-
-        class FakeBridge:
-            _model_bridge = object()
-            hf_pretrained = _FakeHfPretrained()
-
-            def to_megatron_provider(self, *args, **kwargs):
-                calls.append(("to_megatron_provider", args, kwargs))
-                return _FakeProvider(calls)
-
-            def load_megatron_model(self, *args, **kwargs):
-                calls.append(("load_megatron_model", args, kwargs))
-                return fake_model
-
-            def save_hf_pretrained(self, *args, **kwargs):
-                calls.append(("save_hf_pretrained", args, kwargs))
-
-            def save_megatron_model(self, *args, **kwargs):
-                calls.append(("save_megatron_model", args, kwargs))
-
-        checkpoint_path = tmp_path / "megatron"
-        checkpoint_path.mkdir()
-        output_dir = tmp_path / "hf-output"
-        megatron_save_path = tmp_path / "megatron-output"
-        prepared_outputs = []
-        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
-        monkeypatch.setattr(
-            cli,
-            "_prepare_roundtrip_outputs",
-            lambda *args, **kwargs: prepared_outputs.append((args, kwargs)),
-        )
-        monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
-        monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: FakeBridge())
-        monkeypatch.setattr(cli, "_verify_roundtrip_weights", lambda bridge, model: verified_models.append(model))
-
-        cli.roundtrip_checkpoint.__wrapped__(
-            hf_model="org/model",
-            megatron_load_path=str(checkpoint_path),
-            megatron_save_path=str(megatron_save_path),
-            output_dir=str(output_dir),
-            tp=1,
-            pp=1,
-            ep=2,
-            etp=1,
-            trust_remote_code=False,
-            strict=False,
-            skip_save=False,
-            overwrite=True,
-            distributed_timeout_minutes=None,
-        )
-
-        provider_call = next(call for call in calls if call[0] == "to_megatron_provider")
-        assert provider_call[2] == {"load_weights": False}
-        load_call = next(call for call in calls if call[0] == "load_megatron_model")
-        assert load_call[2]["mp_overrides"]["expert_model_parallel_size"] == 2
-        assert verified_models == [fake_model]
-        assert prepared_outputs == [
-            (
-                (str(output_dir / "model"), str(megatron_save_path)),
-                {
-                    "overwrite": True,
-                    "source_paths": ["org/model", str(checkpoint_path)],
-                },
-            )
-        ]
-        assert ("save_hf_pretrained", (fake_model, str(output_dir / "model")), {"strict": False}) in calls
-        assert (
-            "save_megatron_model",
-            (fake_model, str(megatron_save_path)),
-            {"hf_tokenizer_path": "org/model", "hf_tokenizer_kwargs": {}},
-        ) in calls
 
     def test_weight_comparison_casts_known_precision_parameters(self, cli):
         original = torch.tensor([1.0], dtype=torch.bfloat16)
@@ -481,12 +395,3 @@ class TestRoundtrip:
 
         with pytest.raises(ValueError, match="Weight mismatch detected"):
             cli._verify_roundtrip_weights(FakeBridge(), ["megatron-model"])
-
-    def test_output_destinations_must_not_overlap(self, cli, tmp_path):
-        with pytest.raises(ValueError, match="Round-trip destinations overlap"):
-            cli._prepare_roundtrip_outputs(
-                str(tmp_path / "output" / "hf"),
-                str(tmp_path / "output"),
-                overwrite=False,
-                source_paths=[],
-            )

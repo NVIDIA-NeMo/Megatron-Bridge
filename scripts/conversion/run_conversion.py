@@ -107,17 +107,11 @@ def _run_roundtrip(args: argparse.Namespace) -> None:
     """Run distributed round-trip weight validation on the GPU backend."""
     gpu_backend.roundtrip_checkpoint(
         hf_model=args.hf_model,
-        megatron_load_path=args.megatron_load_path,
-        megatron_save_path=args.megatron_save_path,
-        output_dir=args.output_dir,
         tp=args.tp,
         pp=args.pp,
         ep=args.ep,
         etp=args.etp,
         trust_remote_code=args.trust_remote_code,
-        strict=not args.not_strict,
-        skip_save=args.skip_save,
-        overwrite=args.overwrite,
         distributed_timeout_minutes=args.distributed_timeout_minutes,
     )
 

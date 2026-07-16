@@ -137,7 +137,7 @@ def test_worker_args_disable_distributed_save_for_cpu_export():
     assert "--no-distributed-save" in worker_args
 
 
-def test_roundtrip_aliases_and_worker_args():
+def test_roundtrip_alias_and_worker_args():
     module = _load_arguments_module()
     args = module.build_parser(include_execution=True).parse_args(
         [
@@ -146,12 +146,6 @@ def test_roundtrip_aliases_and_worker_args():
             "8",
             "--hf-model-id",
             "hf/model",
-            "--megatron-load-path",
-            "/megatron",
-            "--megatron-save-path",
-            "/megatron-save",
-            "--output-dir",
-            "/hf-output",
             "--tp",
             "2",
             "--pp",
@@ -161,9 +155,6 @@ def test_roundtrip_aliases_and_worker_args():
             "--etp",
             "2",
             "--trust-remote-code",
-            "--not-strict",
-            "--skip-save",
-            "--overwrite",
             "--distributed-timeout-minutes",
             "30",
         ]
@@ -171,7 +162,6 @@ def test_roundtrip_aliases_and_worker_args():
 
     assert args.device == "gpu"
     assert args.hf_model == "hf/model"
-    assert args.megatron_load_path == "/megatron"
     assert module.conversion_worker_args(args) == [
         "roundtrip",
         "--device",
@@ -186,16 +176,7 @@ def test_roundtrip_aliases_and_worker_args():
         "4",
         "--etp",
         "2",
-        "--megatron-path",
-        "/megatron",
-        "--megatron-save-path",
-        "/megatron-save",
-        "--output-dir",
-        "/hf-output",
         "--trust-remote-code",
-        "--not-strict",
-        "--skip-save",
-        "--overwrite",
         "--distributed-timeout-minutes",
         "30",
     ]
@@ -215,11 +196,20 @@ def test_roundtrip_worker_parser_accepts_serialized_args():
             "2",
             "--ep",
             "4",
-            "--skip-save",
         ]
     )
 
     assert args.command == "roundtrip"
     assert args.hf_model == "hf/model"
     assert (args.tp, args.pp, args.ep, args.etp) == (2, 1, 4, 1)
-    assert args.skip_save is True
+    assert (
+        not {
+            "megatron_load_path",
+            "megatron_save_path",
+            "output_dir",
+            "not_strict",
+            "skip_save",
+            "overwrite",
+        }
+        & vars(args).keys()
+    )

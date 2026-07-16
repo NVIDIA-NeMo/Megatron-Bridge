@@ -118,31 +118,19 @@ def test_gpu_roundtrip_dispatches_to_gpu_backend():
             "gpu",
             "--hf-model",
             "hf/model",
-            "--megatron-load-path",
-            "/megatron",
-            "--output-dir",
-            "/hf",
             "--ep",
             "2",
-            "--not-strict",
-            "--skip-save",
         ]
     )
 
     assert calls == [
         {
             "hf_model": "hf/model",
-            "megatron_load_path": "/megatron",
-            "megatron_save_path": None,
-            "output_dir": "/hf",
             "tp": 1,
             "pp": 1,
             "ep": 2,
             "etp": 1,
             "trust_remote_code": False,
-            "strict": False,
-            "skip_save": True,
-            "overwrite": False,
             "distributed_timeout_minutes": None,
         }
     ]

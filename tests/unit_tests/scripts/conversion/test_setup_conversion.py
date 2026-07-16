@@ -256,11 +256,8 @@ def test_roundtrip_task_uses_conversion_worker():
     module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
     args = _parse_roundtrip(
         module,
-        "--megatron-path",
-        "/checkpoint",
         "--tp",
         "2",
-        "--skip-save",
     )
     module._validate_args(args)
 
@@ -282,9 +279,6 @@ def test_roundtrip_task_uses_conversion_worker():
         "1",
         "--etp",
         "1",
-        "--megatron-path",
-        "/checkpoint",
-        "--skip-save",
     ]
 
 
@@ -301,8 +295,8 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
         "partition",
         "--container-image",
         "image.sqsh",
-        "--output-dir",
-        "/output path",
+        "--hf-model-id",
+        "/model path",
         "--tp",
         "2",
     )
@@ -313,7 +307,8 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
     assert task.path == "/opt/Megatron-Bridge/scripts/conversion/run_conversion.py"
     assert task.entrypoint == "python"
     assert task.args != display_args
-    assert task.args == [*display_args[:-1], "'/output path'"]
+    assert display_args[4] == "/model path"
+    assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
 
 
 def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):

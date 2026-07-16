@@ -75,6 +75,5 @@ for config in "${PARALLELISM_CONFIGS[@]}"; do
         --experiment-name "${MODEL_NAME,,}-roundtrip-tp${TP}-pp${PP}-ep${EP}" \
         --hf-model "${HF_MODEL_ID}" \
         --tp "${TP}" --pp "${PP}" --ep "${EP}" \
-        --skip-save \
         "$@"
 done

@@ -45,8 +45,8 @@ example uses the same 96-GPU parallelism as the conversion verification job:
 Use [slurm_conversion.sh](slurm_conversion.sh) to sweep multiple parallelism
 configs (TP, PP, EP) through `convert.sh roundtrip` and verify HF ↔ Megatron
 round-trip conversion. Run it from a Slurm login node; the wrapper submits and
-waits for each config by default. It uses `--skip-save` to avoid writing another
-copy of the approximately 1T-parameter checkpoint:
+waits for each config by default. Validation stays in memory and does not write
+another copy of the approximately 1T-parameter checkpoint:
 
 ```bash
 export CONTAINER_IMAGE=/path/to/container.sqsh

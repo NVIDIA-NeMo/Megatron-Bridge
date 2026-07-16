@@ -191,38 +191,9 @@ def _add_roundtrip_arguments(parser: argparse.ArgumentParser, *, include_executi
         help="Hugging Face model ID or local path.",
     )
     roundtrip.add_argument(
-        "--megatron-path",
-        "--megatron-load-path",
-        dest="megatron_load_path",
-        help="Optional Megatron checkpoint to load instead of converting directly from Hugging Face.",
-    )
-    roundtrip.add_argument(
-        "--megatron-save-path",
-        help="Optional destination for saving the Megatron checkpoint.",
-    )
-    roundtrip.add_argument(
-        "--output-dir",
-        help="Parent directory for the round-tripped Hugging Face model.",
-    )
-    roundtrip.add_argument(
         "--trust-remote-code",
         action="store_true",
         help="Allow custom code from the Hugging Face model repository.",
-    )
-    roundtrip.add_argument(
-        "--not-strict",
-        action="store_true",
-        help="Allow source and destination checkpoints to have different parameter keys.",
-    )
-    roundtrip.add_argument(
-        "--skip-save",
-        action="store_true",
-        help="Verify round-trip weights without saving the resulting checkpoints.",
-    )
-    roundtrip.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Delete non-empty output destinations before saving.",
     )
     _add_parallelism_arguments(parser, include_distributed_timeout=True)
 
@@ -257,7 +228,7 @@ Examples:
   # Local multi-GPU round-trip validation
   ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
       --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
-      --megatron-path /workspace/qwen/iter_0000000 --ep 8 --skip-save
+      --ep 8
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -334,20 +305,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
             "--etp",
             str(args.etp),
         ]
-        if args.megatron_load_path is not None:
-            worker_args.extend(["--megatron-path", args.megatron_load_path])
-        if args.megatron_save_path is not None:
-            worker_args.extend(["--megatron-save-path", args.megatron_save_path])
-        if args.output_dir is not None:
-            worker_args.extend(["--output-dir", args.output_dir])
         if args.trust_remote_code:
             worker_args.append("--trust-remote-code")
-        if args.not_strict:
-            worker_args.append("--not-strict")
-        if args.skip_save:
-            worker_args.append("--skip-save")
-        if args.overwrite:
-            worker_args.append("--overwrite")
         if args.distributed_timeout_minutes is not None:
             worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
         return worker_args

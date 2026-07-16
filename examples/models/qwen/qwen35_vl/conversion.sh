@@ -65,7 +65,5 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/co
     --device gpu \
     --gpus-per-node 8 \
     --hf-model-id Qwen/${MODEL_NAME} \
-    --megatron-load-path ${WORKSPACE}/${MODEL_NAME}/iter_0000000 \
     --tp ${TP} --pp ${PP} --ep ${EP} \
-    --trust-remote-code \
-    --skip-save
+    --trust-remote-code
