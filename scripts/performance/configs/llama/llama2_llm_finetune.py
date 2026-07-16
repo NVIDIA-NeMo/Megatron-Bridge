@@ -142,8 +142,8 @@ def get_llama2_70b_precision_config(compute_dtype: str):
     precision_config = get_precision_config(compute_dtype)
     precision_config.fp4_param = False
     precision_config.fp4_param_gather = False
-    precision_config.fp8_param = False
-    precision_config.fp8_param_gather = False
+    precision_config.fp8_param = True
+    precision_config.fp8_param_gather = True
     precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     precision_config.num_layers_at_start_in_bf16 = 0
     precision_config.num_layers_at_end_in_bf16 = 0
