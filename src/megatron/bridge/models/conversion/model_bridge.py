@@ -1287,6 +1287,9 @@ class MegatronModelBridge(
             megatron_model = [megatron_model]
 
         unwrapped_model_list = unwrap_model(megatron_model)
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(
@@ -1310,6 +1313,7 @@ class MegatronModelBridge(
         unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        tied_mapping_registry = self.mapping_registry() if embeddings_are_tied else None
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
@@ -1383,6 +1387,10 @@ class MegatronModelBridge(
 
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
+            tied_output_hf_name = None
+            if tied_mapping_registry is not None:
+                tied_output_hf_name = self._get_tied_output_hf_name(task, tied_mapping_registry)
+
             for hf_name, tensor in converted_weights_dict.items():
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
@@ -1391,28 +1399,28 @@ class MegatronModelBridge(
                     else:
                         hf_name = hf_name[:suffix_pos] + ".base_layer" + hf_name[suffix_pos:]
 
-                # Handle tied embeddings case
-                # TODO(yuya): fix this hard coded naming
-                if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
-                    emit_lm_head = isinstance(hf_pretrained, PretrainedConfig)
+                if tied_output_hf_name is not None and hf_name == task.mapping.hf_param:
+                    emit_output_weight = isinstance(hf_pretrained, PretrainedConfig)
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
-                        emit_lm_head = "lm_head.weight" in expected_keys
+                        emit_output_weight = tied_output_hf_name in expected_keys
 
                     yield from HFWeightTuple(hf_name, tensor).iter_finalized(
                         export_hook=task.export_hook,
                         cpu=cpu,
                     )
-                    if emit_lm_head:
-                        yield from HFWeightTuple("lm_head.weight", tensor).iter_finalized(
+                    if emit_output_weight:
+                        yield from HFWeightTuple(tied_output_hf_name, tensor).iter_finalized(
                             export_hook=task.export_hook,
                             cpu=cpu,
                             clone_identity_output=True,
                         )
-                elif embeddings_are_tied and hf_name == "lm_head.weight":
+                elif embeddings_are_tied and (
+                    task.global_param_name.endswith("output_layer.weight") or hf_name == tied_output_hf_name
+                ):
                     # This should not happen when embeddings are tied - assert error
                     raise ValueError(
-                        "Encountered lm_head.weight when embeddings are tied. This indicates a mapping error."
+                        f"Encountered {hf_name} when embeddings are tied. This indicates a mapping error."
                     )
                 else:
                     # Regular case - yield the tensor normally
@@ -1608,6 +1616,34 @@ class MegatronModelBridge(
 
         inner_model = getattr(model_chunk, "language_model", model_chunk)
         return bool(getattr(inner_model, "mtp_process", False))
+
+    def _get_tied_output_hf_name(
+        self,
+        task: WeightConversionTask,
+        mapping_registry: MegatronMappingRegistry,
+    ) -> str | None:
+        """Resolve the HF output-weight alias for a tied embedding task."""
+        embedding_suffix = "embedding.word_embeddings.weight"
+        if not task.global_param_name.endswith(embedding_suffix):
+            return None
+        if not isinstance(task.mapping.hf_param, str):
+            raise ValueError(
+                "Expected tied embedding mapping to resolve to one HuggingFace parameter, "
+                f"got {task.mapping.hf_param!r}."
+            )
+
+        megatron_prefix = task.global_param_name[: -len(embedding_suffix)]
+        output_mapping = mapping_registry.megatron_to_hf_lookup(f"{megatron_prefix}output_layer.weight")
+        if output_mapping is None:
+            return None
+        if not isinstance(output_mapping.hf_param, str):
+            raise ValueError(
+                "Expected tied output-layer mapping to resolve to one HuggingFace parameter, "
+                f"got {output_mapping.hf_param!r}."
+            )
+        if output_mapping.hf_param == task.mapping.hf_param:
+            return None
+        return output_mapping.hf_param
 
     def build_conversion_tasks(
         self,
