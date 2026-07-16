@@ -29,6 +29,9 @@
 #   PP: pipeline-parallel size (default: 1 for Flash, 4 for Pro)
 #   NNODES, NPROC_PER_NODE, NODE_RANK, MASTER_ADDR, MASTER_PORT: torchrun launch overrides
 #   UV_RUN_ARGS: extra arguments passed after `uv run` (for example: "--active --no-sync")
+#   CONVERSION_EXECUTOR_ARGS: execution options passed to convert.sh. The default
+#                  runs locally on WORLD_SIZE GPUs. Set Slurm account, partition,
+#                  container, mounts, nodes, and GPUs here for multi-node models.
 #   RUN_COMPARE: set to 1 to run the HF/Megatron logits comparison (default: 0)
 #   RUN_ROUNDTRIP: set to 1 to run the second import/export round-trip (default: 0)
 #
@@ -57,6 +60,8 @@ if [[ -z "${PP:-}" ]]; then
 fi
 TP=1
 WORLD_SIZE=$((TP * PP * EP))
+read -r -a CONVERSION_EXECUTOR_ARGS_ARRAY <<< \
+    "${CONVERSION_EXECUTOR_ARGS:---executor local --device gpu --gpus-per-node ${WORLD_SIZE}}"
 
 _first_slurm_host() {
     local nodelist=$1
@@ -115,8 +120,8 @@ EXPORT_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-hf-export"
 ITER=iter_0000000
 
 # 1) Import HF -> Megatron (FP8 / MXFP4 dequantised to bfloat16 in-flight)
-"${TORCHRUN[@]}" \
-    examples/conversion/convert_checkpoints_multi_gpu.py import \
+./scripts/conversion/convert.sh import \
+    "${CONVERSION_EXECUTOR_ARGS_ARRAY[@]}" \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${MEGATRON_DIR}" \
     --tp ${TP} --pp ${PP} --ep ${EP} \
@@ -135,8 +140,8 @@ if [[ "${RUN_COMPARE}" == "1" ]]; then
 fi
 
 # 3) Export Megatron -> HF (round-trip)
-"${TORCHRUN[@]}" \
-    examples/conversion/convert_checkpoints_multi_gpu.py export \
+./scripts/conversion/convert.sh export \
+    "${CONVERSION_EXECUTOR_ARGS_ARRAY[@]}" \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${MEGATRON_DIR}/${ITER}" \
     --tp ${TP} --pp ${PP} --ep ${EP} \
@@ -151,8 +156,8 @@ fi
 # and compares against the first export.
 if [[ "${RUN_ROUNDTRIP}" == "1" ]]; then
     ROUNDTRIP_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-roundtrip"
-    "${TORCHRUN[@]}" \
-        examples/conversion/convert_checkpoints_multi_gpu.py import \
+    ./scripts/conversion/convert.sh import \
+        "${CONVERSION_EXECUTOR_ARGS_ARRAY[@]}" \
         --hf-model "${EXPORT_DIR}" \
         --megatron-path "${ROUNDTRIP_DIR}" \
         --tp ${TP} --pp ${PP} --ep ${EP} \
@@ -160,8 +165,8 @@ if [[ "${RUN_ROUNDTRIP}" == "1" ]]; then
         --trust-remote-code
 
     ROUNDTRIP_EXPORT_DIR="${WORKSPACE}/models/${MODEL_VARIANT}-roundtrip-export"
-    "${TORCHRUN[@]}" \
-        examples/conversion/convert_checkpoints_multi_gpu.py export \
+    ./scripts/conversion/convert.sh export \
+        "${CONVERSION_EXECUTOR_ARGS_ARRAY[@]}" \
         --hf-model "${EXPORT_DIR}" \
         --megatron-path "${ROUNDTRIP_DIR}" \
         --hf-path "${ROUNDTRIP_EXPORT_DIR}" \

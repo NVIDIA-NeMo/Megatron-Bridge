@@ -72,60 +72,30 @@ Converting to HuggingFace ━━━━━━━━━━━━━━━━━━
 Saving HF-ckpt in Llama-3.2-1B...
 ```
 
-### 2. `convert_checkpoints.py` - Checkpoint Conversion
+### 2. Stable Checkpoint Conversion CLI
 
-A tool for importing/exporting models between HuggingFace and Megatron checkpoint formats.
+Production checkpoint import and export uses
+[`scripts/conversion/convert.sh`](../../scripts/conversion/README.md). The CLI
+supports local or Slurm execution and selects a single-process CPU backend or a
+distributed GPU backend without requiring users to invoke Python, `torchrun`,
+`srun`, or `sbatch` directly.
 
-**Features:**
-- Import HuggingFace models to Megatron checkpoint format
-- Export Megatron checkpoints to HuggingFace format
-- Configurable model settings (dtype, device mapping)
-- Progress tracking and validation
-
-**Usage:**
-
-**Import HF to Megatron:**
 ```bash
-# Basic import
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
+  --executor local --device cpu \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b
 
-# Import with custom settings
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh export \
+  --executor local --device cpu \
   --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b \
-  --torch-dtype bfloat16 \
-  --device-map auto
-```
-
-**Export Megatron to HF:**
-```bash
-# Basic export
-uv run python examples/conversion/convert_checkpoints.py export \
-  --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b \
+  --megatron-path ./checkpoints/llama3_2_1b/iter_0000000 \
   --hf-path ./exports/llama3_2_1b_hf
-
-# Export without progress bar
-uv run python examples/conversion/convert_checkpoints.py export \
-  --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b \
-  --hf-path ./exports/llama3_2_1b_hf \
-  --no-progress
 ```
 
-**Example Output:**
-```
-🔄 Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
-📥 Loading HuggingFace model: meta-llama/Llama-3.2-1B
-...
-  successfully saved checkpoint from iteration       0 to ./checkpoints/llama3_2_1b [ t 1/1, p 1/1 ]
-✅ Successfully imported model to: ./checkpoints/llama3_2_1b
-📁 Checkpoint structure:
-   📂 iter_0000000/
-   📄 latest_train_state.pt
-```
+The scripts in this directory remain examples for round-trip verification,
+generation, benchmarking, and model comparison rather than supported
+checkpoint conversion entry points.
 
 ### 3. `hf_to_megatron_generate_text.py` - Text Generation
 

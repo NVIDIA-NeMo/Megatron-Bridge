@@ -39,7 +39,7 @@ fi
 # uv add transformers>=5.2.0
 
 # Import HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model Qwen/${MODEL_NAME} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME} \
     --torch-dtype bfloat16
@@ -54,7 +54,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/co
     --tp ${TP} --pp ${PP} --ep ${EP}
 
 # Export Megatron → HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model Qwen/${MODEL_NAME} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME}/iter_0000000 \
     --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export

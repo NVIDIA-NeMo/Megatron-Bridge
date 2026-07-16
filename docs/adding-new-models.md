@@ -209,7 +209,7 @@ Use the examples in `examples/conversion/` to verify bidirectional conversion an
 
 ```sh
 uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path <org>/<model-id> --prompt "Hello"
-uv run python examples/conversion/convert_checkpoints.py import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
+./scripts/conversion/convert.sh import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
 ```
 ## 7) Add tests
 

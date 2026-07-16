@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3.5-35B-A3B \
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
   --hf-model Qwen/Qwen3.5-35B-A3B \
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B-hf-export

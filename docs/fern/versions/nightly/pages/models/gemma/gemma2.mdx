@@ -63,17 +63,17 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 To import the HF model to your desired Megatron path:
 ```bash
 # Gemma 2 2B
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model google/gemma-2-2b \
 --megatron-path /models/gemma-2-2b
 
 # Gemma 2 9B
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model google/gemma-2-9b \
 --megatron-path /models/gemma-2-9b
 
 # Gemma 2 27B
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model google/gemma-2-27b \
 --megatron-path /models/gemma-2-27b
 ```
@@ -81,7 +81,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 ```bash
 # Gemma 2 9B example
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model google/gemma-2-9b \
 --megatron-path /results/gemma2_9b/checkpoints/iter_00001000 \
 --hf-path ./gemma2-9b-hf-export
@@ -276,7 +276,7 @@ config = gemma2_27b_peft_config(
 | Gemma 2 27B | LoRA/DoRA | 4 | 1 | 128-256 | 1e-4 |
 
 ## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Checkpoint import/export: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 
 ## Hugging Face Model Cards

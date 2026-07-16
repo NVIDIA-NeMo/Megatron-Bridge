@@ -68,6 +68,7 @@ def test_parser_forwards_training_selection_and_overrides():
     )
 
     assert args.gpus_per_node == 1
+    assert args.srun_args == []
     assert training_args == [
         "--recipe",
         "gpt_oss_20b_sft_config",
@@ -77,6 +78,30 @@ def test_parser_forwards_training_selection_and_overrides():
         "openmathinstruct2",
         "optimizer.lr=0.0001",
     ]
+
+
+def test_parser_consumes_repeatable_srun_args():
+    module = _load_setup_experiment_module()
+
+    args, training_args = module.parse_args(
+        [
+            "--srun-arg=--mpi=pmix",
+            "--srun-arg=--container-writable",
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+        ]
+    )
+
+    assert args.srun_args == ["--mpi=pmix", "--container-writable"]
+    assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
+
+
+def test_srun_args_reject_empty_values():
+    module = _load_setup_experiment_module()
+    args, _ = module.parse_args(["--srun-arg="])
+
+    with pytest.raises(ValueError, match="must not be empty"):
+        module._validate_args(args)
 
 
 @pytest.mark.parametrize("submission_option", ["--submission-dry-run", "--dry-run"])
@@ -187,6 +212,7 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.container_env == ["HF_TOKEN"]
     assert executor.additional_parameters == {"export": "HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
+    assert executor.srun_args == []
 
 
 def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tmp_path, monkeypatch):
@@ -211,6 +237,8 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
             "partition",
             "--container-image",
             "image.sqsh",
+            "--srun-arg=--mpi=pmix",
+            "--srun-arg=--container-writable",
         ]
     )
 
@@ -219,6 +247,7 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
     assert executor.kwargs["ntasks_per_node"] == 8
     assert "gpus_per_node" not in executor.kwargs
     assert executor.additional_parameters == {"export": "NIL"}
+    assert executor.srun_args == ["--mpi=pmix", "--container-writable"]
 
 
 @pytest.mark.parametrize(

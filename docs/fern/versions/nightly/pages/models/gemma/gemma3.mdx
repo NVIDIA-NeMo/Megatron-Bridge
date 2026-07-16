@@ -49,14 +49,14 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 To import the HF model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /models/gemma-3-1b-it
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /results/gemma3_1b/checkpoints/iter_00001000 \
 --hf-path ./gemma3-hf-export
@@ -175,7 +175,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_r
 ```
 
 ## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Checkpoint import/export: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 
 ## Hugging Face Model Cards
