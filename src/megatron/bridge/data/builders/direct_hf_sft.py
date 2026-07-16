@@ -171,21 +171,12 @@ def select_direct_hf_sft_collate(
     examples: list[dict[str, Any]],
     preprocessing: SFTPreprocessingConfig | None = None,
     collate_impl: CollateFunction | None = None,
-    *,
-    processor: Any | None = None,
 ) -> CollateFunction | None:
     """Select a shared text collator for the explicit preprocessing variant."""
     if collate_impl is not None:
         return collate_impl
     preprocessing = preprocessing or ChatSFTPreprocessingConfig()
     validate_sft_preprocessing_config(preprocessing)
-    processor_type = type(processor).__name__
-    if model_collate_required_for_all_examples(processor_type):
-        if not isinstance(preprocessing, ChatSFTPreprocessingConfig):
-            raise ValueError(
-                f"Processor type '{processor_type}' requires chat preprocessing through its model-owned collator."
-            )
-        return None
     if isinstance(preprocessing, ChatSFTPreprocessingConfig):
         if all(is_text_only_chat_example(example) for example in examples):
             return partial(text_chat_collate_fn, loss_mode=preprocessing.loss_mode)
@@ -209,16 +200,20 @@ def build_direct_hf_sft_split(
     if target_length <= 0:
         return None
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
+    if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
+        if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
+            raise ValueError(
+                f"Processor type '{type(processor).__name__}' requires chat preprocessing through its "
+                "model-owned collator."
+            )
+        selected_collate = None
+    else:
+        selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)
     return DirectSFTDataset(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
-        collate_impl=select_direct_hf_sft_collate(
-            examples,
-            config.preprocessing,
-            collate_impl,
-            processor=processor,
-        ),
+        collate_impl=selected_collate,
         sequence_length=config.seq_length,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,

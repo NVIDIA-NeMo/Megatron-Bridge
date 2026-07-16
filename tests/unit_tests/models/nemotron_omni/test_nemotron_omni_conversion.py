@@ -161,6 +161,20 @@ def test_nemotron_omni_provider_rejects_nonpositive_image_token_index(image_toke
         provider.finalize()
 
 
+def test_nemotron_omni_provider_rejects_nonpositive_sound_token_index():
+    provider = NemotronOmniModelProvider(image_token_index=18, has_sound=True, sound_context_token_id=0)
+
+    with pytest.raises(ValueError, match="requires a positive sound_context_token_id"):
+        provider.finalize()
+
+
+def test_nemotron_omni_provider_requires_sound_config_when_enabled():
+    provider = NemotronOmniModelProvider(image_token_index=18, has_sound=True, sound_context_token_id=27)
+
+    with pytest.raises(ValueError, match="requires sound_config"):
+        provider.finalize()
+
+
 def test_nemotron_omni_vision_projection_uses_squared_relu():
     provider = NemotronOmniModelProvider()
 

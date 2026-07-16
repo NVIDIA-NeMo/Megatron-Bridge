@@ -83,8 +83,10 @@ from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    COMPACT_IMAGE_PLACEHOLDER,
     inference_merged_sequence_length,
     inference_num_image_tiles,
+    patchify_temporal_frame,
     select_inference_next_token,
     temporal_model_frames,
 )
@@ -101,31 +103,6 @@ _VIDEO_FRAME_W = 512
 _VISION_PATCH_DIM = 16
 _VIDEO_FPS = 1
 _VIDEO_NFRAMES = 8
-
-# CLIP / RADIO normalization constants (mirrors nemotron_omni_collate_fn)
-_CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
-_CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
-
-
-def _patchify_frame(
-    pil_img: Image.Image, target_h: int = _VIDEO_FRAME_H, target_w: int = _VIDEO_FRAME_W
-) -> torch.Tensor:
-    """Resize + normalize a PIL frame and pack into [num_patches, 3*P*P] patches.
-
-    Mirrors the shared ``nemotron_omni_collate_fn`` patchification exactly so inference-time
-    tensors have the same shape/distribution as SFT training tensors.
-    """
-    from torchvision import transforms
-
-    img = pil_img.convert("RGB").resize((target_w, target_h))
-    tensor = transforms.ToTensor()(img)
-    mean = torch.tensor(_CLIP_MEAN).view(3, 1, 1)
-    std = torch.tensor(_CLIP_STD).view(3, 1, 1)
-    tensor = (tensor - mean) / std
-    P = _VISION_PATCH_DIM
-    py, px = target_h // P, target_w // P
-    patches = tensor.reshape(3, py, P, px, P).permute(1, 3, 0, 2, 4).reshape(py * px, 3 * P * P)
-    return patches
 
 
 def _build_vision_packed_seq_params(imgs_sizes: Optional[torch.Tensor]) -> Optional[PackedSeqParams]:
@@ -391,21 +368,15 @@ def process_image_inputs(
         return inputs.input_ids, None, 0, None
 
 
-def process_video_inputs(
-    tokenizer, processor, video_path: Optional[str], prompt: str, system_prompt: Optional[str] = None
-):
+def process_video_inputs(tokenizer, video_path: Optional[str], prompt: str, system_prompt: Optional[str] = None):
     """Process video inputs for the temporal video embedder inference path.
 
     Mirrors the shared ``nemotron_omni_collate_fn`` SFT data pipeline so the
     model sees the same tensor shapes it was trained on:
 
     - Frames are grouped by ``temporal_patch_size`` (pair of consecutive frames
-      per <image>) and the prompt uses the training-time format ("frame i sampled
-      at t seconds and frame i+1 sampled at t+1 seconds: <image>").
-    - One representative frame per group is fed to the dynamic-resolution HF
-      processor so that <img>/<image>/</img> wrapper tokens render correctly;
-      ``adjust_image_tokens`` then shrinks each wrapper region to one <image>
-      token.
+      per image placeholder) and the prompt uses the training-time timestamp
+      format with one compact ``<img><image></img>`` wrapper per group.
     - All sampled video frames are patchified to a [1, total_patches, 3*P*P]
       tensor. A single frame is repeated only in this model tensor/metadata so
       RADIO selects the temporal embedder; the prompt still has one placeholder.
@@ -437,11 +408,8 @@ def process_video_inputs(
         raise ValueError("Temporal video embedder inference requires at least one sampled frame.")
     model_frames = temporal_model_frames(frames, tps)
 
-    # 2. Build training-style prompt: one <image> per `tps`-frame group, with
-    #    per-frame timestamps. Also collect a representative frame per group
-    #    for the HF processor to use as <image> placeholder rendering.
+    # 2. Build the training-style prompt with one compact wrapper per group.
     fps_for_ts = float(metadata.fps) if (metadata and metadata.fps) else float(_VIDEO_FPS)
-    paired_images = []
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
@@ -449,8 +417,7 @@ def process_video_inputs(
             f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds"
             for j in range(len(group))
         ]
-        video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
-        paired_images.append(group[0])
+        video_prompt_lines.append(" and ".join(ts_parts) + f": {COMPACT_IMAGE_PLACEHOLDER}")
 
     content = "\n".join(video_prompt_lines) + "\n" + prompt
     messages = [{"role": "user", "content": content}]
@@ -459,22 +426,21 @@ def process_video_inputs(
 
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # 3. Process representative frames to produce input_ids with proper
-    #    <img>...</img> wrappers. Limit this dynamic-resolution prepass to its
-    #    smallest patch budget: its pixels are discarded, and equal shapes let
-    #    the processor tensorize mixed-aspect representative frames safely.
-    original_max_num_patches = processor.image_processor.max_num_patches
-    processor.image_processor.max_num_patches = 1
-    try:
-        proc_output = processor(text=[text], images=paired_images, return_tensors="pt")
-    finally:
-        processor.image_processor.max_num_patches = original_max_num_patches
-
-    input_ids = proc_output.input_ids
-    num_patches = torch.ones(len(paired_images), dtype=torch.long)
+    # 3. The compact visual wrappers are already model-ready; no image
+    #    processor prepass is needed because its pixels would be discarded.
+    input_ids = tokenizer([text], return_tensors="pt").input_ids
+    num_patches = torch.ones(len(video_prompt_lines) - 1, dtype=torch.long)
 
     # 4. Replace the HF processor's pixels with the model-frame patch tensor.
-    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in model_frames]
+    all_patches = [
+        patchify_temporal_frame(
+            frame,
+            height=_VIDEO_FRAME_H,
+            width=_VIDEO_FRAME_W,
+            patch_dim=_VISION_PATCH_DIM,
+        )
+        for frame in model_frames
+    ]
     packed_pixel_values = torch.cat(all_patches, dim=0).unsqueeze(0)
 
     imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
@@ -564,7 +530,6 @@ def process_video_audio_inputs(
     model_frames = temporal_model_frames(frames, tps)
 
     fps_for_ts = float(metadata.fps) if (metadata and metadata.fps) else float(_VIDEO_FPS)
-    paired_images = []
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
@@ -572,8 +537,7 @@ def process_video_audio_inputs(
             f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps_for_ts:.2f} seconds"
             for j in range(len(group))
         ]
-        video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
-        paired_images.append(group[0])
+        video_prompt_lines.append(" and ".join(ts_parts) + f": {COMPACT_IMAGE_PLACEHOLDER}")
 
     audio_token = getattr(tokenizer, "audio_token", "<so_embedding>")
     content = "\n".join(video_prompt_lines) + f"\nThis is the audio: {audio_token}\n" + prompt
@@ -583,12 +547,9 @@ def process_video_audio_inputs(
 
     text = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    original_max_num_patches = processor.image_processor.max_num_patches
-    processor.image_processor.max_num_patches = 1
-    try:
-        proc_output = processor(text=[text], images=paired_images, audio=[audio_path], return_tensors="pt")
-    finally:
-        processor.image_processor.max_num_patches = original_max_num_patches
+    # Let the processor expand only the audio placeholder. The visual wrappers
+    # are already compact and require no discarded image preprocessing.
+    proc_output = processor(text=[text], audio=[audio_path], return_tensors="pt")
 
     # Extract raw sound clips and convert to mel spectrogram for BridgeSoundEncoder
     raw_sound_clips = proc_output.pop("sound_clips", None)
@@ -605,8 +566,16 @@ def process_video_audio_inputs(
         f"Audio: {audio_path}, sound_clips shape: {sound_clips.shape}, expected_sound_tokens: {expected_sound_tokens}"
     )
 
-    num_patches = torch.ones(len(paired_images), dtype=torch.long)
-    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in model_frames]
+    num_patches = torch.ones(len(video_prompt_lines) - 1, dtype=torch.long)
+    all_patches = [
+        patchify_temporal_frame(
+            frame,
+            height=_VIDEO_FRAME_H,
+            width=_VIDEO_FRAME_W,
+            patch_dim=_VISION_PATCH_DIM,
+        )
+        for frame in model_frames
+    ]
     packed_pixel_values = torch.cat(all_patches, dim=0).unsqueeze(0)
     imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
     num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
@@ -776,7 +745,7 @@ def main(args) -> None:
         )
     elif args.video_path:
         input_ids, pixel_values, num_patches, imgs_sizes, num_frames = process_video_inputs(
-            tokenizer, processor, args.video_path, args.prompt, args.system_prompt
+            tokenizer, args.video_path, args.prompt, args.system_prompt
         )
         images = pixel_values.bfloat16() if pixel_values is not None else None
     else:

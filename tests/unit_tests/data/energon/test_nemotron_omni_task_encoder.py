@@ -53,6 +53,7 @@ class _Tokenizer:
     def __init__(self, rows: list[list[int]]):
         self.rows = rows
         self.conversations = []
+        self.row_offset = 0
 
     def apply_chat_template(self, conversation, tokenize=False, add_generation_prompt=False, **kwargs):
         self.conversations.append(conversation)
@@ -70,7 +71,8 @@ class _Tokenizer:
                 "<|im_start|>tool\n": [106],
             }
             return {"input_ids": marker_tokens.get(prompts, [1])}
-        rows = self.rows[: len(prompts)]
+        rows = self.rows[self.row_offset : self.row_offset + len(prompts)]
+        self.row_offset += len(prompts)
         width = max(len(row) for row in rows)
         input_ids = torch.full((len(rows), width), self.pad_token_id, dtype=torch.long)
         attention_mask = torch.zeros_like(input_ids)
@@ -96,12 +98,8 @@ class _Processor:
         self.tokenizer = _Tokenizer(rows)
         self.image_processor = type("ImageProcessor", (), {"max_num_patches": 64})()
         self.processor_calls = 0
-        self.processor_patch_budgets = []
-        self.processor_kwargs = []
 
     def __call__(self, **kwargs):
-        self.processor_patch_budgets.append(self.image_processor.max_num_patches)
-        self.processor_kwargs.append(kwargs)
         row = self.tokenizer.rows[self.processor_calls]
         self.processor_calls += 1
         output = {"input_ids": torch.tensor([row], dtype=torch.long)}
@@ -315,12 +313,12 @@ def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
     assert batch.visual_inputs.pixel_values.shape == (1, 6, 3)
     assert batch.imgs_sizes.tolist() == [[512, 512], [512, 512], [512, 512]]
     assert batch.num_frames.tolist() == [3]
-    assert processor.processor_patch_budgets == [1]
-    assert processor.processor_kwargs[0]["return_tensors"] is None
+    assert processor.processor_calls == 0
     assert processor.image_processor.max_num_patches == 64
     rendered_video = processor.tokenizer.conversations[0][0]["content"]
     assert "Frame 1 sampled at 0.00 seconds and frame 2 sampled at 0.50 seconds" in rendered_video
     assert "Frame 3 sampled at 1.00 seconds" in rendered_video
+    assert rendered_video.count("<img><image></img>") == 2
     assert batch.input_ids.tolist() == [
         [1, IMG_START_ID, 97, IMG_END_ID, IMG_START_ID, 97, IMG_END_ID, 21, PAD_AND_END_ID]
     ]
@@ -474,7 +472,7 @@ def test_energon_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
     assert batch.cu_seqlens_q_padded.tolist() == [0, 264, 528]
     assert batch.max_seqlen_q.item() == 264
     assert batch.total_tokens == 528
-    assert batch.num_image_tiles.tolist() == [256, 256, 256, 256]
+    assert batch.num_image_tiles.tolist() == [1, 1]
     packed_seq_params = get_packed_seq_params(encoder.encode_batch(batch))
     assert packed_seq_params.seq_idx.shape == (1, 528)
     assert packed_seq_params.seq_idx[0, :264].unique().tolist() == [0]
@@ -602,5 +600,5 @@ def test_energon_temporal_video_refuses_unsafe_sequence_truncation(monkeypatch):
         )
     )
 
-    with pytest.raises(ValueError, match="cannot truncate image, video, or audio rows"):
+    with pytest.raises(ValueError, match="cannot fit the rectangular multimodal batch"):
         encoder.batch([encoded])

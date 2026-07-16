@@ -248,9 +248,10 @@ encoder. Recipe base: `nemotron_omni_valor32k_*_config`.
 The public processor uses aspect-preserving dynamic sizes for video inference.
 Pinned MCore does not yet support ragged non-square temporal tubelets, so the
 Bridge training path uses an antialiased bicubic 512×512 compatibility canvas.
-Images still use the public dynamic-resolution sizes. Supporting the public
-non-square video layout requires MCore to pixel-shuffle each temporal chunk
-with its own spatial grid.
+Temporal mode uses that canvas for every visual item in the batch, including
+standalone images. Non-temporal image recipes use the public dynamic-resolution
+sizes. Supporting the public non-square video layout requires MCore to
+pixel-shuffle each temporal chunk with its own spatial grid.
 
 Prepare the Energon shards once. For the full walkthrough, see
 [`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).

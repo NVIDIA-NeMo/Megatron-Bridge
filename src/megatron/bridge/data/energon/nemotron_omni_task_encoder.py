@@ -18,6 +18,8 @@ from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass, fields
 from typing import Any, Mapping, Sequence
 
+import torch
+
 from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample, HFTaskEncoder
 from megatron.bridge.models.nemotron_omni.data.collate_fn import (
     _validate_nemotron_omni_visual_keys,
@@ -74,6 +76,13 @@ class _LegacyVisualTensorMapping(MutableMapping[str, Any]):
 class NemotronOmniTaskBatch(HFEnergonBatch):
     """HF-style batch with the legacy ``visual_tensors`` constructor/property."""
 
+    num_patches: torch.Tensor | None = None
+    sound_clips: torch.Tensor | None = None
+    sound_length: torch.Tensor | None = None
+    imgs_sizes: torch.Tensor | None = None
+    num_frames: torch.Tensor | None = None
+    num_image_tiles: torch.Tensor | None = None
+
     def __init__(
         self,
         *args: Any,
@@ -81,6 +90,10 @@ class NemotronOmniTaskBatch(HFEnergonBatch):
         visual_tensors: Mapping[str, Any] | None = None,
         **kwargs: Any,
     ) -> None:
+        omni_fields = {
+            name: kwargs.pop(name, None)
+            for name in ("num_patches", "sound_clips", "sound_length", "imgs_sizes", "num_frames", "num_image_tiles")
+        }
         if visual_inputs is not None and visual_tensors is not None:
             raise ValueError("Specify only one of visual_inputs or legacy visual_tensors.")
         if visual_inputs is None and visual_tensors is not None:
@@ -88,6 +101,8 @@ class NemotronOmniTaskBatch(HFEnergonBatch):
                 **{key: value for key, value in visual_tensors.items() if value is not None}
             )
         super().__init__(*args, visual_inputs=visual_inputs, **kwargs)
+        for name, value in omni_fields.items():
+            setattr(self, name, value)
         self._visual_tensors_proxy = _LegacyVisualTensorMapping(self)
 
     @property
@@ -172,8 +187,15 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
 
     def batch(self, samples: list[HFEnergonSample]) -> NemotronOmniTaskBatch:
         """Collate shared samples while retaining the model-specific batch type."""
-        batch = super().batch(samples)
-        batch_kwargs = {field.name: getattr(batch, field.name) for field in fields(batch) if field.init}
+        collated, batch_kwargs = self._collate_batch_kwargs(samples)
+        batch_kwargs.update(
+            num_patches=collated.get("num_patches"),
+            sound_clips=collated.get("sound_clips"),
+            sound_length=collated.get("sound_length"),
+            imgs_sizes=collated.get("imgs_sizes"),
+            num_frames=collated.get("num_frames"),
+            num_image_tiles=collated.get("num_image_tiles"),
+        )
         return NemotronOmniTaskBatch(**batch_kwargs)
 
     def encode_batch(self, batch: HFEnergonBatch) -> dict[str, Any]:

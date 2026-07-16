@@ -173,6 +173,13 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
                 "Nemotron Omni requires a positive image_token_index from the checkpoint configuration; "
                 f"got {self.image_token_index}. Construct the provider through AutoBridge or set it explicitly."
             )
+        if self.has_sound and self.sound_context_token_id <= 0:
+            raise ValueError(
+                "Sound-enabled Nemotron Omni requires a positive sound_context_token_id from the checkpoint "
+                f"configuration; got {self.sound_context_token_id}."
+            )
+        if self.has_sound and self.sound_config is None:
+            raise ValueError("Sound-enabled Nemotron Omni requires sound_config from the checkpoint configuration.")
 
     def finalize(self) -> None:
         """Finalize a dynamic-resolution Nemotron Omni provider."""

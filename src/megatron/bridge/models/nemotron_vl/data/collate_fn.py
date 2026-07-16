@@ -20,12 +20,10 @@ from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
 from megatron.bridge.data.conversation_processing import (
     build_assistant_loss_mask,
-    chat_template_kwargs_from_example,
     infer_assistant_mask_boundary_config,
     shared_chat_template_kwargs_from_examples,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -97,66 +95,6 @@ def nemotron_nano_v2_vl_collate_fn(
         # Ensure a pad_token is set so padding can produce uniform-length tensors.
         if processor.tokenizer.pad_token is None:
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
-        if enable_in_batch_packing:
-            sequence_rows = []
-            pixel_values = []
-            with use_processor_right_padding(processor):
-                for example in examples:
-                    sample_batch = processor.apply_chat_template(
-                        [example["conversation"]],
-                        tokenize=True,
-                        padding=False,
-                        truncation=True,
-                        return_tensors="pt",
-                        return_dict=True,
-                        **chat_template_kwargs_from_example(example),
-                    )
-                    input_ids = sample_batch["input_ids"]
-                    loss_mask = build_assistant_loss_mask(
-                        example,
-                        input_ids[0],
-                        processor,
-                        skipped_tokens,
-                        boundary_config=boundary_config,
-                    ).to(dtype=torch.int)
-                    adjusted_sample = adjust_image_tokens(
-                        {"input_ids": input_ids, "loss_mask": loss_mask.unsqueeze(0)},
-                        sample_batch["num_patches"],
-                        131073,
-                        131074,
-                    )
-                    row_input_ids = adjusted_sample["input_ids"][0]
-                    row_loss_mask = adjusted_sample["loss_mask"][0].to(
-                        device=row_input_ids.device, dtype=torch.float32
-                    )
-                    labels = torch.cat([row_input_ids[1:], row_input_ids.new_full((1,), IGNORE_INDEX)])
-                    if skipped_tokens.numel() > 0:
-                        labels = labels.masked_fill(
-                            torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX
-                        )
-                    shifted_loss_mask = torch.cat([row_loss_mask[1:], row_loss_mask.new_zeros(1)])
-                    sequence_rows.append(
-                        {
-                            "input_ids": row_input_ids,
-                            "attention_mask": torch.ones_like(row_input_ids),
-                            "position_ids": torch.arange(
-                                row_input_ids.numel(), device=row_input_ids.device, dtype=torch.long
-                            ),
-                            "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
-                            "loss_mask": shifted_loss_mask,
-                        }
-                    )
-                    pixel_values.append(sample_batch["pixel_values"].to(torch.bfloat16))
-
-            packed_batch = build_mcore_thd_sequence_batch_from_rows(
-                sequence_rows,
-                sequence_length=sequence_length,
-                pad_token_id=int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
-                ignore_index=IGNORE_INDEX,
-                pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            )
-            packed_batch["visual_inputs"] = GenericVisualInputs(pixel_values=torch.cat(pixel_values, dim=0))
-            return packed_batch
         with use_processor_right_padding(processor):
             batch = processor.apply_chat_template(
                 [example["conversation"] for example in examples],

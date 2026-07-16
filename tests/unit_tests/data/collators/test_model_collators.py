@@ -2278,7 +2278,11 @@ def test_nemotron_omni_dynamic_collate_handles_mixed_shapes_within_one_sample(mo
     assert torch.all(batch["labels"][batch["attention_mask"] == 0] == IGNORE_INDEX)
 
 
-def test_nemotron_omni_dynamic_collate_repads_heterogeneous_rows_to_fixed_length(monkeypatch):
+def test_nemotron_omni_dynamic_collate_reserves_fixed_width_for_model_merge(monkeypatch):
+    from types import SimpleNamespace
+
+    from megatron.core.models.multimodal.llava_model import LLaVAModel
+
     processor = _DynamicNemotronOmniProcessor()
     monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
 
@@ -2290,11 +2294,54 @@ def test_nemotron_omni_dynamic_collate_repads_heterogeneous_rows_to_fixed_length
         pad_to_multiple_of=1,
     )
 
-    assert batch["input_ids"].shape == (3, 32)
+    assert batch["input_ids"].shape == (3, 30)
     assert batch["attention_mask"].sum(dim=1).tolist() == [3, 6, 10]
     assert torch.all(batch["input_ids"][:, 10:] == processor.tokenizer.pad_token_id)
     assert torch.all(batch["loss_mask"][batch["attention_mask"] == 0] == 0)
     assert torch.all(batch["labels"][batch["attention_mask"] == 0] == IGNORE_INDEX)
+
+    hidden_size = 4
+    pp_model = SimpleNamespace(
+        add_decoder=True,
+        pre_process=True,
+        post_process=True,
+        _language_is_pipeline_parallel=True,
+        _language_max_sequence_length=32,
+        context_parallel_lm=1,
+    )
+    final_embedding, final_labels, final_loss_mask = LLaVAModel._preprocess_data(
+        pp_model,
+        image_embeddings=torch.ones(1, 5, hidden_size),
+        language_embeddings=torch.ones(3, batch["input_ids"].shape[1], hidden_size),
+        input_ids=batch["input_ids"],
+        loss_mask=batch["loss_mask"],
+        labels=batch["labels"],
+        use_inference_kv_cache=False,
+        inference_context=None,
+        image_token_index=NEMO_IMAGE_TOKEN_ID,
+        num_image_tiles=batch["num_image_tiles"],
+        is_packed_dynamic_res=True,
+    )
+
+    assert final_embedding.shape == (32, 3, hidden_size)
+    assert final_labels.shape == final_loss_mask.shape == (3, 32)
+
+
+def test_nemotron_omni_collate_counts_common_padding_in_model_merge_limit(monkeypatch):
+    processor = _DynamicNemotronOmniProcessor()
+    processor.rows[0] = [10, 11, *range(40, 51), 2]
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
+
+    with pytest.raises(
+        ValueError,
+        match=r"compact width 14 produces model row lengths \[14, 14, 16\].*sequence_length=15",
+    ):
+        collate.nemotron_omni_collate_fn(
+            _heterogeneous_nemotron_examples(),
+            processor,
+            sequence_length=15,
+            pad_to_multiple_of=1,
+        )
 
 
 def test_nemotron_omni_collate_checks_post_vision_merge_length_before_contraction(monkeypatch):
@@ -2303,7 +2350,7 @@ def test_nemotron_omni_collate_checks_post_vision_merge_length_before_contractio
 
     with pytest.raises(
         ValueError,
-        match=r"post-merge row lengths \[8\] \(collapsed text lengths \[5\]\).*sequence_length=6",
+        match=r"compact width 5 produces model row lengths \[8\].*sequence_length=6",
     ):
         collate.nemotron_omni_collate_fn(
             [_heterogeneous_nemotron_examples()[1]],
@@ -2352,7 +2399,7 @@ def test_nemotron_omni_collate_checks_temporal_model_expansion_before_truncation
 
     with pytest.raises(
         ValueError,
-        match=r"post-merge row lengths \[260, 519\] \(collapsed text lengths \[5, 9\]\).*sequence_length=512",
+        match=r"compact width 9 produces model row lengths \[264, 519\].*sequence_length=512",
     ):
         collate.nemotron_omni_collate_fn(
             examples,

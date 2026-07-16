@@ -59,12 +59,6 @@ class HFEnergonBatch(Batch):
     position_ids: torch.Tensor = field(default_factory=lambda: torch.empty(0))  # [B, seq_len]
     visual_inputs: GenericVisualInputs | None = None
     attention_mask: torch.Tensor | None = None
-    num_patches: torch.Tensor | None = None
-    sound_clips: torch.Tensor | None = None
-    sound_length: torch.Tensor | None = None
-    imgs_sizes: torch.Tensor | None = None
-    num_frames: torch.Tensor | None = None
-    num_image_tiles: torch.Tensor | None = None
     cu_seqlens_q: torch.Tensor | None = None
     cu_seqlens_kv: torch.Tensor | None = None
     cu_seqlens_q_padded: torch.Tensor | None = None
@@ -179,8 +173,8 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
     # batch
     # ------------------------------------------------------------------
 
-    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
-        """Collate normalized samples with the selected HF VLM collator."""
+    def _collate_batch_kwargs(self, samples: List[HFEnergonSample]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Collate samples and build kwargs shared by generic/model batches."""
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
         collated_seq_len = (
@@ -205,12 +199,6 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             attention_mask=collated.get("attention_mask"),
             position_ids=collated["position_ids"],
             visual_inputs=collated.get("visual_inputs"),
-            num_patches=collated.get("num_patches"),
-            sound_clips=collated.get("sound_clips"),
-            sound_length=collated.get("sound_length"),
-            imgs_sizes=collated.get("imgs_sizes"),
-            num_frames=collated.get("num_frames"),
-            num_image_tiles=collated.get("num_image_tiles"),
             cu_seqlens_q=collated.get("cu_seqlens_q"),
             cu_seqlens_kv=collated.get("cu_seqlens_kv"),
             cu_seqlens_q_padded=collated.get("cu_seqlens_q_padded"),
@@ -219,7 +207,11 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             max_seqlen_kv=collated.get("max_seqlen_kv"),
             total_tokens=collated.get("total_tokens"),
         )
+        return collated, batch_kwargs
 
+    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
+        """Collate normalized samples with the selected HF VLM collator."""
+        _, batch_kwargs = self._collate_batch_kwargs(samples)
         return HFEnergonBatch(**batch_kwargs)
 
     # ------------------------------------------------------------------

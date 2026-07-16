@@ -39,18 +39,18 @@ import torch.distributed as dist
 from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
-from PIL import Image
-from transformers import AutoProcessor, AutoTokenizer, ParakeetFeatureExtractor
+from transformers import AutoTokenizer, ParakeetFeatureExtractor
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    COMPACT_IMAGE_PLACEHOLDER,
     inference_merged_sequence_length,
     inference_num_image_tiles,
+    patchify_temporal_frame,
     select_inference_next_token,
     temporal_model_frames,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
-    adjust_image_tokens,
     maybe_path_or_url_to_data_urls,
     pil_image_from_base64,
 )
@@ -66,27 +66,6 @@ _VIDEO_TEMPORAL_PATCH_SIZE = 2
 _VIDEO_FRAME_H = 512
 _VIDEO_FRAME_W = 512
 _VISION_PATCH_DIM = 16
-
-# CLIP / RADIO normalization (mirrors nemotron_omni_collate_fn)
-_CLIP_MEAN = (0.48145466, 0.4578275, 0.40821073)
-_CLIP_STD = (0.26862954, 0.26130258, 0.27577711)
-
-
-def _patchify_frame(
-    pil_img: Image.Image, target_h: int = _VIDEO_FRAME_H, target_w: int = _VIDEO_FRAME_W
-) -> torch.Tensor:
-    """Resize + normalize a PIL frame and pack into [num_patches, 3*P*P]."""
-    from torchvision import transforms
-
-    img = pil_img.convert("RGB").resize((target_w, target_h))
-    tensor = transforms.ToTensor()(img)
-    mean = torch.tensor(_CLIP_MEAN).view(3, 1, 1)
-    std = torch.tensor(_CLIP_STD).view(3, 1, 1)
-    tensor = (tensor - mean) / std
-    P = _VISION_PATCH_DIM
-    py, px = target_h // P, target_w // P
-    patches = tensor.reshape(3, py, P, px, P).permute(1, 3, 0, 2, 4).reshape(py * px, 3 * P * P)
-    return patches
 
 
 def _build_vision_packed_seq_params(imgs_sizes: Optional[torch.Tensor]) -> Optional[PackedSeqParams]:
@@ -207,7 +186,6 @@ def process_sample(
     vid_map: dict,
     data_root: Path,
     tokenizer,
-    processor,
     feature_extractor,
     video_fps: float = 1.0,
     video_nframes: int = 8,
@@ -252,7 +230,6 @@ def process_sample(
 
     # Group frames by temporal_patch_size for the prompt: one <image> per pair,
     # with the training-time timestamp format.
-    paired_images = []
     video_prompt_lines = ["This is a video:"]
     for i in range(0, len(frames), tps):
         group = frames[i : i + tps]
@@ -260,8 +237,7 @@ def process_sample(
             f"{'Frame' if j == 0 else 'frame'} {i + j + 1} sampled at {(i + j) / fps:.2f} seconds"
             for j in range(len(group))
         ]
-        video_prompt_lines.append(" and ".join(ts_parts) + ": <image>")
-        paired_images.append(group[0])
+        video_prompt_lines.append(" and ".join(ts_parts) + f": {COMPACT_IMAGE_PLACEHOLDER}")
 
     # Build question with MCQ options
     question = qa["question"]
@@ -279,32 +255,20 @@ def process_sample(
     ]
     prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 
-    # Run the dynamic-resolution HF processor on one representative frame per
-    # pair to emit input_ids with proper <img>/<image>/</img> wrappers. Limit
-    # this prepass to its smallest patch budget because its pixels are replaced
-    # by all frames below.
-    original_max_num_patches = processor.image_processor.max_num_patches
-    processor.image_processor.max_num_patches = 1
-    try:
-        inputs = processor(text=[prompt], images=paired_images, return_tensors="pt")
-    finally:
-        processor.image_processor.max_num_patches = original_max_num_patches
-
-    input_ids = inputs.input_ids
-    # One <image> token per tubelet after adjust_image_tokens (matches the
-    # number of tubelets that RADIO's temporal grouping will produce).
-    num_patches = torch.ones(len(paired_images), dtype=torch.long)
-
-    # Adjust image tokens
-    img_start = tokenizer.convert_tokens_to_ids("<img>")
-    img_end = tokenizer.convert_tokens_to_ids("</img>")
-    if (input_ids == img_start).any():
-        input_ids = adjust_image_tokens(input_ids, num_patches, img_start, img_end)
+    input_ids = tokenizer([prompt], return_tensors="pt").input_ids
 
     # Pre-patchify ALL frames into [1, total_patches, 3*P*P]: dynamic-resolution
     # input that RADIO's _apply_temporal_grouping splits per-frame and fuses
     # into tubelets via `video_embedder`.
-    all_patches = [_patchify_frame(f, _VIDEO_FRAME_H, _VIDEO_FRAME_W) for f in model_frames]
+    all_patches = [
+        patchify_temporal_frame(
+            frame,
+            height=_VIDEO_FRAME_H,
+            width=_VIDEO_FRAME_W,
+            patch_dim=_VISION_PATCH_DIM,
+        )
+        for frame in model_frames
+    ]
     images = torch.cat(all_patches, dim=0).unsqueeze(0).bfloat16()
     imgs_sizes = torch.tensor([[_VIDEO_FRAME_H, _VIDEO_FRAME_W]] * len(model_frames), dtype=torch.long)
     num_frames = torch.tensor([len(model_frames)], dtype=torch.long)
@@ -351,6 +315,7 @@ def process_sample(
         sound_id = tokenizer.convert_tokens_to_ids("<so_embedding>")
         so_start_id = tokenizer.convert_tokens_to_ids("<so_start>")
         so_end_id = tokenizer.convert_tokens_to_ids("<so_end>")
+        img_end = tokenizer.convert_tokens_to_ids("</img>")
         img_end_positions = (input_ids[0] == img_end).nonzero(as_tuple=True)[0]
         insert_pos = int(img_end_positions[-1]) + 1 if len(img_end_positions) > 0 else 1
 
@@ -565,9 +530,8 @@ def main():
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)
         model = [m.cuda().bfloat16().eval() for m in model]
 
-    # Load tokenizer and processor
+    # Load tokenizer
     tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=True)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=True)
     feature_extractor = ParakeetFeatureExtractor(sampling_rate=16000, feature_size=128)
 
     if tokenizer.pad_token is None:
@@ -595,7 +559,6 @@ def main():
             vid_map,
             data_root,
             tokenizer,
-            processor,
             feature_extractor,
         )
         if sample is None:

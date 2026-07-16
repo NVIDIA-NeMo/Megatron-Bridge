@@ -204,17 +204,6 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection) -
     if is_first or is_last:
         assert input_ids is not None
 
-    if input_ids is not None and num_image_tiles is not None and getattr(cfg.model, "temporal_patch_dim", 1) > 1:
-        # The temporal encoder emits one fixed-size embedding block per compact
-        # image/tubelet placeholder. On PP last stages the vision encoder is not
-        # present to normalize this metadata, so derive the same one-tile entries
-        # directly from the row-local placeholders.
-        image_token_index = getattr(cfg.model, "image_token_index", None)
-        if image_token_index is None:
-            raise ValueError("Temporal Nemotron Omni pipeline stages require model.image_token_index.")
-        num_placeholders = int((input_ids == image_token_index).sum().item())
-        num_image_tiles = torch.ones(num_placeholders, dtype=torch.int, device=input_ids.device)
-
     return (
         batch.get("images"),
         batch.get("num_patches"),
@@ -241,6 +230,13 @@ def forward_step(
     """Forward training step for Nemotron Omni (vision + audio + language)."""
     timers = state.timers
     straggler_timer = state.straggler_timer
+    dataset_cfg = state.cfg.dataset
+    if getattr(dataset_cfg, "enable_in_batch_packing", False) and getattr(
+        dataset_cfg, "defer_in_batch_packing_to_step", False
+    ):
+        raise ValueError(
+            "nemotron_omni_step requires collate-time in-batch packing; set defer_in_batch_packing_to_step=False"
+        )
 
     pg_collection = get_pg_collection(model)
 

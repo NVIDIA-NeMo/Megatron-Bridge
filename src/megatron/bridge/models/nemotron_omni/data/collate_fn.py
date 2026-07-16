@@ -16,10 +16,9 @@
 
 from __future__ import annotations
 
-import contextlib
 import copy
 import tempfile
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -34,7 +33,11 @@ from megatron.bridge.data.conversation_processing import (
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
-from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import temporal_model_frames
+from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    COMPACT_IMAGE_PLACEHOLDER,
+    patchify_temporal_frame,
+    temporal_model_frames,
+)
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -81,36 +84,32 @@ def _pad_text_rows(
     return input_ids, attention_mask
 
 
-@contextlib.contextmanager
-def _single_representative_patch_processor(processor: Any) -> Iterator[None]:
-    """Bound the dynamic processor prepass to one representative patch budget."""
-    image_processor = processor.image_processor
-    if not hasattr(image_processor, "max_num_patches"):
-        yield
-        return
-    original = image_processor.max_num_patches
-    image_processor.max_num_patches = 1
-    try:
-        yield
-    finally:
-        image_processor.max_num_patches = original
-
-
 def _pil_images(payload: Any) -> list[Any]:
     """Normalize one image/frame payload to a flat list of PIL images."""
-    from megatron.bridge.data.energon.task_encoder_utils import _images_to_pil
-
     if payload is None:
         return []
     if isinstance(payload, torch.Tensor):
-        converted = _images_to_pil(payload)
-        return converted if isinstance(converted, list) else [converted]
+        from PIL import Image
+
+        if payload.dim() == 4:
+            return [Image.fromarray(_tensor_image_to_uint8(image)) for image in payload]
+        if payload.dim() == 3:
+            return [Image.fromarray(_tensor_image_to_uint8(payload))]
+        raise ValueError(f"Image tensors must have shape [C,H,W] or [N,C,H,W], got {tuple(payload.shape)}.")
     if isinstance(payload, (list, tuple)):
         result: list[Any] = []
         for item in payload:
             result.extend(_pil_images(item))
         return result
     return [payload]
+
+
+def _tensor_image_to_uint8(image: torch.Tensor) -> np.ndarray:
+    """Convert one CHW image tensor in either [0, 1] or [0, 255] range to uint8."""
+    array = image.detach().cpu().permute(1, 2, 0).numpy().astype(np.float32)
+    if array.size and array.min() >= 0 and array.max() <= 1:
+        array *= 255
+    return array.clip(0, 255).astype(np.uint8)
 
 
 def _decode_video_path(path: str, *, video_fps: float, video_nframes: int) -> tuple[list[Any], float]:
@@ -156,26 +155,7 @@ def _patchify_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> t
     antialiased bicubic interpolation and RADIO normalization.
     """
     _pixel_shuffled_token_count(height=height, width=width, patch_dim=patch_dim)
-    image = np.asarray(frame.convert("RGB"), dtype=np.uint8).copy()
-    tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(dtype=torch.float32)
-    if tensor.shape[-2:] != (height, width):
-        tensor = torch.nn.functional.interpolate(
-            tensor,
-            size=(height, width),
-            mode="bicubic",
-            align_corners=False,
-            antialias=True,
-        )
-    tensor = tensor.squeeze(0) / 255.0
-    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
-    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
-    tensor = (tensor - mean) / std
-    patch_rows, patch_cols = height // patch_dim, width // patch_dim
-    return (
-        tensor.reshape(3, patch_rows, patch_dim, patch_cols, patch_dim)
-        .permute(1, 3, 0, 2, 4)
-        .reshape(patch_rows * patch_cols, 3 * patch_dim * patch_dim)
-    )
+    return patchify_temporal_frame(frame, height=height, width=width, patch_dim=patch_dim)
 
 
 def _pixel_shuffled_token_count(*, height: int, width: int, patch_dim: int) -> int:
@@ -236,12 +216,10 @@ def _prepare_temporal_rows(
     all_patches: list[torch.Tensor] = []
     all_sizes: list[list[int]] = []
     all_num_frames: list[int] = []
-    all_num_image_tiles: list[int] = []
     placeholder_counts: list[int] = []
 
     for example in examples:
         conversation: list[dict[str, Any]] = []
-        representative_images: list[Any] = []
         row_placeholder_count = 0
         for turn in example["conversation"]:
             turn_copy = copy.deepcopy(turn)
@@ -257,20 +235,12 @@ def _prepare_temporal_rows(
                                 "Each Nemotron Omni image content part must resolve to exactly one image."
                             )
                         image = images[0]
-                        text_parts.append("<image>")
-                        representative_images.append(image)
+                        text_parts.append(COMPACT_IMAGE_PLACEHOLDER)
                         all_patches.append(
                             _patchify_frame(image, height=frame_height, width=frame_width, patch_dim=patch_dim)
                         )
                         all_sizes.append([frame_height, frame_width])
                         all_num_frames.append(1)
-                        all_num_image_tiles.append(
-                            _pixel_shuffled_token_count(
-                                height=frame_height,
-                                width=frame_width,
-                                patch_dim=patch_dim,
-                            )
-                        )
                         row_placeholder_count += 1
                     elif isinstance(item, Mapping) and item.get("type") == "video":
                         payload = item.get("video", item.get("path"))
@@ -289,8 +259,7 @@ def _prepare_temporal_rows(
                                 f"{(frame_start + offset) / sampled_fps:.2f} seconds"
                                 for offset in range(len(group))
                             ]
-                            video_lines.append(" and ".join(timestamps) + ": <image>")
-                            representative_images.append(group[0])
+                            video_lines.append(" and ".join(timestamps) + f": {COMPACT_IMAGE_PLACEHOLDER}")
                             row_placeholder_count += 1
                         text_parts.append("\n".join(video_lines))
                         model_frames = temporal_model_frames(frames, temporal_patch_size)
@@ -300,12 +269,6 @@ def _prepare_temporal_rows(
                         )
                         all_sizes.extend([[frame_height, frame_width]] * len(model_frames))
                         all_num_frames.append(len(model_frames))
-                        tiles_per_frame = _pixel_shuffled_token_count(
-                            height=frame_height,
-                            width=frame_width,
-                            patch_dim=patch_dim,
-                        )
-                        all_num_image_tiles.extend([tiles_per_frame] * len(model_frames))
                     elif isinstance(item, Mapping) and item.get("type") == "text":
                         text_parts.append(str(item.get("text", "")))
                     elif isinstance(item, str):
@@ -323,10 +286,9 @@ def _prepare_temporal_rows(
         )
         audio_token = getattr(processor.tokenizer, "audio_token", "<so_embedding>")
         prompt = prompt.replace("<|audio_1|>", audio_token)
-        with _single_representative_patch_processor(processor), use_processor_right_padding(processor):
-            output = processor(
-                text=[prompt],
-                images=representative_images or None,
+        with use_processor_right_padding(processor):
+            output = processor.tokenizer(
+                [prompt],
                 padding=False,
                 truncation=False,
                 return_tensors=None,
@@ -341,6 +303,10 @@ def _prepare_temporal_rows(
     if pad_token_id is None:
         pad_token_id = processor.tokenizer.eos_token_id or 0
     input_ids, attention_mask = _pad_text_rows(token_rows, pad_token_id=int(pad_token_id))
+    num_image_tiles = torch.tensor(
+        [1 for count in placeholder_counts for _ in range(count)],
+        dtype=torch.int,
+    )
     batch: dict[str, Any] = {"input_ids": input_ids, "attention_mask": attention_mask}
     if all_patches:
         batch["visual_inputs"] = GenericVisualInputs(
@@ -348,13 +314,13 @@ def _prepare_temporal_rows(
         )
         batch["imgs_sizes"] = torch.tensor(all_sizes, dtype=torch.long)
         batch["num_frames"] = torch.tensor(all_num_frames, dtype=torch.long)
-        batch["num_image_tiles"] = torch.tensor(all_num_image_tiles, dtype=torch.int)
+        batch["num_image_tiles"] = num_image_tiles
     else:
         batch["visual_inputs"] = None
     return (
         batch,
         mask_examples,
-        torch.tensor([1 for count in placeholder_counts for _ in range(count)], dtype=torch.long),
+        num_image_tiles.to(dtype=torch.long),
     )
 
 
@@ -656,6 +622,45 @@ def _model_merge_row_lengths(
     return expanded_lengths
 
 
+def _nonpacked_multimodal_compact_width(
+    batch: Mapping[str, Any],
+    post_merge_row_lengths: torch.Tensor,
+    *,
+    sequence_length: int,
+    pad_to_max_length: bool,
+    pad_to_multiple_of: int,
+) -> int:
+    """Choose a compact width whose model-side merged width stays in bounds."""
+    if pad_to_multiple_of < 1:
+        raise ValueError("pad_to_multiple_of must be >= 1.")
+
+    attention_mask = batch["attention_mask"].to(dtype=torch.bool)
+    active_compact_lengths = attention_mask.sum(dim=1).to(dtype=torch.long)
+    merge_deltas = post_merge_row_lengths.to(dtype=torch.long) - active_compact_lengths
+    if bool((merge_deltas < 0).any()):
+        raise ValueError("Nemotron Omni model-merge metadata cannot shrink a compact sequence row.")
+
+    compact_width = int(batch["input_ids"].shape[1])
+    model_row_lengths = merge_deltas + compact_width
+    if bool((model_row_lengths > sequence_length).any()):
+        raise ValueError(
+            "Nemotron Omni cannot fit the rectangular multimodal batch before model-side merge: "
+            f"compact width {compact_width} produces model row lengths {model_row_lengths.tolist()} "
+            f"(active compact lengths {active_compact_lengths.tolist()}) with sequence_length={sequence_length}."
+        )
+
+    max_merge_delta = int(merge_deltas.max().item())
+    if pad_to_max_length:
+        target_model_width = sequence_length
+    else:
+        current_model_width = int(model_row_lengths.max().item())
+        aligned_model_width = (
+            (current_model_width + pad_to_multiple_of - 1) // pad_to_multiple_of
+        ) * pad_to_multiple_of
+        target_model_width = min(sequence_length, aligned_model_width)
+    return target_model_width - max_merge_delta
+
+
 def _pack_omni_rows_to_mcore_thd(
     batch: dict[str, Any],
     post_merge_row_lengths: torch.Tensor,
@@ -894,20 +899,12 @@ def nemotron_omni_collate_fn(
     has_modalities = batch.get("visual_inputs") is not None or batch.get("sound_clips") is not None
     post_merge_row_lengths = None
     if has_modalities and (sequence_length is not None or enable_in_batch_packing):
-        collapsed_row_lengths = batch["attention_mask"].to(dtype=torch.bool).sum(dim=1)
         post_merge_row_lengths = _model_merge_row_lengths(
             batch,
             processor,
             use_per_image_token_counts=use_per_image_token_counts,
             patch_dim=patch_dim,
         )
-        if sequence_length is not None and bool((post_merge_row_lengths > sequence_length).any()):
-            raise ValueError(
-                "Nemotron Omni cannot truncate image, video, or audio rows because modality metadata would no "
-                "longer align with text placeholders; got post-merge row lengths "
-                f"{post_merge_row_lengths.tolist()} (collapsed text lengths {collapsed_row_lengths.tolist()}) with "
-                f"sequence_length={sequence_length}."
-            )
 
     batch_size, sequence_width = batch["input_ids"].shape
     batch["position_ids"] = torch.arange(sequence_width, dtype=torch.long).unsqueeze(0).expand(batch_size, -1)
@@ -935,10 +932,21 @@ def nemotron_omni_collate_fn(
             pad_token_id=int(pad_token_id),
         )
     else:
+        compact_sequence_length = sequence_length
+        compact_pad_to_max_length = pad_to_max_length
+        if post_merge_row_lengths is not None and sequence_length is not None:
+            compact_sequence_length = _nonpacked_multimodal_compact_width(
+                batch,
+                post_merge_row_lengths,
+                sequence_length=sequence_length,
+                pad_to_max_length=pad_to_max_length,
+                pad_to_multiple_of=pad_to_multiple_of,
+            )
+            compact_pad_to_max_length = True
         prepare_sequence_batch(
             batch,
-            sequence_length=sequence_length,
-            pad_to_max_length=pad_to_max_length,
+            sequence_length=compact_sequence_length,
+            pad_to_max_length=compact_pad_to_max_length,
             pad_to_multiple_of=pad_to_multiple_of,
             enable_in_batch_packing=enable_in_batch_packing,
             in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,

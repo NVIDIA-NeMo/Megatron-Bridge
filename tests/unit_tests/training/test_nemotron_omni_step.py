@@ -14,6 +14,7 @@
 
 from types import SimpleNamespace
 
+import pytest
 import torch
 
 from megatron.bridge.training import nemotron_omni_step
@@ -91,7 +92,7 @@ def _packed_pipeline_batch():
         "sound_length": torch.tensor([4]),
         "imgs_sizes": torch.tensor([[32, 32], [32, 32]]),
         "num_frames": torch.tensor([1, 1]),
-        "num_image_tiles": torch.tensor([256, 256], dtype=torch.int),
+        "num_image_tiles": torch.tensor([1, 1], dtype=torch.int),
         "cu_seqlens_q": cu_seqlens,
         "cu_seqlens_kv": cu_seqlens,
         "max_seqlen_q": torch.tensor(2, dtype=torch.int32),
@@ -100,15 +101,27 @@ def _packed_pipeline_batch():
     }
 
 
-def _pipeline_cfg(*, packed=True, temporal_patch_dim=1):
+def _pipeline_cfg(*, packed=True, defer_packing=False, temporal_patch_dim=1):
     return SimpleNamespace(
         dataset=SimpleNamespace(
             skip_getting_attention_mask_from_dataset=True,
             enable_in_batch_packing=packed,
+            defer_in_batch_packing_to_step=defer_packing,
             enable_offline_packing=False,
         ),
         model=SimpleNamespace(temporal_patch_dim=temporal_patch_dim, image_token_index=18),
     )
+
+
+def test_forward_rejects_deferred_multimodal_packing():
+    state = SimpleNamespace(
+        timers=None,
+        straggler_timer=None,
+        cfg=_pipeline_cfg(defer_packing=True),
+    )
+
+    with pytest.raises(ValueError, match="requires collate-time in-batch packing"):
+        nemotron_omni_step.forward_step(state, iter(()), object())
 
 
 def test_middle_pipeline_stage_preserves_only_packed_attention_metadata(monkeypatch):
@@ -153,21 +166,6 @@ def test_last_pipeline_stage_keeps_label_expansion_inputs_without_media(monkeypa
     assert moved["sound_clips"] is None
     assert moved["imgs_sizes"] is None
     assert moved["cu_seqlens_q"] is batch["cu_seqlens_q"]
-
-
-def test_temporal_pipeline_stages_derive_one_tile_per_compact_placeholder(monkeypatch):
-    monkeypatch.setattr(torch.Tensor, "cuda", lambda self, **kwargs: self)
-    monkeypatch.setattr(nemotron_omni_step, "is_pp_first_stage", lambda group: False)
-    monkeypatch.setattr(nemotron_omni_step, "is_pp_last_stage", lambda group: True)
-
-    result = get_batch(
-        iter([_packed_pipeline_batch()]),
-        _pipeline_cfg(temporal_patch_dim=2),
-        pg_collection=SimpleNamespace(pp=object()),
-    )
-
-    assert result[2].tolist() == [[18, 1, 18, 2]]
-    assert result[13].tolist() == [1, 1]
 
 
 def test_packed_middle_pipeline_forward_uses_boundaries_without_input_tensors(monkeypatch):
@@ -279,6 +277,10 @@ def test_forward_unwraps_model_output_and_uses_expanded_loss_mask(monkeypatch):
         timers=_Timer(),
         straggler_timer=_Timer(),
         cfg=SimpleNamespace(
+            dataset=SimpleNamespace(
+                enable_in_batch_packing=False,
+                defer_in_batch_packing_to_step=False,
+            ),
             rerun_state_machine=SimpleNamespace(
                 check_for_nan_in_loss=False,
                 check_for_spiky_loss=False,

@@ -22,6 +22,48 @@ import torch
 
 
 _FrameT = TypeVar("_FrameT")
+COMPACT_IMAGE_PLACEHOLDER = "<img><image></img>"
+
+
+def patchify_temporal_frame(frame: Any, *, height: int, width: int, patch_dim: int) -> torch.Tensor:
+    """Resize and normalize one frame for MCore's square temporal RADIO path.
+
+    The public HF processor preserves aspect ratio, but pinned MCore requires
+    temporal tubelets to share one square spatial grid. This helper is shared
+    by training collation and inference so both paths use the same antialiased
+    bicubic interpolation, RADIO normalization, and patch layout.
+
+    Args:
+        frame: PIL-compatible image with ``convert("RGB")`` support.
+        height: Compatibility-canvas height.
+        width: Compatibility-canvas width.
+        patch_dim: Vision patch edge length.
+
+    Returns:
+        A tensor with shape ``[num_patches, 3 * patch_dim * patch_dim]``.
+    """
+    if patch_dim < 1 or height % patch_dim or width % patch_dim:
+        raise ValueError(f"Image {height}x{width} is not divisible by patch_dim={patch_dim}.")
+    image = np.asarray(frame.convert("RGB"), dtype=np.uint8).copy()
+    tensor = torch.from_numpy(image).permute(2, 0, 1).unsqueeze(0).to(dtype=torch.float32)
+    if tensor.shape[-2:] != (height, width):
+        tensor = torch.nn.functional.interpolate(
+            tensor,
+            size=(height, width),
+            mode="bicubic",
+            align_corners=False,
+            antialias=True,
+        )
+    tensor = tensor.squeeze(0) / 255.0
+    mean = torch.tensor([0.48145466, 0.4578275, 0.40821073]).view(3, 1, 1)
+    std = torch.tensor([0.26862954, 0.26130258, 0.27577711]).view(3, 1, 1)
+    tensor = (tensor - mean) / std
+    patch_rows, patch_cols = height // patch_dim, width // patch_dim
+    return (
+        tensor.reshape(3, patch_rows, patch_dim, patch_cols, patch_dim)
+        .permute(1, 3, 0, 2, 4)
+        .reshape(patch_rows * patch_cols, 3 * patch_dim * patch_dim)
+    )
 
 
 def temporal_model_frames(frames: Sequence[_FrameT], temporal_patch_size: int) -> list[_FrameT]:
