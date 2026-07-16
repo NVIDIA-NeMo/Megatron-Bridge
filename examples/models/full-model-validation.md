@@ -1,6 +1,6 @@
 # Full-checkpoint conversion and inference validation inventory
 
-Last updated: 2026-07-12
+Last updated: 2026-07-15
 
 This manifest tracks full-checkpoint conversion and inference validation for the
 model architectures and explicitly named variants in the root
@@ -49,7 +49,7 @@ forward-logit parity.
 | GPT-OSS | GPT-OSS 120B | `openai/gpt-oss-120b` | `b5c939de8f754692c1647ca79fbf85e8c1e70f8a` | 120.4B | text | `examples/models/gpt_oss` | TODO |
 | HY V3 | Hy3 preview-Base | `tencent/Hy3-preview-Base` | `54a62bb00a50195423bffb6b55e91aa28b6a8ce2` | 298.8B | text | `examples/conversion` | TODO |
 | Llama | Llama 2 | `meta-llama/Llama-2-7b-hf` | `01c7f73d771dfac7d292323805ebc428287df4f9` | 6.7B | text | `examples/conversion` | PASS |
-| Llama | Llama 3 | `meta-llama/Meta-Llama-3-8B` | `8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920` | 8.0B | text | `examples/conversion` | BLOCKED |
+| Llama | Llama 3 | `meta-llama/Meta-Llama-3-8B` | `8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920` | 8.0B | text | `examples/conversion` | PASS |
 | Llama | Llama 3.1 | `meta-llama/Meta-Llama-3.1-8B` | `d04e592bb4f6aa9cfee91e2e20afa771667e1d4b` | 8.0B | text | `examples/conversion` | PASS |
 | Llama | Llama 3.2 | `meta-llama/Llama-3.2-1B` | `4e20de362430cd3b72f300e6b0f18e50e7166e08` | 1.2B | text | `examples/conversion` | PASS |
 | Llama | Llama 3.3 | `meta-llama/Llama-3.3-70B-Instruct` | `6f6073b423013f6a7d4d9f39144961bfbfbc386b` | 70.6B | text | `examples/conversion` | BLOCKED |
@@ -65,7 +65,7 @@ forward-logit parity.
 | Moonlight | Moonlight | `moonshotai/Moonlight-16B-A3B` | `476b36a473d4467f94469414bef6cee75c9c8172` | 16.0B | text | `examples/conversion` | BLOCKED |
 | Nemotron | Nemotron H | `nvidia/Nemotron-H-4B-Base-8K` | `faba3b731ad7ea5781b9518ae75fb610a94affcf` | 4.5B | text | `examples/conversion` | PASS |
 | Nemotron | Nemotron Nano v2 | `nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base` | `dc0661c829b14e5b9246c05cfa89094a0875e052` | 8.9B | text | `examples/conversion` | PASS |
-| Nemotron | Nemotron-3 Nano | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16` | `97ab8012882a655dc38df4fee47422aca9caca07` | 31.6B | text | `examples/models/nemotron/nemotron_3/nano` | PARTIAL |
+| Nemotron | Nemotron-3 Nano | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16` | `97ab8012882a655dc38df4fee47422aca9caca07` | 31.6B | text | `examples/models/nemotron/nemotron_3/nano` | PASS |
 | Nemotron | Nemotron-3 Super | `nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16` | `d51eab0d1f979ebc26b546e634a04f450d99158e` | 123.6B | text | `examples/models/nemotron/nemotron_3/super` | TODO |
 | Nemotron | Llama Nemotron | `nvidia/Llama-3.1-Nemotron-Nano-4B-v1.1` | `d552708a9d575fa8d4a690b988fd870d65279f98` | 4.5B | text | `examples/conversion` | PASS |
 | Nemotron | Nemotron Nano v2 VL | `nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16` | `5d250e2e111dc5e1434131bdf3d590c27a878ade` | 13.2B | vision-language | `examples/models/nemotron/nemotron_vl` | BLOCKED |

@@ -34,7 +34,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
-def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
+def ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
     """Create a decoder block spec that respects ``moe_layer_freq``.
 
     The default ``GPTModelProvider.transformer_layer_spec`` calls
@@ -196,7 +196,7 @@ class Ernie45Bridge(MegatronModelBridge):
         # Mixed dense/MoE layers (layer 0 dense, rest MoE): use decoder
         # block spec that parses moe_layer_freq per-layer instead of the
         # default spec which applies MoE uniformly to all layers.
-        provider.transformer_layer_spec = _ernie45_decoder_block_spec
+        provider.transformer_layer_spec = ernie45_decoder_block_spec
 
         # --- MoE settings (ERNIE uses non-standard HF config field names) ---
         num_experts = self._get_num_experts(hf_config)
