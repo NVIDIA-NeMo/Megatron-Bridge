@@ -23,40 +23,50 @@ The conversion sweep uses layouts that keep dequantized expert parameters near 3
 
 ## Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP/ETP configs to verify HF ↔ Megatron round-trip conversion.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
+submit multiple TP/PP/EP/ETP configs and verify HF ↔ Megatron round-trip
+conversion. Run the wrapper from a Slurm login node; it waits for each job
+before submitting the next config by default. Every config uses `--skip-save`
+because this sweep validates weights rather than producing another checkpoint.
 
 ### Setup
 
-Edit the variables at the top of `slurm_conversion.sh`:
-
 ```bash
-CONTAINER_IMAGE="/path/to/container.sqsh"
-# Optional:
-export HF_TOKEN="hf_your_token_here"
-export HF_HOME="/path/to/shared/HF_HOME"
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export SLURM_PARTITION=batch
+export CONTAINER_MOUNTS=/shared:/shared
+# Optional: export HF_TOKEN and HF_HOME before launching.
 ```
+
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be on storage visible from the compute nodes. Add other comma-separated
+host-to-container mounts through `CONTAINER_MOUNTS`.
 
 ### Submit
 
 ```bash
-sbatch examples/models/mimo_v2_flash/slurm_conversion.sh
+bash examples/models/mimo_v2_flash/slurm_conversion.sh
+```
+
+Cluster-specific `srun` options are not enabled by default. Forward any that
+your cluster requires, for example:
+
+```bash
+bash examples/models/mimo_v2_flash/slurm_conversion.sh \
+    --srun-arg=--mpi=pmix
 ```
 
 ### Expected output
 
-The slurm wrapper prints a header per config and an `[OK]` line on success.
-The underlying conversion script (`hf_megatron_roundtrip_multi_gpu.py`)
-prints a parameter-by-parameter comparison table with ✅ / ❌ in the
+The Slurm wrapper prints the submitted layout for each config. The public
+round-trip launcher prints a parameter-by-parameter comparison table with ✅ / ❌ in the
 "Matches Original" column, and raises a `ValueError("Weight mismatch
-detected")` on any mismatch (which the wrapper turns into an `ERROR`
-line and a non-zero exit). A successful run ends with:
+detected")` on any mismatch. The wrapper exits immediately when a synchronous
+job fails. A successful sweep reaches the third config:
 
 ```
-[OK] Config 3: TP=2, PP=2, EP=4, ETP=2 passed
-
-======================================
-All 3 configs passed
-======================================
+Submitting MiMo-V2-Flash roundtrip: TP=2, PP=2, EP=4, ETP=2
 ```
 
 ## Inference

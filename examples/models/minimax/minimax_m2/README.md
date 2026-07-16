@@ -14,39 +14,47 @@ MiniMax-M2 requires **at least 2 nodes (16 GPUs)** for inference and conversion.
 
 ## Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP configs to verify HF ↔ Megatron round-trip conversion.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
+submit multiple TP/PP/EP configs and verify HF ↔ Megatron round-trip
+conversion. Run the wrapper from a Slurm login node; it waits for each job
+before submitting the next config by default. Every config uses `--skip-save`
+because this sweep validates weights rather than producing another checkpoint.
 
 ### Setup
 
-Edit the variables at the top of `slurm_conversion.sh`:
-
 ```bash
-CONTAINER_IMAGE="/path/to/container.sqsh"
-# Optional:
-export HF_TOKEN="hf_your_token_here"
-export HF_HOME="/path/to/shared/HF_HOME"
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export SLURM_PARTITION=batch
+export CONTAINER_MOUNTS=/shared:/shared
+# Optional: export HF_TOKEN and HF_HOME before launching.
 ```
+
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be on storage visible from the compute nodes. Add other comma-separated
+host-to-container mounts through `CONTAINER_MOUNTS`.
 
 ### Submit
 
 ```bash
-sbatch examples/models/minimax/minimax_m2/slurm_conversion.sh
+bash examples/models/minimax/minimax_m2/slurm_conversion.sh
+```
+
+Cluster-specific `srun` options are not enabled by default. Forward any that
+your cluster requires, for example:
+
+```bash
+bash examples/models/minimax/minimax_m2/slurm_conversion.sh \
+    --srun-arg=--mpi=pmix
 ```
 
 ### Expected output (per config)
 
 ```
-MiniMax-M2 Round-Trip Conversion Sweep
-Job: <JOB_ID> | Nodes: 2
-Parallelism configs: 2,1,8 1,2,8 2,2,4
-======================================
-Config 1/3: TP=2, PP=1, EP=8
+Submitting MiniMax-M2 roundtrip: TP=2, PP=1, EP=8
 ...
-All parameters match: True ✅
-[OK] Config 1: TP=2, PP=1, EP=8 passed
-...
-All 3 configs passed
-======================================
+<parameter comparison table with matches marked ✅>
+Submitting MiniMax-M2 roundtrip: TP=1, PP=2, EP=8
 ```
 
 ## Inference

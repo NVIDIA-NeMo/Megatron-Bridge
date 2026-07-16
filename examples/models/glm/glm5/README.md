@@ -57,10 +57,15 @@ machines, which are used in different areas such...
 
 ## Checkpoint Conversion (Round-Trip)
 
-[slurm_conversion.sh](slurm_conversion.sh) runs HF → Megatron → HF round-trip conversion and verifies weight fidelity. Saves the exported HF checkpoint to `OUTPUT_DIR`.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to submit
+HF → Megatron → HF validation and verify weight fidelity. Run it from a Slurm
+login node; it waits for the job by default and uses `--skip-save` to avoid
+writing another full checkpoint.
 
 ```bash
-sbatch examples/models/glm/glm5/slurm_conversion.sh
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+bash examples/models/glm/glm5/slurm_conversion.sh
 ```
 
 Default config (8 nodes, 64 GPUs): `TP=2, EP=32`.
@@ -76,11 +81,16 @@ Both scripts resolve the HF model from the local cache to avoid `snapshot_downlo
 | Variable | Description |
 |---|---|
 | `CONTAINER_IMAGE` | Path to Singularity/SquashFS container image |
-| `BRIDGE_PATH` | Megatron-Bridge checkout on shared storage (bind-mounted as `/opt/Megatron-Bridge`) |
+| `SLURM_ACCOUNT` | Slurm account used for the submitted job |
+| `SLURM_PARTITION` | Slurm partition; defaults to `batch` |
+| `CONTAINER_MOUNTS` | Optional comma-separated bind mounts for shared storage; the current checkout is mounted automatically at `/opt/Megatron-Bridge` |
 | `HF_HOME` | HuggingFace cache directory (must contain the downloaded `zai-org/GLM-5` or `zai-org/GLM-5.1` model) |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
 | `MODEL_NAME` | HF model name without the `zai-org/` prefix; defaults to `GLM-5`. Set to `GLM-5.1` to run the 5.1 checkpoint. |
-| `OUTPUT_DIR` | Conversion output directory (conversion script only) |
+
+Pass any cluster-specific `srun` flags after the wrapper, for example
+`--srun-arg=--mpi=pmix`. The wrapper forwards them to `convert.sh`; no
+NVIDIA-specific `srun` flags are enabled by default.
 
 ## MCore Patches Required
 
