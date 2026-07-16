@@ -16,6 +16,7 @@
 
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import nemotron_3_nano_pretrain_config
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
@@ -56,6 +57,18 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
+
+    # Retain performance-recipe parity. Nemotron 3 Nano uses no positional
+    # embeddings, so this remains a no-op unless the architecture changes.
+    cfg.model.apply_rope_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+    cfg.ddp.check_for_nan_in_grad = False
+
+    # Keep BF16 compute while reducing gradients in BF16 instead of FP32.
+    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     # TP communication overlap requires TP > 1 and sequence parallelism.
     if cfg.comm_overlap is not None:
