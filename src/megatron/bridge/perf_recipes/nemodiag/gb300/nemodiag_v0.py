@@ -62,6 +62,11 @@ def nemodiag_v0_pretrain_72gpu_gb300_bf16_perf72_e144_config() -> ConfigContaine
     return _nemodiag_v0_gb300_config(precision="bf16", global_batch_size=1152)
 
 
+def nemodiag_v0_pretrain_64gpu_gb300_bf16_perf72_e144_config() -> ConfigContainer:
+    """NeMoDiag V0: 64 GB300 GPUs, BF16."""
+    return _nemodiag_v0_gb300_config(precision="bf16", global_batch_size=1024)
+
+
 def nemodiag_v0_pretrain_144gpu_gb300_bf16_perf72_e144_config() -> ConfigContainer:
     """NeMoDiag V0: 144 GB300 GPUs, BF16."""
     return _nemodiag_v0_gb300_config(precision="bf16", global_batch_size=2304)
@@ -103,6 +108,7 @@ def nemodiag_v0_pretrain_288gpu_gb300_nvfp4_perf72_e144_config() -> ConfigContai
 
 
 __all__ = [
+    "nemodiag_v0_pretrain_64gpu_gb300_bf16_perf72_e144_config",
     "nemodiag_v0_pretrain_72gpu_gb300_bf16_perf72_e144_config",
     "nemodiag_v0_pretrain_72gpu_gb300_fp8mx_perf72_e144_config",
     "nemodiag_v0_pretrain_72gpu_gb300_nvfp4_perf72_e144_config",
