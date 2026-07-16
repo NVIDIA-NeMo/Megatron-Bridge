@@ -4,7 +4,6 @@
 # verified requires an immutable hf_revision, a successful command, a concrete
 # expected_result, and non-null last_verified.
 # unverified may retain an older last_verified date when validation is stale.
-# enabled_features lists only material features enabled by the referenced recipe.
 
 title: qwen3_8b
 model:
@@ -14,6 +13,14 @@ model:
 release: "26.08"
 precision: bf16
 summary: Placeholder card for reviewing the model support items and expected results.
+notes:
+  enabled_features_allowlist:
+    sequence_packing: [offline, in_batch]
+    cuda_graph:
+      implementation: [local, transformer_engine]
+      scopes: [full_iteration, attn, mlp, moe, moe_router, moe_preprocess, mamba]
+    context_parallel_size: "> 1"
+    moe_dispatcher: [deepep, hybridep]
 
 items:
   hf_to_megatron:
