@@ -8,7 +8,7 @@
 title: qwen3_8b
 model:
   hf_id: Qwen/Qwen3-8B
-  hf_revision: null
+  hf_revision: b968826d9c46dd6066d109eabc6255188de91218
   architecture: Qwen3ForCausalLM
 release: "26.08"
 precision: bf16
@@ -105,7 +105,7 @@ items:
       TBD.
 
   sft_long_context:
-    status: unverified
+    status: verified
     enabled_features:
       sequence_packing: offline
       context_parallel_size: 2
@@ -123,7 +123,7 @@ items:
       scheduler.lr_decay_iters=10 validation.eval_iters=0 validation.eval_interval=0
       checkpoint.load=null checkpoint.save=null checkpoint.save_interval=0
       logger.log_interval=1
-    last_verified: null
+    last_verified: 2026-07-16
     expected_result: >
       The 8-GPU command completes 10 SFT steps at a sequence length of 32768
       and reports a finite training loss at step 10.
