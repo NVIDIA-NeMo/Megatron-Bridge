@@ -100,6 +100,7 @@ class TestMultiGPUConversion:
         repo_root = Path(__file__).resolve().parents[4]
         # Run the scripts/conversion roundtrip worker through the public launcher.
         cmd = [
+            "bash",
             str(repo_root / "scripts/conversion/convert.sh"),
             "roundtrip",
             "--executor",
@@ -129,6 +130,7 @@ class TestMultiGPUConversion:
         repo_root = Path(__file__).resolve().parents[4]
         hf_export_path = tmp_path / "hf_export"
         cmd = [
+            "bash",
             str(repo_root / "scripts/conversion/convert.sh"),
             "export",
             "--executor",

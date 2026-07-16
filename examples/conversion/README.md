@@ -322,6 +322,10 @@ uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf
   --tp 2 --pp 2
 ```
 
+Hugging Face checkpoint export uses loose key validation by default for
+backward compatibility. Add `--strict` to require every source checkpoint
+tensor to be written.
+
 **Save in Megatron format:**
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \

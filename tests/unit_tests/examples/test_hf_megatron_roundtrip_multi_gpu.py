@@ -74,3 +74,24 @@ def test_configure_slurm_distributed_environment(monkeypatch: pytest.MonkeyPatch
     assert module.os.environ["LOCAL_RANK"] == "1"
     assert module.os.environ["MASTER_ADDR"] == "node001"
     assert module.os.environ["MASTER_PORT"] == "15456"
+
+
+def test_standalone_roundtrip_defaults_to_loose_export(monkeypatch: pytest.MonkeyPatch):
+    module = _load_roundtrip_module(monkeypatch)
+
+    args = module._build_parser().parse_args([])
+
+    assert args.strict is False
+
+
+def test_standalone_roundtrip_strict_export_is_opt_in(monkeypatch: pytest.MonkeyPatch):
+    module = _load_roundtrip_module(monkeypatch)
+
+    strict_args = module._build_parser().parse_args(["--strict"])
+    legacy_loose_args = module._build_parser().parse_args(["--not-strict"])
+
+    assert strict_args.strict is True
+    assert legacy_loose_args.strict is False
+
+    with pytest.raises(SystemExit):
+        module._build_parser().parse_args(["--strict", "--not-strict"])
