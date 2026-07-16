@@ -1,8 +1,8 @@
 # Draft agent-readable model support card.
 # status: unverified | verified | unsupported | not_applicable
 # last_verified: YYYY-MM-DD or null
-# verified requires an immutable hf_revision, a concrete expected_result,
-# non-null last_verified, and non-empty evidence.
+# verified requires an immutable hf_revision, a successful command, a concrete
+# expected_result, and non-null last_verified.
 # unverified may retain an older last_verified date when validation is stale.
 
 title: qwen3_8b
@@ -17,70 +17,115 @@ summary: Placeholder card for reviewing the model support items and expected res
 items:
   hf_to_megatron:
     status: unverified
+    command: >
+      ./scripts/conversion/convert.sh import --executor local --device gpu
+      --gpus-per-node 4 --hf-model Qwen/Qwen3-8B
+      --megatron-path /workspace/qwen3-8b/megatron --torch-dtype bfloat16 --tp 4
     last_verified: null
     expected_result: >
-      The full checkpoint imports, and the Hugging Face/Megatron logit delta is
-      less than or equal to TBD.
-    evidence: []
+      The command exits successfully and creates a loadable Megatron checkpoint
+      at /workspace/qwen3-8b/megatron/iter_0000000.
 
   megatron_to_hf:
     status: unverified
+    command: >
+      ./scripts/conversion/convert.sh export --executor local --device gpu
+      --gpus-per-node 4 --hf-model Qwen/Qwen3-8B
+      --megatron-path /workspace/qwen3-8b/megatron/iter_0000000
+      --hf-path /workspace/qwen3-8b/hf-export --torch-dtype bfloat16 --tp 4
     last_verified: null
     expected_result: >
-      The full checkpoint exports and reloads, and the Megatron/exported-HF
-      logit delta is less than or equal to TBD.
-    evidence: []
+      The command exits successfully and /workspace/qwen3-8b/hf-export reloads
+      as a Hugging Face checkpoint.
 
   inference:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=4
+      examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path Qwen/Qwen3-8B
+      --megatron_model_path /workspace/qwen3-8b/megatron/iter_0000000 --tp 4
+      --prompt "The capital of France is" --max_new_tokens 32
     last_verified: null
     expected_result: >
-      Prompt TBD produces expected output TBD from the imported checkpoint.
-    evidence: []
+      The generated continuation is non-empty and identifies Paris as the
+      capital of France.
 
   pretrain:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=4
+      scripts/training/run_recipe.py
+      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
+      --dataset mock
     last_verified: null
     expected_result: >
       qwen3_8b_pretrain_4gpu_h100_bf16_config runs for TBD steps and reaches
       loss TBD.
-    evidence: []
 
   sft:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=4
+      scripts/training/run_recipe.py
+      --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
+      --pretrained_checkpoint /workspace/qwen3-8b/megatron/iter_0000000
     last_verified: null
     expected_result: >
       qwen3_8b_sft_4gpu_h100_bf16_config runs for TBD steps and reaches loss
       TBD.
-    evidence: []
 
   peft:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=1
+      scripts/training/run_recipe.py
+      --recipe qwen3_8b_peft_1gpu_h100_bf16_config --mode lora
+      --pretrained_checkpoint /workspace/qwen3-8b/megatron/iter_0000000
     last_verified: null
     expected_result: >
-      qwen3_8b_peft_1gpu_h100_bf16_config trains and exports an adapter; the
-      reloaded adapter produces expected output TBD.
-    evidence: []
+      qwen3_8b_peft_1gpu_h100_bf16_config completes and saves a LoRA adapter
+      checkpoint.
 
   checkpoint_resume:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=4
+      scripts/training/run_recipe.py
+      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
+      --dataset mock --max_steps 50
+      --save_dir /workspace/qwen3-8b/resume-checkpoints --save_interval 50
+      checkpoint.load=null && uv run python -m torch.distributed.run
+      --nproc_per_node=4 scripts/training/run_recipe.py
+      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
+      --dataset mock --max_steps 51
+      --save_dir /workspace/qwen3-8b/resume-checkpoints
+      --load_dir /workspace/qwen3-8b/resume-checkpoints
+      checkpoint.ckpt_step=50
     last_verified: null
     expected_result: >
-      qwen3_8b_pretrain_4gpu_h100_bf16_config resumes from step TBD, and its
-      loss delta from the uninterrupted baseline is less than or equal to TBD.
-    evidence: []
+      Given a checkpoint at step 50, training resumes from it and completes
+      step 51 without restarting from step 0.
 
   pretrain_convergence:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=4
+      scripts/training/run_recipe.py
+      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
+      --dataset mock
     last_verified: null
     expected_result: >
       qwen3_8b_pretrain_4gpu_h100_bf16_config reaches loss TBD by step TBD.
-    evidence: []
 
   pretrain_performance:
     status: unverified
+    command: >
+      uv run python -m torch.distributed.run --nproc_per_node=4
+      scripts/training/run_recipe.py
+      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
+      --dataset mock --max_steps 100
     last_verified: null
     expected_result: >
       qwen3_8b_pretrain_4gpu_h100_bf16_config reaches throughput TBD and peak
       memory TBD on 4x H100 with topology TBD.
-    evidence: []
