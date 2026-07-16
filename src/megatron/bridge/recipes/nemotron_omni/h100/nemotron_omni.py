@@ -231,10 +231,6 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     Adapters target attention, Mamba, and FC1/FC2 projections. Vision and sound
     base modules remain frozen while matching adapters are trainable.
     """
-    from transformers import AutoProcessor
-
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
-    from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
     from megatron.bridge.peft.lora import LoRA
 
     cfg = _nemotron_omni_base()
