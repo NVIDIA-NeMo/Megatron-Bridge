@@ -27,7 +27,31 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     default_openmathinstruct2_config,
     default_openmathinstruct2_thinking_config,
     default_squad_config,
+    default_tulu3_config,
 )
+
+
+@pytest.mark.unit
+class TestDefaultTulu3Config:
+    def test_uses_native_chat_preset_with_validation_holdout(self):
+        cfg = default_tulu3_config()
+
+        assert isinstance(cfg, GPTSFTDatasetConfig)
+        assert cfg.hf_dataset.dataset_name == "tulu3"
+        assert cfg.hf_dataset.split is None
+        assert isinstance(cfg.preprocessing, ChatSFTPreprocessingConfig)
+        assert cfg.hf_validation_proportion == 0.05
+        assert cfg.do_validation is True
+        assert cfg.do_test is False
+
+    def test_custom_sequence_length_and_packing(self):
+        cfg = default_tulu3_config(seq_length=8192, enable_offline_packing=True, pad_seq_to_mult=4)
+
+        assert cfg.seq_length == 8192
+        assert cfg.enable_offline_packing is True
+        assert cfg.offline_packing_specs is not None
+        assert cfg.offline_packing_specs.packed_sequence_size == 8192
+        assert cfg.offline_packing_specs.pad_seq_to_mult == 4
 
 
 @pytest.mark.unit
