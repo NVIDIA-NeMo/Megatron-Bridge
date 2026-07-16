@@ -244,6 +244,7 @@ def kubeflow_executor(
     nodes: int,
     num_gpus_per_node: int,
     container_image: str = "nvcr.io/nvidia/nemo:dev",
+    runtime_ref: str = "torch-distributed",
     train_job_basename: Optional[str] = None,
     volumes: List[Dict[str, Any]] = None,
     volume_mounts: List[Dict[str, Any]] = None,
@@ -346,7 +347,7 @@ def kubeflow_executor(
         launcher=run.Torchrun(),
         # Pin the Kubeflow Trainer runtime + per-replica CPU/memory requests to
         # the same values the verified standalone launch (real_trainjob.py) uses.
-        runtime_ref="torch-distributed",
+        runtime_ref=runtime_ref,
         cpu_requests="8",
         memory_requests="32Gi",
         namespace=namespace,

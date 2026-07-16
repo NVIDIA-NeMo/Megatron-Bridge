@@ -598,6 +598,13 @@ def parse_cli_args():
         default=[],
     )
     kubeflow_args.add_argument(
+        "--kubeflow_runtime_ref",
+        type=str,
+        help="Kubeflow TrainingRuntime or ClusterTrainingRuntime name used by the TrainJob.",
+        required=False,
+        default="torch-distributed",
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_volumes_json",
         type=str,
         help="JSON-encoded list of Kubernetes Volume dicts attached to the training pod "
