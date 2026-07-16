@@ -14,6 +14,7 @@
 
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -35,36 +36,46 @@ MODEL_COLLATE_MODULES = [
 ]
 
 
-def _assert_subprocess_succeeds(code: str) -> None:
-    result = subprocess.run(
-        [sys.executable, "-c", code],
-        capture_output=True,
-        text=True,
-        timeout=180,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
+def _run_import_check(name: str, code: str) -> subprocess.CompletedProcess[str]:
+    try:
+        return subprocess.run(
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            timeout=180,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise AssertionError(
+            f"{name} timed out after {error.timeout} seconds\nstdout: {error.stdout!r}\nstderr: {error.stderr!r}"
+        ) from error
 
 
-def test_direct_collate_module_imports_do_not_load_registry():
+def test_collator_import_boundaries_preserve_lazy_loading():
     modules = ["megatron.bridge.data.collators.visual", *MODEL_COLLATE_MODULES]
-    _assert_subprocess_succeeds(
-        "import importlib\n"
-        "import sys\n"
-        f"for module_name in {modules!r}:\n"
-        "    importlib.import_module(module_name)\n"
-        f"    assert {COLLATE_REGISTRY_MODULE!r} not in sys.modules\n"
-    )
-
-
-def test_registry_import_is_lazy_until_a_processor_is_resolved():
     module_assertions = "; ".join(f"assert {module!r} not in sys.modules" for module in MODEL_COLLATE_MODULES)
-    _assert_subprocess_succeeds(
-        "import sys; "
-        "from megatron.bridge.data.collators.registry import resolve_model_collate; "
-        f"{module_assertions}; "
-        "collate = resolve_model_collate('Qwen2_5_VLProcessor'); "
-        "assert collate.__name__ == 'qwen2_5_collate_fn'; "
-        "assert 'megatron.bridge.models.qwen_vl.data.collate_fn' in sys.modules; "
-        "assert 'megatron.bridge.models.gemma_vl.data.collate_fn' not in sys.modules"
-    )
+    checks = {
+        "direct collator imports": (
+            "import importlib\n"
+            "import sys\n"
+            f"for module_name in {modules!r}:\n"
+            "    importlib.import_module(module_name)\n"
+            f"    assert {COLLATE_REGISTRY_MODULE!r} not in sys.modules\n"
+        ),
+        "lazy registry resolution": (
+            "import sys; "
+            "from megatron.bridge.data.collators.registry import resolve_model_collate; "
+            f"{module_assertions}; "
+            "collate = resolve_model_collate('Qwen2_5_VLProcessor'); "
+            "assert collate.__name__ == 'qwen2_5_collate_fn'; "
+            "assert 'megatron.bridge.models.qwen_vl.data.collate_fn' in sys.modules; "
+            "assert 'megatron.bridge.models.gemma_vl.data.collate_fn' not in sys.modules"
+        ),
+    }
+
+    with ThreadPoolExecutor(max_workers=len(checks)) as executor:
+        futures = {name: executor.submit(_run_import_check, name, code) for name, code in checks.items()}
+        results = {name: future.result() for name, future in futures.items()}
+
+    for name, result in results.items():
+        assert result.returncode == 0, f"{name} failed\n{result.stderr or result.stdout}"
