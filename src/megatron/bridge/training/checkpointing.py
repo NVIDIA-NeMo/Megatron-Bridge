@@ -145,6 +145,19 @@ HF_WEIGHTS_SUBDIR = "hf"
 # ============================================================================
 
 
+def _has_global_non_persistent_checkpoint(load_dir: str | None, ckpt_cfg: CheckpointConfig) -> bool:
+    """Return whether the configured global non-persistent checkpoint source exists."""
+    if ckpt_cfg.non_persistent_ckpt_type != "global":
+        return False
+
+    non_persistent_global_dir = (
+        ckpt_cfg.non_persistent_global_ckpt_dir
+        if ckpt_cfg.non_persistent_global_ckpt_dir or load_dir is None
+        else os.path.join(load_dir, _NON_PERSISTENT_CKPT_SUBDIR)
+    )
+    return checkpoint_exists(non_persistent_global_dir)
+
+
 def set_checkpoint_version(value: float) -> None:
     """Set the global checkpoint version number.
 
@@ -2173,7 +2186,12 @@ def load_checkpoint(
 
     # Finetuning directories
     pretrained_dir = cfg.checkpoint.pretrained_checkpoint
-    if pretrained_dir is not None and not (checkpoint_exists(load_dir) or is_hf_checkpoint_dir(load_dir)):
+    has_resume_checkpoint = (
+        checkpoint_exists(load_dir)
+        or is_hf_checkpoint_dir(load_dir)
+        or _has_global_non_persistent_checkpoint(load_dir, cfg.checkpoint)
+    )
+    if pretrained_dir is not None and not has_resume_checkpoint:
         print_rank_0(
             f"Checkpoint file not found in load directory {load_dir}. "
             f"Attempting to finetune with checkpoint in {pretrained_dir}"
