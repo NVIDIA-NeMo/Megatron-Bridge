@@ -222,6 +222,29 @@ def test_roundtrip_rejects_cpu_backend():
         module._validate_args(args)
 
 
+@pytest.mark.parametrize(
+    ("command", "options"),
+    [
+        ("roundtrip", ("--hf-model-id", "/model path", "--tp", "2")),
+        (
+            "import",
+            ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--megatron-path", "/checkpoint path"),
+        ),
+        (
+            "export",
+            ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--hf-path", "/export path"),
+        ),
+    ],
+)
+def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options):
+    module = _load_setup_conversion_module()
+    parse = {"roundtrip": _parse_roundtrip, "import": _parse, "export": _parse_export}[command]
+    args = parse(module, *options)
+
+    with pytest.raises(ValueError, match="cannot pass model IDs or paths containing whitespace"):
+        module._validate_args(args)
+
+
 def test_local_cpu_executor_uses_one_process_without_launcher():
     module = _load_setup_conversion_module()
     captured = {}
@@ -264,6 +287,7 @@ def test_roundtrip_task_uses_conversion_worker():
     task, display_args = module._build_task(args)
 
     assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
+    assert task.entrypoint == "python"
     assert task.args == display_args
     assert task.args == [
         "roundtrip",

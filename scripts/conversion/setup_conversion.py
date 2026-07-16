@@ -20,7 +20,6 @@ import argparse
 import logging
 import os
 import shlex
-import sys
 from pathlib import Path
 
 import nemo_run as run
@@ -107,6 +106,17 @@ def _validate_args(args: argparse.Namespace) -> None:
     else:
         if args.gpus_per_node is None or args.gpus_per_node < 1:
             raise ValueError("GPU conversion requires --gpus-per-node of at least 1.")
+        if args.executor == "local":
+            worker_values = [args.hf_model]
+            if args.command != "roundtrip":
+                worker_values.append(args.megatron_path)
+            if args.command == "export":
+                worker_values.append(args.hf_path)
+            if any(shlex.quote(value) != value for value in worker_values):
+                raise ValueError(
+                    "Local GPU execution cannot pass model IDs or paths containing whitespace or shell "
+                    "metacharacters through NeMo Run 0.10; use shell-safe names and paths."
+                )
         world_size = args.nodes * args.gpus_per_node
         model_parallel_size = args.tp * args.pp * args.ep
         if world_size != model_parallel_size:
@@ -189,7 +199,10 @@ def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM:$PYTHONPATH"
     task = run.Script(
         path=str(repo_root / relative_task_path),
-        entrypoint=sys.executable if args.executor == "local" else "python",
+        # NeMo Run recognizes the literal "python" entrypoint when building a
+        # torchrun command. An absolute interpreter path is treated as a
+        # non-Python executable and makes torchrun execute this file directly.
+        entrypoint="python",
         env={"PYTHONPATH": pythonpath},
         args=task_args,
     )
