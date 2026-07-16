@@ -115,7 +115,7 @@ override-dependencies = [
     "setuptools>=82.0.0",                                # Required by vllm
     "open-clip-torch>=3.2.0",                            # Required by megatron-bridge, override nemo-toolkit's 2.24.0 constraint
     "lilcom!=1.8.2",
-    "cryptography>=43.0.0,<47",                          # Required by megatron-bridge, override nemo-run's constraint
+    "cryptography==48.0.1",                              # Required by megatron-bridge, override nemo-run's constraint
     "opencv-python; sys_platform == 'never'",            # Use the dependency from the base pytorch container
     "langchain~=1.0.0",
     "langchain-core~=1.3.3",                             # GHSA-pjwx-r37v-7724
