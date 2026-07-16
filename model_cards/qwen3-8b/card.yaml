@@ -4,6 +4,7 @@
 # verified requires an immutable hf_revision, a successful command, a concrete
 # expected_result, and non-null last_verified.
 # unverified may retain an older last_verified date when validation is stale.
+# enabled_features lists only features enabled by the referenced training recipe.
 
 title: qwen3_8b
 model:
@@ -53,6 +54,13 @@ items:
 
   pretrain:
     status: unverified
+    enabled_features:
+      tensor_parallel: 4
+      transformer_engine: true
+      fused_cross_entropy: te
+      distributed_optimizer: true
+      gradient_reduce_overlap: true
+      parameter_gather_overlap: true
     command: >
       uv run python -m torch.distributed.run --nproc_per_node=4
       scripts/training/run_recipe.py
@@ -65,6 +73,11 @@ items:
 
   sft:
     status: unverified
+    enabled_features:
+      tensor_parallel: 4
+      sequence_packing: offline
+      transformer_engine: true
+      fused_cross_entropy: native
     command: >
       uv run python -m torch.distributed.run --nproc_per_node=4
       scripts/training/run_recipe.py
@@ -77,6 +90,11 @@ items:
 
   peft:
     status: unverified
+    enabled_features:
+      lora: true
+      sequence_packing: offline
+      transformer_engine: true
+      fused_cross_entropy: native
     command: >
       uv run python -m torch.distributed.run --nproc_per_node=1
       scripts/training/run_recipe.py
