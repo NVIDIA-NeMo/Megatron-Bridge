@@ -1,0 +1,86 @@
+# Draft agent-readable model support card.
+# status: unverified | verified | unsupported | not_applicable
+# last_verified: YYYY-MM-DD or null
+# verified requires an immutable hf_revision, a concrete expected_result,
+# non-null last_verified, and non-empty evidence.
+# unverified may retain an older last_verified date when validation is stale.
+
+title: qwen3_8b
+model:
+  hf_id: Qwen/Qwen3-8B
+  hf_revision: null
+  architecture: Qwen3ForCausalLM
+release: "26.08"
+precision: bf16
+summary: Placeholder card for reviewing the model support items and expected results.
+
+items:
+  hf_to_megatron:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      The full checkpoint imports, and the Hugging Face/Megatron logit delta is
+      less than or equal to TBD.
+    evidence: []
+
+  megatron_to_hf:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      The full checkpoint exports and reloads, and the Megatron/exported-HF
+      logit delta is less than or equal to TBD.
+    evidence: []
+
+  inference:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      Prompt TBD produces expected output TBD from the imported checkpoint.
+    evidence: []
+
+  pretrain:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      qwen3_8b_pretrain_4gpu_h100_bf16_config runs for TBD steps and reaches
+      loss TBD.
+    evidence: []
+
+  sft:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      qwen3_8b_sft_4gpu_h100_bf16_config runs for TBD steps and reaches loss
+      TBD.
+    evidence: []
+
+  peft:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      qwen3_8b_peft_1gpu_h100_bf16_config trains and exports an adapter; the
+      reloaded adapter produces expected output TBD.
+    evidence: []
+
+  checkpoint_resume:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      qwen3_8b_pretrain_4gpu_h100_bf16_config resumes from step TBD, and its
+      loss delta from the uninterrupted baseline is less than or equal to TBD.
+    evidence: []
+
+  pretrain_convergence:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      qwen3_8b_pretrain_4gpu_h100_bf16_config reaches loss TBD by step TBD.
+    evidence: []
+
+  pretrain_performance:
+    status: unverified
+    last_verified: null
+    expected_result: >
+      qwen3_8b_pretrain_4gpu_h100_bf16_config reaches throughput TBD and peak
+      memory TBD on 4x H100 with topology TBD.
+    evidence: []

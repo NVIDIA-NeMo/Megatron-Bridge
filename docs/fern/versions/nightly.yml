@@ -33,8 +33,6 @@ navigation:
   contents:
   - page: Supported Models
     path: ./nightly/pages/models/README.mdx
-  - page: Model Support Cards (Draft)
-    path: ./nightly/pages/models/support-cards/README.mdx
   - contents:
     - page: Ling 2.0
       path: ./nightly/pages/models/bailing/ling-2.mdx
