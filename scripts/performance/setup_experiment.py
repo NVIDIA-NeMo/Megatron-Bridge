@@ -444,6 +444,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     lock_gpu_freq: Optional[int],
+    peak_mem_clk: Optional[int],
     enable_nsys: bool,
     export_nsys_sqlite: bool,
     pytorch_profiler: bool,
@@ -708,11 +709,17 @@ def main(
     if csp is not None:
         plugins.append(_build_csp_plugin(csp))
 
+    if peak_mem_clk is None and gpu == "vr200":
+        peak_mem_clk = 4750
+    if peak_mem_clk == -1:
+        peak_mem_clk = None
+
     if not use_recipes:
         plugins.append(
             PerfEnvPlugin(
                 enable_vboost=enable_vboost,
                 lock_gpu_freq=lock_gpu_freq,
+                peak_mem_clk=peak_mem_clk,
                 moe_a2a_overlap=moe_a2a_overlap,
                 tp_size=tp_size,
                 pp_size=pp_size,
@@ -1009,6 +1016,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
+        peak_mem_clk=args.peak_mem_clk,
         enable_nsys=args.enable_nsys,
         export_nsys_sqlite=args.export_nsys_sqlite,
         pytorch_profiler=args.pytorch_profiler,

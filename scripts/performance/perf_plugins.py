@@ -211,6 +211,8 @@ class PerfEnvPlugin(Plugin):
             `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
         lock_gpu_freq (int | None): Lock GPU graphics clock to the specified frequency in MHz via
             `sudo nvidia-smi -lgc <freq>`. Runs once per node before training. None to disable.
+        peak_mem_clk (int | None): Lock GPU memory clock to the specified peak frequency in MHz via
+            `sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training. None to disable.
         enable_manual_gc (bool): Enable manual garbage collection for better performance.
         manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
         tp_size (int): Tensor parallelism size. Default is 1.
@@ -224,6 +226,7 @@ class PerfEnvPlugin(Plugin):
     enable_layernorm_sm_margin: bool = True
     enable_vboost: bool = False
     lock_gpu_freq: int | None = None
+    peak_mem_clk: int | None = None
     enable_manual_gc: bool = True
     manual_gc_interval: int = 100
     tp_size: int | None = None
@@ -495,6 +498,53 @@ class PerfEnvPlugin(Plugin):
                 else lock_freq_cmd
             )
 
+    def set_peak_mem_clock(
+        self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", peak_mem_clk: int | None
+    ) -> None:
+        """Lock GPU memory clocks to a fixed peak frequency before training.
+
+        Used for silicon simulation correlation studies where a fixed GPU
+        memory clock frequency is required to match simulation assumptions.
+
+        Args:
+            task: Task associated with the executor.
+            executor: Executor whose setup commands will be updated.
+            peak_mem_clk: Peak memory clock frequency in MHz, or None to disable.
+        """
+
+        def get_peak_mem_clock_srun_cmd(job_dir: str, peak_mem_clk: int) -> str:
+            import shlex
+
+            peak_mem_clock_cmd = "\n".join(
+                [
+                    "",
+                    "# Command 0: lock GPU memory clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "peak_mem_clock.out"),
+                            "--error",
+                            os.path.join(job_dir, "peak_mem_clock.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+
+            return peak_mem_clock_cmd
+
+        if peak_mem_clk is not None and isinstance(executor, SlurmExecutor):
+            peak_mem_clock_cmd = get_peak_mem_clock_srun_cmd(executor.tunnel.job_dir, peak_mem_clk)
+            executor.setup_lines = (
+                executor.setup_lines + peak_mem_clock_cmd
+                if (executor.setup_lines and len(executor.setup_lines) > 0)
+                else peak_mem_clock_cmd
+            )
+
     def setup_recipe_environment(
         self,
         task: Union["run.Partial", "run.Script", None],
@@ -577,6 +627,7 @@ class PerfEnvPlugin(Plugin):
         self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
         self._set_vboost(task, executor, self.enable_vboost)
         self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
+        self.set_peak_mem_clock(task, executor, self.peak_mem_clk)
 
 
 @dataclass

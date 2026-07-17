@@ -719,6 +719,15 @@ def parse_cli_args():
         default=None,
     )
     performance_args.add_argument(
+        "-lmc",
+        "--peak_mem_clk",
+        help="Lock GPU memory clock to the specified peak frequency in MHz via "
+        "`sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training.",
+        type=int,
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
         "-en",
         "--enable_nsys",
         help="Enable Nsys profiling. Disabled by default",
