@@ -1087,9 +1087,7 @@ def qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config(peft_scheme: str | PEFT = "lo
     """
     cfg = qwen3_vl_8b_peft_1gpu_h100_bf16_config(peft_scheme=peft_scheme)
     hf_path = "Qwen/Qwen3-VL-8B-Instruct"
-    cfg.dataset = _make_energon_dataset(
-        hf_path, cfg.model.seq_length, cfg.train.micro_batch_size, cfg.train.global_batch_size
-    )
+    cfg.dataset = _make_energon_dataset(hf_path, cfg.model.seq_length, cfg.train.micro_batch_size)
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,

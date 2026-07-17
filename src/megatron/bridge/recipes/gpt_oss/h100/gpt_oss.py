@@ -22,7 +22,6 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     default_peft_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
-from megatron.bridge.recipes.utils.environment_utils import COMMON_LIBRARY_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config

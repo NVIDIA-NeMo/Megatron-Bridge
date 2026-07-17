@@ -173,6 +173,7 @@ def _load_recipe_runner_module():
                 sys.modules[name] = previous
 
     test_handles = {
+        "apply_environment_variables": config_module.apply_environment_variables,
         "finetune": finetune_module.finetune,
         "omni_forward_step": qwen3_omni_step.forward_step,
         "pretrain": pretrain_module.pretrain,
@@ -183,6 +184,15 @@ def _load_recipe_runner_module():
 
 class TestRecipeRunnerQwen3Omni:
     """Tests for wiring Qwen3-Omni into the shared recipe runner."""
+
+    def test_apply_runtime_environment_applies_recipe_defaults(self):
+        """The shared runner should export recipe-owned environment defaults."""
+        module, handles = _load_recipe_runner_module()
+        config = SimpleNamespace(ddp=SimpleNamespace(nccl_ub=False))
+
+        assert module.apply_runtime_environment(config) is config
+
+        handles["apply_environment_variables"].assert_called_once_with(config)
 
     def test_llm_step_alias_loads_gpt_forward_step(self):
         """The public LLM step should resolve lazily to the GPT forward step."""
