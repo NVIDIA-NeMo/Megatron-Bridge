@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion, deterministic inference, training, checkpoint resume, or post-SFT export results, or preparing a model-support PR. Enforce the fixed card inventory, workload-only commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes runtime orchestration, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion, deterministic inference, training, checkpoint resume, or post-SFT export results, or preparing a model-support PR. Enforce the fixed card inventory, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -52,24 +52,31 @@ Include every required item, even when its status is `unsupported` or
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
 
-For `unsupported` and `not_applicable`, leave command, date, GPU type, and
-metrics null, then state the public product limitation in `expected_result`.
+For `unsupported` and `not_applicable`, leave `command` or `commands`, date,
+GPU type, and metrics null, then state the public product limitation in
+`expected_result`.
 
-### 3. Write workload-only commands
+### 3. Use the public Slurm launchers
 
-Assume the caller has already prepared the working directory, allocation,
-container, credentials, and storage mappings. Record only the workload that
-verifies model support:
+Assume the caller supplies the account, partition, container image, credentials,
+and storage mappings outside the card. Record the portable public launcher and
+the model-verification workload:
 
-- use `scripts/conversion/convert.sh --executor local` for conversion;
-- use `uv run python -m torch.distributed.run ...` for inference and training;
+- use `scripts/conversion/convert.sh --executor slurm` for CPU and GPU
+  conversion, with portable node and GPU counts;
+- use `scripts/training/train.sh --nodes ... --gpus-per-node ...` for every
+  training item;
+- use `uv run python ...` only for inference helpers that do not yet have a
+  public Slurm executor;
 - use ignored, repository-relative logical paths under
   `work/model-verification/...` for dependencies and outputs.
 
-Do not include `srun`, `sbatch`, container commands, scheduler arguments,
-`--mount`, `--env`, shell exports, environment-variable references, or launcher
-overlays. Runtime setup is personal to the verifier and does not belong in a
-model support card.
+The public launchers may read their required generic Slurm configuration from
+the caller's environment. Do not include `srun`, `sbatch`, concrete account or
+partition values, container image arguments, `--mount`, `--env`, shell exports,
+environment-variable references, cluster-specific `--srun-arg` values, or
+launcher overlays. That wiring is personal to the verifier and does not belong
+in a model support card.
 
 Never record or reproduce:
 
@@ -89,12 +96,14 @@ The validator reports the match without printing the private term.
 
 Mark an item `verified` only after the workload represented by its command has
 completed with the recorded model, recipe, data, and checkpoint arguments and
-the concrete expected result has been checked. Execution wrappers do not affect
-the claim and stay outside the card.
+the concrete expected result has been checked. A successful detached Slurm
+submission is not completion; wait for the submitted workload and inspect its
+result. Private executor configuration stays outside the card.
 
 - **Conversion:** Test CPU and GPU import/export separately. Reload every
   output. Require exact keys, shapes, dtypes, and values when the conversion is
-  expected to be lossless; otherwise state the numerical tolerance.
+  expected to be lossless; otherwise state the numerical tolerance. Do not use
+  `--detach` or a dry-run flag in a verified conversion command.
 - **Inference:** Use deterministic greedy generation, specify an exact token
   count, run twice, and record the literal completion including whitespace.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
@@ -104,7 +113,9 @@ the claim and stay outside the card.
   final full-SFT checkpoint when export verification is in scope.
 - **SFT export and inference:** Depend on `sft`, export its final full-model
   checkpoint to HF, reload the exported model with Transformers, and run greedy
-  generation twice. Specify an exact new-token count and record the literal
+  generation twice. Store this item as an ordered `commands` list containing
+  exactly two strings: the synchronous Slurm export first and the `uv run` HF
+  inference second. Specify an exact new-token count and record the literal
   byte-identical completion, including whitespace, in `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
@@ -184,12 +195,13 @@ an item verified merely to make validation pass.
 - Keep all twelve inventory items and use only the four statuses.
 - Pin a public immutable HF revision before marking anything verified.
 - Include commands and concrete expected results for verified items.
-- Keep commands workload-only: no mounts, environment forwarding, scheduler,
-  container, or remote-launch setup.
+- Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
+- Keep private executor wiring out of commands: no mounts, environment
+  forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Include GPU type and all four metrics for verified training items.
 - Leave recipe global and micro batch sizes unchanged in card commands.
 - Save full SFT, export it to HF, and record an exact deterministic N-token HF
-  completion.
+  completion in a two-command ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.

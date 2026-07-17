@@ -16,9 +16,10 @@ precision: bf16
 summary: Qwen3-8B support verification for conversion, inference, and training.
 notes:
   training_verification: >
-    Workload completion and the expected result are required; launch alone is
-    insufficient. For ordered commands, wait for the preceding workload to
-    finish successfully and verify its checkpoint before starting the next.
+    Workload completion and the expected result are required; a successful
+    train.sh submission alone is insufficient. For ordered commands, wait for
+    the preceding workload to finish successfully and verify its checkpoint
+    before starting the next.
     Reference and resumed-output checkpoint directories must be distinct; the
     resumed-output directory must be new or empty, and the commit, H100
     topology, dataset, and configuration must match the reference run.
@@ -43,7 +44,7 @@ items:
   hf_to_megatron_cpu:
     status: verified
     command: >
-      ./scripts/conversion/convert.sh import --executor local --device cpu
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model Qwen/Qwen3-8B
       --megatron-path work/model-verification/qwen3-8b/cpu-megatron
       --torch-dtype bfloat16
@@ -56,8 +57,8 @@ items:
   hf_to_megatron_gpu:
     status: verified
     command: >
-      ./scripts/conversion/convert.sh import --executor local --device gpu
-      --gpus-per-node 4
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 4
       --hf-model Qwen/Qwen3-8B
       --megatron-path work/model-verification/qwen3-8b/imported-megatron
       --torch-dtype bfloat16 --tp 4
@@ -69,7 +70,7 @@ items:
   megatron_to_hf_cpu:
     status: verified
     command: >
-      ./scripts/conversion/convert.sh export --executor local --device cpu
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model Qwen/Qwen3-8B
       --megatron-path work/model-verification/qwen3-8b/cpu-megatron/iter_0000000
       --hf-path work/model-verification/qwen3-8b/cpu-hf-export
@@ -82,8 +83,8 @@ items:
   megatron_to_hf_gpu:
     status: verified
     command: >
-      ./scripts/conversion/convert.sh export --executor local --device gpu
-      --gpus-per-node 4
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 4
       --hf-model Qwen/Qwen3-8B
       --megatron-path work/model-verification/qwen3-8b/imported-megatron/iter_0000000
       --hf-path work/model-verification/qwen3-8b/hf-export --torch-dtype bfloat16
@@ -113,8 +114,7 @@ items:
     gpu_type: H100
     enabled_features: {}
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=4
-      scripts/training/run_recipe.py
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
       --max_steps 400
@@ -147,8 +147,7 @@ items:
     enabled_features:
       sequence_packing: offline
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=4
-      scripts/training/run_recipe.py
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
@@ -176,18 +175,20 @@ items:
   sft_export_inference:
     status: verified
     depends_on: sft
-    command: >
-      ./scripts/conversion/convert.sh export --executor local --device gpu
-      --gpus-per-node 4 --hf-model Qwen/Qwen3-8B
-      --megatron-path work/model-verification/qwen3-8b/sft-checkpoints/iter_0000100
-      --hf-path work/model-verification/qwen3-8b/sft-hf-export
-      --torch-dtype bfloat16 --export-weight-dtype bfloat16
-      --distributed-save --tp 4 &&
-      uv run --active --no-sync python
-      skills/create-model-verification-card/scripts/verify_hf_inference.py
-      --hf-model work/model-verification/qwen3-8b/sft-hf-export
-      --prompt "Name the capital of France and explain its role in one sentence."
-      --max-new-tokens 45 --chat-template --disable-thinking
+    commands:
+      - >
+        ./scripts/conversion/convert.sh export --executor slurm --device gpu
+        --nodes 1 --gpus-per-node 4 --hf-model Qwen/Qwen3-8B
+        --megatron-path work/model-verification/qwen3-8b/sft-checkpoints/iter_0000100
+        --hf-path work/model-verification/qwen3-8b/sft-hf-export
+        --torch-dtype bfloat16 --export-weight-dtype bfloat16
+        --distributed-save --tp 4
+      - >
+        uv run python
+        skills/create-model-verification-card/scripts/verify_hf_inference.py
+        --hf-model work/model-verification/qwen3-8b/sft-hf-export
+        --prompt "Name the capital of France and explain its role in one sentence."
+        --max-new-tokens 45 --chat-template --disable-thinking
     last_verified: 2026-07-17
     expected_result: >
       The full-SFT checkpoint exports to HF and reloads with Transformers, then
@@ -204,8 +205,7 @@ items:
       sequence_packing: offline
       context_parallel_size: 2
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      scripts/training/run_recipe.py
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
       --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
@@ -237,8 +237,7 @@ items:
     enabled_features:
       sequence_packing: offline
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=1
-      scripts/training/run_recipe.py
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 1
       --recipe qwen3_8b_peft_1gpu_h100_bf16_config --mode lora
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
@@ -268,8 +267,7 @@ items:
     gpu_type: H100
     depends_on: pretrain
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=4
-      scripts/training/run_recipe.py
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
       --max_steps 400
@@ -314,8 +312,7 @@ items:
     status: verified
     gpu_type: H100
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=4
-      scripts/training/run_recipe.py
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset mock --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null

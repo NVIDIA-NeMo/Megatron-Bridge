@@ -53,6 +53,7 @@ ITEM_NAMES = (
 TRAINING_ITEMS = frozenset(
     {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
 )
+CONVERSION_ITEMS = frozenset({"hf_to_megatron_cpu", "hf_to_megatron_gpu", "megatron_to_hf_cpu", "megatron_to_hf_gpu"})
 FEATURE_ITEMS = frozenset({"pretrain", "sft", "sft_long_context", "peft"})
 METRIC_NAMES = frozenset(
     {
@@ -83,6 +84,7 @@ ITEM_KEYS = frozenset(
         "status",
         "depends_on",
         "command",
+        "commands",
         "last_verified",
         "expected_result",
         "gpu_type",
@@ -131,13 +133,12 @@ RUNTIME_COMMAND_RE = re.compile(
     r"(?:^|[;&|]\s*|\s)(?:srun|sbatch|docker|podman|apptainer|singularity)(?:\s|$)",
     re.IGNORECASE,
 )
-RUNTIME_ENTRYPOINT_RE = re.compile(r"(?:scripts/training/train\.sh|scripts/training/setup_experiment\.py)")
+RUNTIME_ENTRYPOINT_RE = re.compile(r"scripts/training/setup_experiment\.py")
 RUNTIME_FLAG_RE = re.compile(
     r"--(?:mount|env|export|account|partition|container(?:-image|-mounts)?|qos|reservation|nodelist|host|"
     r"srun-arg|ssh-tunnel|remote-job-dir|user|time|experiment-name)(?:=|\s|$)",
     re.IGNORECASE,
 )
-SLURM_EXECUTOR_RE = re.compile(r"--executor(?:=|\s+)slurm\b", re.IGNORECASE)
 SHELL_SETUP_RE = re.compile(r"(?:^|[;&|]\s*|\s)(?:export\s+[A-Za-z_]|bash\s+-lc\b|cd\s+\S+)", re.IGNORECASE)
 HOME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])~(?:[A-Za-z0-9_.-]+)?/")
 REGISTRY_REFERENCE_RE = re.compile(
@@ -251,6 +252,16 @@ def _command_value(item: Mapping[str, Any]) -> str | None:
     if isinstance(command, str) and command.strip():
         return command
     return None
+
+
+def _command_values(item: Mapping[str, Any]) -> list[str]:
+    command = item.get("command")
+    if isinstance(command, str) and command.strip():
+        return [command]
+    commands = item.get("commands")
+    if isinstance(commands, list):
+        return [value for value in commands if isinstance(value, str) and value.strip()]
+    return []
 
 
 def _as_string_set(value: Any) -> frozenset[str] | None:
@@ -399,6 +410,77 @@ def _has_batch_size_override(command: str) -> bool:
     return False
 
 
+def _require_positive_integer_argument(
+    command: str,
+    argument: str,
+    *,
+    path: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    values = _argument_values(command, argument)
+    if len(values) != 1 or not values[0].isdigit() or int(values[0]) < 1:
+        errors.append(f"{_pointer(*path)}: requires exactly one positive integer {argument}")
+
+
+def _validate_conversion_launcher(
+    command: str,
+    *,
+    operation: str,
+    device: str,
+    path: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return
+    if len(tokens) < 2 or tokens[:2] != ["./scripts/conversion/convert.sh", operation]:
+        errors.append(f"{_pointer(*path)}: conversion must use convert.sh {operation}")
+    executors = _argument_values(command, "--executor")
+    if executors != ["slurm"]:
+        errors.append(f"{_pointer(*path)}: conversion must specify --executor slurm exactly once")
+    devices = _argument_values(command, "--device")
+    if devices != [device]:
+        errors.append(f"{_pointer(*path)}: conversion must specify --device {device} exactly once")
+    _require_positive_integer_argument(command, "--nodes", path=path, errors=errors)
+    gpu_counts = _argument_values(command, "--gpus-per-node")
+    if device == "gpu":
+        _require_positive_integer_argument(command, "--gpus-per-node", path=path, errors=errors)
+    elif gpu_counts:
+        errors.append(f"{_pointer(*path)}: CPU conversion must not request GPUs")
+    if any(option in tokens for option in ("--detach", "--dry-run", "--submission-dry-run")):
+        errors.append(f"{_pointer(*path)}: verified conversion must wait for completion")
+
+
+def _validate_training_launcher(command: str, *, item_name: str, errors: list[str]) -> None:
+    path = ("items", item_name, "command")
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return
+    if not tokens or tokens[0] != "./scripts/training/train.sh":
+        errors.append(f"{_pointer(*path)}: training must use ./scripts/training/train.sh")
+    _require_positive_integer_argument(command, "--nodes", path=path, errors=errors)
+    _require_positive_integer_argument(command, "--gpus-per-node", path=path, errors=errors)
+    if any(option in tokens for option in ("--dry-run", "--submission-dry-run")):
+        errors.append(f"{_pointer(*path)}: verified training command must submit the workload")
+
+
+def _validate_command_text(command: str, *, path: tuple[str, ...], errors: list[str]) -> None:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|")
+        lexer.whitespace_split = True
+        lexer.commenters = ""
+        tokens = list(lexer)
+    except ValueError:
+        errors.append(f"{_pointer(*path)}: command must be shell-parseable")
+        return
+    if any(token in {"&", "&&", "|", "||", ";"} for token in tokens):
+        errors.append(f"{_pointer(*path)}: each entry must contain exactly one command")
+    if _has_batch_size_override(command):
+        errors.append(f"{_pointer(*path)}: card commands must use recipe batch sizes")
+
+
 def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str]) -> None:
     path = ("items", "checkpoint_resume")
     if item.get("depends_on") != "pretrain":
@@ -468,25 +550,40 @@ def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str])
         errors.append(f"{_pointer(*comparison_path, 'sentinels_match')}: must be true when verified")
 
 
-def _validate_inference(item: Mapping[str, Any], *, item_name: str, status: str, errors: list[str]) -> None:
+def _validate_inference(
+    item: Mapping[str, Any],
+    *,
+    item_name: str,
+    status: str,
+    errors: list[str],
+    command_override: str | None = None,
+    command_path: tuple[str, ...] | None = None,
+) -> None:
     if status != "verified":
         return
     path = ("items", item_name)
-    command = _command_value(item)
+    resolved_command_path = command_path or (*path, "command")
+    command = command_override if command_override is not None else _command_value(item)
     expected = item.get("expected_result")
     if command is None or not isinstance(expected, str):
         return
+    try:
+        command_tokens = shlex.split(command)
+    except ValueError:
+        command_tokens = []
+    if command_tokens[:2] != ["uv", "run"]:
+        errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
     token_matches = re.findall(r"--max[_-]new[_-]tokens(?:=|\s+)(\d+)", command)
     if not token_matches:
-        errors.append(f"{_pointer(*path, 'command')}: specify an exact max_new_tokens value")
+        errors.append(f"{_pointer(*resolved_command_path)}: specify an exact max_new_tokens value")
         return
     if len(token_matches) != 1:
-        errors.append(f"{_pointer(*path, 'command')}: specify max_new_tokens exactly once")
+        errors.append(f"{_pointer(*resolved_command_path)}: specify max_new_tokens exactly once")
         return
     token_count_text = token_matches[0]
     token_count = int(token_count_text)
     if token_count <= 0:
-        errors.append(f"{_pointer(*path, 'command')}: max_new_tokens must be positive")
+        errors.append(f"{_pointer(*resolved_command_path)}: max_new_tokens must be positive")
     if "exact" not in expected.lower() or token_count_text not in expected:
         errors.append(f"{_pointer(*path, 'expected_result')}: state the exact {token_count_text}-token result")
     literals = [
@@ -512,7 +609,7 @@ def _validate_inference(item: Mapping[str, Any], *, item_name: str, status: str,
             f"{_pointer(*path, 'expected_result')}: state that two independent runs produced byte-identical output"
         )
     if re.search(r"\bdo[_-]sample(?:=|\s+)(?:true|1)\b", command, re.IGNORECASE):
-        errors.append(f"{_pointer(*path, 'command')}: inference verification must be deterministic")
+        errors.append(f"{_pointer(*resolved_command_path)}: inference verification must be deterministic")
 
 
 def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[str, Any], *, errors: list[str]) -> None:
@@ -525,28 +622,60 @@ def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[st
     if sft_item.get("status") != "verified":
         errors.append(f"{_pointer(*path, 'depends_on')}: sft must be verified first")
 
-    command = _command_value(item)
+    commands = item.get("commands")
     expected = item.get("expected_result")
-    if command is None or not isinstance(expected, str):
+    if (
+        not isinstance(commands, list)
+        or len(commands) != 2
+        or not all(isinstance(command, str) and command.strip() for command in commands)
+        or not isinstance(expected, str)
+    ):
         return
+    export_command, inference_command = commands
+    export_path = (*path, "commands", "0")
+    inference_path = (*path, "commands", "1")
+
     for fragment in (
         "scripts/conversion/convert.sh export",
         "--megatron-path",
         "--hf-path",
-        "uv run",
-        "scripts/verify_hf_inference.py",
     ):
-        if fragment not in command:
-            errors.append(f"{_pointer(*path, 'command')}: missing {fragment}")
+        if fragment not in export_command:
+            errors.append(f"{_pointer(*export_path)}: missing {fragment}")
+    for fragment in ("uv run", "scripts/verify_hf_inference.py"):
+        if fragment not in inference_command:
+            errors.append(f"{_pointer(*inference_path)}: missing {fragment}")
+    try:
+        inference_tokens = shlex.split(inference_command)
+    except ValueError:
+        inference_tokens = []
+    expected_inference_prefix = [
+        "uv",
+        "run",
+        "python",
+        "skills/create-model-verification-card/scripts/verify_hf_inference.py",
+    ]
+    if inference_tokens[:4] != expected_inference_prefix:
+        errors.append(f"{_pointer(*inference_path)}: must directly run the HF inference verifier with uv")
 
-    export_position = command.find("scripts/conversion/convert.sh export")
-    separator_position = command.find("&&", export_position)
-    inference_position = command.find("scripts/verify_hf_inference.py")
-    if not 0 <= export_position < separator_position < inference_position:
-        errors.append(f"{_pointer(*path, 'command')}: export must finish before HF inference")
+    _validate_conversion_launcher(
+        export_command,
+        operation="export",
+        device="gpu",
+        path=export_path,
+        errors=errors,
+    )
+    _validate_inference(
+        item,
+        item_name="sft_export_inference",
+        status=status,
+        errors=errors,
+        command_override=inference_command,
+        command_path=inference_path,
+    )
 
     sft_command = _command_value(sft_item)
-    megatron_path = _argument_value(command, "--megatron-path")
+    megatron_path = _argument_value(export_command, "--megatron-path")
     if sft_command is not None:
         save_dir = _argument_value(sft_command, "--save_dir")
         max_steps = _argument_value(sft_command, "--max_steps")
@@ -557,12 +686,12 @@ def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[st
         else:
             expected_megatron_path = f"{save_dir.rstrip('/')}/iter_{int(max_steps):07d}"
             if megatron_path != expected_megatron_path:
-                errors.append(f"{_pointer(*path, 'command')}: export must consume the final SFT checkpoint")
+                errors.append(f"{_pointer(*export_path)}: export must consume the final SFT checkpoint")
 
-    hf_path = _argument_value(command, "--hf-path")
-    hf_models = _argument_values(command, "--hf-model")
-    if len(hf_models) != 2 or hf_path is None or hf_models[-1] != hf_path:
-        errors.append(f"{_pointer(*path, 'command')}: HF inference must reload the export destination")
+    hf_path = _argument_value(export_command, "--hf-path")
+    inference_hf_models = _argument_values(inference_command, "--hf-model")
+    if len(inference_hf_models) != 1 or hf_path is None or inference_hf_models[0] != hf_path:
+        errors.append(f"{_pointer(*inference_path)}: HF inference must reload the export destination")
     if not re.search(r"\b(?:reload|reloaded|reloads|from_pretrained)\b", expected, re.IGNORECASE):
         errors.append(f"{_pointer(*path, 'expected_result')}: state that the HF export reloads")
 
@@ -595,7 +724,11 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     item = _as_mapping(value, path=path, errors=errors)
     if item is None:
         return
-    required = frozenset({"status", "command", "last_verified", "expected_result"})
+    required = frozenset({"status", "last_verified", "expected_result"})
+    if item_name == "sft_export_inference":
+        required |= frozenset({"commands"})
+    else:
+        required |= frozenset({"command"})
     if item_name in TRAINING_ITEMS:
         required |= frozenset({"gpu_type", "metrics"})
     if item_name in FEATURE_ITEMS:
@@ -612,26 +745,47 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
         return
 
     command = item.get("command")
-    if command is not None and not isinstance(command, str):
-        errors.append(f"{_pointer(*path, 'command')}: expected a string or null")
-    elif isinstance(command, str):
-        try:
-            shlex.split(command)
-        except ValueError:
-            errors.append(f"{_pointer(*path, 'command')}: command must be shell-parseable")
-        if _has_batch_size_override(command):
-            errors.append(f"{_pointer(*path, 'command')}: card commands must use recipe batch sizes")
+    commands = item.get("commands")
+    command_entries: list[tuple[tuple[str, ...], str]] = []
+    command_field = "commands" if item_name == "sft_export_inference" else "command"
+    if item_name == "sft_export_inference":
+        if "command" in item:
+            errors.append(f"{_pointer(*path, 'command')}: use the ordered commands list for this item")
+        if commands is not None:
+            if not isinstance(commands, list):
+                errors.append(f"{_pointer(*path, 'commands')}: expected a two-string list or null")
+            else:
+                if len(commands) != 2:
+                    errors.append(f"{_pointer(*path, 'commands')}: expected exactly two ordered commands")
+                for index, value in enumerate(commands):
+                    entry_path = (*path, "commands", str(index))
+                    if not isinstance(value, str) or not value.strip():
+                        errors.append(f"{_pointer(*entry_path)}: expected a non-empty command string")
+                    else:
+                        command_entries.append((entry_path, value))
+    else:
+        if "commands" in item:
+            errors.append(f"{_pointer(*path, 'commands')}: only sft_export_inference uses a command list")
+        if command is not None and not isinstance(command, str):
+            errors.append(f"{_pointer(*path, 'command')}: expected a string or null")
+        elif isinstance(command, str):
+            command_entries.append(((*path, "command"), command))
+
+    for entry_path, entry in command_entries:
+        _validate_command_text(entry, path=entry_path, errors=errors)
 
     expected = item.get("expected_result")
     if expected is not None and not isinstance(expected, str):
         errors.append(f"{_pointer(*path, 'expected_result')}: expected a string or null")
 
     if status == "verified":
-        complete_command = _command_value(item)
-        if complete_command is None:
-            errors.append(f"{_pointer(*path, 'command')}: verified items require a command")
-        elif PLACEHOLDER_RE.search(complete_command):
-            errors.append(f"{_pointer(*path, 'command')}: verified command contains a placeholder")
+        complete_commands = _command_values(item)
+        expected_count = 2 if item_name == "sft_export_inference" else 1
+        if len(complete_commands) != expected_count:
+            errors.append(f"{_pointer(*path, command_field)}: verified item requires {expected_count} command(s)")
+        for entry_path, entry in command_entries:
+            if PLACEHOLDER_RE.search(entry):
+                errors.append(f"{_pointer(*entry_path)}: verified command contains a placeholder")
         if not isinstance(expected, str) or not expected.strip():
             errors.append(f"{_pointer(*path, 'expected_result')}: verified items require a concrete result")
         elif PLACEHOLDER_RE.search(expected):
@@ -639,12 +793,25 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
         if not _is_iso_date(item.get("last_verified")):
             errors.append(f"{_pointer(*path, 'last_verified')}: verified items require an ISO date")
     elif status in {"unsupported", "not_applicable"}:
-        if _command_value(item) is not None:
-            errors.append(f"{_pointer(*path, 'command')}: must be null for status {status}")
+        if item.get(command_field) is not None:
+            errors.append(f"{_pointer(*path, command_field)}: must be null for status {status}")
         if item.get("last_verified") is not None:
             errors.append(f"{_pointer(*path, 'last_verified')}: must be null for status {status}")
         if not isinstance(expected, str) or not expected.strip() or PLACEHOLDER_RE.search(expected):
             errors.append(f"{_pointer(*path, 'expected_result')}: explain the public limitation")
+
+    if status == "verified" and item_name in CONVERSION_ITEMS:
+        complete_command = _command_value(item)
+        if complete_command is not None:
+            operation = "import" if item_name.startswith("hf_to_megatron") else "export"
+            device = "cpu" if item_name.endswith("cpu") else "gpu"
+            _validate_conversion_launcher(
+                complete_command,
+                operation=operation,
+                device=device,
+                path=(*path, "command"),
+                errors=errors,
+            )
 
     if item_name in TRAINING_ITEMS:
         gpu_type = item.get("gpu_type")
@@ -654,6 +821,10 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
             errors.append(f"{_pointer(*path, 'gpu_type')}: must be null for status {status}")
         _validate_metrics(item, item_name=item_name, status=status, errors=errors)
         _validate_training_window(item, item_name=item_name, status=status, errors=errors)
+        if status == "verified":
+            complete_command = _command_value(item)
+            if complete_command is not None:
+                _validate_training_launcher(complete_command, item_name=item_name, errors=errors)
     elif item.get("metrics") is not None or item.get("gpu_type") is not None:
         errors.append(f"{_pointer(*path)}: metrics and gpu_type are training-only fields")
 
@@ -679,8 +850,6 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     if item_name == "checkpoint_resume":
         _validate_resume(item, status=status, errors=errors)
     if item_name == "inference":
-        _validate_inference(item, item_name=item_name, status=status, errors=errors)
-    if item_name == "sft_export_inference":
         _validate_inference(item, item_name=item_name, status=status, errors=errors)
 
 
@@ -725,6 +894,9 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
                 command = item.get("command")
                 if isinstance(command, str):
                     commands.append(command)
+                command_list = item.get("commands")
+                if isinstance(command_list, list):
+                    commands.extend(value for value in command_list if isinstance(value, str))
     if any("$(" in command or "`" in command for command in commands):
         errors.append("/: shell command substitution is forbidden in cards")
     if any(SECRET_FLAG_RE.search(command) for command in commands):
@@ -734,9 +906,9 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
     if any(RUNTIME_COMMAND_RE.search(command) for command in commands):
         errors.append("/: scheduler and container commands are forbidden in cards")
     if any(RUNTIME_ENTRYPOINT_RE.search(command) for command in commands):
-        errors.append("/: runtime launchers are forbidden; record the rank-local workload")
-    if any(RUNTIME_FLAG_RE.search(command) or SLURM_EXECUTOR_RE.search(command) for command in commands):
-        errors.append("/: runtime orchestration flags are forbidden in cards")
+        errors.append("/: use the public launcher rather than its setup implementation")
+    if any(RUNTIME_FLAG_RE.search(command) for command in commands):
+        errors.append("/: private runtime orchestration flags are forbidden in cards")
     if any(SHELL_SETUP_RE.search(command) for command in commands):
         errors.append("/: shell environment setup is forbidden in cards")
     if "../" in raw:
