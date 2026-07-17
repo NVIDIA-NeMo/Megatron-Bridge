@@ -62,8 +62,19 @@ Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
 
 For `unsupported` and `not_applicable`, leave `command` or `commands`, date,
-GPU type, and metrics null, then state the public product limitation in
-`expected_result`.
+precision, GPU type, and metrics null, then state the public product limitation
+in `expected_result`.
+
+Put a scalar `precision` on every item. It describes the workload that was
+actually verified, not every precision the model might support:
+
+- for conversion, record the imported or exported weight precision;
+- for forward pass and inference, record the compute precision;
+- for training, record the recipe's mixed-precision mode.
+
+Use `bf16` for BF16. Training items may instead use `fp8_mx` for MXFP8 or
+`nvfp4` for NVFP4. Keep MXFP8 and NVFP4 training-only, and do not list either
+until that exact item has completed in that mode.
 
 ### 3. Use the public Slurm launchers
 
@@ -196,7 +207,7 @@ it empty when none of these are central to the verification.
 | `context_parallel_size` | integer greater than one |
 | `moe_dispatcher` | `deepep` or `hybridep` |
 
-Do not list routine TP/PP/DP sizes, precision, Transformer Engine, fused loss,
+Do not list routine TP/PP/DP sizes, Transformer Engine, fused loss,
 distributed optimizer, ordinary communication overlap, LoRA, or DoRA.
 
 ### 7. Validate before review
@@ -222,6 +233,8 @@ an item verified merely to make validation pass.
 ## Completion checklist
 
 - Keep all thirteen inventory items and use only the four statuses.
+- Put the verified workload precision on every item; use `fp8_mx` and `nvfp4`
+  only for training items that ran in those modes.
 - Pin a public immutable HF revision, minimum Transformers version, public base
   container, and exact Bridge verification commit.
 - Use the public model name in commands.

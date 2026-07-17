@@ -36,6 +36,8 @@ from yaml.tokens import AliasToken, AnchorToken, TagToken
 LOG = logging.getLogger(__name__)
 
 STATUSES = frozenset({"unverified", "verified", "unsupported", "not_applicable"})
+PRECISIONS = frozenset({"bf16", "fp8_mx", "nvfp4"})
+TRAINING_ONLY_PRECISIONS = PRECISIONS - {"bf16"}
 ITEM_NAMES = (
     "hf_to_megatron_cpu",
     "hf_to_megatron_gpu",
@@ -70,12 +72,13 @@ CUDA_GRAPH_IMPLEMENTATIONS = frozenset({"local", "transformer_engine"})
 CUDA_GRAPH_SCOPES = frozenset({"full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"})
 MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
 
-TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "precision", "summary", "items"})
+TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "items"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
 ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
     {
         "status",
+        "precision",
         "depends_on",
         "command",
         "commands",
@@ -727,7 +730,7 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     item = _as_mapping(value, path=path, errors=errors)
     if item is None:
         return
-    required = frozenset({"status", "last_verified", "expected_result"})
+    required = frozenset({"status", "precision", "last_verified", "expected_result"})
     if item_name == "sft_export_inference":
         required |= frozenset({"commands"})
     else:
@@ -746,6 +749,16 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     if not isinstance(status, str) or status not in STATUSES:
         errors.append(f"{_pointer(*path, 'status')}: expected one of {sorted(STATUSES)}")
         return
+
+    precision = item.get("precision")
+    if precision is not None and (not isinstance(precision, str) or precision not in PRECISIONS):
+        errors.append(f"{_pointer(*path, 'precision')}: expected one of {sorted(PRECISIONS)} or null")
+    elif isinstance(precision, str) and item_name not in TRAINING_ITEMS and precision in TRAINING_ONLY_PRECISIONS:
+        errors.append(f"{_pointer(*path, 'precision')}: {precision} is supported only on training items")
+    if status == "verified" and precision is None:
+        errors.append(f"{_pointer(*path, 'precision')}: verified items require a concrete precision")
+    elif status in {"unsupported", "not_applicable"} and precision is not None:
+        errors.append(f"{_pointer(*path, 'precision')}: must be null for status {status}")
 
     command = item.get("command")
     commands = item.get("commands")
@@ -948,7 +961,7 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
     errors: list[str] = []
     _check_keys(card, allowed=TOP_LEVEL_KEYS, required=TOP_LEVEL_KEYS, path=(), errors=errors)
 
-    for name in ("title", "precision", "summary"):
+    for name in ("title", "summary"):
         value = card.get(name)
         if not isinstance(value, str) or not value.strip():
             errors.append(f"{_pointer(name)}: expected a non-empty string")

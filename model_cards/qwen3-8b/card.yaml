@@ -15,12 +15,12 @@ model:
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
   bridge_commit: 5c56eab34c540fad08544c38b7cc39d662fb7475  # pragma: allowlist secret
-precision: bf16
 summary: Qwen3-8B support verification for conversion, inference, and training.
 
 items:
   hf_to_megatron_cpu:
     status: verified
+    precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model Qwen/Qwen3-8B
@@ -34,6 +34,7 @@ items:
 
   hf_to_megatron_gpu:
     status: verified
+    precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 4
@@ -47,6 +48,7 @@ items:
 
   megatron_to_hf_cpu:
     status: verified
+    precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model Qwen/Qwen3-8B
@@ -60,6 +62,7 @@ items:
 
   megatron_to_hf_gpu:
     status: verified
+    precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 4
@@ -74,6 +77,7 @@ items:
 
   manual_forward_pass:
     status: verified
+    precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=4
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -89,6 +93,7 @@ items:
 
   inference:
     status: verified
+    precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=4
       examples/conversion/hf_to_megatron_generate_text.py
@@ -104,6 +109,7 @@ items:
 
   pretrain:
     status: verified
+    precision: bf16
     gpu_type: H100
     enabled_features: {}
     command: >
@@ -136,6 +142,7 @@ items:
 
   sft:
     status: verified
+    precision: bf16
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -167,6 +174,7 @@ items:
 
   sft_export_inference:
     status: verified
+    precision: bf16
     depends_on: sft
     commands:
       - >
@@ -193,6 +201,7 @@ items:
 
   sft_long_context:
     status: verified
+    precision: bf16
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -226,6 +235,7 @@ items:
 
   peft:
     status: verified
+    precision: bf16
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -257,6 +267,7 @@ items:
 
   checkpoint_resume:
     status: verified
+    precision: bf16
     gpu_type: H100
     depends_on: pretrain
     command: >
@@ -303,6 +314,7 @@ items:
 
   pretrain_performance:
     status: verified
+    precision: bf16
     gpu_type: H100
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
