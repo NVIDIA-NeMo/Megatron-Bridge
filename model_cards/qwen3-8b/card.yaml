@@ -125,8 +125,10 @@ items:
       --prompt "The capital of France is" --max_new_tokens 32'
     last_verified: 2026-07-16
     expected_result: >
-      The generated continuation is non-empty and identifies Paris as the
-      capital of France.
+      The command exits successfully after exactly 32 generation steps and
+      prints the exact completion, including its leading space,
+      " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The
+      capital of Germany is Berlin. The capital of the Netherlands is Amsterdam. The".
 
   pretrain:
     status: verified
