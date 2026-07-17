@@ -15,11 +15,13 @@ from megatron.bridge.data.builders import (
 )
 from megatron.bridge.data.builders import direct_hf_sft as builder_module
 from megatron.bridge.data.builders.direct_hf_sft import (
+    build_direct_hf_sft_split,
     load_direct_hf_sft_processor,
     select_direct_hf_sft_collate,
 )
 from megatron.bridge.data.sources.hf import resolve_hf_dataset_source
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 pytestmark = pytest.mark.unit
@@ -86,7 +88,7 @@ def test_config_validates_source_and_padding():
         config.validate()
 
 
-def test_config_rejects_disabled_explicit_split_sources():
+def test_config_allows_disabled_split_sources_for_later_config_overrides():
     config = DirectHFSFTDatasetConfig(
         seq_length=16,
         source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
@@ -94,8 +96,7 @@ def test_config_rejects_disabled_explicit_split_sources():
         do_validation=False,
     )
 
-    with pytest.raises(ValueError, match="validation_source requires do_validation"):
-        config.validate()
+    config.validate()
 
 
 @pytest.mark.parametrize("media_type", ["image", "video", "audio"])
@@ -111,6 +112,69 @@ def test_builder_leaves_multimodal_conversations_to_processor_collators(media_ty
     }
 
     assert select_direct_hf_sft_collate([row]) is None
+
+
+def test_builder_keeps_text_shaped_nemotron_omni_data_on_model_collator(monkeypatch):
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
+    captured = {}
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+
+    class _Dataset:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(builder_module, "DirectSFTDataset", _Dataset)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    build_direct_hf_sft_split(config, config.source, 1, processor_type())
+
+    assert captured["collate_impl"] is None
+
+
+def test_builder_keeps_other_registered_processors_on_generic_text_collator(monkeypatch):
+    row = {"conversation": [{"role": "user", "content": "question"}]}
+    processor_type = type("Qwen3VLProcessor", (_Tokenizer,), {})
+    captured = {}
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+
+    class _Dataset:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr(builder_module, "DirectSFTDataset", _Dataset)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    build_direct_hf_sft_split(config, config.source, 1, processor_type())
+
+    assert captured["collate_impl"] is not None
+
+
+def test_builder_rejects_text_prompt_completion_for_nemotron_omni(monkeypatch):
+    row = {"question": "question", "answer": "answer"}
+    processor_type = type("NemotronH_Nano_Omni_Reasoning_V3Processor", (_Tokenizer,), {})
+    preprocessing = PromptCompletionSFTPreprocessingConfig(prompt_column="question", completion_column="answer")
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: [row])
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/paired"),
+        preprocessing=preprocessing,
+        do_validation=False,
+        do_test=False,
+    )
+
+    with pytest.raises(ValueError, match="requires chat preprocessing"):
+        build_direct_hf_sft_split(config, config.source, 1, processor_type())
 
 
 def test_builder_preserves_canonical_conversation_key_for_multimodal_collators(monkeypatch):
@@ -331,6 +395,27 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
+
+
+def test_hf_json_data_file_can_be_supplied_by_cli_override():
+    config = DirectHFSFTDatasetConfig(
+        seq_length=128,
+        source=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            split="train",
+            load_kwargs={"data_files": {"train": None}},
+        ),
+        do_validation=False,
+        do_test=False,
+    )
+
+    process_config_with_overrides(
+        config,
+        cli_overrides=["source.load_kwargs.data_files.train=/data/training.jsonl"],
+    )
+
+    assert config.source.load_kwargs == {"data_files": {"train": "/data/training.jsonl"}}
+    config.validate()
 
 
 def test_prompt_completion_config_round_trip_is_declarative():

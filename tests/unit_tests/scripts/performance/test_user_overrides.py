@@ -55,4 +55,4 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
     updated = set_user_overrides(recipe, _parse_args(tmp_path, "--seq_length", "128"))
 
     assert updated.model.seq_length == 128
-    assert updated.dataset.sequence_length == 128
+    assert updated.dataset.seq_length == 128

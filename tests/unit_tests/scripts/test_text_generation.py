@@ -270,6 +270,17 @@ def test_load_prompts_from_file_with_jsonl_and_truncate(text_generation, tmp_pat
     assert text_generation.load_prompts(None, str(prompt_file), 2, ["d"]) == ["json prompt", "raw prompt"]
 
 
+def test_load_prompts_truncates_only_file_prompts(text_generation, tmp_path):
+    prompt_file = tmp_path / "prompts.txt"
+    prompt_file.write_text("file-1\nfile-2\nfile-3\n", encoding="utf-8")
+
+    assert text_generation.load_prompts(["explicit"], str(prompt_file), 2, ["default"]) == [
+        "explicit",
+        "file-1",
+        "file-2",
+    ]
+
+
 def test_validate_sequence_length(text_generation):
     # fits -> no raise
     text_generation.validate_sequence_length(longest_prompt_tokens=100, num_new_tokens=28, max_seq_length=4096)

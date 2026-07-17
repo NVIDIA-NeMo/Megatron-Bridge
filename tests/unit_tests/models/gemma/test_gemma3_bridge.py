@@ -19,7 +19,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
-from transformers import Gemma3Config, Gemma3ForCausalLM, GenerationConfig
+from transformers import Gemma3Config, Gemma3ForCausalLM, Gemma3TextConfig, GenerationConfig
 
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -212,12 +212,8 @@ class TestMegatronGemma3Bridge:
         # Check that the class exists and has the expected base class
         assert issubclass(Gemma3ModelBridge, MegatronModelBridge)
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_basic_1b(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_basic_1b(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test basic provider_bridge functionality for Gemma3 1B."""
-        # Mock the VL config loading
-        mock_autoconfig.return_value = gemma3_1b_config
-
         bridge = Gemma3ModelBridge()
 
         # Call provider_bridge
@@ -236,12 +232,8 @@ class TestMegatronGemma3Bridge:
             rope_theta_from_hf(gemma3_1b_config),
         )
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_basic_4b(self, mock_autoconfig, mock_pretrained_gemma3_4b, gemma3_4b_config):
+    def test_provider_bridge_basic_4b(self, mock_pretrained_gemma3_4b, gemma3_4b_config):
         """Test basic provider_bridge functionality for Gemma3 4B."""
-        # Mock the VL config loading
-        mock_autoconfig.return_value = gemma3_4b_config
-
         bridge = Gemma3ModelBridge()
 
         # Call provider_bridge
@@ -260,12 +252,8 @@ class TestMegatronGemma3Bridge:
             rope_theta_from_hf(gemma3_4b_config),
         )
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_basic_27b(self, mock_autoconfig, mock_pretrained_gemma3_27b, gemma3_27b_config):
+    def test_provider_bridge_basic_27b(self, mock_pretrained_gemma3_27b, gemma3_27b_config):
         """Test basic provider_bridge functionality for Gemma3 27B."""
-        # Mock the VL config loading
-        mock_autoconfig.return_value = gemma3_27b_config
-
         bridge = Gemma3ModelBridge()
 
         # Call provider_bridge
@@ -284,10 +272,8 @@ class TestMegatronGemma3Bridge:
             rope_theta_from_hf(gemma3_27b_config),
         )
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_vocabulary(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_vocabulary(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test vocabulary size mapping."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -297,10 +283,8 @@ class TestMegatronGemma3Bridge:
         # Gemma3 uses tied embeddings by default
         assert result.share_embeddings_and_output_weights == True
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_attention_config(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_attention_config(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test attention configuration mapping."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -310,10 +294,8 @@ class TestMegatronGemma3Bridge:
         assert result.num_query_groups == gemma3_1b_config.num_key_value_heads
         assert result.window_size == gemma3_1b_config.sliding_window
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_mlp_config(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_mlp_config(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test MLP configuration mapping."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -322,10 +304,8 @@ class TestMegatronGemma3Bridge:
         assert result.ffn_hidden_size == gemma3_1b_config.intermediate_size
         assert result.gated_linear_unit == True  # Gemma3 uses gated MLP
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_normalization(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_normalization(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test normalization configuration."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -333,10 +313,8 @@ class TestMegatronGemma3Bridge:
         # Check normalization settings
         assert result.layernorm_epsilon == gemma3_1b_config.rms_norm_eps
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_position_embedding(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_position_embedding(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test position embedding configuration."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -347,12 +325,8 @@ class TestMegatronGemma3Bridge:
             rope_theta_from_hf(gemma3_1b_config),
         )
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_gemma3_specific_features(
-        self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config
-    ):
+    def test_provider_bridge_gemma3_specific_features(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test Gemma3-specific features."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -363,12 +337,8 @@ class TestMegatronGemma3Bridge:
         assert result.layernorm_zero_centered_gamma == True  # Gemma3-specific RMSNorm behavior
         assert result.softmax_scale == 1.0 / math.sqrt(gemma3_1b_config.query_pre_attn_scalar)
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_head_dim_calculation_1b(
-        self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config
-    ):
+    def test_provider_bridge_head_dim_calculation_1b(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test head dimension calculation for Gemma3 1B."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -378,12 +348,8 @@ class TestMegatronGemma3Bridge:
         # Verify this matches the HF config
         assert result.kv_channels == 256
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_head_dim_calculation_27b(
-        self, mock_autoconfig, mock_pretrained_gemma3_27b, gemma3_27b_config
-    ):
+    def test_provider_bridge_head_dim_calculation_27b(self, mock_pretrained_gemma3_27b, gemma3_27b_config):
         """Test head dimension calculation for Gemma3 27B."""
-        mock_autoconfig.return_value = gemma3_27b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_27b)
@@ -397,11 +363,8 @@ class TestMegatronGemma3Bridge:
         assert result.kv_channels != standard_calculation
         assert result.kv_channels == 128  # Correct value from HF config
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_dtype_handling(self, mock_autoconfig, gemma3_1b_config):
+    def test_provider_bridge_dtype_handling(self, gemma3_1b_config):
         """Test dtype handling in provider_bridge."""
-        mock_autoconfig.return_value = gemma3_1b_config
-
         # Create model with specific dtype - set it in the config
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = gemma3_1b_config
@@ -417,10 +380,8 @@ class TestMegatronGemma3Bridge:
         assert result.bf16 == True
         assert result.fp16 == False
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_rope_scaling_config(self, mock_autoconfig, mock_pretrained_gemma3_4b, gemma3_4b_config):
+    def test_provider_bridge_rope_scaling_config(self, mock_pretrained_gemma3_4b, gemma3_4b_config):
         """Test rope scaling configuration."""
-        mock_autoconfig.return_value = gemma3_4b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_4b)
@@ -429,10 +390,8 @@ class TestMegatronGemma3Bridge:
         assert result.rope_scaling_factor == gemma3_4b_config.rope_scaling["factor"]
         assert result.rope_scaling_factor == 8.0
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_no_rope_scaling(self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config):
+    def test_provider_bridge_no_rope_scaling(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test configuration without rope scaling."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -440,12 +399,8 @@ class TestMegatronGemma3Bridge:
         # 1B model has no rope scaling
         assert result.rope_scaling_factor == 1.0
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_provider_bridge_query_pre_attn_scalar_variants(
-        self, mock_autoconfig, mock_pretrained_gemma3_27b, gemma3_27b_config
-    ):
+    def test_provider_bridge_query_pre_attn_scalar_variants(self, mock_pretrained_gemma3_27b, gemma3_27b_config):
         """Test query_pre_attn_scalar for 27B model which has different value."""
-        mock_autoconfig.return_value = gemma3_27b_config
         bridge = Gemma3ModelBridge()
 
         result = bridge.provider_bridge(mock_pretrained_gemma3_27b)
@@ -455,12 +410,10 @@ class TestMegatronGemma3Bridge:
         assert result.softmax_scale == expected_softmax_scale
         assert abs(result.softmax_scale - (1.0 / math.sqrt(168))) < 1e-6  # 168 for 27B model
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
     def test_megatron_to_hf_config_reconstructs_gemma3_special_fields(
-        self, mock_autoconfig, mock_pretrained_gemma3_4b, gemma3_4b_config
+        self, mock_pretrained_gemma3_4b, gemma3_4b_config
     ):
         """Test Gemma3 reverse export reconstructs rope and scaling fields."""
-        mock_autoconfig.return_value = gemma3_4b_config
         bridge = Gemma3ModelBridge()
 
         provider = bridge.provider_bridge(mock_pretrained_gemma3_4b)
@@ -472,12 +425,8 @@ class TestMegatronGemma3Bridge:
         assert hf_config["query_pre_attn_scalar"] == gemma3_4b_config.query_pre_attn_scalar
         assert hf_config["rope_scaling"] == {"factor": 8.0, "type": "linear"}
 
-    @patch("megatron.bridge.models.gemma.gemma3_bridge.AutoConfig.from_pretrained")
-    def test_megatron_to_hf_config_omits_rope_scaling_when_disabled(
-        self, mock_autoconfig, mock_pretrained_gemma3_1b, gemma3_1b_config
-    ):
+    def test_megatron_to_hf_config_omits_rope_scaling_when_disabled(self, mock_pretrained_gemma3_1b, gemma3_1b_config):
         """Test Gemma3 reverse export leaves rope_scaling unset when no scaling is active."""
-        mock_autoconfig.return_value = gemma3_1b_config
         bridge = Gemma3ModelBridge()
 
         provider = bridge.provider_bridge(mock_pretrained_gemma3_1b)
@@ -504,6 +453,19 @@ class TestMegatronGemma3Bridge:
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Gemma3 models."""
+
+    def test_config_only_provider_uses_in_memory_config(self):
+        """Config-only provider construction does not require a model path."""
+        config = Gemma3TextConfig(
+            architectures=["Gemma3ForCausalLM"],
+            dtype="bfloat16",
+        )
+
+        provider = AutoBridge.from_hf_config(config).to_megatron_provider(load_weights=False)
+
+        assert isinstance(provider, Gemma3ModelProvider)
+        assert provider.hidden_size == config.hidden_size
+        assert provider.params_dtype == torch.bfloat16
 
     @pytest.fixture
     def gemma3_configs(self):
@@ -648,83 +610,3 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["Gemma3Model"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
-
-
-class TestGemma3BridgeParameterMapping:
-    """Test parameter mapping functionality in Gemma3Bridge."""
-
-    @pytest.fixture
-    def mock_gemma3_state_dict(self):
-        """Create a mock state dict with Gemma3 parameter names."""
-        return {
-            "model.embed_tokens.weight": torch.randn(262144, 1152),
-            "model.norm.weight": torch.randn(1152),
-            "model.layers.0.input_layernorm.weight": torch.randn(1152),
-            "model.layers.0.pre_feedforward_layernorm.weight": torch.randn(1152),
-            "model.layers.0.post_feedforward_layernorm.weight": torch.randn(1152),
-            "model.layers.0.post_attention_layernorm.weight": torch.randn(1152),
-            "model.layers.0.self_attn.q_proj.weight": torch.randn(1152, 1152),
-            "model.layers.0.self_attn.k_proj.weight": torch.randn(256, 1152),  # GQA: different size for K
-            "model.layers.0.self_attn.v_proj.weight": torch.randn(256, 1152),  # GQA: different size for V
-            "model.layers.0.self_attn.o_proj.weight": torch.randn(1152, 1152),
-            "model.layers.0.self_attn.q_norm.weight": torch.randn(256),  # Gemma3 has Q/K norms
-            "model.layers.0.self_attn.k_norm.weight": torch.randn(256),
-            "model.layers.0.mlp.gate_proj.weight": torch.randn(6912, 1152),
-            "model.layers.0.mlp.up_proj.weight": torch.randn(6912, 1152),
-            "model.layers.0.mlp.down_proj.weight": torch.randn(1152, 6912),
-        }
-
-    def test_mapping_registry_has_gemma3_specific_mappings(self):
-        """Test that mapping registry includes Gemma3-specific mappings."""
-        bridge = Gemma3ModelBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # This test verifies that the mapping registry was created
-        # The actual parameter mappings are tested in integration tests
-        assert mapping_registry is not None
-
-    def test_gemma3_tied_embeddings_mapping(self):
-        """Test that Gemma3 bridge handles tied embeddings correctly."""
-        bridge = Gemma3ModelBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma3 uses tied embeddings, so there should be no separate lm_head.weight mapping
-        # This is reflected in the mapping registry not including lm_head.weight
-        assert mapping_registry is not None
-
-    def test_gemma3_no_bias_mapping(self):
-        """Test that Gemma3 bridge doesn't include bias mappings."""
-        bridge = Gemma3ModelBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma3 doesn't have bias in linear layers
-        # This is reflected in the QKVMapping and other mappings not including bias terms
-        assert mapping_registry is not None
-
-    def test_gemma3_gated_mlp_mapping(self):
-        """Test that Gemma3 bridge includes gated MLP mappings."""
-        bridge = Gemma3ModelBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma3 uses gated MLP, so it should have GatedMLPMapping
-        # This combines gate_proj and up_proj into linear_fc1
-        assert mapping_registry is not None
-
-    def test_gemma3_additional_layer_norms_mapping(self):
-        """Test that Gemma3 bridge includes additional layer norm mappings."""
-        bridge = Gemma3ModelBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma3 has additional layer normalizations including Q/K norms
-        # pre_feedforward_layernorm, post_feedforward_layernorm, post_attention_layernorm
-        # q_norm, k_norm
-        assert mapping_registry is not None
-
-    def test_gemma3_qk_norm_mapping(self):
-        """Test that Gemma3 bridge includes Q/K normalization mappings."""
-        bridge = Gemma3ModelBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma3 has Q and K normalization layers which are unique to this architecture
-        # These should be mapped correctly
-        assert mapping_registry is not None

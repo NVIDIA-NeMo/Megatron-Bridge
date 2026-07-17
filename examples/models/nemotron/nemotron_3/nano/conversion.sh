@@ -22,14 +22,16 @@ MODEL_NAME=NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16
 HF_MODEL_ID=nvidia/$MODEL_NAME
 
 # Import HF → Megatron
-uv run torchrun --nproc_per_node=8 examples/conversion/convert_checkpoints_multi_gpu.py import \
+./scripts/conversion/convert.sh import \
+    --executor local --device gpu --gpus-per-node 8 \
     --hf-model $HF_MODEL_ID \
     --megatron-path ${WORKSPACE}/models/$MODEL_NAME \
     --tp 1 --ep 8
 
 
 # Export Megatron → HF
-uv run torchrun --nproc_per_node=8 examples/conversion/convert_checkpoints_multi_gpu.py export \
+./scripts/conversion/convert.sh export \
+    --executor local --device gpu --gpus-per-node 8 \
     --hf-model $HF_MODEL_ID \
     --megatron-path ${WORKSPACE}/models/$MODEL_NAME/iter_0000000 \
     --hf-path ${WORKSPACE}/models/$MODEL_NAME-hf-export \

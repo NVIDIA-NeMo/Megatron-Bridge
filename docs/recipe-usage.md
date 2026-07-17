@@ -23,7 +23,7 @@ Training mode follows the recipe and dataset type:
 | LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
 | Full SFT | `GPTSFTDatasetConfig` for local JSONL or Hugging Face source data | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
-| VLM SFT or PEFT | `DirectHFSFTDatasetConfig` + builder, Energon, or a specialized/preloaded provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
+| VLM SFT or PEFT | `DirectHFSFTDatasetConfig` with a Hugging Face source, including its JSON loader, or Energon | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for local JSONL data. Do not use `data_path` for SFT/PEFT JSONL roots.
 
@@ -32,7 +32,7 @@ For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
 The benefit of providing the full recipe through a pythonic structure is that it is agnostic to any configuration approach that a user may prefer, whether that's YAML, `argparse` or something else. In other words, the user may override the recipe however they see fit.
 
-The following sections detail a few different ways to override the configuration recipe. For a generic recipe launcher, see [`scripts/training/run_recipe.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/run_recipe.py).
+The following sections detail a few different ways to override the configuration recipe. For the public Slurm launcher and its rank-local recipe runner, see [`scripts/training/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/README.md).
 
 
 ### Python
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/launch_with_nemo_run.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/launch_with_nemo_run.py).
+For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/setup_experiment.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/setup_experiment.py).
 
 #### Plugins
 

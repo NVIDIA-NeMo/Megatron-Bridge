@@ -77,14 +77,9 @@ class DirectSFTDataset(torch.utils.data.Dataset):
         collate_key = type(processor).__name__ if processor is not None else "default"
         explicit_collate_impl = collate_impl is not None
         if collate_impl is None:
-            from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
+            from megatron.bridge.data.collators.registry import resolve_model_collate
 
-            if collate_key not in COLLATE_FNS:
-                raise ValueError(
-                    f"No SFT collate function registered for processor type '{collate_key}'. "
-                    "Add it to COLLATE_FNS or pass collate_impl explicitly."
-                )
-            collate_impl = COLLATE_FNS[collate_key]
+            collate_impl = resolve_model_collate(collate_key)
         assert collate_impl is not None
 
         collate_kwargs: dict[str, Any] = {

@@ -44,7 +44,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model mistralai/Mistral-Small-24B-Base-2501 \
   --megatron-path /checkpoints/mistral_small_24b_megatron
 ```

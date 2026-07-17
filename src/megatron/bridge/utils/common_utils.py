@@ -261,7 +261,7 @@ def slice_batch_for_context_parallel(
 
     This function handles CP slicing AFTER vision-text embedding merge, ensuring
     image token positions are correctly preserved. It supports both:
-    - THD format (packed sequences): Uses TransformerEngine's thd_get_partitioned_indices
+    - THD format (packed sequences): Uses MCore's packed-sequence CP partitioning
     - BSHD format: Uses Megatron's get_batch_on_this_cp_rank with zigzag pattern
 
     Args:
@@ -287,8 +287,7 @@ def slice_batch_for_context_parallel(
     if inputs_embeds is not None:
         inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
-    # For THD (packed) format, use TE's thd_get_partitioned_indices
-    # This properly slices WITHIN each packed sequence, not across them
+    # MCore's THD path slices within each packed sequence rather than across them.
     if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
         if inputs_embeds is None:
             raise ValueError("inputs_embeds is required for THD CP slicing")
@@ -300,6 +299,7 @@ def slice_batch_for_context_parallel(
             cp_size=cp_size,
             cp_rank=cp_rank,
             device=inputs_embeds.device,
+            cp_group=pg_collection.cp,
         )
 
         # Slice all tensors using THD indices

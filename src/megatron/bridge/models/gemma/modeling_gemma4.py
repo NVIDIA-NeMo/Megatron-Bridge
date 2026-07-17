@@ -1286,26 +1286,51 @@ class Gemma4TransformerLayer(TransformerLayer):
         hidden_states: Tensor,
         inference_context: BaseInferenceContext | None = None,
         padding_mask: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
     ) -> Tensor:
         """Run HF's separate shared-expert, routed-expert, and router inputs."""
         del inference_context
         residual = hidden_states.float() if self.config.fp32_residual_connection else hidden_states
+
+        moe_input = residual
+        moe_unflatten_mbs = None
+        # TODO: remove this guard when MCore dev includes commit e86c262ccd0c and both pins expose
+        # TransformerLayer._maybe_unflatten_for_moe.
+        if packed_seq_params is not None and hasattr(TransformerLayer, "_maybe_unflatten_for_moe"):
+            moe_input, padding_mask, moe_unflatten_mbs = TransformerLayer._maybe_unflatten_for_moe(
+                self,
+                residual,
+                padding_mask,
+                packed_seq_params,
+            )
+
         expert_input = _gemma4_rms_norm(
-            residual,
+            moe_input,
             self.pre_mlp_layernorm.weight,
             self.config.layernorm_epsilon,
         )
         shared_expert_input = _gemma4_rms_norm(
-            residual,
+            moe_input,
             self.pre_shared_expert_layernorm.weight,
             self.config.layernorm_epsilon,
         )
         mlp_output_with_bias = self.mlp.forward_with_separate_inputs(
             expert_input,
             shared_expert_input,
-            residual,
+            moe_input,
             padding_mask=padding_mask,
         )
+
+        if moe_unflatten_mbs is not None:
+            mlp_output, mlp_bias = mlp_output_with_bias
+            mlp_output = TransformerLayer._maybe_reflatten_from_moe(
+                self,
+                mlp_output,
+                packed_seq_params,
+                moe_unflatten_mbs,
+            )
+            mlp_output_with_bias = (mlp_output, mlp_bias)
+
         return self._forward_post_mlp(mlp_output_with_bias, residual)
 
     def _forward_post_mlp(

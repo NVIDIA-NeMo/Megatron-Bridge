@@ -19,7 +19,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.models.gemma.gemma3_provider import Gemma3ModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -172,7 +172,7 @@ def gemma3_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
-    # With packed_sequence=True (default), seq_length is 4096
+    # With enable_offline_packing=True (default), seq_length is 4096
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
@@ -296,7 +296,7 @@ def gemma3_1b_peft_1gpu_h100_bf16_config(
     cfg.tokenizer.tokenizer_model = hf_path
 
     # Sequence length - Gemma3 uses 4096 for packed, 2048 for non-packed
-    # With packed_sequence=True (default), seq_length is 4096
+    # With enable_offline_packing=True (default), seq_length is 4096
     seq_length = 4096
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length

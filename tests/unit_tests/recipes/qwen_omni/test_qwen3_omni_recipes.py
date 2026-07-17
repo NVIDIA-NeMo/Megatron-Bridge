@@ -12,91 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import importlib
-import importlib.util
-import pathlib
-import sys
-import types
-import typing
-from types import SimpleNamespace
-
+import megatron.bridge.recipes.qwen_omni.h100.qwen3_omni as _qwen3_omni_module
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
-
-
-if "megatron.energon" not in sys.modules:
-    fake_energon = types.ModuleType("megatron.energon")
-    fake_energon.WorkerConfig = object
-    fake_energon.get_savable_loader = lambda *args, **kwargs: None
-    fake_energon.get_train_dataset = lambda *args, **kwargs: None
-    sys.modules["megatron.energon"] = fake_energon
-
-if not hasattr(typing, "override"):
-    typing.override = lambda func: func  # type: ignore[attr-defined]
-
-if "megatron.bridge.recipes.common" not in sys.modules:
-    fake_common = types.ModuleType("megatron.bridge.recipes.common")
-
-    def _fake_sft_common_vlm():
-        return SimpleNamespace(
-            model=None,
-            train=SimpleNamespace(train_iters=0, global_batch_size=0, micro_batch_size=0),
-            optimizer=SimpleNamespace(lr=0.0),
-            scheduler=SimpleNamespace(),
-            dataset=SimpleNamespace(seq_length=0, hf_processor_path=None, enable_in_batch_packing=True),
-            tokenizer=SimpleNamespace(),
-            checkpoint=SimpleNamespace(),
-            ddp=SimpleNamespace(
-                overlap_grad_reduce=True,
-                overlap_param_gather=True,
-                check_for_nan_in_grad=False,
-                use_distributed_optimizer=False,
-                grad_reduce_in_fp32=False,
-                average_in_collective=False,
-                data_parallel_sharding_strategy=None,
-            ),
-            peft=None,
-            mixed_precision=None,
-        )
-
-    fake_common._sft_common_vlm = _fake_sft_common_vlm
-    sys.modules["megatron.bridge.recipes.common"] = fake_common
-
-if "megatron.bridge.recipes.utils.optimizer_utils" not in sys.modules:
-    fake_optimizer_utils = types.ModuleType("megatron.bridge.recipes.utils.optimizer_utils")
-
-    def _fake_distributed_fused_adam_with_cosine_annealing(**kwargs):
-        return SimpleNamespace(lr=kwargs["max_lr"]), SimpleNamespace()
-
-    fake_optimizer_utils.distributed_fused_adam_with_cosine_annealing = (
-        _fake_distributed_fused_adam_with_cosine_annealing
-    )
-    sys.modules["megatron.bridge.recipes.utils.optimizer_utils"] = fake_optimizer_utils
-
-if "megatron.bridge.data.vlm_datasets.preloaded_provider" not in sys.modules:
-    fake_preloaded = types.ModuleType("megatron.bridge.data.vlm_datasets.preloaded_provider")
-
-    class _FakePreloadedVLMConversationProvider:
-        def __init__(self, **kwargs):
-            for key, value in kwargs.items():
-                setattr(self, key, value)
-            self.enable_in_batch_packing = False
-
-    fake_preloaded.PreloadedVLMConversationProvider = _FakePreloadedVLMConversationProvider
-    sys.modules["megatron.bridge.data.vlm_datasets.preloaded_provider"] = fake_preloaded
-
-_RECIPE_PATH = (
-    pathlib.Path(__file__).resolve().parents[4]
-    / "src"
-    / "megatron"
-    / "bridge"
-    / "recipes"
-    / "qwen_omni"
-    / "qwen3_omni.py"
-)
-_SPEC = importlib.util.spec_from_file_location("_test_qwen3_omni_recipe_module", _RECIPE_PATH)
-assert _SPEC is not None and _SPEC.loader is not None
-_qwen3_omni_module = importlib.util.module_from_spec(_SPEC)
-_SPEC.loader.exec_module(_qwen3_omni_module)
 
 
 class _FakeProvider:
@@ -138,7 +55,7 @@ class _FakeAutoBridge:
 def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
     patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_config()
+    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config()
 
     assert cfg.model is not None
     assert cfg.train is not None
@@ -151,6 +68,7 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
 
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.sequence_parallel is False
     assert cfg.model.freeze_language_model is False
     assert cfg.model.freeze_vision_model is False
@@ -160,20 +78,27 @@ def test_qwen3_omni_sft_recipe_builds_config(monkeypatch):
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.enable_in_batch_packing is False
+    assert cfg.dataset.skip_getting_attention_mask_from_dataset is False
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
 
     assert cfg.optimizer.lr == 5e-6
 
 
-def test_qwen3_omni_preloaded_recipe_uses_preloaded_provider(monkeypatch):
+def test_qwen3_omni_hf_json_recipe_uses_direct_hf_source(monkeypatch):
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig, HFDatasetSourceConfig
+
     patch_recipe_module_global(monkeypatch, _qwen3_omni_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_preloaded_config()
+    cfg = _qwen3_omni_module.qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config()
 
-    assert cfg.dataset is not None
-    assert cfg.dataset.seq_length == 4096
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert isinstance(cfg.dataset.source, HFDatasetSourceConfig)
+    assert isinstance(cfg.dataset.validation_source, HFDatasetSourceConfig)
+    assert isinstance(cfg.dataset.test_source, HFDatasetSourceConfig)
+    assert cfg.dataset.source.path_or_dataset == "json"
+    assert cfg.dataset.source.load_kwargs == {"data_files": {"train": None}}
+    assert cfg.dataset.validation_source.load_kwargs == {"data_files": {"validation": None}}
+    assert cfg.dataset.test_source.load_kwargs == {"data_files": {"test": None}}
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
-    assert cfg.dataset.train_data_path is None
-    assert cfg.dataset.valid_data_path is None
-    assert cfg.dataset.test_data_path is None
     assert cfg.dataset.enable_in_batch_packing is False
+    assert cfg.dataset.skip_getting_attention_mask_from_dataset is False

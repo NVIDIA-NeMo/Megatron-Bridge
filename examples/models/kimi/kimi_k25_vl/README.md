@@ -23,24 +23,21 @@ Directory structure:
 
 The full model requires multi-node Slurm for conversion.
 
-**Import** the full HF checkpoint into Megatron format (multi-GPU):
+**Import** the full HF checkpoint into Megatron format with NeMo Run. This
+example uses the same 96-GPU parallelism as the conversion verification job:
 
 ```bash
-srun --mpi=pmix -A <YOUR_ACCOUNT> \
-    --partition batch \
-    -N4 \
-    -t 4:00:00 \
-    --container-image=<CONTAINER_IMAGE> \
-    --container-mounts=<YOUR_MOUNT> \
-    --no-container-entrypoint \
-    --no-container-remap-root \
-    --exclusive \
-    --gres=gpu:8 \
-    --ntasks-per-node=8 \
-    python examples/conversion/convert_checkpoints_multi_gpu.py import \
-        --hf-model moonshotai/Kimi-K2.5 \
-        --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron \
-        --tp 8 --ep 8 --pp 4
+./scripts/conversion/convert.sh import \
+    --executor slurm --device gpu \
+    --nodes 12 --gpus-per-node 8 \
+    --account <YOUR_ACCOUNT> --partition batch --time 4:00:00 \
+    --container-image <CONTAINER_IMAGE> \
+    --mount <HOST_WORKSPACE>:${WORKSPACE} \
+    --mount <BRIDGE_CHECKOUT>:/opt/Megatron-Bridge \
+    --env HF_TOKEN \
+    --hf-model moonshotai/Kimi-K2.5 \
+    --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron \
+    --tp 2 --pp 1 --ep 48
 ```
 
 ### Round-Trip Verification

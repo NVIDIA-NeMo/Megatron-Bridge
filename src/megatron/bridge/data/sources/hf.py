@@ -30,6 +30,19 @@ from megatron.bridge.data.sources.hf_adapters import (
 )
 
 
+def _has_unset_data_file(value: Any) -> bool:
+    """Return whether a declarative ``data_files`` value contains no usable path."""
+    if value is None:
+        return True
+    if isinstance(value, (str, Path)):
+        return not str(value).strip()
+    if isinstance(value, (list, tuple)):
+        return not value or any(_has_unset_data_file(item) for item in value)
+    if isinstance(value, dict):
+        return not value or any(_has_unset_data_file(item) for item in value.values())
+    return False
+
+
 @dataclass(kw_only=True)
 class HFDatasetSourceConfig:
     """Serializable source selection for one Hugging Face dataset split.
@@ -53,6 +66,9 @@ class HFDatasetSourceConfig:
         """Validate declarative source and adapter settings."""
         validate_declarative_mapping(self.load_kwargs, field_name="load_kwargs")
         validate_declarative_mapping(self.adapter_kwargs, field_name="adapter_kwargs")
+        if self.load_kwargs is not None and "data_files" in self.load_kwargs:
+            if _has_unset_data_file(self.load_kwargs["data_files"]):
+                raise ValueError("load_kwargs.data_files must contain non-empty paths.")
         if self.split is not None and (not isinstance(self.split, str) or not self.split.strip()):
             raise ValueError("split must be non-empty when set.")
         has_named_source = self.dataset_name is not None
@@ -115,7 +131,7 @@ class _HFDatasetPreset:
     """Resolved physical source metadata for a built-in dataset."""
 
     path_or_dataset: str
-    schema_adapter: str
+    schema_adapter: str | None
     split: str = "train"
     subset: str | list[str] | None = None
     load_kwargs: dict[str, Any] | None = None
@@ -183,6 +199,11 @@ _HF_DATASET_PRESETS: dict[str, _HFDatasetPreset] = {
         path_or_dataset="rajpurkar/squad",
         schema_adapter="squad",
         supported_splits=("train", "validation"),
+    ),
+    "tulu3": _HFDatasetPreset(
+        path_or_dataset="allenai/tulu-3-sft-mixture",
+        schema_adapter=None,
+        supported_splits=("train",),
     ),
 }
 

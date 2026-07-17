@@ -17,6 +17,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers import GptOssConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.gpt_oss.gpt_oss_bridge import GPTOSSBridge
@@ -78,6 +79,16 @@ class TestGptOssBridge:
         assert provider.yarn_correction_range_round_to_int is False
         assert provider.yarn_mscale is None
         assert provider.yarn_mscale_all_dim is None
+
+    def test_megatron_to_hf_config_restores_serialized_window(self, mock_pretrained):
+        bridge = GPTOSSBridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+        provider.window_size = [2047, 0]
+
+        config = GPTOSSBridge.megatron_to_hf_config(provider)
+
+        assert config["sliding_window"] == 2048
+        assert GptOssConfig(sliding_window=config["sliding_window"]).sliding_window == 2048
 
     def test_mapping_registry_splits_hf_layer_across_attention_and_moe_layers(self, mock_pretrained):
         bridge = GPTOSSBridge()

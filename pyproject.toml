@@ -129,7 +129,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@d64bc14dc87eb658ab98839e4b7687595ee53e2d",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@2e559f062497bef768dfbe9d7e45548fadeca80a",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -140,7 +140,7 @@ override-dependencies = [
     "onnx>=1.21.0; python_version < '3.13'",                # onnx<1.21 has missing lower bound on ml-dtypes, uses float4_e2m1fn (requires ml-dtypes>=0.5.0)
     # TODO: Remove this cap once huggingface/transformers#46381 is merged and included in a Transformers release.
     "tokenizers>=0.22.0,<0.23",                             # tokenizers 0.23 renames RobertaProcessing's 'cls' kwarg to 'cls_token'; transformers still passes cls= (breaks CLIPTokenizer)
-    "nvidia-cudnn-frontend==1.24.0",
+    "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
     "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
 ]
@@ -271,6 +271,8 @@ omit = [
     "/tmp/*",
     "/opt/Megatron-Bridge/tests/*",
     "/opt/Megatron-Bridge/*.py",
+    "examples/*",
+    "scripts/*",
     "*_ray.py",
 ]
 

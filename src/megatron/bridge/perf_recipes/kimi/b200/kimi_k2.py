@@ -27,7 +27,7 @@ def kimi_k2_pretrain_256gpu_b200_bf16_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.seq_length = 4096
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
@@ -59,7 +59,7 @@ def kimi_k2_pretrain_256gpu_b200_fp8cs_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.seq_length = 4096
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
@@ -93,7 +93,7 @@ def kimi_k2_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.mixed_precision.fp8_param_gather = False
     cfg.model.seq_length = 4096
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True

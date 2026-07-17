@@ -81,20 +81,28 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             raise ValueError("seq_length must be greater than 0.")
         validate_sft_preprocessing_config(self.preprocessing)
         self.source.validate()
-        if self.validation_source is not None:
+        if self.do_validation and self.validation_source is not None:
+            self._inherit_source_adapter_kwargs(self.validation_source)
             self.validation_source.validate()
-        if self.test_source is not None:
+        if self.do_test and self.test_source is not None:
+            self._inherit_source_adapter_kwargs(self.test_source)
             self.test_source.validate()
-        if not self.do_validation and self.validation_source is not None:
-            raise ValueError("validation_source requires do_validation=True.")
-        if not self.do_test and self.test_source is not None:
-            raise ValueError("test_source requires do_test=True.")
         if self.hf_processor_path is not None and not self.hf_processor_path.strip():
             raise ValueError("hf_processor_path must be a non-empty string when set.")
         if self.pad_to_multiple_of <= 0:
             raise ValueError("pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
             raise ValueError("in_batch_packing_pad_to_multiple_of must be greater than 0.")
+
+    def _inherit_source_adapter_kwargs(self, split_source: HFDatasetSourceConfig) -> None:
+        """Fill unset adapter arguments on another split of the training source."""
+        if split_source.dataset_name != self.source.dataset_name or not self.source.adapter_kwargs:
+            return
+        split_adapter_kwargs = dict(split_source.adapter_kwargs or {})
+        for key, value in self.source.adapter_kwargs.items():
+            if split_adapter_kwargs.get(key) is None:
+                split_adapter_kwargs[key] = value
+        split_source.adapter_kwargs = split_adapter_kwargs
 
     def finalize(self) -> None:
         """Finalize dataloader settings and validate this config."""
@@ -190,12 +198,23 @@ def build_direct_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
+    from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
+
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
+    if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
+        if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
+            raise ValueError(
+                f"Processor type '{type(processor).__name__}' requires chat preprocessing through its "
+                "model-owned collator."
+            )
+        selected_collate = None
+    else:
+        selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)
     return DirectSFTDataset(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
-        collate_impl=select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl),
+        collate_impl=selected_collate,
         sequence_length=config.seq_length,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,

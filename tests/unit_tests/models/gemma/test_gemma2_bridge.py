@@ -409,6 +409,15 @@ class TestMegatronGemma2Bridge:
         assert result.window_size == (gemma2_2b_config.sliding_window - 1, 0)
         assert result.window_size == (4095, 0)
 
+    def test_megatron_to_hf_config_restores_serialized_window(self, mock_pretrained_gemma2_2b):
+        bridge = Gemma2Bridge()
+        provider = bridge.provider_bridge(mock_pretrained_gemma2_2b)
+        provider.window_size = [2047, 0]
+
+        config = Gemma2Bridge.megatron_to_hf_config(provider)
+
+        assert config["sliding_window"] == 2048
+
     def test_provider_bridge_query_pre_attn_scalar_variants(self, mock_pretrained_gemma2_27b, gemma2_27b_config):
         """Test query_pre_attn_scalar for 27B model which has different value."""
         bridge = Gemma2Bridge()
@@ -588,71 +597,3 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["Gemma2Model"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
-
-
-class TestGemma2BridgeParameterMapping:
-    """Test parameter mapping functionality in Gemma2Bridge."""
-
-    @pytest.fixture
-    def mock_gemma2_state_dict(self):
-        """Create a mock state dict with Gemma2 parameter names."""
-        return {
-            "model.embed_tokens.weight": torch.randn(256000, 2304),
-            "model.norm.weight": torch.randn(2304),
-            "model.layers.0.input_layernorm.weight": torch.randn(2304),
-            "model.layers.0.pre_feedforward_layernorm.weight": torch.randn(2304),
-            "model.layers.0.post_feedforward_layernorm.weight": torch.randn(2304),
-            "model.layers.0.post_attention_layernorm.weight": torch.randn(2304),
-            "model.layers.0.self_attn.q_proj.weight": torch.randn(2304, 2304),
-            "model.layers.0.self_attn.k_proj.weight": torch.randn(1024, 2304),  # GQA: different size for K
-            "model.layers.0.self_attn.v_proj.weight": torch.randn(1024, 2304),  # GQA: different size for V
-            "model.layers.0.self_attn.o_proj.weight": torch.randn(2304, 2304),
-            "model.layers.0.mlp.gate_proj.weight": torch.randn(9216, 2304),
-            "model.layers.0.mlp.up_proj.weight": torch.randn(9216, 2304),
-            "model.layers.0.mlp.down_proj.weight": torch.randn(2304, 9216),
-        }
-
-    def test_mapping_registry_has_gemma2_specific_mappings(self):
-        """Test that mapping registry includes Gemma2-specific mappings."""
-        bridge = Gemma2Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # This test verifies that the mapping registry was created
-        # The actual parameter mappings are tested in integration tests
-        assert mapping_registry is not None
-
-    def test_gemma2_tied_embeddings_mapping(self):
-        """Test that Gemma2 bridge handles tied embeddings correctly."""
-        bridge = Gemma2Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma2 uses tied embeddings, so there should be no separate lm_head.weight mapping
-        # This is reflected in the mapping registry not including lm_head.weight
-        assert mapping_registry is not None
-
-    def test_gemma2_no_bias_mapping(self):
-        """Test that Gemma2 bridge doesn't include bias mappings."""
-        bridge = Gemma2Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma2 doesn't have bias in linear layers
-        # This is reflected in the QKVMapping and other mappings not including bias terms
-        assert mapping_registry is not None
-
-    def test_gemma2_gated_mlp_mapping(self):
-        """Test that Gemma2 bridge includes gated MLP mappings."""
-        bridge = Gemma2Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma2 uses gated MLP, so it should have GatedMLPMapping
-        # This combines gate_proj and up_proj into linear_fc1
-        assert mapping_registry is not None
-
-    def test_gemma2_additional_layer_norms_mapping(self):
-        """Test that Gemma2 bridge includes additional layer norm mappings."""
-        bridge = Gemma2Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma2 has additional layer normalizations compared to original Gemma
-        # pre_feedforward_layernorm, post_feedforward_layernorm, post_attention_layernorm
-        assert mapping_registry is not None

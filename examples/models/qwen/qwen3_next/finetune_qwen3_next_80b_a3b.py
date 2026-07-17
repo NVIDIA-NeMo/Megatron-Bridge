@@ -21,7 +21,7 @@ This mirrors the Llama example flow and uses the Qwen3-Next recipe helper.
 Examples:
     Loading pretrained weights (recommended for finetune):
         1) Import HF checkpoint to Megatron format:
-           $ python examples/conversion/convert_checkpoints.py import \
+           $ ./scripts/conversion/convert.sh import \
                --hf-model Qwen/Qwen3-Next-80B-A3B-Instruct \
                --megatron-path /path/to/megatron_ckpt
 
