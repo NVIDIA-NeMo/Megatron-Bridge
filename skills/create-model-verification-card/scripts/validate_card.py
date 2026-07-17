@@ -665,15 +665,15 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         if not isinstance(hf_id, str) or HF_ID_RE.fullmatch(hf_id) is None:
             errors.append(f"{_pointer('model', 'hf_id')}: verified cards require a public ORG/MODEL name")
         elif hf_id == "ORG/MODEL":
-            errors.append(f"{_pointer('model', 'hf_id')}: replace the template model name")
+            errors.append(f"{_pointer('model', 'hf_id')}: replace the placeholder model name")
         if not isinstance(revision, str) or REVISION_RE.fullmatch(revision) is None:
             errors.append(f"{_pointer('model', 'hf_revision')}: verified cards require an immutable 40-hex revision")
         if model.get("architecture") == "MODEL_ARCHITECTURE":
-            errors.append(f"{_pointer('model', 'architecture')}: replace the template architecture")
+            errors.append(f"{_pointer('model', 'architecture')}: replace the placeholder architecture")
         if card.get("title") == "model_variant":
-            errors.append(f"{_pointer('title')}: replace the template title")
+            errors.append(f"{_pointer('title')}: replace the placeholder title")
         if card.get("release") == "YY.MM":
-            errors.append(f"{_pointer('release')}: replace the template release")
+            errors.append(f"{_pointer('release')}: replace the placeholder release")
 
     _validate_privacy(raw, card, deny_terms, errors)
     return sorted(set(errors))

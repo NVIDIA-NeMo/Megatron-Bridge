@@ -1,4 +1,0 @@
-interface:
-  display_name: "Create Model Verification Card"
-  short_description: "Create privacy-safe model verification cards"
-  default_prompt: "Use $create-model-verification-card to create and validate a privacy-safe model verification card for this model."

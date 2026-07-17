@@ -9,12 +9,11 @@ Create `model_cards/<model-slug>/card.yaml` from public model facts and verified
 commands. Keep the card small enough for an agent to scan without interpreting
 logs or reconstructing the execution environment.
 
-## Use the bundled resources
+## Use the repository resources
 
-- Start from [assets/card-template.yaml](assets/card-template.yaml).
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
-- Use `model_cards/qwen3-8b/card.yaml` only as a populated format example; do
-  not copy model-specific settings blindly.
+- Use `model_cards/qwen3-8b/card.yaml` as the format example. Do not copy
+  model-specific settings blindly.
 
 Do not add a README, evidence blobs, log excerpts, runtime setup, or scheduler
 metadata to the skill or card.
@@ -32,7 +31,7 @@ Record the public HF model name in commands and its immutable revision in
 
 ### 2. Create the complete inventory
 
-Include every template item, even when its status is `unsupported` or
+Include every required item, even when its status is `unsupported` or
 `not_applicable`:
 
 1. CPU HF-to-Megatron conversion
