@@ -97,10 +97,14 @@ RUN pip install "starlette==0.49.1" \
 # The actual onnx Python package is managed above via pip/uv; this stale copy triggers CVE scanners.
 RUN rm -rf /opt/pytorch/pytorch/third_party/onnx
 
-# Patch jackson-core CVE inside Ray's bundled fat-jar (cannot upgrade Ray itself)
+# Patch jackson-core CVE inside Ray's bundled fat-jar (cannot upgrade Ray itself).
+# Maven Central throttles CI egress IPs (HTTP 429/503); --retry-on-http-error makes
+# wget retry those instead of aborting the build (wget ignores --tries for HTTP errors).
 RUN JACKSON_VERSION=2.18.6 && \
     TMPDIR=$(mktemp -d) && \
-    wget -q "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/${JACKSON_VERSION}/jackson-core-${JACKSON_VERSION}.jar" \
+    wget -nv --tries=5 --waitretry=10 --retry-connrefused \
+    --retry-on-http-error=429,500,502,503,504 \
+    "https://repo1.maven.org/maven2/com/fasterxml/jackson/core/jackson-core/${JACKSON_VERSION}/jackson-core-${JACKSON_VERSION}.jar" \
     -O "${TMPDIR}/jackson-core-fixed.jar" && \
     unzip -q "${TMPDIR}/jackson-core-fixed.jar" -d "${TMPDIR}/jackson_fixed" && \
     apt-get update && apt-get install -y --no-install-recommends zip && apt-get clean && \
