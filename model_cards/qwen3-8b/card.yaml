@@ -17,9 +17,8 @@ summary: Qwen3-8B support verification for conversion, inference, and training.
 notes:
   default_executor: slurm
   slurm_launcher_env:
-    [SLURM_ACCOUNT, SLURM_PARTITION, CONTAINER_IMAGE, MODEL_CARD_WORKDIR, PRETRAIN_DATA_ROOT, HF_SNAPSHOT]
+    [SLURM_ACCOUNT, SLURM_PARTITION, CONTAINER_IMAGE, MODEL_CARD_WORKDIR, PRETRAIN_DATA_ROOT]
   slurm_forwarded_env: [HF_HOME, HF_TOKEN]
-  hf_snapshot: $HF_HOME/hub/models--Qwen--Qwen3-8B/snapshots/<model.hf_revision>
   eos_launcher_overrides:
     [--no-gpu-resource-request, --srun-arg=--mpi=pmix, --srun-arg=--no-container-mount-home]
   training_verification: >
@@ -41,14 +40,14 @@ items:
       --nodes 1 --cpus-per-task 64 --mount "$PWD:/opt/Megatron-Bridge"
       --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
       --env HF_HOME --env HF_TOKEN
-      --hf-model "$HF_SNAPSHOT"
+      --hf-model Qwen/Qwen3-8B
       --megatron-path /workspace/qwen3-8b/cpu-megatron
       --torch-dtype bfloat16
     last_verified: 2026-07-16
     expected_result: >
       The command exits successfully, creates iter_0000000, and the checkpoint
       round-trips through CPU export with all 399 HF tensors matching the
-      pinned snapshot exactly in keys, shapes, dtypes, and values.
+      recorded HF revision exactly in keys, shapes, dtypes, and values.
 
   hf_to_megatron_gpu:
     status: verified
@@ -57,13 +56,13 @@ items:
       --nodes 1 --gpus-per-node 4 --mount "$PWD:/opt/Megatron-Bridge"
       --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
       --env HF_HOME --env HF_TOKEN
-      --hf-model "$HF_SNAPSHOT"
+      --hf-model Qwen/Qwen3-8B
       --megatron-path /workspace/qwen3-8b/imported-megatron
       --torch-dtype bfloat16 --tp 4
     last_verified: 2026-07-16
     expected_result: >
       The command exits successfully, creates iter_0000000, and the checkpoint
-      reloads at TP=4 with weights exactly matching the pinned HF snapshot.
+      reloads at TP=4 with weights exactly matching the recorded HF revision.
 
   megatron_to_hf_cpu:
     status: verified
@@ -72,13 +71,14 @@ items:
       --nodes 1 --cpus-per-task 64 --mount "$PWD:/opt/Megatron-Bridge"
       --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
       --env HF_HOME --env HF_TOKEN
-      --hf-model "$HF_SNAPSHOT"
+      --hf-model Qwen/Qwen3-8B
       --megatron-path /workspace/qwen3-8b/cpu-megatron/iter_0000000
       --hf-path /workspace/qwen3-8b/cpu-hf-export
     last_verified: 2026-07-16
     expected_result: >
-      The command exits successfully; all 399 exported tensors match the pinned
-      HF snapshot exactly, and the export reloads on CPU as Qwen3ForCausalLM.
+      The command exits successfully; all 399 exported tensors match the
+      recorded HF revision exactly, and the export reloads on CPU as
+      Qwen3ForCausalLM.
 
   megatron_to_hf_gpu:
     status: verified
@@ -87,7 +87,7 @@ items:
       --nodes 1 --gpus-per-node 4 --mount "$PWD:/opt/Megatron-Bridge"
       --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
       --env HF_HOME --env HF_TOKEN
-      --hf-model "$HF_SNAPSHOT"
+      --hf-model Qwen/Qwen3-8B
       --megatron-path /workspace/qwen3-8b/imported-megatron/iter_0000000
       --hf-path /workspace/qwen3-8b/hf-export --torch-dtype bfloat16
       --export-weight-dtype bfloat16 --distributed-save --tp 4
@@ -108,10 +108,9 @@ items:
       export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM &&
       python -m torch.distributed.run --standalone --nproc_per_node=4
       examples/conversion/hf_to_megatron_generate_text.py
-      --hf_model_path "$1"
+      --hf_model_path Qwen/Qwen3-8B
       --megatron_model_path /workspace/qwen3-8b/imported-megatron/iter_0000000 --tp 4
       --prompt "The capital of France is" --max_new_tokens 32'
-      bash "$HF_SNAPSHOT"
     last_verified: 2026-07-16
     expected_result: >
       The generated continuation is non-empty and identifies Paris as the
