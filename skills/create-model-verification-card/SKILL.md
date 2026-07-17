@@ -68,8 +68,9 @@ the model-verification workload:
   training item;
 - use `uv run python ...` only for inference helpers that do not yet have a
   public Slurm executor;
-- use ignored, repository-relative logical paths under
-  `work/model-verification/...` for dependencies and outputs.
+- use short, ignored repository-relative logical paths under `work/...`;
+  prefer aliases such as `work/data/<dataset>` and `work/cache/<model>` over
+  reproducing a physical storage hierarchy.
 
 The public launchers may read their required generic Slurm configuration from
 the caller's environment. Do not include `srun`, `sbatch`, concrete account or

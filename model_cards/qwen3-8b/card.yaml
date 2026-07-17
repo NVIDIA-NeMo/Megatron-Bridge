@@ -119,10 +119,10 @@ items:
       --dataset megatron-indexed --deterministic --seq_length 4096
       --max_steps 400
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-      dataset.data_path=work/model-verification/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
-      dataset.path_to_cache=work/model-verification/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
+      dataset.data_path=work/data/rp2/head_01
+      dataset.path_to_cache=work/cache/qwen3-8b/rp2
       tokenizer.tokenizer_type=SentencePieceTokenizer
-      tokenizer.tokenizer_model=work/model-verification/data/rp2/tokenizer/tokenizer.model
+      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
       rng.seed=1234 dataset.random_seed=1234
       scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
       dist.distributed_timeout_minutes=30 checkpoint.load=null
@@ -154,7 +154,7 @@ items:
       --max_steps 100 --seq_length 2048
       --lr 5e-6 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
-      dataset.hf_output_root=work/model-verification/qwen3-8b/tulu3-train-10000
+      dataset.hf_output_root=work/data/tulu3
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
@@ -212,7 +212,7 @@ items:
       --max_steps 20 --seq_length 32768 --context_parallel_size 2
       --lr 1e-6 --min_lr 0 --warmup_iters 2
       'dataset.hf_dataset.split="train[:10000]"'
-      dataset.hf_output_root=work/model-verification/qwen3-8b/tulu3-train-10000
+      dataset.hf_output_root=work/data/tulu3
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true
       model.sequence_parallel=true
@@ -244,7 +244,7 @@ items:
       --max_steps 100 --seq_length 2048
       --lr 1e-4 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
-      dataset.hf_output_root=work/model-verification/qwen3-8b/tulu3-train-10000
+      dataset.hf_output_root=work/data/tulu3
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
@@ -272,10 +272,10 @@ items:
       --dataset megatron-indexed --deterministic --seq_length 4096
       --max_steps 400
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-      dataset.data_path=work/model-verification/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
-      dataset.path_to_cache=work/model-verification/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
+      dataset.data_path=work/data/rp2/head_01
+      dataset.path_to_cache=work/cache/qwen3-8b/rp2
       tokenizer.tokenizer_type=SentencePieceTokenizer
-      tokenizer.tokenizer_model=work/model-verification/data/rp2/tokenizer/tokenizer.model
+      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
       rng.seed=1234 dataset.random_seed=1234
       scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
       dist.distributed_timeout_minutes=30
