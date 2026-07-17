@@ -28,9 +28,11 @@ from megatron.bridge.training.setup import (
     _build_distributed_model,
     _register_pre_wrap_hook,
     _should_load_checkpoint,
+    _update_model_config_funcs,
     _validate_and_set_vocab_size,
     maybe_log_and_save_config,
 )
+from megatron.bridge.training.state import GlobalState
 
 
 def _make_transformer(**kwargs):
@@ -323,3 +325,35 @@ class TestBuildDistributedModel:
 
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
+
+
+def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
+    """A restart must replace callbacks bound to the discarded model."""
+
+    class FakeDDP:
+        def no_sync(self):
+            pass
+
+        def start_grad_sync(self):
+            pass
+
+    model_config = _make_gpt_model_config()
+    transformer_config = model_config.transformer
+    ddp_config = SimpleNamespace(
+        overlap_grad_reduce=True,
+        overlap_param_gather=False,
+        align_param_gather=False,
+    )
+    first_model = FakeDDP()
+    rebuilt_model = FakeDDP()
+    state = GlobalState()
+    state._cfg = SimpleNamespace(model=model_config)
+
+    with patch("megatron.bridge.training.setup.DistributedDataParallel", FakeDDP):
+        _update_model_config_funcs([first_model], transformer_config, ddp_config, optimizer=None)
+        assert transformer_config.no_sync_func.__self__ is first_model
+
+        state.reset_for_restart()
+        _update_model_config_funcs([rebuilt_model], transformer_config, ddp_config, optimizer=None)
+
+    assert transformer_config.no_sync_func.__self__ is rebuilt_model
