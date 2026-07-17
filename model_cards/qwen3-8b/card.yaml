@@ -129,7 +129,7 @@ items:
       capital of France.
 
   pretrain:
-    status: unverified
+    status: verified
     gpu_type: H100
     enabled_features: {}
     command: >
@@ -153,19 +153,19 @@ items:
       checkpoint.save_optim=true checkpoint.save_rng=true
       --save_dir /workspace/qwen3-8b/pretrain-reference-checkpoints --save_interval 200
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 12.76213
+      final_loss: 5.007709
+      last_half_step_time_ms_avg: 4746.845
+      last_half_model_tflops_per_gpu_avg: 338.553
     expected_result: >
       The uninterrupted RP2 run completes exactly 400 steps with finite losses,
       no skipped or NaN iterations, records all four metrics, and saves
       iter_0000200 and iter_0000400 for the resume-loss reference.
 
   sft:
-    status: unverified
+    status: verified
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -179,25 +179,25 @@ items:
       --pretrained_checkpoint /workspace/qwen3-8b/imported-megatron/iter_0000000
       --max_steps 100 --seq_length 2048 --global_batch_size 8 --micro_batch_size 1
       --lr 5e-6 --min_lr 0 --warmup_iters 10
-      "dataset.hf_dataset.split=train[:10000]"
+      'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=/workspace/qwen3-8b/tulu3-train-10000
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       checkpoint.save=null checkpoint.save_interval=0 logger.log_interval=1
       logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 1.546225
+      final_loss: 1.127447
+      last_half_step_time_ms_avg: 1901.584
+      last_half_model_tflops_per_gpu_avg: 99.432
     expected_result: >
       Tulu3 offline packing completes and full SFT reaches step 100 with finite
       losses, no skipped or NaN iterations, and all four metrics recorded.
 
   sft_long_context:
-    status: unverified
+    status: verified
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -213,7 +213,7 @@ items:
       --max_steps 20 --seq_length 32768 --global_batch_size 1
       --micro_batch_size 1 --context_parallel_size 2
       --lr 1e-6 --min_lr 0 --warmup_iters 2
-      "dataset.hf_dataset.split=train[:10000]"
+      'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=/workspace/qwen3-8b/tulu3-train-10000
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true
@@ -222,19 +222,19 @@ items:
       scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
       checkpoint.load=null checkpoint.save=null checkpoint.save_interval=0
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 1.632253
+      final_loss: 1.341897
+      last_half_step_time_ms_avg: 8573.130
+      last_half_model_tflops_per_gpu_avg: 35.860
     expected_result: >
       The 8-GPU command completes 20 Tulu3 SFT steps at sequence length 32768
       with CP=2 and offline packing, finite losses, no skipped or NaN iterations,
       and all four metrics recorded.
 
   peft:
-    status: unverified
+    status: verified
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -248,7 +248,7 @@ items:
       --pretrained_checkpoint /workspace/qwen3-8b/imported-megatron/iter_0000000
       --max_steps 100 --seq_length 2048 --global_batch_size 8 --micro_batch_size 1
       --lr 1e-4 --min_lr 0 --warmup_iters 10
-      "dataset.hf_dataset.split=train[:10000]"
+      'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=/workspace/qwen3-8b/tulu3-train-10000
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
@@ -256,19 +256,19 @@ items:
       checkpoint.async_save=false
       --save_dir /workspace/qwen3-8b/peft-checkpoints --save_interval 100
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 1.545473
+      final_loss: 1.141865
+      last_half_step_time_ms_avg: 2167.786
+      last_half_model_tflops_per_gpu_avg: 347.862
     expected_result: >
       Tulu3 offline packing and 100 LoRA steps complete with finite losses, no
       skipped or NaN iterations, and all four metrics recorded, then
       iter_0000100 saves as an adapter checkpoint.
 
   checkpoint_resume:
-    status: unverified
+    status: verified
     gpu_type: H100
     depends_on: pretrain
     commands:
@@ -318,18 +318,18 @@ items:
         checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false
         train.exit_interval=null
         logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 12.76213
+      final_loss: 5.007709
+      last_half_step_time_ms_avg: 4748.845
+      last_half_model_tflops_per_gpu_avg: 339.377
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [200, 201, 400]
       loss_relative_tolerance: 1.0e-6
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: null
+      sentinels_match: true
     expected_result: >
       train_to_200 exits successfully after step 200, emits no step 201, and
       synchronously saves iter_0000200. Only then may resume_to_400 run; it must
@@ -341,7 +341,7 @@ items:
       logical-run metrics are recorded; exact printed matches are preferred.
 
   pretrain_performance:
-    status: unverified
+    status: verified
     gpu_type: H100
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
@@ -354,12 +354,12 @@ items:
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       checkpoint.save=null checkpoint.save_interval=0 logger.log_interval=1
       logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 12.74359
+      final_loss: 0.01727812
+      last_half_step_time_ms_avg: 4217.142
+      last_half_model_tflops_per_gpu_avg: 381.016
     expected_result: >
       On one node with 4x H100, the mock-data run completes 100 steps with
       finite losses, no skipped or NaN iterations, records all four metrics,
