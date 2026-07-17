@@ -74,7 +74,7 @@ Saving HF-ckpt in Llama-3.2-1B...
 
 ### 2. Stable Checkpoint Conversion CLI
 
-Production checkpoint import and export uses
+Production checkpoint import, export, and round-trip validation use
 [`scripts/conversion/convert.sh`](../../scripts/conversion/README.md). The CLI
 supports local or Slurm execution and selects a single-process CPU backend or a
 distributed GPU backend without requiring users to invoke Python, `torchrun`,
@@ -91,11 +91,18 @@ distributed GPU backend without requiring users to invoke Python, `torchrun`,
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b/iter_0000000 \
   --hf-path ./exports/llama3_2_1b_hf
+
+./scripts/conversion/convert.sh roundtrip \
+  --executor local --device gpu --gpus-per-node 2 \
+  --hf-model meta-llama/Llama-3.2-1B \
+  --tp 2
 ```
 
-The scripts in this directory remain examples for round-trip verification,
-generation, benchmarking, and model comparison rather than supported
-checkpoint conversion entry points.
+Use `--executor slurm` with the required account, partition, container, mount,
+and resource arguments for multi-node round-trip validation. The launcher
+compares the in-memory HF → Megatron → HF result and does not write a
+checkpoint. The scripts in this directory remain standalone examples for direct
+`torch.distributed.run`, generation, benchmarking, and model comparison.
 
 ### 3. `hf_to_megatron_generate_text.py` - Text Generation
 
@@ -314,6 +321,10 @@ uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf
   --hf-model-id meta-llama/Llama-3.2-1B \
   --tp 2 --pp 2
 ```
+
+Hugging Face checkpoint export uses loose key validation by default for
+backward compatibility. Add `--strict` to require every source checkpoint
+tensor to be written.
 
 **Save in Megatron format:**
 ```bash

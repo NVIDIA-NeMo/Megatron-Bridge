@@ -338,6 +338,44 @@ class TestDataLoaders:
     @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size", return_value=1)
     @mock.patch("torch.distributed.get_rank", return_value=0)
+    def test_iteration_based_loader_respects_drop_last_false(self, _mock_rank, _mock_world_size, _mock_broadcast):
+        class PaddingAwareDataset:
+            def __len__(self):
+                return 3
+
+            def __getitem__(self, index):
+                return index
+
+        cfg = create_simple_test_config()
+        cfg.train.global_batch_size = 4
+        cfg.validation.eval_iters = 0
+        cfg.dataset = GPTSFTDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            drop_last=False,
+            num_workers=0,
+            persistent_workers=False,
+        )
+        real_torch_tensor = torch.tensor
+
+        with mock.patch(
+            "megatron.bridge.data.loaders.torch.tensor",
+            side_effect=lambda data, *, dtype, device: real_torch_tensor(data, dtype=dtype),
+        ):
+            train_dataloader, _, _ = build_train_valid_test_data_loaders(
+                cfg=cfg,
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=mock.Mock(return_value=(PaddingAwareDataset(), None, None)),
+                dp_group=object(),
+            )
+
+        batch = next(iter(train_dataloader)).tolist()
+        assert sorted(batch[:-1]) == [0, 1, 2]
+        assert batch[-1] == -1
+
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
     def test_gpt_sft_batch_eval_preserves_split_smaller_than_global_batch(
         self, _mock_rank, _mock_world_size, _mock_broadcast
     ):

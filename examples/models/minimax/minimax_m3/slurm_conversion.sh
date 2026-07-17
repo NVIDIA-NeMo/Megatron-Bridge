@@ -13,28 +13,27 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-#SBATCH --job-name=minimax-m3-roundtrip
-#SBATCH --nodes=4
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --time=00:45:00
-#SBATCH --partition=batch
-#SBATCH --output=logs/minimax_m3_roundtrip_%j.log
-#SBATCH --exclusive
+# MiniMax-M3 round-trip verification on 4 Slurm nodes (32 GPUs).
+# Run this wrapper from a Slurm login node; convert.sh submits the job and
+# waits for it by default.
+#
+# Required:
+#   export CONTAINER_IMAGE=/path/to/container.sqsh
+#   export SLURM_ACCOUNT=<your-account>
+# Optional:
+#   export CONTAINER_MOUNTS=/shared:/shared,/host/path:/container/path
+#   bash "$0" --srun-arg=--mpi=pmix
 
 set -euo pipefail
 
 : "${CONTAINER_IMAGE:?Set CONTAINER_IMAGE to the Megatron-Bridge container}"
-: "${CONTAINER_MOUNTS:?Mount shared storage and this repository}"
-: "${HF_HOME:?Set HF_HOME to a shared Hugging Face cache}"
-: "${UV_CACHE_DIR:?Set UV_CACHE_DIR to a shared uv cache}"
+: "${CONTAINER_MOUNTS:?Mount shared storage containing HF_HOME}"
+: "${HF_HOME:?Set HF_HOME to a prepopulated shared Hugging Face cache}"
+: "${SLURM_ACCOUNT:?Set SLURM_ACCOUNT to your Slurm account}"
 
-WORKDIR=${WORKDIR:-/opt/Megatron-Bridge}
-HF_MODEL_ID=${HF_MODEL_ID:-MiniMaxAI/MiniMax-M3}
-TP=${TP:-1}
-PP=${PP:-1}
-EP=${EP:-32}
-ETP=${ETP:-1}
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
+CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
 
 export HF_HUB_DISABLE_TELEMETRY=1
 export HF_HUB_DISABLE_PROGRESS_BARS=1
@@ -43,35 +42,32 @@ export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
-mkdir -p logs
+MOUNT_ARGS=(--mount "${REPO_ROOT}:/opt/Megatron-Bridge")
+IFS=',' read -r -a EXTRA_MOUNTS <<< "${CONTAINER_MOUNTS:-}"
+for mount in "${EXTRA_MOUNTS[@]}"; do
+    if [[ -n "${mount}" ]]; then
+        MOUNT_ARGS+=(--mount "${mount}")
+    fi
+done
 
-MASTER_ADDR=$(scontrol show hostnames "${SLURM_JOB_NODELIST}" | head -n 1)
-MASTER_PORT=${MASTER_PORT:-29500}
-export MASTER_ADDR MASTER_PORT
+ENV_ARGS=()
+for name in \
+    HF_TOKEN HF_HOME UV_CACHE_DIR HF_HUB_DISABLE_TELEMETRY HF_HUB_DISABLE_PROGRESS_BARS \
+    TOKENIZERS_PARALLELISM TORCH_NCCL_AVOID_RECORD_STREAMS NCCL_NVLS_ENABLE PYTORCH_CUDA_ALLOC_CONF; do
+    if [[ -n "${!name:-}" ]]; then
+        ENV_ARGS+=(--env "${name}")
+    fi
+done
 
-SRUN=(
-    srun
-    --mpi=pmix
-    --container-image="${CONTAINER_IMAGE}"
-    --container-mounts="${CONTAINER_MOUNTS}"
-    --no-container-mount-home
-)
-
-"${SRUN[@]}" --nodes=1 --ntasks=1 bash -lc 'cd "$1" && uv sync --extra te' minimax-m3-sync "${WORKDIR}"
-
-"${SRUN[@]}" bash -lc '
-    export RANK="${SLURM_PROCID:?}"
-    export WORLD_SIZE="${SLURM_NTASKS:?}"
-    export LOCAL_RANK="${SLURM_LOCALID:?}"
-    cd "$1"
-    uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-        --hf-model-id "$2" \
-        --tp "$3" \
-        --pp "$4" \
-        --ep "$5" \
-        --etp "$6" \
-        --trust-remote-code \
-        --skip-save \
-        --atol 0 \
-        --rtol 0
-' minimax-m3-roundtrip "${WORKDIR}" "${HF_MODEL_ID}" "${TP}" "${PP}" "${EP}" "${ETP}"
+"${CONVERT_SH}" roundtrip \
+    --executor slurm --device gpu \
+    --nodes 4 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 00:45:00 \
+    --container-image "${CONTAINER_IMAGE}" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    --experiment-name minimax-m3-roundtrip \
+    --hf-model MiniMaxAI/MiniMax-M3 \
+    --tp 1 --pp 1 --ep 32 --etp 1 \
+    --trust-remote-code \
+    "$@"
