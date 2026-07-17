@@ -25,14 +25,15 @@ notes:
     Slurm job completion and the expected result are required; submission alone
     is insufficient. For ordered commands, wait for the preceding Slurm job to
     finish successfully and verify its checkpoint before submitting the next.
-    Reference and split-run checkpoint directories must be new or empty, and
-    their commit, container, H100 topology, and configuration must match.
+    Reference and resumed-output checkpoint directories must be distinct; the
+    resumed-output directory must be new or empty, and the commit, container,
+    H100 topology, and configuration must match the reference run.
   training_metrics: >
     initial_loss is the lm loss at the first optimizer step and final_loss is
     the lm loss at the final optimizer step. The two last_half averages are the
     arithmetic means of the per-step console values over the latter half of the
-    logical run. Skipped or NaN iterations invalidate verification rather than
-    being excluded from the averages.
+    optimizer steps executed by that item. Skipped or NaN iterations invalidate
+    verification rather than being excluded from the averages.
   pretrain_dataset: >
     RedPajama2 head_01 is a bounded Megatron-indexed prefix under
     PRETRAIN_DATA_ROOT. Paths name prefixes and omit .bin/.idx.
@@ -270,77 +271,54 @@ items:
       iter_0000100 saves as an adapter checkpoint.
 
   checkpoint_resume:
-    status: verified
+    status: unverified
     gpu_type: H100
     depends_on: pretrain
-    commands:
-      train_to_200: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --time 02:00:00
-        --experiment-name qwen3-8b-rp2-resume-0-200
-        --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
-        --mount "$PRETRAIN_DATA_ROOT:/data/rp2"
-        --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
-        --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-        --dataset megatron-indexed --deterministic --seq_length 4096
-        --max_steps 400 --global_batch_size 32 --micro_batch_size 2
-        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-        dataset.data_path=/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
-        dataset.path_to_cache=/workspace/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=/data/rp2/tokenizer/tokenizer.model
-        rng.seed=1234 dataset.random_seed=1234
-        scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
-        dist.distributed_timeout_minutes=30 checkpoint.load=null
-        checkpoint.ckpt_format=torch_dist checkpoint.async_save=false
-        checkpoint.save_optim=true checkpoint.save_rng=true train.exit_interval=200
-        --save_dir /workspace/qwen3-8b/pretrain-resume-checkpoints --save_interval 200
-        logger.log_interval=1 logger.log_throughput=true
-      resume_to_400: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --time 02:00:00
-        --experiment-name qwen3-8b-rp2-resume-200-400
-        --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
-        --mount "$PRETRAIN_DATA_ROOT:/data/rp2"
-        --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
-        --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-        --dataset megatron-indexed --deterministic --seq_length 4096
-        --max_steps 400 --global_batch_size 32 --micro_batch_size 2
-        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-        dataset.data_path=/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
-        dataset.path_to_cache=/workspace/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
-        tokenizer.tokenizer_type=SentencePieceTokenizer
-        tokenizer.tokenizer_model=/data/rp2/tokenizer/tokenizer.model
-        rng.seed=1234 dataset.random_seed=1234
-        scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
-        dist.distributed_timeout_minutes=30
-        --save_dir /workspace/qwen3-8b/pretrain-resume-checkpoints
-        --load_dir /workspace/qwen3-8b/pretrain-resume-checkpoints --save_interval 200
-        checkpoint.ckpt_step=200 checkpoint.finetune=false
-        checkpoint.ckpt_format=torch_dist checkpoint.dist_ckpt_strictness=raise_all
-        checkpoint.load_optim=true checkpoint.load_rng=true
-        checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false
-        train.exit_interval=null
-        logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-16
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --time 02:00:00
+      --experiment-name qwen3-8b-rp2-resume-reference-200-400
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
+      --mount "$PRETRAIN_DATA_ROOT:/data/rp2"
+      --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
+      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --deterministic --seq_length 4096
+      --max_steps 400 --global_batch_size 32 --micro_batch_size 2
+      --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+      dataset.data_path=/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
+      dataset.path_to_cache=/workspace/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
+      tokenizer.tokenizer_type=SentencePieceTokenizer
+      tokenizer.tokenizer_model=/data/rp2/tokenizer/tokenizer.model
+      rng.seed=1234 dataset.random_seed=1234
+      scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
+      dist.distributed_timeout_minutes=30
+      --load_dir /workspace/qwen3-8b/pretrain-reference-checkpoints
+      --save_dir /workspace/qwen3-8b/pretrain-resumed-from-reference-checkpoints
+      --save_interval 200 checkpoint.ckpt_step=200 checkpoint.finetune=false
+      checkpoint.ckpt_format=torch_dist checkpoint.dist_ckpt_strictness=raise_all
+      checkpoint.load_optim=true checkpoint.load_rng=true
+      checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false
+      train.exit_interval=null logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
     metrics:
-      initial_loss: 12.76213
-      final_loss: 5.007709
-      last_half_step_time_ms_avg: 4748.845
-      last_half_model_tflops_per_gpu_avg: 339.377
+      initial_loss: null
+      final_loss: null
+      last_half_step_time_ms_avg: null
+      last_half_model_tflops_per_gpu_avg: null
     resume_comparison:
       reference_item: pretrain
-      sentinel_steps: [200, 201, 400]
+      sentinel_steps: [201, 400]
       loss_relative_tolerance: 1.0e-6
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: true
+      sentinels_match: null
     expected_result: >
-      train_to_200 exits successfully after step 200, emits no step 201, and
-      synchronously saves iter_0000200. Only then may resume_to_400 run; it must
-      report a successful checkpoint load at iteration 200 without optimizer or
-      RNG load errors, start with step 201, and finish at step 400. Consumed
-      samples must be 6400, 6432, and 12800 at steps 200, 201, and 400;
-      learning rates at steps 201 and 400 and losses at all sentinel steps must
-      match the uninterrupted run within the stated tolerances. All four
-      logical-run metrics are recorded; exact printed matches are preferred.
+      After pretrain has saved iter_0000200, the command loads that checkpoint
+      directly from the reference directory without optimizer or RNG load
+      errors, starts with step 201, and finishes at step 400 while saving to the
+      distinct resumed-output directory. Consumed samples must be 6432 and
+      12800 at steps 201 and 400; their learning rates and losses must match the
+      uninterrupted run within the stated tolerances. All four resumed-segment
+      metrics are recorded, with last-half averages over steps 301-400; exact
+      printed sentinel matches are preferred.
 
   pretrain_performance:
     status: verified
