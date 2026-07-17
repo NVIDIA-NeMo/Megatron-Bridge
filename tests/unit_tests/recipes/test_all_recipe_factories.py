@@ -60,6 +60,7 @@ def test_all_recipe_factories_are_exported() -> None:
     """Every canonical factory remains available from the public recipe package."""
     canonical = {recipe_factory_key(factory) for factory in _RECIPE_FACTORIES}
     assert exported_recipe_factory_keys(_RECIPES_PACKAGE) == canonical
+    assert {recipe_factory_key(factory) for factory in _UNSUPPORTED_RECIPE_FACTORIES} == _UNSUPPORTED_FACTORY_KEYS
     for factory in _RECIPE_FACTORIES:
         assert getattr(_RECIPES_PACKAGE, factory.__name__) is factory
 

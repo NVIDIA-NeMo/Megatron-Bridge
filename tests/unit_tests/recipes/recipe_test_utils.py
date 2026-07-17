@@ -118,7 +118,10 @@ def exported_recipe_factory_keys(module: ModuleType) -> set[tuple[str, str]]:
 
 
 class _OfflineModelProvider:
-    """Mutable provider with the fields HF-backed recipes read before writing."""
+    """Mutable provider with the fields HF-backed recipes read before writing.
+
+    Add newly read provider fields here when extending the recipe surface.
+    """
 
     def __init__(self) -> None:
         self.apply_rope_fusion = False
