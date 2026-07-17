@@ -28,7 +28,7 @@ HF_GEMMA_TOY_MODEL_CONFIG = {
     "bos_token_id": 2,
     "eos_token_id": 1,
     "head_dim": 256,
-    "hidden_act": "gelu",
+    "hidden_act": "gelu_pytorch_tanh",
     "hidden_size": 1024,  # Smaller than real 2B for faster testing
     "initializer_range": 0.02,
     "intermediate_size": 4096,  # Smaller than real 2B for faster testing
@@ -68,13 +68,14 @@ class TestGemmaConversion:
         temp_dir = tmp_path_factory.mktemp("gemma_toy_model")
         model_dir = temp_dir / "gemma_toy"
 
+        torch.manual_seed(1234)
+
         # Create Gemma config from the toy model config
         config = GemmaConfig(**HF_GEMMA_TOY_MODEL_CONFIG)
         config.torch_dtype = torch.bfloat16  # Explicitly set the torch_dtype in config
 
         # Create model with random weights and convert to bfloat16
-        model = GemmaForCausalLM(config)
-        model = model.bfloat16()  # Use .bfloat16() method instead of .to()
+        model = GemmaForCausalLM(config).bfloat16().eval()
 
         # Debug: Check model dtype before saving
         for name, param in model.named_parameters():
@@ -132,6 +133,7 @@ class TestGemmaConversion:
         assert config_data["num_key_value_heads"] == 2
         assert config_data["vocab_size"] == 256000
         assert config_data["head_dim"] == 256
+        assert config_data["hidden_act"] == "gelu_pytorch_tanh"
 
         # Try loading the model to verify it's valid
         try:
