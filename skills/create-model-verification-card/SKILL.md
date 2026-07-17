@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion/inference/training results, or preparing a model-support PR. Enforce the fixed card inventory, workload-only commands, training metrics, important-feature allowlist, direct-resume checks, and a strict privacy boundary that excludes runtime orchestration, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion, deterministic inference, training, checkpoint resume, or post-SFT export results, or preparing a model-support PR. Enforce the fixed card inventory, workload-only commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes runtime orchestration, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -12,6 +12,8 @@ logs or reconstructing the execution environment.
 ## Use the repository resources
 
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
+- Verify exact-length deterministic HF output with
+  [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
 - Use `model_cards/qwen3-8b/card.yaml` as the format example. Do not copy
   model-specific settings blindly.
 
@@ -41,10 +43,11 @@ Include every required item, even when its status is `unsupported` or
 5. Deterministic inference
 6. Pretraining
 7. SFT
-8. Long-context SFT
-9. PEFT
-10. Checkpoint resume
-11. Pretraining performance
+8. SFT checkpoint export and deterministic HF inference
+9. Long-context SFT
+10. PEFT
+11. Checkpoint resume
+12. Pretraining performance
 
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
@@ -97,7 +100,12 @@ the claim and stay outside the card.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope.
 - **SFT and PEFT:** Prefer about 100 optimizer steps with warmup and full-horizon
-  decay. Use a public dataset name or preset, not its storage location.
+  decay. Use a public dataset name or preset, not its storage location. Save the
+  final full-SFT checkpoint when export verification is in scope.
+- **SFT export and inference:** Depend on `sft`, export its final full-model
+  checkpoint to HF, reload the exported model with Transformers, and run greedy
+  generation twice. Specify an exact new-token count and record the literal
+  byte-identical completion, including whitespace, in `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
@@ -111,22 +119,29 @@ Submission is not success. Require the workload process to finish successfully,
 the exact optimizer-step set to be present, finite losses and performance
 values, zero skipped/NaN iterations, and complete reloadable artifacts.
 
+Use the batch sizes defined by the selected recipe. A model verification card
+must not override global or micro batch size. If a recipe batch size is wrong,
+change and validate the recipe separately instead of hiding the change in the
+card command.
+
 ### 5. Record training metrics consistently
 
 For every verified training item, record:
 
 - `initial_loss`: loss at the first optimizer step executed by that item;
 - `final_loss`: loss at its final optimizer step;
-- `last_half_step_time_ms_avg`: arithmetic mean over the latter half of its
-  executed optimizer steps;
-- `last_half_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
+- `last_10_steps_step_time_ms_avg`: arithmetic mean over the final 10 executed
+  optimizer steps;
+- `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
 
 Parse all fields from each complete keyed optimizer-step line. Do not collect
 loss, time, and throughput independently and zip them. Reject missing,
 duplicate, skipped, NaN, or non-finite rows rather than excluding them.
+Every verified training item must execute at least 10 optimizer steps so this
+window is complete.
 
 For a resume that executes steps 201-400, use step 201 as `initial_loss`, step
-400 as `final_loss`, and average steps 301-400.
+400 as `final_loss`, and average steps 391-400.
 
 ### 6. Record only important enabled features
 
@@ -149,7 +164,8 @@ distributed optimizer, ordinary communication overlap, LoRA, or DoRA.
 Run:
 
 ```bash
-uv run python skills/create-model-verification-card/scripts/validate_card.py \
+uv run --no-project --with pyyaml python \
+  skills/create-model-verification-card/scripts/validate_card.py \
   model_cards/<model-slug>/card.yaml
 ```
 
@@ -165,12 +181,15 @@ an item verified merely to make validation pass.
 
 ## Completion checklist
 
-- Keep all eleven inventory items and use only the four statuses.
+- Keep all twelve inventory items and use only the four statuses.
 - Pin a public immutable HF revision before marking anything verified.
 - Include commands and concrete expected results for verified items.
 - Keep commands workload-only: no mounts, environment forwarding, scheduler,
   container, or remote-launch setup.
 - Include GPU type and all four metrics for verified training items.
+- Leave recipe global and micro batch sizes unchanged in card commands.
+- Save full SFT, export it to HF, and record an exact deterministic N-token HF
+  completion.
 - Keep resume as one direct continuation from the pretrain checkpoint.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.

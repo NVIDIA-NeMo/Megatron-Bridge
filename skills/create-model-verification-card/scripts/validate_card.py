@@ -23,6 +23,7 @@ import ipaddress
 import logging
 import math
 import re
+import shlex
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -43,6 +44,7 @@ ITEM_NAMES = (
     "inference",
     "pretrain",
     "sft",
+    "sft_export_inference",
     "sft_long_context",
     "peft",
     "checkpoint_resume",
@@ -56,8 +58,8 @@ METRIC_NAMES = frozenset(
     {
         "initial_loss",
         "final_loss",
-        "last_half_step_time_ms_avg",
-        "last_half_model_tflops_per_gpu_avg",
+        "last_10_steps_step_time_ms_avg",
+        "last_10_steps_model_tflops_per_gpu_avg",
     }
 )
 FEATURE_KEYS = frozenset({"sequence_packing", "cuda_graph", "context_parallel_size", "moe_dispatcher"})
@@ -343,7 +345,14 @@ def _validate_metrics(item: Mapping[str, Any], *, item_name: str, status: str, e
             value = metrics.get(name)
             if not _is_finite_number(value):
                 errors.append(f"{_pointer(*path, name)}: verified metrics must be finite numbers")
-            elif name in {"last_half_step_time_ms_avg", "last_half_model_tflops_per_gpu_avg"} and float(value) <= 0:
+            elif (
+                name
+                in {
+                    "last_10_steps_step_time_ms_avg",
+                    "last_10_steps_model_tflops_per_gpu_avg",
+                }
+                and float(value) <= 0
+            ):
                 errors.append(f"{_pointer(*path, name)}: verified performance metrics must be positive")
     elif status in {"unsupported", "not_applicable"}:
         for name in sorted(METRIC_NAMES):
@@ -352,10 +361,42 @@ def _validate_metrics(item: Mapping[str, Any], *, item_name: str, status: str, e
 
 
 def _argument_value(command: str, argument: str) -> str | None:
-    match = re.search(rf"(?:^|\s){re.escape(argument)}(?:=|\s+)(\"[^\"]+\"|'[^']+'|[^\s]+)", command)
-    if match is None:
+    values = _argument_values(command, argument)
+    if not values:
         return None
-    return match.group(1).strip("\"'")
+    return values[0]
+
+
+def _argument_values(command: str, argument: str) -> list[str]:
+    matches = re.findall(rf"(?:^|\s){re.escape(argument)}(?:=|\s+)(\"[^\"]+\"|'[^']+'|[^\s]+)", command)
+    return [match.strip("\"'") for match in matches]
+
+
+def _has_batch_size_override(command: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    option_names = {
+        "-gb",
+        "-mb",
+        "--global-batch-size",
+        "--global_batch_size",
+        "--micro-batch-size",
+        "--micro_batch_size",
+    }
+    config_names = {
+        "global_batch_size",
+        "micro_batch_size",
+        "train.global_batch_size",
+        "train.micro_batch_size",
+    }
+    for token in tokens:
+        normalized = token.lstrip("+")
+        name = normalized.split("=", 1)[0]
+        if name in option_names or name in config_names:
+            return True
+    return False
 
 
 def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str]) -> None:
@@ -427,27 +468,37 @@ def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str])
         errors.append(f"{_pointer(*comparison_path, 'sentinels_match')}: must be true when verified")
 
 
-def _validate_inference(item: Mapping[str, Any], *, status: str, errors: list[str]) -> None:
+def _validate_inference(item: Mapping[str, Any], *, item_name: str, status: str, errors: list[str]) -> None:
     if status != "verified":
         return
-    path = ("items", "inference")
+    path = ("items", item_name)
     command = _command_value(item)
     expected = item.get("expected_result")
     if command is None or not isinstance(expected, str):
         return
-    token_match = re.search(r"--max[_-]new[_-]tokens(?:=|\s+)(\d+)", command)
-    if token_match is None:
+    token_matches = re.findall(r"--max[_-]new[_-]tokens(?:=|\s+)(\d+)", command)
+    if not token_matches:
         errors.append(f"{_pointer(*path, 'command')}: specify an exact max_new_tokens value")
         return
-    token_count_text = token_match.group(1)
+    if len(token_matches) != 1:
+        errors.append(f"{_pointer(*path, 'command')}: specify max_new_tokens exactly once")
+        return
+    token_count_text = token_matches[0]
     token_count = int(token_count_text)
     if token_count <= 0:
         errors.append(f"{_pointer(*path, 'command')}: max_new_tokens must be positive")
     if "exact" not in expected.lower() or token_count_text not in expected:
         errors.append(f"{_pointer(*path, 'expected_result')}: state the exact {token_count_text}-token result")
-    literals = [left or right for left, right in re.findall(r'"([^\"]+)"|\'([^\']+)\'', expected, re.DOTALL)]
+    literals = [
+        left or right
+        for left, right in re.findall(
+            r"\bcompletion\b[^\"']{0,200}(?:\"([^\"]+)\"|'([^']+)')",
+            expected,
+            re.IGNORECASE | re.DOTALL,
+        )
+    ]
     if not literals:
-        errors.append(f"{_pointer(*path, 'expected_result')}: include the literal completion string")
+        errors.append(f"{_pointer(*path, 'expected_result')}: quote the literal completion after the word completion")
     elif token_count > 0 and len(max(literals, key=len).encode()) < token_count:
         errors.append(
             f"{_pointer(*path, 'expected_result')}: literal completion is too short for {token_count} tokens"
@@ -464,6 +515,81 @@ def _validate_inference(item: Mapping[str, Any], *, status: str, errors: list[st
         errors.append(f"{_pointer(*path, 'command')}: inference verification must be deterministic")
 
 
+def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[str, Any], *, errors: list[str]) -> None:
+    path = ("items", "sft_export_inference")
+    if item.get("depends_on") != "sft":
+        errors.append(f"{_pointer(*path, 'depends_on')}: must be sft")
+    status = item.get("status")
+    if status != "verified":
+        return
+    if sft_item.get("status") != "verified":
+        errors.append(f"{_pointer(*path, 'depends_on')}: sft must be verified first")
+
+    command = _command_value(item)
+    expected = item.get("expected_result")
+    if command is None or not isinstance(expected, str):
+        return
+    for fragment in (
+        "scripts/conversion/convert.sh export",
+        "--megatron-path",
+        "--hf-path",
+        "uv run",
+        "scripts/verify_hf_inference.py",
+    ):
+        if fragment not in command:
+            errors.append(f"{_pointer(*path, 'command')}: missing {fragment}")
+
+    export_position = command.find("scripts/conversion/convert.sh export")
+    separator_position = command.find("&&", export_position)
+    inference_position = command.find("scripts/verify_hf_inference.py")
+    if not 0 <= export_position < separator_position < inference_position:
+        errors.append(f"{_pointer(*path, 'command')}: export must finish before HF inference")
+
+    sft_command = _command_value(sft_item)
+    megatron_path = _argument_value(command, "--megatron-path")
+    if sft_command is not None:
+        save_dir = _argument_value(sft_command, "--save_dir")
+        max_steps = _argument_value(sft_command, "--max_steps")
+        if save_dir is None or max_steps is None or not max_steps.isdigit():
+            errors.append(
+                f"{_pointer('items', 'sft', 'command')}: verified SFT export requires a final save directory"
+            )
+        else:
+            expected_megatron_path = f"{save_dir.rstrip('/')}/iter_{int(max_steps):07d}"
+            if megatron_path != expected_megatron_path:
+                errors.append(f"{_pointer(*path, 'command')}: export must consume the final SFT checkpoint")
+
+    hf_path = _argument_value(command, "--hf-path")
+    hf_models = _argument_values(command, "--hf-model")
+    if len(hf_models) != 2 or hf_path is None or hf_models[-1] != hf_path:
+        errors.append(f"{_pointer(*path, 'command')}: HF inference must reload the export destination")
+    if not re.search(r"\b(?:reload|reloaded|reloads|from_pretrained)\b", expected, re.IGNORECASE):
+        errors.append(f"{_pointer(*path, 'expected_result')}: state that the HF export reloads")
+
+
+def _validate_training_window(item: Mapping[str, Any], *, item_name: str, status: str, errors: list[str]) -> None:
+    if status != "verified":
+        return
+    path = ("items", item_name, "command")
+    command = _command_value(item)
+    if command is None:
+        return
+    max_steps_values = _argument_values(command, "--max_steps")
+    if len(max_steps_values) != 1 or not max_steps_values[0].isdigit():
+        errors.append(f"{_pointer(*path)}: verified training requires exactly one integer --max_steps")
+        return
+    final_step = int(max_steps_values[0])
+    first_step = 1
+    if item_name == "checkpoint_resume":
+        checkpoint_steps = re.findall(r"checkpoint\.ckpt_step=(\d+)", command)
+        if len(checkpoint_steps) != 1:
+            errors.append(f"{_pointer(*path)}: verified resume requires exactly one checkpoint.ckpt_step")
+            return
+        first_step = int(checkpoint_steps[0]) + 1
+    if final_step - first_step + 1 < 10:
+        errors.append(f"{_pointer(*path)}: last-10 metrics require at least 10 executed optimizer steps")
+
+
 def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     path = ("items", item_name)
     item = _as_mapping(value, path=path, errors=errors)
@@ -476,6 +602,8 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
         required |= frozenset({"enabled_features"})
     if item_name == "checkpoint_resume":
         required |= frozenset({"depends_on", "resume_comparison"})
+    if item_name == "sft_export_inference":
+        required |= frozenset({"depends_on"})
     _check_keys(item, allowed=ITEM_KEYS, required=required, path=path, errors=errors)
 
     status = item.get("status")
@@ -486,6 +614,13 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     command = item.get("command")
     if command is not None and not isinstance(command, str):
         errors.append(f"{_pointer(*path, 'command')}: expected a string or null")
+    elif isinstance(command, str):
+        try:
+            shlex.split(command)
+        except ValueError:
+            errors.append(f"{_pointer(*path, 'command')}: command must be shell-parseable")
+        if _has_batch_size_override(command):
+            errors.append(f"{_pointer(*path, 'command')}: card commands must use recipe batch sizes")
 
     expected = item.get("expected_result")
     if expected is not None and not isinstance(expected, str):
@@ -518,6 +653,7 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
         if status in {"unsupported", "not_applicable"} and gpu_type is not None:
             errors.append(f"{_pointer(*path, 'gpu_type')}: must be null for status {status}")
         _validate_metrics(item, item_name=item_name, status=status, errors=errors)
+        _validate_training_window(item, item_name=item_name, status=status, errors=errors)
     elif item.get("metrics") is not None or item.get("gpu_type") is not None:
         errors.append(f"{_pointer(*path)}: metrics and gpu_type are training-only fields")
 
@@ -543,7 +679,9 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     if item_name == "checkpoint_resume":
         _validate_resume(item, status=status, errors=errors)
     if item_name == "inference":
-        _validate_inference(item, status=status, errors=errors)
+        _validate_inference(item, item_name=item_name, status=status, errors=errors)
+    if item_name == "sft_export_inference":
+        _validate_inference(item, item_name=item_name, status=status, errors=errors)
 
 
 def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[str, ...], str]]:
@@ -655,6 +793,10 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         for name in ITEM_NAMES:
             if name in items:
                 _validate_item(name, items[name], errors)
+        sft_item = items.get("sft")
+        sft_export_item = items.get("sft_export_inference")
+        if isinstance(sft_item, Mapping) and isinstance(sft_export_item, Mapping):
+            _validate_sft_export_inference(sft_export_item, sft_item, errors=errors)
 
     any_verified = bool(
         items and any(isinstance(item, Mapping) and item.get("status") == "verified" for item in items.values())

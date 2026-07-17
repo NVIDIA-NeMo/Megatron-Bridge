@@ -24,9 +24,9 @@ notes:
     topology, dataset, and configuration must match the reference run.
   training_metrics: >
     initial_loss is the lm loss at the first optimizer step and final_loss is
-    the lm loss at the final optimizer step. The two last_half averages are the
-    arithmetic means of the per-step console values over the latter half of the
-    optimizer steps executed by that item. Skipped or NaN iterations invalidate
+    the lm loss at the final optimizer step. The two last_10_steps averages are
+    arithmetic means of the per-step console values over the final 10 optimizer
+    steps executed by that item. Skipped or NaN iterations invalidate
     verification rather than being excluded from the averages.
   dataset_policy: >
     RedPajama2 head_01 is a bounded Megatron-indexed prefix; command values omit
@@ -117,7 +117,7 @@ items:
       scripts/training/run_recipe.py
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
-      --max_steps 400 --global_batch_size 32 --micro_batch_size 2
+      --max_steps 400
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       dataset.data_path=work/model-verification/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
       dataset.path_to_cache=work/model-verification/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
@@ -134,8 +134,8 @@ items:
     metrics:
       initial_loss: 12.76213
       final_loss: 5.007709
-      last_half_step_time_ms_avg: 4746.845
-      last_half_model_tflops_per_gpu_avg: 338.553
+      last_10_steps_step_time_ms_avg: 4742.730
+      last_10_steps_model_tflops_per_gpu_avg: 338.790
     expected_result: >
       The uninterrupted RP2 run completes exactly 400 steps with finite losses,
       no skipped or NaN iterations, records all four metrics, and saves
@@ -152,24 +152,50 @@ items:
       --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
-      --max_steps 100 --seq_length 2048 --global_batch_size 8 --micro_batch_size 1
+      --max_steps 100 --seq_length 2048
       --lr 5e-6 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=work/model-verification/qwen3-8b/tulu3-train-10000
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-      checkpoint.save=null checkpoint.save_interval=0 logger.log_interval=1
-      logger.log_throughput=true
-    last_verified: 2026-07-16
+      checkpoint.async_save=false
+      --save_dir work/model-verification/qwen3-8b/sft-checkpoints --save_interval 100
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-17
     metrics:
       initial_loss: 1.546225
-      final_loss: 1.127447
-      last_half_step_time_ms_avg: 1901.584
-      last_half_model_tflops_per_gpu_avg: 99.432
+      final_loss: 1.127269
+      last_10_steps_step_time_ms_avg: 1950.650
+      last_10_steps_model_tflops_per_gpu_avg: 96.510
     expected_result: >
       Tulu3 offline packing completes and full SFT reaches step 100 with finite
-      losses, no skipped or NaN iterations, and all four metrics recorded.
+      losses, no skipped or NaN iterations, and all four metrics recorded, then
+      iter_0000100 saves as a full-model checkpoint.
+
+  sft_export_inference:
+    status: verified
+    depends_on: sft
+    command: >
+      ./scripts/conversion/convert.sh export --executor local --device gpu
+      --gpus-per-node 4 --hf-model Qwen/Qwen3-8B
+      --megatron-path work/model-verification/qwen3-8b/sft-checkpoints/iter_0000100
+      --hf-path work/model-verification/qwen3-8b/sft-hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 4 &&
+      uv run --active --no-sync python
+      skills/create-model-verification-card/scripts/verify_hf_inference.py
+      --hf-model work/model-verification/qwen3-8b/sft-hf-export
+      --prompt "Name the capital of France and explain its role in one sentence."
+      --max-new-tokens 45 --chat-template --disable-thinking
+    last_verified: 2026-07-17
+    expected_result: >
+      The full-SFT checkpoint exports to HF and reloads with Transformers, then
+      two independent runs using greedy generation each produce exactly 45 new
+      tokens with identical token IDs and this coherent, byte-identical literal
+      completion, including whitespace, "The capital of France is Paris. It is the
+      political, economic, and cultural center of France, and is home to many famous
+      landmarks such as the Eiffel Tower, the Louvre Museum, and Notre-Dame Cathedral".
 
   sft_long_context:
     status: verified
@@ -183,8 +209,7 @@ items:
       --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
-      --max_steps 20 --seq_length 32768 --global_batch_size 1
-      --micro_batch_size 1 --context_parallel_size 2
+      --max_steps 20 --seq_length 32768 --context_parallel_size 2
       --lr 1e-6 --min_lr 0 --warmup_iters 2
       'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=work/model-verification/qwen3-8b/tulu3-train-10000
@@ -195,12 +220,12 @@ items:
       scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
       checkpoint.load=null checkpoint.save=null checkpoint.save_interval=0
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-16
+    last_verified: 2026-07-17
     metrics:
-      initial_loss: 1.632253
-      final_loss: 1.341897
-      last_half_step_time_ms_avg: 8573.130
-      last_half_model_tflops_per_gpu_avg: 35.860
+      initial_loss: 1.562296
+      final_loss: 1.414947
+      last_10_steps_step_time_ms_avg: 66386.740
+      last_10_steps_model_tflops_per_gpu_avg: 36.750
     expected_result: >
       The 8-GPU command completes 20 Tulu3 SFT steps at sequence length 32768
       with CP=2 and offline packing, finite losses, no skipped or NaN iterations,
@@ -217,7 +242,7 @@ items:
       --recipe qwen3_8b_peft_1gpu_h100_bf16_config --mode lora
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
-      --max_steps 100 --seq_length 2048 --global_batch_size 8 --micro_batch_size 1
+      --max_steps 100 --seq_length 2048
       --lr 1e-4 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=work/model-verification/qwen3-8b/tulu3-train-10000
@@ -231,8 +256,8 @@ items:
     metrics:
       initial_loss: 1.545473
       final_loss: 1.141865
-      last_half_step_time_ms_avg: 2167.786
-      last_half_model_tflops_per_gpu_avg: 347.862
+      last_10_steps_step_time_ms_avg: 2150.340
+      last_10_steps_model_tflops_per_gpu_avg: 350.000
     expected_result: >
       Tulu3 offline packing and 100 LoRA steps complete with finite losses, no
       skipped or NaN iterations, and all four metrics recorded, then
@@ -247,7 +272,7 @@ items:
       scripts/training/run_recipe.py
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
-      --max_steps 400 --global_batch_size 32 --micro_batch_size 2
+      --max_steps 400
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       dataset.data_path=work/model-verification/data/rp2/kenlm_perp_head_gopher_linefilter_decompressed/bin_idx/nemo/head_01_text_document
       dataset.path_to_cache=work/model-verification/qwen3-8b/rp2-index-cache-head01-seq4096-seed1234
@@ -267,8 +292,8 @@ items:
     metrics:
       initial_loss: 5.663923
       final_loss: 5.007709
-      last_half_step_time_ms_avg: 4766.228
-      last_half_model_tflops_per_gpu_avg: 337.160
+      last_10_steps_step_time_ms_avg: 4761.810
+      last_10_steps_model_tflops_per_gpu_avg: 337.420
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [201, 400]
@@ -282,7 +307,7 @@ items:
       distinct resumed-output directory. Consumed samples must be 6432 and
       12800 at steps 201 and 400; their learning rates and losses must match the
       uninterrupted run within the stated tolerances. All four resumed-segment
-      metrics are recorded, with last-half averages over steps 301-400; exact
+      metrics are recorded, with last-10 averages over steps 391-400; exact
       printed sentinel matches are preferred.
 
   pretrain_performance:
@@ -292,8 +317,7 @@ items:
       uv run python -m torch.distributed.run --standalone --nproc_per_node=4
       scripts/training/run_recipe.py
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-      --dataset mock --max_steps 100 --global_batch_size 32
-      --micro_batch_size 2 --warmup_iters 10 scheduler.lr_decay_iters=100
+      --dataset mock --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       checkpoint.save=null checkpoint.save_interval=0 logger.log_interval=1
       logger.log_throughput=true
@@ -301,10 +325,10 @@ items:
     metrics:
       initial_loss: 12.74359
       final_loss: 0.01727812
-      last_half_step_time_ms_avg: 4217.142
-      last_half_model_tflops_per_gpu_avg: 381.016
+      last_10_steps_step_time_ms_avg: 4216.290
+      last_10_steps_model_tflops_per_gpu_avg: 381.100
     expected_result: >
       On one node with 4x H100, the mock-data run completes 100 steps with
       finite losses, no skipped or NaN iterations, records all four metrics,
       averages at most 4.5 seconds per step and at least 370 model TFLOP/s/GPU
-      over steps 51-100, and stays below 65 GiB/GPU peak allocated memory.
+      over steps 91-100, and stays below 65 GiB/GPU peak allocated memory.
