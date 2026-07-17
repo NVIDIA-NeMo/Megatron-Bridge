@@ -70,7 +70,6 @@ TOP_LEVEL_KEYS = frozenset({"title", "model", "release", "precision", "summary",
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture"})
 NOTE_KEYS = frozenset(
     {
-        "runtime_privacy",
         "training_verification",
         "training_metrics",
         "dataset_policy",
@@ -100,26 +99,6 @@ RESUME_KEYS = frozenset(
     }
 )
 
-ALLOWED_ENVIRONMENT_REFERENCES = frozenset(
-    {
-        "CONTAINER_IMAGE",
-        "HF_HOME",
-        "HF_TOKEN",
-        "MODEL_CARD_WORKDIR",
-        "PRETRAIN_DATA_ROOT",
-        "PWD",
-        "SLURM_ACCOUNT",
-        "SLURM_PARTITION",
-    }
-)
-ALLOWED_ABSOLUTE_ROOTS = (
-    "/data",
-    "/dev/null",
-    "/opt/Megatron-Bridge",
-    "/opt/project",
-    "/tmp",
-    "/workspace",
-)
 FORBIDDEN_KEY_FRAGMENTS = (
     "account",
     "cluster",
@@ -145,27 +124,25 @@ REMOTE_COMMAND_RE = re.compile(r"(?:^|\s)(?:ssh|scp|sftp)(?:\s|$)", re.IGNORECAS
 REMOTE_COPY_RE = re.compile(r"(?:^|\s)[^\s/@:]+@[^\s/:]+:")
 JOB_ID_RE = re.compile(r"\b(?:job(?:[_ -]?id)?|scheduler[_ -]?job)\s*[:=#]?\s*\d{4,}\b", re.IGNORECASE)
 SECRET_ASSIGNMENT_RE = re.compile(r"\b(?:HF_TOKEN|ACCESS_TOKEN|API_KEY|PASSWORD|SECRET)\s*[:=]", re.IGNORECASE)
-RUNTIME_ASSIGNMENT_RE = re.compile(
-    r"\b(?:CONTAINER_IMAGE|HF_HOME|MODEL_CARD_WORKDIR|PRETRAIN_DATA_ROOT|SLURM_ACCOUNT|SLURM_PARTITION)\s*="
-)
-RUNTIME_FLAG_RE = re.compile(
-    r"--(?P<flag>account|partition|container-image|qos|reservation|nodelist|host)"
-    r"(?:=|\s+)(?P<value>\"[^\"]+\"|'[^']+'|[^\s]+)",
+ENVIRONMENT_ASSIGNMENT_RE = re.compile(r"(?:^|[\s;&|])[A-Z_][A-Z0-9_]*=(?:\"[^\"]*\"|'[^']*'|[^\s]+)")
+RUNTIME_COMMAND_RE = re.compile(
+    r"(?:^|[;&|]\s*|\s)(?:srun|sbatch|docker|podman|apptainer|singularity)(?:\s|$)",
     re.IGNORECASE,
 )
-SLURM_SHORT_FLAG_RE = re.compile(r"(?<!\S)(?P<flag>-A|-p)(?:=|\s+)(?P<value>\"[^\"]+\"|'[^']+'|[^\s]+)", re.IGNORECASE)
+RUNTIME_ENTRYPOINT_RE = re.compile(r"(?:scripts/training/train\.sh|scripts/training/setup_experiment\.py)")
+RUNTIME_FLAG_RE = re.compile(
+    r"--(?:mount|env|export|account|partition|container(?:-image|-mounts)?|qos|reservation|nodelist|host|"
+    r"srun-arg|ssh-tunnel|remote-job-dir|user|time|experiment-name)(?:=|\s|$)",
+    re.IGNORECASE,
+)
+SLURM_EXECUTOR_RE = re.compile(r"--executor(?:=|\s+)slurm\b", re.IGNORECASE)
+SHELL_SETUP_RE = re.compile(r"(?:^|[;&|]\s*|\s)(?:export\s+[A-Za-z_]|bash\s+-lc\b|cd\s+\S+)", re.IGNORECASE)
 HOME_PATH_RE = re.compile(r"(?<![A-Za-z0-9_])~(?:[A-Za-z0-9_.-]+)?/")
 REGISTRY_REFERENCE_RE = re.compile(
     r"(?<![A-Za-z0-9_.-])(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}(?::\d+)?/"
     r"[A-Za-z0-9._/-]+(?::[A-Za-z0-9._-]+)?"
 )
-HOST_VALUE_FLAG_RE = re.compile(
-    r"--(?:rdzv[-_]endpoint|master[-_](?:addr|address))(?:=|\s+)"
-    r"(?P<value>\"[^\"]+\"|'[^']+'|[^\s]+)",
-    re.IGNORECASE,
-)
 SECRET_FLAG_RE = re.compile(r"--(?:api[-_]key|access[-_]token|hf[-_]token|password|secret)(?:=|\s+)", re.IGNORECASE)
-COMPLEX_ENVIRONMENT_REFERENCE_RE = re.compile(r"\$\{[A-Za-z_][A-Za-z0-9_]*(?::?[-+=?]|[/#%^,])[^}]*\}")
 IPV6_CANDIDATE_RE = re.compile(r"(?<![0-9A-Fa-f:])(?:[0-9A-Fa-f]{0,4}:){2,}[0-9A-Fa-f]{0,4}(?![0-9A-Fa-f:])")
 
 
@@ -589,7 +566,7 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
     if re.search(r"\bcluster\b", raw, re.IGNORECASE):
         errors.append("/: execution-environment names do not belong in the card")
     if URL_RE.search(raw):
-        errors.append("/: URLs are forbidden; use a public model name or an environment reference")
+        errors.append("/: URLs are forbidden; use a public model name or repository-relative path")
     if EMAIL_RE.search(raw) or IPV4_RE.search(raw) or _contains_ipv6(raw):
         errors.append("/: email or IP address detected")
     if REMOTE_COMMAND_RE.search(raw) or REMOTE_COPY_RE.search(raw):
@@ -598,10 +575,6 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
         errors.append("/: scheduler job metadata is forbidden")
     if SECRET_ASSIGNMENT_RE.search(raw):
         errors.append("/: secret assignment detected")
-    if RUNTIME_ASSIGNMENT_RE.search(raw):
-        errors.append("/: runtime environment values must be supplied outside the card")
-    if COMPLEX_ENVIRONMENT_REFERENCE_RE.search(raw):
-        errors.append("/: environment references may not contain defaults or shell expansion operators")
     if HOME_PATH_RE.search(raw):
         errors.append("/: home-directory paths are forbidden")
     if REGISTRY_REFERENCE_RE.search(raw):
@@ -618,36 +591,28 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
         errors.append("/: shell command substitution is forbidden in cards")
     if any(SECRET_FLAG_RE.search(command) for command in commands):
         errors.append("/: credential flags are forbidden in cards")
-    for command in commands:
-        if re.search(r"\b(?:srun|sbatch)\b", command):
-            for match in SLURM_SHORT_FLAG_RE.finditer(command):
-                if not match.group("value").strip("\"'").startswith("$"):
-                    errors.append("/: scheduler account and partition flags must use environment references")
-        for match in HOST_VALUE_FLAG_RE.finditer(command):
-            if not match.group("value").strip("\"'").startswith("$"):
-                errors.append("/: distributed host endpoints must use environment references")
+    if any(ENVIRONMENT_ASSIGNMENT_RE.search(command) for command in commands):
+        errors.append("/: environment assignments are forbidden in cards")
+    if any(RUNTIME_COMMAND_RE.search(command) for command in commands):
+        errors.append("/: scheduler and container commands are forbidden in cards")
+    if any(RUNTIME_ENTRYPOINT_RE.search(command) for command in commands):
+        errors.append("/: runtime launchers are forbidden; record the rank-local workload")
+    if any(RUNTIME_FLAG_RE.search(command) or SLURM_EXECUTOR_RE.search(command) for command in commands):
+        errors.append("/: runtime orchestration flags are forbidden in cards")
+    if any(SHELL_SETUP_RE.search(command) for command in commands):
+        errors.append("/: shell environment setup is forbidden in cards")
     if "../" in raw:
         errors.append("/: parent-directory traversal is forbidden in cards")
 
     raw_without_urls = URL_RE.sub("", raw)
     for match in ABSOLUTE_PATH_RE.finditer(raw_without_urls):
-        absolute_path = match.group(0).rstrip(".")
-        if not any(absolute_path == root or absolute_path.startswith(f"{root}/") for root in ALLOWED_ABSOLUTE_ROOTS):
-            errors.append(f"/: non-portable absolute path detected at character {match.start()}")
+        errors.append(f"/: absolute path detected at character {match.start()}")
 
-    unknown_environment_references = set(ENVIRONMENT_REFERENCE_RE.findall(raw)) - ALLOWED_ENVIRONMENT_REFERENCES
-    if unknown_environment_references:
+    environment_references = set(ENVIRONMENT_REFERENCE_RE.findall(raw))
+    if environment_references:
         errors.append(
-            f"/: {len(unknown_environment_references)} environment reference(s) are outside the fixed public allowlist"
+            f"/: {len(environment_references)} environment reference(s) detected; runtime wiring belongs outside the card"
         )
-
-    for match in RUNTIME_FLAG_RE.finditer(raw):
-        flag = match.group("flag").lower()
-        value = match.group("value").strip("\"'")
-        if flag in {"qos", "reservation", "nodelist", "host"}:
-            errors.append(f"/: --{flag} is environment-specific and forbidden")
-        elif not value.startswith("$"):
-            errors.append(f"/: --{flag} must reference an allowed environment variable")
 
     lowered = raw.casefold()
     for index, term in enumerate((term for term in deny_terms if term), start=1):

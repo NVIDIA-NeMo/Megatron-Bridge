@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion/inference/training results, or preparing a model-support PR. Enforce the fixed card inventory, training metrics, important-feature allowlist, direct-resume checks, and a strict privacy boundary that excludes internal execution-environment identities, paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion/inference/training results, or preparing a model-support PR. Enforce the fixed card inventory, workload-only commands, training metrics, important-feature allowlist, direct-resume checks, and a strict privacy boundary that excludes runtime orchestration, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -16,8 +16,8 @@ logs or reconstructing the execution environment.
 - Use `model_cards/qwen3-8b/card.yaml` only as a populated format example; do
   not copy model-specific settings blindly.
 
-Do not add a README, evidence blobs, log excerpts, or scheduler metadata to the
-skill or card.
+Do not add a README, evidence blobs, log excerpts, runtime setup, or scheduler
+metadata to the skill or card.
 
 ## Workflow
 
@@ -53,23 +53,27 @@ add `smoke` or an evidence field.
 For `unsupported` and `not_applicable`, leave command, date, GPU type, and
 metrics null, then state the public product limitation in `expected_result`.
 
-### 3. Write portable commands
+### 3. Write workload-only commands
 
-Prefer repository launchers such as `scripts/conversion/convert.sh` and
-`scripts/training/train.sh`. Keep commands directly runnable after the caller
-sets untracked environment values.
+Assume the caller has already prepared the working directory, allocation,
+container, credentials, and storage mappings. Record only the workload that
+verifies model support:
 
-Use environment-variable references for scheduler credentials, runtime images,
-mount sources, caches, dataset roots, and output roots. Use only generic
-container destinations such as `/workspace`, `/data`, `/opt/Megatron-Bridge`,
-and `/tmp`. Reference variables directly; do not embed fallback values or other
-shell expansion operators in the card.
+- use `scripts/conversion/convert.sh --executor local` for conversion;
+- use `uv run python -m torch.distributed.run ...` for inference and training;
+- use ignored, repository-relative logical paths under
+  `work/model-verification/...` for dependencies and outputs.
+
+Do not include `srun`, `sbatch`, container commands, scheduler arguments,
+`--mount`, `--env`, shell exports, environment-variable references, or launcher
+overlays. Runtime setup is personal to the verifier and does not belong in a
+model support card.
 
 Never record or reproduce:
 
 - execution-environment names, hostnames, IPs, usernames, emails, or accounts;
-- concrete partitions, reservations, node lists, image locations, or mount
-  sources;
+- concrete partitions, reservations, node lists, image locations, mount
+  sources, or environment forwarding;
 - host/shared-storage paths, home-directory paths, log locations, or job IDs;
 - tokens, token-loading commands, private URLs, or private registry references;
 - environment-specific launcher overlays.
@@ -81,8 +85,10 @@ The validator reports the match without printing the private term.
 
 ### 4. Apply the verification gates
 
-Mark an item `verified` only after its exact command has completed and the
-concrete expected result has been checked.
+Mark an item `verified` only after the workload represented by its command has
+completed with the recorded model, recipe, data, and checkpoint arguments and
+the concrete expected result has been checked. Execution wrappers do not affect
+the claim and stay outside the card.
 
 - **Conversion:** Test CPU and GPU import/export separately. Reload every
   output. Require exact keys, shapes, dtypes, and values when the conversion is
@@ -163,6 +169,8 @@ an item verified merely to make validation pass.
 - Keep all eleven inventory items and use only the four statuses.
 - Pin a public immutable HF revision before marking anything verified.
 - Include commands and concrete expected results for verified items.
+- Keep commands workload-only: no mounts, environment forwarding, scheduler,
+  container, or remote-launch setup.
 - Include GPU type and all four metrics for verified training items.
 - Keep resume as one direct continuation from the pretrain checkpoint.
 - Keep enabled features within the four-family allowlist.

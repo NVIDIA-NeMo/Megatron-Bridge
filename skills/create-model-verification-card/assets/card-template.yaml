@@ -1,6 +1,6 @@
 # Agent-readable model verification card template.
 # status: unverified | verified | unsupported | not_applicable
-# Populate public facts only. Resolve runtime details from untracked environment values.
+# Populate public facts and workload-only commands. Keep runtime setup outside the card.
 
 title: model_variant
 model:
@@ -11,22 +11,18 @@ release: "YY.MM"
 precision: bf16
 summary: Verification coverage for conversion, inference, and training.
 notes:
-  runtime_privacy: >
-    Resolve scheduler settings, runtime images, mount sources, dataset roots,
-    caches, output roots, credentials, and launcher overlays outside this card.
   training_verification: >
     Workload completion and the expected result are required; submission alone
     is insufficient. Reference and resumed-output directories must be distinct,
-    and the code revision, runtime, hardware topology, and configuration must
-    match when results are compared.
+    and the code revision, hardware topology, data, and configuration must match
+    when results are compared.
   training_metrics: >
     initial_loss and final_loss are taken from the first and final optimizer
     steps executed by an item. Average step time and model TFLOP/s/GPU over the
     latter half of those executed steps. Reject skipped, NaN, non-finite,
     missing, or duplicate keyed iterations.
   dataset_policy: >
-    Name public datasets or generic dataset prefixes only. Resolve storage
-    locations from untracked environment values.
+    Name public datasets or repository-relative logical dataset prefixes only.
   enabled_features_allowlist:
     sequence_packing: [offline, in_batch]
     cuda_graph:
