@@ -157,6 +157,7 @@ def main(args) -> None:
     if is_kimi and image_token_id is None:
         image_token_id = 163605
     is_gemma4 = "gemma4" in model_type
+    is_mistral3 = model_type == "mistral3"
 
     # ------------------------------------------------------------------
     # Load model
@@ -256,6 +257,7 @@ def main(args) -> None:
             args.prompt,
             is_gemma4=is_gemma4,
             is_kimi=is_kimi,
+            is_mistral3=is_mistral3,
             image_token_id=image_token_id,
         )
 

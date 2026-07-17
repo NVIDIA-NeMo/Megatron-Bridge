@@ -159,3 +159,53 @@ class TestGLM47FlashBridge:
         assert "mtp.layers.0.eh_proj.weight" in megatron_params
         assert "mtp.layers.0.final_layernorm.weight" in megatron_params
         assert "mtp.layers.0.mtp_model_layer.mlp.router.expert_bias" in megatron_params
+
+    @pytest.mark.parametrize(
+        ("source_name", "alias_name"),
+        [
+            (
+                "model.embed_tokens.weight",
+                "model.layers.47.embed_tokens.weight",
+            ),
+            (
+                "lm_head.weight",
+                "model.layers.47.shared_head.head.weight",
+            ),
+        ],
+    )
+    def test_export_restores_mtp_alias_weights(
+        self,
+        glm47_flash_config,
+        source_name,
+        alias_name,
+    ):
+        """Test export restores the duplicated MTP embedding and output weights."""
+        bridge = GLM47FlashBridge()
+        bridge.hf_config = glm47_flash_config
+        source_weight = torch.randn(4, 4)
+        converted_weights = {source_name: source_weight}
+
+        result = bridge.maybe_modify_converted_hf_weight(
+            SimpleNamespace(global_param_name="checkpoint.model." + source_name),
+            converted_weights,
+            {},
+        )
+
+        torch.testing.assert_close(result[alias_name], source_weight)
+        assert result[alias_name].data_ptr() != source_weight.data_ptr()
+
+    def test_export_does_not_add_mtp_alias_when_mtp_is_disabled(self, glm47_flash_config):
+        """Test export leaves checkpoints without MTP layers unchanged."""
+        bridge = GLM47FlashBridge()
+        bridge.hf_config = SimpleNamespace(**{**vars(glm47_flash_config), "num_nextn_predict_layers": 0})
+        source_weight = torch.randn(4, 4)
+        converted_weights = {"model.embed_tokens.weight": source_weight}
+
+        result = bridge.maybe_modify_converted_hf_weight(
+            SimpleNamespace(global_param_name="embedding.word_embeddings.weight"),
+            converted_weights,
+            {},
+        )
+
+        assert set(result) == {"model.embed_tokens.weight"}
+        assert result["model.embed_tokens.weight"] is source_weight

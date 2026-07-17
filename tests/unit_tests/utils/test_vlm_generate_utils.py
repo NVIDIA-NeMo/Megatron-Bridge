@@ -132,6 +132,78 @@ class TestProcessMultiImageInputs:
 class TestProcessImageInputs:
     """Tests for ``process_image_inputs``."""
 
+    def test_base_processor_without_chat_template_uses_raw_image_prompt(self):
+        """Base VLMs without a chat template should receive an image-token prompt."""
+        image = mock.MagicMock(name="image")
+        rgb_image = mock.MagicMock(name="rgb_image")
+        image.convert.return_value = rgb_image
+
+        inputs = mock.MagicMock()
+        inputs.input_ids = torch.tensor([[10, 20]])
+        inputs.get.side_effect = lambda key: {
+            "pixel_values": "PIXELS",
+            "image_sizes": "IMAGE_SIZES",
+        }.get(key)
+
+        proc = mock.MagicMock()
+        proc.chat_template = None
+        proc.image_token = "[IMG]"
+        proc.return_value = inputs
+
+        with (
+            mock.patch.object(vlm_generate_utils, "_HAS_QWEN_VL_UTILS", False),
+            mock.patch.object(vlm_generate_utils, "load_image", return_value=image) as load_image_mock,
+        ):
+            result = vlm_generate_utils.process_image_inputs(proc, "/image.png", "describe", is_mistral3=True)
+
+        load_image_mock.assert_called_once_with("/image.png")
+        image.convert.assert_called_once_with("RGB")
+        proc.assert_called_once_with(
+            text=["[IMG]\ndescribe"],
+            images=[rgb_image],
+            padding=True,
+            return_tensors="pt",
+        )
+        assert len(result) == 6
+        input_ids, pixel_values, image_grid_thw, image_sizes, mm_token_type_ids, image_position_ids = result
+        torch.testing.assert_close(input_ids, torch.tensor([[10, 20]]))
+        assert pixel_values == "PIXELS"
+        assert image_grid_thw is None
+        assert image_sizes == "IMAGE_SIZES"
+        assert mm_token_type_ids is None
+        assert image_position_ids is None
+
+    def test_base_processor_preserves_existing_image_token(self):
+        """Do not inject a second image token when the prompt already contains one."""
+        image = mock.MagicMock()
+        image.convert.return_value = "RGB"
+        inputs = mock.MagicMock()
+        inputs.input_ids = torch.tensor([[1]])
+        inputs.get.return_value = None
+
+        proc = mock.MagicMock()
+        proc.chat_template = None
+        proc.image_token = "[IMG]"
+        proc.return_value = inputs
+
+        with mock.patch.object(vlm_generate_utils, "load_image", return_value=image):
+            vlm_generate_utils.process_image_inputs(proc, "/image.png", "[IMG]\ncaption", is_mistral3=True)
+
+        proc.assert_called_once_with(
+            text=["[IMG]\ncaption"],
+            images=["RGB"],
+            padding=True,
+            return_tensors="pt",
+        )
+
+    def test_unrecognized_processor_without_chat_template_fails_clearly(self):
+        """Do not apply the Ministral raw-prompt convention to other VLMs."""
+        proc = mock.MagicMock()
+        proc.chat_template = None
+
+        with pytest.raises(ValueError, match="no model-specific raw-prompt fallback"):
+            vlm_generate_utils.process_image_inputs(proc, "/image.png", "describe")
+
     def test_kimi_image_path_returns_full_six_field_contract(self):
         """Kimi image preprocessing must match the VLM generation unpack contract."""
         inputs = mock.MagicMock()
