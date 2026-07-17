@@ -268,7 +268,7 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
-    drop_last = cfg.train.num_epochs is None
+    drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
 
     # Check that the train dataset has at least one global batch of samples.
     if (
