@@ -1,0 +1,338 @@
+# Agent-readable model support card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_30b_a3b
+model:
+  hf_id: Qwen/Qwen3-30B-A3B
+  hf_revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39  # pragma: allowlist secret
+  architecture: Qwen3MoeForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: 9d09256a842f63bfdda2a5bebbcb6bdb9634851b  # pragma: allowlist secret
+summary: Qwen3-30B-A3B support verification for conversion, inference, and training.
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: 2026-07-17
+    expected_result: >
+      The command exits successfully, creates iter_0000000, and the checkpoint
+      round-trips through CPU export with all 18,867 BF16 tensors matching the
+      recorded HF revision bitwise.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/imported-megatron
+      --torch-dtype bfloat16 --tp 4 --pp 2 --ep 4
+    last_verified: 2026-07-17
+    expected_result: >
+      The command exits successfully, creates iter_0000000, and all 18,867 BF16
+      tensors reload with keys, shapes, dtypes, and values exactly matching the
+      recorded HF revision.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3-30b-a3b/cpu-hf-export
+      --torch-dtype bfloat16
+    last_verified: 2026-07-17
+    expected_result: >
+      The command exits successfully; all 18,867 exported BF16 tensors match
+      the recorded HF revision bitwise, norm_topk_prob remains true, and the
+      export reloads as Qwen3MoeForCausalLM without missing or unexpected keys.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3-30b-a3b/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 4 --pp 2 --ep 4
+    last_verified: 2026-07-17
+    expected_result: >
+      Strict export exits successfully, all 18,867 written BF16 tensors match
+      the recorded HF revision bitwise, norm_topk_prob remains true, and
+      Transformers reloads the output as Qwen3MoeForCausalLM without missing or
+      unexpected keys.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path Qwen/Qwen3-30B-A3B
+      --megatron_model_path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --tp 1 --pp 8 --prompt "The capital of France is the city of"
+    last_verified: null
+    expected_result: >
+      The observed next-token predictions match at token ID 12095 (" Paris"),
+      with maximum and mean absolute logit differences of 0.593750 and 0.130076
+      and cosine similarity 0.999318. This remains unverified because the BF16
+      parity gate requires cosine similarity above 0.9999 and materially smaller
+      absolute differences.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path Qwen/Qwen3-30B-A3B
+      --megatron_model_path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --tp 4 --pp 2 --ep 4
+      --prompt "The capital of France is" --max_new_tokens 32
+    last_verified: 2026-07-17
+    expected_result: >
+      Two independent executions exit successfully after exactly 32 new tokens
+      and print this byte-identical completion, including its leading
+      space, " Paris. The capital of the United Kingdom is London. The capital
+      of the United States is Washington, D.C. The capital of Brazil is
+      Brasília. The".
+
+  pretrain:
+    status: verified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      moe_dispatcher: deepep
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --deterministic --seq_length 4096
+      --max_steps 400 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+      dataset.data_path=work/data/rp2/head_01
+      dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
+      tokenizer.tokenizer_type=SentencePieceTokenizer
+      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+      rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=400
+      validation.eval_iters=0 validation.eval_interval=0
+      dist.distributed_timeout_minutes=30 checkpoint.load=null
+      --save_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
+      --save_interval 200 logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-17
+    metrics:
+      initial_loss: 12.26371
+      final_loss: 4.793316
+      last_10_steps_step_time_ms_avg: 9049.790
+      last_10_steps_model_tflops_per_gpu_avg: 41.680
+    expected_result: >
+      The uninterrupted bounded RP2 run completes exactly 400 steps with finite
+      losses, no skipped or NaN iterations, records all four metrics, and
+      finalizes iter_0000200 and iter_0000400.
+
+  sft:
+    status: verified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      moe_dispatcher: deepep
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      --recipe qwen3_30b_a3b_sft_8gpu_h100_bf16_config --mode sft
+      --dataset tulu3
+      --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --max_steps 100 --seq_length 2048 -tp 8 -pp 1 -ep 8
+      --lr 5e-6 --min_lr 0 --warmup_iters 10
+      'dataset.hf_dataset.split="train[:10000]"'
+      dataset.hf_output_root=work/data/tulu3
+      dataset.do_validation=false dataset.hf_validation_proportion=null
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.load=null
+      --save_dir work/model-verification/qwen3-30b-a3b/sft-checkpoints
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-17
+    metrics:
+      initial_loss: 1.693180
+      final_loss: 0.9047834
+      last_10_steps_step_time_ms_avg: 20316.590
+      last_10_steps_model_tflops_per_gpu_avg: 7.620
+    expected_result: >
+      Tulu3 offline packing completes exactly 100 full-SFT steps with finite
+      losses, no skipped or NaN iterations, all four metrics recorded, and a
+      reloadable full-model iter_0000100 checkpoint. PP=1 keeps tokens, labels,
+      loss masks, and packed-sequence boundaries on one pipeline stage.
+
+  sft_export_inference:
+    status: verified
+    precision: bf16
+    depends_on: sft
+    commands:
+      - >
+        ./scripts/conversion/convert.sh export --executor slurm --device gpu
+        --nodes 1 --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B
+        --megatron-path work/model-verification/qwen3-30b-a3b/sft-checkpoints/iter_0000100
+        --hf-path work/model-verification/qwen3-30b-a3b/sft-hf-export
+        --torch-dtype bfloat16 --export-weight-dtype bfloat16
+        --distributed-save --tp 8 --pp 1 --ep 8
+      - >
+        uv run python
+        skills/create-model-verification-card/scripts/verify_hf_inference.py
+        --hf-model work/model-verification/qwen3-30b-a3b/sft-hf-export
+        --prompt "In one short sentence, explain why Paris is important to France."
+        --max-new-tokens 32 --chat-template --disable-thinking
+    last_verified: 2026-07-17
+    expected_result: >
+      The step-100 full-SFT checkpoint exports and reloads with Transformers
+      without missing or unexpected keys. Two independent executions using
+      greedy generation each produce exactly 32 new tokens with identical token
+      IDs and this coherent, byte-identical literal completion, including
+      whitespace,
+      "Paris is the capital city of France and is a major cultural, economic,
+      and political center in Europe. It is home to many famous landmarks,
+      such as the".
+
+  sft_long_context:
+    status: verified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      context_parallel_size: 2
+      moe_dispatcher: deepep
+    command: >
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+      --recipe qwen3_30b_a3b_sft_8gpu_h100_bf16_config --mode sft
+      --dataset tulu3
+      --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --max_steps 20 --seq_length 32768 --context_parallel_size 2
+      -tp 8 -pp 1 -ep 8
+      --lr 1e-6 --min_lr 0 --warmup_iters 2
+      'dataset.hf_dataset.split="train[:10000]"'
+      dataset.hf_output_root=work/data/tulu3
+      dataset.do_validation=false dataset.hf_validation_proportion=null
+      dataset.enable_offline_packing=true model.cp_comm_type=p2p
+      model.cross_entropy_loss_fusion=false model.recompute_granularity=full
+      model.recompute_method=uniform model.recompute_num_layers=1
+      scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.load=null checkpoint.save=null
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-17
+    metrics:
+      initial_loss: 1.606502
+      final_loss: 1.480433
+      last_10_steps_step_time_ms_avg: 130528.550
+      last_10_steps_model_tflops_per_gpu_avg: 28.530
+    expected_result: >
+      The two-node command completes exactly 20 Tulu3 SFT steps at sequence
+      length 32768 with CP=2 and offline packing, finite losses, no skipped or
+      NaN iterations, and all four metrics recorded. PP=1 keeps tokens, labels,
+      loss masks, and packed-sequence boundaries on one pipeline stage.
+
+  peft:
+    status: verified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      moe_dispatcher: deepep
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+      --recipe qwen3_30b_a3b_peft_4gpu_h100_bf16_config --mode lora
+      --dataset tulu3
+      --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --max_steps 100 --seq_length 2048
+      --lr 1e-4 --min_lr 0 --warmup_iters 10
+      'dataset.hf_dataset.split="train[:10000]"'
+      dataset.hf_output_root=work/data/tulu3
+      dataset.do_validation=false dataset.hf_validation_proportion=null
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.load=null
+      --save_dir work/model-verification/qwen3-30b-a3b/peft-checkpoints
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-17
+    metrics:
+      initial_loss: 1.572119
+      final_loss: 1.139297
+      last_10_steps_step_time_ms_avg: 24134.760
+      last_10_steps_model_tflops_per_gpu_avg: 12.810
+    expected_result: >
+      Tulu3 offline packing and exactly 100 LoRA steps complete with finite
+      losses, no skipped or NaN iterations, and all four metrics recorded, then
+      iter_0000100 finalizes as an adapter checkpoint.
+
+  checkpoint_resume:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    depends_on: pretrain
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --deterministic --seq_length 4096
+      --max_steps 400 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+      dataset.data_path=work/data/rp2/head_01
+      dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
+      tokenizer.tokenizer_type=SentencePieceTokenizer
+      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+      rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=400
+      validation.eval_iters=0 validation.eval_interval=0
+      dist.distributed_timeout_minutes=30
+      --load_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
+      --save_dir work/model-verification/qwen3-30b-a3b/pretrain-resumed-checkpoints
+      --save_interval 200 checkpoint.ckpt_step=200
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    resume_comparison:
+      reference_item: pretrain
+      sentinel_steps: [201, 400]
+      loss_relative_tolerance: 1.0e-6
+      loss_absolute_tolerance: 1.0e-6
+      sentinels_match: false
+    expected_result: >
+      The command should load optimizer and RNG state directly from
+      iter_0000200, begin at step 201, and finish at step 400 in the distinct
+      output root with matching step-201 and step-400 losses. On the pinned
+      dependency stack it currently fails before step 201 because optimizer
+      load-skeleton construction exceeds an 80GB H100, so it remains unverified.
+
+  pretrain_performance:
+    status: verified
+    precision: bf16
+    gpu_type: H100
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
+      --dataset mock --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      checkpoint.save=null logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-17
+    metrics:
+      initial_loss: 12.33417
+      final_loss: 0.08014847
+      last_10_steps_step_time_ms_avg: 7071.990
+      last_10_steps_model_tflops_per_gpu_avg: 53.290
+    expected_result: >
+      On one node with 8x H100, the mock-data run completes exactly 100 steps
+      with finite losses, no skipped or NaN iterations, records all four
+      metrics, averages at most 7.5 seconds per step and at least 50 model
+      TFLOP/s/GPU over steps 91-100, and stays below 75 GiB/GPU peak allocated
+      memory.

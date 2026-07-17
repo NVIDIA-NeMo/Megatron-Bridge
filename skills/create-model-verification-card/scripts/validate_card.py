@@ -561,6 +561,9 @@ def _validate_inference(
         command_tokens = []
     if command_tokens[:2] != ["uv", "run"]:
         errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
+    prompts = _argument_values(command, "--prompt")
+    if len(prompts) != 1:
+        errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")
     token_matches = re.findall(r"--max[_-]new[_-]tokens(?:=|\s+)(\d+)", command)
     if not token_matches:
         errors.append(f"{_pointer(*resolved_command_path)}: specify an exact max_new_tokens value")
@@ -584,10 +587,14 @@ def _validate_inference(
     ]
     if not literals:
         errors.append(f"{_pointer(*path, 'expected_result')}: quote the literal completion after the word completion")
-    elif token_count > 0 and len(max(literals, key=len).encode()) < token_count:
-        errors.append(
-            f"{_pointer(*path, 'expected_result')}: literal completion is too short for {token_count} tokens"
-        )
+    else:
+        literal = max(literals, key=len)
+        if token_count > 0 and len(literal.encode()) < token_count:
+            errors.append(
+                f"{_pointer(*path, 'expected_result')}: literal completion is too short for {token_count} tokens"
+            )
+        if len(prompts) == 1 and literal.strip() == prompts[0].strip():
+            errors.append(f"{_pointer(*path, 'expected_result')}: literal completion must not repeat the prompt")
     repeated = re.search(r"\b(?:twice|two\s+(?:independent\s+)?(?:runs|executions))\b", expected, re.IGNORECASE)
     matched = re.search(
         r"\b(?:byte[- ](?:for[- ])?byte|byte[- ]identical|identical|match(?:es|ed)?)\b", expected, re.IGNORECASE
