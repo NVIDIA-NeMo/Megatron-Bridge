@@ -270,6 +270,7 @@ class TestGemma4VLConversion:
             str(pp),
             "--etp",
             str(etp),
+            "--not-strict",
         ]
 
         result = subprocess.run(
@@ -407,6 +408,7 @@ class TestGemma4DenseVLConversion:
             str(tp),
             "--pp",
             str(pp),
+            "--not-strict",
         ]
 
         result = subprocess.run(

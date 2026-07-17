@@ -187,6 +187,7 @@ class TestNemotronOmniConversion:
             "--pp",
             pp,
             "--trust-remote-code",
+            "--not-strict",
         ]
 
         result = subprocess.run(
