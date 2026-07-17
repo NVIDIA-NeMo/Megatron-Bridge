@@ -33,10 +33,13 @@ The process is as follows:
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B
+    uv run python -m torch.distributed.run --nproc_per_node=8 \
+      examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id meta-llama/Llama-3.2-1B
 
-    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B \
-       --megatron-save-path ./megatron_checkpoint
+    srun --nodes=1 --ntasks-per-node=8 uv run python \
+      examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id meta-llama/Llama-3.2-1B --megatron-save-path ./megatron_checkpoint
 
     uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
       --hf-model-id Qwen/Qwen3-30B-A3B --tp 1 --pp 8
@@ -115,8 +118,8 @@ def main(
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
     _configure_slurm_distributed_environment()
     if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
+        console.print("This script must be launched with torch.distributed.run or as native Slurm tasks. Please run:")
+        console.print(f"uv run python -m torch.distributed.run --nproc_per_node=<gpus> {sys.argv[0]}")
         sys.exit(1)
 
     model_name = hf_model_id.split("/")[-1]
