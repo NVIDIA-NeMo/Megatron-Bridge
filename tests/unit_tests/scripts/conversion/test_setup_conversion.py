@@ -288,6 +288,7 @@ def test_roundtrip_task_uses_conversion_worker():
 
     assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
     assert task.entrypoint == "python"
+    assert task.env["PYTHON_EXEC"] == sys.executable
     assert task.args == display_args
     assert task.args == [
         "roundtrip",
@@ -330,6 +331,7 @@ def test_slurm_roundtrip_task_uses_container_conversion_worker():
 
     assert task.path == "/opt/Megatron-Bridge/scripts/conversion/run_conversion.py"
     assert task.entrypoint == "python"
+    assert "PYTHON_EXEC" not in task.env
     assert task.args != display_args
     assert display_args[4] == "/model path"
     assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]

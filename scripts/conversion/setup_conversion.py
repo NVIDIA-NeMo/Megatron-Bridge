@@ -20,6 +20,7 @@ import argparse
 import logging
 import os
 import shlex
+import sys
 from pathlib import Path
 
 import nemo_run as run
@@ -197,13 +198,19 @@ def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
             pythonpath = f"{pythonpath}:{existing_pythonpath}"
     else:
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM:$PYTHONPATH"
+    task_env = {"PYTHONPATH": pythonpath}
+    if args.executor == "local" and args.device == "gpu":
+        # The torchrun console script can belong to a different Python than the
+        # uv environment running this launcher. PyTorch honors PYTHON_EXEC for
+        # workers, so keep conversion dependencies from this environment.
+        task_env["PYTHON_EXEC"] = sys.executable
     task = run.Script(
         path=str(repo_root / relative_task_path),
         # NeMo Run recognizes the literal "python" entrypoint when building a
         # torchrun command. An absolute interpreter path is treated as a
         # non-Python executable and makes torchrun execute this file directly.
         entrypoint="python",
-        env={"PYTHONPATH": pythonpath},
+        env=task_env,
         args=task_args,
     )
     return task, display_args
