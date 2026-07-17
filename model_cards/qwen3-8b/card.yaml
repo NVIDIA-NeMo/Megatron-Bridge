@@ -34,7 +34,23 @@ notes:
     moe_dispatcher: [deepep, hybridep]
 
 items:
-  hf_to_megatron:
+  hf_to_megatron_cpu:
+    status: verified
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1 --cpus-per-task 64 --mount "$PWD:/opt/Megatron-Bridge"
+      --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
+      --env HF_HOME --env HF_TOKEN
+      --hf-model "$HF_SNAPSHOT"
+      --megatron-path /workspace/qwen3-8b/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: 2026-07-16
+    expected_result: >
+      The command exits successfully, creates iter_0000000, and the checkpoint
+      round-trips through CPU export with all 399 HF tensors matching the
+      pinned snapshot exactly in keys, shapes, dtypes, and values.
+
+  hf_to_megatron_gpu:
     status: verified
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -49,7 +65,22 @@ items:
       The command exits successfully, creates iter_0000000, and the checkpoint
       reloads at TP=4 with weights exactly matching the pinned HF snapshot.
 
-  megatron_to_hf:
+  megatron_to_hf_cpu:
+    status: verified
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --cpus-per-task 64 --mount "$PWD:/opt/Megatron-Bridge"
+      --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
+      --env HF_HOME --env HF_TOKEN
+      --hf-model "$HF_SNAPSHOT"
+      --megatron-path /workspace/qwen3-8b/cpu-megatron/iter_0000000
+      --hf-path /workspace/qwen3-8b/cpu-hf-export
+    last_verified: 2026-07-16
+    expected_result: >
+      The command exits successfully; all 399 exported tensors match the pinned
+      HF snapshot exactly, and the export reloads on CPU as Qwen3ForCausalLM.
+
+  megatron_to_hf_gpu:
     status: verified
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
