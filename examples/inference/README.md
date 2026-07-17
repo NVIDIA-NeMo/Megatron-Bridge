@@ -4,7 +4,7 @@ This directory contains text-generation examples for Megatron Bridge and
 Megatron-Core inference.
 
 To submit offline text generation from a Slurm login node without entering an
-allocation, use [`scripts/inference/inference.sh`](../../scripts/inference/README.md).
+allocation, use [`scripts/inference/infer.sh`](../../scripts/inference/README.md).
 The launcher uses the project NeMo Run Slurm executor and forwards the existing
 Bridge text-generation CLI.
 

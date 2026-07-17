@@ -40,7 +40,7 @@ def _build_parser() -> argparse.ArgumentParser:
         allow_abbrev=False,
         epilog="""
 Example:
-  ./scripts/inference/inference.sh --nodes 1 --gpus-per-node 1 \\
+  ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 1 \\
       --account ACCOUNT --partition PARTITION --container-image IMAGE \\
       --mount /path/to/Megatron-Bridge:/opt/Megatron-Bridge --env HF_TOKEN \\
       --hf-model-path meta-llama/Llama-3.2-1B \\

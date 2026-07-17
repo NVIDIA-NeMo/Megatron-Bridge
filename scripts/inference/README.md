@@ -1,12 +1,12 @@
 # Inference launcher
 
-`inference.sh` submits Bridge-backed offline text generation from a Slurm login
+`infer.sh` submits Bridge-backed offline text generation from a Slurm login
 node. It uses NeMo Run's Slurm executor and launches one srun-native process per
 GPU; users should not enter an allocation or wrap it in `srun`, `torchrun`, or
 `sbatch`.
 
 ```bash
-./scripts/inference/inference.sh \
+./scripts/inference/infer.sh \
   --nodes 1 \
   --gpus-per-node 1 \
   --account ACCOUNT \
@@ -34,7 +34,7 @@ Bridge checkpoint. The Hugging Face path may be omitted when the checkpoint's
 `run_config.yaml` records `model.hf_model_id`.
 
 ```bash
-./scripts/inference/inference.sh \
+./scripts/inference/infer.sh \
   --nodes 1 --gpus-per-node 8 \
   --account ACCOUNT --partition PARTITION \
   --container-image /path/to/megatron-bridge.sqsh \
