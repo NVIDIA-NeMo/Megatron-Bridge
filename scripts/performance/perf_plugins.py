@@ -515,9 +515,6 @@ class PerfEnvPlugin(Plugin):
         def get_peak_mem_clock_srun_cmd(job_dir: str, peak_mem_clk: int) -> str:
             import shlex
 
-            debug_and_lock_cmd = (
-                f"nvidia-smi --lock-memory-clock-info; sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"
-            )
             peak_mem_clock_cmd = "\n".join(
                 [
                     "",
@@ -531,7 +528,7 @@ class PerfEnvPlugin(Plugin):
                             "--error",
                             os.path.join(job_dir, "peak_mem_clock.err"),
                             "bash -c",
-                            shlex.quote(debug_and_lock_cmd),
+                            shlex.quote(f"sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"),
                         ]
                     ),
                     "",

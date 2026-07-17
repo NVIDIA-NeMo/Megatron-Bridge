@@ -79,10 +79,6 @@ def test_setup_adds_peak_mem_clock_slurm_command(monkeypatch):
 
     plugin.setup(MagicMock(), executor)
 
-    assert "nvidia-smi --lock-memory-clock-info" in executor.setup_lines
     assert "sudo nvidia-smi -lmc 2600,2600" in executor.setup_lines
-    assert executor.setup_lines.index("nvidia-smi --lock-memory-clock-info") < executor.setup_lines.index(
-        "sudo nvidia-smi -lmc"
-    )
     assert "--output /tmp/job/peak_mem_clock.out" in executor.setup_lines
     assert "--error /tmp/job/peak_mem_clock.err" in executor.setup_lines
