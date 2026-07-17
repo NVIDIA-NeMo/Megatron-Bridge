@@ -156,6 +156,13 @@ result. Private executor configuration stays outside the card.
 - **Performance:** Keep a bounded mock-data performance item separate from the
   real-data functional run and state public hardware plus thresholds.
 
+Before adding checkpoint overrides, inspect the selected recipe and its
+inherited checkpoint defaults. Keep only values that change the effective
+behavior, such as an explicit load/save root, save interval, resume step, or
+intentional strictness. For resume, the effective configuration must load and
+save optimizer and RNG state and must not use finetune mode, but do not restate
+those values when the recipe already inherits the required defaults.
+
 Submission is not success. Require the workload process to finish successfully,
 the exact optimizer-step set to be present, finite losses and performance
 values, zero skipped/NaN iterations, and complete reloadable artifacts.

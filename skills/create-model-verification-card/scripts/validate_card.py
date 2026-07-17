@@ -349,6 +349,17 @@ def _argument_values(command: str, argument: str) -> list[str]:
     return [match.strip("\"'") for match in matches]
 
 
+def _config_override_values(command: str, field: str) -> list[str]:
+    """Return shell-parsed values for a trailing ConfigContainer override."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return []
+    prefix = f"{field}="
+    normalized_tokens = (token.lstrip("+") for token in tokens)
+    return [token[len(prefix) :] for token in normalized_tokens if token.startswith(prefix)]
+
+
 def _has_batch_size_override(command: str) -> bool:
     try:
         tokens = shlex.split(command)
@@ -478,16 +489,27 @@ def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str])
         errors.append(f"{_pointer(*path, 'command')}: verified resume must use one direct command")
         return
     command = item["command"]
-    required_fragments = (
-        "checkpoint.load_optim=true",
-        "checkpoint.load_rng=true",
-        "checkpoint.ckpt_step=",
-        "--load_dir",
-        "--save_dir",
-    )
+    required_fragments = ("checkpoint.ckpt_step=", "--load_dir", "--save_dir")
     for fragment in required_fragments:
         if fragment not in command:
             errors.append(f"{_pointer(*path, 'command')}: missing {fragment}")
+
+    # The inherited checkpoint defaults already provide full-state resume. The
+    # command may omit them for readability, but an explicit override must not
+    # disable the state needed for a valid continuation.
+    required_effective_values = {
+        "checkpoint.finetune": "false",
+        "checkpoint.load_optim": "true",
+        "checkpoint.load_rng": "true",
+        "checkpoint.save_optim": "true",
+        "checkpoint.save_rng": "true",
+    }
+    for field, expected_value in required_effective_values.items():
+        values = _config_override_values(command, field)
+        if len(values) > 1:
+            errors.append(f"{_pointer(*path, 'command')}: {field} must not be overridden more than once")
+        elif values and values[0].lower() != expected_value:
+            errors.append(f"{_pointer(*path, 'command')}: {field} must remain {expected_value}")
 
     load_dir = _argument_value(command, "--load_dir")
     save_dir = _argument_value(command, "--save_dir")
