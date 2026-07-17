@@ -92,8 +92,6 @@ def test_qwen35_text_recipe_uses_nested_language_model_config(
     assert cfg.rng.te_rng_tracker is True
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.cross_entropy_fusion_impl == "native"
-    assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.dataset.mmap_bin_files is True
 
     if recipe_name == "qwen35_9b_pretrain_8gpu_gb200_bf16_config":
@@ -103,7 +101,10 @@ def test_qwen35_text_recipe_uses_nested_language_model_config(
         assert cfg.model.cuda_graph_impl == "transformer_engine"
         assert cfg.model.cuda_graph_scope is None
         assert cfg.model.cuda_graph_modules == ["attn", "mlp"]
-        assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+        assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+        assert cfg.ddp.grad_reduce_in_fp32 is False
+        assert cfg.ddp.check_for_nan_in_grad is False
+        assert cfg.rerun_state_machine.check_for_nan_in_loss is False
         assert cfg.ddp.overlap_grad_reduce is True
         assert cfg.ddp.overlap_param_gather is True
         assert cfg.comm_overlap.tp_comm_overlap is False
@@ -119,9 +120,11 @@ def test_qwen35_text_recipe_uses_nested_language_model_config(
         assert cfg.model.cuda_graph_impl == "transformer_engine"
         assert cfg.model.cuda_graph_scope is None
         assert cfg.model.cuda_graph_modules == ["attn", "moe_router", "moe_preprocess"]
+        assert cfg.ddp.grad_reduce_in_fp32 is True
+        assert cfg.ddp.check_for_nan_in_grad is True
 
 
-def test_qwen35_9b_recipe_validates_with_library_correctness_checks(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_qwen35_9b_recipe_validates_with_gb200_performance_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """The dense scoped-graph recipe must pass combined config and provider validation."""
     text_config = SimpleNamespace(architectures=None)
     provider = GPTModelProvider(
@@ -152,4 +155,4 @@ def test_qwen35_9b_recipe_validates_with_library_correctness_checks(monkeypatch:
 
     assert text_config.architectures == ["Qwen3_5ForCausalLM"]
     assert cuda_graph_module_names(cfg.model) == ["attn", "mlp"]
-    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is False

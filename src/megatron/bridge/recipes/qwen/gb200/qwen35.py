@@ -24,6 +24,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _QWEN35_9B_BASE = "Qwen/Qwen3.5-9B-Base"
@@ -78,9 +79,8 @@ def qwen35_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
-    # Capture the dense attention and MLP modules while retaining the library
-    # recipe's loss-NaN rerun check. Full-iteration capture, as used by the
-    # Llama performance recipe, is incompatible with that correctness check.
+    # Capture the dense attention and MLP modules. Keep cross entropy on the
+    # native fused path validated by the 64-GPU GB200 performance run.
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = None
     cfg.model.cuda_graph_modules = ["attn", "mlp"]
@@ -94,11 +94,16 @@ def qwen35_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
-    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.check_for_nan_in_grad = False
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.use_megatron_fsdp = False
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     return cfg
