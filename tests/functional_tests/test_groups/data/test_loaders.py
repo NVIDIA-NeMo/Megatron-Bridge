@@ -335,6 +335,53 @@ class TestDataLoaders:
         assert test_call.kwargs["data_parallel_rank"] == 0
         assert test_call.kwargs["data_parallel_size"] == 1
 
+    @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    def test_gpt_sft_batch_eval_preserves_split_smaller_than_global_batch(
+        self, _mock_rank, _mock_world_size, _mock_broadcast
+    ):
+        class PaddingAwareDataset:
+            def __init__(self, size):
+                self.size = size
+
+            def __len__(self):
+                return self.size
+
+            def __getitem__(self, index):
+                return index
+
+        cfg = create_simple_test_config()
+        cfg.train.global_batch_size = 4
+        cfg.validation.eval_global_batch_size = 4
+        cfg.validation.eval_micro_batch_size = 1
+        cfg.dataset = GPTSFTDatasetConfig(
+            dataset_root="/tmp/dataset",
+            seq_length=512,
+            num_workers=0,
+            persistent_workers=False,
+        )
+        datasets = (PaddingAwareDataset(4), PaddingAwareDataset(3), PaddingAwareDataset(3))
+        real_torch_tensor = torch.tensor
+
+        with mock.patch(
+            "megatron.bridge.data.loaders.torch.tensor",
+            side_effect=lambda data, *, dtype, device: real_torch_tensor(data, dtype=dtype),
+        ):
+            _, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+                cfg=cfg,
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=mock.Mock(return_value=datasets),
+                dp_group=object(),
+            )
+
+        valid_batch = next(iter(valid_dataloader))
+        test_batch = next(iter(test_dataloader))
+        assert valid_batch.shape == (cfg.validation.eval_global_batch_size,)
+        assert test_batch.shape == (cfg.validation.eval_global_batch_size,)
+        assert -1 in valid_batch
+        assert -1 in test_batch
+
 
 class TestSampleBasedDataLoaders:
     """Tests for sample-based training data loader functionality."""

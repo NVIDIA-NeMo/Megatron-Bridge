@@ -339,6 +339,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and cfg.dataset.dataloader_type == "batch"),
         )
     elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
@@ -356,6 +357,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and val_dataloader_type == "batch"),
         )
 
     if cfg.validation.eval_iters > 0:
@@ -373,6 +375,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            drop_last=not (isinstance(cfg.dataset, GPTSFTDatasetConfig) and cfg.dataset.dataloader_type == "batch"),
         )
 
     # Flags to know if we need to do training/validation/testing.
