@@ -4,6 +4,7 @@
 # verified requires an immutable hf_revision, a successful command, a concrete
 # expected_result, and non-null last_verified.
 # unverified may retain an older last_verified date when validation is stale.
+# Every training item records the GPU type used for verification.
 
 title: qwen3_8b
 model:
@@ -12,11 +13,15 @@ model:
   architecture: Qwen3ForCausalLM
 release: "26.08"
 precision: bf16
-summary: Placeholder card for reviewing the model support items and expected results.
+summary: Qwen3-8B support verification for conversion, inference, and training.
 notes:
   default_executor: slurm
-  slurm_launcher_env: [SLURM_ACCOUNT, SLURM_PARTITION, CONTAINER_IMAGE]
+  slurm_launcher_env:
+    [SLURM_ACCOUNT, SLURM_PARTITION, CONTAINER_IMAGE, MODEL_CARD_WORKDIR, PRETRAIN_DATA_ROOT, HF_SNAPSHOT]
   slurm_forwarded_env: [HF_HOME, HF_TOKEN]
+  hf_snapshot: $HF_HOME/hub/models--Qwen--Qwen3-8B/snapshots/<model.hf_revision>
+  eos_launcher_overrides:
+    [--no-gpu-resource-request, --srun-arg=--mpi=pmix, --srun-arg=--no-container-mount-home]
   training_verification: >
     Slurm job completion and the expected result are required; submission alone
     is insufficient.
@@ -30,91 +35,107 @@ notes:
 
 items:
   hf_to_megatron:
-    status: unverified
+    status: verified
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 4 --mount "$PWD:/opt/Megatron-Bridge"
-      --mount /workspace --mount "$HF_HOME"
-      --env HF_HOME --env HF_TOKEN --hf-model Qwen/Qwen3-8B
-      --megatron-path /workspace/qwen3-8b/megatron --torch-dtype bfloat16 --tp 4
-    last_verified: null
+      --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
+      --env HF_HOME --env HF_TOKEN
+      --hf-model "$HF_SNAPSHOT"
+      --megatron-path /workspace/qwen3-8b/imported-megatron
+      --torch-dtype bfloat16 --tp 4
+    last_verified: 2026-07-16
     expected_result: >
-      The command exits successfully and creates a loadable Megatron checkpoint
-      at /workspace/qwen3-8b/megatron/iter_0000000.
+      The command exits successfully, creates iter_0000000, and the checkpoint
+      reloads at TP=4 with weights exactly matching the pinned HF snapshot.
 
   megatron_to_hf:
-    status: unverified
+    status: verified
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 4 --mount "$PWD:/opt/Megatron-Bridge"
-      --mount /workspace --mount "$HF_HOME"
-      --env HF_HOME --env HF_TOKEN --hf-model Qwen/Qwen3-8B
-      --megatron-path /workspace/qwen3-8b/megatron/iter_0000000
-      --hf-path /workspace/qwen3-8b/hf-export --torch-dtype bfloat16 --tp 4
-    last_verified: null
+      --mount "$MODEL_CARD_WORKDIR:/workspace" --mount "$HF_HOME"
+      --env HF_HOME --env HF_TOKEN
+      --hf-model "$HF_SNAPSHOT"
+      --megatron-path /workspace/qwen3-8b/imported-megatron/iter_0000000
+      --hf-path /workspace/qwen3-8b/hf-export --torch-dtype bfloat16
+      --export-weight-dtype bfloat16 --distributed-save --tp 4
+    last_verified: 2026-07-16
     expected_result: >
-      The command exits successfully and /workspace/qwen3-8b/hf-export reloads
-      as a Hugging Face checkpoint.
+      Strict export exits successfully and /workspace/qwen3-8b/hf-export
+      reloads with AutoModelForCausalLM as Qwen3ForCausalLM.
 
   inference:
-    status: unverified
+    status: verified
     command: >
-      srun --mpi=pmix --no-kill --nodes=1 --ntasks=4 --gpus-per-task=1
+      srun --mpi=pmix --no-kill --nodes=1 --ntasks=1 --exclusive
       --account "$SLURM_ACCOUNT" --partition "$SLURM_PARTITION"
       --container-image "$CONTAINER_IMAGE"
-      --container-mounts "$PWD:/opt/Megatron-Bridge,/workspace:/workspace,$HF_HOME:$HF_HOME"
+      --container-mounts "$PWD:/opt/Megatron-Bridge,$MODEL_CARD_WORKDIR:/workspace,$HF_HOME:$HF_HOME"
       --export=HF_HOME,HF_TOKEN --no-container-mount-home bash -lc
-      'cd /opt/Megatron-Bridge && uv run --no-sync python
+      'cd /opt/Megatron-Bridge &&
+      export PYTHONPATH=/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM &&
+      python -m torch.distributed.run --standalone --nproc_per_node=4
       examples/conversion/hf_to_megatron_generate_text.py
-      --hf_model_path Qwen/Qwen3-8B
-      --megatron_model_path /workspace/qwen3-8b/megatron/iter_0000000 --tp 4
+      --hf_model_path "$1"
+      --megatron_model_path /workspace/qwen3-8b/imported-megatron/iter_0000000 --tp 4
       --prompt "The capital of France is" --max_new_tokens 32'
-    last_verified: null
+      bash "$HF_SNAPSHOT"
+    last_verified: 2026-07-16
     expected_result: >
       The generated continuation is non-empty and identifies Paris as the
       capital of France.
 
   pretrain:
-    status: unverified
+    status: verified
+    gpu_type: H100
     enabled_features: {}
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-      --dataset mock checkpoint.load=null
-    last_verified: null
+      --dataset mock --max_steps 10 --warmup_iters 1
+      --save_dir /workspace/qwen3-8b/pretrain-checkpoints --save_interval 10
+      scheduler.lr_decay_iters=10 validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.load=null logger.log_interval=1
+    last_verified: 2026-07-16
     expected_result: >
-      qwen3_8b_pretrain_4gpu_h100_bf16_config runs for TBD steps and reaches
-      loss TBD.
+      The 4-GPU command completes 10 steps with a finite loss and no NaN
+      iterations, then saves iter_0000010.
 
   sft:
-    status: unverified
+    status: verified
+    gpu_type: H100
     enabled_features:
       sequence_packing: offline
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
-      --pretrained_checkpoint /workspace/qwen3-8b/megatron/iter_0000000
-      checkpoint.load=null
-    last_verified: null
+      --pretrained_checkpoint /workspace/qwen3-8b/imported-megatron/iter_0000000
+      --max_steps 10 --global_batch_size 1 --micro_batch_size 1 --warmup_iters 1
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=10
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      checkpoint.save=null checkpoint.save_interval=0 logger.log_interval=1
+    last_verified: 2026-07-16
     expected_result: >
-      qwen3_8b_sft_4gpu_h100_bf16_config runs for TBD steps and reaches loss
-      TBD.
+      Offline packing completes and the 4-GPU command reaches step 10 with a
+      finite loss and no NaN iterations.
 
   sft_long_context:
     status: verified
+    gpu_type: H100
     enabled_features:
       sequence_packing: offline
       context_parallel_size: 2
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
-      --pretrained_checkpoint /workspace/qwen3-8b/megatron/iter_0000000
+      --pretrained_checkpoint /workspace/qwen3-8b/imported-megatron/iter_0000000
       --max_steps 10 --seq_length 32768 --global_batch_size 1
       --micro_batch_size 1 --context_parallel_size 2
       --warmup_iters 1 dataset.enable_offline_packing=true
@@ -129,58 +150,80 @@ items:
       and reports a finite training loss at step 10.
 
   peft:
-    status: unverified
+    status: verified
+    gpu_type: H100
     enabled_features:
       sequence_packing: offline
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 1
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_peft_1gpu_h100_bf16_config --mode lora
-      --pretrained_checkpoint /workspace/qwen3-8b/megatron/iter_0000000
-      checkpoint.load=null
-    last_verified: null
+      --pretrained_checkpoint /workspace/qwen3-8b/imported-megatron/iter_0000000
+      --max_steps 10 --global_batch_size 1 --micro_batch_size 1 --warmup_iters 1
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=10
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      --save_dir /workspace/qwen3-8b/peft-checkpoints --save_interval 10
+      logger.log_interval=1
+    last_verified: 2026-07-16
     expected_result: >
-      qwen3_8b_peft_1gpu_h100_bf16_config completes and saves a LoRA adapter
-      checkpoint.
+      Offline packing and 10 LoRA steps complete with finite loss and no NaN
+      iterations, then iter_0000010 saves as an adapter checkpoint.
 
   checkpoint_resume:
-    status: unverified
+    status: verified
+    gpu_type: H100
+    depends_on: pretrain
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-      --dataset mock --max_steps 51
-      --save_dir /workspace/qwen3-8b/resume-checkpoints
-      --load_dir /workspace/qwen3-8b/resume-checkpoints
-      checkpoint.ckpt_step=50
-    last_verified: null
+      --dataset mock --max_steps 11 --warmup_iters 1
+      --save_dir /workspace/qwen3-8b/pretrain-checkpoints
+      --load_dir /workspace/qwen3-8b/pretrain-checkpoints --save_interval 11
+      scheduler.lr_decay_iters=11 validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.ckpt_step=10 logger.log_interval=1
+    last_verified: 2026-07-16
     expected_result: >
-      Given a checkpoint at step 50, training resumes from it and completes
-      step 51 without restarting from step 0.
+      The command loads iter_0000010 produced by pretrain, starts at iteration
+      10, completes only step 11, and saves iter_0000011.
 
   pretrain_convergence:
-    status: unverified
+    status: verified
+    gpu_type: H100
     command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
+      --mount "$PRETRAIN_DATA_ROOT:/data"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-      --dataset mock checkpoint.load=null
-    last_verified: null
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
+      --global_batch_size 128 --micro_batch_size 1 --warmup_iters 10
+      dataset.data_path=/data/megatron/dclm_mistral32k_validation_text_document
+      dataset.path_to_cache=/data/cache tokenizer.tokenizer_model=mistralai/Mistral-7B-v0.1
+      scheduler.lr_decay_iters=100 validation.eval_interval=100 validation.eval_iters=1
+      checkpoint.load=null checkpoint.save=null checkpoint.save_interval=0
+      logger.log_interval=1
+    last_verified: 2026-07-16
     expected_result: >
-      qwen3_8b_pretrain_4gpu_h100_bf16_config reaches loss TBD by step TBD.
+      Training loss decreases from about 12.8 at step 1 to at most 7.2 at step
+      100, validation loss is at most 7.2, and no NaN iterations are reported.
 
   pretrain_performance:
-    status: unverified
+    status: verified
+    gpu_type: H100
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-      --mount "$PWD:/opt/Megatron-Bridge" --mount /workspace
+      --mount "$PWD:/opt/Megatron-Bridge" --mount "$MODEL_CARD_WORKDIR:/workspace"
       --mount "$HF_HOME" --env HF_HOME --env HF_TOKEN
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-      --dataset mock --max_steps 100 checkpoint.load=null
-    last_verified: null
+      --dataset mock --max_steps 100 --global_batch_size 32
+      --micro_batch_size 2 --warmup_iters 10 scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      checkpoint.save=null checkpoint.save_interval=0 logger.log_interval=1
+    last_verified: 2026-07-16
     expected_result: >
-      qwen3_8b_pretrain_4gpu_h100_bf16_config reaches throughput TBD and peak
-      memory TBD on 4x H100 with topology TBD.
+      On one node with 4x H100, steady-state iterations take at most 4.5 seconds,
+      reach at least 370 model TFLOP/s/GPU, and peak allocated memory stays below
+      65 GiB/GPU.
