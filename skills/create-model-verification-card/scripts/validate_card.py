@@ -41,6 +41,7 @@ ITEM_NAMES = (
     "hf_to_megatron_gpu",
     "megatron_to_hf_cpu",
     "megatron_to_hf_gpu",
+    "manual_forward_pass",
     "inference",
     "pretrain",
     "sft",
@@ -69,16 +70,9 @@ CUDA_GRAPH_IMPLEMENTATIONS = frozenset({"local", "transformer_engine"})
 CUDA_GRAPH_SCOPES = frozenset({"full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"})
 MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
 
-TOP_LEVEL_KEYS = frozenset({"title", "model", "release", "precision", "summary", "notes", "items"})
-MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture"})
-NOTE_KEYS = frozenset(
-    {
-        "training_verification",
-        "training_metrics",
-        "dataset_policy",
-        "enabled_features_allowlist",
-    }
-)
+TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "precision", "summary", "items"})
+MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
+ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
     {
         "status",
@@ -119,6 +113,8 @@ FORBIDDEN_KEY_FRAGMENTS = (
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|TBD|PLACEHOLDER)\b|<[^>]+>", re.IGNORECASE)
 HF_ID_RE = re.compile(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+")
 REVISION_RE = re.compile(r"[0-9a-f]{40}")
+VERSION_RE = re.compile(r"\d+\.\d+\.\d+")
+PUBLIC_BASE_CONTAINER_RE = re.compile(r"nvcr\.io/nvidia/(?:nemo|pytorch):[A-Za-z0-9._-]+")
 URL_RE = re.compile(r"\b[a-z][a-z0-9+.-]*://\S+", re.IGNORECASE)
 EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
 IPV4_RE = re.compile(r"(?<!\d)(?:\d{1,3}\.){3}\d{1,3}(?!\d)")
@@ -262,39 +258,6 @@ def _command_values(item: Mapping[str, Any]) -> list[str]:
     if isinstance(commands, list):
         return [value for value in commands if isinstance(value, str) and value.strip()]
     return []
-
-
-def _as_string_set(value: Any) -> frozenset[str] | None:
-    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
-        return None
-    return frozenset(value)
-
-
-def _validate_feature_allowlist(notes: Mapping[str, Any], errors: list[str]) -> None:
-    path = ("notes", "enabled_features_allowlist")
-    allowlist = _as_mapping(notes.get("enabled_features_allowlist"), path=path, errors=errors)
-    if allowlist is None:
-        return
-    _check_keys(allowlist, allowed=FEATURE_KEYS, required=FEATURE_KEYS, path=path, errors=errors)
-    if _as_string_set(allowlist.get("sequence_packing")) != PACKING_VALUES:
-        errors.append(f"{_pointer(*path, 'sequence_packing')}: must list offline and in_batch")
-    cuda_graph = _as_mapping(allowlist.get("cuda_graph"), path=(*path, "cuda_graph"), errors=errors)
-    if cuda_graph is not None:
-        _check_keys(
-            cuda_graph,
-            allowed=frozenset({"implementation", "scopes"}),
-            required=frozenset({"implementation", "scopes"}),
-            path=(*path, "cuda_graph"),
-            errors=errors,
-        )
-        if _as_string_set(cuda_graph.get("implementation")) != CUDA_GRAPH_IMPLEMENTATIONS:
-            errors.append(f"{_pointer(*path, 'cuda_graph', 'implementation')}: must list local and transformer_engine")
-        if _as_string_set(cuda_graph.get("scopes")) != CUDA_GRAPH_SCOPES:
-            errors.append(f"{_pointer(*path, 'cuda_graph', 'scopes')}: scopes do not match the fixed allowlist")
-    if allowlist.get("context_parallel_size") != "> 1":
-        errors.append(f"{_pointer(*path, 'context_parallel_size')}: must be the string '> 1'")
-    if _as_string_set(allowlist.get("moe_dispatcher")) != MOE_DISPATCHERS:
-        errors.append(f"{_pointer(*path, 'moe_dispatcher')}: must list deepep and hybridep")
 
 
 def _validate_enabled_features(value: Any, *, item_name: str, errors: list[str]) -> None:
@@ -612,6 +575,46 @@ def _validate_inference(
         errors.append(f"{_pointer(*resolved_command_path)}: inference verification must be deterministic")
 
 
+def _validate_manual_forward_pass(item: Mapping[str, Any], *, status: str, errors: list[str]) -> None:
+    if status != "verified":
+        return
+    path = ("items", "manual_forward_pass")
+    command = _command_value(item)
+    expected = item.get("expected_result")
+    if command is None or not isinstance(expected, str):
+        return
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        tokens = []
+    prefix = ["uv", "run", "python", "-m", "torch.distributed.run"]
+    if tokens[:5] != prefix:
+        errors.append(f"{_pointer(*path, 'command')}: manual forward pass must use uv distributed run")
+    if "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
+        errors.append(f"{_pointer(*path, 'command')}: use the HF/Megatron comparison helper")
+    for argument in ("--hf_model_path", "--megatron_model_path", "--prompt"):
+        if len(_argument_values(command, argument)) != 1:
+            errors.append(f"{_pointer(*path, 'command')}: specify {argument} exactly once")
+
+    token_match = re.search(
+        r"\b(?:token match:\s*true|next[- ]token\b[^.]*\bmatch(?:es|ed)?)", expected, re.IGNORECASE
+    )
+    if token_match is None:
+        errors.append(f"{_pointer(*path, 'expected_result')}: record that the next token matches")
+    similarity_match = re.search(
+        r"cosine similarity(?:\s+is|\s*:)\s*(0(?:\.\d+)?|1(?:\.0+)?)",
+        expected,
+        re.IGNORECASE,
+    )
+    if similarity_match is None:
+        errors.append(f"{_pointer(*path, 'expected_result')}: record the cosine similarity")
+    elif float(similarity_match.group(1)) < 0.98:
+        errors.append(f"{_pointer(*path, 'expected_result')}: cosine similarity must be at least 0.98")
+    for label in ("max", "mean"):
+        if re.search(rf"\b{label}(?:imum)?\b[^.]*\b(?:absolute\s+)?logit", expected, re.IGNORECASE) is None:
+            errors.append(f"{_pointer(*path, 'expected_result')}: record the {label} absolute logit difference")
+
+
 def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[str, Any], *, errors: list[str]) -> None:
     path = ("items", "sft_export_inference")
     if item.get("depends_on") != "sft":
@@ -849,6 +852,8 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
 
     if item_name == "checkpoint_resume":
         _validate_resume(item, status=status, errors=errors)
+    if item_name == "manual_forward_pass":
+        _validate_manual_forward_pass(item, status=status, errors=errors)
     if item_name == "inference":
         _validate_inference(item, item_name=item_name, status=status, errors=errors)
 
@@ -866,25 +871,34 @@ def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[s
 
 def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, ...], errors: list[str]) -> None:
     for path, key in _walk_keys(card):
+        if path == ("verification_environment",) and key == "base_container":
+            continue
         normalized = key.lower().replace("-", "_")
         if any(fragment in normalized for fragment in FORBIDDEN_KEY_FRAGMENTS):
             errors.append(f"{_pointer(*path, key)}: runtime identity or evidence fields are forbidden")
 
-    if re.search(r"\bcluster\b", raw, re.IGNORECASE):
+    privacy_raw = raw
+    environment = card.get("verification_environment")
+    if isinstance(environment, Mapping):
+        base_container = environment.get("base_container")
+        if isinstance(base_container, str) and PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is not None:
+            privacy_raw = privacy_raw.replace(base_container, "")
+
+    if re.search(r"\bcluster\b", privacy_raw, re.IGNORECASE):
         errors.append("/: execution-environment names do not belong in the card")
-    if URL_RE.search(raw):
+    if URL_RE.search(privacy_raw):
         errors.append("/: URLs are forbidden; use a public model name or repository-relative path")
-    if EMAIL_RE.search(raw) or IPV4_RE.search(raw) or _contains_ipv6(raw):
+    if EMAIL_RE.search(privacy_raw) or IPV4_RE.search(privacy_raw) or _contains_ipv6(privacy_raw):
         errors.append("/: email or IP address detected")
-    if REMOTE_COMMAND_RE.search(raw) or REMOTE_COPY_RE.search(raw):
+    if REMOTE_COMMAND_RE.search(privacy_raw) or REMOTE_COPY_RE.search(privacy_raw):
         errors.append("/: remote host commands are forbidden")
-    if JOB_ID_RE.search(raw):
+    if JOB_ID_RE.search(privacy_raw):
         errors.append("/: scheduler job metadata is forbidden")
-    if SECRET_ASSIGNMENT_RE.search(raw):
+    if SECRET_ASSIGNMENT_RE.search(privacy_raw):
         errors.append("/: secret assignment detected")
-    if HOME_PATH_RE.search(raw):
+    if HOME_PATH_RE.search(privacy_raw):
         errors.append("/: home-directory paths are forbidden")
-    if REGISTRY_REFERENCE_RE.search(raw):
+    if REGISTRY_REFERENCE_RE.search(privacy_raw):
         errors.append("/: concrete registry references are forbidden")
     commands: list[str] = []
     items = card.get("items")
@@ -911,20 +925,20 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
         errors.append("/: private runtime orchestration flags are forbidden in cards")
     if any(SHELL_SETUP_RE.search(command) for command in commands):
         errors.append("/: shell environment setup is forbidden in cards")
-    if "../" in raw:
+    if "../" in privacy_raw:
         errors.append("/: parent-directory traversal is forbidden in cards")
 
-    raw_without_urls = URL_RE.sub("", raw)
+    raw_without_urls = URL_RE.sub("", privacy_raw)
     for match in ABSOLUTE_PATH_RE.finditer(raw_without_urls):
         errors.append(f"/: absolute path detected at character {match.start()}")
 
-    environment_references = set(ENVIRONMENT_REFERENCE_RE.findall(raw))
+    environment_references = set(ENVIRONMENT_REFERENCE_RE.findall(privacy_raw))
     if environment_references:
         errors.append(
             f"/: {len(environment_references)} environment reference(s) detected; runtime wiring belongs outside the card"
         )
 
-    lowered = raw.casefold()
+    lowered = privacy_raw.casefold()
     for index, term in enumerate((term for term in deny_terms if term), start=1):
         if term.casefold() in lowered:
             errors.append(f"/: matched caller-supplied deny term #{index}")
@@ -938,22 +952,40 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         value = card.get(name)
         if not isinstance(value, str) or not value.strip():
             errors.append(f"{_pointer(name)}: expected a non-empty string")
-    if card.get("release") is not None and not isinstance(card.get("release"), str):
-        errors.append(f"{_pointer('release')}: expected a string or null")
 
     model = _as_mapping(card.get("model"), path=("model",), errors=errors)
     if model is not None:
         _check_keys(model, allowed=MODEL_KEYS, required=MODEL_KEYS, path=("model",), errors=errors)
         if not isinstance(model.get("architecture"), str) or not model.get("architecture", "").strip():
             errors.append(f"{_pointer('model', 'architecture')}: expected a non-empty string")
+        min_version = model.get("min_transformers_version")
+        if not isinstance(min_version, str) or VERSION_RE.fullmatch(min_version) is None:
+            errors.append(f"{_pointer('model', 'min_transformers_version')}: expected MAJOR.MINOR.PATCH")
 
-    notes = _as_mapping(card.get("notes"), path=("notes",), errors=errors)
-    if notes is not None:
-        _check_keys(notes, allowed=NOTE_KEYS, required=NOTE_KEYS, path=("notes",), errors=errors)
-        for name in NOTE_KEYS - {"enabled_features_allowlist"}:
-            if not isinstance(notes.get(name), str) or not notes.get(name, "").strip():
-                errors.append(f"{_pointer('notes', name)}: expected non-empty prose")
-        _validate_feature_allowlist(notes, errors)
+    environment = _as_mapping(
+        card.get("verification_environment"),
+        path=("verification_environment",),
+        errors=errors,
+    )
+    if environment is not None:
+        _check_keys(
+            environment,
+            allowed=ENVIRONMENT_KEYS,
+            required=ENVIRONMENT_KEYS,
+            path=("verification_environment",),
+            errors=errors,
+        )
+        base_container = environment.get("base_container")
+        if not isinstance(base_container, str) or PUBLIC_BASE_CONTAINER_RE.fullmatch(base_container) is None:
+            errors.append(
+                f"{_pointer('verification_environment', 'base_container')}: "
+                "expected a public NVIDIA NeMo or PyTorch container"
+            )
+        bridge_commit = environment.get("bridge_commit")
+        if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
+            errors.append(
+                f"{_pointer('verification_environment', 'bridge_commit')}: expected an immutable 40-hex commit"
+            )
 
     items = _as_mapping(card.get("items"), path=("items",), errors=errors)
     if items is not None:
@@ -986,8 +1018,6 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             errors.append(f"{_pointer('model', 'architecture')}: replace the placeholder architecture")
         if card.get("title") == "model_variant":
             errors.append(f"{_pointer('title')}: replace the placeholder title")
-        if card.get("release") == "YY.MM":
-            errors.append(f"{_pointer('release')}: replace the placeholder release")
 
     _validate_privacy(raw, card, deny_terms, errors)
     return sorted(set(errors))

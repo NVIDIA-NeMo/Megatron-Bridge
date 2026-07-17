@@ -28,8 +28,16 @@ Read the model implementation, public HF config, conversion bridge, recipes,
 tests, examples, and the exact revision being verified. Determine which modes
 exist; do not infer support from a family name or another model size.
 
-Record the public HF model name in commands and its immutable revision in
-`model.hf_revision`. Do not introduce an HF snapshot path.
+Record the public HF model name in commands, its immutable revision in
+`model.hf_revision`, and the minimum supported Transformers version in
+`model.min_transformers_version`. Do not introduce an HF snapshot path.
+
+Record only two execution-environment facts: the public base container
+identifier and the exact Bridge commit used for verification. Put them in
+`verification_environment.base_container` and
+`verification_environment.bridge_commit`. If the run mounted a checkout over
+the container, record the mounted checkout commit. Never substitute a private
+image path for the public base container identifier.
 
 ### 2. Create the complete inventory
 
@@ -40,14 +48,15 @@ Include every required item, even when its status is `unsupported` or
 2. GPU HF-to-Megatron conversion
 3. CPU Megatron-to-HF conversion
 4. GPU Megatron-to-HF conversion
-5. Deterministic inference
-6. Pretraining
-7. SFT
-8. SFT checkpoint export and deterministic HF inference
-9. Long-context SFT
-10. PEFT
-11. Checkpoint resume
-12. Pretraining performance
+5. Manual HF/Megatron forward-pass parity
+6. Deterministic Megatron inference
+7. Pretraining
+8. SFT
+9. SFT checkpoint export and deterministic HF inference
+10. Long-context SFT
+11. PEFT
+12. Checkpoint resume
+13. Pretraining performance
 
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
@@ -58,9 +67,11 @@ GPU type, and metrics null, then state the public product limitation in
 
 ### 3. Use the public Slurm launchers
 
-Assume the caller supplies the account, partition, container image, credentials,
-and storage mappings outside the card. Record the portable public launcher and
-the model-verification workload:
+Assume the caller supplies the account, partition, concrete runtime image,
+credentials, and storage mappings outside the card. The top-level
+`verification_environment.base_container` is provenance only; it is not
+launcher configuration. Record the portable public launcher and the
+model-verification workload:
 
 - use `scripts/conversion/convert.sh --executor slurm` for CPU and GPU
   conversion, with portable node and GPU counts;
@@ -82,8 +93,8 @@ in a model support card.
 Never record or reproduce:
 
 - execution-environment names, hostnames, IPs, usernames, emails, or accounts;
-- concrete partitions, reservations, node lists, image locations, mount
-  sources, or environment forwarding;
+- concrete partitions, reservations, node lists, private image locations,
+  mount sources, or environment forwarding;
 - host/shared-storage paths, home-directory paths, log locations, or job IDs;
 - tokens, token-loading commands, private URLs, or private registry references;
 - environment-specific launcher overlays.
@@ -105,8 +116,15 @@ result. Private executor configuration stays outside the card.
   output. Require exact keys, shapes, dtypes, and values when the conversion is
   expected to be lossless; otherwise state the numerical tolerance. Do not use
   `--detach` or a dry-run flag in a verified conversion command.
-- **Inference:** Use deterministic greedy generation, specify an exact token
-  count, run twice, and record the literal completion including whitespace.
+- **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
+  prompt with `examples/conversion/compare_hf_and_megatron/compare.py`. Record
+  whether the next token matches, the cosine similarity, and the maximum and
+  mean absolute logit differences. Keep this result separate from generation.
+  Choose a prompt whose tokenized length is divisible by TP so the helper does
+  not append padding before selecting the compared next-token position.
+- **Megatron inference:** Use deterministic greedy generation, specify an exact
+  token count, run twice, and record the literal completion including
+  whitespace.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope.
 - **SFT and PEFT:** Prefer about 100 optimizer steps with warmup and full-horizon
@@ -131,6 +149,12 @@ Submission is not success. Require the workload process to finish successfully,
 the exact optimizer-step set to be present, finite losses and performance
 values, zero skipped/NaN iterations, and complete reloadable artifacts.
 
+For ordered command lists, wait for the preceding workload to finish and verify
+its artifact before starting the next command. Reference and resumed checkpoint
+roots must be distinct; the resumed root must be new or empty. Use the same
+Bridge commit, public base container, accelerator topology, dataset, and
+configuration as the reference run.
+
 Use the batch sizes defined by the selected recipe. A model verification card
 must not override global or micro batch size. If a recipe batch size is wrong,
 change and validate the recipe separately instead of hiding the change in the
@@ -154,6 +178,10 @@ window is complete.
 
 For a resume that executes steps 201-400, use step 201 as `initial_loss`, step
 400 as `final_loss`, and average steps 391-400.
+
+For Megatron-indexed data, command values are prefixes and omit `.bin` and
+`.idx`. A bounded RedPajama2 prefix such as `head_01` is suitable for a
+reproducible functional run; keep the physical dataset root private.
 
 ### 6. Record only important enabled features
 
@@ -193,8 +221,10 @@ an item verified merely to make validation pass.
 
 ## Completion checklist
 
-- Keep all twelve inventory items and use only the four statuses.
-- Pin a public immutable HF revision before marking anything verified.
+- Keep all thirteen inventory items and use only the four statuses.
+- Pin a public immutable HF revision, minimum Transformers version, public base
+  container, and exact Bridge verification commit.
+- Use the public model name in commands.
 - Include commands and concrete expected results for verified items.
 - Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
 - Keep private executor wiring out of commands: no mounts, environment

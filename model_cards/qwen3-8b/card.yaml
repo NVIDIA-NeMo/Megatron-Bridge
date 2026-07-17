@@ -11,34 +11,12 @@ model:
   hf_id: Qwen/Qwen3-8B
   hf_revision: b968826d9c46dd6066d109eabc6255188de91218  # pragma: allowlist secret
   architecture: Qwen3ForCausalLM
-release: "26.08"
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: 5c56eab34c540fad08544c38b7cc39d662fb7475  # pragma: allowlist secret
 precision: bf16
 summary: Qwen3-8B support verification for conversion, inference, and training.
-notes:
-  training_verification: >
-    Workload completion and the expected result are required; a successful
-    train.sh submission alone is insufficient. For ordered commands, wait for
-    the preceding workload to finish successfully and verify its checkpoint
-    before starting the next.
-    Reference and resumed-output checkpoint directories must be distinct; the
-    resumed-output directory must be new or empty, and the commit, H100
-    topology, dataset, and configuration must match the reference run.
-  training_metrics: >
-    initial_loss is the lm loss at the first optimizer step and final_loss is
-    the lm loss at the final optimizer step. The two last_10_steps averages are
-    arithmetic means of the per-step console values over the final 10 optimizer
-    steps executed by that item. Skipped or NaN iterations invalidate
-    verification rather than being excluded from the averages.
-  dataset_policy: >
-    RedPajama2 head_01 is a bounded Megatron-indexed prefix; command values omit
-    .bin/.idx.
-  enabled_features_allowlist:
-    sequence_packing: [offline, in_batch]
-    cuda_graph:
-      implementation: [local, transformer_engine]
-      scopes: [full_iteration, attn, mlp, moe, moe_router, moe_preprocess, mamba]
-    context_parallel_size: "> 1"
-    moe_dispatcher: [deepep, hybridep]
 
 items:
   hf_to_megatron_cpu:
@@ -93,6 +71,21 @@ items:
     expected_result: >
       Strict export exits successfully and the Hugging Face output reloads with
       AutoModelForCausalLM as Qwen3ForCausalLM.
+
+  manual_forward_pass:
+    status: verified
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=4
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path Qwen/Qwen3-8B
+      --megatron_model_path work/model-verification/qwen3-8b/imported-megatron/iter_0000000
+      --tp 4 --prompt "The capital of France is the city of"
+    last_verified: 2026-07-17
+    expected_result: >
+      The one-step comparison of the eight-token prompt exits successfully; the
+      Hugging Face and Megatron next-token predictions match at token ID 12095
+      (" Paris"), cosine similarity is 0.999969, and the maximum and mean
+      absolute logit differences are 0.187500 and 0.030649, respectively.
 
   inference:
     status: verified
