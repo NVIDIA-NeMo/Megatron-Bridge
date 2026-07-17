@@ -13,13 +13,13 @@
 # limitations under the License.
 """H100 performance recipes for Qwen3 MoE."""
 
+import torch
+
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _apply_qwen3_moe_tuned_defaults,
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
-    _enable_qwen_precision_aware_optimizer,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -227,7 +227,20 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32 × H100, BF16, HybridEP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 40960
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -247,7 +260,20 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_config() -> ConfigContainer:
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.mixed_precision.fp8_recipe = "blockwise"
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 40960
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -264,7 +290,9 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_config() -> ConfigContainer:
     cfg.train.global_batch_size = 256
 
     cfg.rng.te_rng_tracker = True
-    _enable_qwen_precision_aware_optimizer(cfg)
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg
 
 
@@ -272,7 +300,20 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_hybridep_config() -> ConfigContain
     """Qwen3 235B-A22B pretrain: 256× H100, BF16, HybridEP and scoped CUDA graphs."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 4096
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 8

@@ -14,8 +14,6 @@
 # ruff: noqa: F401
 """Common helpers for qwen performance recipes."""
 
-import torch
-
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
@@ -33,35 +31,6 @@ from megatron.bridge.training.config import ConfigContainer
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
     cfg.train.global_batch_size = global_batch_size
     return cfg
-
-
-def _apply_qwen3_moe_tuned_defaults(
-    cfg: ConfigContainer,
-    *,
-    original_max_position_embeddings: int,
-) -> None:
-    """Apply defaults shared by the hardware-tuned Qwen3 MoE recipes."""
-    _benchmark_common(cfg)
-
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
-    cfg.model.yarn_original_max_position_embeddings = original_max_position_embeddings
-    cfg.model.make_vocab_size_divisible_by = 1187
-    cfg.model.moe_router_force_load_balancing = True
-    cfg.model.moe_router_fusion = True
-    cfg.model.moe_router_dtype = torch.float32
-    cfg.model.moe_token_dispatcher_type = "flex"
-
-    cfg.dataset.seq_length = cfg.model.seq_length
-    cfg.train.manual_gc_interval = 5
-
-
-def _enable_qwen_precision_aware_optimizer(cfg: ConfigContainer) -> None:
-    """Enable the BF16 optimizer-state settings used by tuned Qwen3 MoE recipes."""
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
 
 def _enable_hybridep_full_iteration_mxfp8(cfg: ConfigContainer) -> None:

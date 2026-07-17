@@ -13,13 +13,13 @@
 # limitations under the License.
 """GB200 performance recipes for Qwen3 MoE."""
 
+import torch
+
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
-    _apply_qwen3_moe_tuned_defaults,
     _benchmark_common,
     _enable_hybridep_full_iteration_mxfp8,
-    _enable_qwen_precision_aware_optimizer,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -375,7 +375,20 @@ def qwen3_30b_a3b_pretrain_16gpu_gb200_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× GB200, BF16, HybridEP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 40960
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -400,7 +413,20 @@ def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_partial_cg_config() -> ConfigContai
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 40960
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -429,7 +455,20 @@ def qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_paged_stash_config() -> ConfigConta
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.mixed_precision.fp8_param_gather = False
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 40960
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -464,7 +503,20 @@ def qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_paged_stash_config() -> ConfigCo
     """Qwen3 235B-A22B pretrain: 128× GB200, MXFP8 and paged-stash CUDA graphs."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 4096
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -500,7 +552,9 @@ def qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_paged_stash_config() -> ConfigCo
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.rng.te_rng_tracker = True
     cfg.dist.distributed_timeout_minutes = 220
-    _enable_qwen_precision_aware_optimizer(cfg)
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg
 
 
@@ -508,7 +562,20 @@ def qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_partial_cg_config() -> ConfigCon
     """Qwen3 235B-A22B pretrain: 128× GB200, MXFP8 and scoped CUDA graphs."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")
-    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+    _benchmark_common(cfg)
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.yarn_original_max_position_embeddings = 4096
+    cfg.model.make_vocab_size_divisible_by = 1187
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_router_dtype = torch.float32
+    cfg.model.moe_token_dispatcher_type = "flex"
+
+    cfg.dataset.seq_length = cfg.model.seq_length
+    cfg.train.manual_gc_interval = 5
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
@@ -535,5 +602,7 @@ def qwen3_235b_a22b_pretrain_128gpu_gb200_fp8mx_partial_cg_config() -> ConfigCon
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.rng.te_rng_tracker = True
     cfg.dist.distributed_timeout_minutes = 220
-    _enable_qwen_precision_aware_optimizer(cfg)
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg
