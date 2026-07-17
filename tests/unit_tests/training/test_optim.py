@@ -217,6 +217,13 @@ class _ChainedOpt:
         self.chained_optimizers = sub_opts
 
 
+class _FakeLayerWiseChildOpt:
+    """Stand-in for a LayerWiseDistributedOptimizer's wrapped child optimizer."""
+
+    def __init__(self, inner: torch.optim.Optimizer) -> None:
+        self.optimizer = inner
+
+
 class TestMemoryEfficientFp32OptimizerStateLoading:
     """Tests for the scoped TE FusedAdam checkpoint-load fast path."""
 
@@ -350,6 +357,50 @@ class TestMemoryEfficientFp32OptimizerStateLoading:
 
         assert patched == 2
         assert all("load_state_dict" not in opt.optimizer.__dict__ for opt in distributed_optimizers)
+
+    def test_restores_methods_when_later_optimizer_setup_raises(self):
+        """A partial chained-optimizer setup is rolled back when inspection fails."""
+        first_distributed, first_inner, _ = self._distributed_optimizer()
+        second_distributed, second_inner, _ = self._distributed_optimizer()
+        second_inner.param_groups = [{}]
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam),
+            patch("megatron.bridge.training.optim.torch.cuda.empty_cache") as mock_empty_cache,
+            pytest.raises(KeyError, match="params"),
+        ):
+            with memory_efficient_fp32_optimizer_state_loading(_ChainedOpt([first_distributed, second_distributed])):
+                pass
+
+        assert "load_state_dict" not in first_inner.__dict__
+        mock_empty_cache.assert_called_once_with()
+
+    def test_te_unavailable_is_noop(self):
+        """An environment without Transformer Engine retains the existing loader."""
+        distributed, inner, _ = self._distributed_optimizer()
+
+        with (
+            patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=None),
+            patch("megatron.bridge.training.optim.torch.cuda.empty_cache") as mock_empty_cache,
+            memory_efficient_fp32_optimizer_state_loading(distributed) as patched,
+        ):
+            pass
+
+        assert patched == 0
+        assert "load_state_dict" not in inner.__dict__
+        mock_empty_cache.assert_not_called()
+
+    def test_does_not_patch_layerwise_optimizer_children(self):
+        """LayerWise optimizer children lack distributed FP32 shards and remain unchanged."""
+        _, inner, _ = self._distributed_optimizer()
+        layerwise = _ChainedOpt([_FakeLayerWiseChildOpt(inner)])
+
+        with patch("megatron.bridge.training.optim._get_te_fused_adam_class", return_value=_FakeFusedAdam):
+            with memory_efficient_fp32_optimizer_state_loading(layerwise) as patched:
+                pass
+
+        assert patched == 0
+        assert "load_state_dict" not in inner.__dict__
 
     def test_restores_methods_when_loading_raises(self):
         """The scoped replacement is removed when checkpoint loading fails."""

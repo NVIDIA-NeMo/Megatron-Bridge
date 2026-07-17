@@ -171,63 +171,63 @@ def memory_efficient_fp32_optimizer_state_loading(
     missing_method = object()
     patched: list[tuple[torch.optim.Optimizer, object]] = []
 
-    for distributed_optimizer in sub_optimizers:
-        if getattr(distributed_optimizer, "is_stub_optimizer", False):
-            continue
-        if not hasattr(distributed_optimizer, "shard_fp32_from_float16_groups"):
-            continue
-        if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
-            continue
-
-        config = getattr(distributed_optimizer, "config", None)
-        if getattr(config, "use_precision_aware_optimizer", False):
-            continue
-        if getattr(config, "optimizer_cpu_offload", False):
-            continue
-
-        inner = getattr(distributed_optimizer, "optimizer", None)
-        if not isinstance(inner, fused_adam_class):
-            continue
-        if getattr(inner, "master_weights", None) is not False:
-            continue
-        if getattr(inner, "store_param_remainders", False):
-            continue
-
-        state_dtype_map = getattr(inner, "name_to_dtype_map", None)
-        if not isinstance(state_dtype_map, Mapping) or any(
-            state_dtype_map.get(name) != torch.float32 for name in ("exp_avg", "exp_avg_sq")
-        ):
-            continue
-
-        params = [param for group in inner.param_groups for param in group["params"]]
-        if not params or any(param.dtype != torch.float32 for param in params):
-            continue
-
-        original_load_state_dict: Callable[[dict[str, object]], None] = inner.load_state_dict
-
-        def _load_state_dict_without_fp32_reallocation(
-            fused_adam: torch.optim.Optimizer,
-            state_dict: dict[str, object],
-            *,
-            _fallback: Callable[[dict[str, object]], None] = original_load_state_dict,
-        ) -> None:
-            if not _optimizer_state_is_fp32_adam(state_dict):
-                _fallback(state_dict)
-                return
-            torch.optim.Optimizer.load_state_dict(fused_adam, state_dict)
-
-        previous_instance_method = inner.__dict__.get("load_state_dict", missing_method)
-        setattr(inner, "load_state_dict", MethodType(_load_state_dict_without_fp32_reallocation, inner))
-        patched.append((inner, previous_instance_method))
-
-    if patched:
-        G_LOGGER.info(
-            "Enabled memory-efficient FP32 checkpoint-state loading for %d distributed "
-            "Transformer Engine FusedAdam optimizer(s).",
-            len(patched),
-        )
-
     try:
+        for distributed_optimizer in sub_optimizers:
+            if getattr(distributed_optimizer, "is_stub_optimizer", False):
+                continue
+            if not hasattr(distributed_optimizer, "shard_fp32_from_float16_groups"):
+                continue
+            if getattr(getattr(distributed_optimizer, "ddp_config", None), "use_megatron_fsdp", False):
+                continue
+
+            config = getattr(distributed_optimizer, "config", None)
+            if getattr(config, "use_precision_aware_optimizer", False):
+                continue
+            if getattr(config, "optimizer_cpu_offload", False):
+                continue
+
+            inner = getattr(distributed_optimizer, "optimizer", None)
+            if not isinstance(inner, fused_adam_class):
+                continue
+            if getattr(inner, "master_weights", None) is not False:
+                continue
+            if getattr(inner, "store_param_remainders", False):
+                continue
+
+            state_dtype_map = getattr(inner, "name_to_dtype_map", None)
+            if not isinstance(state_dtype_map, Mapping) or any(
+                state_dtype_map.get(name) != torch.float32 for name in ("exp_avg", "exp_avg_sq")
+            ):
+                continue
+
+            params = [param for group in inner.param_groups for param in group["params"]]
+            if not params or any(param.dtype != torch.float32 for param in params):
+                continue
+
+            original_load_state_dict: Callable[[dict[str, object]], None] = inner.load_state_dict
+
+            def _load_state_dict_without_fp32_reallocation(
+                fused_adam: torch.optim.Optimizer,
+                state_dict: dict[str, object],
+                *,
+                _fallback: Callable[[dict[str, object]], None] = original_load_state_dict,
+            ) -> None:
+                if not _optimizer_state_is_fp32_adam(state_dict):
+                    _fallback(state_dict)
+                    return
+                torch.optim.Optimizer.load_state_dict(fused_adam, state_dict)
+
+            previous_instance_method = inner.__dict__.get("load_state_dict", missing_method)
+            setattr(inner, "load_state_dict", MethodType(_load_state_dict_without_fp32_reallocation, inner))
+            patched.append((inner, previous_instance_method))
+
+        if patched:
+            G_LOGGER.info(
+                "Enabled memory-efficient FP32 checkpoint-state loading for %d distributed "
+                "Transformer Engine FusedAdam optimizer(s).",
+                len(patched),
+            )
+
         yield len(patched)
     finally:
         for inner, previous_instance_method in patched:
