@@ -271,7 +271,7 @@ items:
       iter_0000100 saves as an adapter checkpoint.
 
   checkpoint_resume:
-    status: unverified
+    status: verified
     gpu_type: H100
     depends_on: pretrain
     command: >
@@ -298,18 +298,18 @@ items:
       checkpoint.load_optim=true checkpoint.load_rng=true
       checkpoint.save_optim=true checkpoint.save_rng=true checkpoint.async_save=false
       train.exit_interval=null logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-16
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_half_step_time_ms_avg: null
-      last_half_model_tflops_per_gpu_avg: null
+      initial_loss: 5.663923
+      final_loss: 5.007709
+      last_half_step_time_ms_avg: 4766.228
+      last_half_model_tflops_per_gpu_avg: 337.160
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [201, 400]
       loss_relative_tolerance: 1.0e-6
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: null
+      sentinels_match: true
     expected_result: >
       After pretrain has saved iter_0000200, the command loads that checkpoint
       directly from the reference directory without optimizer or RNG load
