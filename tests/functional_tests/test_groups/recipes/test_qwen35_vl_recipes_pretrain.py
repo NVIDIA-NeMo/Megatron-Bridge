@@ -14,7 +14,7 @@
 
 """Functional smoke tests for Qwen3.5-VL pretrain mock recipes.
 
-Verifies that pretrain configs using MockVLMConversationProvider can:
+Verifies that pretrain configs using MockVLMSFTDatasetConfig can:
 1. Build a valid config and instantiate the model
 2. Run a short training loop without errors
 3. Save checkpoints correctly
@@ -33,7 +33,7 @@ from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_rec
 pytestmark = pytest.mark.integration
 
 _TP2_PP1 = {"tensor_model_parallel_size": 2, "pipeline_model_parallel_size": 1}
-_TINY_MODEL = {"num_layers": 4}
+_TINY_MODEL = {"num_layers": 4, "linear_attention_freq": [1, 1, 1, 0]}
 
 QWEN35_VL_PRETRAIN_RECIPES = [
     (

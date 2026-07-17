@@ -31,8 +31,7 @@ echo "[convert] Log dir:         ${LOG_DIR}"
 
 # Single-rank import: the bridge handles per-expert / per-layer mapping itself,
 # so a single process is enough for the conversion step.
-uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "${HF_MODEL}" \
     --megatron-path "${MEGATRON_CKPT_PATH}" \
     2>&1 | tee "${LOG_DIR}/convert_step35_megatron.log"
@@ -41,7 +40,7 @@ echo "[convert] Done. Checkpoint saved to: ${MEGATRON_CKPT_PATH}"
 echo "[convert] Inference example: MEGATRON_MODEL_PATH=${MEGATRON_CKPT_PATH}/iter_0000000 bash examples/models/stepfun/step35/inference.sh"
 
 # Export Megatron -> HF (uncomment to round-trip)
-# uv run python examples/conversion/convert_checkpoints.py export \
+# ./scripts/conversion/convert.sh export \
 #     --hf-model "${HF_MODEL}" \
 #     --megatron-path "${MEGATRON_CKPT_PATH}/iter_0000000" \
 #     --hf-path "${MEGATRON_CKPT_PATH}-hf-export"

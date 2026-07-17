@@ -176,11 +176,16 @@ def normalize_energon_vlm_sample(sample: Any) -> NormalizedVLMSample:
         tools = json.loads(tools)
     if tools is not None and (not isinstance(tools, list) or not all(isinstance(tool, Mapping) for tool in tools)):
         raise ValueError("Energon ChatML tools must be a list of tool-definition dictionaries.")
+    if isinstance(videos, (bytes, bytearray)):
+        normalized_videos = [videos]
+    else:
+        normalized_videos = _videos_to_pil(videos) if videos is not None and len(videos) > 0 else None
+
     return NormalizedVLMSample(
         conversation=cook_chatml_sample(sample.conversation),
         tools=copy.deepcopy(tools),
         images=_images_to_pil(imgs) if imgs is not None and len(imgs) > 0 else None,
-        videos=_videos_to_pil(videos) if videos is not None and len(videos) > 0 else None,
+        videos=normalized_videos,
         audio=getattr(sample, "audio", None),
     )
 

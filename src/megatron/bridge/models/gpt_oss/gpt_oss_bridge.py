@@ -28,7 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     _align_expert_weight_to_shape,
 )
 from megatron.bridge.models.conversion.quantization_utils import dequantize_mxfp4 as _dequantize_mxfp4
-from megatron.bridge.models.conversion.utils import get_module_and_param_from_name
+from megatron.bridge.models.conversion.utils import get_module_and_param_from_name, mcore_to_hf_window_size
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
@@ -121,6 +121,7 @@ class GPTOSSBridge(MegatronModelBridge):
         if hybrid_layer_pattern:
             main_pattern = hybrid_layer_pattern.split(Symbols.MTP_SEPARATOR)[0].replace(Symbols.PIPE, "")
             hf_config["num_hidden_layers"] = main_pattern.count(Symbols.ATTENTION)
+        hf_config["sliding_window"] = mcore_to_hf_window_size(provider.window_size)
         return hf_config
 
     def maybe_modify_loaded_hf_weight(

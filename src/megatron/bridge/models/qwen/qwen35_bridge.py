@@ -17,7 +17,6 @@ from megatron.core.models.gpt.experimental_attention_variant_module_specs import
     get_transformer_block_with_experimental_attention_variant_spec,
 )
 from megatron.core.models.gpt.gpt_model import GPTModel
-from transformers import Qwen3_5ForCausalLM, Qwen3_5MoeForCausalLM
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -33,6 +32,7 @@ from megatron.bridge.models.conversion.param_mapping import (  # noqa: F401
     RMSNorm2ZeroCenteredRMSNormMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import full_attention_interval_from_hf
+from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
@@ -101,7 +101,40 @@ def _apply_qwen35_moe_config(provider: GPTModelProvider, text_config) -> None:
     provider.moe_permute_fusion = True
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3_5MoeForCausalLM, target=GPTModel, model_type="qwen3_5_moe_text")
+def _moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed, transpose_on_export=False):
+    """Routed-expert mappings for a MoE decoder, for both the grouped-GEMM and SequentialMLP layouts.
+
+    ``experts_packed`` selects fused HF tensors (``experts.gate_up_proj`` / ``experts.down_proj``)
+    vs per-expert (``experts.<i>.gate_proj`` / ``up_proj`` / ``down_proj``), matching the checkpoint so
+    HF->Megatron->HF round-trips. ``transpose_on_export`` applies to the fused mappings (e.g. Qwen3-VL).
+    """
+    grouped_fc1 = f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*"
+    grouped_fc2 = f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*"
+    seq_fc1 = f"{megatron_prefix}decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight"
+    seq_fc2 = f"{megatron_prefix}decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight"
+    if experts_packed:
+        gate_up = f"{hf_prefix}layers.*.mlp.experts.gate_up_proj"
+        down = f"{hf_prefix}layers.*.mlp.experts.down_proj"
+        return [
+            FusedGatedExpertMapping(
+                megatron_param=grouped_fc1, hf_param=gate_up, transpose_on_export=transpose_on_export
+            ),
+            FusedExpertMapping(megatron_param=grouped_fc2, hf_param=down, transpose_on_export=transpose_on_export),
+            FusedGatedExpertMapping(megatron_param=seq_fc1, hf_param=gate_up, transpose_on_export=transpose_on_export),
+            FusedExpertMapping(megatron_param=seq_fc2, hf_param=down, transpose_on_export=transpose_on_export),
+        ]
+    gate = f"{hf_prefix}layers.*.mlp.experts.*.gate_proj.weight"
+    up = f"{hf_prefix}layers.*.mlp.experts.*.up_proj.weight"
+    down = f"{hf_prefix}layers.*.mlp.experts.*.down_proj.weight"
+    return [
+        GatedMLPMapping(megatron_param=grouped_fc1, gate=gate, up=up),
+        AutoMapping(megatron_param=grouped_fc2, hf_param=down),
+        GatedMLPMapping(megatron_param=seq_fc1, gate=gate, up=up),
+        AutoMapping(megatron_param=seq_fc2, hf_param=down),
+    ]
+
+
+@MegatronModelBridge.register_bridge(source="Qwen3_5MoeForCausalLM", target=GPTModel, model_type="qwen3_5_moe_text")
 class Qwen35MoEBridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Language Model (MoE variant).
@@ -132,7 +165,7 @@ class Qwen35MoEBridge(MegatronModelBridge):
     """
 
     @staticmethod
-    def _get_moe_lm_mappings(hf_prefix="model.", megatron_prefix=""):
+    def _get_moe_lm_mappings(hf_prefix="model.", megatron_prefix="", experts_packed=False):
         """Get language model parameter mappings for MoE Qwen3.5.
 
         Args:
@@ -140,6 +173,9 @@ class Qwen35MoEBridge(MegatronModelBridge):
                 for LM and "model.language_model.layers.*" for VL models.
             megatron_prefix: Prefix for Megatron param names. Use "" for LM
                 (default) and "language_model." for VL models.
+            experts_packed: Whether the routed experts are stored fused (``experts.gate_up_proj`` /
+                ``down_proj``) rather than per-expert (``experts.<i>.gate_proj`` / ``up_proj`` /
+                ``down_proj``). Selected from the checkpoint layout by ``mapping_registry``.
 
         Returns:
             List of mapping objects for the MoE LM portion.
@@ -231,29 +267,11 @@ class Qwen35MoEBridge(MegatronModelBridge):
                     f"{hf_prefix}layers.*.linear_attn.norm.weight",
                 ),
                 # =============================================================
-                # Language Model: MoE Expert MLPs (routed experts)
-                # Uses GatedMLPMapping for gate+up projection fusion
+                # Language Model: MoE routed-expert MLPs. Covers both the grouped-GEMM
+                # (experts.linear_fc*.weight*) and SequentialMLP (experts.local_experts.*.linear_fc*)
+                # Megatron layouts, selecting fused vs per-expert HF mappings from the checkpoint.
                 # =============================================================
-                FusedGatedExpertMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.down_proj",
-                ),
-                # Sequential (non-grouped) experts <-> per-expert unfused HF weights. Needed when
-                # moe_grouped_gemm is disabled (e.g. ModelOpt pruning) and for checkpoints that store
-                # experts unfused (gate_proj/up_proj/down_proj per expert).
-                GatedMLPMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
-                    gate=f"{hf_prefix}layers.*.mlp.experts.*.gate_proj.weight",
-                    up=f"{hf_prefix}layers.*.mlp.experts.*.up_proj.weight",
-                ),
-                AutoMapping(
-                    megatron_param=f"{megatron_prefix}decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
-                    hf_param=f"{hf_prefix}layers.*.mlp.experts.*.down_proj.weight",
-                ),
+                *_moe_routed_expert_mappings(hf_prefix, megatron_prefix, experts_packed),
                 # =============================================================
                 # Language Model: Shared Expert MLPs
                 # =============================================================
@@ -422,15 +440,16 @@ class Qwen35MoEBridge(MegatronModelBridge):
             hf_keys = set(hf_pretrained.state.source.get_all_keys())
             if "mtp.layers.0.mlp.experts.gate_up_proj" in hf_keys:
                 mtp_experts_packed = True
+        experts_packed = moe_experts_stored_packed(hf_pretrained, "model.layers.")
 
         mapping_list = []
 
-        mapping_list.extend(self._get_moe_lm_mappings(megatron_prefix=""))
+        mapping_list.extend(self._get_moe_lm_mappings(megatron_prefix="", experts_packed=experts_packed))
         mapping_list.extend(self._get_moe_mtp_mappings(megatron_prefix="", mtp_experts_packed=mtp_experts_packed))
         return MegatronMappingRegistry(*mapping_list)
 
 
-@MegatronModelBridge.register_bridge(source=Qwen3_5ForCausalLM, target=GPTModel, model_type="qwen3_5_text")
+@MegatronModelBridge.register_bridge(source="Qwen3_5ForCausalLM", target=GPTModel, model_type="qwen3_5_text")
 class Qwen35Bridge(MegatronModelBridge):
     """
     Megatron Bridge for Qwen3.5 Dense Language Model.

@@ -500,8 +500,8 @@ class CommOverlapConfig:
             assert not model_cfg.moe_shared_expert_overlap, (
                 "disable moe_shared_expert_overlap when enabling overlap_moe_expert_parallel_comm"
             )
-            assert model_cfg.mtp_num_layers is None or model_cfg.mtp_num_layers == 1, (
-                "MTP layernum only supports 1 when enabling overlap_moe_expert_parallel_comm."
+            assert model_cfg.mtp_num_layers in (None, 0, 1), (
+                "MTP supports at most one layer when enabling overlap_moe_expert_parallel_comm."
             )
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:

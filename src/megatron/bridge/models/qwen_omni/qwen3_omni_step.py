@@ -77,6 +77,8 @@ def get_batch_from_iterator(
 
     batch_required_keys: dict[str, Any] = {}
     for key, value in batch.items():
+        if key == "attention_mask" and skip_getting_attention_mask_from_dataset:
+            continue
         if key in required_device_keys:
             if key == "visual_inputs":
                 if value is None:
@@ -204,11 +206,11 @@ def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[st
     if attention_mask is not None and attention_mask.dim() == 2:
         batch = dict(batch)
         batch["_attention_mask_2d"] = batch.pop("attention_mask")
-        batch = get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
         batch["attention_mask"] = batch.pop("_attention_mask_2d")
         return batch
 
-    return get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+    return get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
 
 
 def forward_step(

@@ -20,7 +20,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -266,7 +266,7 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    # Dataset config - packed_sequence=True by default
+    # Dataset config - enable_offline_packing=True by default
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 
@@ -479,7 +479,7 @@ def moonlight_16b_peft_2gpu_h100_bf16_config(
     # Sequence length
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    # Dataset config - packed_sequence=True by default
+    # Dataset config - enable_offline_packing=True by default
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
 

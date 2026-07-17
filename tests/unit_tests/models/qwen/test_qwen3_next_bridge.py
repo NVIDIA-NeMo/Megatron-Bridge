@@ -177,6 +177,32 @@ class TestQwen3NextBridge:
         assert result.linear_num_value_heads == mock_qwen3_next_config.linear_num_value_heads
         assert result.experimental_attention_variant == "gated_delta_net"
 
+    @pytest.mark.parametrize(
+        ("layer_types", "expected_pattern"),
+        [
+            (["linear_attention"] * 4, [1, 1, 1, 1]),
+            (
+                ["linear_attention", "full_attention", "linear_attention", "linear_attention"],
+                [1, 0, 1, 1],
+            ),
+        ],
+    )
+    def test_provider_bridge_preserves_explicit_layer_types(
+        self,
+        mock_pretrained_qwen3_next,
+        mock_qwen3_next_config,
+        layer_types,
+        expected_pattern,
+    ):
+        """Explicit Hugging Face layer schedules must survive config conversion."""
+        mock_qwen3_next_config.num_hidden_layers = len(layer_types)
+        mock_qwen3_next_config.full_attention_interval = None
+        mock_qwen3_next_config.layer_types = layer_types
+
+        result = Qwen3NextBridge().provider_bridge(mock_pretrained_qwen3_next)
+
+        assert result.linear_attention_freq == expected_pattern
+
     def test_provider_bridge_mlp_config(self, mock_pretrained_qwen3_next, mock_qwen3_next_config):
         """Test MLP configuration mapping."""
         bridge = Qwen3NextBridge()

@@ -40,6 +40,7 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointManager,
+    _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
 )
@@ -107,11 +108,15 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
+        cfg.checkpoint.load, cfg.checkpoint
+    )
 
     if cfg.peft is not None:
-        return cfg.checkpoint.load is not None and (
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
             checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
         )
+        return load_checkpoint_exists or has_global_non_persistent_checkpoint
 
     load_checkpoint_exists = cfg.checkpoint.load is not None and (
         checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
@@ -120,7 +125,12 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
         or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
-    should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
+    should_load_checkpoint = (
+        load_checkpoint_exists
+        or has_pretrained_checkpoint
+        or has_local_checkpoint
+        or has_global_non_persistent_checkpoint
+    )
 
     if cfg._checkpoint_load_required and not should_load_checkpoint:
         raise FileNotFoundError(
@@ -288,15 +298,19 @@ def setup(
             # Check which checkpoint path has modelopt state
             if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
                 checkpoint_path = cfg.checkpoint.pretrained_checkpoint
-            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load):
+                ckpt_step = None
+            elif cfg.checkpoint.load and has_modelopt_state(
+                cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step
+            ):
                 checkpoint_path = cfg.checkpoint.load
+                ckpt_step = cfg.checkpoint.ckpt_step
             else:
                 raise RuntimeError(
                     f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
                     f"or load={cfg.checkpoint.load}"
                 )
 
-            load_modelopt_state(model, checkpoint_path)
+            load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
@@ -396,6 +410,7 @@ def setup(
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=pg_collection.dp,
+        eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")

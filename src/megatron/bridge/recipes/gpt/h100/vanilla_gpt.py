@@ -95,7 +95,7 @@ def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
-            sequence_length=1024,
+            seq_length=1024,
             blend=None,
             blend_per_split=None,
             split="9999,8,2",

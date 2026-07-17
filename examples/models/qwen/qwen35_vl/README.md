@@ -21,20 +21,36 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3.5-35B-A3B \
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
   --hf-model Qwen/Qwen3.5-35B-A3B \
   --megatron-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen/Qwen3.5-35B-A3B-hf-export
 ```
 
-See the [conversion.sh](conversion.sh) script for more examples including multi-GPU round-trip validation.
+### Multi-GPU Round-Trip Validation
+
+Use the shared launcher to verify the in-memory Hugging Face → Megatron →
+Hugging Face weight round trip:
+
+```bash
+./scripts/conversion/convert.sh roundtrip \
+  --executor local \
+  --device gpu \
+  --gpus-per-node 8 \
+  --hf-model-id Qwen/Qwen3.5-35B-A3B \
+  --tp 1 --pp 1 --ep 8 \
+  --trust-remote-code
+```
+
+See the [conversion.sh](conversion.sh) script for the parallelism selected for
+each supported model variant.
 
 ## Inference
 
