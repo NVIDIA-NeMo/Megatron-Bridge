@@ -15,12 +15,9 @@ release: "26.08"
 precision: bf16
 summary: Qwen3-8B support verification for conversion, inference, and training.
 notes:
-  default_executor: slurm
-  slurm_launcher_env:
-    [SLURM_ACCOUNT, SLURM_PARTITION, CONTAINER_IMAGE, MODEL_CARD_WORKDIR, PRETRAIN_DATA_ROOT]
-  slurm_forwarded_env: [HF_HOME, HF_TOKEN]
-  eos_launcher_overrides:
-    [--no-gpu-resource-request, --srun-arg=--mpi=pmix, --srun-arg=--no-container-mount-home]
+  runtime_privacy: >
+    Resolve scheduler settings, runtime images, mount sources, dataset roots,
+    caches, output roots, credentials, and launcher overlays outside this card.
   training_verification: >
     Slurm job completion and the expected result are required; submission alone
     is insufficient. For ordered commands, wait for the preceding Slurm job to
@@ -34,9 +31,9 @@ notes:
     arithmetic means of the per-step console values over the latter half of the
     optimizer steps executed by that item. Skipped or NaN iterations invalidate
     verification rather than being excluded from the averages.
-  pretrain_dataset: >
-    RedPajama2 head_01 is a bounded Megatron-indexed prefix under
-    PRETRAIN_DATA_ROOT. Paths name prefixes and omit .bin/.idx.
+  dataset_policy: >
+    RedPajama2 head_01 is a bounded Megatron-indexed prefix. Resolve its storage
+    root from PRETRAIN_DATA_ROOT; prefix values omit .bin/.idx.
   enabled_features_allowlist:
     sequence_packing: [offline, in_batch]
     cuda_graph:
@@ -126,8 +123,8 @@ items:
       --prompt "The capital of France is" --max_new_tokens 32'
     last_verified: 2026-07-16
     expected_result: >
-      The command exits successfully after exactly 32 generation steps and
-      prints the exact completion, including its leading space,
+      Two independent executions exit successfully after exactly 32 generation
+      steps and print this byte-identical completion, including its leading space,
       " Paris. The capital of Italy is Rome. The capital of Spain is Madrid. The
       capital of Germany is Berlin. The capital of the Netherlands is Amsterdam. The".
 

@@ -1,0 +1,170 @@
+---
+name: create-model-verification-card
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion/inference/training results, or preparing a model-support PR. Enforce the fixed card inventory, training metrics, important-feature allowlist, direct-resume checks, and a strict privacy boundary that excludes internal execution-environment identities, paths, credentials, and job metadata.
+---
+
+# Create Model Verification Card
+
+Create `model_cards/<model-slug>/card.yaml` from public model facts and verified
+commands. Keep the card small enough for an agent to scan without interpreting
+logs or reconstructing the execution environment.
+
+## Use the bundled resources
+
+- Start from [assets/card-template.yaml](assets/card-template.yaml).
+- Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
+- Use `model_cards/qwen3-8b/card.yaml` only as a populated format example; do
+  not copy model-specific settings blindly.
+
+Do not add a README, evidence blobs, log excerpts, or scheduler metadata to the
+skill or card.
+
+## Workflow
+
+### 1. Pull facts before drafting
+
+Read the model implementation, public HF config, conversion bridge, recipes,
+tests, examples, and the exact revision being verified. Determine which modes
+exist; do not infer support from a family name or another model size.
+
+Record the public HF model name in commands and its immutable revision in
+`model.hf_revision`. Do not introduce an HF snapshot path.
+
+### 2. Create the complete inventory
+
+Include every template item, even when its status is `unsupported` or
+`not_applicable`:
+
+1. CPU HF-to-Megatron conversion
+2. GPU HF-to-Megatron conversion
+3. CPU Megatron-to-HF conversion
+4. GPU Megatron-to-HF conversion
+5. Deterministic inference
+6. Pretraining
+7. SFT
+8. Long-context SFT
+9. PEFT
+10. Checkpoint resume
+11. Pretraining performance
+
+Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
+add `smoke` or an evidence field.
+
+For `unsupported` and `not_applicable`, leave command, date, GPU type, and
+metrics null, then state the public product limitation in `expected_result`.
+
+### 3. Write portable commands
+
+Prefer repository launchers such as `scripts/conversion/convert.sh` and
+`scripts/training/train.sh`. Keep commands directly runnable after the caller
+sets untracked environment values.
+
+Use environment-variable references for scheduler credentials, runtime images,
+mount sources, caches, dataset roots, and output roots. Use only generic
+container destinations such as `/workspace`, `/data`, `/opt/Megatron-Bridge`,
+and `/tmp`. Reference variables directly; do not embed fallback values or other
+shell expansion operators in the card.
+
+Never record or reproduce:
+
+- execution-environment names, hostnames, IPs, usernames, emails, or accounts;
+- concrete partitions, reservations, node lists, image locations, or mount
+  sources;
+- host/shared-storage paths, home-directory paths, log locations, or job IDs;
+- tokens, token-loading commands, private URLs, or private registry references;
+- environment-specific launcher overlays.
+
+Keep private run notes outside the tracked repository and public PR text. If a
+private codename cannot be recognized generically, pass it to the validator via
+`--deny-term` or an untracked file through `--denylist "$PRIVATE_DENYLIST"`.
+The validator reports the match without printing the private term.
+
+### 4. Apply the verification gates
+
+Mark an item `verified` only after its exact command has completed and the
+concrete expected result has been checked.
+
+- **Conversion:** Test CPU and GPU import/export separately. Reload every
+  output. Require exact keys, shapes, dtypes, and values when the conversion is
+  expected to be lossless; otherwise state the numerical tolerance.
+- **Inference:** Use deterministic greedy generation, specify an exact token
+  count, run twice, and record the literal completion including whitespace.
+- **Pretrain:** Use a bounded public dataset description and a stable schedule.
+  Save a middle and final checkpoint when resume is in scope.
+- **SFT and PEFT:** Prefer about 100 optimizer steps with warmup and full-horizon
+  decay. Use a public dataset name or preset, not its storage location.
+- **Long-context SFT:** Verify sequence packing and CP together. Record CP only
+  when its size is greater than one.
+- **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
+  directly, resume into a distinct new output root, load optimizer and RNG
+  state, and compare the first resumed and final steps with the uninterrupted
+  reference. Do not repeat the pre-checkpoint training segment.
+- **Performance:** Keep a bounded mock-data performance item separate from the
+  real-data functional run and state public hardware plus thresholds.
+
+Submission is not success. Require the workload process to finish successfully,
+the exact optimizer-step set to be present, finite losses and performance
+values, zero skipped/NaN iterations, and complete reloadable artifacts.
+
+### 5. Record training metrics consistently
+
+For every verified training item, record:
+
+- `initial_loss`: loss at the first optimizer step executed by that item;
+- `final_loss`: loss at its final optimizer step;
+- `last_half_step_time_ms_avg`: arithmetic mean over the latter half of its
+  executed optimizer steps;
+- `last_half_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
+
+Parse all fields from each complete keyed optimizer-step line. Do not collect
+loss, time, and throughput independently and zip them. Reject missing,
+duplicate, skipped, NaN, or non-finite rows rather than excluding them.
+
+For a resume that executes steps 201-400, use step 201 as `initial_loss`, step
+400 as `final_loss`, and average steps 301-400.
+
+### 6. Record only important enabled features
+
+Use `enabled_features` only on pretrain, SFT, long-context SFT, and PEFT. Keep
+it empty when none of these are central to the verification.
+
+| Key | Allowed value |
+| --- | --- |
+| `sequence_packing` | `offline` or `in_batch` |
+| `cuda_graph.implementation` | `local` or `transformer_engine` |
+| `cuda_graph.scopes` | `full_iteration`, `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, or `mamba` |
+| `context_parallel_size` | integer greater than one |
+| `moe_dispatcher` | `deepep` or `hybridep` |
+
+Do not list routine TP/PP/DP sizes, precision, Transformer Engine, fused loss,
+distributed optimizer, ordinary communication overlap, LoRA, or DoRA.
+
+### 7. Validate before review
+
+Run:
+
+```bash
+uv run python skills/create-model-verification-card/scripts/validate_card.py \
+  model_cards/<model-slug>/card.yaml
+```
+
+When private terminology is known only at runtime, add:
+
+```bash
+--denylist "$PRIVATE_DENYLIST"
+```
+
+Then parse the YAML, run relevant targeted tests, run
+`uv run pre-commit run --all-files`, and inspect the complete diff. Do not mark
+an item verified merely to make validation pass.
+
+## Completion checklist
+
+- Keep all eleven inventory items and use only the four statuses.
+- Pin a public immutable HF revision before marking anything verified.
+- Include commands and concrete expected results for verified items.
+- Include GPU type and all four metrics for verified training items.
+- Keep resume as one direct continuation from the pretrain checkpoint.
+- Keep enabled features within the four-family allowlist.
+- Pass the bundled validator, including any caller-supplied denylist.
+- Confirm the card, commit, and PR contain no private runtime information.
