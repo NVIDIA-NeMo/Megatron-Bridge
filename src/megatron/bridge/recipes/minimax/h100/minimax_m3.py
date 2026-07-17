@@ -176,7 +176,7 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Tokenizer / dataset (real HF tokenizer; packed / THD)
     cfg.tokenizer.tokenizer_model = MINIMAX_M3_HF_PATH
-    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=True)
+    cfg.dataset = default_squad_config(seq_length=4096, enable_offline_packing=True)
 
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1

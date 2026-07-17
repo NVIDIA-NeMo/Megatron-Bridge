@@ -66,6 +66,7 @@ and loader settings; use `dataset.dataset_kwargs={...}` only for extra options c
 | `local-jsonl` | Source selector | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
 | `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
 | `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
+| `tulu3` | Named preset | sft/lora/dora | Ai2 Tulu 3 SFT mixture (`allenai/tulu-3-sft-mixture`) |
 | `openmathinstruct2` | Named preset | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
 | `openmathinstruct2-thinking` | Named preset | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
 | `gsm8k` | Named preset | sft/lora/dora | GSM8K preset |
@@ -96,10 +97,17 @@ The launcher does not infer the source corpus from the files. For one preprocess
 `openmathinstruct2` uses prompt/completion records. `openmathinstruct2-thinking` changes only the semantic output
 format: chain-of-thought goes to the analysis channel and the answer goes to the final channel.
 
+### Tulu
+
+`tulu3` uses the canonical current Tulu SFT dataset, `allenai/tulu-3-sft-mixture`. The preset reads its published
+`train` split and its native `messages` chat schema; it reserves 5% for validation by default. The mixture is licensed
+under ODC-BY-1.0, but individual subsets can carry additional terms, including non-commercial restrictions. Review the
+Hugging Face dataset card and its linked subset licenses before use.
+
 ### Offline packing
 
 Offline packing is a text SFT option, not a dataset name. Set `dataset.enable_offline_packing=true` for `squad`, either
-OpenMathInstruct-2 format, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
+OpenMathInstruct-2 format, `tulu3`, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
 sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder materializes packed
 data automatically, so a separate packing Slurm job is not required. The selected recipe/model must support packed THD
 sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on
