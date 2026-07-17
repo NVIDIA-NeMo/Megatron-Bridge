@@ -55,7 +55,7 @@ All training scripts use SLURM for containerized multi-node training.
 
 ### Nano
 
-See the SLURM scripts in [nano/](nano/): [slurm_pretrain.sh](nano/slurm_pretrain.sh), [slurm_sft.sh](nano/slurm_sft.sh), [slurm_peft.sh](nano/slurm_peft.sh).
+See the SLURM scripts in [nano/](nano/): [slurm_pretrain.sh](nano/slurm_pretrain.sh), [slurm_pretrain_fsdp.sh](nano/slurm_pretrain_fsdp.sh), [slurm_sft.sh](nano/slurm_sft.sh), [slurm_peft.sh](nano/slurm_peft.sh).
 
 ### Super
 

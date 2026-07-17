@@ -27,7 +27,7 @@
 #
 #   Checkpoint: FSDP supports checkpointing in fsdp_dtensor format only as of now. In the future, we do
 #               plan to support torch_dist checkpointing format as well.
-#   TODO: Add ckpt conversion details.
+#   To convert checkpoint formats follow https://github.com/NVIDIA/Megatron-LM/blob/main/examples/megatron_fsdp/sbatch_checkpoint_convert.sh 
 # ==============================================================================
 
 #SBATCH --job-name=nemotron3-pretrain-hsdp
