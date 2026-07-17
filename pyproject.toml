@@ -131,7 +131,7 @@ override-dependencies = [
     "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@b9d690e042b1c4e455214e7dab65d6d3512c05d6",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
-    "cryptography>=43.0.0,<47",
+    "cryptography==48.0.1",
     "nvidia-modelopt==0.44.0rc5",
     # TODO: remove this guard when cuda-tile >=1.5.0 publishes a Linux AArch64 wheel.
     "cuda-tile==1.4.0",
