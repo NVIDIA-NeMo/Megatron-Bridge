@@ -35,7 +35,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     for name in ("tp", "pp", "ep", "etp"):
         if getattr(args, name) < 1:
             raise ValueError(f"--{name} must be at least 1.")
-    if args.distributed_timeout_minutes is not None and args.distributed_timeout_minutes < 1:
+    distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
+    if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
     if args.device == "cpu" and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
         raise ValueError("CPU conversion requires TP=PP=EP=ETP=1.")
@@ -102,6 +103,19 @@ def _run_export(args: argparse.Namespace) -> None:
     )
 
 
+def _run_roundtrip(args: argparse.Namespace) -> None:
+    """Run distributed round-trip weight validation on the GPU backend."""
+    gpu_backend.roundtrip_checkpoint(
+        hf_model=args.hf_model,
+        tp=args.tp,
+        pp=args.pp,
+        ep=args.ep,
+        etp=args.etp,
+        trust_remote_code=args.trust_remote_code,
+        distributed_timeout_minutes=args.distributed_timeout_minutes,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Parse worker arguments and run checkpoint conversion."""
     args = build_parser(include_execution=False).parse_args(argv)
@@ -109,8 +123,10 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("Selected %s backend for %s conversion", args.device.upper(), args.command)
     if args.command == "import":
         _run_import(args)
-    else:
+    elif args.command == "export":
         _run_export(args)
+    else:
+        _run_roundtrip(args)
 
 
 if __name__ == "__main__":
