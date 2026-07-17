@@ -89,6 +89,8 @@ def _build_recipe(recipe_func: Callable[[], ConfigContainer], monkeypatch: pytes
 
 def _dsa_source_layer_id(layer_id: int, *, skip_topk_offset: int, topk_freq: int) -> int:
     """Return the zero-based source layer defined by MCore's DSA sharing contract."""
+    # Mirrors the private MCore `_validate_dsa_index_share_pipeline_split`
+    # helper that guarded this recipe before removal from the pinned revision.
     # MCore defines DSA sharing with one-based layers: layers through
     # max(skip_topk_offset, 1) compute their own indices, then each topk_freq
     # group reuses the indices computed by its first layer.
