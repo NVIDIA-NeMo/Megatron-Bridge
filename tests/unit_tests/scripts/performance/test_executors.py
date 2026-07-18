@@ -213,4 +213,7 @@ def test_kubeflow_script_wraps_pre_and_post_hooks():
     assert "bash /hooks/pre.sh" in wrapped
     assert "bash /hooks/post.sh" in wrapped
     assert "NEMO_RUN_TRAINING_EXIT_CODE" in wrapped
+    assert "KUBEFLOW_FAILURE_SLEEP_SECONDS" in wrapped
+    assert "NEMO_CLUSTERDIAG_FAILURE_SLEEP_SECONDS" in wrapped
+    assert "Failure detected train_rc=" in wrapped
     assert 'exit "${TRAIN_RC}"' in wrapped
