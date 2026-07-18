@@ -137,7 +137,7 @@ def test_parse_env_rejects_inline_values(monkeypatch):
     module = _load_setup_experiment_module()
     monkeypatch.setenv("SECRET_VALUE", "from-launcher")
 
-    with pytest.raises(ValueError, match="accepts NAME only"):
+    with pytest.raises(ValueError, match="expected a shell variable name"):
         module._parse_env(["SECRET_VALUE=inline"])
 
 
@@ -209,7 +209,7 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
     assert executor.env_vars == {}
-    assert executor.container_env == ["HF_TOKEN"]
+    assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH", *module.TRAINING_LAUNCH_ENV}
     assert executor.additional_parameters == {"export": "HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
     assert executor.srun_args == []
@@ -248,6 +248,34 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
     assert "gpus_per_node" not in executor.kwargs
     assert executor.additional_parameters == {"export": "NIL"}
     assert executor.srun_args == ["--mpi=pmix", "--container-writable"]
+
+    monkeypatch.setattr(module, "_performance_slurm_launcher", lambda _: object())
+    performance_args, _ = module.parse_args(
+        [
+            "--nodes",
+            "4",
+            "--gpus-per-node",
+            "4",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+        ]
+    )
+    metadata = module.PerformanceRecipeMetadata(
+        recipe_name="qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        num_gpus=16,
+        hardware="h100",
+    )
+
+    performance_executor = module._build_executor(performance_args, [], [], performance_metadata=metadata)
+
+    assert performance_executor.kwargs["ntasks_per_node"] == 4
+    assert performance_executor.kwargs["segment"] == 4
+    assert performance_executor.srun_args == []
+    assert module._performance_segment(gpus_per_node=8, nodes=2) is None
 
 
 @pytest.mark.parametrize(
@@ -304,7 +332,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     sentinel_executor = object()
     module.run.Script = _Script
     module.run.Experiment = _Experiment
-    monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: sentinel_executor)
 
     training_args = ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"]
     module.main(
@@ -328,11 +356,93 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     assert scripts[0].path == "/opt/Megatron-Bridge/scripts/training/run_recipe.py"
     assert scripts[0].entrypoint == "python"
     assert scripts[0].env == {
-        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
+        **module.TRAINING_LAUNCH_ENV,
+        "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH",
     }
     submission_options = {"--submission-dry-run", "--dry-run"}
     expected_training_options = [option for option in extra_options if option not in submission_options]
     assert scripts[0].args == [*training_args, *expected_training_options]
+
+
+def test_train_launcher_routes_exact_performance_recipe(monkeypatch):
+    module = _load_setup_experiment_module()
+    scripts = []
+    executor_metadata = []
+    dryrun_calls = []
+
+    class _Script:
+        def __init__(self, **kwargs):
+            scripts.append(types.SimpleNamespace(**kwargs))
+
+    class _Experiment:
+        def __init__(self, _name):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, *_args, **_kwargs):
+            pass
+
+        def dryrun(self):
+            dryrun_calls.append(True)
+
+    def _build_executor(*_args, performance_metadata=None, **_kwargs):
+        executor_metadata.append(performance_metadata)
+        return object()
+
+    module.run.Script = _Script
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", _build_executor)
+
+    module.main(
+        [
+            "--nodes",
+            "4",
+            "--gpus-per-node",
+            "4",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--offline",
+            "--submission-dry-run",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        ]
+    )
+
+    assert len(dryrun_calls) == 1
+    assert executor_metadata[0] is not None
+    assert scripts[0].path == "/opt/Megatron-Bridge/scripts/performance/run_script.py"
+    assert scripts[0].args == [
+        "--recipe",
+        "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+    ]
+    assert scripts[0].env["TORCH_NCCL_AVOID_RECORD_STREAMS"] == "1"
+    assert scripts[0].env["HF_HUB_OFFLINE"] == "1"
+
+    mismatched_args, _ = module.parse_args(
+        [
+            "--nodes",
+            "3",
+            "--gpus-per-node",
+            "4",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+        ]
+    )
+    with pytest.raises(ValueError, match="request 12"):
+        module._validate_args(mismatched_args, executor_metadata[0])
 
 
 def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
@@ -361,7 +471,7 @@ def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
 
     module.run.Script = _Script
     module.run.Experiment = _Experiment
-    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: object())
     sentinel = "logger.wandb_exp_name=benign; echo should-not-run"
 
     module.main(

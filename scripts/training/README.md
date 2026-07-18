@@ -6,18 +6,19 @@ Megatron Bridge training provides a small public Slurm launcher:
 ./scripts/training/train.sh [launch options] [runner options] [KEY=VALUE overrides]
 ```
 
-`train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` directly through Slurm. The
-setup layer only owns resources, the container, explicitly forwarded environment variables, and explicit mounts.
-Recipe selection, dataset construction, and ConfigContainer overrides are resolved inside the training environment.
-Without an active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than
-resolving the full GPU training dependency set on the login node.
+`train.sh` invokes `setup_experiment.py` on a Slurm login node. Library recipes run through `run_recipe.py`; an exact
+flat performance recipe name is passed unchanged to the current rank-local performance runtime. The setup layer owns
+resources, the container, explicitly forwarded environment variables, and explicit mounts. Without an active virtual
+environment, the shell entry point creates an isolated `nemo-run` environment rather than resolving the full GPU
+training dependency set on the login node.
 
 `launch_with_nemo_run.py` and `launch_with_sbatch.sh` remain available for their existing specialized workflows; `train.sh` is the compact recipe-oriented path.
 
 ## Selection rules
 
-Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. Every
-invocation requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or `--mode dora`.
+Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. The mode
+is inferred from a conventional complete recipe name; pass one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
+`--mode dora` when using `--model` or when the name does not encode it.
 
 ### Complete recipe
 
@@ -51,6 +52,28 @@ The default forward step is `llm_step`. Pass `--step-func NAME` explicitly for a
 forward step. Common training, sequence-length, parallelism, optimization, and checkpoint fields also have convenience
 flags such as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`.
 Use trailing `KEY=VALUE` overrides for every other `ConfigContainer` field.
+
+### Performance recipe
+
+Pass the complete exported performance recipe name through the same `--recipe` option; recipe type is inferred:
+
+```bash
+./scripts/training/train.sh \
+    --nodes 2 --gpus-per-node 8 \
+    --account ACCOUNT --partition PARTITION \
+    --container-image /path/to/container.sqsh \
+    --env HF_TOKEN \
+    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+```
+
+The GPU count encoded in the recipe name must equal `--nodes × --gpus-per-node`; the user-provided
+`--gpus-per-node` determines the node shape. This compact route supports exact exported recipe names only;
+model-family selectors and advanced performance-launcher controls remain on `scripts/performance` during migration.
+The exact name is discovered from the launcher checkout and resolved again by the Bridge code under
+`/opt/Megatron-Bridge` in the container, so use an image containing the same Bridge revision and recipe export.
+Forward `HF_TOKEN` with `--env HF_TOKEN` when the selected recipe needs online Hugging Face access, or pass `--offline`
+with a pre-populated cache. The job records the container's Bridge and Megatron-Core revisions in
+`/nemo_run/configs/repo_status.json`.
 
 ## Dataset selection
 
@@ -194,7 +217,7 @@ forwarded implicitly. Export credentials in the launcher environment, then repea
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
-No cluster-specific `srun` flags are added by default. Repeat
+The launcher adds no cluster-specific `srun` flags. Repeat
 `--srun-arg=ARG` for every flag required by the target cluster. For example,
 a Pyxis/Enroot cluster may use:
 
@@ -205,6 +228,9 @@ a Pyxis/Enroot cluster may use:
 ```
 
 The `=` form is required when `ARG` begins with `-`.
+
+Common NCCL, Transformer Engine, tokenizer, and allocator environment defaults are applied to both library and
+performance recipes. Explicitly inherited environment names take precedence over these defaults.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.
