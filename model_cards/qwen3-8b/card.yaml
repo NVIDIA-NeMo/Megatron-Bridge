@@ -306,24 +306,21 @@ items:
       printed sentinel matches are preferred.
 
   pretrain_performance:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
-    command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
-      --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
-      --dataset mock --max_steps 100 --warmup_iters 10 scheduler.lr_decay_iters=100
-      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-      checkpoint.save=null logger.log_interval=1
-      logger.log_throughput=true
-    last_verified: 2026-07-16
+    command: null
+    last_verified: null
     metrics:
-      initial_loss: 12.74359
-      final_loss: 0.01727812
-      last_10_steps_step_time_ms_avg: 4216.290
-      last_10_steps_model_tflops_per_gpu_avg: 381.100
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      On one node with 4x H100, the mock-data run completes 100 steps with
-      finite losses, no skipped or NaN iterations, records all four metrics,
-      averages at most 4.5 seconds per step and at least 370 model TFLOP/s/GPU
-      over steps 91-100, and stays below 65 GiB/GPU peak allocated memory.
+      No dense Qwen3-8B performance recipe is currently exported from the
+      public performance-recipe package, so this gate has no reproducible
+      command and remains unverified. The ordinary
+      qwen3_8b_pretrain_4gpu_h100_bf16_config library-recipe benchmark is not a
+      substitute. Verification requires an exported H100 performance recipe
+      and a completed run with finite losses, no skipped or NaN iterations,
+      all four metrics, and explicit last-10 thresholds.
