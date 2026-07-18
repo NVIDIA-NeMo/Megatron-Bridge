@@ -62,26 +62,18 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
     _benchmark_common(cfg)
 
 
-def _apply_nemotron_3_ultra_gb300_model_configs(cfg: ConfigContainer) -> None:
-    """Apply Nemotron 3 Ultra GB300 model / parallelism / training settings.
+def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
+    """Apply shared Nemotron 3 Ultra perf defaults after recipe-specific overrides."""
 
-    Uses TP1 / PP1 / CP1 / EP64 / ETP1, GBS 256 / MBS 1,
-    seq 8192, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
-    recompute + activation offload of the expert MLP, MTP=2. The MoE architecture
-    (512 experts, latent MoE, MTP, squared-relu, hybrid Mamba/attention pattern,
-    ...) is inherited from the base recipe via ``AutoBridge``.
-    """
-    # Parallelism (TP1 / PP1 / CP1 / EP64 / ETP1).
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = torch.bfloat16
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = False
-    cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
-    cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.seq_length = 8192
+    # Native cross-entropy fusion (--cross-entropy-fusion-impl native). TE fusion
+    # has known stability issues and is rejected by Megatron-LM arg validation.
+    _benchmark_common(cfg, cross_entropy_impl="native")
+
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.checkpoint.async_save = False
 
     # MoE token dispatcher + grouped-GEMM / router fusions
     # (--moe-token-dispatcher-type flex --moe-flex-dispatcher-backend hybridep).
@@ -95,20 +87,6 @@ def _apply_nemotron_3_ultra_gb300_model_configs(cfg: ConfigContainer) -> None:
     # CuteDSL fused grouped MLP + TE op fuser (--use-transformer-engine-op-fuser,
     # NVTE_CUTEDSL_FUSED_GROUPED_MLP=1).
     cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-
-    # Fine-grained activation offloading (--fine-grained-activation-offloading
-    # --offload-modules fused_group_mlp). Requires NVTE_CPU_OFFLOAD_V1=1 in the
-    # launch environment. Only tensors larger than 500MB are offloaded, which
-    # approximates offloading the moe_act input for seq 8192 / MBS 1.
-    cfg.model.fine_grained_activation_offloading = True
-    cfg.model.offload_modules = ["fused_group_mlp"]
-    cfg.model.min_offloaded_tensor_size = 500_000_000
-
-    # Selective recompute of the MoE activation (--recompute-granularity selective
-    # --recompute-modules moe_act).
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act"]
 
     # Kernel / graph selections.
     cfg.model.attention_backend = "fused"
@@ -117,8 +95,7 @@ def _apply_nemotron_3_ultra_gb300_model_configs(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_scope = []
     cfg.model.init_method_std = 0.0099
 
-    # Batch sizing (--global-batch-size 256 --micro-batch-size 1) with manual GC.
-    cfg.train.global_batch_size = 256
+    # Batch sizing (--micro-batch-size 1) with manual GC.
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
@@ -144,26 +121,7 @@ def _apply_nemotron_3_ultra_gb300_model_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.num_buckets = 48
 
 
-def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
-    """Apply shared Nemotron 3 Ultra perf defaults after recipe-specific overrides."""
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
-    cfg.ddp.grad_reduce_in_fp32 = False
-
-    cfg.model.moe_router_force_load_balancing = True
-    cfg.checkpoint.async_save = False
-
-    # Native cross-entropy fusion (--cross-entropy-fusion-impl native). TE fusion
-    # has known stability issues and is rejected by Megatron-LM arg validation.
-    _benchmark_common(cfg, cross_entropy_impl="native")
-
-    # ``_benchmark_common`` disables the TE op fuser for the generic perf path;
-    # Nemotron 3 Ultra needs the CuteDSL fused grouped MLP, so re-enable it (and
-    # its interleave size) after the shared benchmark defaults.
-    cfg.model.use_transformer_engine_op_fuser = True
-    cfg.model.moe_mlp_glu_interleave_size = 32
-
-
-def _apply_nemotron_3_ultra_gb300_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:
+def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:
     """Apply Megatron-FSDP (HSDP) settings for Nemotron 3 Ultra on GB300.
 
     Shards params/grads/optimizer
@@ -171,7 +129,7 @@ def _apply_nemotron_3_ultra_gb300_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int)
     BF16 gradient comm, FP32 main params, and BF16 main grads. Applied last so it
     wins over the generic perf defaults.
     """
-    # Base Megatron-FSDP enablement (mirrors ``_set_megatron_fsdp_overrides``).
+    # Base Megatron-FSDP enablement
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False
@@ -200,5 +158,3 @@ def _apply_nemotron_3_ultra_gb300_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int)
     cfg.model.gradient_accumulation_fusion = False
     # --ckpt-format fsdp_dtensor
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
-    # --cross-entropy-fusion-impl native (the common perf override forces "te")
-    cfg.model.cross_entropy_fusion_impl = "native"
