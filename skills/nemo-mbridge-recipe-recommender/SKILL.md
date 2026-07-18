@@ -69,7 +69,6 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ./scripts/training/train.sh \
     --nodes 2 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION --container-image IMAGE \
-    --recipe-source performance \
     --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config \
     --mode pretrain
 ```
@@ -106,9 +105,12 @@ recipe logic was split across multiple indirection layers, configs were not
 self-contained, and the two-level pipeline made maintenance and debugging
 difficult. Python functions are explicit, greppable, and composable.
 
-The training launcher can invoke library recipes and canonical text-pretraining
-perf recipes without the removed legacy config package. Recipe namespaces are
-explicit because some function names exist in both.
+The training launcher discovers library recipes and canonical text-pretraining
+perf recipes from the complete exported function name. Three legacy duplicate
+text-pretraining names select the perf definition; use the corresponding
+generic alias for those functional workloads. Two duplicate SFT/PEFT names
+remain library-first until those perf workflows migrate. New recipe names
+should be unique across both packages.
 
 ---
 
@@ -331,7 +333,7 @@ User wants to train a model
 │
 ├─ Want throughput benchmarks?
 │   ├─ Yes → Use perf recipes (src/megatron/bridge/perf_recipes/)
-│   │   ├─ Canonical text pretrain → scripts/training/train.sh --recipe-source performance
+│   │   ├─ Canonical text pretrain → scripts/training/train.sh --recipe <exact function name>
 │   │   └─ Other perf workflows → scripts/performance/setup_experiment.py during migration
 │   └─ No → Use library recipes (scripts/training/run_recipe.py)
 │
@@ -430,7 +432,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
 | Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 8 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
-| Benchmark text-pretrain throughput | Perf recipe via `train.sh --recipe-source performance` | Exact encoded count |
+| Benchmark text-pretrain throughput | Perf recipe via `train.sh --recipe <exact name>` | Exact encoded count |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |
 | VLM fine-tuning | `qwen3_vl_8b_sft_config` or `gemma3_vl_*_sft_config` | 4–8 |
 | Diffusion training | `wan_1_3B_pretrain_config` or `flux_12b_pretrain_config` | 8 |

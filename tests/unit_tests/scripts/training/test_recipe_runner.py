@@ -65,7 +65,7 @@ def test_recipe_without_configurable_scheme_allows_default_lora(recipe_runner: M
     assert recipe_runner._load_with_optional_kwargs(lora_only_recipe, peft_scheme="lora") is config
 
 
-def test_load_recipe_uses_library_namespace_by_default(
+def test_load_recipe_falls_back_to_library_when_name_is_not_performance(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = object()
@@ -75,6 +75,7 @@ def test_load_recipe_uses_library_namespace_by_default(
 
     library_finder = Mock(return_value=library_recipe)
     performance_finder = Mock()
+    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: None)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
     monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
 
@@ -83,7 +84,7 @@ def test_load_recipe_uses_library_namespace_by_default(
     performance_finder.assert_not_called()
 
 
-def test_load_recipe_uses_explicit_performance_namespace(
+def test_load_recipe_auto_detects_exact_performance_export(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = object()
@@ -93,26 +94,59 @@ def test_load_recipe_uses_explicit_performance_namespace(
 
     library_finder = Mock()
     performance_finder = Mock(return_value=performance_recipe)
+    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: object())
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
     monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
 
-    assert recipe_runner.load_recipe("shared_recipe_config", source="performance") is config
+    assert recipe_runner.load_recipe("shared_recipe_config") is config
     performance_finder.assert_called_once_with("shared_recipe_config")
     library_finder.assert_not_called()
 
 
-def test_load_recipe_reports_selected_namespace_when_missing(
+def test_load_recipe_reports_both_packages_when_missing(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(recipe_runner, "find_performance_recipe", lambda _name: None)
+    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: None)
+    monkeypatch.setattr(recipe_runner, "find_library_recipe", lambda _name: None)
 
-    with pytest.raises(AttributeError, match=r"not found in megatron\.bridge\.perf_recipes"):
-        recipe_runner.load_recipe("missing_recipe_config", source="performance")
+    with pytest.raises(AttributeError, match=r"megatron\.bridge\.recipes or megatron\.bridge\.perf_recipes"):
+        recipe_runner.load_recipe("missing_recipe_config")
 
 
-def test_load_recipe_rejects_unknown_source(recipe_runner: ModuleType) -> None:
-    with pytest.raises(ValueError, match="Unknown recipe source"):
-        recipe_runner.load_recipe("recipe_config", source="unknown")
+def test_duplicate_name_warns_and_selects_performance(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    recipe_name = "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config"
+    config = object()
+
+    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: object())
+    performance_finder = Mock(return_value=lambda: config)
+    library_finder = Mock()
+    monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
+    monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
+
+    assert recipe_runner.load_recipe(recipe_name) is config
+    assert "selecting the performance definition" in caplog.text
+    performance_finder.assert_called_once_with(recipe_name)
+    library_finder.assert_not_called()
+
+
+def test_unsupported_finetuning_collision_stays_on_library(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    recipe_name = "llama3_70b_sft_32gpu_h100_bf16_config"
+    config = object()
+
+    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: None)
+    library_finder = Mock(return_value=lambda: config)
+    performance_finder = Mock()
+    monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
+    monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
+
+    assert recipe_runner.load_recipe(recipe_name) is config
+    assert "selecting the library definition" in caplog.text
+    library_finder.assert_called_once_with(recipe_name)
+    performance_finder.assert_not_called()
 
 
 def test_find_performance_recipe_imports_exporting_family_lazily(
@@ -349,7 +383,7 @@ def test_performance_bootstrap_applies_environment_before_self_exec(
         recipe_runner.bootstrap_recipe_environment(
             config,
             script_path="/repo/scripts/training/run_recipe.py",
-            argv=["--recipe-source", "performance"],
+            argv=["--recipe", "perf_recipe_config"],
         )
 
     assert events == ["environment", "exec"]
@@ -358,8 +392,8 @@ def test_performance_bootstrap_applies_environment_before_self_exec(
     assert command == [
         recipe_runner.sys.executable,
         "/repo/scripts/training/run_recipe.py",
-        "--recipe-source",
-        "performance",
+        "--recipe",
+        "perf_recipe_config",
     ]
     assert environment["RECIPE_DEFAULT"] == "enabled"
     assert environment[recipe_runner.RECIPE_ENV_BOOTSTRAP_MARKER] == str(recipe_runner.os.getpid())

@@ -131,6 +131,7 @@ def _load_module():
         "--set",
         "--hf-path",
         "--hf_path",
+        "--recipe-source",
     ],
 )
 def test_removed_selection_options_are_rejected(option):
@@ -196,7 +197,7 @@ def test_model_adapter_modes_select_peft_recipe_and_scheme(mode):
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "finetune"
 
 
-def test_full_recipe_uses_only_library_namespace_and_default_llm_step():
+def test_full_recipe_uses_library_recipe_and_default_llm_step():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
 
@@ -209,7 +210,7 @@ def test_full_recipe_uses_only_library_namespace_and_default_llm_step():
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-def test_full_recipe_can_select_performance_namespace(monkeypatch):
+def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "16")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
@@ -220,8 +221,6 @@ def test_full_recipe_can_select_performance_namespace(monkeypatch):
 
     module.main(
         [
-            "--recipe-source",
-            "performance",
             "--recipe",
             "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
             "--mode",
@@ -232,7 +231,6 @@ def test_full_recipe_can_select_performance_namespace(monkeypatch):
     handles.recipe_runner.load_recipe.assert_called_once_with(
         "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
         peft_scheme=None,
-        source="performance",
     )
     assert config.optimizer.use_precision_aware_optimizer is True
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
@@ -250,18 +248,21 @@ def test_full_recipe_can_select_performance_namespace(monkeypatch):
     )
 
 
-@pytest.mark.parametrize("mode", ["sft", "lora"])
-def test_performance_finetuning_recipes_remain_on_legacy_launcher(mode):
+@pytest.mark.parametrize(
+    ("mode", "recipe_name"),
+    [
+        ("sft", "llama3_8b_sft_8gpu_gb200_bf16_config"),
+        ("lora", "llama3_70b_peft_8gpu_gb200_bf16_config"),
+    ],
+)
+def test_performance_finetuning_recipes_remain_on_legacy_launcher(mode, recipe_name):
     module, handles = _load_module()
-    recipe_task = "sft" if mode == "sft" else "peft"
 
     with pytest.raises(ValueError, match="performance pretraining recipes only"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
-                f"llama3_70b_{recipe_task}_32gpu_h100_bf16_config",
+                recipe_name,
                 "--mode",
                 mode,
             ]
@@ -270,20 +271,42 @@ def test_performance_finetuning_recipes_remain_on_legacy_launcher(mode):
     handles.recipe_runner.load_recipe.assert_not_called()
 
 
-def test_performance_namespace_requires_explicit_recipe_name():
-    module, _ = _load_module()
+@pytest.mark.parametrize(
+    ("mode", "recipe_name"),
+    [
+        ("sft", "llama3_70b_sft_32gpu_h100_bf16_config"),
+        ("lora", "llama3_70b_peft_8gpu_h100_bf16_config"),
+    ],
+)
+def test_unsupported_finetuning_name_collisions_keep_library_behavior(mode, recipe_name):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
 
-    with pytest.raises(ValueError, match="requires an explicit --recipe"):
-        module.main(
-            [
-                "--model",
-                "qwen3_30b_a3b",
-                "--recipe-source",
-                "performance",
-                "--mode",
-                "pretrain",
-            ]
-        )
+    module.main(["--recipe", recipe_name, "--mode", mode])
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+    handles.recipe_runner.load_recipe.assert_called_once_with(
+        recipe_name,
+        peft_scheme=mode if mode == "lora" else None,
+    )
+    handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="finetune")
+
+
+def test_library_only_canonical_name_does_not_enable_performance_runtime():
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+
+    module.main(
+        [
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+    handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
 @pytest.mark.parametrize(
@@ -300,8 +323,6 @@ def test_performance_recipe_rejects_noncanonical_overrides(override):
     with pytest.raises(ValueError, match="canonical model"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -323,8 +344,6 @@ def test_performance_dry_run_accepts_observability_and_duration_overrides(monkey
 
     module.main(
         [
-            "--recipe-source",
-            "performance",
             "--recipe",
             "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
             "--mode",
@@ -368,8 +387,6 @@ def test_performance_recipe_rejects_noncanonical_world_size(monkeypatch):
     with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -391,8 +408,6 @@ def test_performance_recipe_rejects_noncanonical_per_node_topology(monkeypatch):
     with pytest.raises(ValueError, match="requires exactly 8 GPUs per h100 node"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -414,8 +429,6 @@ def test_performance_recipe_accepts_homogeneous_slurm_tasks_per_node(monkeypatch
 
     module.main(
         [
-            "--recipe-source",
-            "performance",
             "--recipe",
             "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
             "--mode",
@@ -439,8 +452,6 @@ def test_performance_recipe_rejects_heterogeneous_slurm_tasks_per_node(monkeypat
     with pytest.raises(ValueError, match="one homogeneous tasks-per-node"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -457,8 +468,6 @@ def test_performance_recipe_rejects_noncanonical_forward_step():
     with pytest.raises(ValueError, match="canonical gpt_step"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -477,8 +486,6 @@ def test_performance_recipe_rejects_deterministic_bypass():
     with pytest.raises(ValueError, match="--deterministic"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -503,8 +510,6 @@ def test_performance_recipe_requires_distributed_world_size(monkeypatch):
     with pytest.raises(ValueError, match="existing distributed environment"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -521,8 +526,6 @@ def test_performance_recipe_rejects_public_dataset_replacement():
     with pytest.raises(ValueError, match="own their canonical dataset"):
         module.main(
             [
-                "--recipe-source",
-                "performance",
                 "--recipe",
                 "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
                 "--mode",
@@ -538,15 +541,15 @@ def test_performance_recipe_rejects_public_dataset_replacement():
 @pytest.mark.parametrize(
     "recipe_name",
     [
-        "qwen3_vl_8b_pretrain_8gpu_h100_bf16_config",
-        "wan_14b_pretrain_8gpu_h100_bf16_config",
+        "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "wan_14b_pretrain_16gpu_gb200_bf16_config",
     ],
 )
 def test_non_text_performance_recipes_remain_on_legacy_launcher(recipe_name):
     module, handles = _load_module()
 
     with pytest.raises(ValueError, match="text performance recipes only"):
-        module.main(["--recipe-source", "performance", "--recipe", recipe_name, "--mode", "pretrain"])
+        module.main(["--recipe", recipe_name, "--mode", "pretrain"])
 
     handles.recipe_runner.load_recipe.assert_not_called()
 
@@ -554,8 +557,11 @@ def test_non_text_performance_recipes_remain_on_legacy_launcher(recipe_name):
 def test_performance_recipe_metadata_accepts_named_variant():
     module, _ = _load_module()
 
-    metadata = module.performance_recipe_metadata("qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config")
+    metadata = module.resolved_performance_recipe_metadata(
+        "qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config"
+    )
 
+    assert metadata is not None
     assert metadata.num_gpus == 256
     assert metadata.gpus_per_node == 8
     assert metadata.family == "qwen"
@@ -577,7 +583,10 @@ def test_performance_recipe_metadata_accepts_named_variant():
 def test_performance_recipe_metadata_selects_one_family(recipe_name, family):
     module, _ = _load_module()
 
-    assert module.performance_recipe_metadata(recipe_name).family == family
+    metadata = module.resolved_performance_recipe_metadata(recipe_name)
+
+    assert metadata is not None
+    assert metadata.family == family
 
 
 def test_full_recipe_rejects_incompatible_mode():

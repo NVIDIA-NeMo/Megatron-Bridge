@@ -2,8 +2,9 @@
 
 ## NOTE: This directory will change a lot over the coming weeks
 
-New canonical text-pretraining runs should use `scripts/training/train.sh --recipe-source performance` with the exact
-flat recipe function name. The launcher in this directory is retained as a compatibility path while SFT/PEFT, VLM,
+New canonical text-pretraining runs should use `scripts/training/train.sh --recipe <function_name>` with the exact
+flat recipe function name. The launcher discovers the recipe automatically. This directory is retained as a
+compatibility path while SFT/PEFT, VLM,
 diffusion, dataset replacement, topology resizing, and specialized benchmark controls migrate. The training launcher
 already preserves the flat text-pretrain path's GPU topology validation, NUMA binding, process environment, and core
 Pyxis `srun` setup.

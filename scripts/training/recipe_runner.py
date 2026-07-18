@@ -28,9 +28,14 @@ import re
 import sys
 from collections.abc import Callable
 from types import ModuleType
-from typing import Literal, cast
+from typing import cast
 
-from performance_recipe import performance_recipe_family
+from performance_recipe import (
+    LIBRARY_RECIPE_PRECEDENCE_COLLISIONS,
+    PERFORMANCE_RECIPE_PRECEDENCE_COLLISIONS,
+    performance_recipe_family,
+    resolved_performance_recipe_metadata,
+)
 
 from megatron.bridge.training.config import ConfigContainer, apply_environment_variables
 
@@ -44,7 +49,6 @@ SENSITIVE_ENV_VAR_PATTERN = re.compile(
 
 StepFunctionEntry = Callable | tuple[str, str]
 TrainFunctionEntry = Callable | tuple[str, str]
-RecipeSource = Literal["library", "performance"]
 
 STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "audio_lm_step": ("megatron.bridge.training.audio_lm_step", "forward_step"),
@@ -223,22 +227,36 @@ def load_recipe(
     recipe_name: str,
     peft_scheme: str | None = None,
     seq_length: int | None = None,
-    *,
-    source: RecipeSource = "library",
 ) -> ConfigContainer:
-    """Load a recipe from the explicitly selected recipe namespace."""
-    if source == "library":
-        config_builder = find_library_recipe(recipe_name)
-        package_name = "megatron.bridge.recipes"
-    elif source == "performance":
+    """Load an exact performance recipe when exported, otherwise a library recipe."""
+    if resolved_performance_recipe_metadata(recipe_name) is not None:
         config_builder = find_performance_recipe(recipe_name)
         package_name = "megatron.bridge.perf_recipes"
+        recipe_kind = "performance"
+        if recipe_name in PERFORMANCE_RECIPE_PRECEDENCE_COLLISIONS:
+            logger.warning(
+                "Recipe '%s' is exported by both packages; selecting the performance definition. "
+                "Use the generic library recipe alias for functional training.",
+                recipe_name,
+            )
     else:
-        raise ValueError(f"Unknown recipe source '{source}'. Choose 'library' or 'performance'.")
+        config_builder = find_library_recipe(recipe_name)
+        package_name = "megatron.bridge.recipes"
+        recipe_kind = "library"
+        if recipe_name in LIBRARY_RECIPE_PRECEDENCE_COLLISIONS:
+            logger.warning(
+                "Recipe '%s' is exported by both packages; selecting the library definition until unified "
+                "performance finetuning is supported.",
+                recipe_name,
+            )
 
     if config_builder is None:
-        raise AttributeError(f"Recipe '{recipe_name}' not found in {package_name}.")
-    logger.info("Loading %s recipe '%s' from %s", source, recipe_name, package_name)
+        if recipe_kind == "library":
+            raise AttributeError(
+                f"Recipe '{recipe_name}' not found in megatron.bridge.recipes or megatron.bridge.perf_recipes."
+            )
+        raise AttributeError(f"Recipe '{recipe_name}' is indexed but not callable in {package_name}.")
+    logger.info("Loading %s recipe '%s' from %s", recipe_kind, recipe_name, package_name)
     return _load_with_optional_kwargs(
         config_builder,
         peft_scheme=peft_scheme,

@@ -16,10 +16,10 @@ resolving the full GPU training dependency set on the login node.
 
 ## Selection rules
 
-Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. Recipes
-come from the functional `library` namespace by default. Select a flat performance recipe explicitly with
-`--recipe-source performance`; performance selection requires its complete function name. Every invocation requires
-one of `--mode pretrain`, `--mode sft`, `--mode lora`, or `--mode dora`.
+Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. A complete
+recipe is discovered automatically from its exported function name, whether it is functional or performance-oriented;
+there is no separate source flag. Every invocation requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
+`--mode dora`.
 
 ### Library recipe
 
@@ -60,7 +60,6 @@ recipe name; the selected Slurm partition must provide that hardware:
     --nodes 2 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION \
     --container-image IMAGE \
-    --recipe-source performance \
     --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config \
     --mode pretrain
 ```
@@ -78,6 +77,10 @@ model configuration and therefore do not belong in each recipe.
 SFT/PEFT, VLM, diffusion, topology resizing, dataset replacement, and other specialized performance controls remain
 on `scripts/performance/setup_experiment.py` while those paths migrate. The compatibility launcher remains available;
 new canonical text-pretraining invocations should use `scripts/training/train.sh`.
+
+Three legacy duplicate text-pretraining names resolve to the performance definition; their functional workloads remain
+available through the corresponding generic recipe aliases. Two duplicate SFT/PEFT names continue to resolve to the
+functional library until those performance workflows migrate. New recipe names should be unique across both packages.
 
 The default library forward step is `llm_step`. Pass `--step-func NAME` explicitly for a library recipe that needs
 another registered forward step. Text performance recipes use the same `gpt_step` path as the compatibility launcher.
@@ -260,8 +263,8 @@ uv run python scripts/training/run_recipe.py \
     --dry-run logger.save_config_filepath=/tmp/config.yaml
 ```
 
-For a performance dry run, add `--recipe-source performance`, use the complete flat recipe name, and omit
-`--dataset`. The rank-local dry run validates the final config against the topology encoded in that name without
+For a performance dry run, use the complete flat recipe name and omit `--dataset`. The rank-local dry run discovers the
+recipe and validates the final config against the topology encoded in that name without
 requiring a live allocation; the submission dry run additionally validates `--nodes` and `--gpus-per-node`.
 
 ## Rank-local entry point

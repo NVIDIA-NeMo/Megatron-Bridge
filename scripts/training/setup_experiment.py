@@ -31,7 +31,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from performance_recipe import PerformanceRecipeMetadata, selected_performance_recipe  # noqa: E402
+from performance_recipe import (  # noqa: E402
+    PerformanceRecipeMetadata,
+    selected_performance_recipe,
+    validate_selected_performance_recipe,
+)
 
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
@@ -69,7 +73,6 @@ Training examples:
 
   ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 \\
       --account ACCOUNT --partition PARTITION --container-image IMAGE \\
-      --recipe-source performance \\
       --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
 
 Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
@@ -296,6 +299,8 @@ def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
     performance_metadata = selected_performance_recipe(training_args)
+    if performance_metadata is not None:
+        validate_selected_performance_recipe(training_args, performance_metadata)
     _validate_args(args, performance_metadata)
 
     env_names = _parse_env(args.env)

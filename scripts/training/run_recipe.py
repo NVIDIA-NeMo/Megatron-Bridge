@@ -15,12 +15,11 @@
 """Run a Megatron Bridge recipe in an existing distributed environment.
 
 Select either a model name with --model or a complete recipe function with
---recipe. Complete recipes may come from the functional library or flat
-performance namespace; select the latter explicitly with
---recipe-source performance. The public launcher accepts one training mode, a
-direct dataset name, runner controls, common convenience arguments, and
-trailing KEY=VALUE ConfigContainer overrides. Slurm resources, containers,
-mounts, and environment forwarding are owned by setup_experiment.py.
+--recipe. The launcher discovers complete functional and performance recipes
+by their exported function name. It accepts one training mode, a direct dataset
+name, runner controls, common convenience arguments, and trailing KEY=VALUE
+ConfigContainer overrides. Slurm resources, containers, mounts, and environment
+forwarding are owned by setup_experiment.py.
 
 Common ConfigContainer overrides
 --------------------------------
@@ -63,7 +62,7 @@ For example:
   run_recipe.py --model gpt_oss_20b --mode pretrain --dataset mock \\
     -sl 8192 -mb 1 -tp 2 model.sequence_parallel=true
 
-  run_recipe.py --recipe-source performance \\
+  run_recipe.py \\
     --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
 """
 
@@ -83,7 +82,11 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from performance_recipe import PerformanceRecipeMetadata, performance_recipe_metadata  # noqa: E402
+from performance_recipe import (  # noqa: E402
+    PerformanceRecipeMetadata,
+    resolved_performance_recipe_metadata,
+    validate_performance_recipe_scope,
+)
 from recipe_runner import (  # noqa: E402
     apply_cli_overrides,
     apply_determinism,
@@ -158,12 +161,6 @@ def _build_parser() -> argparse.ArgumentParser:
     recipe_selection.add_argument("--model", help="Model recipe stem, for example gpt_oss_20b.")
     recipe_selection.add_argument("--recipe", help="Complete recipe function name.")
     selection.add_argument(
-        "--recipe-source",
-        choices=["library", "performance"],
-        default="library",
-        help="Recipe namespace used by --recipe; --model always selects the functional library.",
-    )
-    selection.add_argument(
         "--mode",
         choices=["pretrain", "sft", "lora", "dora"],
         help="Training mode; inferred from a conventional --recipe name when omitted.",
@@ -172,7 +169,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--step-func",
         "--step_func",
         dest="step_func",
-        help="Forward-step registry name; defaults to llm_step for library recipes and gpt_step for performance.",
+        help="Forward-step registry name; defaults to llm_step or the selected performance recipe's gpt_step.",
     )
 
     data = parser.add_argument_group("Data")
@@ -345,37 +342,6 @@ def _validate_performance_overrides(cli_overrides: list[str]) -> None:
         )
 
 
-def _validate_performance_scope(
-    args: argparse.Namespace,
-    metadata: PerformanceRecipeMetadata,
-) -> None:
-    """Limit the first unified-launcher stage to canonical text pretraining."""
-    if args.mode != "pretrain":
-        raise ValueError(
-            "The training launcher currently supports performance pretraining recipes only; continue using "
-            "scripts/performance for SFT and PEFT benchmarks during migration."
-        )
-    if metadata.family in {"qwen_vl", "wan"}:
-        raise ValueError(
-            "The training launcher currently supports text performance recipes only; continue using "
-            "scripts/performance for VLM and diffusion benchmarks during migration."
-        )
-    if args.step_func is not None and args.step_func.lower() != "gpt_step":
-        raise ValueError(
-            "Text performance recipes use the canonical gpt_step forward step; omit --step-func or pass gpt_step."
-        )
-    if args.deterministic:
-        raise ValueError(
-            "Performance recipes currently require their canonical benchmark settings; --deterministic is not "
-            "supported by the training launcher during migration."
-        )
-    if args.dataset is not None:
-        raise ValueError(
-            "Performance recipes own their canonical dataset; omit --dataset or continue using scripts/performance "
-            "for non-canonical benchmark data."
-        )
-
-
 def _current_world_size() -> int | None:
     """Return the distributed world size supplied by torchrun or Slurm, when available."""
     for variable_name in ("WORLD_SIZE", "SLURM_NTASKS"):
@@ -446,18 +412,12 @@ def _apply_performance_runtime_defaults(
 
 
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
-    """Load the requested recipe from its explicit namespace."""
-    if args.model and args.recipe_source != "library":
-        raise ValueError(
-            "--recipe-source performance requires an explicit --recipe name; --model uses library recipes."
-        )
-
+    """Load the requested recipe by its complete name or model-derived library name."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
     recipe_name = args.recipe or f"{args.model}_{_recipe_task(args.mode)}_config"
     if args.recipe:
         _validate_recipe_mode(recipe_name, args.mode)
-    load_kwargs = {"source": "performance"} if args.recipe_source == "performance" else {}
-    return load_recipe(recipe_name, peft_scheme=peft_scheme, **load_kwargs)
+    return load_recipe(recipe_name, peft_scheme=peft_scheme)
 
 
 def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
@@ -487,14 +447,15 @@ def main(argv: list[str] | None = None) -> None:
     logging.basicConfig(level=logging.INFO)
     args, cli_overrides = parse_args(argv)
 
-    metadata = None
-    if args.recipe_source == "performance":
-        if args.recipe is None:
-            raise ValueError(
-                "--recipe-source performance requires an explicit --recipe name; --model uses library recipes."
-            )
-        metadata = performance_recipe_metadata(args.recipe)
-        _validate_performance_scope(args, metadata)
+    metadata = resolved_performance_recipe_metadata(args.recipe) if args.recipe is not None else None
+    if metadata is not None:
+        validate_performance_recipe_scope(
+            metadata,
+            mode=args.mode,
+            step_func=args.step_func,
+            deterministic=args.deterministic,
+            dataset=args.dataset,
+        )
         _validate_performance_overrides(cli_overrides)
 
     recipe = _load_selected_recipe(args)
