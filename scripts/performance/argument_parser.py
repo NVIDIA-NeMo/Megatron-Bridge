@@ -159,18 +159,13 @@ def parse_additional_slurm_params(params_str):
     return params if params else None
 
 
-def parse_cli_args(*, require_legacy_selectors: bool = True) -> argparse.ArgumentParser:
+def parse_cli_args():
     """
     Command line arguments for running pre-training and fine-tuning experiments.
     """
     parser = argparse.ArgumentParser(
         description="Megatron-Bridge Pretraining and Fine-Tuning",
         argument_default=None,
-    )
-    parser.add_argument(
-        "--recipe",
-        type=str,
-        help="Exact flat performance recipe function name.",
     )
     parser.add_argument(
         "--domain",
@@ -184,14 +179,14 @@ def parse_cli_args(*, require_legacy_selectors: bool = True) -> argparse.Argumen
         "--model_family_name",
         type=lower_str,
         help="Model family name to use for experiment. E.g. `--model_family_name llama` (not llama3)",
-        required=require_legacy_selectors,
+        required=True,
     )
     parser.add_argument(
         "-mr",
         "--model_recipe_name",
         type=lower_str,
         help="Model recipe name to use for experiment. E.g. `--model_recipe_name llama31_405b`",
-        required=require_legacy_selectors,
+        required=True,
     )
     parser.add_argument(
         "--use_recipes",
@@ -229,7 +224,7 @@ def parse_cli_args(*, require_legacy_selectors: bool = True) -> argparse.Argumen
         "--num_gpus",
         type=int,
         help="Number of gpus.",
-        required=require_legacy_selectors,
+        required=True,
     )
     parser.add_argument(
         "--hidden_size",
@@ -687,7 +682,7 @@ def parse_cli_args(*, require_legacy_selectors: bool = True) -> argparse.Argumen
         type=str,
         choices=NUM_GPUS_PER_NODE_MAP.keys(),
         help="Target gpu type.",
-        required=require_legacy_selectors,
+        required=True,
     )
     performance_args.add_argument(
         "-c",

@@ -7,10 +7,10 @@ Megatron Bridge training provides a small public Slurm launcher:
 ```
 
 `train.sh` invokes `setup_experiment.py` on a Slurm login node. Library recipes run through `run_recipe.py`; an exact
-flat performance recipe name is passed unchanged to the current rank-local performance runtime. The setup layer owns
-resources, the container, explicitly forwarded environment variables, and explicit mounts. Without an active virtual
-environment, the shell entry point creates an isolated `nemo-run` environment rather than resolving the full GPU
-training dependency set on the login node.
+flat performance recipe name is translated to the selector interface already supported by `run_script.py`. The setup
+layer owns resources, the container, explicitly forwarded environment variables, and explicit mounts. Without an
+active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than resolving
+the full GPU training dependency set on the login node.
 
 `launch_with_nemo_run.py` and `launch_with_sbatch.sh` remain available for their existing specialized workflows; `train.sh` is the compact recipe-oriented path.
 
@@ -69,11 +69,10 @@ Pass the complete exported performance recipe name through the same `--recipe` o
 The GPU count encoded in the recipe name must equal `--nodes × --gpus-per-node`; the user-provided
 `--gpus-per-node` determines the node shape. This compact route supports exact exported recipe names only;
 model-family selectors and advanced performance-launcher controls remain on `scripts/performance` during migration.
-The exact name is discovered from the launcher checkout and resolved again by the Bridge code under
-`/opt/Megatron-Bridge` in the container, so use an image containing the same Bridge revision and recipe export.
-Forward `HF_TOKEN` with `--env HF_TOKEN` when the selected recipe needs online Hugging Face access, or pass `--offline`
-with a pre-populated cache. The job records the container's Bridge and Megatron-Core revisions in
-`/nemo_run/configs/repo_status.json`.
+The launcher discovers the exact public export from source and derives the existing runner selectors from its name;
+the performance parser and runner remain unchanged. Use an image containing the same Bridge revision and recipe
+export. Two SFT/PEFT names exported by both recipe packages retain their existing library route. Forward `HF_TOKEN`
+with `--env HF_TOKEN` when the selected recipe needs online Hugging Face access.
 
 ## Dataset selection
 

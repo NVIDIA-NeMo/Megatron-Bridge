@@ -51,7 +51,6 @@ def test_setup_experiment_uses_run_script_for_every_perf_workload():
 
 def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
     args = SimpleNamespace(
-        recipe=None,
         model_family_name="qwen",
         model_recipe_name="qwen3_30b_a3b",
         task="pretrain",
@@ -71,7 +70,7 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
     workload = SimpleNamespace()
     calls = []
 
-    monkeypatch.setattr(run_script, "parse_cli_args", lambda **_: parser)
+    monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
 
     def get_recipe(**kwargs):
         calls.append(("recipe", kwargs))
@@ -106,13 +105,12 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
 
 
 def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):
-    args = SimpleNamespace(recipe=None)
+    args = SimpleNamespace()
     cli_overrides = ["model.num_layers=1"]
     parser = SimpleNamespace(parse_known_args=lambda: (args, cli_overrides))
     calls = []
 
-    monkeypatch.setattr(run_script, "parse_cli_args", lambda **_: parser)
-    monkeypatch.setattr(run_script, "_resolve_recipe_selection", lambda _: None)
+    monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
     monkeypatch.setenv(run_script.ENV_BOOTSTRAP_MARKER, str(run_script.os.getpid()))
     monkeypatch.setattr(run_script, "_bootstrap_recipe_environment", lambda _: calls.append("bootstrap"))
     monkeypatch.setattr(
@@ -125,12 +123,11 @@ def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):
 
 
 def test_run_script_ignores_stale_bootstrap_marker(monkeypatch):
-    args = SimpleNamespace(recipe=None)
+    args = SimpleNamespace()
     parser = SimpleNamespace(parse_known_args=lambda: (args, []))
     calls = []
 
-    monkeypatch.setattr(run_script, "parse_cli_args", lambda **_: parser)
-    monkeypatch.setattr(run_script, "_resolve_recipe_selection", lambda _: None)
+    monkeypatch.setattr(run_script, "parse_cli_args", lambda: parser)
     monkeypatch.setenv(run_script.ENV_BOOTSTRAP_MARKER, "stale-pid")
     monkeypatch.setattr(run_script, "_bootstrap_recipe_environment", lambda parsed_args: calls.append(parsed_args))
     monkeypatch.setattr(run_script, "_run_training", lambda *_: calls.append("training"))
@@ -138,36 +135,6 @@ def test_run_script_ignores_stale_bootstrap_marker(monkeypatch):
     run_script.main()
 
     assert calls == [args]
-
-
-def test_run_script_resolves_exact_recipe_without_public_family_selector(monkeypatch):
-    args = SimpleNamespace(
-        recipe="qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
-        model_family_name=None,
-        model_recipe_name=None,
-        num_gpus=None,
-        gpu=None,
-        task="pretrain",
-        compute_dtype="bf16",
-        config_variant=None,
-    )
-    recipe = lambda: None
-    monkeypatch.setattr(
-        run_script,
-        "_find_perf_recipe_export",
-        lambda _: (recipe, "megatron.bridge.perf_recipes.qwen"),
-    )
-
-    run_script._resolve_recipe_selection(args)
-
-    assert args.model_family_name == "qwen"
-    assert args.model_recipe_name == "qwen3_30b_a3b"
-    assert args.task == "pretrain"
-    assert args.num_gpus == 16
-    assert args.gpu == "h100"
-    assert args.compute_dtype == "bf16"
-    assert args.config_variant is None
-    assert args.domain == "llm"
 
 
 def test_run_script_defers_training_framework_imports():

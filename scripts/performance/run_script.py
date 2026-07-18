@@ -36,20 +36,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 ENV_BOOTSTRAP_MARKER = "_MB_PERF_ENV_BOOTSTRAPPED"
-FLAT_RECIPE_PATTERN = re.compile(
-    r"^(?P<model_recipe_name>[a-z0-9_]+)_(?P<task>pretrain|sft|peft)_"
-    r"(?P<num_gpus>[1-9][0-9]*)gpu_"
-    r"(?P<gpu>[a-z0-9]+)_"
-    r"(?P<precision>bf16|fp8cs|fp8mx|fp8sc|nvfp4)"
-    r"(?:_(?P<config_variant>[a-z0-9_]+))?_config$"
-)
-PRECISION_ARGUMENTS = {
-    "bf16": "bf16",
-    "fp8cs": "fp8_cs",
-    "fp8mx": "fp8_mx",
-    "fp8sc": "fp8_sc",
-    "nvfp4": "nvfp4",
-}
 SENSITIVE_ENV_VAR_PATTERN = re.compile(
     r"(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTHORIZATION)(_|$)",
     re.IGNORECASE,
@@ -95,19 +81,13 @@ def _perf_recipe_family_modules() -> tuple[str, ...]:
     return tuple(sorted(module_names))
 
 
-def _find_perf_recipe_export(name: str) -> tuple[Callable[[], object], str] | None:
-    """Find an exact flat recipe and the package that exports it."""
+def _find_perf_recipe(name: str) -> Callable[[], object] | None:
+    """Find a flat perf recipe function exported by any perf recipe family package."""
     for module_name in _perf_recipe_family_modules():
         recipe_fn = getattr(importlib.import_module(module_name), name, None)
         if callable(recipe_fn):
-            return cast(Callable[[], object], recipe_fn), module_name
+            return cast(Callable[[], object], recipe_fn)
     return None
-
-
-def _find_perf_recipe(name: str) -> Callable[[], object] | None:
-    """Find a flat perf recipe function exported by any perf recipe package."""
-    export = _find_perf_recipe_export(name)
-    return export[0] if export is not None else None
 
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
@@ -149,60 +129,6 @@ def get_perf_recipe_by_name(
     return recipe_fn()
 
 
-def _resolve_recipe_selection(args) -> None:
-    """Resolve an exact recipe name or validate the legacy selector arguments."""
-    if args.recipe is None:
-        required_arguments = ("model_family_name", "model_recipe_name", "num_gpus", "gpu")
-        missing = [name for name in required_arguments if getattr(args, name) is None]
-        if missing:
-            options = ", ".join(f"--{name}" for name in missing)
-            raise ValueError(
-                f"Pass --recipe with an exact flat recipe name or provide the legacy selectors: {options}."
-            )
-        return
-
-    conflicting_arguments = ("model_family_name", "model_recipe_name", "num_gpus", "gpu")
-    conflicts = [name for name in conflicting_arguments if getattr(args, name) is not None]
-    if conflicts:
-        options = ", ".join(f"--{name}" for name in conflicts)
-        raise ValueError(f"--recipe already identifies the workload; omit legacy selectors: {options}.")
-
-    match = FLAT_RECIPE_PATTERN.fullmatch(args.recipe)
-    export = _find_perf_recipe_export(args.recipe)
-    if match is None or export is None:
-        raise ValueError(f"No exact flat performance recipe named '{args.recipe}' is exported.")
-
-    _, module_name = export
-    args.model_family_name = module_name.rsplit(".", 1)[-1]
-    args.model_recipe_name = match.group("model_recipe_name")
-    args.task = match.group("task")
-    args.num_gpus = int(match.group("num_gpus"))
-    args.gpu = match.group("gpu")
-    args.compute_dtype = PRECISION_ARGUMENTS[match.group("precision")]
-    args.config_variant = match.group("config_variant")
-    args.domain = {
-        "qwen_vl": "qwen3vl",
-        "wan": "diffusion",
-    }.get(args.model_family_name, "llm")
-
-
-def _load_perf_recipe(args) -> "ConfigContainer":
-    """Load the exact recipe when selected, otherwise use legacy selectors."""
-    if args.recipe is not None:
-        recipe_fn = _find_perf_recipe(args.recipe)
-        if recipe_fn is None:
-            raise ValueError(f"No exact flat performance recipe named '{args.recipe}' is exported.")
-        return recipe_fn()
-    return get_perf_recipe_by_name(
-        model_recipe_name=args.model_recipe_name,
-        task=args.task,
-        num_gpus=args.num_gpus,
-        gpu=args.gpu,
-        precision=args.compute_dtype,
-        config_variant=args.config_variant,
-    )
-
-
 class _EnvironmentExecutor:
     """Minimal executor adapter for ``PerfEnvPlugin`` environment setup."""
 
@@ -212,17 +138,14 @@ class _EnvironmentExecutor:
 
 def _bootstrap_recipe_environment(args) -> None:
     """Install recipe env and re-exec this script in a clean interpreter."""
-    if args.recipe is not None:
-        recipe = _load_perf_recipe(args)
-    else:
-        recipe = get_perf_recipe_for_environment(
-            model_recipe_name=args.model_recipe_name,
-            task=args.task,
-            num_gpus=args.num_gpus,
-            gpu=args.gpu,
-            precision=args.compute_dtype,
-            config_variant=args.config_variant,
-        )
+    recipe = get_perf_recipe_for_environment(
+        model_recipe_name=args.model_recipe_name,
+        task=args.task,
+        num_gpus=args.num_gpus,
+        gpu=args.gpu,
+        precision=args.compute_dtype,
+        config_variant=args.config_variant,
+    )
     workload_base_config = _workload_base_config_from_recipe(recipe, num_gpus=args.num_gpus)
     plugin = PerfEnvPlugin(
         moe_a2a_overlap=args.moe_a2a_overlap,
@@ -262,7 +185,14 @@ def _run_training(args, cli_overrides: list[str]) -> None:
     if args.dump_env:
         _dump_env_rank0()
 
-    recipe = _load_perf_recipe(args)
+    recipe = get_perf_recipe_by_name(
+        model_recipe_name=args.model_recipe_name,
+        task=args.task,
+        num_gpus=args.num_gpus,
+        gpu=args.gpu,
+        precision=args.compute_dtype,
+        config_variant=getattr(args, "config_variant", None),
+    )
 
     recipe = set_cli_overrides(recipe, cli_overrides)
     recipe = set_user_overrides(recipe, args)
@@ -309,16 +239,8 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
 def main() -> None:
     """Resolve recipe env on the first pass and train in the self-exec process."""
-    parser = parse_cli_args(require_legacy_selectors=False)
+    parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
-    _resolve_recipe_selection(args)
-
-    if args.recipe is not None:
-        override_fields = {override.lstrip("+~").split("=", 1)[0] for override in cli_overrides if "=" in override}
-        if "train.manual_gc" not in override_fields:
-            cli_overrides.insert(0, "train.manual_gc=true")
-        if "train.manual_gc_interval" not in override_fields:
-            cli_overrides.insert(1, "train.manual_gc_interval=100")
 
     if os.environ.get(ENV_BOOTSTRAP_MARKER) != str(os.getpid()):
         _bootstrap_recipe_environment(args)
