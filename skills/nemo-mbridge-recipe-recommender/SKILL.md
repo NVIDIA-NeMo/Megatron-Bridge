@@ -25,9 +25,9 @@ index details:
 
 1. **Library recipes** under `src/megatron/bridge/recipes/` are for functional
    training and use `scripts/training/run_recipe.py`.
-2. **Performance recipes** under `scripts/performance/` are for upper-bound
-   throughput benchmarks. They use mock data and should not be presented as
-   production training recipes.
+2. **Performance recipes** under `src/megatron/bridge/perf_recipes/` are for
+   upper-bound throughput benchmarks. They own their canonical benchmark data
+   and settings and should not be presented as production training recipes.
 3. For a first-time Bridge smoke test, recommend `llama3_8b_sft_config` with
    mock data via `--dataset llm-pretrain-mock`. Do not use `llm-finetune` for
    the setup-only tryout unless the user specifically asks for an SFT data path.
@@ -66,14 +66,27 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 ### Performance recipes (throughput benchmarks)
 
 ```bash
-python scripts/performance/run_script.py \
-    --recipe <model_family> \
-    --gpu_type h100 \
-    --num_gpus 64 \
-    --data mock
+./scripts/training/train.sh \
+    --nodes 2 --gpus-per-node 8 \
+    --account ACCOUNT --partition PARTITION --container-image IMAGE \
+    --recipe-source performance \
+    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config \
+    --mode pretrain
 ```
 
-See the Performance Recipe Index for important caveats before using these for anything beyond throughput benchmarking.
+The GPU allocation and GPUs per node must exactly match the count and hardware
+topology encoded in the recipe name. The selected partition must provide that
+hardware. The launcher preserves the compatibility path's rank-local NUMA
+binding and core Pyxis runtime defaults. The
+unified launcher currently supports canonical text pretraining only: preserve
+the recipe-owned dataset and configuration, and limit overrides to
+`train.train_iters`, `logger.*`, `profiling.*`, and `env_vars.*`. Use
+`scripts/performance/setup_experiment.py` for SFT/PEFT, VLM, diffusion, dataset
+replacement, topology resizing, and specialized benchmark controls until those
+paths migrate.
+
+See the Performance Recipe Index for important caveats before using these for
+anything beyond throughput benchmarking.
 
 ---
 
@@ -93,8 +106,9 @@ recipe logic was split across multiple indirection layers, configs were not
 self-contained, and the two-level pipeline made maintenance and debugging
 difficult. Python functions are explicit, greppable, and composable.
 
-The training launcher can invoke both library recipes and perf recipes without
-the removed legacy config package.
+The training launcher can invoke library recipes and canonical text-pretraining
+perf recipes without the removed legacy config package. Recipe namespaces are
+explicit because some function names exist in both.
 
 ---
 
@@ -316,8 +330,9 @@ User wants to train a model
 │   └─ 128+ GPUs → 405B+, large MoE (DeepSeek V3, Kimi K2)
 │
 ├─ Want throughput benchmarks?
-│   ├─ Yes → Use perf recipes (scripts/performance/)
-│   │   └─ ⚠️ These run on mock data for upper-bound perf only
+│   ├─ Yes → Use perf recipes (src/megatron/bridge/perf_recipes/)
+│   │   ├─ Canonical text pretrain → scripts/training/train.sh --recipe-source performance
+│   │   └─ Other perf workflows → scripts/performance/setup_experiment.py during migration
 │   └─ No → Use library recipes (scripts/training/run_recipe.py)
 │
 └─ Long context?
@@ -415,7 +430,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
 | Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 8 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
-| Benchmark throughput | Perf recipes via `run_script.py` | Varies |
+| Benchmark text-pretrain throughput | Perf recipe via `train.sh --recipe-source performance` | Exact encoded count |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |
 | VLM fine-tuning | `qwen3_vl_8b_sft_config` or `gemma3_vl_*_sft_config` | 4–8 |
 | Diffusion training | `wan_1_3B_pretrain_config` or `flux_12b_pretrain_config` | 8 |
@@ -430,7 +445,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Recipe `__init__.py` (all exports) | `src/megatron/bridge/recipes/__init__.py` |
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
+| Training Slurm launcher | `scripts/training/train.sh` |
 | Perf recipes root | `src/megatron/bridge/perf_recipes/` |
-| Perf entry point | `scripts/performance/run_script.py` |
+| Perf compatibility launcher | `scripts/performance/setup_experiment.py` |
 | Perf recipe helpers | `scripts/performance/utils/utils.py` |
 | Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |

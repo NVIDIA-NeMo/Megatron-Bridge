@@ -6,21 +6,22 @@ Megatron Bridge training provides a small public Slurm launcher:
 ./scripts/training/train.sh [launch options] [runner options] [KEY=VALUE overrides]
 ```
 
-`train.sh` invokes `setup_experiment.py` on a Slurm login node. Library recipes run through `run_recipe.py`; an exact
-flat performance recipe name is translated to the selector interface already supported by `run_script.py`. The setup
-layer owns resources, the container, explicitly forwarded environment variables, and explicit mounts. Without an
-active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than resolving
-the full GPU training dependency set on the login node.
+`train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` directly through Slurm. The
+setup layer only owns resources, the container, explicitly forwarded environment variables, and explicit mounts.
+Recipe selection, dataset construction, and ConfigContainer overrides are resolved inside the training environment.
+Without an active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than
+resolving the full GPU training dependency set on the login node.
 
 `launch_with_nemo_run.py` and `launch_with_sbatch.sh` remain available for their existing specialized workflows; `train.sh` is the compact recipe-oriented path.
 
 ## Selection rules
 
-Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. The mode
-is inferred from a conventional complete recipe name; pass one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
-`--mode dora` when using `--model` or when the name does not encode it.
+Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. Recipes
+come from the functional `library` namespace by default. Select a flat performance recipe explicitly with
+`--recipe-source performance`; performance selection requires its complete function name. Every invocation requires
+one of `--mode pretrain`, `--mode sft`, `--mode lora`, or `--mode dora`.
 
-### Complete recipe
+### Library recipe
 
 A complete recipe already identifies the model and default training configuration, so do not also pass `--model`:
 
@@ -48,38 +49,49 @@ requested adapter scheme.
     --mode pretrain --dataset mock
 ```
 
-The default forward step is `llm_step`. Pass `--step-func NAME` explicitly for a recipe that needs another registered
-forward step. Common training, sequence-length, parallelism, optimization, and checkpoint fields also have convenience
-flags such as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`.
-Use trailing `KEY=VALUE` overrides for every other `ConfigContainer` field.
-
 ### Performance recipe
 
-Pass the complete exported performance recipe name through the same `--recipe` option; recipe type is inferred:
+The training launcher can run canonical text-pretraining recipes from
+`src/megatron/bridge/perf_recipes`. Both the total allocation and GPUs per node must match the topology encoded by the
+recipe name; the selected Slurm partition must provide that hardware:
 
 ```bash
 ./scripts/training/train.sh \
     --nodes 2 --gpus-per-node 8 \
     --account ACCOUNT --partition PARTITION \
-    --container-image /path/to/container.sqsh \
-    --env HF_TOKEN \
-    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+    --container-image IMAGE \
+    --recipe-source performance \
+    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config \
+    --mode pretrain
 ```
 
-The GPU count encoded in the recipe name must equal `--nodes × --gpus-per-node`; the user-provided
-`--gpus-per-node` determines the node shape. This compact route supports exact exported recipe names only;
-model-family selectors and advanced performance-launcher controls remain on `scripts/performance` during migration.
-The launcher discovers the exact public export from source and derives the existing runner selectors from its name;
-the performance parser and runner remain unchanged. Use an image containing the same Bridge revision and recipe
-export. Two SFT/PEFT names exported by both recipe packages retain their existing library route. Forward `HF_TOKEN`
-with `--env HF_TOKEN` when the selected recipe needs online Hugging Face access.
+Performance recipes own their benchmark dataset, topology, batch sizes, sequence length, precision, dispatcher,
+CUDA-graph settings, and process environment. Do not pass `--dataset` or configuration overrides for those fields.
+During the first migration stage, only `train.train_iters` (including `--max_steps`), `logger.*`, `profiling.*`, and
+`env_vars.*` overrides are accepted. Recipe environment defaults are installed before the launcher enters the training
+stack; values explicitly set by the shell or Slurm environment retain precedence.
+
+For performance recipes, the launcher also preserves the compatibility path's rank-local CPU/NUMA binding, canonical
+GPUs-per-node check, offline benchmark environment, and Pyxis `srun` defaults. These are launcher semantics rather than
+model configuration and therefore do not belong in each recipe.
+
+SFT/PEFT, VLM, diffusion, topology resizing, dataset replacement, and other specialized performance controls remain
+on `scripts/performance/setup_experiment.py` while those paths migrate. The compatibility launcher remains available;
+new canonical text-pretraining invocations should use `scripts/training/train.sh`.
+
+The default library forward step is `llm_step`. Pass `--step-func NAME` explicitly for a library recipe that needs
+another registered forward step. Text performance recipes use the same `gpt_step` path as the compatibility launcher.
+Common training, sequence-length, parallelism, optimization, and checkpoint fields also have convenience flags such
+as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`. Use trailing
+`KEY=VALUE` overrides for every other library `ConfigContainer` field.
 
 ## Dataset selection
 
-`--dataset` accepts source selectors and named dataset presets rather than internal dataset config class names.
+For library recipes, `--dataset` accepts source selectors and named dataset presets rather than internal dataset config class names.
 Each name selects a `DatasetConfig` preset; the config type selects the existing runtime builder. Trailing
 `dataset.*` overrides are applied directly after preset selection. Use typed fields for source, preprocessing, packing,
 and loader settings; use `dataset.dataset_kwargs={...}` only for extra options consumed by a dataset implementation.
+Performance recipes retain their recipe-owned dataset and reject `--dataset`.
 
 | Value | Kind | Mode | Behavior |
 |---|---|---|---|
@@ -179,9 +191,9 @@ directory:
 
 ## Overrides
 
-Every `ConfigContainer` field can be set with trailing `KEY=VALUE` arguments. Common fields also accept the convenience
-flags listed by `run_recipe.py --help`. For example, batch sizes and training duration belong under `train`, not
-`model`:
+For library recipes, every `ConfigContainer` field can be set with trailing `KEY=VALUE` arguments. Common fields also
+accept the convenience flags listed by `run_recipe.py --help`. For example, batch sizes and training duration belong
+under `train`, not `model`:
 
 ```bash
 ./scripts/training/train.sh \
@@ -198,6 +210,10 @@ flags listed by `run_recipe.py --help`. For example, batch sizes and training du
 Precedence is recipe defaults, the selected dataset configuration, common convenience arguments, then trailing
 `ConfigContainer` overrides. A trailing override therefore wins when it targets the same field as a convenience
 argument.
+
+Performance recipes intentionally accept only duration, logging, profiling, and recipe-environment overrides during
+the first migration stage. This keeps their measured configuration canonical; use the compatibility performance
+launcher for other experiments.
 
 ## Slurm and containers
 
@@ -216,7 +232,7 @@ forwarded implicitly. Export credentials in the launcher environment, then repea
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
-The launcher adds no cluster-specific `srun` flags. Repeat
+Library-recipe launches add no cluster-specific `srun` flags by default. Repeat
 `--srun-arg=ARG` for every flag required by the target cluster. For example,
 a Pyxis/Enroot cluster may use:
 
@@ -228,8 +244,8 @@ a Pyxis/Enroot cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
-Common NCCL, Transformer Engine, tokenizer, and allocator environment defaults are applied to both library and
-performance recipes. Explicitly inherited environment names take precedence over these defaults.
+Performance-recipe launches add `--mpi=pmix`, `--no-container-mount-home`, and `--container-writable` after custom
+arguments to preserve the compatibility launcher, and prefix every rank with the hardware-specific `numactl` binding.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.
@@ -244,6 +260,10 @@ uv run python scripts/training/run_recipe.py \
     --dry-run logger.save_config_filepath=/tmp/config.yaml
 ```
 
+For a performance dry run, add `--recipe-source performance`, use the complete flat recipe name, and omit
+`--dataset`. The rank-local dry run validates the final config against the topology encoded in that name without
+requiring a live allocation; the submission dry run additionally validates `--nodes` and `--gpus-per-node`.
+
 ## Rank-local entry point
 
 `run_recipe.py` remains available for existing distributed environments that already own process launch:
@@ -257,4 +277,5 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
     model.sequence_parallel=true
 ```
 
-This entry point loads library recipes for functional pretraining, SFT, LoRA, and DoRA.
+This entry point loads library recipes for functional pretraining, SFT, LoRA, and DoRA, and canonical text-pretraining
+performance recipes when selected explicitly.

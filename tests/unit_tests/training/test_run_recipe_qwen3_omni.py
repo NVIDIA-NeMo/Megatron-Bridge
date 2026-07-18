@@ -115,13 +115,6 @@ def _load_recipe_runner_module():
     common_utils_module = types.ModuleType("megatron.bridge.utils.common_utils")
     common_utils_module.get_rank_safe = lambda: 1
 
-    torch_stub = types.SimpleNamespace()
-    torch_stub.distributed = types.SimpleNamespace(
-        barrier=Mock(name="barrier"),
-        destroy_process_group=Mock(name="destroy_process_group"),
-        is_initialized=lambda: False,
-    )
-
     stub_modules = {
         "megatron": megatron_module,
         "megatron.bridge": bridge_module,
@@ -158,14 +151,21 @@ def _load_recipe_runner_module():
 
     previous_modules = {name: sys.modules.get(name) for name in stub_modules}
     sys.modules.update(stub_modules)
+    script_dir = str(script_path.parent)
+    inserted_script_dir = script_dir not in sys.path
+    if inserted_script_dir:
+        sys.path.insert(0, script_dir)
 
     try:
         spec = importlib.util.spec_from_file_location(module_name, script_path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        module.torch = torch_stub
+        module._destroy_process_group = Mock(name="destroy_process_group")
+        module._get_rank_safe = lambda: 1
     finally:
+        if inserted_script_dir:
+            sys.path.remove(script_dir)
         for name, previous in previous_modules.items():
             if previous is None:
                 sys.modules.pop(name, None)
@@ -228,6 +228,7 @@ class TestRecipeRunnerQwen3Omni:
 
         module, handles = _load_recipe_runner_module()
         config = object()
+        module.TRAIN_FUNCTIONS["finetune"] = handles["finetune"]
 
         module.run_config(config=config, mode="finetune", step_func=handles["omni_forward_step"])
 
@@ -240,6 +241,7 @@ class TestRecipeRunnerQwen3Omni:
         events = []
         module.dump_env_rank0 = Mock(side_effect=lambda: events.append("dump"))
         handles["finetune"].side_effect = lambda **kwargs: events.append("training")
+        module.TRAIN_FUNCTIONS["finetune"] = handles["finetune"]
 
         module.run_config(config=object(), mode="finetune", step_func=object(), dump_environment=True)
 

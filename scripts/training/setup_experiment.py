@@ -31,24 +31,27 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from performance_recipe import PerformanceRecipeMetadata, resolve_performance_recipe_args  # noqa: E402
+from performance_recipe import PerformanceRecipeMetadata, selected_performance_recipe  # noqa: E402
 
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
-TRAINING_ENTRYPOINT = CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"
-PERFORMANCE_ENTRYPOINT = CONTAINER_REPO_ROOT / "scripts/performance/run_script.py"
-TRAINING_LAUNCH_ENV = {
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
+PERFORMANCE_SRUN_ARGS = ("--mpi=pmix", "--no-container-mount-home", "--container-writable")
+PERFORMANCE_LAUNCH_ENV = {
     "TRANSFORMERS_OFFLINE": "1",
     "TOKENIZERS_PARALLELISM": "False",
-    "NCCL_NVLS_ENABLE": "0",
-    "NVTE_NORM_FWD_USE_CUDNN": "1",
-    "NVTE_NORM_BWD_USE_CUDNN": "1",
-    "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-    "NCCL_GRAPH_REGISTER": "0",
 }
+PERFORMANCE_GB200_LAUNCH_ENV = {
+    "NCCL_NET_GDR_LEVEL": "PHB",
+    "NCCL_NET_GDR_C2C": "1",
+}
+PERFORMANCE_SLURM_TEMPLATE = r"""
+#!/usr/bin/env bash
+set -euo pipefail
+
+command -v numactl >/dev/null || { echo "numactl is required for performance recipe CPU binding" >&2; exit 1; }
+exec {{ numa_command | safe }} {{ command | safe }}
+"""
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -66,11 +69,10 @@ Training examples:
 
   ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 \\
       --account ACCOUNT --partition PARTITION --container-image IMAGE \\
-      --env HF_TOKEN \\
-      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+      --recipe-source performance \\
+      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
 
-Library arguments are forwarded to run_recipe.py. Exact performance names are
-translated to the existing selector interface of the unchanged performance runner.
+Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
 """,
     )
     execution = parser.add_argument_group("Execution")
@@ -173,6 +175,11 @@ def _validate_args(
     if not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
     if performance_metadata is not None:
+        if args.gpus_per_node != performance_metadata.gpus_per_node:
+            raise ValueError(
+                f"Performance recipe requires exactly {performance_metadata.gpus_per_node} GPUs per "
+                f"{performance_metadata.hardware} node, but --gpus-per-node is {args.gpus_per_node}."
+            )
         requested_gpus = args.nodes * args.gpus_per_node
         if requested_gpus != performance_metadata.num_gpus:
             raise ValueError(
@@ -181,31 +188,76 @@ def _validate_args(
             )
 
 
+def _performance_numa_command(metadata: PerformanceRecipeMetadata) -> str:
+    """Return the compatibility launcher's hardware-specific NUMA binding."""
+    numa_divisor = 2 if metadata.hardware in {"gb200", "gb300"} else 4
+    command = f"numactl --cpunodebind=$((SLURM_LOCALID/{numa_divisor})) --membind=$((SLURM_LOCALID/{numa_divisor}))"
+    if metadata.hardware == "b300":
+        command += " -C $((SLURM_LOCALID * 16)),$((SLURM_LOCALID * 16 + 1))"
+    return command
+
+
+def _performance_segment(metadata: PerformanceRecipeMetadata, *, nodes: int) -> int | None:
+    """Preserve the compatibility launcher's Slurm segment sizing on four-GPU nodes."""
+    if metadata.gpus_per_node != 4:
+        return None
+    if nodes <= 18:
+        return nodes
+    for segment in range(18, 0, -1):
+        if nodes % segment == 0:
+            return segment
+    raise AssertionError("Every positive node count is divisible by one.")
+
+
+def _performance_slurm_launcher(metadata: PerformanceRecipeMetadata) -> object:
+    """Build the rank-local NUMA-prefixed Slurm command template lazily."""
+    from nemo_run.core.execution.launcher import SlurmTemplate
+
+    return SlurmTemplate(
+        template_inline=PERFORMANCE_SLURM_TEMPLATE,
+        template_vars={"numa_command": _performance_numa_command(metadata)},
+    )
+
+
 def _task_environment(
     performance_metadata: PerformanceRecipeMetadata | None,
     *,
     inherited_env_names: list[str],
 ) -> dict[str, str]:
-    """Build the rank-local environment without materializing inherited values."""
-    python_paths = [
-        str(CONTAINER_REPO_ROOT / "src"),
-        str(CONTAINER_REPO_ROOT / "3rdparty/Megatron-LM"),
-    ]
-    if performance_metadata is not None:
-        python_paths.insert(0, str(CONTAINER_REPO_ROOT / "scripts/performance"))
-    environment = {"PYTHONPATH": f"{':'.join(python_paths)}:$PYTHONPATH"}
-    launch_environment = dict(TRAINING_LAUNCH_ENV)
-    if "HF_TOKEN" in inherited_env_names and "TRANSFORMERS_OFFLINE" not in inherited_env_names:
-        launch_environment["TRANSFORMERS_OFFLINE"] = "0"
-    for name, value in launch_environment.items():
+    """Build non-secret rank-local environment defaults for the selected recipe source."""
+    environment = {
+        "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
+    }
+    if performance_metadata is None:
+        return environment
+
+    performance_environment = dict(PERFORMANCE_LAUNCH_ENV)
+    if performance_metadata.hardware == "gb200":
+        performance_environment.update(PERFORMANCE_GB200_LAUNCH_ENV)
+    for name, value in performance_environment.items():
         if name not in inherited_env_names:
             environment[name] = value
     return environment
 
 
-def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
+def _build_executor(
+    args: argparse.Namespace,
+    env_names: list[str],
+    mounts: list[str],
+    *,
+    performance_metadata: PerformanceRecipeMetadata | None = None,
+) -> object:
     """Build a Slurm NeMo-Run executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
+    performance_kwargs = {}
+    srun_args = list(args.srun_args)
+    if performance_metadata is not None:
+        performance_kwargs["launcher"] = _performance_slurm_launcher(performance_metadata)
+        segment = _performance_segment(performance_metadata, nodes=args.nodes)
+        if segment is not None:
+            performance_kwargs["segment"] = segment
+        srun_args.extend(PERFORMANCE_SRUN_ARGS)
+
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
@@ -217,6 +269,7 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
         packager=run.Packager(),
+        **performance_kwargs,
         **gpu_kwargs,
     )
     executor.container_image = args.container_image
@@ -224,13 +277,13 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     # Slurm inherits these values from the launcher environment. NeMo-Run receives
     # names only so secrets are not materialized into generated sbatch scripts.
     executor.env_vars = {}
-    task_env_names = _task_environment(None, inherited_env_names=env_names)
+    task_env_names = _task_environment(performance_metadata, inherited_env_names=env_names)
     # Pyxis otherwise lets values baked into the image override the task
     # environment. Name every task variable here while keeping secret values in
     # the inherited Slurm environment only.
     executor.container_env = sorted(set(env_names) | set(task_env_names))
     executor.additional_parameters = {"export": ",".join(env_names) if env_names else "NIL"}
-    executor.srun_args = args.srun_args
+    executor.srun_args = srun_args
     return executor
 
 
@@ -242,24 +295,26 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
-    performance_metadata, task_args = resolve_performance_recipe_args(training_args)
-    entrypoint = PERFORMANCE_ENTRYPOINT if performance_metadata is not None else TRAINING_ENTRYPOINT
+    performance_metadata = selected_performance_recipe(training_args)
+    _validate_args(args, performance_metadata)
 
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
-    _validate_args(args, performance_metadata)
-    executor = _build_executor(args, env_names, mounts)
+    executor = _build_executor(args, env_names, mounts, performance_metadata=performance_metadata)
 
     task = run.Script(
-        path=str(entrypoint),
+        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
         entrypoint="python",
         env=_task_environment(performance_metadata, inherited_env_names=env_names),
         # NeMo-Run 0.10 joins Script arguments into an sbatch shell command.
         # Quote each value here so spaces and metacharacters remain one argument.
-        args=[shlex.quote(argument) for argument in task_args],
+        args=[shlex.quote(argument) for argument in training_args],
     )
     experiment_name = args.experiment_name or "training"
-    logger.info("Training command: %s", shlex.join(["python", str(entrypoint), *task_args]))
+    logger.info(
+        "Training command: %s",
+        shlex.join(["python", str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"), *training_args]),
+    )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 

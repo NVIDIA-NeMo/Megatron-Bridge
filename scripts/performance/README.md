@@ -2,7 +2,13 @@
 
 ## NOTE: This directory will change a lot over the coming weeks
 
-- Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
+New canonical text-pretraining runs should use `scripts/training/train.sh --recipe-source performance` with the exact
+flat recipe function name. The launcher in this directory is retained as a compatibility path while SFT/PEFT, VLM,
+diffusion, dataset replacement, topology resizing, and specialized benchmark controls migrate. The training launcher
+already preserves the flat text-pretrain path's GPU topology validation, NUMA binding, process environment, and core
+Pyxis `srun` setup.
+
+- Scripts defined in `scripts/performance` launch performance-optimized experiments on Slurm-based clusters.
 
 ## Performance recipe configs
 
@@ -11,7 +17,7 @@ launcher resolves recipes from that package by model, task, GPU count, GPU type,
 and config variant.
 
 `setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
-applies recipe-owned process settings before importing Torch, then replaces itself with
+applies recipe-owned process settings before importing the training loop, then replaces itself with
 either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
 Each training entrypoint therefore executes only once.
 

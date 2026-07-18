@@ -42,6 +42,7 @@ def _load_module():
         "apply_cli_overrides",
         "apply_determinism",
         "apply_runtime_environment",
+        "bootstrap_recipe_environment",
         "load_forward_step",
         "load_recipe",
         "run_config",
@@ -53,6 +54,7 @@ def _load_module():
     recipe_runner.apply_cli_overrides.side_effect = lambda config, _: config
     recipe_runner.apply_determinism.side_effect = lambda config, **_: config
     recipe_runner.apply_runtime_environment.side_effect = lambda config: config
+    recipe_runner.bootstrap_recipe_environment.side_effect = lambda config, **_: config
     recipe_runner.sync_finetuning_cp_invariants.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda config: config
@@ -205,6 +207,377 @@ def test_full_recipe_uses_only_library_namespace_and_default_llm_step():
         peft_scheme=None,
     )
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
+
+
+def test_full_recipe_can_select_performance_namespace(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS_PER_NODE", raising=False)
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe-source",
+            "performance",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    handles.recipe_runner.load_recipe.assert_called_once_with(
+        "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        peft_scheme=None,
+        source="performance",
+    )
+    assert config.optimizer.use_precision_aware_optimizer is True
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    bootstrap_call = handles.recipe_runner.bootstrap_recipe_environment.call_args
+    assert bootstrap_call.args == (config,)
+    assert bootstrap_call.kwargs["script_path"].endswith("scripts/training/run_recipe.py")
+    handles.recipe_runner.load_forward_step.assert_called_once_with("gpt_step", mode="pretrain")
+    handles.recipe_runner.run_config.assert_called_once_with(
+        config=config,
+        mode="pretrain",
+        step_func=handles.recipe_runner.load_forward_step.return_value,
+        dryrun=False,
+        dryrun_world_size=16,
+        dump_environment=False,
+    )
+
+
+@pytest.mark.parametrize("mode", ["sft", "lora"])
+def test_performance_finetuning_recipes_remain_on_legacy_launcher(mode):
+    module, handles = _load_module()
+    recipe_task = "sft" if mode == "sft" else "peft"
+
+    with pytest.raises(ValueError, match="performance pretraining recipes only"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                f"llama3_70b_{recipe_task}_32gpu_h100_bf16_config",
+                "--mode",
+                mode,
+            ]
+        )
+
+    handles.recipe_runner.load_recipe.assert_not_called()
+
+
+def test_performance_namespace_requires_explicit_recipe_name():
+    module, _ = _load_module()
+
+    with pytest.raises(ValueError, match="requires an explicit --recipe"):
+        module.main(
+            [
+                "--model",
+                "qwen3_30b_a3b",
+                "--recipe-source",
+                "performance",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "model.expert_model_parallel_size=8",
+        "dataset.seq_length=8192",
+        "train.micro_batch_size=2",
+    ],
+)
+def test_performance_recipe_rejects_noncanonical_overrides(override):
+    module, handles = _load_module()
+
+    with pytest.raises(ValueError, match="canonical model"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+                override,
+            ]
+        )
+
+    handles.recipe_runner.load_recipe.assert_not_called()
+
+
+def test_performance_dry_run_accepts_observability_and_duration_overrides(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
+    monkeypatch.setenv("SLURM_TASKS_PER_NODE", "heterogeneous-dry-run-allocation")
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe-source",
+            "performance",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+            "--dry-run",
+            "--max_steps",
+            "75",
+            "logger.log_interval=5",
+            "profiling.use_pytorch_profiler=true",
+            "env_vars.NCCL_DEBUG=INFO",
+        ]
+    )
+
+    handles.recipe_runner.apply_cli_overrides.assert_called_once_with(
+        config,
+        [
+            "train.train_iters=75",
+            "logger.log_interval=5",
+            "profiling.use_pytorch_profiler=true",
+            "env_vars.NCCL_DEBUG=INFO",
+        ],
+    )
+    handles.recipe_runner.run_config.assert_called_once_with(
+        config=config,
+        mode="pretrain",
+        step_func=handles.recipe_runner.load_forward_step.return_value,
+        dryrun=True,
+        dryrun_world_size=16,
+        dump_environment=False,
+    )
+
+
+def test_performance_recipe_rejects_noncanonical_world_size(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "8")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
+    )
+
+    with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_performance_recipe_rejects_noncanonical_per_node_topology(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
+    )
+
+    with pytest.raises(ValueError, match="requires exactly 8 GPUs per h100 node"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_performance_recipe_accepts_homogeneous_slurm_tasks_per_node(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS_PER_NODE", raising=False)
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    monkeypatch.setenv("SLURM_TASKS_PER_NODE", "8(x2)")
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe-source",
+            "performance",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+
+
+def test_performance_recipe_rejects_heterogeneous_slurm_tasks_per_node(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS_PER_NODE", raising=False)
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    monkeypatch.setenv("SLURM_TASKS_PER_NODE", "8,4(x2)")
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
+    )
+
+    with pytest.raises(ValueError, match="one homogeneous tasks-per-node"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_performance_recipe_rejects_noncanonical_forward_step():
+    module, handles = _load_module()
+
+    with pytest.raises(ValueError, match="canonical gpt_step"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+                "--step-func",
+                "llm_step",
+            ]
+        )
+
+    handles.recipe_runner.load_recipe.assert_not_called()
+
+
+def test_performance_recipe_rejects_deterministic_bypass():
+    module, handles = _load_module()
+
+    with pytest.raises(ValueError, match="--deterministic"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+                "--deterministic",
+            ]
+        )
+
+    handles.recipe_runner.load_recipe.assert_not_called()
+
+
+def test_performance_recipe_requires_distributed_world_size(monkeypatch):
+    module, handles = _load_module()
+    monkeypatch.delenv("WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS", raising=False)
+    monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
+    monkeypatch.delenv("SLURM_NTASKS_PER_NODE", raising=False)
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
+    )
+
+    with pytest.raises(ValueError, match="existing distributed environment"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+            ]
+        )
+
+    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
+
+
+def test_performance_recipe_rejects_public_dataset_replacement():
+    module, handles = _load_module()
+
+    with pytest.raises(ValueError, match="own their canonical dataset"):
+        module.main(
+            [
+                "--recipe-source",
+                "performance",
+                "--recipe",
+                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+                "--mode",
+                "pretrain",
+                "--dataset",
+                "mock",
+            ]
+        )
+
+    handles.recipe_runner.load_recipe.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "qwen3_vl_8b_pretrain_8gpu_h100_bf16_config",
+        "wan_14b_pretrain_8gpu_h100_bf16_config",
+    ],
+)
+def test_non_text_performance_recipes_remain_on_legacy_launcher(recipe_name):
+    module, handles = _load_module()
+
+    with pytest.raises(ValueError, match="text performance recipes only"):
+        module.main(["--recipe-source", "performance", "--recipe", recipe_name, "--mode", "pretrain"])
+
+    handles.recipe_runner.load_recipe.assert_not_called()
+
+
+def test_performance_recipe_metadata_accepts_named_variant():
+    module, _ = _load_module()
+
+    metadata = module.performance_recipe_metadata("qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config")
+
+    assert metadata.num_gpus == 256
+    assert metadata.gpus_per_node == 8
+    assert metadata.family == "qwen"
+    assert metadata.hardware == "h100"
+    assert metadata.precision == "fp8cs"
+
+
+@pytest.mark.parametrize(
+    ("recipe_name", "family"),
+    [
+        ("deepseek_v3_pretrain_64gpu_h100_bf16_config", "deepseek"),
+        ("glm51_sft_192gpu_gb200_bf16_config", "glm_moe_dsa"),
+        ("nemotron_3_nano_pretrain_16gpu_h100_bf16_config", "nemotronh"),
+        ("qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config", "qwen_vl"),
+        ("qwen35_vl_35b_a3b_pretrain_16gpu_h100_bf16_config", "qwen_vl"),
+        ("wan_14b_pretrain_32gpu_h100_bf16_config", "wan"),
+    ],
+)
+def test_performance_recipe_metadata_selects_one_family(recipe_name, family):
+    module, _ = _load_module()
+
+    assert module.performance_recipe_metadata(recipe_name).family == family
 
 
 def test_full_recipe_rejects_incompatible_mode():

@@ -98,6 +98,70 @@ def test_parser_forwards_training_selection_and_overrides():
     ]
 
 
+def test_parser_forwards_performance_recipe_source_unchanged():
+    module = _load_setup_experiment_module()
+
+    args, training_args = module.parse_args(
+        [
+            "--gpus-per-node",
+            "8",
+            "--recipe-source",
+            "performance",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    assert args.gpus_per_node == 8
+    assert training_args == [
+        "--recipe-source",
+        "performance",
+        "--recipe",
+        "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "--mode",
+        "pretrain",
+    ]
+    metadata = module.selected_performance_recipe(training_args)
+    assert metadata.num_gpus == 16
+    assert metadata.gpus_per_node == 8
+    assert metadata.family == "qwen"
+    assert metadata.hardware == "h100"
+
+
+@pytest.mark.parametrize(
+    ("nodes", "gpus_per_node", "message"),
+    [
+        (2, 4, "8 GPUs per h100 node"),
+        (1, 8, "requires exactly 16 GPUs"),
+    ],
+)
+def test_performance_recipe_validates_submission_topology(nodes, gpus_per_node, message):
+    module = _load_setup_experiment_module()
+    args, training_args = module.parse_args(
+        [
+            "--nodes",
+            str(nodes),
+            "--gpus-per-node",
+            str(gpus_per_node),
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--recipe-source",
+            "performance",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        ]
+    )
+
+    with pytest.raises(ValueError, match=message):
+        module._validate_args(args, module.selected_performance_recipe(training_args))
+
+
 def test_parser_consumes_repeatable_srun_args():
     module = _load_setup_experiment_module()
 
@@ -231,6 +295,75 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.additional_parameters == {"export": "HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
     assert executor.srun_args == []
+
+
+def test_performance_slurm_executor_preserves_binding_and_runtime_defaults(tmp_path, monkeypatch):
+    module = _load_setup_experiment_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    sentinel_launcher = object()
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.Packager = object
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    monkeypatch.setattr(module, "_performance_slurm_launcher", lambda _metadata: sentinel_launcher)
+    args, training_args = module.parse_args(
+        [
+            "--nodes",
+            "2",
+            "--gpus-per-node",
+            "8",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--srun-arg=--label",
+            "--recipe-source",
+            "performance",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        ]
+    )
+    metadata = module.selected_performance_recipe(training_args)
+
+    executor = module._build_executor(args, [], [], performance_metadata=metadata)
+
+    assert executor.kwargs["launcher"] is sentinel_launcher
+    assert executor.kwargs["ntasks_per_node"] == 8
+    assert executor.kwargs["gpus_per_node"] == 8
+    assert executor.srun_args == ["--label", *module.PERFORMANCE_SRUN_ARGS]
+    assert "segment" not in executor.kwargs
+    assert module._performance_numa_command(metadata) == (
+        "numactl --cpunodebind=$((SLURM_LOCALID/4)) --membind=$((SLURM_LOCALID/4))"
+    )
+    assert "{{ numa_command | safe }} {{ command | safe }}" in module.PERFORMANCE_SLURM_TEMPLATE
+
+
+def test_performance_task_environment_preserves_explicit_process_values():
+    module = _load_setup_experiment_module()
+    metadata = module.PerformanceRecipeMetadata(
+        num_gpus=16,
+        gpus_per_node=4,
+        family="qwen",
+        hardware="gb200",
+        precision="bf16",
+    )
+
+    environment = module._task_environment(
+        metadata,
+        inherited_env_names=["TRANSFORMERS_OFFLINE", "NCCL_NET_GDR_LEVEL"],
+    )
+
+    assert "TRANSFORMERS_OFFLINE" not in environment
+    assert "NCCL_NET_GDR_LEVEL" not in environment
+    assert environment["TOKENIZERS_PARALLELISM"] == "False"
+    assert environment["NCCL_NET_GDR_C2C"] == "1"
+    assert environment["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
 
 
 def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tmp_path, monkeypatch):

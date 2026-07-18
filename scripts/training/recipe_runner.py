@@ -15,6 +15,8 @@
 
 """Shared helpers for recipe-based training entry points."""
 
+from __future__ import annotations
+
 import functools
 import importlib
 import inspect
@@ -23,18 +25,14 @@ import math
 import os
 import pkgutil
 import re
+import sys
 from collections.abc import Callable
-from typing import cast
+from types import ModuleType
+from typing import Literal, cast
 
-import torch
+from performance_recipe import performance_recipe_family
 
-import megatron.bridge.recipes as recipes
-from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
 from megatron.bridge.training.config import ConfigContainer, apply_environment_variables
-from megatron.bridge.training.finetune import finetune
-from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
-from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger = logging.getLogger(__name__)
@@ -45,6 +43,8 @@ SENSITIVE_ENV_VAR_PATTERN = re.compile(
 )
 
 StepFunctionEntry = Callable | tuple[str, str]
+TrainFunctionEntry = Callable | tuple[str, str]
+RecipeSource = Literal["library", "performance"]
 
 STEP_FUNCTIONS: dict[str, StepFunctionEntry] = {
     "audio_lm_step": ("megatron.bridge.training.audio_lm_step", "forward_step"),
@@ -74,12 +74,13 @@ STEP_MODALITIES = {
     "wan_step": "diffusion",
 }
 
-TRAIN_FUNCTIONS = {
-    "pretrain": pretrain,
-    "finetune": finetune,
+TRAIN_FUNCTIONS: dict[str, TrainFunctionEntry] = {
+    "pretrain": ("megatron.bridge.training.pretrain", "pretrain"),
+    "finetune": ("megatron.bridge.training.finetune", "finetune"),
 }
 
 ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
+RECIPE_ENV_BOOTSTRAP_MARKER = "_MB_TRAINING_RECIPE_ENV_BOOTSTRAPPED"
 
 
 def dump_env_rank0() -> None:
@@ -155,8 +156,17 @@ def _load_with_optional_kwargs(
 
 
 @functools.lru_cache(maxsize=1)
+def library_recipe_package() -> ModuleType:
+    """Import the functional recipe package only when that source is selected."""
+    import megatron.bridge.recipes as recipes
+
+    return recipes
+
+
+@functools.lru_cache(maxsize=1)
 def library_h100_modules() -> tuple[str, ...]:
     """Return import paths for H100 library recipe alias packages."""
+    recipes = library_recipe_package()
     module_names = []
     for module_info in pkgutil.iter_modules(recipes.__path__):
         if not module_info.ispkg or module_info.name.startswith("_") or module_info.name == "utils":
@@ -174,6 +184,7 @@ def library_h100_modules() -> tuple[str, ...]:
 
 def find_library_recipe(recipe_name: str, *, model_family_name: str | None = None) -> Callable | None:
     """Find a library recipe function by legacy or H100-style exported function name."""
+    recipes = library_recipe_package()
     if hasattr(recipes, recipe_name):
         recipe_fn = getattr(recipes, recipe_name)
         if callable(recipe_fn):
@@ -197,15 +208,37 @@ def find_library_recipe(recipe_name: str, *, model_family_name: str | None = Non
     return None
 
 
+def find_performance_recipe(recipe_name: str) -> Callable | None:
+    """Find one flat performance recipe by its exported function name."""
+    try:
+        family = performance_recipe_family(recipe_name)
+    except ValueError:
+        return None
+    module_name = f"megatron.bridge.perf_recipes.{family}"
+    recipe_fn = getattr(importlib.import_module(module_name), recipe_name, None)
+    return cast(Callable, recipe_fn) if callable(recipe_fn) else None
+
+
 def load_recipe(
     recipe_name: str,
     peft_scheme: str | None = None,
     seq_length: int | None = None,
+    *,
+    source: RecipeSource = "library",
 ) -> ConfigContainer:
-    """Load a recipe from the library recipe package."""
-    config_builder = find_library_recipe(recipe_name)
+    """Load a recipe from the explicitly selected recipe namespace."""
+    if source == "library":
+        config_builder = find_library_recipe(recipe_name)
+        package_name = "megatron.bridge.recipes"
+    elif source == "performance":
+        config_builder = find_performance_recipe(recipe_name)
+        package_name = "megatron.bridge.perf_recipes"
+    else:
+        raise ValueError(f"Unknown recipe source '{source}'. Choose 'library' or 'performance'.")
+
     if config_builder is None:
-        raise AttributeError(f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.")
+        raise AttributeError(f"Recipe '{recipe_name}' not found in {package_name}.")
+    logger.info("Loading %s recipe '%s' from %s", source, recipe_name, package_name)
     return _load_with_optional_kwargs(
         config_builder,
         peft_scheme=peft_scheme,
@@ -239,6 +272,8 @@ def _load_step_function(step_key: str) -> Callable:
 
 def apply_cli_overrides(config: ConfigContainer, cli_overrides: list[str] | None) -> ConfigContainer:
     """Apply Hydra-style CLI overrides to a ConfigContainer."""
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
     return process_config_with_overrides(config, cli_overrides=cli_overrides or None)
 
 
@@ -252,19 +287,44 @@ def apply_runtime_environment(config: ConfigContainer) -> ConfigContainer:
     """Apply environment settings derived from the resolved ConfigContainer."""
     apply_environment_variables(config)
     if getattr(getattr(config, "ddp", None), "nccl_ub", False):
-        os.environ["NCCL_NVLS_ENABLE"] = "1"
-        os.environ["NCCL_CTA_POLICY"] = "1"
+        os.environ.setdefault("NCCL_NVLS_ENABLE", "1")
+        os.environ.setdefault("NCCL_CTA_POLICY", "1")
     return config
 
 
 def apply_determinism(config: ConfigContainer, *, deterministic: bool) -> ConfigContainer:
     """Apply deterministic-training config overrides when requested."""
     if deterministic:
-        os.environ.setdefault("NCCL_ALGO", "Ring")
-        os.environ.setdefault("NVTE_ALLOW_NONDETERMINISTIC_ALGO", "0")
-        os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+        from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
         apply_determinism_overrides(config)
     return config
+
+
+def bootstrap_recipe_environment(
+    config: ConfigContainer,
+    *,
+    script_path: str,
+    argv: list[str],
+) -> ConfigContainer:
+    """Apply recipe environment defaults and re-exec before training imports.
+
+    The PID-bound marker prevents inherited or stale values from skipping the
+    bootstrap in a new process. ``execvpe`` preserves the current PID, so the
+    second interpreter returns normally after re-applying idempotent defaults.
+    """
+    config = apply_runtime_environment(config)
+    if os.environ.get(RECIPE_ENV_BOOTSTRAP_MARKER) == str(os.getpid()):
+        return config
+
+    environment = dict(os.environ)
+    environment[RECIPE_ENV_BOOTSTRAP_MARKER] = str(os.getpid())
+    os.execvpe(
+        sys.executable,
+        [sys.executable, script_path, *argv],
+        environment,
+    )
+    raise RuntimeError("os.execvpe returned unexpectedly")
 
 
 def sync_finetuning_cp_invariants(config: ConfigContainer, *, mode: str) -> ConfigContainer:
@@ -365,6 +425,7 @@ def run_config(
     step_func: Callable,
     dryrun: bool = False,
     save_config_filepath: str | None = None,
+    dryrun_world_size: int | None = None,
     dump_environment: bool = False,
 ) -> bool:
     """Run or dry-run a ConfigContainer with the selected training function.
@@ -376,19 +437,48 @@ def run_config(
         dump_env_rank0()
 
     if dryrun:
+        if dryrun_world_size is not None:
+            from megatron.bridge.training.config import runtime_config_update
+
+            os.environ["WORLD_SIZE"] = str(dryrun_world_size)
+            os.environ["RANK"] = "0"
+            runtime_config_update(config)
         logger_config = getattr(config, "logger", None)
         configured_path = getattr(logger_config, "save_config_filepath", None)
         save_config(config, save_config_filepath or configured_path or "ConfigContainer.yaml")
         return True
 
-    if get_rank_safe() == 0:
+    if _get_rank_safe() == 0:
         logger.info("Final configuration:")
         config.print_yaml()
 
-    train_func = TRAIN_FUNCTIONS[mode]
+    train_func = _load_train_function(mode)
     train_func(config=config, forward_step_func=step_func)
+
+    _destroy_process_group()
+
+    return False
+
+
+def _load_train_function(mode: str) -> Callable:
+    """Import the selected training loop only after environment bootstrap."""
+    entry = TRAIN_FUNCTIONS[mode]
+    if callable(entry):
+        return entry
+    module_name, attribute_name = entry
+    return cast(Callable, getattr(importlib.import_module(module_name), attribute_name))
+
+
+def _destroy_process_group() -> None:
+    """Destroy an initialized process group without importing Torch during bootstrap."""
+    import torch
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
 
-    return False
+
+def _get_rank_safe() -> int:
+    """Read the distributed rank without importing runtime helpers during bootstrap."""
+    from megatron.bridge.utils.common_utils import get_rank_safe
+
+    return get_rank_safe()
