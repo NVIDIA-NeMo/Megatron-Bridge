@@ -39,9 +39,12 @@ if HAS_NEMO_RUN:
     from utils.executors import (
         INLINE_TEMPLATE,
         KUBEFLOW_NUMA_BINDING_ENV,
+        KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV,
+        KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV,
         PERF_ENV_VARS,
         _kubeflow_numa_binding_enabled,
         _kubeflow_numa_binding_script,
+        _patch_kubeflow_torchrun_launch_script,
         slurm_executor,
     )
 
@@ -139,6 +142,30 @@ def test_kubeflow_numa_binding_is_disabled_by_default():
     """Normal Kubeflow jobs must retain the unmodified Torchrun launcher."""
     assert not _kubeflow_numa_binding_enabled({})
     assert not _kubeflow_numa_binding_enabled({KUBEFLOW_NUMA_BINDING_ENV: "0"})
+
+
+@pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
+def test_kubeflow_launch_script_patches_torchrun_startup_sleep_and_timeout():
+    """Patch generated launch.sh before torchrun starts."""
+    script = "\n".join(
+        [
+            "#!/usr/bin/env bash",
+            "export NCCL_DEBUG=INFO",
+            (
+                "torchrun --rdzv-backend c10d --rdzv-endpoint $PET_MASTER_ADDR:29500 "
+                "--rdzv-id 123 --nnodes 2 --nproc-per-node 4 --node-rank $PET_NODE_RANK "
+                "--tee 3 --no-python bash -lc 'python train.py'"
+            ),
+            "",
+        ]
+    )
+
+    patched = _patch_kubeflow_torchrun_launch_script(script)
+
+    assert f'{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}="${{{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}:-0}}"' in patched
+    assert f'sleep "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}"' in patched
+    assert f"--rdzv-conf read_timeout=${{{KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV}:-300}}" in patched
+    assert patched.index("sleep $") < patched.index("torchrun --rdzv-backend c10d")
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")

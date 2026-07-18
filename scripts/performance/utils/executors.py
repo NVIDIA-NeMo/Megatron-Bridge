@@ -15,6 +15,7 @@
 import logging
 import os
 import shlex
+import textwrap
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +29,79 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
 
 KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
+KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV = "NEMO_CLUSTERDIAG_TORCHRUN_STARTUP_SLEEP_SECONDS"
+KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV = "NEMO_CLUSTERDIAG_TORCHRUN_RDZV_READ_TIMEOUT_SECONDS"
+
+
+def _install_kubeflow_torchrun_launch_patch(executor: run.KubeflowExecutor) -> None:
+    """Patch the NeMo-Run Kubeflow dry-run scheduler before PVC packaging."""
+    from nemo_run.run.torchx_backend.schedulers.kubeflow import KubeflowScheduler
+
+    if getattr(KubeflowScheduler, "_clusterdiag_torchrun_launch_patch_installed", False):
+        return
+
+    original_submit_dryrun = KubeflowScheduler._submit_dryrun
+
+    def _submit_dryrun(self, app: Any, cfg: Any) -> Any:
+        dryrun_info = original_submit_dryrun(self, app, cfg)
+        request = getattr(dryrun_info, "request", None)
+        request_executor = getattr(request, "executor", cfg)
+        job_dir = getattr(request_executor, "job_dir", None)
+        if job_dir:
+            _patch_kubeflow_torchrun_launch_file(Path(job_dir) / "launch.sh")
+        return dryrun_info
+
+    KubeflowScheduler._submit_dryrun = _submit_dryrun
+    KubeflowScheduler._clusterdiag_torchrun_launch_patch_installed = True
+
+
+def _patch_kubeflow_torchrun_launch_file(launch_script_path: Path) -> None:
+    """Patch one generated Kubeflow launch script in place."""
+    if not launch_script_path.is_file():
+        return
+    script = launch_script_path.read_text(encoding="utf-8")
+    patched = _patch_kubeflow_torchrun_launch_script(script)
+    if patched == script:
+        return
+    launch_script_path.write_text(patched, encoding="utf-8")
+    logger.info("Patched Kubeflow torchrun launcher in %s", launch_script_path)
+
+
+def _patch_kubeflow_torchrun_launch_script(script: str) -> str:
+    """Inject opt-in pre-torchrun sleep and rendezvous read timeout into launch.sh."""
+    lines = script.splitlines(keepends=True)
+    patched: list[str] = []
+    changed = False
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("torchrun ") and "--rdzv-backend" in line:
+            indent = line[: len(line) - len(stripped)]
+            patched.append(_kubeflow_torchrun_startup_sleep_block(indent))
+            if "--rdzv-conf " not in line:
+                line = line.replace(
+                    " --nnodes ",
+                    f" --rdzv-conf read_timeout=${{{KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV}:-300}} --nnodes ",
+                    1,
+                )
+            changed = True
+        patched.append(line)
+    return "".join(patched) if changed else script
+
+
+def _kubeflow_torchrun_startup_sleep_block(indent: str) -> str:
+    """Return shell that sleeps before torchrun when the opt-in env var is set."""
+    block = f"""
+{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}="${{{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}:-0}}"
+if ! [[ "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" =~ ^[0-9]+$ ]]; then
+    echo "[kubeflow-launch] Ignoring non-numeric torchrun startup sleep: ${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" >&2
+    {KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}=0
+fi
+if [ "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" -gt 0 ]; then
+    echo "[kubeflow-launch] sleeping ${{{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}}}s before torchrun"
+    sleep "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}"
+fi
+"""
+    return textwrap.indent(textwrap.dedent(block).lstrip(), indent)
 
 
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
@@ -390,4 +464,5 @@ def kubeflow_executor(
         # are harmless cost there.)
         packager=run.GitArchivePackager(include_submodules=True),
     )
+    _install_kubeflow_torchrun_launch_patch(executor)
     return executor
