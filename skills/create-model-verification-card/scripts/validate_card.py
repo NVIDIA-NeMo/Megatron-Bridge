@@ -38,7 +38,7 @@ LOG = logging.getLogger(__name__)
 STATUSES = frozenset({"unverified", "verified", "unsupported", "not_applicable"})
 PRECISIONS = frozenset({"bf16", "fp8_mx", "nvfp4"})
 TRAINING_ONLY_PRECISIONS = PRECISIONS - {"bf16"}
-ITEM_NAMES = (
+REQUIRED_ITEM_NAMES = (
     "hf_to_megatron_cpu",
     "hf_to_megatron_gpu",
     "megatron_to_hf_cpu",
@@ -51,8 +51,9 @@ ITEM_NAMES = (
     "sft_long_context",
     "peft",
     "checkpoint_resume",
-    "pretrain_performance",
 )
+OPTIONAL_ITEM_NAMES = ("pretrain_performance",)
+ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 TRAINING_ITEMS = frozenset(
     {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
 )
@@ -1034,7 +1035,7 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         item_names = set(items)
         for name in sorted(item_names - set(ITEM_NAMES)):
             errors.append(f"{_pointer('items', name)}: unknown verification item")
-        for name in sorted(set(ITEM_NAMES) - item_names):
+        for name in sorted(set(REQUIRED_ITEM_NAMES) - item_names):
             errors.append(f"{_pointer('items', name)}: required verification item is missing")
         for name in ITEM_NAMES:
             if name in items:

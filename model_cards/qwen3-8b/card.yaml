@@ -304,23 +304,3 @@ items:
       uninterrupted run within the stated tolerances. All four resumed-segment
       metrics are recorded, with last-10 averages over steps 391-400; exact
       printed sentinel matches are preferred.
-
-  pretrain_performance:
-    status: unverified
-    precision: bf16
-    gpu_type: H100
-    command: null
-    last_verified: null
-    metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
-    expected_result: >
-      No dense Qwen3-8B performance recipe is currently exported from the
-      public performance-recipe package, so this gate has no reproducible
-      command and remains unverified. The ordinary
-      qwen3_8b_pretrain_4gpu_h100_bf16_config library-recipe benchmark is not a
-      substitute. Verification requires an exported H100 performance recipe
-      and a completed run with finite losses, no skipped or NaN iterations,
-      all four metrics, and explicit last-10 thresholds.

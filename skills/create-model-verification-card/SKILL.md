@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion, deterministic inference, training, checkpoint resume, or post-SFT export results, or preparing a model-support PR. Enforce the fixed card inventory, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce the required core inventory, optional canonical performance item, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -15,7 +15,8 @@ logs or reconstructing the execution environment.
 - Verify exact-length deterministic HF output with
   [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
 - Use `model_cards/qwen3-8b/card.yaml` as the format example. Do not copy
-  model-specific settings blindly.
+  model-specific settings blindly. For the optional performance item, refer to
+  `model_cards/qwen3-30b-a3b/card.yaml`.
 
 Do not add a README, evidence blobs, log excerpts, runtime setup, or scheduler
 metadata to the skill or card.
@@ -39,9 +40,9 @@ identifier and the exact Bridge commit used for verification. Put them in
 the container, record the mounted checkout commit. Never substitute a private
 image path for the public base container identifier.
 
-### 2. Create the complete inventory
+### 2. Create the core inventory and add performance when available
 
-Include every required item, even when its status is `unsupported` or
+Include these twelve required items, even when their status is `unsupported` or
 `not_applicable`:
 
 1. CPU HF-to-Megatron conversion
@@ -56,7 +57,12 @@ Include every required item, even when its status is `unsupported` or
 10. Long-context SFT
 11. PEFT
 12. Checkpoint resume
-13. Pretraining performance
+
+Add `pretrain_performance` as a thirteenth item only when the exact model
+variant has a canonical public performance recipe. If no such recipe is
+exported, omit the item instead of adding an unverified placeholder. Once a
+canonical recipe exists, keep the item in the card even if its run is still
+unverified.
 
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
@@ -153,8 +159,9 @@ result. Private executor configuration stays outside the card.
   directly, resume into a distinct new output root, load optimizer and RNG
   state, and compare the first resumed and final steps with the uninterrupted
   reference. Do not repeat the pre-checkpoint training segment.
-- **Performance:** Keep a bounded mock-data performance item separate from the
-  real-data functional run and state public hardware plus thresholds.
+- **Performance (when present):** Use the exact canonical public performance
+  recipe. Keep its bounded mock-data run separate from the real-data functional
+  run and state public hardware plus thresholds.
 
 Before adding checkpoint overrides, inspect the selected recipe and its
 inherited checkpoint defaults. Keep only values that change the effective
@@ -239,7 +246,9 @@ an item verified merely to make validation pass.
 
 ## Completion checklist
 
-- Keep all thirteen inventory items and use only the four statuses.
+- Keep all twelve core inventory items and use only the four statuses. Include
+  `pretrain_performance` only when the exact variant has a canonical public
+  performance recipe.
 - Put the verified workload precision on every item; use `fp8_mx` and `nvfp4`
   only for training items that ran in those modes.
 - Pin a public immutable HF revision, minimum Transformers version, public base
