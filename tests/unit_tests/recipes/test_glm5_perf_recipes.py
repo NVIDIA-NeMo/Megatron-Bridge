@@ -20,6 +20,8 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
+
+
 try:
     # WAR (dev-ref mcore): `_validate_dsa_index_share_pipeline_split` was removed on the
     # Megatron-Core dev ref. It still exists on main, so import defensively and skip the
