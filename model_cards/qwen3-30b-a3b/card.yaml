@@ -9,7 +9,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 9d09256a842f63bfdda2a5bebbcb6bdb9634851b  # pragma: allowlist secret
+  bridge_commit: aabb29d0ed15fc7ed881f0538352c6bd2d2fd52d  # pragma: allowlist secret
 summary: Qwen3-30B-A3B support verification for conversion, inference, and training.
 
 items:
@@ -114,10 +114,9 @@ items:
     status: verified
     precision: bf16
     gpu_type: H100
-    enabled_features:
-      moe_dispatcher: deepep
+    enabled_features: {}
     command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
       --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
       --max_steps 400 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
@@ -127,15 +126,21 @@ items:
       tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
       rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=400
       validation.eval_iters=0 validation.eval_interval=0
-      dist.distributed_timeout_minutes=30 checkpoint.load=null
+      dist.distributed_timeout_minutes=30 -tp 4 -pp 1 -ep 16 -etp 1
+      model.bias_activation_fusion=true
+      model.apply_rope_fusion=true model.moe_router_fusion=true
+      model.recompute_granularity=selective model.recompute_method=null
+      model.recompute_num_layers=null 'model.recompute_modules=[core_attn]'
+      model.moe_token_dispatcher_type=alltoall
+      model.moe_flex_dispatcher_backend=null checkpoint.load=null
       --save_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
       --save_interval 200 logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-17
+    last_verified: 2026-07-18
     metrics:
-      initial_loss: 12.26371
-      final_loss: 4.793316
-      last_10_steps_step_time_ms_avg: 9049.790
-      last_10_steps_model_tflops_per_gpu_avg: 41.680
+      initial_loss: 12.37864
+      final_loss: 4.840969
+      last_10_steps_step_time_ms_avg: 2646.100
+      last_10_steps_model_tflops_per_gpu_avg: 71.220
     expected_result: >
       The uninterrupted bounded RP2 run completes exactly 400 steps with finite
       losses, no skipped or NaN iterations, records all four metrics, and
@@ -147,28 +152,30 @@ items:
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
-      moe_dispatcher: deepep
     command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
       --recipe qwen3_30b_a3b_sft_8gpu_h100_bf16_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
-      --max_steps 100 --seq_length 2048 -tp 8 -pp 1 -ep 8
+      --max_steps 100 --seq_length 2048 -tp 1 -pp 1 -ep 16 -etp 1
       --lr 5e-6 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=work/data/tulu3
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0
-      checkpoint.load=null
+      model.sequence_parallel=false model.bias_activation_fusion=true
+      model.apply_rope_fusion=true model.moe_router_fusion=true
+      model.moe_token_dispatcher_type=alltoall
+      model.moe_flex_dispatcher_backend=null checkpoint.load=null
       --save_dir work/model-verification/qwen3-30b-a3b/sft-checkpoints
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-17
+    last_verified: 2026-07-18
     metrics:
-      initial_loss: 1.693180
-      final_loss: 0.9047834
-      last_10_steps_step_time_ms_avg: 20316.590
-      last_10_steps_model_tflops_per_gpu_avg: 7.620
+      initial_loss: 1.553515
+      final_loss: 0.8965551
+      last_10_steps_step_time_ms_avg: 1189.000
+      last_10_steps_model_tflops_per_gpu_avg: 64.920
     expected_result: >
       Tulu3 offline packing completes exactly 100 full-SFT steps with finite
       losses, no skipped or NaN iterations, all four metrics recorded, and a
@@ -182,18 +189,18 @@ items:
     commands:
       - >
         ./scripts/conversion/convert.sh export --executor slurm --device gpu
-        --nodes 1 --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B
+        --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B
         --megatron-path work/model-verification/qwen3-30b-a3b/sft-checkpoints/iter_0000100
         --hf-path work/model-verification/qwen3-30b-a3b/sft-hf-export
         --torch-dtype bfloat16 --export-weight-dtype bfloat16
-        --distributed-save --tp 8 --pp 1 --ep 8
+        --distributed-save --tp 1 --pp 1 --ep 16
       - >
         uv run python
         skills/create-model-verification-card/scripts/verify_hf_inference.py
         --hf-model work/model-verification/qwen3-30b-a3b/sft-hf-export
         --prompt "In one short sentence, explain why Paris is important to France."
         --max-new-tokens 32 --chat-template --disable-thinking
-    last_verified: 2026-07-17
+    last_verified: 2026-07-18
     expected_result: >
       The step-100 full-SFT checkpoint exports and reloads with Transformers
       without missing or unexpected keys. Two independent executions using
@@ -247,28 +254,30 @@ items:
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
-      moe_dispatcher: deepep
     command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
       --recipe qwen3_30b_a3b_peft_4gpu_h100_bf16_config --mode lora
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
-      --max_steps 100 --seq_length 2048
+      --max_steps 100 --seq_length 2048 -tp 1 -pp 1 -ep 16 -etp 1
       --lr 1e-4 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=work/data/tulu3
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0
-      checkpoint.load=null
+      model.sequence_parallel=false model.bias_activation_fusion=true
+      model.apply_rope_fusion=true model.moe_router_fusion=true
+      model.moe_token_dispatcher_type=alltoall
+      model.moe_flex_dispatcher_backend=null checkpoint.load=null
       --save_dir work/model-verification/qwen3-30b-a3b/peft-checkpoints
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-17
+    last_verified: 2026-07-18
     metrics:
-      initial_loss: 1.572119
-      final_loss: 1.139297
-      last_10_steps_step_time_ms_avg: 24134.760
-      last_10_steps_model_tflops_per_gpu_avg: 12.810
+      initial_loss: 1.553515
+      final_loss: 1.000964
+      last_10_steps_step_time_ms_avg: 1107.380
+      last_10_steps_model_tflops_per_gpu_avg: 69.820
     expected_result: >
       Tulu3 offline packing and exactly 100 LoRA steps complete with finite
       losses, no skipped or NaN iterations, and all four metrics recorded, then
@@ -280,7 +289,7 @@ items:
     gpu_type: H100
     depends_on: pretrain
     command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
       --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
       --max_steps 400 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
@@ -291,16 +300,22 @@ items:
       rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=400
       validation.eval_iters=0 validation.eval_interval=0
       dist.distributed_timeout_minutes=30
+      -tp 4 -pp 1 -ep 16 -etp 1 model.bias_activation_fusion=true
+      model.apply_rope_fusion=true model.moe_router_fusion=true
+      model.recompute_granularity=selective model.recompute_method=null
+      model.recompute_num_layers=null 'model.recompute_modules=[core_attn]'
+      model.moe_token_dispatcher_type=alltoall
+      model.moe_flex_dispatcher_backend=null
       --load_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
       --save_dir work/model-verification/qwen3-30b-a3b/pretrain-resumed-checkpoints
       --save_interval 200 checkpoint.ckpt_step=200
       logger.log_interval=1 logger.log_throughput=true
     last_verified: null
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 5.446439
+      final_loss: 4.840848
+      last_10_steps_step_time_ms_avg: 2621.200
+      last_10_steps_model_tflops_per_gpu_avg: 71.920
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [201, 400]
@@ -308,11 +323,12 @@ items:
       loss_absolute_tolerance: 1.0e-6
       sentinels_match: false
     expected_result: >
-      The command should load optimizer and RNG state directly from
-      iter_0000200, begin at step 201, and finish at step 400 in the distinct
-      output root with matching step-201 and step-400 losses. On the pinned
-      dependency stack it currently fails before step 201 because optimizer
-      load-skeleton construction exceeds an 80GB H100, so it remains unverified.
+      The command loads optimizer and RNG state directly from iter_0000200,
+      begins at step 201, and completes step 400 in the distinct output root
+      with finite losses and no skipped or NaN iterations. Step 201 matches the
+      uninterrupted reference at 5.446439, but resumed step 400 is 4.840848
+      versus reference 4.840969. The 0.000121 absolute difference exceeds the
+      strict 1e-6 sentinel tolerances, so checkpoint resume remains unverified.
 
   pretrain_performance:
     status: verified
