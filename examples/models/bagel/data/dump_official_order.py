@@ -31,6 +31,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokenizer-model", type=Path, required=True)
     parser.add_argument("--seed", type=int, required=True)
     parser.add_argument("--num-batches", type=int, default=3)
+    parser.add_argument("--rank", type=int, default=0)
+    parser.add_argument("--world-size", type=int, default=1)
+    parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -70,6 +73,7 @@ def resolve_source_ids(
     batch_data_indexes: list[dict[str, object]],
     grouped_datasets: dict[str, object],
     vlm_rows: dict[str, int],
+    num_workers: int = 0,
 ) -> list[dict[str, object]]:
     """Resolve BAGEL cursors to stable raw file and row coordinates."""
     source_ids = []
@@ -77,16 +81,21 @@ def resolve_source_ids(
         dataset_name = item["dataset_name"]
         data_indexes = item["data_indexes"]
         dataset = grouped_datasets[dataset_name]
+        data_paths = dataset.data_paths_per_rank
+        if num_workers:
+            per_worker = len(data_paths) // num_workers
+            worker_id = item["worker_id"]
+            data_paths = data_paths[worker_id * per_worker : (worker_id + 1) * per_worker][::-1]
         if dataset_name == "t2i_pretrain":
             parquet_index, row_group, row = data_indexes
-            parquet = dataset.data_paths_per_rank[parquet_index]
+            parquet = data_paths[parquet_index]
             source = {"parquet": Path(parquet).name, "row_group": row_group, "row": row}
         elif dataset_name == "unified_edit":
             global_row_group, row = data_indexes
-            parquet, row_group = dataset.data_paths_per_rank[global_row_group]
+            parquet, row_group = data_paths[global_row_group]
             source = {"parquet": Path(parquet).name, "row_group": row_group, "row": row}
         else:
-            json_data, _ = dataset.data_paths_per_rank[data_indexes]
+            json_data, _ = data_paths[data_indexes]
             source = {"jsonl": "llava_ov_si.jsonl", "row": vlm_rows[json_data.rstrip("\n")]}
         source_ids.append({"dataset_name": dataset_name, "source": source})
     return source_ids
@@ -95,6 +104,8 @@ def resolve_source_ids(
 def main() -> None:
     """Run the official loader and write its first batches as JSONL."""
     args = parse_args()
+    if not 0 <= args.rank < args.world_size:
+        raise ValueError("rank must be between zero and world-size")
     sys.path.insert(0, str(args.bagel_repo))
 
     from data.data_utils import add_special_tokens
@@ -114,9 +125,9 @@ def main() -> None:
         DataConfig(grouped_datasets=dataset_meta),
         tokenizer=tokenizer,
         special_tokens=special_tokens,
-        local_rank=0,
-        world_size=1,
-        num_workers=1,
+        local_rank=args.rank,
+        world_size=args.world_size,
+        num_workers=max(args.num_workers, 1),
     )
     dataset.set_epoch(args.seed)
     grouped_datasets = {item.dataset_name: item for item in dataset.grouped_datasets}
@@ -126,7 +137,7 @@ def main() -> None:
         dataset,
         batch_size=1,
         collate_fn=collate_wrapper(),
-        num_workers=0,
+        num_workers=args.num_workers,
     )
 
     with args.output.open("w", encoding="utf-8") as stream:
@@ -136,7 +147,12 @@ def main() -> None:
                 packed.pop(field, None)
             record = {
                 "step": step,
-                "source_ids": resolve_source_ids(batch.batch_data_indexes, grouped_datasets, vlm_rows),
+                "source_ids": resolve_source_ids(
+                    batch.batch_data_indexes,
+                    grouped_datasets,
+                    vlm_rows,
+                    args.num_workers,
+                ),
                 "batch_data_indexes": batch.batch_data_indexes,
                 **packed,
             }
