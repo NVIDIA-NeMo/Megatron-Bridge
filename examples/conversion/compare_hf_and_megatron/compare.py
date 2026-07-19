@@ -671,6 +671,29 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
     return tokenizer, processor
 
 
+def _broadcast_hf_results(hf_logits, hf_next_token, device):
+    """Broadcast rank-0 HF results using the model's actual output vocabulary size."""
+    if hf_logits is not None:
+        hf_logits = hf_logits.float()
+
+    hf_logits_size = torch.tensor(
+        [hf_logits.numel() if hf_logits is not None else 0],
+        device=device,
+        dtype=torch.long,
+    )
+    torch.distributed.broadcast(hf_logits_size, 0)
+
+    if hf_next_token is None:
+        hf_next_token = torch.zeros(1, device=device, dtype=torch.long)
+    if hf_logits is None:
+        hf_logits = torch.zeros(hf_logits_size.item(), device=device, dtype=torch.float32)
+
+    torch.distributed.broadcast(hf_next_token, 0)
+    torch.distributed.broadcast(hf_logits, 0)
+    torch.distributed.barrier()
+    return hf_logits, hf_next_token
+
+
 def compare_models_one_step(args) -> None:
     """Compare 1-step generation between HF and Megatron models with debugging.
 
@@ -733,28 +756,10 @@ def compare_models_one_step(args) -> None:
 
     # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():
-        # Ensure consistent dtype across ranks: rank 0 has bfloat16 logits from the HF model,
-        # so all ranks must use the same dtype for NCCL broadcast to work correctly.
-        if hf_logits is not None:
-            hf_logits = hf_logits.float()
-
-        # Create tensors for broadcasting if they don't exist on non-rank-0
-        if hf_next_token is None:
-            hf_next_token = torch.zeros(1, device=input_ids.device, dtype=torch.long)
-        if hf_logits is None:
-            # Get vocab size from tokenizer for proper tensor size
-            vocab_size = getattr(
-                tokenizer, "vocab_size", len(tokenizer.vocab) if hasattr(tokenizer, "vocab") else 32000
-            )
-            hf_logits = torch.zeros(vocab_size, device=input_ids.device, dtype=torch.float32)
-
-        # Ensure consistent dtype across ranks before broadcast
-        hf_logits = hf_logits.float()
-
-        # Broadcast from rank 0 to all ranks
-        torch.distributed.broadcast(hf_next_token, 0)
-        torch.distributed.broadcast(hf_logits, 0)
-        torch.distributed.barrier()
+        # The model's output vocabulary can be larger than the tokenizer vocabulary.
+        # Broadcast the actual logits length before allocating receive buffers so every
+        # rank participates in the logits broadcast with the same tensor shape.
+        hf_logits, hf_next_token = _broadcast_hf_results(hf_logits, hf_next_token, input_ids.device)
         print_rank_0("HF results broadcast complete.")
 
     # Run Megatron model forward pass

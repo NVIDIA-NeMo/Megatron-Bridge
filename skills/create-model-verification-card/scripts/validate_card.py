@@ -698,13 +698,17 @@ def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[st
     if inference_tokens[:4] != expected_inference_prefix:
         errors.append(f"{_pointer(*inference_path)}: must directly run the HF inference verifier with uv")
 
-    _validate_conversion_launcher(
-        export_command,
-        operation="export",
-        device="gpu",
-        path=export_path,
-        errors=errors,
-    )
+    export_devices = _argument_values(export_command, "--device")
+    if len(export_devices) == 1 and export_devices[0] in {"cpu", "gpu"}:
+        _validate_conversion_launcher(
+            export_command,
+            operation="export",
+            device=export_devices[0],
+            path=export_path,
+            errors=errors,
+        )
+    else:
+        errors.append(f"{_pointer(*export_path)}: SFT export must specify --device cpu or gpu exactly once")
     _validate_inference(
         item,
         item_name="sft_export_inference",

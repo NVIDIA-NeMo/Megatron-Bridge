@@ -51,6 +51,7 @@ _MODULES_TO_MOCK = [
     "megatron.bridge.training.utils.checkpoint_utils",
     "megatron.bridge.utils",
     "megatron.bridge.utils.common_utils",
+    "megatron.bridge.utils.safe_url",
     "PIL",
     "PIL.Image",
     "requests",
@@ -71,6 +72,7 @@ sys.path.insert(
 import compare  # noqa: E402
 from compare import (  # noqa: E402
     SingleBatchIterator,
+    _broadcast_hf_results,
     _run_hf_inference,  # noqa: E402
     vlm_forward_step,
 )
@@ -139,6 +141,26 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].dtype == torch.bool
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
+
+    def test_hf_broadcast_uses_model_output_vocab_size(self):
+        """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
+        broadcast_shapes = []
+
+        def mock_broadcast(tensor, _source_rank):
+            broadcast_shapes.append(tuple(tensor.shape))
+            if len(broadcast_shapes) == 1:
+                tensor.fill_(163840)
+
+        with (
+            patch.object(torch.distributed, "broadcast", side_effect=mock_broadcast),
+            patch.object(torch.distributed, "barrier"),
+        ):
+            hf_logits, hf_next_token = _broadcast_hf_results(None, None, torch.device("cpu"))
+
+        assert hf_logits.shape == (163840,)
+        assert hf_logits.dtype == torch.float32
+        assert hf_next_token.shape == (1,)
+        assert broadcast_shapes == [(1,), (1,), (163840,)]
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):

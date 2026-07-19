@@ -43,9 +43,10 @@ def _moonlight_16b_finetuning_model_provider(
     """Build a checkpoint-compatible Moonlight provider for SFT or PEFT."""
     model = _moonlight_16b_model_provider()
 
-    # The tokenizer includes two added tokens beyond the pretrained embedding
-    # rows. Checkpoint loading copies the original rows and initializes the two
-    # new rows for finetuning; HF export trims them back to the model vocabulary.
+    # Preserve the historical finetuning recipe's 163842-row checkpoint shape.
+    # It is two rows larger than the released 163840-row model; checkpoint loading
+    # expands the pretrained table, so HF export must synthesize config from the
+    # finetuning checkpoint instead of copying the released model config.
     model.vocab_size = _MOONLIGHT_16B_FINETUNING_VOCAB_SIZE
 
     model.tensor_model_parallel_size = tensor_parallel_size
