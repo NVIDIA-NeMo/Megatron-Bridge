@@ -33,6 +33,11 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--max-new-tokens", required=True, type=int, help="Exact number of tokens to generate.")
     parser.add_argument("--chat-template", action="store_true", help="Format the prompt as a user chat turn.")
     parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Allow custom model and tokenizer code from the selected Hugging Face repository.",
+    )
+    parser.add_argument(
         "--disable-thinking",
         action="store_true",
         help="Pass enable_thinking=False to the tokenizer chat template.",
@@ -72,8 +77,16 @@ def main() -> int:
     from transformers import AutoModelForCausalLM, AutoTokenizer
 
     dtype = getattr(torch, args.dtype)
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model)
-    model = AutoModelForCausalLM.from_pretrained(args.hf_model, dtype=dtype).to(args.device).eval()
+    tokenizer = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
+    model = (
+        AutoModelForCausalLM.from_pretrained(
+            args.hf_model,
+            dtype=dtype,
+            trust_remote_code=args.trust_remote_code,
+        )
+        .to(args.device)
+        .eval()
+    )
     formatted_prompt = _format_prompt(
         tokenizer,
         args.prompt,
