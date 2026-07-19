@@ -276,6 +276,98 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft is None
 
 
+def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that the generic 30B-A3B pretrain recipe uses the verified 16-GPU topology."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    cfg = qwen3_30b_a3b_pretrain_config()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
+    assert cfg.model.use_te_rng_tracker is True
+    assert cfg.rng.te_rng_tracker is True
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.comm_overlap.tp_comm_overlap is True
+
+
+def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_functional_config(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the H100 BF16 perf recipe only adds benchmark-specific overrides."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config,
+    )
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    default_cfg = qwen3_30b_a3b_pretrain_config()
+    perf_cfg = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config()
+
+    assert perf_cfg.model.tensor_model_parallel_size == default_cfg.model.tensor_model_parallel_size
+    assert perf_cfg.model.pipeline_model_parallel_size == default_cfg.model.pipeline_model_parallel_size
+    assert perf_cfg.model.expert_model_parallel_size == default_cfg.model.expert_model_parallel_size
+    assert perf_cfg.model.sequence_parallel == default_cfg.model.sequence_parallel
+    assert perf_cfg.train.global_batch_size == default_cfg.train.global_batch_size
+    assert perf_cfg.train.micro_batch_size == default_cfg.train.micro_batch_size
+    assert perf_cfg.model.moe_flex_dispatcher_backend == default_cfg.model.moe_flex_dispatcher_backend
+    assert perf_cfg.model.moe_token_dispatcher_type == default_cfg.model.moe_token_dispatcher_type
+    assert perf_cfg.model.cuda_graph_impl == default_cfg.model.cuda_graph_impl
+    assert perf_cfg.model.cuda_graph_scope == default_cfg.model.cuda_graph_scope
+    assert perf_cfg.comm_overlap.tp_comm_overlap == default_cfg.comm_overlap.tp_comm_overlap
+    assert perf_cfg.model.moe_router_force_load_balancing is True
+    assert default_cfg.model.moe_router_force_load_balancing is False
+
+
+def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
+    """Keep non-H100-BF16 perf recipes isolated from the new generic default."""
+    from megatron.bridge.perf_recipes.qwen.common import qwen3_30b_a3b_pretrain_config as perf_base
+    from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config as legacy_base,
+    )
+
+    assert perf_base is legacy_base
+
+
+def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that changing the generic default does not alter the H100 FP8 recipe."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
+        qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
+    )
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    cfg = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
+
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_scope == []
+
+
 def test_qwen3_235b_a22b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B LoRA has correct default parallelism."""
     from megatron.bridge.recipes.qwen import qwen3_235b_a22b_peft_config

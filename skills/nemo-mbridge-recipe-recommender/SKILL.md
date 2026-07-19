@@ -143,7 +143,7 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 | Recipe | Mode | TP | PP | EP | CP | GPUs |
 |--------|------|----|----|----|----|------|
-| `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 8 | — | 8 |
+| `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 16 | — | 16 |
 | `qwen3_30b_a3b_sft_config` | SFT | 1 | 1 | 8 | — | 8 |
 | `qwen3_30b_a3b_peft_config` | PEFT | 1 | 1 | 1 | — | 1 |
 | `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 512+ |
@@ -413,7 +413,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–8 |
 | LoRA on 1 GPU | `llama3_8b_peft_config` or `qwen3_8b_peft_config` | 1 |
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
-| Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 8 |
+| Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 16 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
 | Benchmark throughput | Perf recipes via `run_script.py` | Varies |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |

@@ -18,6 +18,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import bf16_mixed
@@ -127,6 +128,58 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for Qwen3-30B-A3B on 16 H100 GPUs.
+
+    Recommended parallelism: TP=1, PP=1, EP=16 with HybridEP.
+    """
+    cfg = qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config()
+
+    # Precision and fused kernels
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.model.bias_activation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+
+    # The 16-GPU topology fits without activation recomputation.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 1
+
+    # HybridEP dispatcher
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_a2a_overlap = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_router_force_load_balancing = False
+
+    # Transformer Engine scoped CUDA graphs
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
     return cfg
 
 
@@ -808,6 +861,7 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",  # pragma: allowlist secret
     "qwen3_235b_a22b_sft_64gpu_h100_bf16_config",
     "qwen3_30b_a3b_peft_4gpu_h100_bf16_config",
+    "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
     "qwen3_30b_a3b_sft_8gpu_h100_bf16_config",
 ]
