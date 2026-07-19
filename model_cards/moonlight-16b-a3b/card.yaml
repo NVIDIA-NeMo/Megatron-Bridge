@@ -24,9 +24,10 @@ items:
     last_verified: 2026-07-19
     expected_result: >
       The command exits successfully, creates iter_0000000, and the checkpoint
-      round-trips through CPU export with exact model configuration and all 377
-      registered parameters and persistent buffers matching bitwise by key,
-      shape, dtype, and value.
+      round-trips through CPU export with exact model configuration. All 377
+      registered parameters and persistent buffers match by key, shape, and
+      exact numerical value; 351 retain their dtype and bitwise representation,
+      while 26 router correction-bias buffers widen losslessly to FP32.
 
   hf_to_megatron_gpu:
     status: verified
@@ -52,15 +53,16 @@ items:
       --hf-model moonshotai/Moonlight-16B-A3B
       --megatron-path work/model-verification/moonlight-16b-a3b/cpu-megatron/iter_0000000
       --hf-path work/model-verification/moonlight-16b-a3b/cpu-hf-export
-      --trust-remote-code
+      --torch-dtype bfloat16 --trust-remote-code
     last_verified: 2026-07-19
     expected_result: >
       The command exits successfully, the model configuration is exact, and all
-      377 registered parameters and persistent buffers match bitwise by key,
-      shape, dtype, and value. Native Transformers strictly reloads the output
-      as DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized
-      files, the 26 router correction-bias buffers are exact-value BF16-to-FP32
-      widenings and 27 stale, nonpersistent source inv_freq tensors are omitted.
+      377 registered parameters and persistent buffers match by key, shape, and
+      exact numerical value. Native Transformers strictly reloads the output as
+      DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized
+      files, 351 semantic tensors retain their dtype and bitwise representation,
+      26 router correction-bias buffers widen losslessly from BF16 to FP32, and
+      27 stale, nonpersistent source inv_freq tensors are omitted.
 
   megatron_to_hf_gpu:
     status: verified
@@ -209,7 +211,7 @@ items:
       France's most famous".
 
   sft_long_context:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -228,16 +230,17 @@ items:
       dataset.enable_offline_packing=true scheduler.lr_decay_iters=20
       validation.eval_iters=0 validation.eval_interval=0
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 1.264452
+      final_loss: 1.251715
+      last_10_steps_step_time_ms_avg: 59637.250
+      last_10_steps_model_tflops_per_gpu_avg: 41.490
     expected_result: >
       The command completes exactly 20 Tulu3 SFT steps at the model's 8192-token
-      context limit with CP=2 and offline packing, finite losses, no skipped or
-      NaN iterations, and all four metrics.
+      context limit with CP=2 and 99.69%-efficient offline packing, finite loss
+      1.264452 at step 1 and 1.251715 at step 20, no skipped or NaN iterations,
+      and the recorded final-ten metrics.
 
   peft:
     status: verified
