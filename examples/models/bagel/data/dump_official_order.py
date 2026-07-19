@@ -102,11 +102,17 @@ def main() -> None:
 
     with args.output.open("w", encoding="utf-8") as stream:
         for step, batch in zip(range(args.num_batches), loader):
+            packed = batch.to_dict()
+            for field in ("batch_data_indexes", "nested_attention_masks", "padded_images", "packed_vit_tokens"):
+                packed.pop(field, None)
             record = {
                 "step": step,
+                "source_ids": [
+                    {"dataset_name": item["dataset_name"], "data_indexes": item["data_indexes"]}
+                    for item in batch.batch_data_indexes
+                ],
                 "batch_data_indexes": batch.batch_data_indexes,
-                "sequence_length": batch.sequence_length,
-                "sample_lens": batch.sample_lens,
+                **packed,
             }
             stream.write(json.dumps(to_jsonable(record), separators=(",", ":")) + "\n")
 
