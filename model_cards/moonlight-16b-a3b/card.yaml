@@ -122,7 +122,7 @@ items:
       Louvre Museum, and Notre-Dame".
 
   pretrain:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     enabled_features: {}
@@ -138,16 +138,17 @@ items:
       dist.distributed_timeout_minutes=30
       --save_dir work/model-verification/moonlight-16b-a3b/pretrain-reference-checkpoints
       --save_interval 200 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 12.41085
+      final_loss: 3.413953
+      last_10_steps_step_time_ms_avg: 25895.910
+      last_10_steps_model_tflops_per_gpu_avg: 86.840
     expected_result: >
       The unchanged recipe batch completes exactly 400 bounded RP2 optimizer
-      steps with finite losses, no skipped or NaN iterations, all four metrics,
-      and complete iter_0000200 and iter_0000400 checkpoints.
+      steps with finite loss 12.41085 at step 1 and 3.413953 at step 400, no
+      skipped or NaN iterations, the recorded final-ten metrics, and complete
+      iter_0000200 and iter_0000400 checkpoints.
 
   sft:
     status: verified
