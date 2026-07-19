@@ -46,7 +46,7 @@ def main() -> None:
     )
     dataset_yaml = args.dataset_dir / ".nv-meta" / "dataset.yaml"
     dataset_yaml.write_text(
-        "__module__: megatron.energon\n__class__: CrudeWebdataset\n",
+        "__module__: megatron.energon\n__class__: CrudeWebdataset\nauto_decode: false\n",
         encoding="utf-8",
     )
     logger.info("Prepared %s as an Energon CrudeWebdataset", relative_tar)
