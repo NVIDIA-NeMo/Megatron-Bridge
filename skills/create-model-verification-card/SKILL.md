@@ -39,6 +39,12 @@ identifier and the exact Bridge commit used for verification. Put them in
 the container, record the mounted checkout commit. Never substitute a private
 image path for the public base container identifier.
 
+The top-level Bridge commit is the default for every item. If one verified item
+was run from a different clean checkout, put that exact 40-hex commit in the
+item's optional `bridge_commit` field. Omit the field when it would repeat the
+top-level value, and never use a commit field to disguise uncommitted runtime
+changes. Items that are not verified must not carry a commit override.
+
 ### 2. Create the core inventory and add performance when available
 
 Include these twelve required items, even when their status is `unsupported` or
@@ -254,7 +260,8 @@ an item verified merely to make validation pass.
 - Put the verified workload precision on every item; use `fp8_mx` and `nvfp4`
   only for training items that ran in those modes.
 - Pin a public immutable HF revision, minimum Transformers version, public base
-  container, and exact Bridge verification commit.
+  container, and exact Bridge verification commit; use an item override only
+  for a verified workload run from a different clean commit.
 - Use the public model name in commands.
 - Include commands and concrete expected results for verified items.
 - Use `convert.sh --executor slurm` for conversion and `train.sh` for training.

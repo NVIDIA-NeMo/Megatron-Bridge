@@ -80,6 +80,7 @@ ITEM_KEYS = frozenset(
     {
         "status",
         "precision",
+        "bridge_commit",
         "depends_on",
         "command",
         "commands",
@@ -361,6 +362,68 @@ def _config_override_values(command: str, field: str) -> list[str]:
     return [token[len(prefix) :] for token in normalized_tokens if token.startswith(prefix)]
 
 
+def _resume_reference_settings(command: str) -> list[tuple[str, str, str | None]] | None:
+    """Return order-independent settings that must match a reference run."""
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return None
+
+    ignored_arguments = {
+        "--load-dir",
+        "--load_dir",
+        "--save-dir",
+        "--save-interval",
+        "--save_dir",
+        "--save_interval",
+    }
+    ignored_checkpoint_overrides = {
+        "checkpoint.ckpt_step",
+        "checkpoint.finetune",
+        "checkpoint.load",
+        "checkpoint.load_optim",
+        "checkpoint.load_rng",
+        "checkpoint.save",
+        "checkpoint.save_optim",
+        "checkpoint.save_rng",
+    }
+    ignored_runtime_overrides = {"train.empty_unused_memory_level"}
+    settings: list[tuple[str, str, str | None]] = []
+    index = 1  # Both commands are validated separately as train.sh invocations.
+    while index < len(tokens):
+        token = tokens[index]
+        normalized = token.lstrip("+")
+
+        if token.startswith("-"):
+            if "=" in token:
+                argument, value = token.split("=", maxsplit=1)
+            else:
+                argument = token
+                value = None
+                if index + 1 < len(tokens):
+                    candidate = tokens[index + 1]
+                    if not candidate.startswith("-") and "=" not in candidate:
+                        value = candidate
+                        index += 1
+            if argument not in ignored_arguments:
+                settings.append(("argument", argument, value))
+        elif "=" in normalized:
+            field, value = normalized.split("=", maxsplit=1)
+            if field not in ignored_checkpoint_overrides and field not in ignored_runtime_overrides:
+                settings.append(("override", field, value))
+        else:
+            settings.append(("positional", normalized, None))
+        index += 1
+
+    return sorted(settings, key=lambda setting: (setting[0], setting[1], setting[2] or ""))
+
+
+def _resume_setting_names(settings: list[tuple[str, str, str | None]]) -> str:
+    """Describe mismatched settings without reproducing their possibly private values."""
+    names = sorted({"<positional>" if kind == "positional" else name for kind, name, _ in settings})
+    return ", ".join(names)
+
+
 def _has_batch_size_override(command: str) -> bool:
     try:
         tokens = shlex.split(command)
@@ -516,9 +579,19 @@ def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str])
         elif values and values[0].lower() != expected_value:
             errors.append(f"{_pointer(*path, 'command')}: {field} must remain {expected_value}")
 
-    load_dir = _argument_value(command, "--load_dir")
-    save_dir = _argument_value(command, "--save_dir")
-    if load_dir is not None and save_dir is not None and load_dir == save_dir:
+    for field in ("checkpoint.load", "checkpoint.save"):
+        if _config_override_values(command, field):
+            errors.append(
+                f"{_pointer(*path, 'command')}: use the canonical --load_dir and --save_dir arguments, not {field}"
+            )
+
+    load_dirs = _argument_values(command, "--load_dir")
+    save_dirs = _argument_values(command, "--save_dir")
+    if len(load_dirs) != 1:
+        errors.append(f"{_pointer(*path, 'command')}: verified resume requires exactly one --load_dir")
+    if len(save_dirs) != 1:
+        errors.append(f"{_pointer(*path, 'command')}: verified resume requires exactly one --save_dir")
+    if len(load_dirs) == 1 and len(save_dirs) == 1 and load_dirs[0].rstrip("/") == save_dirs[0].rstrip("/"):
         errors.append(f"{_pointer(*path, 'command')}: load and save directories must be distinct")
 
     ckpt_match = re.search(r"checkpoint\.ckpt_step=(\d+)", command)
@@ -541,6 +614,84 @@ def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str])
             errors.append(f"{_pointer(*comparison_path, 'sentinel_steps')}: final sentinel must equal max_steps")
     if comparison.get("sentinels_match") is not True:
         errors.append(f"{_pointer(*comparison_path, 'sentinels_match')}: must be true when verified")
+
+
+def _validate_resume_against_pretrain(
+    item: Mapping[str, Any],
+    pretrain_item: Mapping[str, Any],
+    *,
+    default_bridge_commit: str | None,
+    errors: list[str],
+) -> None:
+    """Require a direct resume to use its reference run's checkpoint and settings."""
+    if item.get("status") == "verified":
+        if pretrain_item.get("status") != "verified":
+            errors.append(f"{_pointer('items', 'checkpoint_resume', 'depends_on')}: pretrain must be verified first")
+        reference_commit = pretrain_item.get("bridge_commit") or default_bridge_commit
+        resume_commit = item.get("bridge_commit") or default_bridge_commit
+        if reference_commit != resume_commit:
+            errors.append(
+                f"{_pointer('items', 'checkpoint_resume', 'bridge_commit')}: "
+                "resume and pretrain must use the same Bridge commit"
+            )
+
+    resume_command = _command_value(item)
+    pretrain_command = _command_value(pretrain_item)
+    if resume_command is None or pretrain_command is None:
+        return
+
+    resume_path = ("items", "checkpoint_resume", "command")
+    pretrain_path = ("items", "pretrain", "command")
+    reference_save_dirs = _argument_values(pretrain_command, "--save_dir")
+    resume_load_dirs = _argument_values(resume_command, "--load_dir")
+    if len(reference_save_dirs) != 1:
+        errors.append(f"{_pointer(*pretrain_path)}: checkpoint resume requires exactly one reference --save_dir")
+    if len(resume_load_dirs) != 1:
+        errors.append(f"{_pointer(*resume_path)}: checkpoint resume requires exactly one --load_dir")
+    if len(reference_save_dirs) == 1 and len(resume_load_dirs) == 1:
+        if reference_save_dirs[0].rstrip("/") != resume_load_dirs[0].rstrip("/"):
+            errors.append(f"{_pointer(*resume_path)}: --load_dir must equal the pretrain --save_dir")
+
+    if _argument_values(pretrain_command, "--load_dir"):
+        errors.append(f"{_pointer(*pretrain_path)}: uninterrupted reference pretrain must not use --load_dir")
+    if _config_override_values(pretrain_command, "checkpoint.ckpt_step"):
+        errors.append(
+            f"{_pointer(*pretrain_path)}: uninterrupted reference pretrain must not set checkpoint.ckpt_step"
+        )
+    reference_load_values = _config_override_values(pretrain_command, "checkpoint.load")
+    if len(reference_load_values) > 1:
+        errors.append(f"{_pointer(*pretrain_path)}: checkpoint.load must not be overridden more than once")
+    elif reference_load_values and reference_load_values[0].lower() not in {"none", "null"}:
+        errors.append(f"{_pointer(*pretrain_path)}: uninterrupted reference checkpoint.load must be null")
+    if _config_override_values(pretrain_command, "checkpoint.save"):
+        errors.append(f"{_pointer(*pretrain_path)}: use the canonical --save_dir argument, not checkpoint.save")
+
+    required_reference_values = {
+        "checkpoint.finetune": "false",
+        "checkpoint.save_optim": "true",
+        "checkpoint.save_rng": "true",
+    }
+    for field, expected_value in required_reference_values.items():
+        values = _config_override_values(pretrain_command, field)
+        if len(values) > 1:
+            errors.append(f"{_pointer(*pretrain_path)}: {field} must not be overridden more than once")
+        elif values and values[0].lower() != expected_value:
+            errors.append(f"{_pointer(*pretrain_path)}: {field} must remain {expected_value} for checkpoint resume")
+
+    reference_settings = _resume_reference_settings(pretrain_command)
+    resume_settings = _resume_reference_settings(resume_command)
+    if reference_settings is None or resume_settings is None or reference_settings == resume_settings:
+        return
+
+    differing_settings = [
+        setting
+        for setting in {*reference_settings, *resume_settings}
+        if reference_settings.count(setting) != resume_settings.count(setting)
+    ]
+    errors.append(
+        f"{_pointer(*resume_path)}: reference and resume launch settings must match; "
+        f"differences found in {_resume_setting_names(differing_settings)}"
+    )
 
 
 def _validate_inference(
@@ -787,6 +938,13 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     if not isinstance(status, str) or status not in STATUSES:
         errors.append(f"{_pointer(*path, 'status')}: expected one of {sorted(STATUSES)}")
         return
+
+    bridge_commit = item.get("bridge_commit")
+    if "bridge_commit" in item:
+        if status != "verified":
+            errors.append(f"{_pointer(*path, 'bridge_commit')}: item overrides are allowed only when verified")
+        if not isinstance(bridge_commit, str) or REVISION_RE.fullmatch(bridge_commit) is None:
+            errors.append(f"{_pointer(*path, 'bridge_commit')}: expected an immutable 40-hex commit")
 
     precision = item.get("precision")
     if precision is not None and (not isinstance(precision, str) or precision not in PRECISIONS):
@@ -1052,6 +1210,30 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         sft_export_item = items.get("sft_export_inference")
         if isinstance(sft_item, Mapping) and isinstance(sft_export_item, Mapping):
             _validate_sft_export_inference(sft_export_item, sft_item, errors=errors)
+        pretrain_item = items.get("pretrain")
+        resume_item = items.get("checkpoint_resume")
+        if isinstance(pretrain_item, Mapping) and isinstance(resume_item, Mapping):
+            default_bridge_commit = environment.get("bridge_commit") if environment is not None else None
+            _validate_resume_against_pretrain(
+                resume_item,
+                pretrain_item,
+                default_bridge_commit=default_bridge_commit if isinstance(default_bridge_commit, str) else None,
+                errors=errors,
+            )
+
+        if environment is not None:
+            default_bridge_commit = environment.get("bridge_commit")
+            for name, item in items.items():
+                if (
+                    isinstance(default_bridge_commit, str)
+                    and isinstance(item, Mapping)
+                    and "bridge_commit" in item
+                    and item.get("bridge_commit") == default_bridge_commit
+                ):
+                    errors.append(
+                        f"{_pointer('items', str(name), 'bridge_commit')}: "
+                        "omit a redundant override of verification_environment.bridge_commit"
+                    )
 
     any_verified = bool(
         items and any(isinstance(item, Mapping) and item.get("status") == "verified" for item in items.values())

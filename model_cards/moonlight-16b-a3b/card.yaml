@@ -9,7 +9,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: e0d0c1273cd739afc4d8e0c66e8b2fa9c24f08a5  # pragma: allowlist secret
+  bridge_commit: 93c6930597fd3766acd177288b7a8607d7b96ad7  # pragma: allowlist secret
 summary: Moonlight-16B-A3B support verification for conversion, inference, and training.
 
 items:
@@ -24,10 +24,10 @@ items:
     last_verified: 2026-07-19
     expected_result: >
       The command exits successfully, creates iter_0000000, and the checkpoint
-      round-trips through CPU export with exact model configuration. All 377
-      registered parameters and persistent buffers match by key, shape, and
-      exact numerical value; 351 retain their dtype and bitwise representation,
-      while 26 router correction-bias buffers widen losslessly to FP32.
+      round-trips through CPU export with exact model configuration. After
+      native reload, all 377 registered parameters and persistent buffers match
+      bitwise by key, shape, dtype, and value. In the serialized files, 26 router
+      correction-bias buffers widen losslessly from BF16 to FP32.
 
   hf_to_megatron_gpu:
     status: verified
@@ -57,12 +57,12 @@ items:
     last_verified: 2026-07-19
     expected_result: >
       The command exits successfully, the model configuration is exact, and all
-      377 registered parameters and persistent buffers match by key, shape, and
-      exact numerical value. Native Transformers strictly reloads the output as
-      DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized
-      files, 351 semantic tensors retain their dtype and bitwise representation,
-      26 router correction-bias buffers widen losslessly from BF16 to FP32, and
-      27 stale, nonpersistent source inv_freq tensors are omitted.
+      377 registered parameters and persistent buffers match bitwise by key,
+      shape, dtype, and value after native reload. Transformers strictly reloads
+      the output as DeepseekV3ForCausalLM with trust_remote_code disabled. In the
+      serialized files, 26 router correction-bias buffers widen losslessly from
+      BF16 to FP32 and 27 stale, nonpersistent source inv_freq tensors are
+      omitted.
 
   megatron_to_hf_gpu:
     status: verified
@@ -84,7 +84,7 @@ items:
       trust_remote_code disabled and no missing or unexpected keys.
 
   manual_forward_pass:
-    status: verified
+    status: unverified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
@@ -94,12 +94,11 @@ items:
       --tp 1 --pp 1 --ep 8 --etp 1
       --prompt "The capital of France is"
       --model_class DeepseekV3ForCausalLM --trust-remote-code
-    last_verified: 2026-07-19
+    last_verified: null
     expected_result: >
-      Hugging Face and Megatron have next-token matches at token ID 17374
-      (" Paris"). Cosine similarity: 0.999893, above the 0.9998 gate; the max
-      absolute logit difference is 0.472656 and the mean absolute logit
-      difference is 0.074414.
+      From a clean checkout, Hugging Face and Megatron must select the same
+      next token and achieve cosine similarity of at least 0.9998; the maximum
+      and mean absolute logit differences must also be recorded.
 
   inference:
     status: verified
