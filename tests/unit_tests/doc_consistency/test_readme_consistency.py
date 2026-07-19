@@ -29,6 +29,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
+PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
@@ -81,9 +82,12 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions and public aliases under src/.../recipes/**."""
+    """All recipe-config functions and public aliases under src/.../recipes/** and perf_recipes/**."""
     names: set[str] = set()
-    for py in RECIPES_DIR.rglob("*.py"):
+    recipe_files = list(RECIPES_DIR.rglob("*.py"))
+    if PERF_RECIPES_DIR.is_dir():
+        recipe_files += list(PERF_RECIPES_DIR.rglob("*.py"))
+    for py in recipe_files:
         tree = ast.parse(_read(py), filename=str(py))
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
