@@ -15,7 +15,7 @@
 #
 # Test purpose:
 # - Parametrize over all exported Moonlight recipe functions in `megatron.bridge.recipes.moonlight`.
-# - For each recipe, monkeypatch `MLAModelProvider` with a lightweight fake to avoid I/O.
+# - For each recipe, monkeypatch `AutoBridge` with a lightweight fake to avoid I/O.
 # - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
 # - Verify tokenizer selection and sanity-check parallelism fields.
 #
@@ -24,6 +24,7 @@ import importlib
 from typing import Callable
 
 import pytest
+import torch
 
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -84,7 +85,11 @@ class _FakeMoonlightModelProvider:
             setattr(self, key, value)
 
         # Set required attributes
-        self.vocab_size = 151936  # Default vocab size for Moonlight
+        self.vocab_size = 163840
+        self.kv_channels = 128
+        self.multi_latent_attention = True
+        self.q_lora_rank = None
+        self.moe_aux_loss_coeff = 0.0001
         self.account_for_embedding_in_pipeline_split = False
         self.account_for_loss_in_pipeline_split = False
         self.num_layers_in_first_pipeline_stage = None
@@ -108,6 +113,19 @@ class _FakeMoonlightModelProvider:
 
     def finalize(self):
         return None
+
+
+class _FakeBridge:
+    """Return the checkpoint-compatible fake provider without model I/O."""
+
+    @classmethod
+    def from_hf_pretrained(cls, model_id: str) -> "_FakeBridge":
+        assert model_id == "moonshotai/Moonlight-16B-A3B"
+        return cls()
+
+    def to_megatron_provider(self, *, load_weights: bool) -> _FakeMoonlightModelProvider:
+        assert load_weights is False
+        return _FakeMoonlightModelProvider()
 
 
 def _assert_basic_config(cfg):
@@ -134,8 +152,8 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
 
-    # Monkeypatch the MLAModelProvider class
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    # Keep every recipe construction offline.
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()
@@ -170,7 +188,7 @@ def test_moonlight_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.
     """Test that each Moonlight SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func()
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -195,7 +213,7 @@ def test_moonlight_peft_config_builds(recipe_func: Callable, monkeypatch: pytest
     """Test that each Moonlight PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme="lora")
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -221,7 +239,7 @@ def test_moonlight_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeyp
     """Test that PEFT configurations are correctly applied with different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -237,7 +255,7 @@ def test_moonlight_16b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = moonlight_16b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "moonlight_16b_peft_config")
@@ -249,6 +267,18 @@ def test_moonlight_16b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 2
     assert cfg.model.sequence_parallel is False
+    assert cfg.model.kv_channels == 128
+    assert cfg.model.multi_latent_attention is True
+    assert cfg.model.q_lora_rank is None
+    assert cfg.model.moe_aux_loss_coeff == 0.001
+    assert cfg.model.vocab_size == 163842
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
 
     # Check manual GC is enabled
     assert cfg.train.manual_gc is True
@@ -260,7 +290,7 @@ def test_moonlight_16b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = moonlight_16b_peft_config(peft_scheme="dora")
     _apply_test_overrides(cfg, "moonlight_16b_peft_config")
@@ -283,7 +313,7 @@ def test_moonlight_16b_sft_full_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = moonlight_16b_sft_config()
     _apply_test_overrides(cfg, "moonlight_16b_sft_config")
@@ -295,6 +325,18 @@ def test_moonlight_16b_sft_full_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.kv_channels == 128
+    assert cfg.model.multi_latent_attention is True
+    assert cfg.model.q_lora_rank is None
+    assert cfg.model.moe_aux_loss_coeff == 0.001
+    assert cfg.model.vocab_size == 163842
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
 
     # Check manual GC is enabled
     assert cfg.train.manual_gc is True
@@ -306,7 +348,7 @@ def test_moonlight_16b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyP
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = moonlight_16b_sft_config()
     _apply_test_overrides(cfg, "moonlight_16b_sft_config")
@@ -315,8 +357,6 @@ def test_moonlight_16b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyP
 
     # Check precision-aware optimizer settings
     assert cfg.optimizer.use_precision_aware_optimizer is True
-    import torch
-
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.main_grads_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
@@ -328,7 +368,7 @@ def test_moonlight_16b_sft_tokenizer_with_trust_remote_code(monkeypatch: pytest.
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = moonlight_16b_sft_config()
 

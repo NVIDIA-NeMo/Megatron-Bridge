@@ -14,7 +14,6 @@
 
 
 import torch
-import torch.nn.functional as F
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -24,6 +23,48 @@ from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+
+
+_MOONLIGHT_16B_MODEL_ID = "moonshotai/Moonlight-16B-A3B"
+_MOONLIGHT_16B_FINETUNING_VOCAB_SIZE = 163842
+
+
+def _moonlight_16b_model_provider() -> MLAModelProvider:
+    """Build the Moonlight architecture from its Hugging Face configuration."""
+    return AutoBridge.from_hf_pretrained(_MOONLIGHT_16B_MODEL_ID).to_megatron_provider(load_weights=False)
+
+
+def _moonlight_16b_finetuning_model_provider(
+    *,
+    tensor_parallel_size: int,
+    expert_parallel_size: int,
+    sequence_parallel: bool,
+) -> MLAModelProvider:
+    """Build a checkpoint-compatible Moonlight provider for SFT or PEFT."""
+    model = _moonlight_16b_model_provider()
+
+    # The tokenizer includes two added tokens beyond the pretrained embedding
+    # rows. Checkpoint loading copies the original rows and initializes the two
+    # new rows for finetuning; HF export trims them back to the model vocabulary.
+    model.vocab_size = _MOONLIGHT_16B_FINETUNING_VOCAB_SIZE
+
+    model.tensor_model_parallel_size = tensor_parallel_size
+    model.pipeline_model_parallel_size = 1
+    model.pipeline_dtype = torch.bfloat16
+    model.virtual_pipeline_model_parallel_size = None
+    model.context_parallel_size = 1
+    model.expert_model_parallel_size = expert_parallel_size
+    model.expert_tensor_parallel_size = 1
+    model.sequence_parallel = sequence_parallel
+
+    model.recompute_granularity = "selective"
+    model.recompute_modules = None
+    model.recompute_method = None
+    model.recompute_num_layers = None
+
+    # Preserve the finetuning recipe's source-model auxiliary-loss value.
+    model.moe_aux_loss_coeff = 0.001
+    return model
 
 
 def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int):
@@ -56,10 +97,7 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config via AutoBridge (dispatches to DeepSeekV3Bridge)
-    cfg.model = AutoBridge.from_hf_pretrained("moonshotai/Moonlight-16B-A3B").to_megatron_provider(load_weights=False)
-    # TEMPFIX(yuya): Moonlight has no Q LoRA compression (HF q_lora_rank=null),
-    # but CONFIG_MAPPING skips None so MLATransformerConfig default (512) would be used
-    cfg.model.q_lora_rank = None
+    cfg.model = _moonlight_16b_model_provider()
 
     # Tokenizer - uses NullTokenizer with model vocab_size
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
@@ -196,62 +234,10 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    # Model config - uses MLAModelProvider with Moonlight-16B architecture
-    cfg.model = MLAModelProvider(
-        # Architecture
-        num_layers=27,
-        hidden_size=2048,
-        ffn_hidden_size=11264,
-        num_attention_heads=16,
-        kv_channels=16,
-        q_lora_rank=None,
-        kv_lora_rank=512,
-        num_moe_experts=64,
-        moe_ffn_hidden_size=1408,
-        moe_shared_expert_intermediate_size=2816,
-        moe_layer_freq=[0] * 1 + [1] * 26,
-        moe_router_topk=6,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        moe_router_topk_scaling_factor=2.446,
-        moe_aux_loss_coeff=0.001,
-        make_vocab_size_divisible_by=1280,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        rotary_scaling_factor=1.0,
-        mscale=1.0,
-        mscale_all_dim=1.0,
-        rotary_base=50000,
-        layernorm_epsilon=1e-5,
-        init_method_std=0.02,
-        moe_router_bias_update_rate=1e-3,
-        rotary_percent=1.0,
-        vocab_size=163842,
-        # Common defaults
-        normalization="RMSNorm",
-        activation_func=F.silu,
-        gated_linear_unit=True,
-        position_embedding_type="rope",
-        add_bias_linear=False,
-        share_embeddings_and_output_weights=False,
-        qk_layernorm=True,
-        bf16=True,
-        params_dtype=torch.bfloat16,
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        # Parallelism
-        tensor_model_parallel_size=2,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=8,
+    cfg.model = _moonlight_16b_finetuning_model_provider(
+        tensor_parallel_size=2,
+        expert_parallel_size=8,
         sequence_parallel=True,
-        expert_tensor_parallel_size=1,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
     )
 
     # Pipeline split settings
@@ -409,62 +395,10 @@ def moonlight_16b_peft_2gpu_h100_bf16_config(
     """
     cfg = _peft_common()
 
-    # Model config - PEFT uses TP=1, EP=2
-    cfg.model = MLAModelProvider(
-        # Architecture
-        num_layers=27,
-        hidden_size=2048,
-        ffn_hidden_size=11264,
-        num_attention_heads=16,
-        kv_channels=16,
-        q_lora_rank=None,
-        kv_lora_rank=512,
-        num_moe_experts=64,
-        moe_ffn_hidden_size=1408,
-        moe_shared_expert_intermediate_size=2816,
-        moe_layer_freq=[0] * 1 + [1] * 26,
-        moe_router_topk=6,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        moe_router_topk_scaling_factor=2.446,
-        moe_aux_loss_coeff=0.001,
-        make_vocab_size_divisible_by=1280,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        rotary_scaling_factor=1.0,
-        mscale=1.0,
-        mscale_all_dim=1.0,
-        rotary_base=50000,
-        layernorm_epsilon=1e-5,
-        init_method_std=0.02,
-        moe_router_bias_update_rate=1e-3,
-        rotary_percent=1.0,
-        vocab_size=163842,
-        # Common defaults
-        normalization="RMSNorm",
-        activation_func=F.silu,
-        gated_linear_unit=True,
-        position_embedding_type="rope",
-        add_bias_linear=False,
-        share_embeddings_and_output_weights=False,
-        qk_layernorm=True,
-        bf16=True,
-        params_dtype=torch.bfloat16,
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        # Parallelism
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        expert_model_parallel_size=2,
+    cfg.model = _moonlight_16b_finetuning_model_provider(
+        tensor_parallel_size=1,
+        expert_parallel_size=2,
         sequence_parallel=False,
-        expert_tensor_parallel_size=1,
-        recompute_granularity="selective",
-        recompute_modules=None,
-        recompute_method=None,
-        recompute_num_layers=None,
     )
 
     # Pipeline split settings
