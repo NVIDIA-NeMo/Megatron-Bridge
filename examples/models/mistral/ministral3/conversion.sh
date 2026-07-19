@@ -21,12 +21,12 @@ WORKSPACE=${WORKSPACE:-/workspace}
 # Commands below use uv run --no-sync to avoid conflicts with the virtual environment.
 
 # Import HF → Megatron
-uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
     --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16
 
 # Export Megatron → HF
-uv run --no-sync python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model mistralai/Ministral-3-3B-Instruct-2512-BF16 \
     --megatron-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16/iter_0000000 \
     --hf-path ${WORKSPACE}/models/Ministral-3-3B-Instruct-2512-BF16-hf-export

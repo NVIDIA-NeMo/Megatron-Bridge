@@ -17,8 +17,8 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import (
     CommOverlapConfig,
@@ -1285,7 +1285,7 @@ def llama32_1b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.train_iters = 1000
     cfg.validation.eval_interval = 30
     cfg.validation.eval_iters = 32
-    cfg.train.global_batch_size = 8  # packed_sequence=True, else 128
+    cfg.train.global_batch_size = 8  # enable_offline_packing=True, else 128
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100

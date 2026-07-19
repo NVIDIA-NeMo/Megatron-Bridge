@@ -76,7 +76,7 @@ def build_config(args: argparse.Namespace) -> ConfigContainer:
         reset_attention_mask=False,
         eod_mask_loss=False,
     )
-    cfg.dataset.sequence_length = args.seq_length
+    cfg.dataset.seq_length = args.seq_length
     cfg.dataset.dataloader_type = "single"
     cfg.dataset.num_workers = 0
     cfg.dataset.persistent_workers = False

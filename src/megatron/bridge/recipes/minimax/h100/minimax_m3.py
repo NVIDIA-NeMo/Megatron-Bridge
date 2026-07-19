@@ -16,7 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
+from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
@@ -176,7 +176,7 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
 
     # Tokenizer / dataset (real HF tokenizer; packed / THD)
     cfg.tokenizer.tokenizer_model = MINIMAX_M3_HF_PATH
-    cfg.dataset = default_squad_config(seq_length=4096, packed_sequence=True)
+    cfg.dataset = default_squad_config(seq_length=4096, enable_offline_packing=True)
 
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1

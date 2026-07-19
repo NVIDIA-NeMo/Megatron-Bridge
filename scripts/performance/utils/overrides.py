@@ -419,7 +419,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
             raise ValueError("--dataset-paths and --index-mapping-dir are required for rp2 dataset")
         recipe.dataset = create_rp2_dataset_config(
             dataset_paths=args.dataset_paths,
-            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.seq_length,
             index_mapping_dir=args.index_mapping_dir,
             num_workers=recipe.dataset.num_workers,
             pin_memory=recipe.dataset.pin_memory,
@@ -429,7 +429,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if not args.c4_root:
             raise ValueError("--c4_root is required for c4 dataset")
         recipe.dataset = create_c4_dataset_config(
-            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.sequence_length,
+            seq_length=args.seq_length if args.seq_length is not None else recipe.dataset.seq_length,
             c4_root=args.c4_root,
             train_shards=tuple(args.c4_train_shards),
             index_mapping_dir=args.index_mapping_dir,

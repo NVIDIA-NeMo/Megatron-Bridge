@@ -104,6 +104,16 @@ class TestMegatronMistralBridge:
         assert result.seq_length == mistral_config.max_position_embeddings
         assert result.rotary_base == rope_theta_from_hf(mistral_config)
 
+    def test_megatron_to_hf_config_restores_serialized_window(self, mock_pretrained_mistral):
+        bridge = MistralBridge()
+        provider = bridge.provider_bridge(mock_pretrained_mistral)
+        provider.window_size = [2047, 0]
+
+        config = MistralBridge.megatron_to_hf_config(provider)
+
+        assert config["sliding_window"] == 2048
+        assert MistralConfig(**config).sliding_window == 2048
+
     def test_provider_bridge_vocabulary(self, mock_pretrained_mistral, mistral_config):
         """Test vocabulary size mapping."""
         bridge = MistralBridge()
@@ -436,10 +446,3 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["MistralModel"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
-
-    def test_list_supported_models(self):
-        """Test list_supported_models includes MistralForCausalLM."""
-        # This test requires the dispatch system to be set up
-        # Since we're testing in isolation, we'll skip this test
-        # In a real environment, this would work if the bridges are registered
-        pass  # Skip for now as it requires full dispatch setup

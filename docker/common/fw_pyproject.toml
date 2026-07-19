@@ -103,7 +103,7 @@ override-dependencies = [
     "nvidia-cusparse-cu12; sys_platform == 'never'",
     "nvidia-cusparselt-cu12; sys_platform == 'never'",
     "nvidia-nccl-cu12; sys_platform == 'never'",
-    "nvidia-cudnn-frontend==1.24.0",
+    "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'", # Rely on system site packages install
     "tensorrt-llm; sys_platform == 'never'",
     "tensorrt; sys_platform == 'never'",
@@ -122,4 +122,5 @@ override-dependencies = [
     "decord; sys_platform == 'never'",                   # Optional dependency. Resolves CVE
     "av; sys_platform == 'never'",                       # Optional dependency. Resolves CVE
     "opencv-python-headless; sys_platform == 'never'",   # Optional dependency. Resolves CVE
+    "fastapi<0.139.2"                                    # 0.139.2 fails with ray 2.55.1 at least
 ]

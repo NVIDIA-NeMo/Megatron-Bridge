@@ -138,10 +138,8 @@ class TestEnergonMultiModalDataModuleFunctional:
         datamodule = EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
             tokenizer=MagicMock(),
-            image_processor=MagicMock(),
             seq_length=1024,
             micro_batch_size=2,
-            global_batch_size=4,
             num_workers=2,
             pg_collection=pg_collection,
         )
@@ -226,10 +224,8 @@ class TestEnergonDataModuleCPHandling:
         return EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
             tokenizer=MagicMock(),
-            image_processor=MagicMock(),
             seq_length=1024,
             micro_batch_size=2,
-            global_batch_size=8,
             num_workers=num_workers,
             num_val_workers=num_val_workers,
             pg_collection=pg_collection,
@@ -567,10 +563,8 @@ class TestEnergonDataShardingVerification:
             dm = EnergonMultiModalDataModule(
                 path="/tmp/mock_dataset",
                 tokenizer=MagicMock(),
-                image_processor=MagicMock(),
                 seq_length=self.SEQ_LENGTH,
                 micro_batch_size=self.MICRO_BATCH_SIZE,
-                global_batch_size=self.MICRO_BATCH_SIZE * dp_world_size,
                 num_workers=1,
                 pg_collection=pg,
             )

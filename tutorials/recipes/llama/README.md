@@ -20,7 +20,7 @@ the `AutoBridge`:
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama32_1b
 ```
@@ -80,7 +80,7 @@ Example YAML (`conf/llama32_1b_pretrain.yaml`):
 # Each section maps to a ConfigContainer field
 dataset:                           # GPTDatasetConfig
   data_path: /path/to/training/data
-  sequence_length: 4096
+  seq_length: 4096
 
 train:                             # TrainingConfig
   train_iters: 100
@@ -91,7 +91,7 @@ checkpoint:                        # CheckpointConfig
   save_interval: 50
 
 model:                             # Model Provider
-  seq_length: 4096                 # Must match dataset.sequence_length
+  seq_length: 4096                 # Must match dataset.seq_length
   tensor_model_parallel_size: 1
   
 optimizer:                         # OptimizerConfig
