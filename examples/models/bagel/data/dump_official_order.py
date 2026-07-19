@@ -66,6 +66,32 @@ def configure_official_data(data_root: Path, dataset_meta: dict, dataset_info: d
     }
 
 
+def resolve_source_ids(
+    batch_data_indexes: list[dict[str, object]],
+    grouped_datasets: dict[str, object],
+    vlm_rows: dict[str, int],
+) -> list[dict[str, object]]:
+    """Resolve BAGEL cursors to stable raw file and row coordinates."""
+    source_ids = []
+    for item in batch_data_indexes:
+        dataset_name = item["dataset_name"]
+        data_indexes = item["data_indexes"]
+        dataset = grouped_datasets[dataset_name]
+        if dataset_name == "t2i_pretrain":
+            parquet_index, row_group, row = data_indexes
+            parquet = dataset.data_paths_per_rank[parquet_index]
+            source = {"parquet": Path(parquet).name, "row_group": row_group, "row": row}
+        elif dataset_name == "unified_edit":
+            global_row_group, row = data_indexes
+            parquet, row_group = dataset.data_paths_per_rank[global_row_group]
+            source = {"parquet": Path(parquet).name, "row_group": row_group, "row": row}
+        else:
+            json_data, _ = dataset.data_paths_per_rank[data_indexes]
+            source = {"jsonl": "llava_ov_si.jsonl", "row": vlm_rows[json_data.rstrip("\n")]}
+        source_ids.append({"dataset_name": dataset_name, "source": source})
+    return source_ids
+
+
 def main() -> None:
     """Run the official loader and write its first batches as JSONL."""
     args = parse_args()
@@ -93,6 +119,9 @@ def main() -> None:
         num_workers=1,
     )
     dataset.set_epoch(args.seed)
+    grouped_datasets = {item.dataset_name: item for item in dataset.grouped_datasets}
+    vlm_jsonl = args.data_root / "vlm" / "llava_ov_si.jsonl"
+    vlm_rows = {line.rstrip("\n"): row for row, line in enumerate(vlm_jsonl.read_text(encoding="utf-8").splitlines())}
     loader = torch.utils.data.DataLoader(
         dataset,
         batch_size=1,
@@ -107,10 +136,7 @@ def main() -> None:
                 packed.pop(field, None)
             record = {
                 "step": step,
-                "source_ids": [
-                    {"dataset_name": item["dataset_name"], "data_indexes": item["data_indexes"]}
-                    for item in batch.batch_data_indexes
-                ],
+                "source_ids": resolve_source_ids(batch.batch_data_indexes, grouped_datasets, vlm_rows),
                 "batch_data_indexes": batch.batch_data_indexes,
                 **packed,
             }
