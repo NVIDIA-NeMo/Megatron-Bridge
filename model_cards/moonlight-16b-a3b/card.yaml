@@ -277,7 +277,7 @@ items:
       adapter checkpoint.
 
   checkpoint_resume:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     depends_on: pretrain
@@ -295,20 +295,22 @@ items:
       --save_dir work/model-verification/moonlight-16b-a3b/pretrain-resumed-checkpoints
       --save_interval 200 checkpoint.ckpt_step=200
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 4.104850
+      final_loss: 3.413714
+      last_10_steps_step_time_ms_avg: 25707.450
+      last_10_steps_model_tflops_per_gpu_avg: 87.470
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [201, 400]
       loss_relative_tolerance: 1.0e-2
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: false
+      sentinels_match: true
     expected_result: >
       The command restores optimizer and RNG state directly from iter_0000200,
-      begins at step 201, and completes step 400 in the distinct output root.
-      Step-201 and step-400 losses match the uninterrupted reference within the
-      recorded one-percent relative tolerance.
+      executes exactly steps 201–400 with finite losses and no skipped or NaN
+      iterations, and saves a complete iter_0000400 in the distinct output
+      root. Step-201 loss 4.104850 exactly matches the reference; step-400 loss
+      3.413714 differs from reference 3.413953 by 0.007001%, within the
+      one-percent gate. The recorded final-ten metrics cover steps 391–400.
