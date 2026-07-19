@@ -99,14 +99,16 @@ def load_prompts(
     """Collect prompts from explicit args and/or a line-oriented (optionally JSONL) file."""
     collected = list(prompts or [])
     if prompt_file:
+        file_prompts_collected = 0
         with Path(prompt_file).open("r", encoding="utf-8") as handle:
             for line in handle:
                 raw_prompt = line.rstrip("\n")
                 if not raw_prompt:
                     continue
-                collected.append(_get_prompt_from_json_line(raw_prompt) or raw_prompt)
-                if prompt_file_num_truncate is not None and len(collected) >= prompt_file_num_truncate:
+                if prompt_file_num_truncate is not None and file_prompts_collected >= prompt_file_num_truncate:
                     break
+                collected.append(_get_prompt_from_json_line(raw_prompt) or raw_prompt)
+                file_prompts_collected += 1
     if not collected:
         collected = list(default_prompts)
     return collected
@@ -357,7 +359,7 @@ def build_inference_config(
 def build_sampling_params(
     *,
     temperature: float,
-    top_k: int,
+    top_k: int | None,
     top_p: float,
     return_log_probs: bool,
     skip_prompt_log_probs: bool,
@@ -367,6 +369,10 @@ def build_sampling_params(
     stop_words: list[str] | None,
 ) -> SamplingParams:
     """Build MCore ``SamplingParams`` from CLI-derived values."""
+    if top_k is None:
+        top_k = 0 if top_p > 0.0 else 1
+    if top_k > 0 and top_p > 0.0:
+        raise ValueError("--top_k and --top_p cannot both be positive.")
     return SamplingParams(
         temperature=temperature,
         top_k=top_k,
@@ -467,7 +473,12 @@ def add_sampling_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParse
     group.add_argument("--max_new_tokens", type=int, default=30, help="Maximum generated tokens per prompt.")
     group.add_argument("--temperature", type=float, default=1.0, help="Sampling temperature.")
     group.add_argument("--top_p", type=float, default=0.0, help="Top-p sampling.")
-    group.add_argument("--top_k", type=int, default=1, help="Top-k sampling.")
+    group.add_argument(
+        "--top_k",
+        type=int,
+        default=None,
+        help="Top-k sampling. Defaults to 1 unless --top_p is set.",
+    )
     group.add_argument("--return-log-probs", action="store_true", help="Return token log probabilities.")
     group.add_argument("--skip-prompt-log-probs", action="store_true", help="Skip prompt log probabilities.")
     group.add_argument("--top-n-logprobs", type=int, default=0, help="Return top-n logprobs.")

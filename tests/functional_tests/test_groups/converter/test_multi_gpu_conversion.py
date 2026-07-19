@@ -18,6 +18,63 @@ from pathlib import Path
 import pytest
 
 
+_HF_MODEL = "meta-llama/Llama-3.2-1B"
+
+
+def _assert_hf_weights_match(export_path: Path) -> None:
+    """Compare an exported checkpoint with the original Hugging Face weights."""
+    import torch
+
+    from megatron.bridge import AutoBridge
+
+    original_bridge = AutoBridge.from_hf_pretrained(_HF_MODEL, torch_dtype=torch.bfloat16)
+    exported_bridge = AutoBridge.from_hf_pretrained(str(export_path), torch_dtype=torch.bfloat16)
+    original_state = original_bridge.hf_pretrained.state
+    exported_state = exported_bridge.hf_pretrained.state
+    assert set(exported_state.keys()) == set(original_state.keys())
+    for name in original_state:
+        original = original_state[name]
+        exported = exported_state[name]
+        assert exported.dtype == original.dtype, f"Exported dtype mismatch for {name}"
+        assert torch.equal(exported, original), f"Exported weight mismatch for {name}"
+
+
+@pytest.fixture(scope="class")
+def llama_megatron_checkpoint(tmp_path_factory):
+    """Create a Megatron checkpoint for the distributed GPU export test."""
+    repo_root = Path(__file__).resolve().parents[4]
+    checkpoint_path = tmp_path_factory.mktemp("gpu-export") / "megatron_checkpoint"
+    result = subprocess.run(
+        [
+            "python",
+            "-m",
+            "coverage",
+            "run",
+            "--data-file=/opt/Megatron-Bridge/.coverage",
+            "--source=/opt/Megatron-Bridge/",
+            "--parallel-mode",
+            "scripts/conversion/run_conversion.py",
+            "import",
+            "--device",
+            "cpu",
+            "--hf-model",
+            _HF_MODEL,
+            "--megatron-path",
+            str(checkpoint_path),
+            "--torch-dtype",
+            "bfloat16",
+        ],
+        capture_output=True,
+        text=True,
+        cwd=repo_root,
+    )
+    assert result.returncode == 0, (
+        f"GPU export fixture import failed with return code {result.returncode}\n"
+        f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+    )
+    return checkpoint_path
+
+
 class TestMultiGPUConversion:
     """
     Test multi-GPU conversion from HuggingFace models with different parallelism configurations.
@@ -31,74 +88,73 @@ class TestMultiGPUConversion:
             (1, 2, "PP"),
         ],
     )
-    def test_conversion_parallelism(self, tmp_path, tp, pp, test_name):
+    def test_conversion_parallelism(self, tp, pp, test_name):
         """
         Test model conversion with different parallelism configurations.
 
         Args:
-            tmp_path: Pytest temporary path fixture
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
             test_name: Name of the test for identification
         """
-
-        # Create temporary output directory
-        test_output_dir = tmp_path / test_name
-        test_output_dir.mkdir(exist_ok=True)
-
-        # Run hf_megatron_roundtrip_multi_gpu.py with specified parallelism configuration
+        repo_root = Path(__file__).resolve().parents[4]
+        # Run the scripts/conversion roundtrip worker through the public launcher.
         cmd = [
-            "python",
-            "-m",
-            "torch.distributed.run",
-            "--nproc_per_node=2",
-            "--nnodes=1",
-            "-m",
-            "coverage",
-            "run",
-            "--data-file=/opt/Megatron-Bridge/.coverage",
-            "--source=/opt/Megatron-Bridge/",
-            "--parallel-mode",
-            "examples/conversion/hf_megatron_roundtrip_multi_gpu.py",
+            "bash",
+            str(repo_root / "scripts/conversion/convert.sh"),
+            "roundtrip",
+            "--executor",
+            "local",
+            "--device",
+            "gpu",
+            "--gpus-per-node",
+            "2",
             "--hf-model-id",
-            "meta-llama/Llama-3.2-1B",
-            "--output-dir",
-            str(test_output_dir),
+            _HF_MODEL,
             "--tp",
             str(tp),
             "--pp",
             str(pp),
         ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
 
-        try:
-            result = subprocess.run(
-                cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
-            )
+        assert result.returncode == 0, (
+            f"{test_name} round-trip validation failed with return code {result.returncode}\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+        assert "GPU round-trip validation complete" in result.stdout
 
-            # Check that the conversion completed successfully
-            if result.returncode != 0:
-                print(f"STDOUT: {result.stdout}")
-                print(f"STDERR: {result.stderr}")
-                assert False, f"Conversion failed with return code {result.returncode}"
+    @pytest.mark.run_only_on("GPU")
+    def test_gpu_checkpoint_export(self, tmp_path, llama_megatron_checkpoint):
+        """Test distributed checkpoint loading and Hugging Face saving on two GPUs."""
+        repo_root = Path(__file__).resolve().parents[4]
+        hf_export_path = tmp_path / "hf_export"
+        cmd = [
+            "bash",
+            str(repo_root / "scripts/conversion/convert.sh"),
+            "export",
+            "--executor",
+            "local",
+            "--device",
+            "gpu",
+            "--gpus-per-node",
+            "2",
+            "--hf-model",
+            _HF_MODEL,
+            "--megatron-path",
+            str(llama_megatron_checkpoint),
+            "--hf-path",
+            str(hf_export_path),
+            "--tp",
+            "2",
+        ]
+        result = subprocess.run(cmd, capture_output=True, text=True, cwd=repo_root)
 
-            # Verify that the converted model was saved
-            converted_model_dir = test_output_dir / "Llama-3.2-1B"
-            assert converted_model_dir.exists(), f"Converted model directory not found at {converted_model_dir}"
-
-            # Check that essential model files exist
-            config_file = converted_model_dir / "config.json"
-            assert config_file.exists(), f"config.json not found in converted model at {config_file}"
-
-            # Check for model weights file (could be either safetensors or pytorch_model.bin)
-            weights_file_safetensors = converted_model_dir / "model.safetensors"
-            weights_file_pytorch = converted_model_dir / "pytorch_model.bin"
-            assert weights_file_safetensors.exists() or weights_file_pytorch.exists(), (
-                f"Model weights file not found in converted model at {converted_model_dir}"
-            )
-
-            print(f"SUCCESS: {test_name} conversion test completed successfully")
-            print(f"Converted model saved at: {converted_model_dir}")
-
-        except Exception as e:
-            print(f"Error during {test_name} conversion test: {e}")
-            raise
+        assert result.returncode == 0, (
+            f"Distributed GPU export failed with return code {result.returncode}\n"
+            f"STDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+        assert "GPU export complete:" in result.stdout
+        assert (hf_export_path / "config.json").exists()
+        assert list(hf_export_path.glob("*.safetensors"))
+        _assert_hf_weights_match(hf_export_path)

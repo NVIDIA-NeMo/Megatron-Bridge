@@ -33,8 +33,8 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import Qwen3VLMultim
 
 @pytest.fixture(scope="module")
 def hf_config():
-    """Load HuggingFace config once for all tests."""
-    return Qwen3VLMoeTextConfig.from_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
+    """Create a local HuggingFace config once for all tests."""
+    return Qwen3VLMoeTextConfig()
 
 
 class TestQwen3VLTextRotaryEmbedding:
