@@ -18,12 +18,14 @@ WORKDIR /opt/Megatron-Bridge
 
 ARG INSTALL_DEEPEP=True
 ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
+ARG REINSTALL_NVSHMEM=True
 
 ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
     UV_PROJECT_ENVIRONMENT=/opt/venv \
     VIRTUAL_ENV=/opt/venv \
     UV_LINK_MODE=copy \
     UV_VERSION="0.7.2" \
+    UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \
@@ -59,10 +61,12 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
         git fetch origin $DEEPEP_COMMIT && \
         git checkout FETCH_HEAD && \
         patch -p1 < /opt/deepep.patch && \
-        pip install --no-cache-dir nvidia-nvshmem-cu13==3.6.5 && \
-        # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
-        NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
-        ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so && \
+        if [ "$REINSTALL_NVSHMEM" = "True" ]; then \
+            pip install --no-cache-dir nvidia-nvshmem-cu13==3.6.5 && \
+            # Create symlink for libnvshmem_host.so (required for DeepEP fabric handle operations)
+            NVSHMEM_LIB_PATH=$(pip show nvidia-nvshmem-cu13 | grep "Location:" | cut -d' ' -f2)/nvidia/nvshmem/lib && \
+            ln -sf ${NVSHMEM_LIB_PATH}/libnvshmem_host.so.3 ${NVSHMEM_LIB_PATH}/libnvshmem_host.so; \
+        fi && \
         apt-get update && \
         apt-get install -y --no-install-recommends libnvidia-ml-dev && \
         TORCH_CUDA_ARCH_LIST="9.0 10.0 12.0" pip install --no-cache-dir --no-build-isolation -v . && \

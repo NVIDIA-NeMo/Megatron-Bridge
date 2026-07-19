@@ -42,14 +42,23 @@ example uses the same 96-GPU parallelism as the conversion verification job:
 
 ### Round-Trip Verification
 
-Use [slurm_conversion.sh](slurm_conversion.sh) to sweep multiple parallelism
-configs (TP, PP, EP) and verify HF ↔ Megatron round-trip conversion:
+Use [slurm_conversion.sh](slurm_conversion.sh) to run the recommended
+parallelism config through `convert.sh roundtrip` and verify HF ↔ Megatron
+round-trip conversion. Run it from a Slurm login node; the wrapper submits and
+waits for the job by default. Validation stays in memory and does not write
+another copy of the approximately 1T-parameter checkpoint:
 
 ```bash
-sbatch examples/models/kimi/kimi_k25_vl/slurm_conversion.sh
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export CONTAINER_MOUNTS=/host/workspace:${WORKSPACE}
+bash examples/models/kimi/kimi_k25_vl/slurm_conversion.sh
 ```
 
-Default configs: `TP=2,EP=48` | `TP=2,PP=2,EP=24` | `TP=4,EP=24`.
+The script uses 12 nodes (96 GPUs) with `TP=2`, `PP=1`, and `EP=48`.
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be visible from the compute nodes. Extra launcher arguments are forwarded;
+for example, add `--srun-arg=--mpi=pmix` only if your cluster requires it.
 
 ## Inference
 

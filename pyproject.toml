@@ -142,6 +142,7 @@ override-dependencies = [
     "tokenizers>=0.22.0,<0.23",                             # tokenizers 0.23 renames RobertaProcessing's 'cls' kwarg to 'cls_token'; transformers still passes cls= (breaks CLIPTokenizer)
     "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
+    "fastapi<0.139.2",                                      # 0.139.2 fails with ray 2.55.1 at least
     "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
 ]
 
@@ -271,6 +272,8 @@ omit = [
     "/tmp/*",
     "/opt/Megatron-Bridge/tests/*",
     "/opt/Megatron-Bridge/*.py",
+    "examples/*",
+    "scripts/*",
     "*_ray.py",
 ]
 

@@ -17,19 +17,16 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Run a direct MCore-style OpenAI-compatible inference server.
+Run a Bridge/AutoBridge-backed OpenAI-compatible inference server.
 
 Example:
-  examples/inference/run_openai_server.sh --nproc 8 \
-    --load /path/to/megatron/checkpoint \
-    --tokenizer-type HuggingFaceTokenizer \
-    --tokenizer-model Qwen/Qwen2.5-1.5B \
-    --model-provider gpt \
-    --bf16 \
+  examples/inference/run_openai_server.sh --nproc 1 \
+    --hf_model_path Qwen/Qwen2.5-1.5B \
+    --dtype bf16 \
     --host 0.0.0.0 \
     --port 5000
 
-Pass Megatron training/inference/server arguments after --nproc.
+Pass scripts/inference/openai_server.py arguments after --nproc.
 USAGE
 }
 

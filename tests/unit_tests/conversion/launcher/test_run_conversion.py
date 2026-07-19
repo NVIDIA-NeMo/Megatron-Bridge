@@ -106,6 +106,36 @@ def test_gpu_export_enables_distributed_save_by_default():
     assert calls[0]["hf_path"] == "/hf"
 
 
+def test_gpu_roundtrip_dispatches_to_gpu_backend():
+    module, _, gpu_backend = _load_run_conversion_module()
+    calls = []
+    gpu_backend.roundtrip_checkpoint = lambda **kwargs: calls.append(kwargs)
+
+    module.main(
+        [
+            "roundtrip",
+            "--device",
+            "gpu",
+            "--hf-model",
+            "hf/model",
+            "--ep",
+            "2",
+        ]
+    )
+
+    assert calls == [
+        {
+            "hf_model": "hf/model",
+            "tp": 1,
+            "pp": 1,
+            "ep": 2,
+            "etp": 1,
+            "trust_remote_code": False,
+            "distributed_timeout_minutes": None,
+        }
+    ]
+
+
 def test_cpu_worker_rejects_parallelism():
     module, _, _ = _load_run_conversion_module()
 
