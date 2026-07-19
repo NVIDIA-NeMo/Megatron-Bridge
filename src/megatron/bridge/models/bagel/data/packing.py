@@ -15,7 +15,7 @@
 import logging
 import random
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Self
 
 import numpy as np
 import torch
@@ -110,6 +110,9 @@ class BagelPacker:
         self.max_latent_size = max_latent_size
         self.vit_patch_size = vit_patch_size
         self.max_num_patch_per_side = max_num_patch_per_side
+        self._status = self._new_status()
+        self._source_ids: list[dict[str, object]] = []
+        self._buffer: list[BagelSample] = []
 
     @staticmethod
     def _new_status() -> dict[str, Any]:
@@ -141,27 +144,27 @@ class BagelPacker:
         """Return the canonical source coordinate carried by a cooked sample."""
         return {"dataset_name": sample.metadata["dataset_group"], "source": sample.metadata["source"]}
 
-    def __iter__(self) -> Iterator[dict[str, object]]:
-        """Yield packed batches with official mandatory and FIFO-buffer behavior."""
-        status = self._new_status()
-        source_ids: list[dict[str, object]] = []
-        buffer: list[BagelSample] = []
+    def __iter__(self) -> Self:
+        """Return this stateful packed-batch iterator."""
+        return self
 
+    def __next__(self) -> dict[str, object]:
+        """Return the next batch with official mandatory and FIFO-buffer behavior."""
         while True:
-            if status["curr"] == 0:
+            if self._status["curr"] == 0:
                 for group_index, group_iter in enumerate(self.group_iters):
                     if self.is_mandatory[group_index]:
                         while True:
                             sample = next(group_iter)
                             num_tokens = sample.num_tokens + 2 * len(sample.sequence_plan)
                             if num_tokens < self.max_num_tokens_per_sample:
-                                self._pack_sequence(sample, status)
-                                source_ids.append(self._source_id(sample))
+                                self._pack_sequence(sample, self._status)
+                                self._source_ids.append(self._source_id(sample))
                                 break
                             logger.warning("Skipping BAGEL mandatory sample with length %d", num_tokens)
 
-            if status["curr"] < self.prefer_buffer_before and buffer:
-                sample = buffer.pop(0)
+            if self._status["curr"] < self.prefer_buffer_before and self._buffer:
+                sample = self._buffer.pop(0)
                 sample_from_buffer = True
             else:
                 draw = random.random()
@@ -178,25 +181,48 @@ class BagelPacker:
                 logger.warning("Skipping BAGEL sample with length %d", num_tokens)
                 continue
 
-            if status["curr"] + num_tokens > self.max_num_tokens:
-                if len(buffer) < self.max_buffer_size and not sample_from_buffer:
-                    buffer.append(sample)
+            if self._status["curr"] + num_tokens > self.max_num_tokens:
+                if len(self._buffer) < self.max_buffer_size and not sample_from_buffer:
+                    self._buffer.append(sample)
                 else:
-                    batch = self._to_tensor(status)
-                    batch["source_ids"] = source_ids
-                    yield batch
-                    status = self._new_status()
-                    source_ids = []
+                    batch = self._to_tensor(self._status)
+                    batch["source_ids"] = self._source_ids
+                    self._status = self._new_status()
+                    self._source_ids = []
+                    return batch
                 continue
 
-            self._pack_sequence(sample, status)
-            source_ids.append(self._source_id(sample))
-            if status["curr"] >= self.expected_num_tokens:
-                batch = self._to_tensor(status)
-                batch["source_ids"] = source_ids
-                yield batch
-                status = self._new_status()
-                source_ids = []
+            self._pack_sequence(sample, self._status)
+            self._source_ids.append(self._source_id(sample))
+            if self._status["curr"] >= self.expected_num_tokens:
+                batch = self._to_tensor(self._status)
+                batch["source_ids"] = self._source_ids
+                self._status = self._new_status()
+                self._source_ids = []
+                return batch
+
+    def state_dict(self) -> dict[str, object]:
+        """Capture packing, buffering, and process RNG state at a batch boundary."""
+        return {
+            "status": {key: list(value) if isinstance(value, list) else value for key, value in self._status.items()},
+            "source_ids": list(self._source_ids),
+            "buffer": list(self._buffer),
+            "python_rng": random.getstate(),
+            "numpy_rng": np.random.get_state(),
+            "torch_rng": torch.get_rng_state(),
+        }
+
+    def load_state_dict(self, state: Mapping[str, object]) -> None:
+        """Restore packing, buffering, and process RNG state."""
+        status = state["status"]
+        if not isinstance(status, dict):
+            raise TypeError("BAGEL packer status must be a dictionary")
+        self._status = {key: list(value) if isinstance(value, list) else value for key, value in status.items()}
+        self._source_ids = list(state["source_ids"])
+        self._buffer = list(state["buffer"])
+        random.setstate(state["python_rng"])
+        np.random.set_state(state["numpy_rng"])
+        torch.set_rng_state(state["torch_rng"])
 
     def _pack_sequence(self, sample: BagelSample, status: dict[str, Any]) -> None:
         """Append one cooked sample using BAGEL's dropout and timestep calls."""

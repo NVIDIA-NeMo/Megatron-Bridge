@@ -18,6 +18,7 @@ import json
 import logging
 import sys
 from pathlib import Path
+from typing import TextIO
 
 import numpy as np
 import torch
@@ -46,6 +47,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--official-tensor-digests", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--num-batches", type=int, default=100)
+    parser.add_argument("--save-after", type=int)
     parser.add_argument("--output", type=Path, required=True)
     return parser.parse_args()
 
@@ -91,9 +93,61 @@ def build_loader(dataset_dir: Path, task_encoder: object) -> object:
     return get_savable_loader(dataset)
 
 
+def build_pipeline(
+    dataset_root: Path,
+    encoders: list[object],
+    special_tokens: dict[str, int],
+    *,
+    length: int,
+) -> tuple[list[object], BagelPacker, BagelExternalLoader]:
+    """Build the three readers, packer, and external loader."""
+    group_names = ("t2i", "editing", "vlm")
+    loaders = [build_loader(dataset_root / name, encoder) for name, encoder in zip(group_names, encoders)]
+    packer = BagelPacker(
+        [iter(loader) for loader in loaders],
+        [1.0, 1.0, 1.0],
+        [True, False, True],
+        special_tokens,
+    )
+    return loaders, packer, BagelExternalLoader(packer, length=length, stateful_loaders=loaders)
+
+
+def validate_batch(batch: dict[str, object], step: int, official_stream: TextIO, digest_stream: TextIO) -> str:
+    """Compare one packed batch and return its deterministic trace line."""
+    actual_digests = {
+        field: tensor_digest(batch[field])
+        for field in ("nested_attention_masks", "padded_images", "packed_vit_tokens")
+        if field in batch
+    }
+    expected_digests = json.loads(next(digest_stream))
+    if {"step": step, **actual_digests} != expected_digests:
+        raise ValueError(f"tensor digest mismatch at packed batch {step}")
+
+    compact_batch = dict(batch)
+    for field in actual_digests:
+        compact_batch.pop(field)
+    actual = to_jsonable({"step": step, **compact_batch})
+    expected = json.loads(next(official_stream))
+    if actual != expected:
+        differing = sorted(key for key in actual.keys() | expected.keys() if actual.get(key) != expected.get(key))
+        raise ValueError(f"packed batch {step} differs in fields: {differing}")
+
+    canonical = json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()
+    trace = {
+        "step": step,
+        "source_ids": actual["source_ids"],
+        "sequence_length": actual["sequence_length"],
+        "packed_sha256": hashlib.sha256(canonical).hexdigest(),
+        "tensor_digests": actual_digests,
+    }
+    return json.dumps(trace, sort_keys=True, separators=(",", ":")) + "\n"
+
+
 def main() -> None:
     """Cook, pack, and compare the fixed 100-batch Energon trace."""
     args = parse_args()
+    if args.save_after is not None and not 0 < args.save_after < args.num_batches:
+        raise ValueError("save-after must be between zero and num-batches")
     sys.path.insert(0, str(args.bagel_repo))
 
     from data.data_utils import add_special_tokens
@@ -115,18 +169,15 @@ def main() -> None:
         BagelEditingTaskEncoder(tokenizer, vae_transform, editing_vit_transform, 16, 14),
         BagelVLMTaskEncoder(tokenizer, vlm_transform, 14),
     ]
-    group_names = ("t2i", "editing", "vlm")
-    loaders = [build_loader(args.dataset_root / name, encoder) for name, encoder in zip(group_names, encoders)]
-    group_iters = [iter(loader) for loader in loaders]
-
-    set_seed(args.seed)
-    packer = BagelPacker(
-        group_iters,
-        [1.0, 1.0, 1.0],
-        [True, False, True],
+    _, _, external_loader = build_pipeline(
+        args.dataset_root,
+        encoders,
         special_tokens,
+        length=args.num_batches,
     )
-    external_loader = BagelExternalLoader(packer, length=args.num_batches)
+    set_seed(args.seed)
+    saved_state = None
+    suffix_lines = []
 
     with (
         args.official.open(encoding="utf-8") as official_stream,
@@ -135,35 +186,35 @@ def main() -> None:
     ):
         for step in range(args.num_batches):
             batch = next(external_loader)
-            actual_digests = {
-                field: tensor_digest(batch[field])
-                for field in ("nested_attention_masks", "padded_images", "packed_vit_tokens")
-                if field in batch
-            }
-            expected_digests = json.loads(next(digest_stream))
-            if {"step": step, **actual_digests} != expected_digests:
-                raise ValueError(f"tensor digest mismatch at packed batch {step}")
+            if args.save_after == step + 1:
+                saved_state = external_loader.save_state()
+            trace_line = validate_batch(batch, step, official_stream, digest_stream)
+            output_stream.write(trace_line)
+            if args.save_after is not None and step >= args.save_after:
+                suffix_lines.append(trace_line)
 
-            compact_batch = dict(batch)
-            for field in actual_digests:
-                compact_batch.pop(field)
-            actual = to_jsonable({"step": step, **compact_batch})
-            expected = json.loads(next(official_stream))
-            if actual != expected:
-                differing = sorted(
-                    key for key in actual.keys() | expected.keys() if actual.get(key) != expected.get(key)
-                )
-                raise ValueError(f"packed batch {step} differs in fields: {differing}")
-
-            canonical = json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()
-            trace = {
-                "step": step,
-                "source_ids": actual["source_ids"],
-                "sequence_length": actual["sequence_length"],
-                "packed_sha256": hashlib.sha256(canonical).hexdigest(),
-                "tensor_digests": actual_digests,
-            }
-            output_stream.write(json.dumps(trace, sort_keys=True, separators=(",", ":")) + "\n")
+    if saved_state is not None:
+        _, _, restored_external = build_pipeline(
+            args.dataset_root,
+            encoders,
+            special_tokens,
+            length=args.num_batches,
+        )
+        restored_external.restore_state(saved_state)
+        with (
+            args.official.open(encoding="utf-8") as official_stream,
+            args.official_tensor_digests.open(encoding="utf-8") as digest_stream,
+        ):
+            for _ in range(args.save_after):
+                next(official_stream)
+                next(digest_stream)
+            restored_lines = [
+                validate_batch(next(restored_external), step, official_stream, digest_stream)
+                for step in range(args.save_after, args.num_batches)
+            ]
+        if restored_lines != suffix_lines:
+            raise ValueError("restored packed-batch suffix differs from the original suffix")
+        logger.info("Restored the exact %d-batch suffix", len(restored_lines))
 
     logger.info("Matched %d official BAGEL packed batches", args.num_batches)
 
