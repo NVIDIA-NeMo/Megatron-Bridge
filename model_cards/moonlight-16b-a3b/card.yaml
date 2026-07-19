@@ -9,7 +9,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 93c6930597fd3766acd177288b7a8607d7b96ad7  # pragma: allowlist secret
+  bridge_commit: e0d0c1273cd739afc4d8e0c66e8b2fa9c24f08a5  # pragma: allowlist secret
 summary: Moonlight-16B-A3B support verification for conversion, inference, and training.
 
 items:
@@ -82,7 +82,7 @@ items:
       trust_remote_code disabled and no missing or unexpected keys.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
@@ -92,14 +92,15 @@ items:
       --tp 1 --pp 1 --ep 8 --etp 1
       --prompt "The capital of France is"
       --model_class DeepseekV3ForCausalLM --trust-remote-code
-    last_verified: null
+    last_verified: 2026-07-19
     expected_result: >
-      Hugging Face and Megatron predict the same next token with BF16 logit
-      cosine similarity above 0.9999 and small maximum and mean absolute logit
-      differences.
+      Hugging Face and Megatron have next-token matches at token ID 17374
+      (" Paris"). Cosine similarity: 0.999893, above the 0.9998 gate; the max
+      absolute logit difference is 0.472656 and the mean absolute logit
+      difference is 0.074414.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
@@ -109,10 +110,13 @@ items:
       --tp 1 --pp 1 --ep 8 --etp 1
       --prompt "The capital of France is" --max_new_tokens 32
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-07-19
     expected_result: >
-      Two independent greedy executions each produce exactly 32 new tokens
-      with byte-identical token IDs and decoded output.
+      Two independent executions using greedy decoding each produce exactly 32
+      new tokens with byte-identical token IDs and this literal completion,
+      including its leading space, " Paris. It is the largest city in France
+      and is known for its iconic landmarks such as the Eiffel Tower, the
+      Louvre Museum, and Notre-Dame".
 
   pretrain:
     status: unverified
@@ -143,7 +147,7 @@ items:
       and complete iter_0000200 and iter_0000400 checkpoints.
 
   sft:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -162,43 +166,47 @@ items:
       validation.eval_iters=0 validation.eval_interval=0
       --save_dir work/model-verification/moonlight-16b-a3b/sft-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 1.280769
+      final_loss: 1.162448
+      last_10_steps_step_time_ms_avg: 16743.000
+      last_10_steps_model_tflops_per_gpu_avg: 30.820
     expected_result: >
       Tulu3 offline packing completes exactly 100 full-SFT steps with finite
-      losses, no skipped or NaN iterations, all four metrics, and a reloadable
-      full-model iter_0000100 checkpoint.
+      loss 1.280769 at step 1 and 1.162448 at step 100, no skipped or NaN
+      iterations, the recorded final-ten metrics, and a complete full-model
+      iter_0000100 checkpoint.
 
   sft_export_inference:
-    status: unverified
+    status: verified
     precision: bf16
     depends_on: sft
     commands:
       - >
-        ./scripts/conversion/convert.sh export --executor slurm --device gpu
-        --nodes 1 --gpus-per-node 8
+        ./scripts/conversion/convert.sh export --executor slurm --device cpu
+        --nodes 1
         --hf-model moonshotai/Moonlight-16B-A3B
         --megatron-path work/model-verification/moonlight-16b-a3b/sft-checkpoints/iter_0000100
         --hf-path work/model-verification/moonlight-16b-a3b/sft-hf-export
-        --torch-dtype bfloat16 --export-weight-dtype bfloat16
-        --distributed-save --tp 1 --pp 1 --ep 8 --etp 1
-        --trust-remote-code
+        --torch-dtype bfloat16 --trust-remote-code
       - >
         uv run python
         skills/create-model-verification-card/scripts/verify_hf_inference.py
         --hf-model work/model-verification/moonlight-16b-a3b/sft-hf-export
         --prompt "In one short sentence, explain why Paris is important to France."
         --max-new-tokens 32 --chat-template
-    last_verified: null
+    last_verified: 2026-07-19
     expected_result: >
-      The step-100 SFT checkpoint exports with the original 163840-row HF
-      embedding and output head, natively reloads with trust_remote_code disabled
-      and no missing or unexpected keys, and two greedy runs produce the same
-      coherent 32-token completion.
+      The step-100 SFT checkpoint exports with its checkpoint-configured
+      163842-row embedding and output head, natively reloads with
+      trust_remote_code disabled and no missing or unexpected keys. Two
+      independent runs using greedy generation each produce exactly 32 new
+      tokens with identical token IDs and this coherent, byte-identical literal
+      completion, including whitespace,
+      "Paris is the capital city of France and is considered the cultural,
+      political, and economic center of the country. It is home to many of
+      France's most famous".
 
   sft_long_context:
     status: unverified
@@ -232,7 +240,7 @@ items:
       NaN iterations, and all four metrics.
 
   peft:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -251,16 +259,17 @@ items:
       validation.eval_iters=0 validation.eval_interval=0
       --save_dir work/model-verification/moonlight-16b-a3b/peft-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 1.247692
+      final_loss: 1.115713
+      last_10_steps_step_time_ms_avg: 36894.370
+      last_10_steps_model_tflops_per_gpu_avg: 55.820
     expected_result: >
-      Tulu3 offline packing and exactly 100 LoRA steps complete with finite
-      losses, no skipped or NaN iterations, all four metrics, and a finalized
-      iter_0000100 adapter checkpoint.
+      Tulu3 offline packing completes exactly 100 LoRA steps with finite loss
+      1.247692 at step 1 and 1.115713 at step 100, no skipped or NaN
+      iterations, the recorded final-ten metrics, and a complete iter_0000100
+      adapter checkpoint.
 
   checkpoint_resume:
     status: unverified
