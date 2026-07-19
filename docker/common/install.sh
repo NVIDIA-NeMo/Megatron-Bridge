@@ -82,6 +82,13 @@ main() {
     unset PIP_CONSTRAINT
 
     if [[ "$USE_UV" == "true" ]]; then
+        # TransformerEngine's bundled HybridEP submodule (3rdparty/nccl/contrib/nccl_ep)
+        # compiles against newer NCCL device/GIN symbols than the pinned NGC PyTorch base
+        # images ship, so building TE from source fails at `make -C contrib/nccl_ep`.
+        # Disable that submodule so TE builds from source without HybridEP (passes
+        # -DNVTE_WITH_NCCL_EP=OFF to its CMake); see NVIDIA/TransformerEngine build_tools.
+        export NVTE_WITH_NCCL_EP="${NVTE_WITH_NCCL_EP:-0}"
+
         if [[ "$BASE_IMAGE" == "pytorch" ]]; then
             UV_ARGS=(
                 "--no-install-package" "torch"
