@@ -82,12 +82,31 @@ main() {
     unset PIP_CONSTRAINT
 
     if [[ "$USE_UV" == "true" ]]; then
-        # TransformerEngine's bundled HybridEP submodule (3rdparty/nccl/contrib/nccl_ep)
-        # compiles against newer NCCL device/GIN symbols than the pinned NGC PyTorch base
-        # images ship, so building TE from source fails at `make -C contrib/nccl_ep`.
-        # Disable that submodule so TE builds from source without HybridEP (passes
-        # -DNVTE_WITH_NCCL_EP=OFF to its CMake); see NVIDIA/TransformerEngine build_tools.
-        export NVTE_WITH_NCCL_EP="${NVTE_WITH_NCCL_EP:-0}"
+        # Dev-ref workarounds (WARs). These apply ONLY when building the Megatron-Core
+        # `dev` ref (the 3rdparty/Megatron-LM submodule gitlink points at .dev.commit,
+        # not .main.commit) — never on main builds. Guarded so the WARs stay dev-specific.
+        # Force-enable/disable with MCORE_DEV_WARS=1|0.
+        MCORE_DEV_WARS="${MCORE_DEV_WARS:-}"
+        if [[ -z "$MCORE_DEV_WARS" ]]; then
+            MCORE_DEV_WARS="0"
+            if [[ -f .dev.commit && -f .main.commit ]]; then
+                submodule_sha="$(git -C 3rdparty/Megatron-LM rev-parse HEAD 2>/dev/null || true)"
+                dev_sha="$(tr -d '[:space:]' <.dev.commit)"
+                main_sha="$(tr -d '[:space:]' <.main.commit)"
+                if [[ -n "$submodule_sha" && "$submodule_sha" == "$dev_sha" && "$dev_sha" != "$main_sha" ]]; then
+                    MCORE_DEV_WARS="1"
+                fi
+            fi
+        fi
+        if [[ "$MCORE_DEV_WARS" == "1" ]]; then
+            # WAR: dev-ref TransformerEngine (@2e559f06) builds its bundled HybridEP submodule
+            # (3rdparty/nccl/contrib/nccl_ep) against newer NCCL device/GIN symbols than the
+            # pinned NGC PyTorch base images ship, so the source build fails at
+            # `make -C contrib/nccl_ep`. Disable that submodule so TE still builds from source
+            # without HybridEP (CMake -DNVTE_WITH_NCCL_EP=OFF); see NVIDIA/TransformerEngine.
+            export NVTE_WITH_NCCL_EP="${NVTE_WITH_NCCL_EP:-0}"
+            echo "🔧 Dev-ref WARs enabled (MCORE_DEV_WARS=1): NVTE_WITH_NCCL_EP=$NVTE_WITH_NCCL_EP"
+        fi
 
         if [[ "$BASE_IMAGE" == "pytorch" ]]; then
             UV_ARGS=(
