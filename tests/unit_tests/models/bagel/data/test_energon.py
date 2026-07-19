@@ -8,6 +8,8 @@ import torch
 from PIL import Image
 
 from megatron.bridge.models.bagel.data.energon import (
+    BagelEditingSample,
+    BagelEditingTaskEncoder,
     BagelT2IRawSample,
     BagelT2ISample,
     BagelT2ITaskEncoder,
@@ -49,6 +51,53 @@ def test_cook_bagel_t2i_preserves_raw_data_and_sample_keys() -> None:
     assert sample.__restore_key__ == restore_key
     assert sample.__subflavor__ is None
     assert sample.__subflavors__ == subflavors
+
+
+def test_editing_task_encoder_processes_images_instruction_and_sequence_plan() -> None:
+    image_bytes = []
+    for color in ((10, 20, 30), (40, 50, 60)):
+        image_buffer = io.BytesIO()
+        Image.new("RGB", (32, 16), color).save(image_buffer, format="PNG")
+        image_bytes.append(image_buffer.getvalue())
+    metadata = {
+        "dataset_group": "unified_edit",
+        "dataset_name": "seedxedit_multi",
+        "source": {"parquet": "chunk_0.parquet", "row_group": 0, "row": 0},
+        "instruction_list": [["turn it blue"]],
+        "image_count": 2,
+    }
+    crude_sample = {
+        "__key__": "editing-chunk_0-rg0-row0",
+        "__restore_key__": ("Webdataset", 0, 0),
+        "__subflavor__": None,
+        "__subflavors__": {},
+        "image0": image_bytes[0],
+        "image1": image_bytes[1],
+        "json": json.dumps(metadata).encode("utf-8"),
+    }
+    tokenizer = Mock()
+    tokenizer.encode.return_value = [3, 4]
+
+    def transform(_: Image.Image) -> torch.Tensor:
+        return torch.full((3, 16, 32), 0.5)
+
+    def vit_transform(_: Image.Image) -> torch.Tensor:
+        return torch.ones((3, 14, 28))
+
+    random.seed(42)
+    sample = BagelEditingTaskEncoder(tokenizer, transform, vit_transform, 16, 14).cookers[0].cook(crude_sample)
+
+    assert isinstance(sample, BagelEditingSample)
+    assert len(sample.image_tensor_list) == 3
+    assert sample.text_ids_list == [[3, 4]]
+    assert sample.num_tokens == 8
+    assert sample.sequence_plan == [
+        {"type": "vae_image", "enable_cfg": 1, "loss": 0, "special_token_loss": 0, "special_token_label": None},
+        {"type": "vit_image", "enable_cfg": 1, "loss": 0, "special_token_loss": 0, "special_token_label": None},
+        {"type": "text", "enable_cfg": 1, "loss": 0, "special_token_loss": 0, "special_token_label": None},
+        {"type": "vae_image", "enable_cfg": 0, "loss": 1, "special_token_loss": 0, "special_token_label": None},
+    ]
+    assert sample.metadata == metadata
 
 
 def test_t2i_task_encoder_processes_caption_image_and_sequence_plan() -> None:
