@@ -82,31 +82,31 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions and public aliases in both recipe trees."""
+    """All recipe-config functions and public aliases under src/.../recipes/** and perf_recipes/**."""
     names: set[str] = set()
-    for recipe_dir in (RECIPES_DIR, PERF_RECIPES_DIR):
-        for py in recipe_dir.rglob("*.py"):
-            tree = ast.parse(_read(py), filename=str(py))
-            for node in tree.body:
-                if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
-                    names.add(node.name)
-                elif isinstance(node, (ast.Import, ast.ImportFrom)):
-                    for alias in node.names:
-                        public_name = alias.asname or alias.name.rsplit(".", 1)[-1]
-                        if public_name.endswith("_config"):
-                            names.add(public_name)
-                elif isinstance(node, (ast.Assign, ast.AnnAssign)):
-                    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
-                    names.update(
-                        target.id
-                        for target in targets
-                        if isinstance(target, ast.Name) and target.id.endswith("_config")
-                    )
+    recipe_files = list(RECIPES_DIR.rglob("*.py"))
+    if PERF_RECIPES_DIR.is_dir():
+        recipe_files += list(PERF_RECIPES_DIR.rglob("*.py"))
+    for py in recipe_files:
+        tree = ast.parse(_read(py), filename=str(py))
+        for node in tree.body:
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
+                names.add(node.name)
+            elif isinstance(node, (ast.Import, ast.ImportFrom)):
+                for alias in node.names:
+                    public_name = alias.asname or alias.name.rsplit(".", 1)[-1]
+                    if public_name.endswith("_config"):
+                        names.add(public_name)
+            elif isinstance(node, (ast.Assign, ast.AnnAssign)):
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                names.update(
+                    target.id for target in targets if isinstance(target, ast.Name) and target.id.endswith("_config")
+                )
     return names
 
 
 def test_training_readme_recipes_exist():
-    """Every `--recipe NAME` in the training README is a real exported recipe."""
+    """Every `--recipe NAME` in the training README is a real recipe function (bugs 1, 2)."""
     defined = _defined_recipe_names()
     assert defined, "no recipe configs discovered — path assumption wrong"
     referenced = set(re.findall(r"--recipe\s+(\w+)", _read(TRAINING_README)))
