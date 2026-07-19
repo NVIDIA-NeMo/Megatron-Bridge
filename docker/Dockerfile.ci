@@ -85,6 +85,10 @@ COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/m
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
+# Dev-ref workarounds (WARs). Off by default so main builds are unaffected; the
+# nightly Megatron-Core dev-ref bump sets MCORE_DEV_WARS=1 to build the dev-ref
+# TransformerEngine without its HybridEP submodule (see the uv sync step below).
+ARG MCORE_DEV_WARS=0
 ARG UV_CACHE_PRUNE_ARGS
 
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
@@ -103,6 +107,11 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     # its CUTLASS-backed kernels.
     pip uninstall -y nvidia-cutlass-dsl nvidia-cutlass-dsl-libs-base nvidia-cutlass-dsl-libs-cu13 && \
     pip install nvidia-cutlass-dsl[cu13]==4.5.0 && \
+    # WAR (MCORE_DEV_WARS=1, dev-ref only): the dev-ref TransformerEngine builds its bundled
+    # HybridEP submodule against newer NCCL device/GIN symbols than this base ships, failing at
+    # `make -C contrib/nccl_ep`. Skip that submodule (CMake -DNVTE_WITH_NCCL_EP=OFF) so TE still
+    # builds from source. Off by default, so main builds are unchanged.
+    if [ "$MCORE_DEV_WARS" = "1" ]; then export NVTE_WITH_NCCL_EP="${NVTE_WITH_NCCL_EP:-0}"; fi && \
     if [ "$MCORE_TRIGGERED_TESTING" = "true" ]; then \
         echo "⚙️ MCore testing mode: skipping --locked flag"; \
         uv sync --only-group build && \
