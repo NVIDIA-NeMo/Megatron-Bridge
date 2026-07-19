@@ -1,0 +1,300 @@
+# Agent-readable model support card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: moonlight_16b_a3b
+model:
+  hf_id: moonshotai/Moonlight-16B-A3B
+  hf_revision: 476b36a473d4467f94469414bef6cee75c9c8172  # pragma: allowlist secret
+  architecture: DeepseekV3ForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: 93c6930597fd3766acd177288b7a8607d7b96ad7  # pragma: allowlist secret
+summary: Moonlight-16B-A3B support verification for conversion, inference, and training.
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model moonshotai/Moonlight-16B-A3B
+      --megatron-path work/model-verification/moonlight-16b-a3b/cpu-megatron
+      --torch-dtype bfloat16 --trust-remote-code
+    last_verified: 2026-07-19
+    expected_result: >
+      The command exits successfully, creates iter_0000000, and the checkpoint
+      round-trips through CPU export with exact model configuration and all 377
+      registered parameters and persistent buffers matching bitwise by key,
+      shape, dtype, and value.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model moonshotai/Moonlight-16B-A3B
+      --megatron-path work/model-verification/moonlight-16b-a3b/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 8 --etp 1
+      --trust-remote-code
+    last_verified: 2026-07-19
+    expected_result: >
+      The command exits successfully, creates a reloadable iter_0000000, and
+      an exact audit finds all 5,344 serialized source tensors and the model
+      configuration unchanged after the paired GPU export.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model moonshotai/Moonlight-16B-A3B
+      --megatron-path work/model-verification/moonlight-16b-a3b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/moonlight-16b-a3b/cpu-hf-export
+      --trust-remote-code
+    last_verified: 2026-07-19
+    expected_result: >
+      The command exits successfully, the model configuration is exact, and all
+      377 registered parameters and persistent buffers match bitwise by key,
+      shape, dtype, and value. Native Transformers strictly reloads the output
+      as DeepseekV3ForCausalLM with trust_remote_code disabled. In the serialized
+      files, the 26 router correction-bias buffers are exact-value BF16-to-FP32
+      widenings and 27 stale, nonpersistent source inv_freq tensors are omitted.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model moonshotai/Moonlight-16B-A3B
+      --megatron-path work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/moonlight-16b-a3b/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 1 --pp 1 --ep 8 --etp 1
+      --trust-remote-code
+    last_verified: 2026-07-19
+    expected_result: >
+      Strict distributed export exits successfully, all 5,344 serialized tensor
+      keys, shapes, dtypes, and values match the recorded HF revision, and native
+      Transformers strictly reloads the output as DeepseekV3ForCausalLM with
+      trust_remote_code disabled and no missing or unexpected keys.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path moonshotai/Moonlight-16B-A3B
+      --megatron_model_path work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
+      --tp 1 --pp 1 --ep 8 --etp 1
+      --prompt "The capital of France is"
+      --model_class DeepseekV3ForCausalLM --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Hugging Face and Megatron predict the same next token with BF16 logit
+      cosine similarity above 0.9999 and small maximum and mean absolute logit
+      differences.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path moonshotai/Moonlight-16B-A3B
+      --megatron_model_path work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
+      --tp 1 --pp 1 --ep 8 --etp 1
+      --prompt "The capital of France is" --max_new_tokens 32
+      --trust-remote-code
+    last_verified: null
+    expected_result: >
+      Two independent greedy executions each produce exactly 32 new tokens
+      with byte-identical token IDs and decoded output.
+
+  pretrain:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features: {}
+    command: >
+      ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
+      --recipe moonlight_16b_pretrain_8gpu_h100_bf16_config
+      --dataset megatron-indexed --seq_length 4096 --max_steps 400
+      --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+      dataset.data_path=work/data/rp2/head_01
+      dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2
+      scheduler.lr_decay_iters=400
+      validation.eval_iters=0 validation.eval_interval=0
+      dist.distributed_timeout_minutes=30
+      --save_dir work/model-verification/moonlight-16b-a3b/pretrain-reference-checkpoints
+      --save_interval 200 logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: >
+      The unchanged recipe batch completes exactly 400 bounded RP2 optimizer
+      steps with finite losses, no skipped or NaN iterations, all four metrics,
+      and complete iter_0000200 and iter_0000400 checkpoints.
+
+  sft:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      --recipe moonlight_16b_sft_8gpu_h100_bf16_config --mode sft
+      --dataset tulu3
+      --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
+      --max_steps 100 --seq_length 2048
+      --lr 5e-6 --min_lr 0 --warmup_iters 10
+      "dataset.hf_dataset.split='train[:10000]'"
+      dataset.hf_output_root=work/data/tulu3
+      dataset.do_validation=false dataset.hf_validation_proportion=null
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0
+      --save_dir work/model-verification/moonlight-16b-a3b/sft-checkpoints
+      --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: >
+      Tulu3 offline packing completes exactly 100 full-SFT steps with finite
+      losses, no skipped or NaN iterations, all four metrics, and a reloadable
+      full-model iter_0000100 checkpoint.
+
+  sft_export_inference:
+    status: unverified
+    precision: bf16
+    depends_on: sft
+    commands:
+      - >
+        ./scripts/conversion/convert.sh export --executor slurm --device gpu
+        --nodes 1 --gpus-per-node 8
+        --hf-model moonshotai/Moonlight-16B-A3B
+        --megatron-path work/model-verification/moonlight-16b-a3b/sft-checkpoints/iter_0000100
+        --hf-path work/model-verification/moonlight-16b-a3b/sft-hf-export
+        --torch-dtype bfloat16 --export-weight-dtype bfloat16
+        --distributed-save --tp 1 --pp 1 --ep 8 --etp 1
+        --trust-remote-code
+      - >
+        uv run python
+        skills/create-model-verification-card/scripts/verify_hf_inference.py
+        --hf-model work/model-verification/moonlight-16b-a3b/sft-hf-export
+        --prompt "In one short sentence, explain why Paris is important to France."
+        --max-new-tokens 32 --chat-template
+    last_verified: null
+    expected_result: >
+      The step-100 SFT checkpoint exports with the original 163840-row HF
+      embedding and output head, natively reloads with trust_remote_code disabled
+      and no missing or unexpected keys, and two greedy runs produce the same
+      coherent 32-token completion.
+
+  sft_long_context:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      context_parallel_size: 2
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+      --recipe moonlight_16b_sft_8gpu_h100_bf16_config --mode sft
+      --dataset tulu3
+      --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
+      --max_steps 20 --seq_length 8192 --context_parallel_size 2
+      --lr 1e-6 --min_lr 0 --warmup_iters 2
+      "dataset.hf_dataset.split='train[:10000]'"
+      dataset.hf_output_root=work/data/tulu3-long-context
+      dataset.do_validation=false dataset.hf_validation_proportion=null
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=20
+      validation.eval_iters=0 validation.eval_interval=0
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: >
+      The command completes exactly 20 Tulu3 SFT steps at the model's 8192-token
+      context limit with CP=2 and offline packing, finite losses, no skipped or
+      NaN iterations, and all four metrics.
+
+  peft:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+    command: >
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 2
+      --recipe moonlight_16b_peft_2gpu_h100_bf16_config --mode lora
+      --dataset tulu3
+      --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
+      --max_steps 100 --seq_length 2048
+      --lr 1e-4 --min_lr 0 --warmup_iters 10
+      "dataset.hf_dataset.split='train[:10000]'"
+      dataset.hf_output_root=work/data/tulu3-lora
+      dataset.do_validation=false dataset.hf_validation_proportion=null
+      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0
+      --save_dir work/model-verification/moonlight-16b-a3b/peft-checkpoints
+      --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: >
+      Tulu3 offline packing and exactly 100 LoRA steps complete with finite
+      losses, no skipped or NaN iterations, all four metrics, and a finalized
+      iter_0000100 adapter checkpoint.
+
+  checkpoint_resume:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    depends_on: pretrain
+    command: >
+      ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
+      --recipe moonlight_16b_pretrain_8gpu_h100_bf16_config
+      --dataset megatron-indexed --seq_length 4096 --max_steps 400
+      --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+      dataset.data_path=work/data/rp2/head_01
+      dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2
+      scheduler.lr_decay_iters=400
+      validation.eval_iters=0 validation.eval_interval=0
+      dist.distributed_timeout_minutes=30
+      --load_dir work/model-verification/moonlight-16b-a3b/pretrain-reference-checkpoints
+      --save_dir work/model-verification/moonlight-16b-a3b/pretrain-resumed-checkpoints
+      --save_interval 200 checkpoint.ckpt_step=200
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    resume_comparison:
+      reference_item: pretrain
+      sentinel_steps: [201, 400]
+      loss_relative_tolerance: 1.0e-2
+      loss_absolute_tolerance: 1.0e-6
+      sentinels_match: false
+    expected_result: >
+      The command restores optimizer and RNG state directly from iter_0000200,
+      begins at step 201, and completes step 400 in the distinct output root.
+      Step-201 and step-400 losses match the uninterrupted reference within the
+      recorded one-percent relative tolerance.
