@@ -114,37 +114,42 @@ items:
     status: verified
     precision: bf16
     gpu_type: H100
-    enabled_features: {}
+    enabled_features:
+      cuda_graph:
+        implementation: transformer_engine
+        scopes: [moe_router, moe_preprocess]
+      moe_dispatcher: hybridep
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
-      --dataset megatron-indexed --deterministic --seq_length 4096
-      --max_steps 400 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-      dataset.data_path=work/data/rp2/head_01
-      dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
-      tokenizer.tokenizer_type=SentencePieceTokenizer
-      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
-      rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=400
-      validation.eval_iters=0 validation.eval_interval=0
-      dist.distributed_timeout_minutes=30 -tp 4 -pp 1 -ep 16 -etp 1
-      model.bias_activation_fusion=true
-      model.apply_rope_fusion=true model.moe_router_fusion=true
-      model.recompute_granularity=selective model.recompute_method=null
-      model.recompute_num_layers=null 'model.recompute_modules=[core_attn]'
-      model.moe_token_dispatcher_type=alltoall
-      model.moe_flex_dispatcher_backend=null checkpoint.load=null
+      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+      --data rp2 --dataset_paths work/data/rp2/head_01
+      --index_mapping_dir work/cache/qwen3-30b-a3b/rp2
+      --tokenizer_type SentencePieceTokenizer
+      --tokenizer_model work/data/rp2/tokenizer.model
+      --max_steps 400 --moe_flex_dispatcher_backend hybridep
+      optimizer.lr=3e-4 optimizer.min_lr=3e-5
+      scheduler.lr_warmup_iters=40 scheduler.lr_decay_iters=400
+      model.moe_router_force_load_balancing=false
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
       --save_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
-      --save_interval 200 logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-18
+      --save_interval 200 validation.eval_iters=0 validation.eval_interval=0
+      dataset.random_seed=1234 rng.seed=1234
+      dist.distributed_timeout_minutes=30
+      logger.log_interval=1 logger.log_throughput=true
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: 12.37864
-      final_loss: 4.840969
-      last_10_steps_step_time_ms_avg: 2646.100
-      last_10_steps_model_tflops_per_gpu_avg: 71.220
+      initial_loss: 12.41145
+      final_loss: 3.917895
+      last_10_steps_step_time_ms_avg: 28211.570
+      last_10_steps_model_tflops_per_gpu_avg: 213.780
     expected_result: >
-      The uninterrupted bounded RP2 run completes exactly 400 steps with finite
-      losses, no skipped or NaN iterations, records all four metrics, and
-      finalizes iter_0000200 and iter_0000400.
+      On two nodes with 16x H100, the exact performance-recipe topology and
+      batch run bounded real RP2 with natural routing, complete exactly 400
+      steps with finite losses and no skipped or NaN iterations, record all
+      four metrics, and finalize iter_0000200 and iter_0000400. HybridEP and
+      Transformer Engine CUDA graphs for moe_router and moe_preprocess remain
+      active throughout the run.
 
   sft:
     status: verified
@@ -290,32 +295,31 @@ items:
     depends_on: pretrain
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config --mode pretrain
-      --dataset megatron-indexed --deterministic --seq_length 4096
-      --max_steps 400 --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-      dataset.data_path=work/data/rp2/head_01
-      dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
-      tokenizer.tokenizer_type=SentencePieceTokenizer
-      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
-      rng.seed=1234 dataset.random_seed=1234 scheduler.lr_decay_iters=400
-      validation.eval_iters=0 validation.eval_interval=0
-      dist.distributed_timeout_minutes=30
-      -tp 4 -pp 1 -ep 16 -etp 1 model.bias_activation_fusion=true
-      model.apply_rope_fusion=true model.moe_router_fusion=true
-      model.recompute_granularity=selective model.recompute_method=null
-      model.recompute_num_layers=null 'model.recompute_modules=[core_attn]'
-      model.moe_token_dispatcher_type=alltoall
-      model.moe_flex_dispatcher_backend=null
+      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+      --data rp2 --dataset_paths work/data/rp2/head_01
+      --index_mapping_dir work/cache/qwen3-30b-a3b/rp2
+      --tokenizer_type SentencePieceTokenizer
+      --tokenizer_model work/data/rp2/tokenizer.model
+      --max_steps 400 --moe_flex_dispatcher_backend hybridep
+      optimizer.lr=3e-4 optimizer.min_lr=3e-5
+      scheduler.lr_warmup_iters=40 scheduler.lr_decay_iters=400
+      model.moe_router_force_load_balancing=false
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true
       --load_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
       --save_dir work/model-verification/qwen3-30b-a3b/pretrain-resumed-checkpoints
       --save_interval 200 checkpoint.ckpt_step=200
+      train.empty_unused_memory_level=2
+      validation.eval_iters=0 validation.eval_interval=0
+      dataset.random_seed=1234 rng.seed=1234
+      dist.distributed_timeout_minutes=30
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-18
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: 5.446439
-      final_loss: 4.840848
-      last_10_steps_step_time_ms_avg: 2621.200
-      last_10_steps_model_tflops_per_gpu_avg: 71.920
+      initial_loss: 5.012609
+      final_loss: 3.912371
+      last_10_steps_step_time_ms_avg: 28992.130
+      last_10_steps_model_tflops_per_gpu_avg: 208.030
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [201, 400]
@@ -325,10 +329,12 @@ items:
     expected_result: >
       The command loads optimizer and RNG state directly from iter_0000200,
       begins at step 201, and completes step 400 in the distinct output root
-      with finite losses and no skipped or NaN iterations. Step 201 matches the
-      uninterrupted reference at 5.446439, but resumed step 400 is 4.840848
-      versus reference 4.840969. The 0.002499% relative difference is within
-      the 1% relative loss tolerance, so both resume sentinels match.
+      with finite losses and no skipped or NaN iterations. Releasing unused
+      cached memory after each optimizer step preserves NCCL allocation
+      headroom without changing training math. Step 201 matches the
+      uninterrupted reference at 5.012609; resumed step 400 is 3.912371 versus
+      reference 3.917895. The 0.1410% relative difference is within the 1%
+      relative loss tolerance, so both resume sentinels match.
 
   pretrain_performance:
     status: verified
