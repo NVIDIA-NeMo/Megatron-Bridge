@@ -483,6 +483,10 @@ def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str])
         if not _is_finite_number(value) or float(value) <= 0:
             errors.append(f"{_pointer(*comparison_path, name)}: expected a positive finite number")
 
+    relative_tolerance = comparison.get("loss_relative_tolerance")
+    if _is_finite_number(relative_tolerance) and float(relative_tolerance) > 1.0e-2:
+        errors.append(f"{_pointer(*comparison_path, 'loss_relative_tolerance')}: must not exceed 1%")
+
     if status != "verified":
         return
 

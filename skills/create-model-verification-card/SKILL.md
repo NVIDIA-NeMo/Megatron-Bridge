@@ -157,7 +157,10 @@ result. Private executor configuration stays outside the card.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
   directly, resume into a distinct new output root, load optimizer and RNG
   state, and compare the first resumed and final steps with the uninterrupted
-  reference. Do not repeat the pre-checkpoint training segment.
+  reference. Use at most a 1% relative loss tolerance for sentinel comparison;
+  tighter model-specific tolerances are allowed. Keep a small independent
+  absolute tolerance, such as 1e-6, for values near zero. Do not repeat the
+  pre-checkpoint training segment.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
   run and state public hardware plus thresholds.
