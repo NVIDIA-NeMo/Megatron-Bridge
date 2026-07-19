@@ -106,9 +106,7 @@ def test_item_commit_override_must_be_verified_and_nonredundant() -> None:
 
 
 def test_resume_setting_sort_handles_flag_and_flag_value() -> None:
-    settings = VALIDATOR._resume_reference_settings(
-        "./scripts/training/train.sh --deterministic --deterministic=true"
-    )
+    settings = VALIDATOR._resume_reference_settings("./scripts/training/train.sh --deterministic --deterministic=true")
     assert settings is not None
     assert len(settings) == 2
 
