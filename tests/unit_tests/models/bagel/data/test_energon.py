@@ -13,6 +13,8 @@ from megatron.bridge.models.bagel.data.energon import (
     BagelT2IRawSample,
     BagelT2ISample,
     BagelT2ITaskEncoder,
+    BagelVLMSample,
+    BagelVLMTaskEncoder,
     cook_bagel_t2i,
 )
 
@@ -134,5 +136,49 @@ def test_t2i_task_encoder_processes_caption_image_and_sequence_plan() -> None:
     assert sample.sequence_plan == [
         {"type": "text", "enable_cfg": 1, "loss": 0, "special_token_loss": 0, "special_token_label": None},
         {"type": "vae_image", "enable_cfg": 0, "loss": 1, "special_token_loss": 0, "special_token_label": None},
+    ]
+    assert sample.metadata == metadata
+
+
+def test_vlm_task_encoder_processes_image_conversation_and_sequence_plan() -> None:
+    image_buffer = io.BytesIO()
+    Image.new("RGB", (32, 16), (10, 20, 30)).save(image_buffer, format="PNG")
+    metadata = {
+        "dataset_group": "vlm_sft",
+        "dataset_name": "llava_ov",
+        "source": {"jsonl": "llava_ov_si.jsonl", "row": 0},
+        "conversations": [
+            {"from": "human", "value": "<image>\nQuestion?"},
+            {"from": "gpt", "value": "Answer."},
+        ],
+        "image_names": ["image.png"],
+        "image_count": 1,
+    }
+    crude_sample = {
+        "__key__": "vlm-llava_ov_si-row0",
+        "__restore_key__": ("Webdataset", 0, 0),
+        "__subflavor__": None,
+        "__subflavors__": {},
+        "image0": image_buffer.getvalue(),
+        "json": json.dumps(metadata).encode("utf-8"),
+    }
+    tokenizer = Mock()
+    tokenizer.encode.side_effect = {"Question?": [1, 2], "Answer.": [3, 4, 5]}.get
+
+    def transform(image: Image.Image, image_count: int) -> torch.Tensor:
+        assert image.mode == "RGB"
+        assert image_count == 1
+        return torch.ones((3, 14, 28))
+
+    sample = BagelVLMTaskEncoder(tokenizer, transform, 14).cookers[0].cook(crude_sample)
+
+    assert isinstance(sample, BagelVLMSample)
+    assert len(sample.image_tensor_list) == 1
+    assert sample.text_ids_list == [[1, 2], [3, 4, 5]]
+    assert sample.num_tokens == 7
+    assert sample.sequence_plan == [
+        {"type": "vit_image", "enable_cfg": 0, "loss": 0, "special_token_loss": 0, "special_token_label": None},
+        {"type": "text", "enable_cfg": 0, "loss": 0, "special_token_loss": 0, "special_token_label": None},
+        {"type": "text", "enable_cfg": 0, "loss": 1, "special_token_loss": 0, "special_token_label": None},
     ]
     assert sample.metadata == metadata

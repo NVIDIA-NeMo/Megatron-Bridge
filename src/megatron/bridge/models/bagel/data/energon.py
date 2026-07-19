@@ -55,6 +55,17 @@ class BagelEditingSample(Sample):
     metadata: dict[str, object]
 
 
+@dataclass
+class BagelVLMSample(Sample):
+    """BAGEL vision-language sample ready for packing."""
+
+    image_tensor_list: list[torch.Tensor]
+    text_ids_list: list[list[int]]
+    num_tokens: int
+    sequence_plan: list[dict[str, object]]
+    metadata: dict[str, object]
+
+
 def _load_metadata(crude_sample: dict[str, object]) -> dict[str, object]:
     """Load one WebDataset JSON member."""
     json_value = crude_sample["json"]
@@ -235,6 +246,85 @@ def cook_bagel_editing_sample(
     )
 
 
+def cook_bagel_vlm_sample(
+    crude_sample: dict[str, object],
+    *,
+    tokenizer: PreTrainedTokenizerBase,
+    transform: Callable[[Image.Image, int], torch.Tensor],
+    image_stride: int,
+) -> BagelVLMSample:
+    """Apply BAGEL's VLM image, conversation, token, and sequence-plan processing."""
+    metadata = _load_metadata(crude_sample)
+    image_count = metadata["image_count"]
+    conversations = metadata["conversations"]
+    if not isinstance(image_count, int) or not isinstance(conversations, list):
+        raise TypeError("BAGEL VLM metadata has invalid image or conversation fields")
+
+    image_tensor_list = []
+    num_tokens = 0
+    for image_index in range(image_count):
+        image_bytes = crude_sample[f"image{image_index}"]
+        if not isinstance(image_bytes, bytes):
+            raise TypeError("BAGEL VLM image fields must contain bytes")
+        image_tensor = transform(_decode_rgb(image_bytes), image_count)
+        image_tensor_list.append(image_tensor)
+        num_tokens += image_tensor.shape[1] * image_tensor.shape[2] // image_stride**2
+
+    elements = []
+    for conversation in conversations:
+        if conversation["from"] == "human":
+            if "<image>" not in conversation["value"]:
+                elements.append({"type": "text", "has_loss": 0, "text": conversation["value"]})
+            else:
+                text_list = conversation["value"].split("<image>")
+                for index, text in enumerate(text_list):
+                    if text.strip():
+                        elements.append({"type": "text", "has_loss": 0, "text": text.strip()})
+                    if index != len(text_list) - 1 and index < image_count:
+                        elements.append({"type": "image"})
+        elif conversation["from"] == "gpt":
+            elements.append({"type": "text", "has_loss": 1, "text": conversation["value"]})
+
+    text_ids_list = []
+    sequence_plan = []
+    for element in elements:
+        if element["type"] == "text":
+            text_ids = tokenizer.encode(element["text"])
+            if text_ids:
+                text_ids_list.append(text_ids)
+                num_tokens += len(text_ids)
+                sequence_plan.append(
+                    {
+                        "type": "text",
+                        "enable_cfg": 0,
+                        "loss": element["has_loss"],
+                        "special_token_loss": 0,
+                        "special_token_label": None,
+                    }
+                )
+        elif element["type"] == "image":
+            sequence_plan.append(
+                {
+                    "type": "vit_image",
+                    "enable_cfg": 0,
+                    "loss": 0,
+                    "special_token_loss": 0,
+                    "special_token_label": None,
+                }
+            )
+    if not any(item["loss"] for item in sequence_plan):
+        raise ValueError("BAGEL VLM sample has no loss-bearing text")
+
+    return BagelVLMSample(
+        **basic_sample_keys(crude_sample),
+        image_tensor_list=image_tensor_list,
+        text_ids_list=text_ids_list,
+        num_tokens=num_tokens,
+        sequence_plan=sequence_plan,
+        metadata=metadata,
+    )
+
+
 class BagelT2IRawTaskEncoder(TaskEncoder):
     """Register the BAGEL T2I raw sample cooker."""
 
@@ -284,6 +374,28 @@ class BagelEditingTaskEncoder(TaskEncoder):
                     vit_transform=vit_transform,
                     image_stride=image_stride,
                     vit_image_stride=vit_image_stride,
+                )
+            )
+        ]
+
+
+class BagelVLMTaskEncoder(TaskEncoder):
+    """Register configured BAGEL VLM sample processing."""
+
+    def __init__(
+        self,
+        tokenizer: PreTrainedTokenizerBase,
+        transform: Callable[[Image.Image, int], torch.Tensor],
+        image_stride: int,
+    ) -> None:
+        """Configure the official tokenizer and image transform."""
+        self.cookers = [
+            Cooker(
+                partial(
+                    cook_bagel_vlm_sample,
+                    tokenizer=tokenizer,
+                    transform=transform,
+                    image_stride=image_stride,
                 )
             )
         ]
