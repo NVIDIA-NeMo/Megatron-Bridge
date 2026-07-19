@@ -17,6 +17,9 @@ if TYPE_CHECKING:
     from megatron.bridge.models.megatron_mimo.megatron_mimo_config import MegatronMIMOParallelismConfig
 
 
+_MIMO_SAMPLE_INDICES_KEY = "_mimo_sample_indices"
+
+
 def _batch_dim_for_tensor(key: str, value: torch.Tensor) -> int:
     """Return the batch dimension for known MegatronMIMO batch tensors."""
     # Qwen-VL MRoPE position_ids are [3, batch, seq] instead of [batch, seq].
@@ -234,11 +237,35 @@ def slice_batch_for_megatron_mimo(
         >>> local_batch = slice_batch_for_megatron_mimo(global_batch, dp_rank=1, dp_size=3)
         >>> local_batch['tokens'].shape  # torch.Size([4, 2048])
     """
-    if dp_size == 1:
+    modality_sample_indices = batch.get(_MIMO_SAMPLE_INDICES_KEY)
+    if dp_size == 1 and modality_sample_indices is None:
         return batch
+
+    global_batch_size = None
+    for key in ("input_ids", "labels", "loss_mask"):
+        value = batch.get(key)
+        if isinstance(value, torch.Tensor):
+            global_batch_size = value.size(_batch_dim_for_tensor(key, value))
+            break
+    if modality_sample_indices is not None and global_batch_size is None:
+        raise ValueError("Sparse MegatronMIMO modality inputs require a sample-batched tensor.")
+
+    sample_start = 0
+    sample_end = global_batch_size
+    if global_batch_size is not None and dp_size > 1:
+        if global_batch_size % dp_size != 0:
+            raise ValueError(
+                f"Batch size {global_batch_size} is not divisible by DP size {dp_size}. "
+                "Ensure micro_batch_size is divisible by every module's data_parallel_size."
+            )
+        local_batch_size = global_batch_size // dp_size
+        sample_start = dp_rank * local_batch_size
+        sample_end = sample_start + local_batch_size
 
     sliced = {}
     for key, value in batch.items():
+        if key == _MIMO_SAMPLE_INDICES_KEY:
+            continue
         if isinstance(value, torch.Tensor):
             batch_dim = _batch_dim_for_tensor(key, value)
             batch_size = value.size(batch_dim)
@@ -255,10 +282,35 @@ def slice_batch_for_megatron_mimo(
             index[batch_dim] = builtins.slice(start_idx, end_idx)
             sliced[key] = value[tuple(index)]
         elif isinstance(value, dict):
+            if key == "modality_inputs" and modality_sample_indices is not None:
+                local_modalities = {}
+                for modality_name, modality_values in value.items():
+                    local_values = {}
+                    field_indices = modality_sample_indices.get(modality_name, {})
+                    for field_name, field_value in modality_values.items():
+                        indices = field_indices.get(field_name)
+                        if not isinstance(indices, torch.Tensor):
+                            local_values[field_name] = field_value
+                            continue
+                        selected = (indices >= sample_start) & (indices < sample_end)
+                        if isinstance(field_value, torch.Tensor):
+                            local_values[field_name] = field_value[selected]
+                        elif isinstance(field_value, list):
+                            local_values[field_name] = [
+                                item for item, keep in zip(field_value, selected.tolist()) if keep
+                            ]
+                        else:
+                            local_values[field_name] = field_value
+                    if any(
+                        not isinstance(field_value, (torch.Tensor, list)) or len(field_value) > 0
+                        for field_value in local_values.values()
+                    ):
+                        local_modalities[modality_name] = local_values
+                sliced[key] = local_modalities
             # Patch-packed visual encoder inputs use dim 0 for different units
             # across fields (patches for hidden_states, images for grid_thw), so
             # they need joint slicing instead of normal recursive tensor slicing.
-            if _is_patch_packed_visual_dict(value):
+            elif _is_patch_packed_visual_dict(value):
                 sliced[key] = _slice_patch_packed_visual_dict(value, dp_rank, dp_size)
             else:
                 # Recurse into nested dicts (e.g. modality_inputs)
