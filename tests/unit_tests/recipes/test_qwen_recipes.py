@@ -308,6 +308,7 @@ def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.rng.te_rng_tracker is True
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.comm_overlap.tp_comm_overlap is True
 
 
@@ -337,6 +338,7 @@ def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_functional_config(
     assert perf_cfg.model.cuda_graph_impl == default_cfg.model.cuda_graph_impl
     assert perf_cfg.model.cuda_graph_scope == default_cfg.model.cuda_graph_scope
     assert perf_cfg.comm_overlap.tp_comm_overlap == default_cfg.comm_overlap.tp_comm_overlap
+    assert perf_cfg.optimizer.use_precision_aware_optimizer == default_cfg.optimizer.use_precision_aware_optimizer
     assert perf_cfg.model.moe_router_force_load_balancing is True
     assert default_cfg.model.moe_router_force_load_balancing is False
 

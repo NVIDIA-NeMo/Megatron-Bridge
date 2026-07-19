@@ -142,6 +142,7 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.use_precision_aware_optimizer = True
     cfg.model.bias_activation_fusion = True
     cfg.model.apply_rope_fusion = True
     cfg.model.moe_router_fusion = True
