@@ -14,9 +14,8 @@ logs or reconstructing the execution environment.
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
 - Verify exact-length deterministic HF output with
   [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
-- Use `model_cards/qwen3-8b/card.yaml` as the format example. Do not copy
-  model-specific settings blindly. For the optional performance item, refer to
-  `model_cards/qwen3-30b-a3b/card.yaml`.
+- Use the inventory and field rules below as the format contract. Do not infer
+  model-specific settings from another family or variant.
 
 Do not add a README, evidence blobs, log excerpts, runtime setup, or scheduler
 metadata to the skill or card.
