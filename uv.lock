@@ -932,20 +932,20 @@ wheels = [
 
 [[package]]
 name = "dulwich"
-version = "1.2.11"
+version = "1.2.12"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "urllib3" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b4/bc/70bac5c71214fad2f297c97228d3ca82f2d0a5095f76c3875854957d4554/dulwich-1.2.11.tar.gz", hash = "sha256:771bb2128045477c9332f71ed3fd4498c4a455e90ff76198d92cbc09218773a3", size = 1320432, upload-time = "2026-07-16T14:35:31.109Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/e5/73/e0ac42b16e180189e8426af41b1f29b079096088e1253d03322259945911/dulwich-1.2.12.tar.gz", hash = "sha256:1278d8ddb0a92fa4bc9f2e9b14edf0a2e140248bccc4c7c9752a1390e2ab4c64", size = 1323805, upload-time = "2026-07-19T11:16:39.472Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/e3/27/b2933633b45429bac51eccd4f398056d409d99515f8231bc98c2d0a1f8ee/dulwich-1.2.11-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:b5a9429fdf5e4ff7fafb0f4ec79382046037bc725f9d69270a19cd75ada18994", size = 1374342, upload-time = "2026-07-16T14:34:43.597Z" },
-    { url = "https://files.pythonhosted.org/packages/87/9c/e0b087e39964ec9191aa063997150518196e7900e1b2f754a06c7f778fe5/dulwich-1.2.11-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:0f795fdfae87dc31a67af7b6e186e0d94dd849dcaf424be27894cc2fbb5db8af", size = 1356942, upload-time = "2026-07-16T14:34:44.987Z" },
-    { url = "https://files.pythonhosted.org/packages/b8/4c/a013b3d3b09a6cdb711d0894352f27b840c7572ccd4d35ed8597a73259b3/dulwich-1.2.11-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:8ac68189341cda83a53fae48af99473e8d0c1d46ab8019f44230fd34d6be9f21", size = 1437430, upload-time = "2026-07-16T14:34:46.703Z" },
-    { url = "https://files.pythonhosted.org/packages/bc/50/f827c52b2737875a5f3bbbed24c2f0d76d3467cbff89b2bdd7e0490efa8c/dulwich-1.2.11-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:db6fdc000d47d8106a41d26ab80be20cea0aec4a0f27f791bc59119ec9aed61e", size = 1512066, upload-time = "2026-07-16T14:34:48.429Z" },
-    { url = "https://files.pythonhosted.org/packages/0e/c6/872c11f5fa5fc8aaa32678a5693f4732fa4ea346c7e3f6c1ab43327ead9d/dulwich-1.2.11-cp312-cp312-win32.whl", hash = "sha256:103c14d17a2a6977069d823918332473601a902135fd4de767057b086f3ca69d", size = 1041308, upload-time = "2026-07-16T14:34:50.19Z" },
-    { url = "https://files.pythonhosted.org/packages/35/8a/62cc6df990cba318cf63c412d70a93a6d606a12d70cb4703199a2e290ece/dulwich-1.2.11-cp312-cp312-win_amd64.whl", hash = "sha256:34e05d11b4a5d673cd668dff0a873f1a7292855fbcf8a64b304b2df56e0911ba", size = 1099530, upload-time = "2026-07-16T14:34:51.795Z" },
-    { url = "https://files.pythonhosted.org/packages/13/b2/8efd78cd1b39fff57c1ae86876e396ed12dc470e758fdc1d48c55648c50a/dulwich-1.2.11-py3-none-any.whl", hash = "sha256:1e10ff178c0af122e18437564422d40a04108b8b1c64bbe98a6b32326cad1883", size = 715102, upload-time = "2026-07-16T14:35:29.596Z" },
+    { url = "https://files.pythonhosted.org/packages/78/2b/29d5c8530da1cb07212023389defdde62119e56c35ef4148cef5fca77955/dulwich-1.2.12-cp312-cp312-macosx_10_13_x86_64.whl", hash = "sha256:9155f5f6e35b2a4d48d74a9c4ad5dcd3d88ebf97677eb5c6f78ac3dd940eefbe", size = 1374692, upload-time = "2026-07-19T11:15:47.247Z" },
+    { url = "https://files.pythonhosted.org/packages/6f/93/bebfd89d18472df6fedd0f5a9fb5ad1ef7fd88074d23ac8a8c12c05ccb33/dulwich-1.2.12-cp312-cp312-macosx_11_0_arm64.whl", hash = "sha256:af7560e02c12aa7d6bdb8414bcde8c236a10d8f32db5c9e71e6cfdbe3e7d5795", size = 1357770, upload-time = "2026-07-19T11:15:48.987Z" },
+    { url = "https://files.pythonhosted.org/packages/74/bf/bd1911442a955316de7588d760b4bd5dcdaba4e858c9e6ff50523464efa1/dulwich-1.2.12-cp312-cp312-manylinux_2_28_aarch64.whl", hash = "sha256:2b4c64f4b73fe1e720b55653bcb80fc7b75aa2b8f2eb58075199b117ef0351e5", size = 1438162, upload-time = "2026-07-19T11:15:50.789Z" },
+    { url = "https://files.pythonhosted.org/packages/66/8b/96e9731d18c6101b76c8a8bd51641e01c4a287bdc511263fdf9f76835d07/dulwich-1.2.12-cp312-cp312-manylinux_2_28_x86_64.whl", hash = "sha256:1d45f2b3023425a8f1d40fb4e097410f8b367f4d4e9f9e698a2daa9fd07d99e2", size = 1513381, upload-time = "2026-07-19T11:15:52.595Z" },
+    { url = "https://files.pythonhosted.org/packages/5d/35/16f5a6065442f8a648a38ad78de90fc3d29281e86ef76421f31584cac123/dulwich-1.2.12-cp312-cp312-win32.whl", hash = "sha256:ba7bddba355c6232600f435cfdf83399c5b31c9a5dab21cc2847b78968a0f715", size = 1042147, upload-time = "2026-07-19T11:15:54.313Z" },
+    { url = "https://files.pythonhosted.org/packages/46/49/cac7f9da6059a3ab357c86892859c435466a0fcc49454c97c28ac8e8cd79/dulwich-1.2.12-cp312-cp312-win_amd64.whl", hash = "sha256:90d1280a7f29a316851a8afef87d1cf3ab26cdfa450d480a8aafe63681244088", size = 1100266, upload-time = "2026-07-19T11:15:56.23Z" },
+    { url = "https://files.pythonhosted.org/packages/33/67/6c1a89af18f160a9d7311fddbd62068e347c2bf6cfada8530ebfd4e75b8b/dulwich-1.2.12-py3-none-any.whl", hash = "sha256:713de88063b80ab37d707e7aff17e403efb236156e09c34c149ada48d48b6e96", size = 715939, upload-time = "2026-07-19T11:16:37.722Z" },
 ]
 
 [[package]]
@@ -4394,11 +4394,11 @@ wheels = [
 
 [[package]]
 name = "soupsieve"
-version = "2.8.4"
+version = "2.9"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/47/2c/0a5f6f8ee0d5589e48c7640213ed5175d52cf540a06725b628cc1a45d6ce/soupsieve-2.8.4.tar.gz", hash = "sha256:e121fd02e975c695e4e9e8774a5ee35d74714b59307868dcc5319ad2d9e3328e", size = 121110, upload-time = "2026-05-24T13:55:57.154Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/80/f1/93422647dd7e461f23d254e6b2bfa687a85b53aeb4903fcdbb74474d4584/soupsieve-2.9.tar.gz", hash = "sha256:acee8417325c5653e1377dc31eccad59eb82cbc65942afe6174c53b3aaad63fc", size = 122122, upload-time = "2026-07-19T01:35:18.425Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/5e/f5/0c41cb68dcae6b7de4fac4188a3a9589e21fb31df21ea3a2e888db95e6c9/soupsieve-2.8.4-py3-none-any.whl", hash = "sha256:e7e6b0769c8f51ed59acab6e994b00621096cfb1c640a7509295987388fbaf65", size = 37304, upload-time = "2026-05-24T13:55:55.406Z" },
+    { url = "https://files.pythonhosted.org/packages/7b/d6/3185ab5ad1280319b31986898f3206dd7227cd75e293d4dba2a5e6bf27a0/soupsieve-2.9-py3-none-any.whl", hash = "sha256:a2b2c76d67df2382d245409fd71e321a571717e58463efa32ace87dcadac2c12", size = 37387, upload-time = "2026-07-19T01:35:17.106Z" },
 ]
 
 [[package]]
