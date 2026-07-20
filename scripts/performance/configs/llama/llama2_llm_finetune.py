@@ -256,7 +256,7 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str 
     set_llama2_70b_common_configs(cfg)
 
     # 1 GPUs
-    if config_variant == "v1":
+    if config_variant == "v5":
         cfg.validation.eval_global_batch_size = 1
         cfg.validation.eval_interval = 48
         cfg.validation.eval_iters = 173
@@ -269,7 +269,7 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str 
         cfg.dataset.seed = 172
         cfg.rng.seed = 172
     # 4 GPUs
-    elif config_variant == "v2":
+    elif config_variant == "v1":
         cfg.validation.eval_global_batch_size = 4
         cfg.validation.eval_interval = 48
         cfg.validation.eval_iters = 44
@@ -282,7 +282,7 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str 
         cfg.dataset.seed = 10710
         cfg.rng.seed = 10710
     # 8 GPUs
-    elif config_variant == "v3":
+    elif config_variant == "v2":
         cfg.validation.eval_global_batch_size = 8
         cfg.validation.eval_interval = 48
         cfg.validation.eval_iters = 22
@@ -295,7 +295,7 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str 
         cfg.dataset.seed = 22699
         cfg.rng.seed = 22699
     # 72 GPUs
-    elif config_variant == "v4":
+    elif config_variant == "v3":
         cfg.validation.eval_global_batch_size = 36
         cfg.validation.eval_interval = 43
         cfg.validation.eval_iters = 5
@@ -308,7 +308,7 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str 
         cfg.dataset.seed = 14954
         cfg.rng.seed = 14954
     # 512 GPUs
-    elif config_variant == "v5":
+    elif config_variant == "v4":
         cfg.optimizer.lr = 0.0006
         cfg.validation.eval_global_batch_size = 64
         cfg.validation.eval_interval = 6
