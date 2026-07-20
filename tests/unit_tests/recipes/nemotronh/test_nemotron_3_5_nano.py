@@ -22,11 +22,9 @@ Tests cover:
 - MoE-specific settings (expert parallelism, MTP)
 - Parallelism and tokenizer configurations
 
-The recipe loads its HF config via ``AutoBridge.from_hf_pretrained``. The
-checkpoint path is still a private lustre directory; on environments where
-``AutoBridge`` cannot reach it (e.g. CI before the model is published), this
-file skips at collection. Drop the skip wrapper once the path is swapped to a
-public HF id.
+The recipe loads its HF config via ``AutoBridge.from_hf_pretrained``. The EA2
+repository is private, so environments without access skip this model-specific
+suite. The exhaustive recipe-factory tests exercise construction offline.
 """
 
 import os
@@ -34,7 +32,7 @@ import tempfile
 
 import pytest
 
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.nemotron_3_5_nano import (
     NEMOTRON_3_5_NANO_HF_MODEL_ID,
     nemotron_3_5_nano_peft_config,
@@ -60,9 +58,8 @@ def _recipe_loadable() -> bool:
 pytestmark = pytest.mark.skipif(
     not _recipe_loadable(),
     reason=(
-        f"Nemotron 3.5 Nano HF config not loadable from '{NEMOTRON_3_5_NANO_HF_MODEL_ID}'. "
-        "Update the path to the published HF id (or run from a host with access to the local "
-        "checkpoint) to enable these tests."
+        f"Nemotron 3.5 Nano HF config not accessible from '{NEMOTRON_3_5_NANO_HF_MODEL_ID}'. "
+        "Authenticate to the private EA2 repository to enable these tests."
     ),
 )
 
@@ -75,7 +72,7 @@ class TestNemotron35NanoPretrain:
         config = nemotron_3_5_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         # Parallelism — H100 BF16 preset (TP=1, EP=8, SP=True)
         assert config.model.tensor_model_parallel_size == 1
@@ -158,7 +155,7 @@ class TestNemotron35NanoSft:
         config = nemotron_3_5_nano_sft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         assert config.model.tensor_model_parallel_size == 1
         assert config.model.pipeline_model_parallel_size == 1
@@ -215,7 +212,7 @@ class TestNemotron35NanoPeft:
         config = nemotron_3_5_nano_peft_config()
 
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
 
         assert config.model.tensor_model_parallel_size == 1
         assert config.model.pipeline_model_parallel_size == 1
@@ -261,7 +258,7 @@ class TestNemotron35NanoCommon:
     def test_config_container_structure(self, recipe_fn):
         config = recipe_fn()
         assert isinstance(config, ConfigContainer)
-        assert isinstance(config.model, MambaModelProvider)
+        assert isinstance(config.model, HybridModelProvider)
         assert config.train is not None
         assert config.optimizer is not None
         assert config.scheduler is not None

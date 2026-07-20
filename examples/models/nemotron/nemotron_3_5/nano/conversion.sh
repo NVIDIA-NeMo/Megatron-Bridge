@@ -18,25 +18,27 @@ set -xeuo pipefail
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
 
-# Local model path (replace with the published HF id before opening a PR)
-MODEL_NAME=${MODEL_NAME:-nemotron35-nano-base-050126}
-HF_MODEL_ID=${HF_MODEL_ID:-/lustre/fsw/portfolios/coreai/users/liding/public/nano_v35/nemotron35-nano-base-050126}
+# Hugging Face model identifier. The EA2 repository requires authenticated access.
+MODEL_NAME=${MODEL_NAME:-nemotron-nano-3.5-ea2}
+HF_MODEL_ID=${HF_MODEL_ID:-nvidia/${MODEL_NAME}}
 
 # Import HF → Megatron
-uv run torchrun --nproc_per_node=8 examples/conversion/convert_checkpoints_multi_gpu.py import \
+./scripts/conversion/convert.sh import \
+    --executor local --device gpu --gpus-per-node 8 \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}" \
     --tp 1 --ep 8
 
 # Export Megatron → HF
-uv run torchrun --nproc_per_node=8 examples/conversion/convert_checkpoints_multi_gpu.py export \
+./scripts/conversion/convert.sh export \
+    --executor local --device gpu --gpus-per-node 8 \
     --hf-model "${HF_MODEL_ID}" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \
     --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export" \
     --tp 1 --ep 8
 
 # Round-trip validation
-uv run torchrun --nproc_per_node=8 \
+uv run python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
     --hf-model-id "${HF_MODEL_ID}" \
     --megatron-load-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \

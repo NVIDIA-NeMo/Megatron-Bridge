@@ -1026,6 +1026,17 @@ class TestNemotronHBridgeMTPIntegration:
         qkv_mappings = [m for m in registry.mappings if isinstance(m, _MTPFlatteningQKVMapping)]
         assert len(qkv_mappings) == 1
 
+    def test_mapping_registry_reads_mtp_pattern_from_hf_config(self):
+        """Adapter export can build MTP mappings without conversion-task setup."""
+        bridge = NemotronHBridge()
+        bridge.hf_config = SimpleNamespace(mtp_hybrid_override_pattern="*E")
+
+        registry = bridge.mapping_registry()
+
+        assert bridge._mtp_layers_per_block == 2
+        assert any(isinstance(mapping, _MTPFlatteningMapping) for mapping in registry.mappings)
+        assert any(isinstance(mapping, _MTPFlatteningQKVMapping) for mapping in registry.mappings)
+
     def test_mapping_registry_resolves_representative_mtp_params(self):
         """Verify current MTP mappings resolve to concrete HF parameter names."""
         bridge = NemotronHBridge()

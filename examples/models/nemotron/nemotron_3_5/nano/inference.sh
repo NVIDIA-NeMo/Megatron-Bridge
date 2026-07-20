@@ -15,7 +15,7 @@
 
 set -xeuo pipefail
 
-MODEL_NAME=${MODEL_NAME:-nemotron35-nano-base-050126}
+MODEL_NAME=${MODEL_NAME:-nemotron-nano-3.5-ea2}
 HF_MODEL_ID=${HF_MODEL_ID:-nvidia/$MODEL_NAME}
 MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH:-}
 PROMPT=${PROMPT:-"Write a concise explanation of hybrid Mamba-attention models."}
