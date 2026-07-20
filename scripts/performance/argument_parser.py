@@ -581,6 +581,14 @@ def parse_cli_args():
         required=False,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_workspace_root",
+        type=str,
+        help="Writable directory reserved for this launcher on the workdir PVC. "
+        "Defaults to --kubeflow_workdir_pvc_path for backward compatibility.",
+        default=None,
+        required=False,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_workdir_local_path",
         type=str,
         help="Local directory whose contents nemo-run's KubeflowExecutor.package() "

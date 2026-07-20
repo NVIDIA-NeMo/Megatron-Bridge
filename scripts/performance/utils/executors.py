@@ -14,8 +14,10 @@
 
 import logging
 import os
+import posixpath
 import shlex
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -102,6 +104,44 @@ if [ "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" -gt 0 ]; then
 fi
 """
     return textwrap.indent(textwrap.dedent(block).lstrip(), indent)
+
+
+if isinstance(run.KubeflowExecutor, type):
+
+    @dataclass(kw_only=True)
+    class WorkspaceRootKubeflowExecutor(run.KubeflowExecutor):
+        """Keep NeMo-Run's code staging beneath a configurable PVC workspace root."""
+
+        workspace_root: Optional[str] = None
+
+        def __post_init__(self):
+            if self.workspace_root:
+                mount_path = posixpath.normpath(self.workdir_pvc_path)
+                workspace_root = posixpath.normpath(self.workspace_root)
+                if not workspace_root.startswith("/"):
+                    raise ValueError("workspace_root must be an absolute path")
+                if workspace_root != mount_path and not workspace_root.startswith(f"{mount_path}/"):
+                    raise ValueError(
+                        f"workspace_root must be under workdir_pvc_path: {workspace_root} not under {mount_path}"
+                    )
+                self.workspace_root = workspace_root
+            super().__post_init__()
+
+        @property
+        def code_dir(self) -> str:
+            upstream_code_dir = posixpath.normpath(super().code_dir)
+            if not self.workspace_root:
+                return upstream_code_dir
+            mount_path = posixpath.normpath(self.workdir_pvc_path)
+            relative_code_dir = posixpath.relpath(upstream_code_dir, mount_path)
+            if relative_code_dir == ".." or relative_code_dir.startswith("../"):
+                raise ValueError(
+                    f"NeMo-Run code_dir must be under workdir_pvc_path: {upstream_code_dir} not under {mount_path}"
+                )
+            return posixpath.join(self.workspace_root, relative_code_dir)
+
+else:  # Minimal offline test doubles expose KubeflowExecutor as a function.
+    WorkspaceRootKubeflowExecutor = None
 
 
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
@@ -329,6 +369,7 @@ def kubeflow_executor(
     volume_mounts: List[Dict[str, Any]] = None,
     workdir_pvc: Optional[str] = None,
     workdir_pvc_path: str = "/nemo_run",
+    workspace_root: Optional[str] = None,
     workdir_local_path: Optional[str] = None,
     image_pull_secrets: List[str] = None,
     wandb_key: str = None,
@@ -364,6 +405,8 @@ def kubeflow_executor(
         volume_mounts: Container volume mounts.
         workdir_pvc: PVC to sync the run workdir into.
         workdir_pvc_path: Mount path for the workdir PVC inside the container.
+        workspace_root: Writable directory beneath ``workdir_pvc_path`` used for
+            staged launcher code. Defaults to ``workdir_pvc_path``.
         workdir_local_path: Local directory whose contents nemo-run's
             ``KubeflowExecutor.package()`` rsyncs into the workdir PVC via
             a temporary alpine pod before launch. Used to overlay a
@@ -416,7 +459,10 @@ def kubeflow_executor(
     }
     labels = {**ci_labels, **(labels or {})}
 
-    executor = run.KubeflowExecutor(
+    executor_class = WorkspaceRootKubeflowExecutor if workspace_root else run.KubeflowExecutor
+    if executor_class is None:
+        raise RuntimeError("workspace_root requires a class-based KubeflowExecutor")
+    executor = executor_class(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
         # consumed and a single WORLD_SIZE = num_nodes * gpus_per_node process
@@ -436,6 +482,7 @@ def kubeflow_executor(
         volume_mounts=volume_mounts or [],
         workdir_pvc=workdir_pvc,
         workdir_pvc_path=workdir_pvc_path,
+        **({"workspace_root": workspace_root} if workspace_root else {}),
         workdir_local_path=workdir_local_path,
         train_job_basename=train_job_basename,
         image_pull_secrets=image_pull_secrets or [],
