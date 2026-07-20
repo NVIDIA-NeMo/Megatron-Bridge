@@ -76,10 +76,11 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 The GPU allocation and GPUs per node must exactly match the count and hardware
 topology encoded in the recipe name. The selected partition must provide that
 hardware. The launcher preserves the compatibility path's rank-local NUMA
-binding and core Pyxis runtime defaults. The
-unified launcher currently supports canonical text pretraining only: preserve
-the recipe-owned dataset and configuration, and limit overrides to
-`train.train_iters`, `logger.*`, `profiling.*`, and `env_vars.*`. Use
+binding and offline benchmark environment, but cluster-specific `srun` options
+must be supplied explicitly with repeated `--srun-arg=ARG` options. The unified
+launcher currently supports text pretraining only. Trailing `KEY=VALUE`
+overrides are accepted, but an overridden performance recipe no longer
+represents its canonical benchmark configuration. Use
 `scripts/performance/setup_experiment.py` for SFT/PEFT, VLM, diffusion, dataset
 replacement, topology resizing, and specialized benchmark controls until those
 paths migrate.

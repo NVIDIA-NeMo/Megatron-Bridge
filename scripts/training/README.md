@@ -64,15 +64,16 @@ recipe name; the selected Slurm partition must provide that hardware:
     --mode pretrain
 ```
 
-Performance recipes own their benchmark dataset, topology, batch sizes, sequence length, precision, dispatcher,
-CUDA-graph settings, and process environment. Do not pass `--dataset` or configuration overrides for those fields.
-During the first migration stage, only `train.train_iters` (including `--max_steps`), `logger.*`, `profiling.*`, and
-`env_vars.*` overrides are accepted. Recipe environment defaults are installed before the launcher enters the training
-stack; values explicitly set by the shell or Slurm environment retain precedence.
+Performance recipes provide benchmark defaults for their dataset, topology, batch sizes, sequence length, precision,
+dispatcher, CUDA-graph settings, and process environment. Trailing `KEY=VALUE` overrides are applied to their
+`ConfigContainer` in the same way as library recipes; an overridden run no longer represents the canonical benchmark
+configuration. Performance recipes retain their selected dataset type, so `--dataset` is not supported on this path.
+Recipe environment defaults are installed before the launcher enters the training stack; values explicitly set by the
+shell or Slurm environment retain precedence.
 
 For performance recipes, the launcher also preserves the compatibility path's rank-local CPU/NUMA binding, canonical
-GPUs-per-node check, offline benchmark environment, and Pyxis `srun` defaults. These are launcher semantics rather than
-model configuration and therefore do not belong in each recipe.
+GPUs-per-node check, and offline benchmark environment. These are launcher semantics rather than model configuration
+and therefore do not belong in each recipe.
 
 SFT/PEFT, VLM, diffusion, topology resizing, dataset replacement, and other specialized performance controls remain
 on `scripts/performance/setup_experiment.py` while those paths migrate. The compatibility launcher remains available;
@@ -86,7 +87,7 @@ The default library forward step is `llm_step`. Pass `--step-func NAME` explicit
 another registered forward step. Text performance recipes use the same `gpt_step` path as the compatibility launcher.
 Common training, sequence-length, parallelism, optimization, and checkpoint fields also have convenience flags such
 as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`. Use trailing
-`KEY=VALUE` overrides for every other library `ConfigContainer` field.
+`KEY=VALUE` overrides for every other `ConfigContainer` field.
 
 ## Dataset selection
 
@@ -194,7 +195,7 @@ directory:
 
 ## Overrides
 
-For library recipes, every `ConfigContainer` field can be set with trailing `KEY=VALUE` arguments. Common fields also
+Every selected recipe's `ConfigContainer` fields can be set with trailing `KEY=VALUE` arguments. Common fields also
 accept the convenience flags listed by `run_recipe.py --help`. For example, batch sizes and training duration belong
 under `train`, not `model`:
 
@@ -214,9 +215,8 @@ Precedence is recipe defaults, the selected dataset configuration, common conven
 `ConfigContainer` overrides. A trailing override therefore wins when it targets the same field as a convenience
 argument.
 
-Performance recipes intentionally accept only duration, logging, profiling, and recipe-environment overrides during
-the first migration stage. This keeps their measured configuration canonical; use the compatibility performance
-launcher for other experiments.
+Overrides take a performance recipe outside its canonical benchmark configuration. Use
+`scripts/performance/setup_experiment.py` for specialized workflows that the unified launcher has not migrated yet.
 
 ## Slurm and containers
 
@@ -235,9 +235,8 @@ forwarded implicitly. Export credentials in the launcher environment, then repea
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
-Library-recipe launches add no cluster-specific `srun` flags by default. Repeat
-`--srun-arg=ARG` for every flag required by the target cluster. For example,
-a Pyxis/Enroot cluster may use:
+The launcher adds no cluster-specific `srun` flags by default. Repeat `--srun-arg=ARG` for every flag required by the
+target cluster. For example, a Pyxis/Enroot cluster may use:
 
 ```bash
 --srun-arg=--mpi=pmix \
@@ -247,8 +246,7 @@ a Pyxis/Enroot cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
-Performance-recipe launches add `--mpi=pmix`, `--no-container-mount-home`, and `--container-writable` after custom
-arguments to preserve the compatibility launcher, and prefix every rank with the hardware-specific `numactl` binding.
+Performance-recipe launches still prefix every rank with the hardware-specific `numactl` binding.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.

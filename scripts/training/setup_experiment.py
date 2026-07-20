@@ -39,7 +39,6 @@ from performance_recipe import (  # noqa: E402
 
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
-PERFORMANCE_SRUN_ARGS = ("--mpi=pmix", "--no-container-mount-home", "--container-writable")
 PERFORMANCE_LAUNCH_ENV = {
     "TRANSFORMERS_OFFLINE": "1",
     "TOKENIZERS_PARALLELISM": "False",
@@ -259,7 +258,6 @@ def _build_executor(
         segment = _performance_segment(performance_metadata, nodes=args.nodes)
         if segment is not None:
             performance_kwargs["segment"] = segment
-        srun_args.extend(PERFORMANCE_SRUN_ARGS)
 
     executor = run.SlurmExecutor(
         account=args.account,

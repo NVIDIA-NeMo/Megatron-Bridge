@@ -309,32 +309,7 @@ def test_library_only_canonical_name_does_not_enable_performance_runtime():
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-@pytest.mark.parametrize(
-    "override",
-    [
-        "model.expert_model_parallel_size=8",
-        "dataset.seq_length=8192",
-        "train.micro_batch_size=2",
-    ],
-)
-def test_performance_recipe_rejects_noncanonical_overrides(override):
-    module, handles = _load_module()
-
-    with pytest.raises(ValueError, match="canonical model"):
-        module.main(
-            [
-                "--recipe",
-                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
-                "--mode",
-                "pretrain",
-                override,
-            ]
-        )
-
-    handles.recipe_runner.load_recipe.assert_not_called()
-
-
-def test_performance_dry_run_accepts_observability_and_duration_overrides(monkeypatch):
+def test_performance_dry_run_accepts_config_overrides(monkeypatch):
     module, handles = _load_module()
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     monkeypatch.delenv("SLURM_NTASKS", raising=False)
@@ -354,6 +329,9 @@ def test_performance_dry_run_accepts_observability_and_duration_overrides(monkey
             "logger.log_interval=5",
             "profiling.use_pytorch_profiler=true",
             "env_vars.NCCL_DEBUG=INFO",
+            "model.expert_model_parallel_size=8",
+            "dataset.seq_length=8192",
+            "train.micro_batch_size=2",
         ]
     )
 
@@ -364,6 +342,9 @@ def test_performance_dry_run_accepts_observability_and_duration_overrides(monkey
             "logger.log_interval=5",
             "profiling.use_pytorch_profiler=true",
             "env_vars.NCCL_DEBUG=INFO",
+            "model.expert_model_parallel_size=8",
+            "dataset.seq_length=8192",
+            "train.micro_batch_size=2",
         ],
     )
     handles.recipe_runner.run_config.assert_called_once_with(

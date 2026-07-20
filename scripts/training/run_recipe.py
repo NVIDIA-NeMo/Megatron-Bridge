@@ -115,14 +115,6 @@ PublicMode = Literal["pretrain", "sft", "lora", "dora"]
 TrainMode = Literal["pretrain", "finetune"]
 
 
-PERFORMANCE_SAFE_OVERRIDE_FIELDS = (
-    "env_vars",
-    "logger",
-    "profiling",
-    "train.train_iters",
-)
-
-
 COMMON_OVERRIDE_FIELDS = (
     ("max_steps", "train.train_iters"),
     ("global_batch_size", "train.global_batch_size"),
@@ -323,25 +315,6 @@ def _validate_recipe_mode(recipe_name: str, mode: PublicMode) -> None:
         raise ValueError(f"Mode '{mode}' is incompatible with recipe '{recipe_name}'.")
 
 
-def _validate_performance_overrides(cli_overrides: list[str]) -> None:
-    """Allow only overrides that preserve the canonical benchmark configuration."""
-    unsupported_overrides = []
-    for override in cli_overrides:
-        field_name = override.lstrip("+~").split("=", 1)[0]
-        if not any(
-            field_name == safe_field or field_name.startswith(f"{safe_field}.")
-            for safe_field in PERFORMANCE_SAFE_OVERRIDE_FIELDS
-        ):
-            unsupported_overrides.append(field_name)
-
-    if unsupported_overrides:
-        fields = ", ".join(dict.fromkeys(unsupported_overrides))
-        raise ValueError(
-            "Performance recipes currently require their canonical model, topology, batch, sequence length, "
-            f"dispatcher, graph, precision, and dataset settings; unsupported overrides: {fields}."
-        )
-
-
 def _current_world_size() -> int | None:
     """Return the distributed world size supplied by torchrun or Slurm, when available."""
     for variable_name in ("WORLD_SIZE", "SLURM_NTASKS"):
@@ -456,7 +429,6 @@ def main(argv: list[str] | None = None) -> None:
             deterministic=args.deterministic,
             dataset=args.dataset,
         )
-        _validate_performance_overrides(cli_overrides)
 
     recipe = _load_selected_recipe(args)
     recipe = _apply_dataset(recipe, args)

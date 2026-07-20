@@ -309,7 +309,7 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.srun_args == []
 
 
-def test_performance_slurm_executor_preserves_binding_and_runtime_defaults(tmp_path, monkeypatch):
+def test_performance_slurm_executor_preserves_binding_without_cluster_srun_defaults(tmp_path, monkeypatch):
     module = _load_setup_experiment_module()
 
     class _SlurmExecutor:
@@ -347,7 +347,7 @@ def test_performance_slurm_executor_preserves_binding_and_runtime_defaults(tmp_p
     assert executor.kwargs["launcher"] is sentinel_launcher
     assert executor.kwargs["ntasks_per_node"] == 8
     assert executor.kwargs["gpus_per_node"] == 8
-    assert executor.srun_args == ["--label", *module.PERFORMANCE_SRUN_ARGS]
+    assert executor.srun_args == ["--label"]
     assert "segment" not in executor.kwargs
     assert module._performance_numa_command(metadata) == (
         "numactl --cpunodebind=$((SLURM_LOCALID/4)) --membind=$((SLURM_LOCALID/4))"
