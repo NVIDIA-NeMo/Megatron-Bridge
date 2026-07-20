@@ -168,6 +168,7 @@ def qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_router_dtype = "fp32"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
     cfg.model.moe_router_padding_for_fp8 = False
