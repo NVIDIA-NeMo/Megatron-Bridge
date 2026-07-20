@@ -458,9 +458,17 @@ def run_config(
         if dryrun_world_size is not None:
             from megatron.bridge.training.config import runtime_config_update
 
-            os.environ["WORLD_SIZE"] = str(dryrun_world_size)
-            os.environ["RANK"] = "0"
-            runtime_config_update(config)
+            temporary_environment = {"WORLD_SIZE": str(dryrun_world_size), "RANK": "0"}
+            previous_environment = {name: os.environ.get(name) for name in temporary_environment}
+            try:
+                os.environ.update(temporary_environment)
+                runtime_config_update(config)
+            finally:
+                for name, value in previous_environment.items():
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
         logger_config = getattr(config, "logger", None)
         configured_path = getattr(logger_config, "save_config_filepath", None)
         save_config(config, save_config_filepath or configured_path or "ConfigContainer.yaml")

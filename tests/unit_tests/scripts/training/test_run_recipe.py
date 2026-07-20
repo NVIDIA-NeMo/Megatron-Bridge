@@ -79,7 +79,13 @@ def _load_module():
     }
     dataset_utils.DATASET_PRESETS = dict.fromkeys(dataset_names, object())
     dataset_utils.build_dataset_config = Mock(
-        side_effect=lambda _config, dataset_name: SimpleNamespace(dataset_name=dataset_name)
+        side_effect=lambda _config, dataset_name: SimpleNamespace(
+            dataset_name=dataset_name,
+            num_workers=None,
+            pin_memory=None,
+            persistent_workers=None,
+            split=None,
+        )
     )
     dataset_utils.dataset_train_mode = Mock(
         side_effect=lambda dataset: "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
@@ -174,12 +180,20 @@ def test_model_selection_requires_mode_when_it_cannot_be_inferred():
         module.parse_args(["--model", "gpt_oss_20b"])
 
 
-def test_conventional_recipe_name_infers_mode():
+@pytest.mark.parametrize(
+    ("recipe_name", "mode"),
+    [
+        ("gpt_oss_20b_pretrain_config", "pretrain"),
+        ("llama3_8b_sft_8gpu_gb200_bf16_config", "sft"),
+        ("llama3_70b_peft_8gpu_gb200_bf16_config", "lora"),
+    ],
+)
+def test_conventional_recipe_name_infers_mode(recipe_name, mode):
     module, _ = _load_module()
 
-    args, _ = module.parse_args(["--recipe", "gpt_oss_20b_pretrain_config"])
+    args, _ = module.parse_args(["--recipe", recipe_name])
 
-    assert args.mode == "pretrain"
+    assert args.mode == mode
 
 
 @pytest.mark.parametrize("mode", ["lora", "dora"])
@@ -260,7 +274,10 @@ def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
 def test_performance_finetuning_recipes_use_unified_runner(monkeypatch, mode, task, world_size, recipe_name):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", str(world_size))
-    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    config = SimpleNamespace(
+        dataset=SimpleNamespace(num_workers=3, pin_memory=True, persistent_workers=True),
+        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False),
+    )
     handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", recipe_name, "--mode", mode])
@@ -270,6 +287,12 @@ def test_performance_finetuning_recipes_use_unified_runner(monkeypatch, mode, ta
         peft_scheme=mode if mode == "lora" else None,
     )
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    handles.build_dataset_config.assert_called_once_with(config, "mock")
+    assert config.dataset.dataset_name == "mock"
+    assert config.dataset.num_workers == 3
+    assert config.dataset.pin_memory is True
+    assert config.dataset.persistent_workers is True
+    assert config.dataset.split == "99990,8,2"
     handles.recipe_runner.load_forward_step.assert_called_once_with("gpt_step", mode=task)
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
@@ -473,6 +496,7 @@ def test_non_text_performance_recipes_use_modality_step(monkeypatch, recipe_name
     module.main(["--recipe", recipe_name, "--mode", "pretrain"])
 
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    handles.build_dataset_config.assert_not_called()
     handles.recipe_runner.load_forward_step.assert_called_once_with(step_name, mode="pretrain")
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 

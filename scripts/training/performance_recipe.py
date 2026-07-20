@@ -76,6 +76,8 @@ PERFORMANCE_FORWARD_STEPS = {
     "wan": "wan_step",
 }
 
+PERFORMANCE_PUBLIC_MODES = frozenset({"pretrain", "sft", "lora", "dora"})
+
 
 @dataclass(frozen=True)
 class PerformanceRecipeMetadata:
@@ -182,9 +184,15 @@ def validate_performance_recipe_scope(
     dataset: str | None = None,
 ) -> None:
     """Validate task, forward step, and dataset selection for an exact performance recipe."""
+    if mode not in PERFORMANCE_PUBLIC_MODES:
+        choices = ", ".join(sorted(PERFORMANCE_PUBLIC_MODES))
+        raise ValueError(f"Unsupported performance mode '{mode}'; choose from: {choices}.")
+
     requested_task = "peft" if mode in {"lora", "dora"} else mode
     if requested_task != metadata.task:
         raise ValueError(f"Mode '{mode}' is incompatible with performance task '{metadata.task}'.")
+    if metadata.task == "peft" and mode != "lora":
+        raise ValueError("Performance PEFT recipes are fixed LoRA configs; omit --mode or pass --mode lora.")
 
     expected_step = performance_recipe_step(metadata)
     if step_func is not None and step_func.lower() != expected_step:

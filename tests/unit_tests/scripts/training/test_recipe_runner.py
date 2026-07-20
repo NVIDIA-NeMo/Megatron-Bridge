@@ -206,6 +206,37 @@ def test_load_forward_step_imports_only_selected_module(
     recipe_runner._load_step_function.cache_clear()
 
 
+def test_qwen_vl_registry_loads_its_specialized_forward_step(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    step = Mock(name="qwen3_vl_forward_step")
+    import_module = Mock(return_value=SimpleNamespace(forward_step=step))
+    monkeypatch.setattr(recipe_runner.importlib, "import_module", import_module)
+
+    recipe_runner._load_step_function.cache_clear()
+    assert recipe_runner.load_forward_step("qwen3_vl_step", mode="pretrain") is step
+    import_module.assert_called_once_with("megatron.bridge.models.qwen_vl.qwen3_vl_step")
+    recipe_runner._load_step_function.cache_clear()
+
+
+def test_wan_registry_constructs_forward_step_with_performance_mode(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    class WanForwardStep:
+        def __init__(self, mode: str | None = None) -> None:
+            self.mode = mode
+
+    import_module = Mock(return_value=SimpleNamespace(WanForwardStep=WanForwardStep))
+    monkeypatch.setattr(recipe_runner.importlib, "import_module", import_module)
+
+    recipe_runner._load_step_function.cache_clear()
+    step = recipe_runner.load_forward_step("wan_step", mode="pretrain")
+    assert isinstance(step, WanForwardStep)
+    assert step.mode == "pretrain"
+    import_module.assert_called_once_with("megatron.bridge.diffusion.models.wan.wan_step")
+    recipe_runner._load_step_function.cache_clear()
+
+
 def test_sync_model_dataset_sequence_length_uses_canonical_dataset_field(recipe_runner: ModuleType) -> None:
     config = SimpleNamespace(model=SimpleNamespace(seq_length=1024), dataset=SimpleNamespace(seq_length=256))
 
@@ -462,11 +493,19 @@ def test_run_config_dryrun_validates_requested_world_size(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = SimpleNamespace(logger=SimpleNamespace(save_config_filepath="resolved.yaml"))
-    runtime_updates: list[object] = []
+    runtime_updates: list[tuple[str | None, str | None, object]] = []
     config_module = ModuleType("megatron.bridge.training.config")
-    config_module.runtime_config_update = lambda current_config: runtime_updates.append(current_config)
+    config_module.runtime_config_update = lambda current_config: runtime_updates.append(
+        (
+            recipe_runner.os.environ.get("WORLD_SIZE"),
+            recipe_runner.os.environ.get("RANK"),
+            current_config,
+        )
+    )
     monkeypatch.setitem(sys.modules, "megatron.bridge.training.config", config_module)
     monkeypatch.setattr(recipe_runner, "save_config", lambda *_args: None)
+    monkeypatch.setenv("WORLD_SIZE", "existing-world-size")
+    monkeypatch.delenv("RANK", raising=False)
 
     recipe_runner.run_config(
         config=config,
@@ -476,9 +515,34 @@ def test_run_config_dryrun_validates_requested_world_size(
         dryrun_world_size=16,
     )
 
-    assert runtime_updates == [config]
-    assert recipe_runner.os.environ["WORLD_SIZE"] == "16"
-    assert recipe_runner.os.environ["RANK"] == "0"
+    assert runtime_updates == [("16", "0", config)]
+    assert recipe_runner.os.environ["WORLD_SIZE"] == "existing-world-size"
+    assert "RANK" not in recipe_runner.os.environ
+
+
+def test_run_config_dryrun_restores_environment_when_runtime_update_fails(
+    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def fail_runtime_update(_config: object) -> None:
+        raise RuntimeError("runtime update failed")
+
+    config_module = ModuleType("megatron.bridge.training.config")
+    config_module.runtime_config_update = fail_runtime_update
+    monkeypatch.setitem(sys.modules, "megatron.bridge.training.config", config_module)
+    monkeypatch.setenv("WORLD_SIZE", "existing-world-size")
+    monkeypatch.delenv("RANK", raising=False)
+
+    with pytest.raises(RuntimeError, match="runtime update failed"):
+        recipe_runner.run_config(
+            config=object(),
+            mode="pretrain",
+            step_func=object(),
+            dryrun=True,
+            dryrun_world_size=16,
+        )
+
+    assert recipe_runner.os.environ["WORLD_SIZE"] == "existing-world-size"
+    assert "RANK" not in recipe_runner.os.environ
 
 
 def test_run_config_dryrun_uses_logger_save_path(recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch) -> None:

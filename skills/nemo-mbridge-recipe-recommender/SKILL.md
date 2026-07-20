@@ -79,7 +79,10 @@ requested hardware. The launcher preserves the compatibility path's rank-local N
 binding and offline benchmark environment, but cluster-specific `srun` options
 must be supplied explicitly with repeated `--srun-arg=ARG` options. The unified
 launcher supports exact exported text pretraining, text SFT/PEFT, Qwen-VL
-pretraining, and Wan pretraining recipes and infers their forward step.
+pretraining, and Wan pretraining recipes and infers their forward step. Text
+SFT/PEFT performance recipes retain the flat runner's mock-data default;
+Qwen-VL and Wan retain their model-specific datasets. Exported performance
+PEFT recipes are fixed LoRA configs; use a configurable library recipe for DoRA.
 Trailing `KEY=VALUE` overrides are accepted, but an overridden performance
 recipe no longer represents its canonical benchmark configuration. Use
 `scripts/performance/setup_experiment.py` for selector-based invocation,

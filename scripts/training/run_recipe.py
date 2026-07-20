@@ -356,6 +356,27 @@ def _apply_performance_runtime_defaults(
     return recipe
 
 
+def _apply_performance_dataset_defaults(
+    recipe: ConfigContainer,
+    metadata: PerformanceRecipeMetadata,
+) -> ConfigContainer:
+    """Preserve the flat runner's mock-data default for text finetuning benchmarks."""
+    if metadata.task in {"sft", "peft"} and performance_recipe_step(metadata) == "gpt_step":
+        source_dataset = getattr(recipe, "dataset", None)
+        mock_dataset = build_dataset_config(recipe, "mock")
+        for field_name in ("num_workers", "pin_memory", "persistent_workers"):
+            if (
+                source_dataset is not None
+                and hasattr(source_dataset, field_name)
+                and hasattr(mock_dataset, field_name)
+            ):
+                setattr(mock_dataset, field_name, getattr(source_dataset, field_name))
+        if hasattr(mock_dataset, "split"):
+            mock_dataset.split = "99990,8,2"
+        recipe.dataset = mock_dataset
+    return recipe
+
+
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
     """Load the requested recipe by its complete name or model-derived library name."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
@@ -402,6 +423,8 @@ def main(argv: list[str] | None = None) -> None:
         )
 
     recipe = _load_selected_recipe(args)
+    if metadata is not None:
+        recipe = _apply_performance_dataset_defaults(recipe, metadata)
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)

@@ -180,6 +180,23 @@ def test_all_performance_tasks_and_modalities_are_accepted_before_submission(rec
     module.validate_selected_performance_recipe(training_args, metadata)
 
 
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("peft", "Unsupported performance mode 'peft'"),
+        ("dora", "fixed LoRA configs"),
+    ],
+)
+def test_invalid_performance_peft_mode_is_rejected_before_submission(mode, message):
+    module = _load_setup_experiment_module()
+    training_args = ["--recipe", "llama3_70b_peft_8gpu_h100_bf16_config", "--mode", mode]
+    metadata = module.selected_performance_recipe(training_args)
+
+    assert metadata is not None
+    with pytest.raises(ValueError, match=message):
+        module.validate_selected_performance_recipe(training_args, metadata)
+
+
 def test_parser_consumes_repeatable_srun_args():
     module = _load_setup_experiment_module()
 
@@ -374,14 +391,32 @@ def test_performance_task_environment_preserves_explicit_process_values():
 
     environment = module._task_environment(
         metadata,
-        inherited_env_names=["TRANSFORMERS_OFFLINE", "NCCL_NET_GDR_LEVEL"],
+        inherited_env_names=["HF_TOKEN", "TRANSFORMERS_OFFLINE", "NCCL_NET_GDR_LEVEL"],
     )
 
+    assert "HF_TOKEN" not in environment
     assert "TRANSFORMERS_OFFLINE" not in environment
     assert "NCCL_NET_GDR_LEVEL" not in environment
     assert environment["TOKENIZERS_PARALLELISM"] == "False"
     assert environment["NCCL_NET_GDR_C2C"] == "1"
     assert environment["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
+
+
+def test_performance_task_environment_enables_transformers_access_for_forwarded_hf_token():
+    module = _load_setup_experiment_module()
+    metadata = module.PerformanceRecipeMetadata(
+        num_gpus=16,
+        gpus_per_node=8,
+        family="qwen",
+        hardware="h100",
+        precision="bf16",
+        task="pretrain",
+    )
+
+    environment = module._task_environment(metadata, inherited_env_names=["HF_TOKEN"])
+
+    assert environment["TRANSFORMERS_OFFLINE"] == "0"
+    assert "HF_TOKEN" not in environment
 
 
 def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tmp_path, monkeypatch):

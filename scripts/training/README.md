@@ -80,6 +80,10 @@ The runner selects `gpt_step`, `qwen3_vl_step`, or `wan_step` from the recipe fa
 `scripts/performance/setup_experiment.py` remains available for selector-based invocation, dataset replacement, and
 specialized legacy controls that are not part of the compact training CLI.
 
+Text SFT/PEFT performance recipes retain the flat runner's mock-data default. Qwen-VL and Wan recipes retain their
+model-specific dataset configuration. Exported performance PEFT recipes are fixed LoRA configs; DoRA remains available
+through configurable library recipes. Explicit performance dataset replacement remains on the compatibility launcher.
+
 Five legacy duplicate names resolve to the performance definition; their functional workloads remain available through
 the corresponding generic recipe aliases. New recipe names should be unique across both packages.
 
@@ -234,6 +238,8 @@ Set `CONTAINER_IMAGE` to avoid repeating `--container-image`. On clusters that a
 forwarded implicitly. Export credentials in the launcher environment, then repeat `--env NAME` to forward names without
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
+For performance recipes, forwarding `HF_TOKEN` also sets the non-secret task default `TRANSFORMERS_OFFLINE=0`; forwarding
+`TRANSFORMERS_OFFLINE` explicitly preserves the user's value instead.
 
 The launcher adds no cluster-specific `srun` flags by default. Repeat `--srun-arg=ARG` for every flag required by the
 target cluster. For example, a Pyxis/Enroot cluster may use:

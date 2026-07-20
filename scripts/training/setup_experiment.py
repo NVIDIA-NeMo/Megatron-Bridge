@@ -229,6 +229,8 @@ def _task_environment(
         return environment
 
     performance_environment = dict(PERFORMANCE_LAUNCH_ENV)
+    if "HF_TOKEN" in inherited_env_names and "TRANSFORMERS_OFFLINE" not in inherited_env_names:
+        performance_environment["TRANSFORMERS_OFFLINE"] = "0"
     if performance_metadata.hardware == "gb200":
         performance_environment.update(PERFORMANCE_GB200_LAUNCH_ENV)
     for name, value in performance_environment.items():
