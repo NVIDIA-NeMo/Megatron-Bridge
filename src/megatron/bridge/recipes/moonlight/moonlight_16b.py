@@ -23,7 +23,7 @@ from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_
 from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 
 
 def _get_moonlight_pipeline_layout(pp_size: int, vp_size: int):
@@ -178,6 +178,15 @@ def moonlight_16b_pretrain_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
+    return cfg
+
+
+def moonlight_16b_mxfp8_pretrain_config() -> ConfigContainer:
+    """Return a pre-training config for Moonlight-16B with Blackwell MXFP8."""
+    cfg = moonlight_16b_pretrain_config()
+    cfg.mixed_precision = get_mixed_precision_config("bf16_with_mxfp8_mixed")
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.model.moe_router_padding_for_fp8 = True
     return cfg
 
 
@@ -608,6 +617,7 @@ def moonlight_16b_peft_config(
 
 __all__ = [
     # Pretrain config
+    "moonlight_16b_mxfp8_pretrain_config",
     "moonlight_16b_pretrain_config",
     # SFT config
     "moonlight_16b_sft_config",

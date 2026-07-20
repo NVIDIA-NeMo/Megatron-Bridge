@@ -108,6 +108,17 @@ class _FakeMoonlightModelProvider:
         return None
 
 
+class _FakeAutoBridge:
+    """Fake AutoBridge that returns a lightweight Moonlight provider."""
+
+    @classmethod
+    def from_hf_pretrained(cls, *_args, **_kwargs):
+        return cls()
+
+    def to_megatron_provider(self, *, load_weights: bool):
+        return _FakeMoonlightModelProvider()
+
+
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 
@@ -134,6 +145,7 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
 
     # Monkeypatch the MLAModelProvider class
     monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider)
+    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()
@@ -161,6 +173,39 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "expert_model_parallel_size", 1) >= 1
+
+
+def test_moonlight_16b_mxfp8_pretrain_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that MXFP8 changes only the intended precision settings."""
+    from megatron.bridge.recipes.moonlight import (
+        moonlight_16b_mxfp8_pretrain_config,
+        moonlight_16b_pretrain_config,
+    )
+
+    mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
+    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+
+    bf16_cfg = moonlight_16b_pretrain_config()
+    mxfp8_cfg = moonlight_16b_mxfp8_pretrain_config()
+
+    assert mxfp8_cfg.model.tensor_model_parallel_size == bf16_cfg.model.tensor_model_parallel_size
+    assert mxfp8_cfg.model.pipeline_model_parallel_size == bf16_cfg.model.pipeline_model_parallel_size
+    assert mxfp8_cfg.model.expert_model_parallel_size == bf16_cfg.model.expert_model_parallel_size
+    assert mxfp8_cfg.model.seq_length == bf16_cfg.model.seq_length
+    assert mxfp8_cfg.train.global_batch_size == bf16_cfg.train.global_batch_size
+    assert mxfp8_cfg.train.micro_batch_size == bf16_cfg.train.micro_batch_size
+
+    assert mxfp8_cfg.mixed_precision.fp8 == "e4m3"
+    assert mxfp8_cfg.mixed_precision.fp8_recipe == "mxfp8"
+    assert mxfp8_cfg.mixed_precision.fp8_param_gather is True
+    assert mxfp8_cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
+    assert mxfp8_cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert mxfp8_cfg.model.moe_router_padding_for_fp8 is True
+    assert mxfp8_cfg.ddp.grad_reduce_in_fp32 is False
+
+    assert bf16_cfg.mixed_precision.fp8 is None
+    assert bf16_cfg.mixed_precision.fp8_param_gather is False
+    assert bf16_cfg.model.moe_router_padding_for_fp8 is False
 
 
 @pytest.mark.parametrize("recipe_func", _MOONLIGHT_SFT_FUNCS)
