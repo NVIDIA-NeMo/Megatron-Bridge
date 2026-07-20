@@ -29,6 +29,10 @@ _CANONICAL_RECIPE_NAME = re.compile(
     r".+_(?:pretrain|sft|peft)_\d+gpu_[a-z0-9]+_(?:bf16|fp8cs|fp8mx|fp8sc|nvfp4)(?:_.+)?_config"
 )
 _RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
+# Deliberately lock the discovered public inventory; update this for intentional recipe additions or removals.
+_EXPECTED_FLAT_RECIPE_COUNT = 397
+_EXPECTED_DEEPSEEK_RECIPE_COUNT = 37
+_EXPECTED_DEEPSEEK_HYBRID_EP_RECIPE_COUNT = 35
 _INLINE_CORE_ENV_NAMES = {
     "CUDA_DEVICE_MAX_CONNECTIONS",
     "NCCL_NVLS_ENABLE",
@@ -144,7 +148,7 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
                 for decorator in node.decorator_list
             )
 
-    assert len(builders) == 396
+    assert len(builders) == _EXPECTED_FLAT_RECIPE_COUNT
     assert not invalid
 
 
@@ -185,9 +189,9 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
                 deepseek_hybrid_ep_count += 1
 
-    assert len(recipes) == 396
-    assert deepseek_recipe_count == 36
-    assert deepseek_hybrid_ep_count == 34
+    assert len(recipes) == _EXPECTED_FLAT_RECIPE_COUNT
+    assert deepseek_recipe_count == _EXPECTED_DEEPSEEK_RECIPE_COUNT
+    assert deepseek_hybrid_ep_count == _EXPECTED_DEEPSEEK_HYBRID_EP_RECIPE_COUNT
 
 
 @pytest.mark.parametrize(

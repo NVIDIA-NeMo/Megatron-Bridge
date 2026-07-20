@@ -141,7 +141,11 @@ def create_squad_dataset_config(
         seed=5678,
         do_validation=True,
         do_test=False,
-        preprocessing=PromptCompletionSFTPreprocessingConfig(separator=" "),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
         dataset_kwargs=dataset_kwargs,
         enable_offline_packing=packed,
         offline_packing_specs=offline_packing_specs,
