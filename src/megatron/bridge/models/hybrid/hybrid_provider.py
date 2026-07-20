@@ -234,6 +234,14 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
                     )
             self.num_layers = num_layers_in_pattern
 
+        # Normalize "no MTP" to None. The provider defaults mtp_num_layers to 0,
+        # but MCore's overlap_moe_expert_parallel_comm validation only accepts
+        # mtp_num_layers being None or 1 and rejects 0, even though 0 and None
+        # both mean "no MTP head". Coerce the falsy 0 to None so hybrid models
+        # without MTP (e.g. GPT-OSS) can enable expert-parallel comm overlap.
+        if not self.mtp_num_layers:
+            self.mtp_num_layers = None
+
         super().finalize()
 
     def _resolve_hybrid_stack_spec(self) -> ModuleSpec:
