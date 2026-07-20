@@ -185,14 +185,70 @@ evaluation, or checkpoint checks. These settings may be valid for a canonical
 `pretrain_performance` item, but their losses and checkpoints are never
 convergence evidence.
 
-For a cross-model verification cohort, freeze a shared workload protocol before
-the first run:
+Use `qwen3_30b_a3b_convergence_v1` as the named default cross-model bounded
+convergence cohort. It is the target contract derived from the resolved
+Qwen3-30B-A3B H100 recipes; the name identifies settings, not evidence status.
+Do not call a workload cohort-verified until its recipe owns this contract and
+a clean-commit run passes the applicable gates below. Its 100 optimizer steps
+test finite loss, short-horizon loss trend, checkpoint reload, and direct
+resume; they do not establish full training convergence.
 
-| Workload | Cohort defaults |
+Freeze this optimizer fingerprint for all three workloads:
+
+| Field | Value |
 | --- | --- |
-| Pretrain | Same bounded raw RP2 selection, sample seed/order, sequence length 4096, BF16 convergence precision, optimizer family/hyperparameters, GBS/MBS 1024/1, and natural routing for MoE. Use peak/minimum LR `3e-4`/`3e-5`, 100 steps, 40 warmup steps, cosine decay through step 100, and saves at steps 50 and 100. |
-| SFT | Same bounded Tulu 3 `train[:10000]` selection, preprocessing/chat masking, offline-packing semantics, sequence length 2048, BF16 convergence precision, optimizer family/hyperparameters, and GBS/MBS 32/1. Use peak/minimum LR `5e-6`/`0`, 100 steps, 10 warmup steps, and decay through step 100. |
-| PEFT | Same SFT data contract plus the same adapter definition and GBS/MBS 32/1. Use peak/minimum LR `1e-4`/`0`, 100 steps, 10 warmup steps, and decay through step 100. Do not compare PEFT loss directly with full SFT. |
+| Optimizer | Megatron distributed fused Adam |
+| Betas / epsilon | `(0.9, 0.95)` / `1e-8` |
+| Effective weight decay | `0.033`, constant |
+| Gradient clipping | `1.0` |
+| LR schedule | Cosine, starting from zero |
+| Model / compute precision | BF16 |
+| Optimizer master parameters, main gradients, moments | FP32 |
+
+Record the effective weight decay applied to optimizer parameter groups, not
+only the nominal optimizer-config value. The Qwen anchor has a nominal
+`optimizer.weight_decay=0.1`, but its constant scheduler applies `0.033`; use
+`0.033` when reproducing this contract. Treat any other effective value
+as a convergence-contract change.
+
+Freeze the following workload profiles:
+
+| Field | Pretrain | Full SFT | PEFT |
+| --- | --- | --- | --- |
+| Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on `linear_qkv` and `linear_proj`, rank 8, alpha 16, dropout 0 |
+| Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
+| Sequence / GBS / MBS | `4096 / 1024 / 1` | `2048 / 32 / 1` | `2048 / 32 / 1` |
+| Token slots | `4,194,304` per step; `419,430,400` total | `65,536` per step; `6,553,600` total | `65,536` per step; `6,553,600` total |
+| Peak / minimum LR | `3e-4 / 3e-5` | `5e-6 / 0` | `1e-4 / 0` |
+| Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
+| RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
+| Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
+
+Treat the token counts above as token slots. For SFT and PEFT, also record the
+actual supervised-token count after label masking; do not present padded or
+masked token slots as supervised tokens.
+
+Use these accumulation layouts for the Qwen reference executions:
+
+| Workload | Reference topology | DP | Gradient accumulation |
+| --- | --- | ---: | ---: |
+| Pretrain | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 64 |
+| Full SFT | 8 GPUs, TP4/PP2/CP1/EP4 | 1 | 32 |
+| PEFT | 4 GPUs, TP4/PP1/CP1/EP4 | 1 | 32 |
+
+Topology remains an execution fingerprint, but micro batch size and gradient
+accumulation remain cohort constraints. If a different topology changes DP or
+accumulation, register a new execution cohort and pass fresh loss sentinels;
+do not claim strict numerical comparability with the reference layout.
+
+For the Qwen anchor, record 128 experts, top-8 post-softmax-normalized routing,
+auxiliary load-balancing loss coefficient `1e-3`, natural routing, and no
+forced balancing or token dropping. These are model-native identity fields,
+not universal cross-model overrides. Keep another model's native expert count,
+top-k, router objective, auxiliary loss, capacity, and dropout values, record
+them in its convergence fingerprint, and never alter them merely to imitate
+Qwen. Require natural routing and prohibit benchmark-only forced balancing in
+all convergence cohorts.
 
 Use the same numerical value for global batch size within a comparison cohort.
 If a model cannot use that value, change and validate its recipe separately,
@@ -206,7 +262,9 @@ final loss.
 Pin the same raw-document selection across models, then tokenize it with each
 model's verified tokenizer unless a deliberately shared tokenizer is part of
 the cohort. Do not assume that one indexed token-ID prefix represents the same
-text under different tokenizers.
+text under different tokenizers. The Qwen anchor's pinned tokenizer revision
+may reproduce the Qwen run, but do not silently reuse its token IDs for another
+model family. Compare cross-model stability and trend, never absolute loss.
 
 Make every bounded convergence override explicit in the card command and apply
 the same cohort values across models; never tune these values merely to improve
@@ -215,6 +273,10 @@ disagrees with the cohort contract, update and validate the recipe separately
 instead of overriding it in the card. A canonical `perf_recipes` benchmark may
 intentionally use mock data, forced balancing, or a different batch and is not
 convergence evidence.
+
+Keep long-context SFT outside `qwen3_30b_a3b_convergence_v1`. Sequence length,
+CP, packing, batch construction, LR, and horizon define a separate convergence
+cohort even when the starting checkpoint and dataset are shared.
 
 ### 5. Apply the verification gates
 
@@ -257,10 +319,10 @@ result. Private executor configuration stays outside the card.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
   directly, resume into a distinct new output root, load optimizer and RNG
   state, and compare the first resumed and final steps with the uninterrupted
-  reference. Use at most a 1% relative loss tolerance for sentinel comparison;
-  tighter model-specific tolerances are allowed. Keep a small independent
-  absolute tolerance, such as 1e-6, for values near zero. Do not repeat the
-  pre-checkpoint training segment.
+  reference. For each declared loss sentinel, require this bound:
+  `abs(resumed - reference) <= 1e-6 + 0.01 * abs(reference)`. Tighter
+  model-specific tolerances are allowed. Do not repeat the pre-checkpoint
+  training segment.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
   run and state public hardware plus thresholds.
@@ -367,7 +429,8 @@ an item verified merely to make validation pass.
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Include GPU type and all four metrics for verified training items.
 - Audit the resolved convergence contract before each training run; align it
-  within the comparison cohort or record that the result is not comparable.
+  with `qwen3_30b_a3b_convergence_v1` or record the exception and classify the
+  result as support verification rather than cross-model convergence evidence.
 - Change only the execution/performance contract while tuning throughput, and
   recheck loss sentinels after numerically non-bitwise changes.
 - Leave recipe global and micro batch sizes unchanged in card commands.
