@@ -111,8 +111,9 @@ items:
       Brasília. The".
 
   pretrain:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       cuda_graph:
@@ -121,7 +122,7 @@ items:
       moe_dispatcher: hybridep
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --recipe qwen3_30b_a3b_pretrain_config --mode pretrain
       --dataset megatron-indexed --seq_length 4096 --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       'dataset.blend=[["work/data/rp2/head_01"],null]'
@@ -138,20 +139,20 @@ items:
       --save_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-reference-checkpoints
       --save_interval 50 logger.log_interval=1 logger.log_throughput=true
       logger.tensorboard_dir=null
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 12.41145
+      final_loss: 6.139116
+      last_10_steps_step_time_ms_avg: 30289.550
+      last_10_steps_model_tflops_per_gpu_avg: 199.120
     expected_result: >
-      The pending 16x H100 reference must complete exactly 100 bounded RP2
-      optimizer steps with recipe-owned TP1/PP1/CP1/EP16/ETP1, DP16, SP off,
-      GBS/MBS 1024/1, and 64-way gradient accumulation. Natural routing,
-      HybridEP, and Transformer Engine CUDA graphs for moe_router and
-      moe_preprocess must remain active with finite losses and no skipped or
-      NaN iterations. Complete iter_0000050 and iter_0000100 checkpoints and
-      all four metrics are required before this cohort item can be verified.
+      On 16x H100, the public alias resolves to the 16-GPU recipe and completes
+      exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP16/ETP1,
+      DP16, SP off, GBS/MBS 1024/1, and 64-way gradient accumulation. Natural
+      routing, HybridEP, and Transformer Engine CUDA graphs for moe_router and
+      moe_preprocess remain active. Loss is finite from 12.41145 to 6.139116
+      with no skipped or NaN iterations, all four metrics are recorded, and
+      complete iter_0000050 and iter_0000100 checkpoints are saved.
 
   sft:
     status: unverified
@@ -309,13 +310,14 @@ items:
       iter_0000100 adapter checkpoint can be verified.
 
   checkpoint_resume:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     depends_on: pretrain
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --recipe qwen3_30b_a3b_pretrain_config --mode pretrain
       --dataset megatron-indexed --seq_length 4096 --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       'dataset.blend=[["work/data/rp2/head_01"],null]'
@@ -332,28 +334,29 @@ items:
       --load_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-reference-checkpoints
       --save_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-resumed-checkpoints
       --save_interval 50 checkpoint.ckpt_step=50
+      train.empty_unused_memory_level=2
       logger.log_interval=1 logger.log_throughput=true
       logger.tensorboard_dir=null
-    last_verified: null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 6.989006
+      final_loss: 6.145390
+      last_10_steps_step_time_ms_avg: 31142.650
+      last_10_steps_model_tflops_per_gpu_avg: 193.640
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [51, 100]
       loss_relative_tolerance: 1.0e-2
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: null
+      sentinels_match: true
     expected_result: >
-      After the pending uninterrupted reference succeeds, the command must
-      restore optimizer, scheduler, data-order, and RNG state directly from
-      iter_0000050, begin at step 51, and finish at step 100 in the distinct
-      resumed output root with finite losses and no skipped or NaN iterations.
-      Step-51 and step-100 loss must satisfy the configured absolute-plus-
-      relative tolerance against the reference, and all four resumed-segment
-      metrics must be recorded before this item can be verified.
+      The command restores optimizer, scheduler, data-order, and RNG state from
+      iter_0000050, begins at step 51, and finishes at step 100 in the distinct
+      resumed root with finite losses and no skipped or NaN iterations. Releasing
+      unused cached memory after optimizer steps is execution-only. Step-51 loss
+      6.989006 matches the uninterrupted reference exactly; step-100 loss
+      6.145390 differs from reference 6.139116 by 0.102197%, within the declared
+      one-percent gate, so both sentinels match and all four metrics are recorded.
 
   pretrain_performance:
     status: verified
