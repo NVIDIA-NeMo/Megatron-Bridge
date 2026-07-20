@@ -211,7 +211,28 @@ class PreTrainedBase(ABC):
         for name in self.OPTIONAL_ARTIFACTS:
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
-                artifact.save_pretrained(save_path)
+                try:
+                    artifact.save_pretrained(save_path)
+                except ValueError:
+                    if name != "generation_config":
+                        raise
+
+                    source_path = original_source_path or getattr(self, "model_name_or_path", None)
+                    if source_path is None:
+                        raise
+
+                    copied_files = self._copy_custom_modeling_files(
+                        source_path=source_path,
+                        target_path=save_path,
+                        file_patterns=["generation_config.json"],
+                    )
+                    if "generation_config.json" not in copied_files:
+                        raise
+
+                    logger.warning(
+                        "Generation config validation failed during export; preserving the source "
+                        "generation_config.json unchanged"
+                    )
 
         # Download/copy additional files if specified
         if additional_files:
