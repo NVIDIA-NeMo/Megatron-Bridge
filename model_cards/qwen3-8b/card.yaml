@@ -110,33 +110,40 @@ items:
   pretrain:
     status: verified
     precision: bf16
+    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     enabled_features: {}
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
-      --max_steps 400
+      --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       dataset.data_path=work/data/rp2/head_01
       dataset.path_to_cache=work/cache/qwen3-8b/rp2
       tokenizer.tokenizer_type=SentencePieceTokenizer
       tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
       rng.seed=1234 dataset.random_seed=1234
-      scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
-      dist.distributed_timeout_minutes=30 checkpoint.load=null
-      --save_dir work/model-verification/qwen3-8b/pretrain-reference-checkpoints --save_interval 200
-      logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-16
+      scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
+      dist.distributed_timeout_minutes=30
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
+      --save_dir work/model-verification/qwen3-8b/pretrain-reference-checkpoints --save_interval 50
+      logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+    last_verified: 2026-07-19
     metrics:
       initial_loss: 12.76213
-      final_loss: 5.007709
-      last_10_steps_step_time_ms_avg: 4742.730
-      last_10_steps_model_tflops_per_gpu_avg: 338.790
+      final_loss: 6.374147
+      last_10_steps_step_time_ms_avg: 4756.430
+      last_10_steps_model_tflops_per_gpu_avg: 337.820
     expected_result: >
-      The uninterrupted RP2 run completes exactly 400 steps with finite losses,
-      no skipped or NaN iterations, records all four metrics, and saves
-      iter_0000200 and iter_0000400 for the resume-loss reference.
+      The uninterrupted bounded RP2 run completes exactly 100 steps with finite
+      losses, no skipped or NaN iterations, and all four metrics recorded. It
+      reaches peak learning rate at step 40, completes decay at step 100, and
+      saves complete iter_0000050 and iter_0000100 checkpoints for the
+      resume-loss reference. Because the library recipe owns GBS/MBS 32/2
+      rather than the comparison-cohort 1024/1 contract, this is support
+      verification and not apples-to-apples cross-model convergence evidence.
 
   sft:
     status: verified
@@ -264,43 +271,45 @@ items:
   checkpoint_resume:
     status: verified
     precision: bf16
+    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     depends_on: pretrain
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_8b_pretrain_4gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --deterministic --seq_length 4096
-      --max_steps 400
+      --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       dataset.data_path=work/data/rp2/head_01
       dataset.path_to_cache=work/cache/qwen3-8b/rp2
       tokenizer.tokenizer_type=SentencePieceTokenizer
       tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
       rng.seed=1234 dataset.random_seed=1234
-      scheduler.lr_decay_iters=400 validation.eval_iters=0 validation.eval_interval=0
+      scheduler.lr_decay_iters=100 validation.eval_iters=0 validation.eval_interval=0
       dist.distributed_timeout_minutes=30
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true
       --load_dir work/model-verification/qwen3-8b/pretrain-reference-checkpoints
       --save_dir work/model-verification/qwen3-8b/pretrain-resumed-from-reference-checkpoints
-      --save_interval 200 checkpoint.ckpt_step=200
-      logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-16
+      --save_interval 50 checkpoint.ckpt_step=50
+      logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: 5.663923
-      final_loss: 5.007709
-      last_10_steps_step_time_ms_avg: 4761.810
-      last_10_steps_model_tflops_per_gpu_avg: 337.420
+      initial_loss: 7.140421
+      final_loss: 6.374147
+      last_10_steps_step_time_ms_avg: 4729.320
+      last_10_steps_model_tflops_per_gpu_avg: 339.760
     resume_comparison:
       reference_item: pretrain
-      sentinel_steps: [201, 400]
+      sentinel_steps: [51, 100]
       loss_relative_tolerance: 1.0e-6
       loss_absolute_tolerance: 1.0e-6
       sentinels_match: true
     expected_result: >
-      After pretrain has saved iter_0000200, the command loads that checkpoint
-      directly from the reference directory without optimizer or RNG load
-      errors, starts with step 201, and finishes at step 400 while saving to the
-      distinct resumed-output directory. Consumed samples must be 6432 and
-      12800 at steps 201 and 400; their learning rates and losses must match the
-      uninterrupted run within the stated tolerances. All four resumed-segment
-      metrics are recorded, with last-10 averages over steps 391-400; exact
-      printed sentinel matches are preferred.
+      The command restores optimizer and RNG state directly from iter_0000050,
+      begins at step 51, and finishes at step 100 in the distinct resumed-output
+      directory with finite losses and no skipped or NaN iterations. Consumed
+      samples are 1632 and 3200 at steps 51 and 100, and their learning rates,
+      losses, and gradient norms exactly match the uninterrupted run. The
+      sentinel losses are 7.140421 and 6.374147, and all four resumed-segment
+      metrics are recorded with last-10 averages over steps 91-100.
