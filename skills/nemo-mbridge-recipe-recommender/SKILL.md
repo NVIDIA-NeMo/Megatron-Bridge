@@ -61,11 +61,12 @@ HybridEP when the routing policy is unchanged. These settings should preserve
 the objective and effective updates, although floating-point reduction order
 can produce small numerical drift that still needs validation.
 
-Freeze micro batch size and gradient accumulation for comparable evidence. Tune
-them only as a separately validated execution variant with unchanged global
-batch membership/order, normalization, optimizer boundaries, and token budget.
-Packing, precision, forced MoE load balancing, token dropping/capacity, and
-router/auxiliary loss changes are never performance-only knobs.
+Treat micro batch size and gradient accumulation as execution fingerprints.
+Tune them only with fixed global batch size, global batch membership/order,
+normalization, optimizer boundaries, and token budget, and validate fresh loss
+sentinels for each layout. Packing, precision, forced MoE load balancing, token
+dropping/capacity, and router/auxiliary loss changes are never performance-only
+knobs.
 
 Treat mock data, forced balancing, disabled correctness checks, and timing-only
 schedules as benchmark-only shortcuts. They may be appropriate in
@@ -196,7 +197,7 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 | Recipe | Mode | TP | PP | EP | CP | GPUs |
 |--------|------|----|----|----|----|------|
 | `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 16 | — | 16 |
-| `qwen3_30b_a3b_sft_config` | SFT | 4 | 2 | 4 | — | 8 |
+| `qwen3_30b_a3b_sft_config` | SFT | 1 | 1 | 16 | — | 16 |
 | `qwen3_30b_a3b_peft_config` | PEFT | 4 | 1 | 4 | — | 4 |
 | `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 512+ |
 | `qwen3_235b_a22b_sft_config` | SFT | 4 | 8 | 8 | — | 256 |
@@ -404,7 +405,8 @@ When the user's GPU count differs from the recipe default:
 7. **Dense and expert meshes overlap.** Do not multiply TP and EP together.
    The minimum MoE world size is `PP × max(TP × CP, EP × ETP)`. Dense DP is
    `world_size / (TP × PP × CP)` and expert EDP is
-   `world_size / (PP × EP × ETP)`; both quotients must be integral.
+   `world_size / (PP × EP × ETP)`; both quotients must be integral, and the
+   expert count must be divisible by EP.
 
 ### Batch Size Tuning
 

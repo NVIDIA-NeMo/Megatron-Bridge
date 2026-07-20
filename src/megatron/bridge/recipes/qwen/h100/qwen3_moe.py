@@ -471,6 +471,46 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def qwen3_30b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen3-30B-A3B MoE on 16 H100 GPUs.
+
+    Recommended parallelism: TP=1, PP=1, EP=16 (2 nodes, 16 GPUs).
+    This topology keeps the global batch size at 32 while using DP=16 and
+    two gradient-accumulation steps for the default micro batch size of 1.
+    """
+    cfg = qwen3_30b_a3b_sft_8gpu_h100_bf16_config()
+
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # Keep GBS fixed while increasing data parallelism. Offline packing
+    # currently requires MBS=1, which gives two accumulation steps at DP=16.
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
+
+    # The plain all-to-all dispatcher and fused kernels are faster for this
+    # short-sequence SFT workload than DeepEP, EP overlap, or CUDA graphs.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_a2a_overlap = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.bias_activation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.cuda_graph_impl = "none"
+    cfg.comm_overlap = None
+
+    return cfg
+
+
 def qwen3_235b_a22b_sft_64gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3-235B-A22B MoE.
 
@@ -922,5 +962,6 @@ __all__ = [
     "qwen3_30b_a3b_peft_4gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
+    "qwen3_30b_a3b_sft_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_sft_8gpu_h100_bf16_config",
 ]

@@ -163,12 +163,12 @@ hardware. It may vary across models or be tuned for throughput:
   provided routing, capacity, token dropping, and auxiliary losses are
   unchanged.
 
-Freeze micro batch size and gradient-accumulation layout within a comparison
-cohort because they can change accumulation order, dropout RNG, MoE token
-grouping, and auxiliary-loss reduction. They may be tuned as a new execution
-variant only after global batch membership/order, loss normalization,
-optimizer-step boundaries, and total token budget are shown to remain intact
-and loss sentinels pass.
+Treat micro batch size and gradient-accumulation layout as execution
+fingerprints. They may be tuned while global batch size, global batch
+membership/order, loss normalization, optimizer-step boundaries, and total
+token budget remain intact. Because they can change accumulation order,
+dropout RNG, MoE token grouping, and auxiliary-loss reduction, require fresh
+loss sentinels for every layout and do not claim step-by-step numerical parity.
 
 Performance settings are **intended** to preserve training semantics, not
 guaranteed to be bitwise neutral. Parallel reductions, fusions, recompute, and
@@ -217,7 +217,9 @@ Freeze the following workload profiles:
 | --- | --- | --- | --- |
 | Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
-| Sequence / GBS / MBS | `4096 / 1024 / 1` | `2048 / 32 / 1` | `2048 / 32 / 1` |
+| Sequence / GBS | `4096 / 1024` | `2048 / 32` | `2048 / 32` |
+| Reference MBS | `1` | `1` | `1` |
+| Reference packing alignment | Not applicable | `pad_seq_to_mult=1` | `pad_seq_to_mult=4` |
 | Token slots | `4,194,304` per step; `419,430,400` total | `65,536` per step; `6,553,600` total | `65,536` per step; `6,553,600` total |
 | Peak / minimum LR | `3e-4 / 3e-5` | `5e-6 / 0` | `1e-4 / 0` |
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
@@ -233,13 +235,15 @@ Use these accumulation layouts for the Qwen reference executions:
 | Workload | Reference topology | DP | Gradient accumulation |
 | --- | --- | ---: | ---: |
 | Pretrain | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 64 |
-| Full SFT | 8 GPUs, TP4/PP2/CP1/EP4 | 1 | 32 |
+| Full SFT | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 2 |
 | PEFT | 4 GPUs, TP4/PP1/CP1/EP4 | 1 | 32 |
 
-Topology remains an execution fingerprint, but micro batch size and gradient
-accumulation remain cohort constraints. If a different topology changes DP or
-accumulation, register a new execution cohort and pass fresh loss sentinels;
-do not claim strict numerical comparability with the reference layout.
+Topology, DP, micro batch size, and gradient accumulation are execution
+fingerprints rather than convergence constraints. They may change while the
+global batch size remains fixed. Every new execution layout must pass fresh
+loss sentinels, and its step-by-step values are not strictly numerically
+comparable with another layout. The current offline-packed SFT implementation
+requires MBS=1; treat that as an implementation limit, not a convergence rule.
 
 For the Qwen anchor, record 128 experts, top-8 post-softmax-normalized routing,
 auxiliary load-balancing loss coefficient `1e-3`, natural routing, and no

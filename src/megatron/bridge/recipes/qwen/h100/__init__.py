@@ -61,6 +61,7 @@ __all__ = [
     "qwen3_30b_a3b_peft_4gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
+    "qwen3_30b_a3b_sft_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_sft_8gpu_h100_bf16_config",
     "qwen3_32b_peft_1gpu_h100_bf16_config",
     "qwen3_32b_pretrain_16gpu_h100_bf16_config",

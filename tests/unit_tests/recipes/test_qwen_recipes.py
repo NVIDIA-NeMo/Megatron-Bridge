@@ -427,7 +427,7 @@ def test_qwen3_30b_a3b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test that 30B-A3B full SFT has correct default parallelism."""
+    """Test that generic 30B-A3B full SFT uses the verified 16-GPU config."""
     from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
@@ -437,11 +437,53 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
     _assert_basic_config(cfg)
 
-    # For full SFT, 30B-A3B should use TP=4, PP=2, EP=4
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.get_data_parallel_size(16) == 16
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(16)) == 2
+    assert cfg.model.seq_length == 2048
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_a2a_overlap is False
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.bias_activation_fusion is True
+    assert cfg.model.apply_rope_fusion is True
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.comm_overlap is None
+    assert cfg.train.train_iters == 100
+    assert cfg.dataset.seed == 1234
+    assert cfg.rng.seed == 5678
+    assert cfg.scheduler.lr_warmup_iters == 10
+    assert cfg.scheduler.lr_decay_iters == 100
+    assert cfg.checkpoint.save_interval == 100
+    assert cfg.checkpoint.load is None
+    assert cfg.peft is None
+    _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
+
+
+def test_qwen3_30b_a3b_legacy_8gpu_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Keep the explicit 8-GPU SFT topology available for existing callers."""
+    from megatron.bridge.recipes.qwen.h100.qwen3_moe import qwen3_30b_a3b_sft_8gpu_h100_bf16_config
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+
+    cfg = qwen3_30b_a3b_sft_8gpu_h100_bf16_config()
+
     assert cfg.model.tensor_model_parallel_size == 4
     assert cfg.model.pipeline_model_parallel_size == 2
     assert cfg.model.expert_model_parallel_size == 4
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.moe_flex_dispatcher_backend == "deepep"
     assert cfg.peft is None
     assert cfg.model.seq_length == 2048
     assert cfg.train.train_iters == 100
@@ -454,6 +496,14 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.checkpoint.save_interval == 100
     assert cfg.checkpoint.load is None
     _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
+
+
+def test_qwen3_30b_a3b_sft_generic_alias_uses_16gpu_factory():
+    """Keep the generic SFT alias attached to the verified 16-GPU factory."""
+    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_sft_config
+    from megatron.bridge.recipes.qwen.h100.qwen3_moe import qwen3_30b_a3b_sft_16gpu_h100_bf16_config
+
+    assert qwen3_30b_a3b_sft_config is qwen3_30b_a3b_sft_16gpu_h100_bf16_config
 
 
 def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
