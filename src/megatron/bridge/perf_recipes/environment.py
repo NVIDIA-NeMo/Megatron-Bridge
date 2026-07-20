@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .determinism_utils import apply_determinism_overrides
-from .environment_utils import COMMON_RECIPE_ENV_VARS
-from .naming import (
-    PRECISION_NAME_MAP,
-    normalize_precision_name,
-    recipe_function_name,
-    recipe_variant_suffix,
-)
+"""Process environment defaults shared by every flat performance recipe.
 
+Keep this mapping deliberately small. Values that depend on a model, GPU,
+parallel layout, precision, or CUDA graph mode belong next to the corresponding
+recipe builder so users can see the exact benchmark environment.
+"""
 
-__all__ = [
-    "PRECISION_NAME_MAP",
-    "COMMON_RECIPE_ENV_VARS",
-    "apply_determinism_overrides",
-    "normalize_precision_name",
-    "recipe_function_name",
-    "recipe_variant_suffix",
-]
+COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
+    # This is the only process setting with the same value in all 396 flat recipes.
+    # Run NCCL work on its high-priority stream for every measured workload.
+    "TORCH_NCCL_HIGH_PRIORITY": 1,
+}

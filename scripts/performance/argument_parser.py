@@ -191,7 +191,7 @@ def parse_cli_args():
     parser.add_argument(
         "--use_recipes",
         action="store_true",
-        help="Use library recipes. Disabled by default.",
+        help="Use model recipes instead of flat performance recipes. Disabled by default.",
         default=False,
     )
     parser.add_argument(
@@ -258,7 +258,7 @@ def parse_cli_args():
         "-d",
         "--dryrun",
         help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
-        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "In bootstrap.py: selects a training entrypoint, builds the full ConfigContainer with all overrides, "
         "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",
@@ -854,6 +854,8 @@ def parse_cli_args():
         help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
         choices=["deepep", "hybridep", None],
         required=False,
+        # -1 means the option was omitted and the recipe backend must be kept;
+        # None means the user explicitly requested the alltoall dispatcher.
         default=-1,
     )
     performance_args.add_argument(

@@ -21,10 +21,12 @@ import os
 import pkgutil
 import re
 import select
+import shlex
 import sys
-from collections.abc import Callable
-from dataclasses import dataclass, fields
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass, field, fields
 from pathlib import Path
+from typing import Any
 
 
 logger = logging.getLogger(__name__)
@@ -70,6 +72,55 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
 }
 
 
+def configure_slurm_gpu_tuning(executor: Any, *, enable_vboost: bool, lock_gpu_freq: int | None) -> None:
+    """Add optional GPU tuning commands to a Slurm executor before submission."""
+    commands = []
+    job_dir = executor.tunnel.job_dir
+
+    if enable_vboost:
+        commands.append(
+            " ".join(
+                [
+                    "\n# Enable VBoost\n",
+                    "srun",
+                    f"--ntasks={executor.nodes}",
+                    "--output",
+                    os.path.join(job_dir, "vboost.out"),
+                    "--error",
+                    os.path.join(job_dir, "vboost.err"),
+                    "bash -c",
+                    shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
+                ]
+            )
+        )
+
+    if lock_gpu_freq is not None:
+        commands.append(
+            "\n".join(
+                [
+                    "",
+                    "# Lock GPU graphics clock",
+                    " ".join(
+                        [
+                            "srun",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "lock_gpu_freq.out"),
+                            "--error",
+                            os.path.join(job_dir, "lock_gpu_freq.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lgc {lock_gpu_freq}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+        )
+
+    if commands:
+        executor.setup_lines = f"{executor.setup_lines or ''}{''.join(commands)}"
+
+
 @dataclass
 class WorkloadBaseConfig:
     """Container for workload base configs. This object exists because we cannot import MBridge on the headnode but need a place to store recipe overrides."""
@@ -92,6 +143,8 @@ class WorkloadBaseConfig:
 
     global_batch_size: int = 1
     micro_batch_size: int = 1
+
+    env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
 
     use_megatron_fsdp: bool | None = None
     nccl_ub: bool | None = None
@@ -132,18 +185,187 @@ class WorkloadBaseConfig:
         return self.global_batch_size / self.num_gpus
 
 
+def explicit_environment_override_names(
+    cli_overrides: list[str], base_env_vars: dict, effective_env_vars: dict
+) -> set[str]:
+    """Return recipe env names explicitly selected through Hydra overrides."""
+    names = set()
+    for override in cli_overrides:
+        key = override.split("=", 1)[0].lstrip("+~")
+        if key == "env_vars":
+            from hydra.core.override_parser.overrides_parser import OverridesParser
+
+            override_value = OverridesParser.create().parse_override(override).value()
+            if isinstance(override_value, Mapping):
+                names.update(override_value)
+            names.update(
+                name
+                for name in base_env_vars.keys() | effective_env_vars.keys()
+                if name not in base_env_vars
+                or name not in effective_env_vars
+                or base_env_vars[name] != effective_env_vars[name]
+            )
+        elif key.startswith("env_vars."):
+            names.add(key.removeprefix("env_vars.").split(".", 1)[0])
+    return names
+
+
+def apply_target_topology_environment(
+    config: Any,
+    *,
+    gpu: str,
+    protected_env_names: set[str] | None = None,
+) -> None:
+    """Adapt only HybridEP topology for the launch target.
+
+    Some hardware targets reuse a recipe whose static defaults describe H100.
+    This step changes only the final HybridEP topology for the selected target;
+    model-specific environment stays explicit in the recipe. Explicit
+    ``env_vars`` overrides remain final.
+    """
+    topology_names = {
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN",
+        "NVLINK_DOMAIN_SIZE",
+        "USE_MNNVL",
+    }
+    protected = protected_env_names or set()
+    if getattr(config.model, "moe_flex_dispatcher_backend", None) != "hybridep":
+        for name in topology_names - protected:
+            config.env_vars.pop(name, None)
+        return
+
+    expert_model_parallel_size = getattr(config.model, "expert_model_parallel_size", 1)
+    if expert_model_parallel_size is None:
+        expert_model_parallel_size = 1
+    if expert_model_parallel_size <= 0:
+        raise ValueError("HybridEP expert parallel size must be positive.")
+
+    normalized_gpu = gpu.lower()
+    if normalized_gpu in {"h100", "b200", "b300"}:
+        topology = {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": min(expert_model_parallel_size, 8),
+            "NVLINK_DOMAIN_SIZE": 8,
+            "USE_MNNVL": 0,
+        }
+    elif normalized_gpu in {"gb200", "gb300", "vr200", "r100"}:
+        if expert_model_parallel_size > 72:
+            raise ValueError("HybridEP expert parallel size must not exceed the 72-rank NVLink domain.")
+        topology = {
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": expert_model_parallel_size,
+            "NVLINK_DOMAIN_SIZE": 72,
+            "USE_MNNVL": 1,
+        }
+    else:
+        raise ValueError(f"Unsupported GPU type for HybridEP topology: {gpu!r}.")
+
+    for name, value in topology.items():
+        if name not in protected:
+            config.env_vars[name] = value
+
+
+def apply_feature_environment(
+    config: Any,
+    *,
+    nccl_ub_override: bool | None,
+    protected_env_names: set[str] | None = None,
+) -> None:
+    """Keep CLI-selected feature flags and their process settings consistent."""
+    protected = protected_env_names or set()
+    if nccl_ub_override is not True:
+        return
+
+    for name, value in {"NCCL_NVLS_ENABLE": 1, "NCCL_CTA_POLICY": 1}.items():
+        if name not in protected:
+            config.env_vars[name] = value
+
+
+def apply_argparse_overrides(config: Any, args: Any) -> Any:
+    """Apply argparse values that affect recipe configuration.
+
+    The bootstrap and training entrypoints call this helper before Hydra
+    overrides so parallelism and environment-relevant settings match.
+    """
+    if getattr(args, "nccl_ub", False):
+        config.ddp.nccl_ub = True
+
+    # Keep all parallelism overrides together so bootstrap topology and the
+    # final training config resolve the same user input.
+    tensor_model_parallel_size = getattr(args, "tensor_model_parallel_size", None)
+    if tensor_model_parallel_size is not None:
+        config.model.tensor_model_parallel_size = tensor_model_parallel_size
+
+    pipeline_model_parallel_size = getattr(args, "pipeline_model_parallel_size", None)
+    if pipeline_model_parallel_size is not None:
+        config.model.pipeline_model_parallel_size = pipeline_model_parallel_size
+
+    context_parallel_size = getattr(args, "context_parallel_size", None)
+    if context_parallel_size is not None:
+        config.model.context_parallel_size = context_parallel_size
+
+    virtual_pipeline_model_parallel_size = getattr(args, "virtual_pipeline_model_parallel_size", -1)
+    if virtual_pipeline_model_parallel_size != -1:
+        config.model.virtual_pipeline_model_parallel_size = virtual_pipeline_model_parallel_size
+
+    expert_model_parallel_size = getattr(args, "expert_model_parallel_size", None)
+    if expert_model_parallel_size is not None:
+        config.model.expert_model_parallel_size = expert_model_parallel_size
+
+    expert_tensor_parallel_size = getattr(args, "expert_tensor_parallel_size", None)
+    if expert_tensor_parallel_size is not None:
+        config.model.expert_tensor_parallel_size = expert_tensor_parallel_size
+
+    dispatcher_backend = getattr(args, "moe_flex_dispatcher_backend", -1)
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+        config.model.moe_flex_dispatcher_backend = dispatcher_backend
+    elif dispatcher_backend in {"deepep", "hybridep"}:
+        logger.warning("Ignoring flex dispatcher override for a model without MoE experts.")
+    elif dispatcher_backend is None:
+        config.model.moe_flex_dispatcher_backend = None
+
+    return config
+
+
+def finalize_config_overrides(config: Any) -> Any:
+    """Reconcile config invariants after argparse and Hydra overrides.
+
+    Hydra has final precedence over primary fields such as ``ddp.nccl_ub`` and
+    ``model.moe_flex_dispatcher_backend``. Dependent fields are therefore
+    normalized only after both override layers have completed.
+    """
+    if getattr(config.ddp, "nccl_ub", False):
+        config.ddp.average_in_collective = False
+        if getattr(config.ddp, "use_megatron_fsdp", False):
+            config.ddp.fsdp_manual_registration = True
+    elif getattr(config.ddp, "fsdp_manual_registration", False):
+        config.ddp.fsdp_manual_registration = False
+
+    dispatcher_backend = getattr(config.model, "moe_flex_dispatcher_backend", None)
+    num_moe_experts = getattr(config.model, "num_moe_experts", None)
+    if dispatcher_backend in {"deepep", "hybridep"} and num_moe_experts not in {None, 0}:
+        config.model.moe_token_dispatcher_type = "flex"
+        config.model.moe_shared_expert_overlap = False
+    elif dispatcher_backend is None and getattr(config.model, "moe_token_dispatcher_type", None) == "flex":
+        config.model.moe_token_dispatcher_type = "alltoall"
+
+    return config
+
+
 def _normalize_precision_name(precision: str) -> str:
     return _PRECISION_NAME_MAP.get(precision.lower(), precision.lower().replace("_", ""))
 
 
 def _recipe_variant_suffix(config_variant: str | None) -> str:
-    if config_variant is None:
+    # Temporary compatibility for legacy nemo-ci configs that still pass the
+    # removed v1/v2 labels. They select the canonical recipe, not a variant.
+    if config_variant is None or config_variant.lower() in {"v1", "v2"}:
         return ""
     return f"_{config_variant.lower()}"
 
 
 def _recipe_variant_name(config_variant: str | None) -> str | None:
-    return None if config_variant is None else config_variant.lower()
+    # Keep legacy nemo-ci v1/v2 labels out of canonical recipe names.
+    return None if config_variant is None or config_variant.lower() in {"v1", "v2"} else config_variant.lower()
 
 
 def _display_config_variant(config_variant: str | None) -> str:
@@ -235,7 +457,7 @@ def get_perf_recipe_by_name(
     precision: str,
     config_variant: str | None = None,
 ):
-    """Load a flat perf recipe from ``megatron.bridge.perf_recipes``."""
+    """Load an environment-finalized recipe from ``megatron.bridge.perf_recipes``."""
     name = _recipe_function_name(
         model_recipe_name=model_recipe_name,
         task=task,
@@ -353,6 +575,7 @@ def _workload_base_config_from_recipe(config, *, num_gpus: int) -> WorkloadBaseC
         expert_tensor_parallel_size=getattr(model, "expert_tensor_parallel_size", None),
         global_batch_size=train.global_batch_size,
         micro_batch_size=train.micro_batch_size,
+        env_vars=dict(getattr(config, "env_vars", {})),
         use_megatron_fsdp=getattr(ddp, "use_megatron_fsdp", None),
         nccl_ub=getattr(ddp, "nccl_ub", None),
         cuda_graph_impl=getattr(model, "cuda_graph_impl", None),
@@ -534,11 +757,11 @@ def get_perf_optimized_recipe(
     return cfg
 
 
-def get_library_recipe(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
-    """Get the library recipe.
+def build_recipe_config(model_family_name: str, model_recipe_name: str, train_task: str, wandb_experiment_name: str):
+    """Build a recipe config and set its run output paths.
 
-    Note: Library pretrain recipes no longer accept kwargs. This function calls the recipe
-    without arguments and then configures the output directories on the returned config.
+    Recipe builders no longer accept output-directory kwargs. This function
+    calls the selected builder and then configures those paths on its result.
 
     The old API was: recipe_builder(dir="/nemo_run/", name=wandb_experiment_name)
     This set:
@@ -558,8 +781,8 @@ def get_library_recipe(model_family_name: str, model_recipe_name: str, train_tas
 
     recipe_builder = getattr(family_pkg, model_recipe_name)
 
-    # Library pretrain recipes no longer accept kwargs - call without args
-    # and configure the returned ConfigContainer
+    # Recipe builders no longer accept output path kwargs. Configure the
+    # returned ConfigContainer instead.
     cfg = recipe_builder()
 
     # Set output directories that were previously configured via dir="/nemo_run/" and name=wandb_experiment_name
