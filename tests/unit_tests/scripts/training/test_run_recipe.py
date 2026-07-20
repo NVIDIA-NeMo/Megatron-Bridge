@@ -378,33 +378,10 @@ def test_performance_recipe_rejects_noncanonical_world_size(monkeypatch):
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
 
 
-def test_performance_recipe_rejects_noncanonical_per_node_topology(monkeypatch):
+def test_performance_recipe_accepts_user_selected_per_node_topology(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "16")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
-        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
-    )
-
-    with pytest.raises(ValueError, match="requires exactly 8 GPUs per h100 node"):
-        module.main(
-            [
-                "--recipe",
-                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
-                "--mode",
-                "pretrain",
-            ]
-        )
-
-    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
-
-
-def test_performance_recipe_accepts_homogeneous_slurm_tasks_per_node(monkeypatch):
-    module, handles = _load_module()
-    monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
-    monkeypatch.delenv("SLURM_NTASKS_PER_NODE", raising=False)
-    monkeypatch.setenv("WORLD_SIZE", "16")
-    monkeypatch.setenv("SLURM_TASKS_PER_NODE", "8(x2)")
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
     handles.recipe_runner.load_recipe.return_value = config
 
@@ -418,29 +395,6 @@ def test_performance_recipe_accepts_homogeneous_slurm_tasks_per_node(monkeypatch
     )
 
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
-
-
-def test_performance_recipe_rejects_heterogeneous_slurm_tasks_per_node(monkeypatch):
-    module, handles = _load_module()
-    monkeypatch.delenv("LOCAL_WORLD_SIZE", raising=False)
-    monkeypatch.delenv("SLURM_NTASKS_PER_NODE", raising=False)
-    monkeypatch.setenv("WORLD_SIZE", "16")
-    monkeypatch.setenv("SLURM_TASKS_PER_NODE", "8,4(x2)")
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace(
-        optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False)
-    )
-
-    with pytest.raises(ValueError, match="one homogeneous tasks-per-node"):
-        module.main(
-            [
-                "--recipe",
-                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
-                "--mode",
-                "pretrain",
-            ]
-        )
-
-    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
 
 
 def test_performance_recipe_rejects_noncanonical_forward_step():

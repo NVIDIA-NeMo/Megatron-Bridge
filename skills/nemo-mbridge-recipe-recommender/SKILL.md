@@ -73,9 +73,9 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
     --mode pretrain
 ```
 
-The GPU allocation and GPUs per node must exactly match the count and hardware
-topology encoded in the recipe name. The selected partition must provide that
-hardware. The launcher preserves the compatibility path's rank-local NUMA
+The total GPU allocation must match the count encoded in the recipe name. The
+user selects the node shape, and the selected partition must provide the
+requested hardware. The launcher preserves the compatibility path's rank-local NUMA
 binding and offline benchmark environment, but cluster-specific `srun` options
 must be supplied explicitly with repeated `--srun-arg=ARG` options. The unified
 launcher currently supports text pretraining only. Trailing `KEY=VALUE`

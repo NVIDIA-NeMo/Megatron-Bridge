@@ -52,8 +52,8 @@ requested adapter scheme.
 ### Performance recipe
 
 The training launcher can run canonical text-pretraining recipes from
-`src/megatron/bridge/perf_recipes`. Both the total allocation and GPUs per node must match the topology encoded by the
-recipe name; the selected Slurm partition must provide that hardware:
+`src/megatron/bridge/perf_recipes`. The total allocation must match the GPU count encoded by the recipe name; the user
+selects the node shape, and the Slurm partition must provide the requested hardware:
 
 ```bash
 ./scripts/training/train.sh \
@@ -71,9 +71,9 @@ configuration. Performance recipes retain their selected dataset type, so `--dat
 Recipe environment defaults are installed before the launcher enters the training stack; values explicitly set by the
 shell or Slurm environment retain precedence.
 
-For performance recipes, the launcher also preserves the compatibility path's rank-local CPU/NUMA binding, canonical
-GPUs-per-node check, and offline benchmark environment. These are launcher semantics rather than model configuration
-and therefore do not belong in each recipe.
+For performance recipes, the launcher also preserves the compatibility path's rank-local CPU/NUMA binding and offline
+benchmark environment. These are launcher semantics rather than model configuration and therefore do not belong in
+each recipe.
 
 SFT/PEFT, VLM, diffusion, topology resizing, dataset replacement, and other specialized performance controls remain
 on `scripts/performance/setup_experiment.py` while those paths migrate. The compatibility launcher remains available;
@@ -262,7 +262,7 @@ uv run python scripts/training/run_recipe.py \
 ```
 
 For a performance dry run, use the complete flat recipe name and omit `--dataset`. The rank-local dry run discovers the
-recipe and validates the final config against the topology encoded in that name without
+recipe and validates the final config against the total GPU count encoded in that name without
 requiring a live allocation; the submission dry run additionally validates `--nodes` and `--gpus-per-node`.
 
 ## Rank-local entry point

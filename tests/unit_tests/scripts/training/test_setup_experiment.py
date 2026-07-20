@@ -125,21 +125,14 @@ def test_library_resolved_recipe_does_not_enable_performance_executor(recipe_nam
     assert module.selected_performance_recipe(training_args) is None
 
 
-@pytest.mark.parametrize(
-    ("nodes", "gpus_per_node", "message"),
-    [
-        (2, 4, "8 GPUs per h100 node"),
-        (1, 8, "requires exactly 16 GPUs"),
-    ],
-)
-def test_performance_recipe_validates_submission_topology(nodes, gpus_per_node, message):
+def test_performance_recipe_validates_total_submission_size():
     module = _load_setup_experiment_module()
     args, training_args = module.parse_args(
         [
             "--nodes",
-            str(nodes),
+            "2",
             "--gpus-per-node",
-            str(gpus_per_node),
+            "4",
             "--account",
             "account",
             "--partition",
@@ -151,8 +144,30 @@ def test_performance_recipe_validates_submission_topology(nodes, gpus_per_node, 
         ]
     )
 
-    with pytest.raises(ValueError, match=message):
+    with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
         module._validate_args(args, module.selected_performance_recipe(training_args))
+
+
+def test_performance_recipe_accepts_user_selected_node_shape():
+    module = _load_setup_experiment_module()
+    args, training_args = module.parse_args(
+        [
+            "--nodes",
+            "4",
+            "--gpus-per-node",
+            "4",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        ]
+    )
+
+    module._validate_args(args, module.selected_performance_recipe(training_args))
 
 
 @pytest.mark.parametrize(

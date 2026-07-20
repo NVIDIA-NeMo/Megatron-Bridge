@@ -177,11 +177,6 @@ def _validate_args(
     if not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
     if performance_metadata is not None:
-        if args.gpus_per_node != performance_metadata.gpus_per_node:
-            raise ValueError(
-                f"Performance recipe requires exactly {performance_metadata.gpus_per_node} GPUs per "
-                f"{performance_metadata.hardware} node, but --gpus-per-node is {args.gpus_per_node}."
-            )
         requested_gpus = args.nodes * args.gpus_per_node
         if requested_gpus != performance_metadata.num_gpus:
             raise ValueError(

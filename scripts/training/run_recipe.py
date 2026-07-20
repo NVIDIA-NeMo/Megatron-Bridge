@@ -72,7 +72,6 @@ import argparse
 import json
 import logging
 import os
-import re
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
@@ -328,48 +327,20 @@ def _current_world_size() -> int | None:
     return None
 
 
-def _current_local_world_size() -> int | None:
-    """Return the number of rank-local workers supplied by torchrun or Slurm."""
-    for variable_name in ("LOCAL_WORLD_SIZE", "SLURM_NTASKS_PER_NODE", "SLURM_TASKS_PER_NODE"):
-        value = os.environ.get(variable_name)
-        if value is None:
-            continue
-        if variable_name == "SLURM_TASKS_PER_NODE":
-            match = re.fullmatch(r"(?P<tasks>[1-9][0-9]*)(?:\(x[1-9][0-9]*\))?", value)
-            if match is None:
-                raise ValueError(
-                    "SLURM_TASKS_PER_NODE must describe one homogeneous tasks-per-node value for performance "
-                    f"recipes, got {value!r}."
-                )
-            local_world_size = int(match.group("tasks"))
-        else:
-            local_world_size = int(value)
-        if local_world_size < 1:
-            raise ValueError(f"{variable_name} must be positive, got {value!r}.")
-        return local_world_size
-    return None
-
-
 def _validate_performance_world_size(metadata: PerformanceRecipeMetadata, *, dryrun: bool) -> None:
-    """Require the canonical total and per-node GPU topology for an executable run."""
+    """Require the recipe's total GPU count for an executable run."""
     if dryrun:
         return
     world_size = _current_world_size()
-    local_world_size = _current_local_world_size()
-    if world_size is None or local_world_size is None:
+    if world_size is None:
         raise ValueError(
-            "Performance recipes require an existing distributed environment with total and local world sizes set "
-            "by torchrun or Slurm."
+            "Performance recipes require an existing distributed environment with the world size set by torchrun "
+            "or Slurm."
         )
     if world_size != metadata.num_gpus:
         raise ValueError(
             f"Performance recipe requires exactly {metadata.num_gpus} GPUs, but the distributed world size is "
             f"{world_size}. Select a recipe matching the allocation."
-        )
-    if local_world_size != metadata.gpus_per_node:
-        raise ValueError(
-            f"Performance recipe requires exactly {metadata.gpus_per_node} GPUs per {metadata.hardware} node, but "
-            f"the local world size is {local_world_size}. Use the canonical node topology."
         )
 
 
