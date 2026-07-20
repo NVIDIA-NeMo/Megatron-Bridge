@@ -226,6 +226,24 @@ Freeze the following workload profiles:
 | RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
 | Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
 
+Treat the reference packing alignments as frozen data semantics, not as
+topology-derived performance defaults. Set them explicitly in the recipe and
+build every compared run from a fresh packing output. If a topology or kernel
+requires a larger alignment, record the resolved value, packing-manifest hash,
+and actual supervised-token count, then classify that run as support
+verification rather than evidence for this cross-model convergence cohort.
+Never let runtime alignment synchronization silently change a cohort run.
+
+The public training runner applies `--dataset` after constructing the model
+recipe and replaces the recipe's dataset object with the selected preset.
+Consequently, a card command that uses `--dataset tulu3` must explicitly pin
+the dataset revision, split, data-order/packing seed, offline-packing enablement,
+and `+dataset.offline_packing_specs.pad_seq_to_mult`; recipe-level dataset
+defaults alone do not freeze the resolved CLI workload. Use a fresh
+`dataset.hf_output_root` (or force a deliberate rewrite) whenever any of these
+fields changes, and audit the final `ConfigContainer` after all overrides and
+runtime synchronization.
+
 Treat the token counts above as token slots. For SFT and PEFT, also record the
 actual supervised-token count after label masking; do not present padded or
 masked token slots as supervised tokens.

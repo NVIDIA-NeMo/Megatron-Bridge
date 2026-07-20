@@ -29,7 +29,7 @@ from megatron.bridge.recipes.moonlight.h100.moonlight_16b import (
     moonlight_16b_sft_8gpu_h100_bf16_8k_config as moonlight_16b_sft_8k_config,
 )
 from megatron.bridge.recipes.moonlight.h100.moonlight_16b import (
-    moonlight_16b_sft_8gpu_h100_bf16_config as moonlight_16b_sft_config,
+    moonlight_16b_sft_8gpu_h100_bf16_tp1_config as moonlight_16b_sft_config,
 )
 
 

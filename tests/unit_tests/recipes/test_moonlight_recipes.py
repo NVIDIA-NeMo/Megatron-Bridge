@@ -355,27 +355,28 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
 
 
 def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
-    """Test the exact 8-GPU full-SFT convergence contract and PP layout."""
+    """Test the exact 8-GPU full-SFT convergence contract."""
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     patch_recipe_module_global(monkeypatch, moonlight_16b_sft_config, "AutoBridge", _FakeBridge)
     cfg = moonlight_16b_sft_config()
 
-    assert moonlight_16b_sft_config.__name__ == "moonlight_16b_sft_8gpu_h100_bf16_config"
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_layout == [
-        ["embedding"] + ["decoder"] * 14,
-        ["decoder"] * 13 + ["loss"],
-    ]
+    assert moonlight_16b_sft_config.__name__ == "moonlight_16b_sft_8gpu_h100_bf16_tp1_config"
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.model.vocab_size == 163844
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.vocab_size == 163842
+    assert cfg.get_data_parallel_size(8) == 8
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(8)) == 4
+    assert cfg.model.num_moe_experts // cfg.model.expert_model_parallel_size == 8
     assert cfg.model.seq_length == 2048
     assert cfg.dataset.seq_length == 2048
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 2048
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1
@@ -390,8 +391,36 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model == "moonshotai/Moonlight-16B-A3B"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {"trust_remote_code": True}
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_a2a_overlap is False
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.comm_overlap is None
     _assert_finetuning_optimizer_contract(cfg)
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
+
+
+def test_moonlight_16b_legacy_sft_contract_remains_available(monkeypatch: pytest.MonkeyPatch):
+    """Keep the existing TP4/PP2 support topology available to callers."""
+    from megatron.bridge.recipes.moonlight.h100.moonlight_16b import (
+        moonlight_16b_sft_8gpu_h100_bf16_config,
+    )
+
+    patch_recipe_module_global(monkeypatch, moonlight_16b_sft_8gpu_h100_bf16_config, "AutoBridge", _FakeBridge)
+    cfg = moonlight_16b_sft_8gpu_h100_bf16_config()
+
+    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_layout == [
+        ["embedding"] + ["decoder"] * 14,
+        ["decoder"] * 13 + ["loss"],
+    ]
+    assert cfg.model.expert_model_parallel_size == 4
+    assert cfg.model.sequence_parallel is True
+    assert cfg.model.vocab_size == 163844
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
 
 
 def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
@@ -415,6 +444,7 @@ def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch
     assert cfg.model.seq_length == 2048
     assert cfg.dataset.seq_length == 2048
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 2048
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1

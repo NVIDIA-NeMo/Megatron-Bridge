@@ -359,9 +359,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
     cfg.dataset.seed = 1234
     cfg.rng.seed = 5678
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # MoE Token Dispatcher settings, may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -696,9 +694,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.train.micro_batch_size = 1
     cfg.dataset.seed = 1234
     cfg.rng.seed = 5678
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"

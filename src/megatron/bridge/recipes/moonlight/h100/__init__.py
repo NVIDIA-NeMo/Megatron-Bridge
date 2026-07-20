@@ -22,4 +22,5 @@ __all__ = [
     "moonlight_16b_pretrain_8gpu_h100_bf16_config",
     "moonlight_16b_sft_8gpu_h100_bf16_8k_config",
     "moonlight_16b_sft_8gpu_h100_bf16_config",
+    "moonlight_16b_sft_8gpu_h100_bf16_tp1_config",
 ]

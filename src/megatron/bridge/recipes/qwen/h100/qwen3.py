@@ -968,9 +968,7 @@ def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.micro_batch_size = 1
     cfg.dataset.seed = 1234
     cfg.rng.seed = 5678
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1585,9 +1583,7 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.train.micro_batch_size = 1
     cfg.dataset.seed = 1234
     cfg.rng.seed = 5678
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # Training config
     cfg.validation.eval_interval = 30

@@ -348,9 +348,12 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return the bounded-convergence full SFT config for Moonlight-16B.
+    """Return the legacy TP4/PP2 full SFT config for Moonlight-16B.
 
     Recommended parallelism: TP=4, PP=2, CP=1, EP=4 on 8 H100 GPUs.
+    Sequence parallelism resolves offline packing to ``pad_seq_to_mult=4``, so
+    this remains a support recipe rather than the shared pad-1 convergence
+    cohort.
 
     Returns:
         ConfigContainer with all settings pre-configured for Moonlight-16B SFT.
@@ -380,6 +383,7 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset config - enable_offline_packing=True by default
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # MoE performance optimizations
     cfg.model.moe_permute_fusion = True
@@ -453,6 +457,44 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+
+    return cfg
+
+
+def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
+    """Return the bounded-convergence full SFT config for Moonlight-16B.
+
+    Recommended parallelism is TP=1, PP=1, CP=1, EP=8 on 8 H100 GPUs. This
+    topology keeps sequence parallelism disabled so the shared SFT packing
+    contract remains ``pad_seq_to_mult=1``. With GBS=32 and MBS=1 it uses
+    dense DP=8 and four gradient-accumulation steps.
+
+    Returns:
+        ConfigContainer with the Moonlight-16B full-SFT convergence contract.
+    """
+    cfg = moonlight_16b_sft_8gpu_h100_bf16_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.vocab_size = _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE
+
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
+
+    # Plain all-to-all is the correctness-first single-node EP8 path. Clear
+    # inactive flex-dispatcher settings so the execution fingerprint is exact.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_a2a_overlap = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.comm_overlap = None
 
     return cfg
 
@@ -728,6 +770,7 @@ def moonlight_16b_peft_4gpu_h100_bf16_config(
     cfg.model.seq_length = seq_length
     cfg.dataset.seq_length = seq_length
     cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
         cfg.peft = default_peft_config(
@@ -750,4 +793,5 @@ __all__ = [
     "moonlight_16b_pretrain_8gpu_h100_bf16_config",
     "moonlight_16b_sft_8gpu_h100_bf16_8k_config",
     "moonlight_16b_sft_8gpu_h100_bf16_config",
+    "moonlight_16b_sft_8gpu_h100_bf16_tp1_config",
 ]

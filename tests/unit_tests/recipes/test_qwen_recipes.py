@@ -255,6 +255,7 @@ def test_qwen3_8b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
     assert cfg.scheduler.lr_warmup_iters == 10
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
@@ -276,6 +277,7 @@ def test_qwen3_8b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
     assert cfg.scheduler.lr_warmup_iters == 10
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
@@ -395,6 +397,7 @@ def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
     assert cfg.scheduler.lr_warmup_iters == 10
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
@@ -462,6 +465,7 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.train_iters == 100
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
     assert cfg.scheduler.lr_warmup_iters == 10
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
@@ -491,6 +495,7 @@ def test_qwen3_30b_a3b_legacy_8gpu_full_sft_defaults(monkeypatch: pytest.MonkeyP
     assert cfg.train.micro_batch_size == 1
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 4
     assert cfg.scheduler.lr_warmup_iters == 10
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
