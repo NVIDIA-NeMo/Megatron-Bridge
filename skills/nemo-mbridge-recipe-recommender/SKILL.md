@@ -182,20 +182,22 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 ### Qwen3 (Dense)
 
-| Recipe | Mode | TP | PP | CP | Sizes |
-|--------|------|----|----|-----|-------|
-| `qwen3_*_pretrain_config` | Pretrain | 1–8 | 1–2 | — | 600M–32B |
-| `qwen3_*_sft_config` | SFT | 1–8 | 1–2 | — | 600M–32B |
-| `qwen3_600m_sft_128k_config` | SFT | 1 | 1 | 8 | 600M (128K seq) |
-| `qwen3_*_peft_config` | PEFT | 1 | 1 | — | 600M–32B |
+| Recipe | Mode | TP | PP | CP | GPUs | Sizes / notes |
+|--------|------|----|----|----|------|---------------|
+| `qwen3_8b_pretrain_config` | Pretrain | 1 | 1 | — | 16 | Bounded convergence cohort |
+| `qwen3_8b_sft_config` | SFT | 4 | 1 | — | 4 | 2K bounded convergence cohort |
+| `qwen3_8b_sft_32k_config` | SFT | 4 | 1 | 2 | 8 | Separate 32K long-context cohort |
+| `qwen3_8b_peft_config` | PEFT | 1 | 1 | — | 1 | Bounded LoRA/DoRA cohort |
+| `qwen3_*_{pretrain,sft,peft}_config` | All | 1–8 | 1–2 | — | varies | Other dense sizes, 600M–32B |
+| `qwen3_600m_sft_128k_config` | SFT | 1 | 1 | 8 | 8 | 600M, 128K sequence |
 
 ### Qwen3 MoE
 
 | Recipe | Mode | TP | PP | EP | CP | GPUs |
 |--------|------|----|----|----|----|------|
 | `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 16 | — | 16 |
-| `qwen3_30b_a3b_sft_config` | SFT | 1 | 1 | 8 | — | 8 |
-| `qwen3_30b_a3b_peft_config` | PEFT | 1 | 1 | 1 | — | 1 |
+| `qwen3_30b_a3b_sft_config` | SFT | 4 | 2 | 4 | — | 8 |
+| `qwen3_30b_a3b_peft_config` | PEFT | 4 | 1 | 4 | — | 4 |
 | `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 512+ |
 | `qwen3_235b_a22b_sft_config` | SFT | 4 | 8 | 8 | — | 256 |
 | `qwen3_235b_a22b_peft_config` | PEFT | 1 | 4 | 4 | — | 16 |
@@ -248,7 +250,10 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 | Recipe | Mode | Notes |
 |--------|------|-------|
-| `moonlight_16b_{pretrain,sft,peft}_config` | All | MoE EP=8 |
+| `moonlight_16b_pretrain_config` | Pretrain | 16 GPUs, TP1/PP1/EP16; bounded convergence cohort |
+| `moonlight_16b_sft_config` | SFT | 8 GPUs, TP4/PP2/EP4; 2K bounded convergence cohort |
+| `moonlight_16b_peft_config` | PEFT | 4 GPUs, TP4/PP1/EP4; bounded LoRA/DoRA cohort |
+| `moonlight_16b_sft_8k_config` | SFT | 8 GPUs, TP2/PP1/CP2/EP8; separate 8K cohort |
 | `olmoe_7b_{pretrain,sft,peft}_config` | All | MoE EP=8 |
 | `ministral3_{3b,8b,14b}_{sft,peft}_config` | SFT/PEFT | Dense |
 | `gpt_oss_20b_*_config` | All | MoE + FP8/MXFP8 variants |
@@ -396,8 +401,10 @@ When the user's GPU count differs from the recipe default:
    copies and is essentially free.
 6. **CP requires all-to-all or ring attention.** Check `cp_comm_type`. For
    GQA models, `a2a+p2p` hierarchical CP allows CP > num_kv_heads.
-7. **world_size = DP × TP × PP × CP × EP.** DP is implicit. Make sure the
-   product of explicit parallelisms divides your total GPU count.
+7. **Dense and expert meshes overlap.** Do not multiply TP and EP together.
+   The minimum MoE world size is `PP × max(TP × CP, EP × ETP)`. Dense DP is
+   `world_size / (TP × PP × CP)` and expert EDP is
+   `world_size / (PP × EP × ETP)`; both quotients must be integral.
 
 ### Batch Size Tuning
 
@@ -430,11 +437,10 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
     --recipe llama3_8b_pretrain_config \
     --dataset llm-pretrain-mock
 
-# Reduce parallelism for Qwen3-MoE 30B to fit on 4 GPUs
+# Run the native 4-GPU Qwen3-MoE 30B PEFT topology
 uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
-    --recipe qwen3_30b_a3b_sft_config \
-    --dataset llm-finetune \
-    'model.expert_model_parallel_size=4'
+    --recipe qwen3_30b_a3b_peft_config \
+    --dataset llm-finetune
 
 # Add long context to an existing recipe
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
@@ -460,7 +466,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | I want to... | Start with | GPUs needed |
 |---|---|---|
 | Try Bridge for the first time | `llama3_8b_sft_config` + mock data | 2 |
-| Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–8 |
+| Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–4 |
 | LoRA on 1 GPU | `llama3_8b_peft_config` or `qwen3_8b_peft_config` | 1 |
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
 | Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 16 |

@@ -161,8 +161,33 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 16
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
+    cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
+    cfg.dataset.random_seed = 1234
+    cfg.rng.seed = 1234
+
+    cfg.optimizer.lr = 3e-4
+    cfg.optimizer.min_lr = 3e-5
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
+    cfg.optimizer.use_distributed_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.scheduler.lr_warmup_iters = 40
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.load = None
 
     # HybridEP dispatcher
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
@@ -329,8 +354,11 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length (2048 for packed sequences)
     cfg.model.seq_length = 2048
 
-    # Global batch size is 32 for MoE packed sequences
+    # qwen3_30b_a3b_convergence_v1 batch and RNG contract
     cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seed = 1234
+    cfg.rng.seed = 5678
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -359,7 +387,18 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Optimizer and scheduler overrides for MoE
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+    cfg.optimizer.lr = 5e-6
+    cfg.optimizer.min_lr = 0.0
+    cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -398,6 +437,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_distributed_optimizer = True
 
     # Communication overlap
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
@@ -408,6 +448,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Checkpoint config
     cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.load = None
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
@@ -574,7 +615,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     Args:
         peft_scheme: PEFT scheme - 'lora', 'dora', or a PEFT instance. Default: 'lora'
 
-    Recommended parallelism: TP=4, PP=1, EP=4 (1 node, 8 GPUs with SP=True)
+    Recommended parallelism: TP=4, PP=1, EP=4 (1 node, 4 GPUs with SP=True)
     LoRA/DoRA uses dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
     """
     cfg = _peft_common()
@@ -606,11 +647,15 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
         peft_cfg.dim = 8
         peft_cfg.alpha = 16
+        peft_cfg.dropout = 0.0
         peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
     cfg.peft = peft_cfg
 
-    # Global batch size is 32 for MoE packed sequences
+    # qwen3_30b_a3b_convergence_v1 batch and RNG contract
     cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seed = 1234
+    cfg.rng.seed = 5678
     # Set pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -639,7 +684,18 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Optimizer and scheduler overrides for MoE
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 0.0
+    cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -678,6 +734,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_distributed_optimizer = True
 
     # Communication overlap
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
@@ -688,6 +745,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 
     # Checkpoint config
     cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.load = None
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"

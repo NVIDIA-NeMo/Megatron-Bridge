@@ -215,7 +215,7 @@ Freeze the following workload profiles:
 
 | Field | Pretrain | Full SFT | PEFT |
 | --- | --- | --- | --- |
-| Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on `linear_qkv` and `linear_proj`, rank 8, alpha 16, dropout 0 |
+| Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
 | Sequence / GBS / MBS | `4096 / 1024 / 1` | `2048 / 32 / 1` | `2048 / 32 / 1` |
 | Token slots | `4,194,304` per step; `419,430,400` total | `65,536` per step; `6,553,600` total | `65,536` per step; `6,553,600` total |
@@ -249,6 +249,15 @@ top-k, router objective, auxiliary loss, capacity, and dropout values, record
 them in its convergence fingerprint, and never alter them merely to imitate
 Qwen. Require natural routing and prohibit benchmark-only forced balancing in
 all convergence cohorts.
+
+The Qwen PEFT anchor names its fused attention projections `linear_qkv` and
+`linear_proj`. Preserve the same semantic adapter scope on architectures that
+split Q, K, and V: list every model-native attention projection explicitly and
+record the names as a model-specific fingerprint. For Moonlight MLA this is
+`linear_q_proj`, `linear_kv_down_proj`, `linear_kv_up_proj`, and
+`linear_proj`. Never retain a nonexistent fused-module name merely to make the
+textual configuration look identical; verify that every declared target
+actually matches modules before accepting PEFT evidence.
 
 Use the same numerical value for global batch size within a comparison cohort.
 If a model cannot use that value, change and validate its recipe separately,

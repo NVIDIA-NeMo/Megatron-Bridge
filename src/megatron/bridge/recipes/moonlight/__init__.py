@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -15,6 +15,7 @@
 from megatron.bridge.recipes.moonlight.moonlight_16b import (
     moonlight_16b_peft_config,
     moonlight_16b_pretrain_config,
+    moonlight_16b_sft_8k_config,
     moonlight_16b_sft_config,
 )
 
@@ -22,5 +23,6 @@ from megatron.bridge.recipes.moonlight.moonlight_16b import (
 __all__ = [
     "moonlight_16b_pretrain_config",
     "moonlight_16b_sft_config",
+    "moonlight_16b_sft_8k_config",
     "moonlight_16b_peft_config",
 ]
