@@ -127,8 +127,8 @@ from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_la
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
-# Cosine similarity threshold: require at least 98% similarity (2% tolerance)
-SIMILARITY_THRESHOLD = 0.98
+# Cosine similarity threshold: require at least 99% similarity (1% cosine distance)
+SIMILARITY_THRESHOLD = 0.99
 
 
 sys.path.append(os.path.dirname(__file__))
@@ -943,8 +943,12 @@ def compare_models_one_step(args) -> None:
                 cos_val = cosine_sim.item()
                 percent = cos_val * 100.0
                 status_emoji = "✅" if cos_val >= SIMILARITY_THRESHOLD else "❌"
-                tolerance_text = "within ±2%" if cos_val >= SIMILARITY_THRESHOLD else "outside ±2%"
-                print(f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} ({tolerance_text} tolerance)")
+                limit_text = "within" if cos_val >= SIMILARITY_THRESHOLD else "outside"
+                distance_limit = 1.0 - SIMILARITY_THRESHOLD
+                print(
+                    f"Cosine similarity: {cos_val:.6f} ({percent:.2f}%) {status_emoji} "
+                    f"({limit_text} {distance_limit:.0%} cosine-distance limit)"
+                )
 
                 print("=== COMPARISON COMPLETE ===")
         else:

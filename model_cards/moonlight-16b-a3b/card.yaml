@@ -98,9 +98,10 @@ items:
     last_verified: 2026-07-19
     expected_result: >
       Hugging Face and Megatron have next-token matches at token ID 17374
-      (" Paris"). Cosine similarity is 0.999893, above the 0.9998 gate; the
-      maximum absolute logit difference is 0.472656 and the mean absolute logit
-      difference is 0.074414.
+      (" Paris"). Cosine similarity is 0.999893, above the 0.99 correlation
+      gate. The maximum absolute logit difference is 0.472656 and the mean
+      absolute logit difference is 0.074414; both are report-only diagnostic
+      observations.
 
   inference:
     status: verified

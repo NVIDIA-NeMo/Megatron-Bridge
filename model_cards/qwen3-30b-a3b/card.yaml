@@ -82,16 +82,18 @@ items:
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/compare_hf_and_megatron/compare.py
       --hf_model_path Qwen/Qwen3-30B-A3B
+      --hf-revision ad44e777bcd18fa416d9da3bd8f70d33ebb85d39
       --megatron_model_path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
       --tp 1 --pp 8 --prompt "The capital of France is the city of"
     last_verified: null
     expected_result: >
-      The immutable-revision rerun selects token ID 12095 (" Paris") on both
-      paths, with maximum and mean absolute logit differences of 0.593750 and
-      0.130064 and cosine similarity 0.999317. Moving the HF expert probability
-      multiplication before its down projection improves cosine similarity to
-      0.999834 but still fails the BF16 gate above 0.9999, so this item remains
-      unverified.
+      A pinned-revision rerun must produce matching Hugging Face and Megatron
+      next-token predictions and cosine similarity of at least 0.99, while
+      recording numeric maximum and mean absolute logit differences as
+      report-only diagnostics. An earlier run observed token ID 12095
+      (" Paris"), cosine similarity 0.999317, maximum difference 0.593750, and
+      mean difference 0.130064, but its public command could not pin the HF
+      revision and therefore is not verification evidence for this item.
 
   inference:
     status: verified

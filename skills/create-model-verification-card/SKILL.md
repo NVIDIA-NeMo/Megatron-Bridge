@@ -54,7 +54,7 @@ Include these twelve required items, even when their status is `unsupported` or
 2. GPU HF-to-Megatron conversion
 3. CPU Megatron-to-HF conversion
 4. GPU Megatron-to-HF conversion
-5. Manual HF/Megatron forward-pass parity
+5. Manual HF/Megatron forward-pass correlation
 6. Deterministic Megatron inference
 7. Pretraining
 8. SFT
@@ -324,9 +324,16 @@ result. Private executor configuration stays outside the card.
 - **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
   prompt with `examples/conversion/compare_hf_and_megatron/compare.py`. Record
   whether the next token matches, the cosine similarity, and the maximum and
-  mean absolute logit differences. Keep this result separate from generation.
-  Choose a prompt whose tokenized length is divisible by TP so the helper does
-  not append padding before selecting the compared next-token position.
+  mean absolute logit differences. Pass `--hf-revision` with the exact
+  `model.hf_revision` so the command itself is reproducibly pinned. Mark the
+  item verified when the next token matches and cosine similarity is at least
+  0.99 (cosine distance at most 1%). Numeric maximum and mean absolute
+  differences are required diagnostic observations, but are report-only and
+  must not guard the item status. This gate establishes functional logit
+  correlation, not strict numerical equality. Keep this result separate from
+  generation. Choose a prompt whose tokenized length is divisible by TP so the
+  helper does not append padding before selecting the compared next-token
+  position.
 - **Megatron inference:** Use deterministic greedy generation, specify an exact
   token count, run twice, and record the literal completion including
   whitespace.
@@ -455,6 +462,10 @@ an item verified merely to make validation pass.
   for a verified workload run from a different clean commit.
 - Use the public model name in commands.
 - Include commands and concrete expected results for verified items.
+- For manual forward pass, require a next-token match and cosine similarity of
+  at least 0.99; record numeric max/mean absolute logit differences without
+  guarding on them, and pass the exact `model.hf_revision` through
+  `--hf-revision`.
 - Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.

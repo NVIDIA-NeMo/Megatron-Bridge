@@ -72,6 +72,7 @@ PACKING_VALUES = frozenset({"offline", "in_batch"})
 CUDA_GRAPH_IMPLEMENTATIONS = frozenset({"local", "transformer_engine"})
 CUDA_GRAPH_SCOPES = frozenset({"full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"})
 MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
+MANUAL_FORWARD_COSINE_THRESHOLD = 0.99
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "items"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
@@ -787,7 +788,13 @@ def _validate_manual_forward_pass(item: Mapping[str, Any], *, status: str, error
     token_match = re.search(
         r"\b(?:token match:\s*true|next[- ]token\b[^.]*\bmatch(?:es|ed)?)", expected, re.IGNORECASE
     )
-    if token_match is None:
+    token_mismatch = re.search(
+        r"\b(?:token match:\s*false|next[- ]token\b[^.]*\b(?:"
+        r"(?:not|never)\s+match|(?:doesn|didn)['’]t\s+match|fail(?:s|ed)?\s+to\s+match|mismatch))",
+        expected,
+        re.IGNORECASE,
+    )
+    if token_match is None or token_mismatch is not None:
         errors.append(f"{_pointer(*path, 'expected_result')}: record that the next token matches")
     similarity_match = re.search(
         r"cosine similarity(?:\s+is|\s*:)\s*(0(?:\.\d+)?|1(?:\.0+)?)",
@@ -796,11 +803,35 @@ def _validate_manual_forward_pass(item: Mapping[str, Any], *, status: str, error
     )
     if similarity_match is None:
         errors.append(f"{_pointer(*path, 'expected_result')}: record the cosine similarity")
-    elif float(similarity_match.group(1)) < 0.98:
-        errors.append(f"{_pointer(*path, 'expected_result')}: cosine similarity must be at least 0.98")
+    elif float(similarity_match.group(1)) < MANUAL_FORWARD_COSINE_THRESHOLD:
+        errors.append(
+            f"{_pointer(*path, 'expected_result')}: cosine similarity must be at least "
+            f"{MANUAL_FORWARD_COSINE_THRESHOLD:.2f}"
+        )
+    number = r"(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][-+]?\d+)?"
+    combined_differences = re.search(
+        rf"\bmax(?:imum)?\s+and\s+mean\s+(?:absolute\s+)?logit\s+differences?\s*(?:are|:|=)\s*"
+        rf"{number}\s+(?:and|,)\s*{number}",
+        expected,
+        re.IGNORECASE,
+    )
+    helper_differences = re.search(
+        rf"\blogits?\s+diff(?:erences?)?\s*-?\s*max(?:imum)?\s*(?::|=|is|was)\s*{number}\s*,\s*"
+        rf"mean\s*(?::|=|is|was)\s*{number}",
+        expected,
+        re.IGNORECASE,
+    )
     for label in ("max", "mean"):
-        if re.search(rf"\b{label}(?:imum)?\b[^.]*\b(?:absolute\s+)?logit", expected, re.IGNORECASE) is None:
-            errors.append(f"{_pointer(*path, 'expected_result')}: record the {label} absolute logit difference")
+        narrative_difference = re.search(
+            rf"\b{label}(?:imum)?\b[^.]*\b(?:absolute\s+)?logit\s+differences?\s*"
+            rf"(?:is|are|was|were|:|=)\s*{number}",
+            expected,
+            re.IGNORECASE,
+        )
+        if combined_differences is None and helper_differences is None and narrative_difference is None:
+            errors.append(
+                f"{_pointer(*path, 'expected_result')}: record the numeric {label} absolute logit difference"
+            )
 
 
 def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[str, Any], *, errors: list[str]) -> None:
