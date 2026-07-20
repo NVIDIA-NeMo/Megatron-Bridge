@@ -21,6 +21,7 @@ from types import SimpleNamespace
 
 import pytest
 
+
 try:
     from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
         _validate_dsa_index_share_pipeline_split,
@@ -177,9 +178,7 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chun
 ) -> None:
     """The GLM-5.2 layout never shares DSA indices across PP/VPP chunks."""
     if not HAVE_DSA_INDEX_SHARE_VALIDATOR:
-        pytest.skip(
-            "megatron.core removed _validate_dsa_index_share_pipeline_split on the mcore dev ref"
-        )
+        pytest.skip("megatron.core removed _validate_dsa_index_share_pipeline_split on the mcore dev ref")
 
     cfg = _build_recipe(glm52_sft_416gpu_h100_bf16_config, monkeypatch)
 
