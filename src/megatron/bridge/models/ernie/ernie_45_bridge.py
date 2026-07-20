@@ -233,9 +233,10 @@ class Ernie45Bridge(MegatronModelBridge):
         # flag is irrelevant; for training it will be enabled whenever
         # the required extensions are present.
 
-        # Disable MTP (Multi-Token Prediction) for inference -- the ERNIE HF
-        # model stores num_nextn_predict_layers in config but does not ship
-        # MTP weights, so we must not create MTP layers in Megatron.
+        # Disable MTP (Multi-Token Prediction) for conversion and inference.
+        # The PT checkpoint stores MTP weights but they are pre-training-only;
+        # Stage 1 validation only requires the main model weights.
+        # Export uses --not-strict so the 12 missing MTP tensors are warnings.
         provider.mtp_num_layers = None
 
         # Determine which layers are dense vs MoE.

@@ -1,6 +1,6 @@
 # Full-checkpoint conversion and inference validation inventory
 
-Last updated: 2026-07-15
+Last updated: 2026-07-16
 
 This manifest tracks full-checkpoint conversion and inference validation for the
 model architectures and explicitly named variants in the root
@@ -31,7 +31,7 @@ forward-logit parity.
 | Diffusion | LLaDA 1.5 | `GSAI-ML/LLaDA-1.5` | `84346fd91ba60252d260022201ad6fc5a3468fb2` | 8.0B | text diffusion | `examples/models/llada/llada15` | TODO |
 | Diffusion | Nemotron-Labs Diffusion | `nvidia/Nemotron-Labs-Diffusion-3B` | `0d51902da1f8869f83413ce642fab402fa5641e0` | 3.8B | text diffusion | `examples/models/nemotron_labs_diffusion` | TODO |
 | Diffusion | WAN 2.1 | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `0fad780a534b6463e45facd96134c9f345acfa5b` | 1.3B | text-to-video | `examples/models/wan` | TODO |
-| Ernie | Ernie 4.5 MoE | `baidu/ERNIE-4.5-21B-A3B-PT` | `87db95487941cb39592ee0abca3b9155a6d19c5c` | 21.9B | text | `examples/conversion` | BLOCKED |
+| Ernie | Ernie 4.5 MoE | `baidu/ERNIE-4.5-21B-A3B-PT` | `87db95487941cb39592ee0abca3b9155a6d19c5c` | 21.9B | text | `examples/models/ernie/ernie45` | PASS |
 | Ernie | Ernie 4.5 VL MoE | `baidu/ERNIE-4.5-VL-28B-A3B-PT` | `e3815e65c607ea211bfe21b46ab0cd264b76731c` | 29.4B | vision-language | `examples/models/vlm/ernie_vl` | BLOCKED |
 | Falcon | Falcon H1 | `tiiuae/Falcon-H1-0.5B-Instruct` | `8f2587ca06bff78d8fa1adfccbe8c24d5f86b368` | 0.5B | text | `examples/models/falcon_h1` | PASS |
 | Gemma | Gemma | `google/gemma-2b` | `9cf48e52b224239de00d483ec8eb84fb8d0f3a3a` | 2.5B | text | `examples/conversion` | PASS |
@@ -52,7 +52,7 @@ forward-logit parity.
 | Llama | Llama 3 | `meta-llama/Meta-Llama-3-8B` | `8cde5ca8380496c9a6cc7ef3a8b46a0372a1d920` | 8.0B | text | `examples/conversion` | PASS |
 | Llama | Llama 3.1 | `meta-llama/Meta-Llama-3.1-8B` | `d04e592bb4f6aa9cfee91e2e20afa771667e1d4b` | 8.0B | text | `examples/conversion` | PASS |
 | Llama | Llama 3.2 | `meta-llama/Llama-3.2-1B` | `4e20de362430cd3b72f300e6b0f18e50e7166e08` | 1.2B | text | `examples/conversion` | PASS |
-| Llama | Llama 3.3 | `meta-llama/Llama-3.3-70B-Instruct` | `6f6073b423013f6a7d4d9f39144961bfbfbc386b` | 70.6B | text | `examples/conversion` | BLOCKED |
+| Llama | Llama 3.3 | `meta-llama/Llama-3.3-70B-Instruct` | `6f6073b423013f6a7d4d9f39144961bfbfbc386b` | 70.6B | text | `examples/conversion` | PASS |
 | MiniMax | MiniMax-M2 | `MiniMaxAI/MiniMax-M2` | `757303d492a50514c312788b5247a4f696a4c6a3` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
 | MiniMax | MiniMax-M2.5 | `MiniMaxAI/MiniMax-M2.5` | `f710177d938eff80b684d42c5aa84b382612f21f` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
 | MiniMax | MiniMax-M2.7 | `MiniMaxAI/MiniMax-M2.7` | `d494266a4affc0d2995ba1fa35c8481cbd84294b` | 456B | text | `examples/models/minimax/minimax_m2` | TODO |
@@ -62,7 +62,7 @@ forward-logit parity.
 | Mistral | Ministral 3 14B | `mistralai/Ministral-3-14B-Base-2512` | `5b0ceedbb42dff466ae60b258ba296f32da51384` | 13.9B | vision-language | `examples/models/mistral/ministral3` | PASS |
 | Xiaomi-MiMo | MiMo | `XiaomiMiMo/MiMo-7B-Base` | `c72df4586cb8bdeebd65f36929cd3385a6566fbe` | 7.8B | text | `examples/models/mimo` | PASS |
 | Xiaomi-MiMo | MiMo-V2-Flash | `XiaomiMiMo/MiMo-V2-Flash` | `1afd314a2406c282e0956375c34a676501c78649` | 309.8B | text | `examples/models/mimo_v2_flash` | TODO |
-| Moonlight | Moonlight | `moonshotai/Moonlight-16B-A3B` | `476b36a473d4467f94469414bef6cee75c9c8172` | 16.0B | text | `examples/conversion` | BLOCKED |
+| Moonlight | Moonlight | `moonshotai/Moonlight-16B-A3B` | `476b36a473d4467f94469414bef6cee75c9c8172` | 16.0B | text | `examples/conversion` | PARTIAL |
 | Nemotron | Nemotron H | `nvidia/Nemotron-H-4B-Base-8K` | `faba3b731ad7ea5781b9518ae75fb610a94affcf` | 4.5B | text | `examples/conversion` | PASS |
 | Nemotron | Nemotron Nano v2 | `nvidia/NVIDIA-Nemotron-Nano-9B-v2-Base` | `dc0661c829b14e5b9246c05cfa89094a0875e052` | 8.9B | text | `examples/conversion` | PASS |
 | Nemotron | Nemotron-3 Nano | `nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-Base-BF16` | `97ab8012882a655dc38df4fee47422aca9caca07` | 31.6B | text | `examples/models/nemotron/nemotron_3/nano` | PASS |
