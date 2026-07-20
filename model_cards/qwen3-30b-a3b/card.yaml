@@ -157,42 +157,46 @@ items:
   sft:
     status: verified
     precision: bf16
+    bridge_commit: 691b8c3fa37815842fb69a9eed4da519f2b19cd5  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_sft_8gpu_h100_bf16_config --mode sft
+      --recipe qwen3_30b_a3b_sft_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
-      --max_steps 100 --seq_length 2048 -tp 1 -pp 1 -ep 16 -etp 1
-      --lr 5e-6 --min_lr 0 --warmup_iters 10
+      --max_steps 100
       'dataset.hf_dataset.split="train[:10000]"'
       dataset.hf_output_root=work/data/tulu3
+      dataset.seed=1234
       dataset.do_validation=false dataset.hf_validation_proportion=null
-      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+      dataset.enable_offline_packing=true
       validation.eval_iters=0 validation.eval_interval=0
-      model.sequence_parallel=false model.bias_activation_fusion=true
-      model.apply_rope_fusion=true model.moe_router_fusion=true
-      model.moe_token_dispatcher_type=alltoall
-      model.moe_flex_dispatcher_backend=null checkpoint.load=null
+      rng.seed=5678 model.moe_router_force_load_balancing=false
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true
       --save_dir work/model-verification/qwen3-30b-a3b/sft-checkpoints
-      logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-18
+      --save_interval 100
+      logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+    last_verified: 2026-07-19
     metrics:
-      initial_loss: 1.553515
-      final_loss: 0.8965551
-      last_10_steps_step_time_ms_avg: 1189.000
-      last_10_steps_model_tflops_per_gpu_avg: 64.920
+      initial_loss: 1.623911
+      final_loss: 0.8882903
+      last_10_steps_step_time_ms_avg: 1195.170
+      last_10_steps_model_tflops_per_gpu_avg: 64.620
     expected_result: >
-      Tulu3 offline packing completes exactly 100 full-SFT steps with finite
-      losses, no skipped or NaN iterations, all four metrics recorded, and a
-      reloadable full-model iter_0000100 checkpoint. PP=1 keeps tokens, labels,
-      loss masks, and packed-sequence boundaries on one pipeline stage.
+      On two nodes with 16x H100, the generic library recipe completes exactly
+      100 Tulu3 full-SFT steps using its default TP1/PP1/EP16 topology and
+      DP16/MBS1/GA2 batch layout while preserving GBS32. Offline packing is
+      99.30% efficient; losses and gradients remain finite with no skipped or
+      NaN iterations, all four metrics are recorded, and a reloadable
+      full-model iter_0000100 checkpoint is saved.
 
   sft_export_inference:
     status: verified
     precision: bf16
+    bridge_commit: 691b8c3fa37815842fb69a9eed4da519f2b19cd5  # pragma: allowlist secret
     depends_on: sft
     commands:
       - >
@@ -201,20 +205,21 @@ items:
         --megatron-path work/model-verification/qwen3-30b-a3b/sft-checkpoints/iter_0000100
         --hf-path work/model-verification/qwen3-30b-a3b/sft-hf-export
         --torch-dtype bfloat16 --export-weight-dtype bfloat16
-        --distributed-save --tp 1 --pp 1 --ep 16
+        --distributed-save --tp 1 --pp 1 --ep 16 --etp 1
       - >
         uv run python
         skills/create-model-verification-card/scripts/verify_hf_inference.py
         --hf-model work/model-verification/qwen3-30b-a3b/sft-hf-export
         --prompt "In one short sentence, explain why Paris is important to France."
         --max-new-tokens 32 --chat-template --disable-thinking
-    last_verified: 2026-07-18
+    last_verified: 2026-07-19
     expected_result: >
-      The step-100 full-SFT checkpoint exports and reloads with Transformers
+      The step-100 full-SFT checkpoint exports into 16 BF16 safetensors shards
+      whose index covers all 18,867 weights, then reloads with Transformers
       without missing or unexpected keys. Two independent executions using
       greedy generation each produce exactly 32 new tokens with identical token
-      IDs and this coherent, byte-identical literal completion, including
-      whitespace,
+      IDs and this coherent, byte-identical literal completion with no leading
+      or trailing whitespace,
       "Paris is the capital city of France and is a major cultural, economic,
       and political center in Europe. It is home to many famous landmarks,
       such as the".
