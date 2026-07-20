@@ -505,6 +505,11 @@ class CommOverlapConfig:
             assert model_cfg.recompute_num_layers is None, (
                 "recompute_num_layers must be None when enabling overlap_moe_expert_parallel_comm"
             )
+            # ``recompute_modules`` may still be None here (Megatron-Core normalizes it to
+            # ["core_attn"] in __post_init__, which runs after this pre-finalize check).
+            assert "moe" not in (model_cfg.recompute_modules or []), (
+                "disable moe in recompute_modules when enabling overlap_moe_expert_parallel_comm"
+            )
             assert not model_cfg.moe_shared_expert_overlap, (
                 "disable moe_shared_expert_overlap when enabling overlap_moe_expert_parallel_comm"
             )
