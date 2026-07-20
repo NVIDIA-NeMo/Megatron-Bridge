@@ -8,6 +8,7 @@ except ModuleNotFoundError:
 if HAVE_MEGATRON_BRIDGE:
     from .llama2_llm_finetune import (
         llama2_70b_lora_config_gb200,
+        llama2_70b_lora_config_gb300,
     )
     from .llama3_llm_finetune import (
         llama3_8b_sft_config_gb200,
@@ -51,6 +52,11 @@ from .llama2_workload_base_configs import (
     LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V2,
     LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V3,
     LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V4,
+    LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V1,
+    LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V2,
+    LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V3,
+    LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V4,
+    LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V5,
 )
 
 from .llama3_workload_base_configs import (
@@ -336,12 +342,18 @@ __all__ = [
     "LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V2",
     "LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V3",
     "LLAMA2_70B_LORA_CONFIG_GB200_FP8_DS_V4",
+    "LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V1",
+    "LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V2",
+    "LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V3",
+    "LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V4",
+    "LLAMA2_70B_LORA_CONFIG_GB300_FP8_DS_V5",
 ]
 
 if HAVE_MEGATRON_BRIDGE:
     __all__.extend(
         [
             "llama2_70b_lora_config_gb200",
+            "llama2_70b_lora_config_gb300",
             "llama3_8b_pretrain_config_gb300",
             "llama3_8b_pretrain_config_gb200",
             "llama3_8b_pretrain_config_b300",

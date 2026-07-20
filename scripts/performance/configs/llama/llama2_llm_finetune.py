@@ -142,12 +142,15 @@ def get_llama2_70b_precision_config(compute_dtype: str):
     precision_config = get_precision_config(compute_dtype)
     precision_config.fp4_param = False
     precision_config.fp4_param_gather = False
-    precision_config.fp8_param = True
-    precision_config.fp8_param_gather = True
+    precision_config.fp8_param = False
+    precision_config.fp8_param_gather = False
     precision_config.reuse_grad_buf_for_mxfp8_param_ag = False
     precision_config.num_layers_at_start_in_bf16 = 0
     precision_config.num_layers_at_end_in_bf16 = 0
     precision_config.first_last_layers_bf16 = False
+    if compute_dtype == "fp8_ds":
+        precision_config.fp8_param = True
+        precision_config.fp8_param_gather = True
     return precision_config
 
 def llama2_70b_lora_config_gb200(precision: str = "fp8_ds", config_variant: str = "v1") -> ConfigContainer:
@@ -234,6 +237,89 @@ def llama2_70b_lora_config_gb200(precision: str = "fp8_ds", config_variant: str 
         cfg.dataset.num_workers = 2
         cfg.dataset.seed = 22205
         cfg.rng.seed = 22205
+    return cfg
 
+def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str = "v1") -> ConfigContainer:
+    """GB300, MLPerf config."""
+    base_cfg = get_workload_base_config(
+        model_family_name="llama",
+        model_recipe_name="llama2_70b",
+        task="lora",
+        gpu="gb300",
+        compute_dtype=precision.upper(),
+        config_variant=config_variant,
+    )
+    cfg = llama2_70b_peft_config(peft_scheme="lora")
+    set_workload_base_configs(cfg, base_cfg)
+    precision_config = get_llama2_70b_precision_config(precision)
+    cfg.mixed_precision = precision_config
+    set_llama2_70b_common_configs(cfg)
+
+    # 1 GPUs
+    if config_variant == "v1":
+        cfg.validation.eval_global_batch_size = 1
+        cfg.validation.eval_interval = 48
+        cfg.validation.eval_iters = 173
+        cfg.validation.start_at_eval_iter = 192
+        cfg.scheduler.lr_decay_iters = 800
+        cfg.scheduler.lr_decay_steps = 6400
+        cfg.scheduler.wd_incr_steps = 6400
+        cfg.dataset.max_train_samples = 6432
+        cfg.dataset.num_workers = 4
+        cfg.dataset.seed = 172
+        cfg.rng.seed = 172
+    # 4 GPUs
+    elif config_variant == "v2":
+        cfg.validation.eval_global_batch_size = 4
+        cfg.validation.eval_interval = 48
+        cfg.validation.eval_iters = 44
+        cfg.validation.start_at_eval_iter = 192
+        cfg.scheduler.lr_decay_iters = 800
+        cfg.scheduler.lr_decay_steps = 6400
+        cfg.scheduler.wd_incr_steps = 6400
+        cfg.dataset.max_train_samples = 6432
+        cfg.dataset.num_workers = 4
+        cfg.dataset.seed = 10710
+        cfg.rng.seed = 10710
+    # 8 GPUs
+    elif config_variant == "v3":
+        cfg.validation.eval_global_batch_size = 8
+        cfg.validation.eval_interval = 48
+        cfg.validation.eval_iters = 22
+        cfg.validation.start_at_eval_iter = 192
+        cfg.scheduler.lr_decay_iters = 800
+        cfg.scheduler.lr_decay_steps = 6400
+        cfg.scheduler.wd_incr_steps = 6400
+        cfg.dataset.max_train_samples = 6432
+        cfg.dataset.num_workers = 4
+        cfg.dataset.seed = 22699
+        cfg.rng.seed = 22699
+    # 72 GPUs
+    elif config_variant == "v4":
+        cfg.validation.eval_global_batch_size = 36
+        cfg.validation.eval_interval = 43
+        cfg.validation.eval_iters = 5
+        cfg.validation.start_at_eval_iter = 172
+        cfg.scheduler.lr_decay_iters = 800
+        cfg.scheduler.lr_decay_steps = 7200
+        cfg.scheduler.wd_incr_steps = 7200
+        cfg.dataset.max_train_samples = 7236
+        cfg.dataset.num_workers = 2
+        cfg.dataset.seed = 14954
+        cfg.rng.seed = 14954
+    # 512 GPUs
+    elif config_variant == "v5":
+        cfg.optimizer.lr = 0.0006
+        cfg.validation.eval_global_batch_size = 64
+        cfg.validation.eval_interval = 6
+        cfg.validation.eval_iters = 3
+        cfg.validation.start_at_eval_iter = 66
+        cfg.scheduler.lr_decay_iters = 600
+        cfg.scheduler.lr_decay_steps = 38400
+        cfg.scheduler.wd_incr_steps = 38400
+        cfg.dataset.max_train_samples = 38592
+        cfg.dataset.num_workers = 2
+        cfg.dataset.seed = 8353
+        cfg.rng.seed = 8353
     return cfg
 
