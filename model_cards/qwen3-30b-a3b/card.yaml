@@ -86,11 +86,12 @@ items:
       --tp 1 --pp 8 --prompt "The capital of France is the city of"
     last_verified: null
     expected_result: >
-      The observed next-token predictions match at token ID 12095 (" Paris"),
-      with maximum and mean absolute logit differences of 0.593750 and 0.130076
-      and cosine similarity 0.999318. This remains unverified because the BF16
-      parity gate requires cosine similarity above 0.9999 and materially smaller
-      absolute differences.
+      The immutable-revision rerun selects token ID 12095 (" Paris") on both
+      paths, with maximum and mean absolute logit differences of 0.593750 and
+      0.130064 and cosine similarity 0.999317. Moving the HF expert probability
+      multiplication before its down projection improves cosine similarity to
+      0.999834 but still fails the BF16 gate above 0.9999, so this item remains
+      unverified.
 
   inference:
     status: verified
