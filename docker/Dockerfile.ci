@@ -76,12 +76,19 @@ RUN --mount=type=bind,source=docker/patches/deepep.patch,target=/opt/deepep.patc
     popd; \
     fi
 
-COPY pyproject.toml uv.lock /opt/Megatron-Bridge/
-COPY src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
-COPY 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
-COPY 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
-COPY 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
-COPY 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
+# --link makes each COPY an independent, content-addressed layer that is rebased
+# onto the parent instead of layered on top of it. This keeps the dependency-manifest
+# COPYs (and everything below them, including the ~40 min `uv sync` layer) cacheable
+# across CI builds: without --link a COPY is keyed to the exact parent-layer chain and
+# forces BuildKit to pull AND extract the large DeepEP layer above just to run the copy,
+# so the layer reliably cache-misses against the registry cache and the expensive
+# `uv sync` rebuilds cold on every run — even a no-op main build.
+COPY --link pyproject.toml uv.lock /opt/Megatron-Bridge/
+COPY --link src/megatron/bridge/__init__.py src/megatron/bridge/package_info.py /opt/Megatron-Bridge/src/megatron/bridge/
+COPY --link 3rdparty/Megatron-LM/pyproject.toml 3rdparty/Megatron-LM/setup.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/
+COPY --link 3rdparty/Megatron-LM/megatron/training/__init__.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/training/
+COPY --link 3rdparty/Megatron-LM/megatron/core/__init__.py 3rdparty/Megatron-LM/megatron/core/package_info.py /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/
+COPY --link 3rdparty/Megatron-LM/megatron/core/datasets/Makefile 3rdparty/Megatron-LM/megatron/core/datasets/helpers.cpp /opt/Megatron-Bridge/3rdparty/Megatron-LM/megatron/core/datasets/
 
 # Build arg to skip --locked when testing with different MCore versions
 ARG MCORE_TRIGGERED_TESTING=false
@@ -116,4 +123,4 @@ RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     ln -sf "$(ldconfig -p | awk '/libcudart\.so\.[0-9]+ /{print $NF; exit}')" /opt/venv/lib/python3.12/site-packages/tilelang/lib/libcudart_stub.so && \
     uv cache prune ${UV_CACHE_PRUNE_ARGS}
 
-COPY --chmod=644 . /opt/Megatron-Bridge
+COPY --link --chmod=644 . /opt/Megatron-Bridge
