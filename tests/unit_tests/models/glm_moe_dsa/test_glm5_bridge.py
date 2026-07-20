@@ -42,6 +42,7 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
     config = {
         "first_k_dense_replace": 3,
         "num_hidden_layers": 78,
+        "num_nextn_predict_layers": 1,
         "moe_intermediate_size": 2048,
         "n_shared_experts": 1,
         "rope_parameters": {"rope_theta": 1_000_000},
@@ -55,9 +56,16 @@ def _provider_from_hf_config(monkeypatch: pytest.MonkeyPatch, **config_overrides
     monkeypatch.setattr(
         MegatronModelBridge,
         "provider_bridge",
-        lambda _self, _hf_pretrained: SimpleNamespace(),
+        lambda _self, hf_pretrained: SimpleNamespace(mtp_num_layers=hf_pretrained.config.num_nextn_predict_layers),
     )
     return GLM5Bridge().provider_bridge(SimpleNamespace(config=SimpleNamespace(**config)))
+
+
+def test_provider_bridge_preserves_mtp_architecture_from_hf_config(monkeypatch: pytest.MonkeyPatch) -> None:
+    """GLM-5 conversion preserves the MTP layers declared by the checkpoint config."""
+    provider = _provider_from_hf_config(monkeypatch)
+
+    assert provider.mtp_num_layers == 1
 
 
 @pytest.mark.parametrize(
