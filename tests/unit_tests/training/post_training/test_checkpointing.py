@@ -30,6 +30,7 @@ from megatron.bridge.training.post_training.checkpointing import (
     load_modelopt_state,
 )
 from megatron.bridge.training.state import TrainState
+from tests.unit_tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 @pytest.fixture
@@ -376,10 +377,10 @@ class TestPostTrainingCheckpointUtilities:
                     result = has_modelopt_state(str(checkpoint_dir))
                     assert result == expected
 
-    # Broken by the Megatron-Core dev bump (dev-branch tracking): torch_dist
-    # save now writes common.pt for object-only dicts. TODO: realign the
-    # detect/restore contract with the new MCore layout.
-    @pytest.mark.pleasefixme
+    # Skipped only on the unreleased Megatron-Core dev ref: torch_dist save now
+    # writes common.pt for object-only dicts. Stays active on main. TODO: realign
+    # the detect/restore contract with the new MCore layout.
+    @pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="Broken by the Megatron-Core dev ref; realignment pending.")
     @patch("megatron.bridge.training.post_training.checkpointing._load_extra_state_from_sharded_checkpoint")
     @patch("megatron.bridge.training.post_training.checkpointing.mto.restore_from_modelopt_state")
     @patch("megatron.bridge.training.post_training.checkpointing.mto.ModeloptStateManager.is_converted")
