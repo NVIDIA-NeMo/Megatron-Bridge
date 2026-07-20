@@ -84,17 +84,36 @@ KIMI_K2_PRETRAIN_CONFIG_B300 = replace(
 )
 KIMI_K2_PRETRAIN_CONFIG_B300_BF16 = KIMI_K2_PRETRAIN_CONFIG_B300
 KIMI_K2_PRETRAIN_CONFIG_B300_FP8_CS = KIMI_K2_PRETRAIN_CONFIG_B300
-KIMI_K2_PRETRAIN_CONFIG_B300_FP8_MX = KIMI_K2_PRETRAIN_CONFIG_B300
+KIMI_K2_PRETRAIN_CONFIG_B300_FP8_MX = replace(
+    BASE_KIMI_K2_CONFIG,
+    num_gpus=256,
+    micro_batch_size=1,
+    global_batch_size=2048,
+    pipeline_model_parallel_size=16,
+    virtual_pipeline_model_parallel_size=None,
+    expert_model_parallel_size=8,
+    moe_flex_dispatcher_backend="hybridep",
+    moe_a2a_overlap=True,
+    cuda_graph_impl="full_iteration",
+    cuda_graph_scope=[],
+    cutedsl_fused_grouped_mlp=True,
+    fp8_dot_product_attention=True,
+    recompute_modules=["mla_up_proj"],
+)
 
 
 KIMI_K2_PRETRAIN_CONFIG_B200 = replace(
     BASE_KIMI_K2_CONFIG,
     num_gpus=256,
     pipeline_model_parallel_size=16,
+    virtual_pipeline_model_parallel_size=None,
     expert_model_parallel_size=16,
-    global_batch_size=2048,
-    recompute_modules=["mla_up_proj"],
+    global_batch_size=4096,
+    recompute_modules=["mla_up_proj","mlp"],
     moe_a2a_overlap=False,
+    moe_flex_dispatcher_backend="deepep",
+    cuda_graph_impl="transformer_engine",
+    cuda_graph_scope=["moe_router", "moe_preprocess","attn"],
 )
 KIMI_K2_PRETRAIN_CONFIG_B200_BF16 = KIMI_K2_PRETRAIN_CONFIG_B200
 KIMI_K2_PRETRAIN_CONFIG_B200_FP8_CS = KIMI_K2_PRETRAIN_CONFIG_B200
