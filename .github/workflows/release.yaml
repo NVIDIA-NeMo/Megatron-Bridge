@@ -99,7 +99,7 @@ jobs:
       packaging: uv
       has-src-dir: true
       skip-test-wheel: true
-      custom-container: nvcr.io/nvidia/pytorch:26.06-py3
+      custom-container: nvcr.io/nvidia/pytorch:25.11-py3
       runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}

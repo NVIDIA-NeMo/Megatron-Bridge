@@ -20,9 +20,17 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    _validate_dsa_index_share_pipeline_split,
-)
+
+try:
+    from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+        _validate_dsa_index_share_pipeline_split,
+    )
+
+    HAVE_DSA_INDEX_SHARE_VALIDATOR = True
+except ImportError:
+    _validate_dsa_index_share_pipeline_split = None
+    HAVE_DSA_INDEX_SHARE_VALIDATOR = False
+
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
@@ -168,6 +176,11 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chun
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The GLM-5.2 layout never shares DSA indices across PP/VPP chunks."""
+    if not HAVE_DSA_INDEX_SHARE_VALIDATOR:
+        pytest.skip(
+            "megatron.core removed _validate_dsa_index_share_pipeline_split on the mcore dev ref"
+        )
+
     cfg = _build_recipe(glm52_sft_416gpu_h100_bf16_config, monkeypatch)
 
     layout = cfg.model.pipeline_model_parallel_layout
