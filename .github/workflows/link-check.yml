@@ -51,8 +51,9 @@ jobs:
             --scheme https
             --scheme http
             --accept '200..=299,401,403,429'
-            --exclude '^/'
+            --root-dir docs/fern
             --exclude 'github\.com/deepseek-ai/DeepSeek-V4'
+            --exclude 'github\.com/NVIDIA-NeMo/Megatron-Bridge/stargazers'
             --exclude 'sched\.com'
             --exclude 'llama\.com'
             "docs/fern/**/*.mdx"
