@@ -344,6 +344,33 @@ def deepseek_v3_pretrain_128gpu_gb300_fp8mx_hsdp_config() -> ConfigContainer:
     cfg.mixed_precision.fp8_dot_product_attention = False
 
     cfg.model.moe_router_force_load_balancing = True
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        # Keep DeepSeek kernel selection aligned with the measured baseline.
+        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+    }
     return cfg
 
 
