@@ -269,6 +269,18 @@ def build_train_valid_test_data_loaders(
     )
 
     drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
+    if (
+        train_ds is not None
+        and cfg.dataset.dataloader_type == "batch"
+        and not drop_last
+        and len(train_ds) % cfg.train.global_batch_size != 0
+        and not isinstance(cfg.dataset, GPTSFTDatasetConfig)
+    ):
+        raise ValueError(
+            'dataloader_type="batch" with drop_last=False requires GPTSFTDatasetConfig because incomplete '
+            "global batches use negative indices that only GPT SFT datasets convert to loss-masked padding. "
+            "Use drop_last=True for other dataset providers."
+        )
 
     # Check that the train dataset has at least one global batch of samples.
     if (
