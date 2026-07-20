@@ -358,12 +358,15 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
         "partition",
         "--container-image",
         "image.sqsh",
+        "--experiment-name",
+        "mb4909-nano4b-conversion",
     )
     module._validate_args(args)
 
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
     assert executor.kwargs["ntasks_per_node"] == 1
+    assert executor.kwargs["job_name_prefix"] == "mb4909-nano4b-conversion"
     assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
