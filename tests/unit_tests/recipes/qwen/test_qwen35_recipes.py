@@ -115,6 +115,7 @@ def test_qwen35_text_recipe_uses_nested_language_model_config(
         assert cfg.model.moe_token_dispatcher_type == "flex"
         assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
         assert cfg.model.moe_flex_dispatcher_num_sms == 32
+        assert cfg.model.moe_hybridep_num_sms is None
         assert cfg.model.moe_router_force_load_balancing is False
         assert cfg.model.cuda_graph_impl == "transformer_engine"
         assert cfg.model.cuda_graph_scope is None

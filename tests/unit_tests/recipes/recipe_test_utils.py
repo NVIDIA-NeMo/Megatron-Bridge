@@ -153,6 +153,11 @@ class _OfflineAutoBridge:
     """Build a local provider without reading a Hugging Face configuration."""
 
     @classmethod
+    def from_hf_config(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
+        del args, kwargs
+        return cls()
+
+    @classmethod
     def from_hf_pretrained(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
         del args, kwargs
         return cls()
@@ -215,7 +220,17 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
     deepseek_v4_recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v4")
     monkeypatch.setattr(deepseek_v4_recipe_module, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
 
-    from transformers import AutoTokenizer
+    from transformers import AutoConfig, AutoTokenizer
+
+    def load_offline_auto_config(*args: object, **kwargs: object) -> SimpleNamespace:
+        del args, kwargs
+        return SimpleNamespace(text_config=SimpleNamespace(architectures=None))
+
+    monkeypatch.setattr(
+        AutoConfig,
+        "from_pretrained",
+        staticmethod(load_offline_auto_config),
+    )
 
     def load_offline_tokenizer(*args: object, **kwargs: object) -> _OfflineTokenizer:
         del args, kwargs
