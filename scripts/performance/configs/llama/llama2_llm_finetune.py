@@ -80,6 +80,7 @@ def set_llama2_70b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.use_te_rng_tracker = True
     cfg.rng.te_rng_tracker = True
     cfg.model.cp_comm_type = "a2a"
+    cfg.model.cpu_offloading = False
     cfg.model.cuda_graph_modules = []
     cfg.model.cuda_graph_warmup_steps = 5
     cfg.model.deallocate_pipeline_outputs = True
@@ -255,21 +256,9 @@ def llama2_70b_lora_config_gb300(precision: str = "fp8_ds", config_variant: str 
     cfg.mixed_precision = precision_config
     set_llama2_70b_common_configs(cfg)
 
-    # 1 GPUs
-    if config_variant == "v5":
-        cfg.validation.eval_global_batch_size = 1
-        cfg.validation.eval_interval = 48
-        cfg.validation.eval_iters = 173
-        cfg.validation.start_at_eval_iter = 192
-        cfg.scheduler.lr_decay_iters = 800
-        cfg.scheduler.lr_decay_steps = 6400
-        cfg.scheduler.wd_incr_steps = 6400
-        cfg.dataset.max_train_samples = 6432
-        cfg.dataset.num_workers = 4
-        cfg.dataset.seed = 172
-        cfg.rng.seed = 172
     # 4 GPUs
-    elif config_variant == "v1":
+    if config_variant == "v1":
+        cfg.model.cuda_graph_warmup_steps = 1
         cfg.validation.eval_global_batch_size = 4
         cfg.validation.eval_interval = 48
         cfg.validation.eval_iters = 44
