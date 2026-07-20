@@ -14,7 +14,10 @@
 
 from functools import partial
 from types import SimpleNamespace
+from unittest.mock import Mock
 
+from megatron.bridge.models.nemotron_vl import modeling_nemotron_vl
+from megatron.bridge.models.nemotron_vl import nemotron_vl_provider as provider_module
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
     NemotronVLModelProvider,
     get_language_mlp_submodules,
@@ -65,6 +68,20 @@ class TestNemotronVLModelProvider:
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True
         assert provider.freeze_vision_projection is True
+
+    def test_provide_uses_provider_as_runtime_config(self, monkeypatch):
+        provider = NemotronVLModelProvider()
+        llava_model = SimpleNamespace()
+        model = SimpleNamespace()
+        model_factory = Mock(return_value=model)
+
+        monkeypatch.setattr(provider_module, "LLaVAModel", Mock(return_value=llava_model))
+        monkeypatch.setattr(provider_module, "get_vit_layer_with_transformer_engine_spec", Mock(return_value=object()))
+        monkeypatch.setattr(provider_module, "get_language_mlp_submodules", Mock(return_value=object()))
+        monkeypatch.setattr(modeling_nemotron_vl, "NemotronVLModel", model_factory)
+
+        assert provider.provide() is model
+        model_factory.assert_called_once_with(config=provider, llava_model=llava_model)
 
     def test_language_mlp_submodules_from_object_specs(self):
         mlp_submodules = SimpleNamespace(linear_fc1=object(), linear_fc2=object())
