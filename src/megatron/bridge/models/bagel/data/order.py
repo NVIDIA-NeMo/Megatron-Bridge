@@ -12,13 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import random
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from pathlib import Path
-from typing import TypeVar
+from typing import Protocol, Self, TypeVar, cast
+
+from megatron.energon import WorkerConfig
 
 
 T = TypeVar("T")
+
+
+class _RestorableDataset(Protocol):
+    def restore_sample(self, key: tuple[str | int, ...]) -> object: ...
 
 
 def shuffle_and_shard(
@@ -104,3 +111,112 @@ def choose_group(weights: Sequence[float], rng: random.Random) -> int:
         if value < sum(weights[: index + 1]) / total:
             return index
     raise RuntimeError("BAGEL group draw fell outside cumulative weights")
+
+
+def plan_manifest_indices(
+    manifest_path: Path,
+    *,
+    seed: int,
+    rank: int,
+    world_size: int,
+    worker_id: int,
+    num_workers: int,
+    num_used_data: int,
+    shuffle_seed: int = 0,
+) -> list[int]:
+    """Map BAGEL's independently planned source stream to physical WDS sample indices."""
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    samples = cast(list[dict[str, object]], manifest["samples"])
+    planning = cast(dict[str, object], manifest["planning"])
+    shard_args = {
+        "seed": seed,
+        "rank": rank,
+        "world_size": world_size,
+        "worker_id": worker_id,
+        "num_workers": num_workers,
+    }
+    dataset_group = manifest["dataset_group"]
+    if dataset_group == "t2i_pretrain":
+        parquet_paths = cast(list[str], planning["parquet_paths"])[:num_used_data]
+        row_counts = cast(dict[str, list[int]], planning["row_counts"])
+        planned = plan_t2i_sources(parquet_paths, row_counts, **shard_args)
+    elif dataset_group == "unified_edit":
+        rows = cast(list[dict[str, object]], planning["row_groups"])
+        selected = set(sorted({cast(str, row["parquet"]) for row in rows})[:num_used_data])
+        row_groups = [
+            (cast(str, row["parquet"]), cast(int, row["row_group"])) for row in rows if row["parquet"] in selected
+        ]
+        row_counts = {
+            (cast(str, row["parquet"]), cast(int, row["row_group"])): cast(int, row["rows"])
+            for row in rows
+            if row["parquet"] in selected
+        }
+        planned = plan_editing_sources(row_groups, row_counts, **shard_args)
+    elif dataset_group == "vlm_sft":
+        planned = plan_vlm_sources(
+            cast(list[str], planning["lines"]),
+            jsonl_name=cast(str, planning["jsonl"]),
+            num_used_data=num_used_data,
+            shuffle_seed=shuffle_seed,
+            **shard_args,
+        )
+    else:
+        raise ValueError(f"unknown BAGEL dataset group: {dataset_group}")
+
+    source_indexes = {
+        json.dumps(sample["source"], sort_keys=True, separators=(",", ":")): cast(int, sample["index"])
+        for sample in samples
+    }
+    return [source_indexes[json.dumps(item["source"], sort_keys=True, separators=(",", ":"))] for item in planned]
+
+
+class BagelPlannedLoader(Iterator[object]):
+    """Read an independently planned repeating source stream by Energon restore key."""
+
+    def __init__(
+        self,
+        dataset: _RestorableDataset,
+        sample_indices: Sequence[int],
+        worker_config: WorkerConfig,
+    ) -> None:
+        """Store the random-access Energon dataset and canonical source plan."""
+        if not sample_indices:
+            raise ValueError("BAGEL source plan is empty")
+        self.dataset = dataset
+        self.sample_indices = list(sample_indices)
+        self.worker_config = worker_config
+        self.position = 0
+
+    def __iter__(self) -> Self:
+        """Return this stateful source reader."""
+        return self
+
+    def __next__(self) -> object:
+        """Cook the next planned WDS sample through Energon's restore API."""
+        sample_index = self.sample_indices[self.position % len(self.sample_indices)]
+        restore_key = (
+            "MapDataset",
+            self.position,
+            "MapDataset",
+            self.position,
+            "Webdataset",
+            sample_index,
+        )
+        self.worker_config.worker_activate(self.position)
+        try:
+            sample = self.dataset.restore_sample(restore_key)
+        finally:
+            self.worker_config.worker_deactivate()
+        self.position += 1
+        return sample
+
+    def save_state_rank(self) -> dict[str, int]:
+        """Save this worker's source-stream position."""
+        return {"position": self.position}
+
+    def restore_state_rank(self, state: Mapping[str, object]) -> None:
+        """Restore this worker's source-stream position."""
+        position = state["position"]
+        if not isinstance(position, int):
+            raise TypeError("BAGEL planned-loader position must be an integer")
+        self.position = position
