@@ -388,7 +388,9 @@ class PerfEnvPlugin(Plugin):
                 if use_mnnvl is None:
                     executor.env_vars["USE_MNNVL"] = "0"
                 if hybrid_ep_ranks_per_nvl_domain is None:
-                    executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = "8" if ep_size > 8 else str(ep_size)
+                    executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = (
+                        "8" if ep_size > 8 else str(ep_size)
+                    )
             else:
                 # GB200/GB300 use NVL72 topology
                 assert ep_size <= 72, "ep_size must be less than or equal to 72"

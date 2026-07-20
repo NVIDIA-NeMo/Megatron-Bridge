@@ -96,10 +96,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     multi_value_flags = {"-cb", "--custom_bash_cmds", "--custom_post_bash_cmds"}
 
     def _is_launcher_only(flag: str) -> bool:
-        return (
-            flag in ("--additional_slurm_params", "--csp", *multi_value_flags)
-            or flag.startswith("--kubeflow_")
-        )
+        return flag in ("--additional_slurm_params", "--csp", *multi_value_flags) or flag.startswith("--kubeflow_")
 
     filtered_args = []
     index = 0
@@ -170,7 +167,7 @@ mkdir -p "${{ARTIFACT_DIR}}/ranks"
 TRAIN_LOG="${{ARTIFACT_DIR}}/ranks/train-rank-${{RANK_ID}}.log"
 
 set +e
-bash -c {shlex.quote(f"{pre_cmds} ; {training_cmd}")} 2>&1 | tee "${{TRAIN_LOG}}"
+bash -c {shlex.quote(f'{pre_cmds} ; {training_cmd} "$@"')} -- "$@" 2>&1 | tee "${{TRAIN_LOG}}"
 TRAIN_RC="${{PIPESTATUS[0]}}"
 set -e
 
@@ -195,7 +192,7 @@ exit "${{POST_RC}}"
 """
     return run.Script(
         path="bash",
-        args=["-lc", wrapped_cmd],
+        args=["-lc", wrapped_cmd, "nemo-kubeflow-hook-wrapper"],
         env=script.env.copy(),
         metadata=script.metadata.copy(),
     )

@@ -108,9 +108,10 @@ def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
     """Wrap a task with per-rank GPU-local NUMA binding without dropping task metadata."""
     training_command = shlex.join(task.to_command(with_entrypoint=True))
     return run.Script(
-        env=task.env.copy(),
-        metadata=task.metadata.copy(),
-        inline=f"""
+        path="bash",
+        args=[
+            "-lc",
+            f"""
 set -euo pipefail
 
 : "${{LOCAL_RANK:?LOCAL_RANK must be set by torchrun}}"
@@ -133,8 +134,12 @@ if [[ ! "$NUMA_NODE" =~ ^[0-9]+$ ]]; then
 fi
 
 echo "[numactl_local] host=$(hostname) rank=${{RANK:-unknown}} local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE"
-exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command}
+exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command} "$@"
 """,
+            "nemo-kubeflow-numa-wrapper",
+        ],
+        env=task.env.copy(),
+        metadata=task.metadata.copy(),
     )
 
 
