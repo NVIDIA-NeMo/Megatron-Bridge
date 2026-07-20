@@ -2063,7 +2063,7 @@ wheels = [
 [[package]]
 name = "mamba-ssm"
 version = "2.3.2.post1"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/state-spaces/mamba.git?rev=0048fbf2e7b2f214dcbe703ea3dec2b9647595e1#0048fbf2e7b2f214dcbe703ea3dec2b9647595e1" }
 dependencies = [
     { name = "apache-tvm-ffi" },
     { name = "einops" },
@@ -2076,7 +2076,6 @@ dependencies = [
     { name = "transformers" },
     { name = "triton", marker = "sys_platform == 'never'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/af/48/aa7bec0efc7453fa0512276c0069c854bf684219050294266534bfef34bb/mamba_ssm-2.3.2.post1.tar.gz", hash = "sha256:104cc47e9101e5401a675fa2b784f2952b9b037f3b1dd83b5ac544394e95d028", size = 216439, upload-time = "2026-05-09T12:47:51.797Z" }
 
 [[package]]
 name = "markdown"
@@ -2325,7 +2324,7 @@ requires-dist = [
     { name = "flashinfer-python", specifier = "==0.6.8.post1" },
     { name = "hydra-core", specifier = ">1.3,<=1.3.2" },
     { name = "librosa", marker = "extra == 'audio'" },
-    { name = "mamba-ssm", marker = "extra == 'ssm'" },
+    { name = "mamba-ssm", marker = "extra == 'ssm'", git = "https://github.com/state-spaces/mamba.git?rev=0048fbf2e7b2f214dcbe703ea3dec2b9647595e1" },
     { name = "megatron-core", extras = ["dev", "mlm"], editable = "3rdparty/Megatron-LM" },
     { name = "mistral-common", specifier = ">=1.10.0" },
     { name = "mlflow", specifier = ">=3.9.0" },
