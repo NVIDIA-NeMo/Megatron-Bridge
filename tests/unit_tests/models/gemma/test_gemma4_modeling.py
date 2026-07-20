@@ -2001,9 +2001,7 @@ class TestGemma4MoEHelpers:
         expert, shared, router, routed_padding_mask = calls[0]
         if hasattr(TransformerLayer, "_maybe_unflatten_for_moe"):
             expected_router = hidden_states.view(2, 2, -1).transpose(0, 1).contiguous()
-            normalized = expected_router * torch.pow(
-                expected_router.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5
-            )
+            normalized = expected_router * torch.pow(expected_router.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
             torch.testing.assert_close(expert, normalized * 2.0)
             torch.testing.assert_close(shared, normalized * 3.0)
             torch.testing.assert_close(router, expected_router)
@@ -2013,9 +2011,7 @@ class TestGemma4MoEHelpers:
             # WAR (dev-ref mcore): TransformerLayer._maybe_unflatten_for_moe is absent on the
             # Megatron-Core dev ref (see modeling_gemma4._forward_mlp guard, TODO e86c262ccd0c),
             # so _forward_mlp passes hidden_states through unflattened and skips the reflatten.
-            normalized = hidden_states * torch.pow(
-                hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5
-            )
+            normalized = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
             torch.testing.assert_close(expert, normalized * 2.0)
             torch.testing.assert_close(shared, normalized * 3.0)
             torch.testing.assert_close(router, hidden_states)
