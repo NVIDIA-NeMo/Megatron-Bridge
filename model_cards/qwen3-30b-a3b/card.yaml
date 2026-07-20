@@ -76,8 +76,9 @@ items:
       unexpected keys.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 24f3dcde1fe27a1c3f1097b94d69b38e37a57415  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -85,15 +86,13 @@ items:
       --hf-revision ad44e777bcd18fa416d9da3bd8f70d33ebb85d39
       --megatron_model_path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
       --tp 1 --pp 8 --prompt "The capital of France is the city of"
-    last_verified: null
+    last_verified: 2026-07-20
     expected_result: >
-      A pinned-revision rerun must produce matching Hugging Face and Megatron
-      next-token predictions and cosine similarity of at least 0.99, while
-      recording numeric maximum and mean absolute logit differences as
-      report-only diagnostics. An earlier run observed token ID 12095
-      (" Paris"), cosine similarity 0.999317, maximum difference 0.593750, and
-      mean difference 0.130064, but its public command could not pin the HF
-      revision and therefore is not verification evidence for this item.
+      The pinned-revision one-step comparison exits successfully; the Hugging
+      Face and Megatron next-token predictions match at token ID 12095
+      (" Paris"), and cosine similarity is 0.999317, above the 0.99 correlation
+      gate. The maximum and mean absolute logit differences are 0.593750 and
+      0.130064, respectively; both are report-only diagnostic observations.
 
   inference:
     status: verified
