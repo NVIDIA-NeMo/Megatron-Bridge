@@ -40,7 +40,6 @@ from transformers.modeling_utils import PreTrainedModel
 from transformers.pytorch_utils import ALL_LAYERNORM_LAYERS, is_torch_greater_or_equal_than_1_13
 from transformers.utils import (
     add_start_docstrings,
-    add_start_docstrings_to_model_forward,
     is_flash_attn_2_available,
     is_flash_attn_greater_or_equal_2_10,
     logging,
@@ -81,6 +80,29 @@ if is_torch_fx_available():
 logger = logging.get_logger(__name__)
 
 _CONFIG_FOR_DOC = "BailingMoeV2Config"
+
+
+def add_start_docstrings_to_model_forward(*docstr):
+    """Prepend the given docstrings to a forward method without introspecting its source.
+
+    This mirrors the intent of ``transformers.utils.add_start_docstrings_to_model_forward``
+    but avoids the ``inspect.getsource(func)`` call that upstream performs at decoration
+    time. That introspection raises ``OSError('could not get source code')`` whenever the
+    module's source file is not retrievable (for example when the package was installed from
+    a working tree that is later cleaned), which broke importing this model during training.
+
+    Args:
+        *docstr: Docstring fragments to prepend to the decorated function's ``__doc__``.
+
+    Returns:
+        A decorator that concatenates ``docstr`` ahead of the function's existing docstring.
+    """
+
+    def docstring_decorator(fn):
+        fn.__doc__ = "".join(docstr) + (fn.__doc__ if fn.__doc__ is not None else "")
+        return fn
+
+    return docstring_decorator
 
 
 def roll_tensor(tensor, shifts=-1, dims=-1, fill_value=0):
