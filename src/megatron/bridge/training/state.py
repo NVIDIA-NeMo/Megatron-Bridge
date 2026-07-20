@@ -490,6 +490,8 @@ class GlobalState:
                 setattr(model_config, callback_name, None)
         self._timers = None
         self._train_state = None
+        if self._tensorboard_logger is not None:
+            self._tensorboard_logger.close()
         self._tensorboard_logger = None
         self._wandb_logger = None
         self._mlflow_logger = None

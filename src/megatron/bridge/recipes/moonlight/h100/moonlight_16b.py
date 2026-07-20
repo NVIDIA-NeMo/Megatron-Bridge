@@ -20,6 +20,7 @@ from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -275,6 +276,10 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     if cfg.model.apply_rope_fusion:
         cfg.dist.enable_megatron_core_experimental = True  # for mla rope fusion
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -339,6 +344,10 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     )
     cfg.ddp.grad_reduce_in_fp32 = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -458,6 +467,10 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -496,6 +509,10 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
     cfg.model.moe_shared_expert_overlap = False
     cfg.comm_overlap = None
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -566,6 +583,10 @@ def moonlight_16b_sft_8gpu_h100_bf16_8k_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -733,6 +754,10 @@ def moonlight_16b_peft_2gpu_h100_bf16_config(
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -783,6 +808,10 @@ def moonlight_16b_peft_4gpu_h100_bf16_config(
 
     _apply_moonlight_16b_finetuning_convergence_contract(cfg)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

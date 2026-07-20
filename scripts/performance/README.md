@@ -10,6 +10,11 @@ Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The pe
 launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
 and config variant.
 
+`setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
+applies recipe-owned process settings before importing Torch, then replaces itself with
+either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
+Each training entrypoint therefore executes only once.
+
 - Prefer command-line overrides for one-off changes.
 - Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
@@ -90,7 +95,7 @@ uv run python scripts/performance/setup_experiment.py \
 
 - `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
 - `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
-- `--use_recipes`: Use library recipes. Disabled by default.
+- `--use_recipes`: Use model recipes instead of flat performance recipes. Disabled by default.
 - `-nh/--nemo_home`: Directory to expose as `NEMO_HOME` on the compute node. Defaults to `~/.cache/nemo`.
 - `--detach`: Detach the experiment from the terminal. Pass `true` or `false`. Default `true`.
 - `--max_retries`: Maximum number of retries. Default `2`.
@@ -282,7 +287,7 @@ Deterministic training guarantees that two runs with identical inputs produce id
 
 ### What `--deterministic` does
 
-**Environment variables** (set on the Slurm executor via `PerfEnvPlugin`):
+**Environment variables** (stored in `cfg.env_vars` and applied before the training process imports Torch):
 
 | Variable | Value | Reason |
 |---|---|---|
@@ -316,7 +321,7 @@ python scripts/performance/setup_experiment.py \
   --deterministic
 ```
 
-### Using the recipe library directly
+### Using model recipes directly
 
 `apply_determinism_overrides` is also importable for use outside the performance script layer:
 
@@ -333,4 +338,5 @@ cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 
-Note: bit-exact reproducibility additionally requires the executor-side env vars listed above. The recipe-only path covers the model config, not the runtime environment.
+`apply_determinism_overrides(cfg)` adds both the model overrides and these runtime environment defaults to the recipe.
+Explicit shell or launcher environment values retain precedence when the recipe is launched.

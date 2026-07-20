@@ -23,6 +23,7 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
@@ -164,6 +165,10 @@ def nemotron_3_nano_4b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -195,6 +200,10 @@ def nemotron_3_nano_4b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -215,6 +224,10 @@ def nemotron_3_nano_4b_sft_8gpu_h100_bf16_32k_config() -> ConfigContainer:
     cfg.train.global_batch_size = 8
     cfg.ddp.average_in_collective = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -260,6 +273,10 @@ def nemotron_3_nano_4b_peft_8gpu_h100_bf16_config(
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
