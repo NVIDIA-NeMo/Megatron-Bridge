@@ -100,6 +100,8 @@ from typing import Optional
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
+from megatron.core.inference.contexts import StaticInferenceContext
+from megatron.core.inference.utils import InferenceMode
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
 
@@ -264,11 +266,20 @@ class SingleBatchIterator:
     then raises StopIteration. Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids, attention_mask, pixel_values=None, image_grid_thw=None):
+    def __init__(
+        self,
+        input_ids,
+        position_ids,
+        attention_mask,
+        pixel_values=None,
+        image_grid_thw=None,
+        inference_context=None,
+    ):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
             attention_mask=attention_mask,
+            inference_context=inference_context,
         )
 
         # Add vision inputs if provided
@@ -327,6 +338,47 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         output_tensor = model_output
 
     return output_tensor, loss_func
+
+
+def inference_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
+    """Run a text-model forward step with an explicit inference context."""
+    batch = next(data_iterator)
+
+    def loss_func(x, **kwargs):
+        return x
+
+    model_output = model(
+        input_ids=batch["tokens"],
+        position_ids=batch["position_ids"],
+        attention_mask=batch.get("attention_mask"),
+        inference_context=batch["inference_context"],
+        runtime_gather_output=True,
+    )
+    if isinstance(model_output, tuple):
+        model_output = model_output[0]
+    return model_output, loss_func
+
+
+def _run_megatron_forward(fwd_bwd_function, **kwargs):
+    """Run a Megatron forward pass with the inference execution paths active."""
+    with InferenceMode.active():
+        return fwd_bwd_function(**kwargs)
+
+
+def _maybe_gather_tensor_parallel_logits(megatron_output, hf_vocab_size: int, world_size: int, group):
+    """Gather sharded TP logits while preserving an already gathered full-vocabulary tensor."""
+    if megatron_output.size(-1) >= hf_vocab_size:
+        return megatron_output
+
+    gathered_tensors = [torch.zeros_like(megatron_output) for _ in range(world_size)]
+    dist.all_gather(gathered_tensors, megatron_output, group=group)
+    gathered_output = torch.cat(gathered_tensors, dim=2)
+    if gathered_output.size(-1) < hf_vocab_size:
+        raise ValueError(
+            f"Gathered Megatron vocabulary ({gathered_output.size(-1)}) is smaller than "
+            f"the Hugging Face vocabulary ({hf_vocab_size})."
+        )
+    return gathered_output
 
 
 def load_image(image_path: str) -> Image.Image:
@@ -778,18 +830,44 @@ def compare_models_one_step(args) -> None:
         attention_mask = None
 
         fwd_bwd_function = get_forward_backward_func()
-        iterator = SingleBatchIterator(input_ids, position_ids, attention_mask, pixel_values, image_grid_thw)
-
-        megatron_output = fwd_bwd_function(
-            forward_step_func=vlm_forward_step,
-            data_iterator=iterator,
-            model=megatron_model,
-            num_microbatches=1,
-            forward_only=True,
-            seq_length=input_ids.size(1),
-            micro_batch_size=1,
-            collect_non_loss_data=True,
-        )
+        forward_kwargs = {
+            "model": megatron_model,
+            "num_microbatches": 1,
+            "forward_only": True,
+            "seq_length": input_ids.size(1),
+            "micro_batch_size": 1,
+            "collect_non_loss_data": True,
+        }
+        if is_vl_model:
+            iterator = SingleBatchIterator(
+                input_ids,
+                position_ids,
+                attention_mask,
+                pixel_values,
+                image_grid_thw,
+            )
+            megatron_output = fwd_bwd_function(
+                forward_step_func=vlm_forward_step,
+                data_iterator=iterator,
+                **forward_kwargs,
+            )
+        else:
+            inference_context = StaticInferenceContext(
+                max_batch_size=input_ids.size(0),
+                max_sequence_length=input_ids.size(1),
+            )
+            iterator = SingleBatchIterator(
+                input_ids,
+                position_ids,
+                attention_mask,
+                inference_context=inference_context,
+            )
+            megatron_output = _run_megatron_forward(
+                fwd_bwd_function,
+                forward_step_func=inference_forward_step,
+                data_iterator=iterator,
+                **forward_kwargs,
+            )
 
         if isinstance(megatron_output, list) and len(megatron_output) > 0:
             megatron_output = megatron_output[0]
@@ -801,11 +879,12 @@ def compare_models_one_step(args) -> None:
             # Gather tensor parallel results if using TP
             if torch.distributed.is_initialized() and parallel_state.get_tensor_model_parallel_world_size() > 1:
                 world_size = parallel_state.get_tensor_model_parallel_world_size()
-                gathered_tensors = [torch.zeros_like(megatron_output) for _ in range(world_size)]
-                dist.all_gather(
-                    gathered_tensors, megatron_output, group=parallel_state.get_tensor_model_parallel_group()
+                megatron_output = _maybe_gather_tensor_parallel_logits(
+                    megatron_output,
+                    hf_logits.size(0),
+                    world_size,
+                    parallel_state.get_tensor_model_parallel_group(),
                 )
-                megatron_output = torch.cat(gathered_tensors, dim=2)
 
             megatron_logits = megatron_output[0, -1, :]
             megatron_next_token = torch.argmax(megatron_logits, dim=-1)

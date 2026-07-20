@@ -45,6 +45,7 @@ def _model_config(*, seq_length: int, context_parallel_size: int = 1) -> HybridM
         mamba_head_dim=80,
         mamba_state_dim=128,
         mamba_num_groups=8,
+        mamba_chunk_size=256,
         seq_length=seq_length,
         vocab_size=131072,
         should_pad_vocab=False,

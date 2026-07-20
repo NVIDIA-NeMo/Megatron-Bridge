@@ -30,6 +30,7 @@ def _assert_exact_architecture(config: ConfigContainer) -> None:
     assert config.model.mamba_head_dim == 80
     assert config.model.mamba_state_dim == 128
     assert config.model.mamba_num_groups == 8
+    assert config.model.mamba_chunk_size == 256
     assert config.model.vocab_size == 131072
     assert config.model.share_embeddings_and_output_weights is False
     assert config.model.position_embedding_type == "none"
