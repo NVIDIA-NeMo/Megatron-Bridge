@@ -385,8 +385,11 @@ def forward_step(
         ) = get_batch(data_iterator, state.cfg, pg_collection=pg_collection)
     timers("batch-generator").stop()
 
+<<<<<<< HEAD
     _dump_loss_active_tokens(state, input_ids, labels, packed_seq_params)
 
+=======
+>>>>>>> origin/main
     # Encoder and last stages need an empty image sentinel for text/audio-only
     # batches. Middle stages may legitimately have no input_ids or image tensor.
     if images is None and input_ids is not None:

@@ -159,7 +159,14 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.peft is not None
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
@@ -195,7 +202,14 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.peft is not None
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None

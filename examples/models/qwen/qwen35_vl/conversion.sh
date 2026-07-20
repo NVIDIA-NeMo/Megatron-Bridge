@@ -60,5 +60,10 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/co
     --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export
 
 # Round-trip validation
-uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-      --hf-model-id Qwen/${MODEL_NAME} --tp ${TP} --pp ${PP} --ep ${EP}
+./scripts/conversion/convert.sh roundtrip \
+    --executor local \
+    --device gpu \
+    --gpus-per-node 8 \
+    --hf-model-id Qwen/${MODEL_NAME} \
+    --tp ${TP} --pp ${PP} --ep ${EP} \
+    --trust-remote-code

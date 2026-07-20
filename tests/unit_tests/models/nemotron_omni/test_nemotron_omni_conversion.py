@@ -257,3 +257,24 @@ def test_nemotron_omni_freeze_sound_modules_without_stdout(monkeypatch, capsys):
     assert all(not param.requires_grad for param in model.llava_model.sound_model.parameters())
     assert all(not param.requires_grad for param in model.llava_model.sound_projection.parameters())
     assert capsys.readouterr().out == ""
+
+
+def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
+    model = NemotronOmniModel.__new__(NemotronOmniModel)
+    model.llava_model = SimpleNamespace(
+        language_model=nn.Linear(4, 4),
+        vision_model=None,
+        vision_projection=None,
+        sound_model=None,
+        sound_projection=None,
+    )
+
+    model.freeze(
+        freeze_language_model=True,
+        freeze_vision_model=True,
+        freeze_vision_projection=True,
+        freeze_sound_model=True,
+        freeze_sound_projection=True,
+    )
+
+    assert all(not param.requires_grad for param in model.llava_model.language_model.parameters())

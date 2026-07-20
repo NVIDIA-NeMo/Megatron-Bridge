@@ -24,7 +24,6 @@ import os
 from dataclasses import replace
 from types import SimpleNamespace
 
-import numpy as np
 import pytest
 import torch
 import torch.distributed as dist
@@ -34,8 +33,7 @@ from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_with_transfor
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
-from PIL import Image
-from transformers import AutoProcessor, Qwen3VLMoeConfig
+from transformers import Qwen3VLMoeConfig
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.model import Qwen3VLModel
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
@@ -43,22 +41,11 @@ from megatron.bridge.models.qwen_vl.qwen3_vl_provider import DistTrainConfig
 
 
 @pytest.fixture(scope="module")
-def processor():
-    """Load HuggingFace processor once for all tests."""
-    return AutoProcessor.from_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
-
-
-@pytest.fixture(scope="module")
 def hf_config():
-    """Load HuggingFace config once for all tests."""
-    return Qwen3VLMoeConfig.from_pretrained("Qwen/Qwen3-VL-30B-A3B-Instruct")
-
-
-@pytest.fixture
-def random_image():
-    """Generate a random PIL image."""
-    random_array = np.random.randint(0, 256, (224, 224, 3), dtype=np.uint8)
-    return Image.fromarray(random_array)
+    """Create a local HuggingFace config once for all tests."""
+    config = Qwen3VLMoeConfig()
+    config.vision_config.out_hidden_size = config.text_config.hidden_size
+    return config
 
 
 class TestQwen3VLModel:
@@ -200,12 +187,11 @@ class TestQwen3VLModel:
         return language_model_layer_spec
 
     @staticmethod
-    def get_data_batch(processor, random_image):
+    def get_data_batch(hf_config):
         """Generate a batch of data for model forward pass.
 
         Args:
-            processor: HuggingFace processor.
-            random_image: Random PIL image.
+            hf_config: HuggingFace config object.
 
         Returns:
             dict: A dictionary containing all inputs needed for model forward pass:
@@ -216,36 +202,28 @@ class TestQwen3VLModel:
                 - pixel_values_videos: Video pixel values (None for images only)
                 - video_grid_thw: Video grid dimensions (None for images only)
         """
-        # Create a sample message with image and text
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "image",
-                        "image": random_image,  # Pass PIL Image directly
-                    },
-                    {"type": "text", "text": "Describe this image."},
-                ],
-            }
-        ]
-
-        # Process inputs using HuggingFace processor
-        inputs = processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            add_generation_prompt=True,
-            return_dict=True,
-            return_tensors="pt",
+        vision_config = hf_config.vision_config
+        image_grid_thw = torch.tensor([[1, 14, 14]], dtype=torch.long)
+        num_patches = int(image_grid_thw.prod(dim=1).sum().item())
+        patch_dim = vision_config.in_channels * vision_config.temporal_patch_size * vision_config.patch_size**2
+        pixel_values = torch.randn(num_patches, patch_dim)
+        num_image_tokens = num_patches // vision_config.spatial_merge_size**2
+        input_ids = torch.tensor(
+            [
+                [hf_config.vision_start_token_id]
+                + [hf_config.image_token_id] * num_image_tokens
+                + [hf_config.vision_end_token_id, 1]
+            ],
+            dtype=torch.long,
         )
 
         batch = {
-            "input_ids": inputs["input_ids"],
-            "attention_mask": inputs.get("attention_mask"),
-            "pixel_values": inputs.get("pixel_values"),
-            "image_grid_thw": inputs.get("image_grid_thw"),
-            "pixel_values_videos": inputs.get("pixel_values_videos"),
-            "video_grid_thw": inputs.get("video_grid_thw"),
+            "input_ids": input_ids,
+            "attention_mask": torch.ones_like(input_ids),
+            "pixel_values": pixel_values,
+            "image_grid_thw": image_grid_thw,
+            "pixel_values_videos": None,
+            "video_grid_thw": None,
             "position_ids": None,
             "labels": None,
         }
@@ -420,7 +398,7 @@ class TestQwen3VLModel:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(120)
-    def test_forward_dist_train_encoder_only(self, hf_config, processor, random_image):
+    def test_forward_dist_train_encoder_only(self, hf_config):
         """use_dist_train=True, add_encoder=True, add_decoder=False: forward returns vision_module payload."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
@@ -445,7 +423,7 @@ class TestQwen3VLModel:
         assert model.add_encoder is True and model.add_decoder is False
 
         model.cuda()
-        batch = self.get_data_batch(processor, random_image)
+        batch = self.get_data_batch(hf_config)
 
         with torch.inference_mode():
             out = model(
@@ -466,7 +444,7 @@ class TestQwen3VLModel:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(180)
-    def test_forward_dist_train_decoder_only(self, hf_config, processor, random_image):
+    def test_forward_dist_train_decoder_only(self, hf_config):
         """use_dist_train=True, add_encoder=False, add_decoder=True: consume vision_module then run language stack."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
@@ -503,7 +481,7 @@ class TestQwen3VLModel:
 
         encoder.cuda()
         decoder.cuda()
-        batch = self.get_data_batch(processor, random_image)
+        batch = self.get_data_batch(hf_config)
 
         with torch.inference_mode():
             enc_out = encoder(
@@ -814,7 +792,7 @@ class TestQwen3VLModel:
 
     @pytest.mark.skipif(not torch.cuda.is_available(), reason="Qwen3VLModel.forward requires CUDA")
     @pytest.mark.timeout(120)
-    def test_forward_non_dist_train(self, hf_config, processor, random_image):
+    def test_forward_non_dist_train(self, hf_config):
         """use_dist_train=False, add_encoder=True, add_decoder=True: multimodal forward with both encoder and decoder."""
         self._setup_parallel_state(tp_size=1, ep_size=1, pp_size=1, cp_size=1)
         pg_collection = ProcessGroupCollection.use_mpu_process_groups()
@@ -838,7 +816,7 @@ class TestQwen3VLModel:
         assert model.add_encoder is True and model.add_decoder is True
 
         model.cuda()
-        batch = self.get_data_batch(processor, random_image)
+        batch = self.get_data_batch(hf_config)
 
         with torch.inference_mode():
             out = model(

@@ -31,7 +31,7 @@ import pytest
 pa = pytest.importorskip("pyarrow")
 pq = pytest.importorskip("pyarrow.parquet")
 
-from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset
+from megatron.bridge.data.packing.parquet import GPTSFTPackedParquetDataset, write_packed_parquet
 from megatron.bridge.data.packing.paths import (
     _resolve_parquet_paths,
     is_packed_parquet_file,
@@ -77,6 +77,24 @@ def _write_parquet(path: str | Path, rows: list[dict], row_group_size: int = 500
         }
     )
     pq.write_table(table, str(path), row_group_size=row_group_size)
+
+
+# ---------------------------------------------------------------------------
+# Tests: write_packed_parquet
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_write_packed_parquet_normalizes_mixed_loss_mask_types(tmp_path):
+    rows = [_make_packed_row(n_tokens=4, n_seqs=1)]
+    rows[0]["loss_mask"] = [True, False, 1, 0]
+    path = tmp_path / "mixed-loss-mask.idx.parquet"
+
+    write_packed_parquet(rows, path)
+
+    table = pq.read_table(path)
+    assert table.schema.field("loss_mask").type == pa.list_(pa.int8())
+    assert table.column("loss_mask").to_pylist() == [[1, 0, 1, 0]]
 
 
 # ---------------------------------------------------------------------------

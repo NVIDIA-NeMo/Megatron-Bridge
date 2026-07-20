@@ -33,9 +33,11 @@ _spec.loader.exec_module(_mod)
 _try_numeric = _mod._try_numeric
 _try_parse_value = _mod._try_parse_value
 parse_raw_args = _mod.parse_raw_args
+parse_yaml_config = _mod.parse_yaml_config
 translate = _mod.translate
 TranslationResult = _mod.TranslationResult
 emit_overrides = _mod.emit_overrides
+emit_recipe = _mod.emit_recipe
 parse_bridge_overrides = _mod.parse_bridge_overrides
 translate_bridge_to_mlm = _mod.translate_bridge_to_mlm
 ReverseTranslationResult = _mod.ReverseTranslationResult
@@ -427,6 +429,70 @@ class TestTranslateEnvVars:
         """Default env_vars is empty dict."""
         r = translate({})
         assert r.env_vars == {}
+
+    @pytest.mark.skipif(not _mod.HAS_YAML, reason="PyYAML is not installed")
+    def test_yaml_env_vars_preserve_scalar_types_and_colons(self, tmp_path):
+        """MLM ENV_VARS blocks should survive parsing without losing special values."""
+        config_path = tmp_path / "model.yaml"
+        config_path.write_text(
+            """ENV_VARS:
+  NVTE_FWD_LAYERNORM_SM_MARGIN: 16
+  TORCHINDUCTOR_WORKER_START: fork
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  USE_MNNVL: 1
+MODEL_ARGS:
+  --num-layers: 2
+"""
+        )
+
+        _, env_vars = parse_yaml_config(str(config_path))
+
+        assert env_vars == {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "USE_MNNVL": 1,
+        }
+
+    def test_env_vars_are_emitted_in_generated_recipe(self):
+        """Generated recipes preserve scalar and colon-bearing environment values."""
+        env_vars = {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "QUANTIZATION_TYPE_DEBUG": 1,
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+            "USE_MNNVL": 1,
+        }
+
+        output = emit_recipe(translate({}, env_vars=env_vars), recipe_name="translated_model")
+
+        assert f"env_vars={env_vars!r}" in output
+
+    def test_env_vars_are_emitted_as_hydra_override(self):
+        """Override output should preserve values containing colons without shell splitting."""
+        from hydra.core.override_parser.overrides_parser import OverridesParser
+
+        result = translate(
+            {},
+            env_vars={
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "QUANTIZATION_TYPE_DEBUG": 1,
+            },
+        )
+
+        output = emit_overrides(result)
+
+        override = next(line.strip().removesuffix(" \\") for line in output.splitlines() if "++env_vars=" in line)
+        override = override.removeprefix("'").removesuffix("'")
+        parsed = OverridesParser.create().parse_overrides([override])
+
+        assert len(parsed) == 1
+        assert parsed[0].key_or_group == "env_vars"
+        assert parsed[0].value() == {
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "QUANTIZATION_TYPE_DEBUG": 1,
+        }
 
 
 class TestTranslateMlaMoe:
