@@ -9,7 +9,7 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = REPO_ROOT / "skills/create-model-verification-card/scripts/validate_card.py"
-CARD_PATH = REPO_ROOT / "model_cards/qwen3-8b/card.yaml"
+CARD_PATH = REPO_ROOT / "model_cards/nemotron-3-nano-4b/card.yaml"
 
 
 def _load_validator() -> ModuleType:
@@ -58,7 +58,7 @@ def test_resume_must_keep_reference_launch_settings() -> None:
     card = _card()
     resume = card["items"]["checkpoint_resume"]
     resume["command"] = resume["command"].replace(
-        "qwen3_8b_pretrain_4gpu_h100_bf16_config",
+        "nemotron_3_nano_4b_pretrain_8gpu_h100_bf16_config",
         "another_recipe",
     )
     _assert_error(card, "reference and resume launch settings must match")

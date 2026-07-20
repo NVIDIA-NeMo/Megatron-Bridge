@@ -76,7 +76,7 @@ def test_decode_completion_excludes_prompt_and_special_tokens() -> None:
 
 @pytest.mark.unit
 def test_hf_revision_is_parsed_and_forwarded() -> None:
-    revision = "0123456789abcdef0123456789abcdef01234567"
+    revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
 
     args = _build_parser().parse_args(["--hf_model_path", "org/model", "--hf-revision", revision])
 

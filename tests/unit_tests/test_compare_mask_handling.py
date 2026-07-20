@@ -245,7 +245,7 @@ class TestCompareMaskHandling:
 
     def test_hf_revision_is_parsed_and_forwarded(self):
         """Test that an immutable revision reaches every HF loader via shared kwargs."""
-        revision = "0123456789abcdef0123456789abcdef01234567"
+        revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
         args = compare.build_parser().parse_args(
             [
                 "--hf_model_path",
