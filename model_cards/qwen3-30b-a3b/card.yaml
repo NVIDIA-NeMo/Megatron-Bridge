@@ -113,7 +113,7 @@ items:
   pretrain:
     status: verified
     precision: bf16
-    bridge_commit: 04eb4f8d6045526331113ba3f0d39b7a4d22bb85  # pragma: allowlist secret
+    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       cuda_graph:
@@ -142,16 +142,17 @@ items:
     last_verified: 2026-07-19
     metrics:
       initial_loss: 12.41145
-      final_loss: 6.099745
-      last_10_steps_step_time_ms_avg: 31425.900
-      last_10_steps_model_tflops_per_gpu_avg: 191.930
+      final_loss: 6.139116
+      last_10_steps_step_time_ms_avg: 30289.550
+      last_10_steps_model_tflops_per_gpu_avg: 199.120
     expected_result: >
       On two nodes with 16x H100, the generic library recipe's default EP
-      topology and batch complete exactly 100 bounded RP2 optimizer steps with
-      natural routing, finite losses, no skipped or NaN iterations, and all
-      four metrics recorded. Complete iter_0000050 and iter_0000100 checkpoints
-      are saved. HybridEP and Transformer Engine CUDA graphs for moe_router and
-      moe_preprocess remain active throughout the run.
+      topology, batch, and precision-aware optimizer complete exactly 100
+      bounded RP2 optimizer steps with natural routing, finite losses, no
+      skipped or NaN iterations, and all four metrics recorded. Complete
+      iter_0000050 and iter_0000100 checkpoints are saved. HybridEP and
+      Transformer Engine CUDA graphs for moe_router and moe_preprocess remain
+      active throughout the run.
 
   sft:
     status: verified
@@ -293,7 +294,7 @@ items:
   checkpoint_resume:
     status: verified
     precision: bf16
-    bridge_commit: 04eb4f8d6045526331113ba3f0d39b7a4d22bb85  # pragma: allowlist secret
+    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     depends_on: pretrain
     command: >
@@ -320,10 +321,10 @@ items:
       logger.tensorboard_dir=null
     last_verified: 2026-07-19
     metrics:
-      initial_loss: 6.749319
-      final_loss: 6.075993
-      last_10_steps_step_time_ms_avg: 30598.310
-      last_10_steps_model_tflops_per_gpu_avg: 197.110
+      initial_loss: 6.989006
+      final_loss: 6.145390
+      last_10_steps_step_time_ms_avg: 31142.650
+      last_10_steps_model_tflops_per_gpu_avg: 193.640
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [51, 100]
@@ -336,8 +337,8 @@ items:
       root with finite losses and no skipped or NaN iterations. Releasing
       unused cached memory after each optimizer step preserves allocation
       headroom without changing training math. Step 51 matches the
-      uninterrupted reference exactly at 6.749319; resumed step 100 is
-      6.075993 versus reference 6.099745. The 0.389393% relative difference is
+      uninterrupted reference exactly at 6.989006; resumed step 100 is
+      6.145390 versus reference 6.139116. The 0.102197% relative difference is
       within the 1% relative loss tolerance, so both resume sentinels match.
 
   pretrain_performance:
