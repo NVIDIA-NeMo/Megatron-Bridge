@@ -16,6 +16,7 @@
 from megatron.bridge.perf_recipes.kimi.common import (
     ConfigContainer,
     _benchmark_common,
+    _enable_kimi_full_iteration_mxfp8,
     _get_kimi_k2_pipeline_layout,
     _perf_precision,
     kimi_k2_pretrain_config,
@@ -100,6 +101,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.mixed_precision.fp8_param_gather = False
+    cfg.model.fp8_output_proj = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
@@ -115,9 +117,9 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 64
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 4096
-    cfg.train.micro_batch_size = 2
+    cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mla_up_proj", "moe_act"]
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False
@@ -128,6 +130,7 @@ def kimi_k2_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
 
     cfg.model.cuda_graph_scope = []
     _benchmark_common(cfg)
+    _enable_kimi_full_iteration_mxfp8(cfg)
     cfg.rng.te_rng_tracker = True
     return cfg
 

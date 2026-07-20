@@ -92,6 +92,7 @@ def kimi_k2_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.mixed_precision = _perf_precision("fp8_mx")
     cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.mixed_precision.fp8_param_gather = False
+    cfg.model.fp8_output_proj = True
     cfg.model.seq_length = 4096
     cfg.dataset.seq_length = 4096
     cfg.model.moe_router_fusion = True
@@ -106,12 +107,16 @@ def kimi_k2_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 16
     cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 2048
+    cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 1
 
-    cfg.model.recompute_modules = ["mla_up_proj"]
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.pipeline_model_parallel_layout = _get_kimi_k2_pipeline_layout(16, 1)
     cfg.model.moe_shared_expert_overlap = False
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.comm_overlap.overlap_grad_reduce = True
