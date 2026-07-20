@@ -90,8 +90,14 @@ items:
       paths, with maximum and mean absolute logit differences of 0.593750 and
       0.130064 and cosine similarity 0.999317. Moving the HF expert probability
       multiplication before its down projection improves cosine similarity to
-      0.999834 but still fails the BF16 gate above 0.9999, so this item remains
-      unverified.
+      0.999834. Layer-0 diagnostics show that raw Q/K/V projections pass and
+      that the first strict maximum-error failure occurs after Q/K RMSNorm.
+      Exact Q/K norm weights and decomposition metrics through the value input
+      are identical with Transformer Engine and true local layer specs, so the
+      discrepancy is not specific to TE fusion. It decomposes into a small BF16
+      projection perturbation plus an MCore-versus-HF RMSNorm arithmetic
+      difference shared by both backends. The result still fails the BF16 gate
+      above 0.9999, so this item remains unverified.
 
   inference:
     status: verified
