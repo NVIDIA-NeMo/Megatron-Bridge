@@ -74,6 +74,7 @@ from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     LoggerConfig,
+    MegatronMIMOFeatureConfig,
     OptimizerConfig,
     ProfilingConfig,
     TrainingConfig,
@@ -264,9 +265,16 @@ def _batch_spec_for_rank(cfg: Any) -> MIMOBatchSpec:
     is_first_pp = pp_rank == 0
     is_last_pp = pp_rank == pp_size - 1
 
+    # In-batch sequence packing needs input_ids on EVERY language PP stage: forward_step derives the
+    # per-sample real lengths from input_ids (the only tensor that counts image-placeholder tokens)
+    # before nulling it, so every stage packs to the SAME [1, T] as the packed hidden states crossing
+    # the pipeline. Without it, stages > 0 fall back to lengths=None and the packed shapes mismatch.
+    mimo_cfg = getattr(cfg, "mimo", None)
+    packing_active = bool(mimo_cfg is not None and mimo_cfg.pack_sequences_in_batch)
+
     if module_name == MIMO_LANGUAGE_MODULE_KEY:
         return MIMOBatchSpec(
-            input_ids=is_first_pp,
+            input_ids=is_first_pp or packing_active,
             # Qwen3.5-VL mRoPE needs position_ids on every language PP stage.
             position_ids=True,
             labels=is_last_pp,
@@ -1196,6 +1204,14 @@ def _parse_args() -> argparse.Namespace:
         default=True,
         help="Pad/truncate direct HF SFT batches to --seq-length before MIMO forward.",
     )
+    parser.add_argument(
+        "--pack-sequences-in-batch",
+        type=_str2bool,
+        default=False,
+        help="Enable MegatronMIMO in-batch sequence packing: pack each language DP shard's real "
+        "tokens into one [1, T] THD sequence so the language model skips padding compute "
+        "(block-diagonal attention comes from cu_seqlens).",
+    )
     parser.add_argument("--profile", choices=("none", "nsys", "pytorch"), default="none")
     parser.add_argument("--profile-step-start", type=int, default=1)
     parser.add_argument("--profile-step-end", type=int, default=2)
@@ -1271,6 +1287,10 @@ def main() -> None:
         _log(f"checkpoint dir: {args.checkpoint_dir}")
         _log("building training config")
         cfg = _build_config(model_provider=model_provider, dataset_config=dataset_config, args=args)
+        cfg.mimo = MegatronMIMOFeatureConfig(
+            pack_sequences_in_batch=args.pack_sequences_in_batch,
+            pad_token_id=hf_spec.pad_token_id,
+        )
 
         _log("launching pretrain_megatron_mimo")
         pretrain_megatron_mimo(

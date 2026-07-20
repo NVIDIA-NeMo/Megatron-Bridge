@@ -8,6 +8,7 @@ import torch.distributed as dist
 from megatron.bridge.data.megatron_mimo.dp_utils import (
     get_megatron_mimo_dp_info,
     get_megatron_mimo_sampling_info,
+    real_token_lengths,
     slice_batch_for_megatron_mimo,
 )
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
@@ -381,3 +382,46 @@ class TestPatchPackedVisualSlice:
         sliced = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
         enc = sliced["modality_inputs"]["images"]["vision_encoder"]
         assert enc["encoder_meta"] == "fixed-string"
+
+
+# ---------------------------------------------------------------------------
+# Tests: real_token_lengths (in-batch sequence packing length source)
+# ---------------------------------------------------------------------------
+
+
+def test_real_token_lengths_uses_attention_mask_when_present():
+    """A matching [B, S] attention_mask is authoritative: its row sums are the lengths."""
+    # input_ids contains no pad id, so the pad fallback alone would return S=4 for both rows;
+    # the mask (with trailing zeros) must win and yield 3 and 2.
+    input_ids = torch.tensor([[5, 6, 7, 8], [9, 10, 11, 12]])
+    attention_mask = torch.tensor([[1, 1, 1, 0], [1, 1, 0, 0]])
+    lengths = real_token_lengths(input_ids, pad_token_id=0, attention_mask=attention_mask)
+    assert lengths.tolist() == [3, 2]
+    assert lengths.dtype == torch.int64
+    assert tuple(lengths.shape) == (2,)
+
+
+def test_real_token_lengths_falls_back_to_pad_id():
+    """Without an attention_mask, lengths come from ``input_ids != pad_token_id``."""
+    input_ids = torch.tensor([[1, 2, 3, 0, 0], [4, 5, 0, 0, 0]])  # pad id 0
+    lengths = real_token_lengths(input_ids, pad_token_id=0)
+    assert lengths.tolist() == [3, 2]
+
+
+def test_real_token_lengths_respects_nonzero_pad_id():
+    """The fallback counts against the configured (non-zero) pad id, not 0."""
+    pad = 248044
+    input_ids = torch.tensor([[1, 2, 3, pad, pad], [4, 5, pad, pad, pad]])
+    lengths = real_token_lengths(input_ids, pad_token_id=pad)
+    assert lengths.tolist() == [3, 2]
+    # 0 is a real token here (not the pad id), so it must be counted.
+    input_ids_with_zero = torch.tensor([[0, 1, pad, pad]])
+    assert real_token_lengths(input_ids_with_zero, pad_token_id=pad).tolist() == [2]
+
+
+def test_real_token_lengths_ignores_mismatched_attention_mask():
+    """An attention_mask whose shape does not match input_ids is ignored (pad fallback used)."""
+    input_ids = torch.tensor([[1, 2, 3, 0, 0], [4, 5, 0, 0, 0]])  # real 3, 2 by pad id
+    bad_mask = torch.ones(2, 3)  # wrong S -> not authoritative
+    lengths = real_token_lengths(input_ids, pad_token_id=0, attention_mask=bad_mask)
+    assert lengths.tolist() == [3, 2]

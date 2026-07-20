@@ -19,7 +19,11 @@ import torch
 from megatron.core.models.mimo import MimoModel
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
-from megatron.bridge.data.megatron_mimo.dp_utils import slice_batch_for_megatron_mimo
+from megatron.bridge.data.megatron_mimo.dp_utils import (
+    real_token_lengths,
+    slice_batch_for_megatron_mimo,
+)
+from megatron.bridge.data.megatron_mimo.sequence_pack import pack_language_shard
 from megatron.bridge.training.megatron_mimo_parallel_utils import unwrap_megatron_mimo_model
 from megatron.bridge.training.state import GlobalState
 
@@ -171,6 +175,11 @@ def forward_step(
             modality_modules = megatron_mimo_model.role.modality_module_names
             needs_data = any(megatron_mimo_model.role.is_first_stage(mod) for mod in modality_modules)
 
+    # MegatronMIMO in-batch sequence packing, read from the serialized config (absent -> off).
+    mimo_cfg = getattr(state.cfg, "mimo", None)
+    pack_sequences_enabled = bool(mimo_cfg is not None and mimo_cfg.pack_sequences_in_batch)
+    pad_token_id = mimo_cfg.pad_token_id if mimo_cfg is not None else 0
+
     if needs_data:
         data_batch = get_batch(data_iterator)
         if data_batch is None:
@@ -194,13 +203,48 @@ def forward_step(
             data_batch["modality_inputs"] = None
         dp_rank, dp_size = _get_module_dp_info(megatron_mimo_model)
         data_batch = slice_batch_for_megatron_mimo(data_batch, dp_rank, dp_size)
+        pack_lengths = None
         if megatron_mimo_model.role is not None and megatron_mimo_model.role.has_language_module:
+            # PP-consistent sequence packing: derive the per-sample real lengths from
+            # ``input_ids`` on EVERY language stage *before* it is nulled on non-first stages.
+            # ``input_ids`` is the only tensor that counts image-placeholder tokens, so every
+            # PP stage packs to an identical ``[1, T]`` and the decoder ``cu_seqlens`` match the
+            # hidden states propagated down the pipeline (attention_mask/position_ids are
+            # text-only for VLM batches and would otherwise yield a shorter pack on the last
+            # stage -> GDN "cu_seqlens does not match total_sequence_length").
+            if pack_sequences_enabled and isinstance(data_batch.get("input_ids"), torch.Tensor):
+                pack_lengths = real_token_lengths(
+                    data_batch["input_ids"],
+                    pad_token_id=pad_token_id,
+                    attention_mask=data_batch.get("attention_mask"),
+                )
             if not is_language_first_stage:
                 data_batch["input_ids"] = None
                 data_batch["modality_inputs"] = None
             if not is_language_last_stage:
                 data_batch["labels"] = None
                 data_batch["loss_mask"] = None
+        # Sequence packing: pack this language shard's real tokens into a single [1, T]
+        # packed sequence (THD layout) so the LM skips padding compute and attention is
+        # block-diagonal via cu_seqlens. The MIMO modality splice fills image-placeholder tokens
+        # in order, so vision embeddings (via bridge) still align. Fires on ALL language stages:
+        # the first stage packs input_ids, intermediate/last stages pack labels/loss_mask to the
+        # SAME [1, T] using the caller-supplied lengths (derived from input_ids above, which the
+        # example keeps on every language stage), so packed-logits and label shapes match under
+        # PP>1. pack_language_shard no-ops when no length source is present (non-data /
+        # single-token stages).
+        if (
+            pack_sequences_enabled
+            and megatron_mimo_model.role is not None
+            and megatron_mimo_model.role.has_language_module
+        ):
+            data_batch, packing_kwargs = pack_language_shard(
+                data_batch,
+                pad_token_id=pad_token_id,
+                lengths=pack_lengths,
+            )
+            if packing_kwargs is not None:
+                data_batch["packing_kwargs"] = packing_kwargs
     else:
         # Non-data stages consume hidden states from pipeline input tensors.
         data_batch = {

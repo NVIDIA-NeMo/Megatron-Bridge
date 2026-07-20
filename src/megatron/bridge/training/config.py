@@ -955,6 +955,38 @@ class InProcessRestartConfig:
     """Directory for monitor process log files. If None, monitor process logging is disabled."""
 
 
+@dataclass
+class MegatronMIMOFeatureConfig:
+    """Configuration for MegatronMIMO data-efficiency features.
+
+    Currently one knob: **in-batch sequence packing** (:attr:`pack_sequences_in_batch`) --
+    concatenate each language shard's real tokens into a single block-diagonal sequence so
+    the LM skips padding compute.
+
+    Captured in the serialized run config (reproducible) and validated up front.
+    """
+
+    pack_sequences_in_batch: bool = False
+    """Pack each language DP shard's real tokens into a single ``[1, T]`` packed sequence (THD layout)."""
+
+    pad_token_id: int = 0
+    """Model/tokenizer pad id used to derive real (non-pad) token lengths for sequence packing.
+    Must match the collator's padding id. Lengths are taken from ``attention_mask`` when present
+    (the authoritative padding mask); this id is the fallback via ``input_ids != pad_token_id``.
+    Some models legitimately use ``0`` as the pad id."""
+
+    def finalize(self) -> None:
+        """Validate the feature configuration.
+
+        Raises:
+            ValueError: If ``pad_token_id`` is not a non-negative int.
+        """
+        if not isinstance(self.pad_token_id, int) or self.pad_token_id < 0:
+            raise ValueError(
+                f"MegatronMIMOFeatureConfig.pad_token_id must be a non-negative int, got {self.pad_token_id!r}."
+            )
+
+
 # ---------------- Container config (standalone top-level config) ----------------
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
@@ -1006,6 +1038,7 @@ class ConfigContainer(Container):
     mixed_precision: Optional[Union[MixedPrecisionConfig, str]] = None
     tensor_inspect: TensorInspectConfig | None = None
     inprocess_restart: Optional[InProcessRestartConfig] = None
+    mimo: Optional[MegatronMIMOFeatureConfig] = None
     _checkpoint_load_required: bool = field(default=False, init=False, repr=False)
 
     def get_data_parallel_size(self, world_size: int) -> int:
@@ -1237,6 +1270,8 @@ class ConfigContainer(Container):
             self.nvrx_straggler.finalize()
         if self.tensor_inspect is not None:
             self.tensor_inspect.finalize()
+        if self.mimo is not None:
+            self.mimo.finalize()
 
         # Sync config. If TE RNG tracker is set in either ways, set them in both places.
         if self.rng.te_rng_tracker or self.model.use_te_rng_tracker:
