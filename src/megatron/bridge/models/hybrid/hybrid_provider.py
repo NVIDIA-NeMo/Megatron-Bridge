@@ -33,6 +33,7 @@ from megatron.core.ssm.mamba_hybrid_layer_allocation import Symbols, get_hybrid_
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.enums import AttnBackend
 
+from megatron.bridge.models.hybrid.hybrid_builder import _validate_hybrid_model_ep_overlap
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
@@ -162,6 +163,8 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         Calculates the number of layers from ``hybrid_layer_pattern`` and executes
         the deferred MCore post-init logic.
         """
+        _validate_hybrid_model_ep_overlap(self)
+
         # Check if hybrid_override_pattern is specified and throw deprecation warning.
         used_hybrid_override_pattern = False
         if self.hybrid_override_pattern is not None:

@@ -196,8 +196,9 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    # TODO: Re-enable after NVIDIA/Megatron-LM#4942 is merged and included in the MCore pin.
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
     _benchmark_common(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

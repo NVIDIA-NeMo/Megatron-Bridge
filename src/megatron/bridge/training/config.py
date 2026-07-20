@@ -65,7 +65,7 @@ from megatron.bridge.data.builders.mock_vlm_sft import MockVLMSFTDatasetConfig
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig, _validate_hybrid_model_ep_overlap
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
 from megatron.bridge.peft.base import PEFT
@@ -1208,6 +1208,9 @@ class ConfigContainer(Container):
             self.ddp.finalize()
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
+
+        if isinstance(self.model, HybridModelConfig):
+            _validate_hybrid_model_ep_overlap(self.model.transformer)
 
         # Guard post-construction CUDA graph overrides before MCore post-init can
         # migrate deprecated scope fields into a different implementation.

@@ -18,7 +18,18 @@ from megatron.core.models.hybrid.hybrid_layer_specs import (
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec as default_hybrid_stack_spec
 from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.hybrid import HybridModelBuilder, HybridModelConfig
+
+
+def _validate_hybrid_model_ep_overlap(transformer_config: TransformerConfig) -> None:
+    """Reject EP overlap until the pinned MCore HybridModel supports it."""
+    # TODO: Remove this guard after NVIDIA/Megatron-LM#4942 is merged and included in the MCore pin.
+    if transformer_config.overlap_moe_expert_parallel_comm:
+        raise ValueError(
+            "HybridModel does not support overlap_moe_expert_parallel_comm with the current Megatron Core. "
+            "Disable comm_overlap.overlap_moe_expert_parallel_comm and comm_overlap.delay_wgrad_compute."
+        )
 
 
 def transformer_engine_hybrid_stack_spec() -> ModuleSpec:

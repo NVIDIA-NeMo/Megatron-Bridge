@@ -165,6 +165,25 @@ class TestHybridModelProvider:
         assert provider.num_layers == 9
         mock_finalize.assert_called_once_with(provider)
 
+    @pytest.mark.parametrize("delay_wgrad_compute", [False, True])
+    def test_finalize_rejects_ep_overlap(self, delay_wgrad_compute):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            hybrid_layer_pattern="*E",
+            overlap_moe_expert_parallel_comm=True,
+            delay_wgrad_compute=delay_wgrad_compute,
+        )
+
+        with (
+            patch.object(hybrid_provider.TransformerConfig, "finalize", autospec=True) as mock_finalize,
+            pytest.raises(ValueError, match="HybridModel does not support overlap_moe_expert_parallel_comm"),
+        ):
+            provider.finalize()
+
+        mock_finalize.assert_not_called()
+
     def test_finalize_mtp_num_layers_none_with_repeated_layer(self):
         sep = hybrid_provider.Symbols.MTP_SEPARATOR
         provider = HybridModelProvider(

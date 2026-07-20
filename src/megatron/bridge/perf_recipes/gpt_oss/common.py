@@ -45,8 +45,10 @@ def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:
     cfg.rng.te_rng_tracker = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    cfg.comm_overlap.delay_wgrad_compute = True
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    # TODO: Re-enable after NVIDIA/Megatron-LM#4942 is included in the MCore pin and
+    # HybridModel EP overlap supports full-iteration CUDA graphs.
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
 
 def _gpt_oss_20b_fp8mx_precision():
