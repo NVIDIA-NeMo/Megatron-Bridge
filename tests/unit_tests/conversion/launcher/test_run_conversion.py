@@ -80,6 +80,33 @@ def test_cpu_import_dispatches_to_cpu_backend():
     ]
 
 
+def test_cpu_import_resolves_hf_revision_before_dispatch(monkeypatch):
+    module, cpu_backend, _ = _load_run_conversion_module()
+    calls = []
+    cpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setattr(
+        module,
+        "resolve_hf_model_revision",
+        lambda model, revision: f"/snapshots/{model.replace('/', '--')}/{revision}",
+    )
+
+    module.main(
+        [
+            "import",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--megatron-path",
+            "/checkpoint",
+        ]
+    )
+
+    assert calls[0]["hf_model"] == "/snapshots/hf--model/0123456789abcdef"
+
+
 def test_gpu_export_enables_distributed_save_by_default():
     module, _, gpu_backend = _load_run_conversion_module()
     calls = []

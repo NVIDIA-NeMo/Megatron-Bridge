@@ -20,6 +20,7 @@ import logging
 import cpu_backend
 import gpu_backend
 from arguments import build_parser
+from utils import resolve_hf_model_revision
 
 
 logger = logging.getLogger(__name__)
@@ -120,6 +121,9 @@ def main(argv: list[str] | None = None) -> None:
     """Parse worker arguments and run checkpoint conversion."""
     args = build_parser(include_execution=False).parse_args(argv)
     _validate_args(args)
+    if args.hf_revision is not None:
+        args.hf_model = resolve_hf_model_revision(args.hf_model, args.hf_revision)
+        logger.info("Resolved Hugging Face model at revision %s", args.hf_revision)
     logger.info("Selected %s backend for %s conversion", args.device.upper(), args.command)
     if args.command == "import":
         _run_import(args)

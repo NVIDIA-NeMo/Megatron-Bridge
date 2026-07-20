@@ -26,6 +26,25 @@ assert spec is not None and spec.loader is not None
 conversion_utils = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(conversion_utils)
 prepare_output_directory = conversion_utils.prepare_output_directory
+resolve_hf_model_revision = conversion_utils.resolve_hf_model_revision
+
+
+def test_resolve_hf_model_revision_downloads_exact_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda **kwargs: calls.append(kwargs) or "/cache/models--hf--model/snapshots/0123456789abcdef",
+    )
+
+    resolved = resolve_hf_model_revision("hf/model", "0123456789abcdef")
+
+    assert resolved == "/cache/models--hf--model/snapshots/0123456789abcdef"
+    assert calls == [{"repo_id": "hf/model", "revision": "0123456789abcdef"}]
+
+
+def test_resolve_hf_model_revision_rejects_local_path(tmp_path):
+    with pytest.raises(ValueError, match="only to Hugging Face Hub model IDs"):
+        resolve_hf_model_revision(str(tmp_path), "0123456789abcdef")
 
 
 @pytest.mark.parametrize("relationship", ["equal", "destination-parent", "destination-child"])

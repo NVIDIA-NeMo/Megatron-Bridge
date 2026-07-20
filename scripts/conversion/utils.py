@@ -27,6 +27,31 @@ DTYPE_MAP = {
 }
 
 
+def resolve_hf_model_revision(hf_model: str, hf_revision: str | None) -> str:
+    """Resolve a remote Hugging Face model revision to an immutable local snapshot.
+
+    Args:
+        hf_model: Hugging Face model ID or local path.
+        hf_revision: Hub branch, tag, or commit to resolve. ``None`` preserves
+            the original model reference.
+
+    Returns:
+        The original model reference when no revision is provided, otherwise
+        the local path of the resolved Hub snapshot.
+
+    Raises:
+        ValueError: If a revision is paired with an existing local path.
+    """
+    if hf_revision is None:
+        return hf_model
+    if Path(hf_model).expanduser().exists():
+        raise ValueError("--hf-revision applies only to Hugging Face Hub model IDs, not local paths.")
+
+    from huggingface_hub import snapshot_download
+
+    return snapshot_download(repo_id=hf_model, revision=hf_revision)
+
+
 def parse_dtype(name: str) -> torch.dtype:
     """Resolve a CLI dtype name.
 
