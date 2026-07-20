@@ -16,7 +16,6 @@
 """Tests for flop_utils module."""
 
 import importlib
-from types import SimpleNamespace
 
 import pytest
 
@@ -34,19 +33,12 @@ class TestFlops:
             ("qwen", "qwen3_235b_a22b_pretrain_config", 4096, 151643, 6.06e14),
         ],
     )
-    def test_flops(self, model_family, model_config_func_name, seq_length, vocab_size, expected_flops, monkeypatch):
+    def test_flops(self, model_family, model_config_func_name, seq_length, vocab_size, expected_flops):
         """
         Test the number of floating point operations for a given model family and configuration.
         For GBS=1
 
         """
-        # H100 recipe construction validates hardware-specific dispatcher settings,
-        # but FLOP calculation must not depend on the CI runner's CUDA driver.
-        monkeypatch.setattr(
-            "torch.cuda.get_device_properties",
-            lambda _: SimpleNamespace(major=9, name="NVIDIA H100"),
-        )
-
         model_family_module = importlib.import_module(f"megatron.bridge.recipes.{model_family}")
         cfg = getattr(model_family_module, model_config_func_name)()
         cfg.model.finalize()
