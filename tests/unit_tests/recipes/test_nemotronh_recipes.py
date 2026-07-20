@@ -59,8 +59,9 @@ class _FakeAutoBridge:
 
 @pytest.fixture(autouse=True)
 def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep Super and Ultra recipe construction deterministic and offline."""
+    """Keep AutoBridge-backed recipe construction deterministic and offline."""
     for module_name in (
+        "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
