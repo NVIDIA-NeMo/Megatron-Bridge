@@ -16,19 +16,42 @@ from megatron.core.models.hybrid.hybrid_layer_specs import (
     hybrid_inference_stack_spec as default_hybrid_inference_stack_spec,
 )
 from megatron.core.models.hybrid.hybrid_layer_specs import hybrid_stack_spec as default_hybrid_stack_spec
+from megatron.core.models.hybrid.hybrid_model import HybridModel as MCoreHybridModel
 from megatron.core.post_training.modelopt.hybrid.model_specs import get_hybrid_stack_modelopt_spec
 from megatron.core.transformer import ModuleSpec
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.hybrid import HybridModelBuilder, HybridModelConfig
 
 
+def _hybrid_model_uses_cuda_graphs(transformer_config: TransformerConfig) -> bool:
+    """Return whether current or deprecated config fields enable CUDA graphs."""
+    return (
+        transformer_config.cuda_graph_impl != "none"
+        or transformer_config.enable_cuda_graph
+        or transformer_config.external_cuda_graph
+    )
+
+
+def _hybrid_model_supports_ep_overlap(transformer_config: TransformerConfig) -> bool:
+    """Return whether the installed MCore supports HybridModel EP overlap for this config."""
+    return callable(getattr(MCoreHybridModel, "build_schedule_plan", None)) and not _hybrid_model_uses_cuda_graphs(
+        transformer_config
+    )
+
+
 def _validate_hybrid_model_ep_overlap(transformer_config: TransformerConfig) -> None:
-    """Reject EP overlap until the pinned MCore HybridModel supports it."""
-    # TODO: Remove this guard after NVIDIA/Megatron-LM#4942 is merged and included in the MCore pin.
-    if transformer_config.overlap_moe_expert_parallel_comm:
+    """Reject HybridModel EP overlap when the installed MCore cannot support it."""
+    if not transformer_config.overlap_moe_expert_parallel_comm:
+        return
+    if not callable(getattr(MCoreHybridModel, "build_schedule_plan", None)):
         raise ValueError(
             "HybridModel does not support overlap_moe_expert_parallel_comm with the current Megatron Core. "
             "Disable comm_overlap.overlap_moe_expert_parallel_comm and comm_overlap.delay_wgrad_compute."
+        )
+    if _hybrid_model_uses_cuda_graphs(transformer_config):
+        raise ValueError(
+            "HybridModel EP overlap does not support CUDA graphs with the current Megatron Core. "
+            "Set model.cuda_graph_impl=none or disable MoE expert-parallel communication overlap."
         )
 
 

@@ -13,6 +13,7 @@
 # limitations under the License.
 """GB200 performance recipes for GPT-OSS."""
 
+from megatron.bridge.models.hybrid.hybrid_builder import _hybrid_model_supports_ep_overlap
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.gpt_oss.common import (
     CommOverlapConfig,
@@ -196,9 +197,9 @@ def gpt_oss_120b_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_granularity = "selective"
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    # TODO: Re-enable after NVIDIA/Megatron-LM#4942 is merged and included in the MCore pin.
-    cfg.comm_overlap.delay_wgrad_compute = False
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    enable_ep_overlap = _hybrid_model_supports_ep_overlap(cfg.model)
+    cfg.comm_overlap.delay_wgrad_compute = enable_ep_overlap
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = enable_ep_overlap
 
     _benchmark_common(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.

@@ -14,7 +14,7 @@
 
 import os
 from dataclasses import fields
-from typing import Any, Optional
+from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -29,10 +29,8 @@ from megatron.bridge.data.builders import (
     MockVLMSFTDatasetConfig,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
-from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.mla_provider import MLAModelProvider
 from megatron.bridge.models.t5_provider import T5ModelProvider
-from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -248,7 +246,7 @@ def create_test_nvrx_straggler_config(**kwargs: Any) -> NVRxStragglerDetectionCo
 
 def create_test_config_container(
     world_size_override: int,
-    model_config: GPTModelProvider | HybridModelConfig | T5ModelProvider,
+    model_config: Union[GPTModelProvider, T5ModelProvider],
     train_config: Optional[TrainingConfig] = None,
     optimizer_config: Optional[OptimizerConfig] = None,
     scheduler_config: Optional[SchedulerConfig] = None,
@@ -475,29 +473,6 @@ class TestMockGPTDatasetConfig:
 
 
 class TestConfigContainerValidation:
-    def test_hybrid_builder_config_rejects_ep_overlap(self):
-        model_config = HybridModelConfig(
-            transformer=TransformerConfig(
-                num_layers=2,
-                hidden_size=128,
-                num_attention_heads=1,
-                overlap_moe_expert_parallel_comm=True,
-            ),
-            hybrid_layer_pattern="*E",
-            vocab_size=1000,
-        )
-        container, original_get_world_size, config_module = create_test_config_container(
-            world_size_override=1,
-            model_config=model_config,
-            dataset_config_override=create_test_gpt_dataset_config(sequence_length=model_config.seq_length),
-        )
-
-        try:
-            with pytest.raises(ValueError, match="HybridModel does not support overlap_moe_expert_parallel_comm"):
-                container.validate()
-        finally:
-            restore_get_world_size_safe(original_get_world_size, config_module)
-
     def test_deterministic_mode_disallows_ce_fusion(self, monkeypatch):
         """Test that deterministic mode disallows cross-entropy loss fusion."""
         gpt_model_cfg = create_test_gpt_config(

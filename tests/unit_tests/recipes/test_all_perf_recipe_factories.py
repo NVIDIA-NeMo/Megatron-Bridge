@@ -35,9 +35,6 @@ pytestmark = pytest.mark.unit
 
 _PERF_RECIPES_PACKAGE = importlib.import_module("megatron.bridge.perf_recipes")
 _PERF_RECIPE_FACTORIES = discover_recipe_factories(_PERF_RECIPES_PACKAGE)
-_GPT_OSS_PERF_RECIPE_FACTORIES = tuple(
-    factory for factory in _PERF_RECIPE_FACTORIES if ".gpt_oss." in factory.__module__
-)
 _PERF_RECIPE_FAMILY_PACKAGES = tuple(
     importlib.import_module(module_info.name)
     for module_info in pkgutil.iter_modules(
@@ -87,15 +84,3 @@ def test_perf_recipe_factory_builds_config(recipe_factory: Callable[..., object]
         "dist",
     ):
         assert getattr(cfg, section) is not None
-
-
-@pytest.mark.parametrize("recipe_factory", _GPT_OSS_PERF_RECIPE_FACTORIES, ids=recipe_factory_id)
-def test_gpt_oss_perf_recipes_disable_unsupported_ep_overlap(
-    recipe_factory: Callable[..., ConfigContainer],
-) -> None:
-    """GPT-OSS HybridModel recipes must not enable unsupported EP overlap."""
-    cfg = recipe_factory()
-
-    if cfg.comm_overlap is not None:
-        assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is not True
-        assert cfg.comm_overlap.delay_wgrad_compute is not True

@@ -14,6 +14,7 @@
 # ruff: noqa: F401
 """Common helpers for gpt_oss performance recipes."""
 
+from megatron.bridge.models.hybrid.hybrid_builder import _hybrid_model_supports_ep_overlap
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
 from megatron.bridge.recipes.gpt_oss.gpt_oss import gpt_oss_20b_pretrain_config, gpt_oss_120b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -45,10 +46,9 @@ def _apply_gpt_oss_120b_full_iter_fp8mx_configs(cfg: ConfigContainer) -> None:
     cfg.rng.te_rng_tracker = True
 
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
-    # TODO: Re-enable after NVIDIA/Megatron-LM#4942 is included in the MCore pin and
-    # HybridModel EP overlap supports full-iteration CUDA graphs.
-    cfg.comm_overlap.delay_wgrad_compute = False
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    enable_ep_overlap = _hybrid_model_supports_ep_overlap(cfg.model)
+    cfg.comm_overlap.delay_wgrad_compute = enable_ep_overlap
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = enable_ep_overlap
 
 
 def _gpt_oss_20b_fp8mx_precision():
