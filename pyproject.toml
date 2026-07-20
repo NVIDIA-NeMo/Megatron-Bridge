@@ -161,6 +161,13 @@ requires-dist = []
 megatron-core = { path = "3rdparty/Megatron-LM/", editable = true }
 nvidia-modelopt = { index = "nvidia" }
 flash_mla = { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" }
+# Pin mamba-ssm to the cutlass-dsl-4.6.1-compatible commit. Megatron-Core main
+# pins this via its own [tool.uv.sources]; the dev ref instead requires
+# `mamba-ssm~=2.2` from PyPI, whose bundled `quack` references
+# `cutlass.cute.nvgpu.cpasync.ReductionKind` (absent from the pinned
+# nvidia-cutlass-dsl 4.6.1) and crashes on import. Pin it here so the dev-ref
+# lock resolves the same known-good commit regardless of the submodule ref.
+mamba-ssm = { git = "https://github.com/state-spaces/mamba.git", rev = "0048fbf2e7b2f214dcbe703ea3dec2b9647595e1" }
 
 [project.optional-dependencies]
 recipes = [
