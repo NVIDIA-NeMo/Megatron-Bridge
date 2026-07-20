@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-recipe-recommender
 license: Apache-2.0
-description: Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes.
-when_to_use: User wants a starting recipe or training config; 'which recipe', 'recommend recipe', 'how to train Llama', 'starting config for X GPUs', 'what recipe for SFT'.
+description: Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes, and distinguishes convergence changes, semantics-preserving execution tuning, and benchmark-only shortcuts.
 ---
 
 # Auto Recipe — Recipe Index & Recommendation
@@ -37,6 +36,57 @@ index details:
    divide `num_key_value_heads`, keep TP within one node unless using
    NVL72-class interconnect, enable SP when TP > 1, configure CP for long
    context, DP is implicit, and reduce `micro_batch_size` first on OOM.
+6. State whether each proposed override changes the convergence contract or
+   only the execution/performance mapping. Do not trade convergence semantics
+   for throughput without calling it a new experiment.
+
+## Configuration Layers and Change Control
+
+Separate training semantics from their hardware mapping before recommending or
+tuning a recipe.
+
+**Convergence configuration** includes the starting checkpoint and trainable
+parameters; dataset/revision/split/order/seeds; tokenizer, masking, truncation,
+and packing; sequence length; global batch and token budget; objective and loss
+coefficients; natural or forced MoE routing and token-dropping policy;
+optimizer, LR, schedule, warmup, betas, epsilon, weight decay, clipping, and
+dropout; arithmetic and optimizer-state precision; and PEFT adapter settings.
+Changing one of these creates a new convergence experiment.
+
+**Execution/performance configuration** includes hardware count and topology;
+TP/PP/VP/CP/EP/ETP/DP/SP; recompute and offload; distributed optimizer/FSDP;
+communication overlap; fusions and attention backends; CUDA graphs and
+compilation; checkpoint I/O; and MoE transport through all-to-all, DeepEP, or
+HybridEP when the routing policy is unchanged. These settings should preserve
+the objective and effective updates, although floating-point reduction order
+can produce small numerical drift that still needs validation.
+
+Freeze micro batch size and gradient accumulation for comparable evidence. Tune
+them only as a separately validated execution variant with unchanged global
+batch membership/order, normalization, optimizer boundaries, and token budget.
+Packing, precision, forced MoE load balancing, token dropping/capacity, and
+router/auxiliary loss changes are never performance-only knobs.
+
+Treat mock data, forced balancing, disabled correctness checks, and timing-only
+schedules as benchmark-only shortcuts. They may be appropriate in
+`perf_recipes`, but their losses and checkpoints are not convergence evidence.
+
+For comparable model-verification recipes, choose a cohort-wide convergence
+contract before tuning performance. Keep the same bounded data selection,
+preprocessing, sequence length, global batch, optimizer/schedule, precision,
+seeds, routing policy, optimizer-step horizon, and processed-token checkpoints
+where the architectures permit. Record any necessary model-specific deviation
+and do not present that result as apples-to-apples convergence evidence.
+Absolute losses from different architectures or tokenizers are not directly
+rankable; compare stability and trend at equal token counts.
+
+When a recipe's batch disagrees with the chosen convergence contract, modify
+and validate the library recipe separately. A declared bounded-verification
+protocol may explicitly apply the same LR, schedule, sequence, and data
+overrides across a cohort, but do not make one-off convergence changes merely
+to improve throughput. Conversely, first try TP/PP/CP/EP, recompute/offload,
+dispatcher transport, overlap, fusion, and CUDA graphs when optimizing fit or
+throughput.
 
 ---
 

@@ -1,6 +1,6 @@
 ---
 name: create-model-verification-card
-description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce the required core inventory, optional canonical performance item, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
+description: Create or update concise, agent-readable Megatron Bridge model verification cards. Use when adding a model support card, auditing cross-model convergence comparability or verification coverage, recording conversion, deterministic inference, training, checkpoint resume, post-SFT export, or performance results, or preparing a model-support PR. Enforce the required core inventory, convergence-versus-performance contracts, optional canonical performance item, public Slurm launcher commands, training metrics, important-feature allowlist, and a strict privacy boundary that excludes private runtime wiring, internal paths, credentials, and job metadata.
 ---
 
 # Create Model Verification Card
@@ -126,7 +126,97 @@ private codename cannot be recognized generically, pass it to the validator via
 `--deny-term` or an untracked file through `--denylist "$PRIVATE_DENYLIST"`.
 The validator reports the match without printing the private term.
 
-### 4. Apply the verification gates
+### 4. Freeze convergence, execution, and benchmark contracts
+
+Before launching any training item, resolve the selected recipe and classify
+its effective configuration into the three groups below. Do this from the
+built `ConfigContainer`, not only from command-line overrides. Record the
+resolved convergence and execution field/value fingerprints in the internal
+per-model record; keep the public card concise.
+
+The **convergence contract** contains settings that change the training
+objective, examples seen at an optimizer boundary, or numerical update rule:
+
+- starting checkpoint and trainable parameter set;
+- dataset identity/revision, split or bounded selection, sample order, seeds,
+  tokenizer/chat template, truncation, masking, and packing semantics;
+- sequence length, global batch size, global tokens per optimizer step, total
+  optimizer steps, and total token budget;
+- objective and loss settings, including label masking, MoE auxiliary/router
+  losses, token dropping/capacity, natural versus forced routing, and loss
+  normalization;
+- optimizer family, peak/minimum learning rate, schedule shape, warmup and
+  decay horizon, betas, epsilon, weight decay, gradient clipping, and dropout;
+- model/gradient/optimizer-state precision and loss-scaling behavior;
+- for PEFT, adapter type, targets, rank, alpha, dropout, and which base weights
+  are frozen.
+
+The **execution/performance contract** maps the frozen training semantics to
+hardware. It may vary across models or be tuned for throughput:
+
+- node/GPU count and TP, PP, VP, CP, EP, ETP, DP, and sequence parallelism;
+- activation recompute, activation/optimizer offload, distributed optimizer or
+  FSDP sharding, checkpoint I/O strategy, and garbage-collection policy;
+- communication overlap, fused kernels, Transformer Engine implementation,
+  attention backend, CUDA graphs, and compilation;
+- MoE transport/dispatcher backend such as all-to-all, DeepEP, or HybridEP,
+  provided routing, capacity, token dropping, and auxiliary losses are
+  unchanged.
+
+Freeze micro batch size and gradient-accumulation layout within a comparison
+cohort because they can change accumulation order, dropout RNG, MoE token
+grouping, and auxiliary-loss reduction. They may be tuned as a new execution
+variant only after global batch membership/order, loss normalization,
+optimizer-step boundaries, and total token budget are shown to remain intact
+and loss sentinels pass.
+
+Performance settings are **intended** to preserve training semantics, not
+guaranteed to be bitwise neutral. Parallel reductions, fusions, recompute, and
+dispatcher implementations can change floating-point order. After changing
+them, require finite loss, no skipped iterations, and compatible loss sentinels
+before calling the mapping verified. Anything that changes arithmetic
+precision, forced router balancing, token dropping, packing, or effective batch
+construction is a convergence change, even when introduced to improve speed.
+
+The **benchmark-only configuration** may deliberately change semantics to find
+an upper throughput bound. It includes mock data, forced MoE load balancing,
+changed batch/LR or timing-only schedules, and disabled NaN/large-gradient,
+evaluation, or checkpoint checks. These settings may be valid for a canonical
+`pretrain_performance` item, but their losses and checkpoints are never
+convergence evidence.
+
+For a cross-model verification cohort, freeze a shared workload protocol before
+the first run:
+
+| Workload | Cohort defaults |
+| --- | --- |
+| Pretrain | Same bounded raw RP2 selection, sample seed/order, sequence length 4096, BF16 convergence precision, optimizer family/hyperparameters, GBS/MBS 1024/1, and natural routing for MoE. Use peak/minimum LR `3e-4`/`3e-5`, 100 steps, 40 warmup steps, cosine decay through step 100, and saves at steps 50 and 100. |
+| SFT | Same bounded Tulu 3 `train[:10000]` selection, preprocessing/chat masking, offline-packing semantics, sequence length 2048, BF16 convergence precision, optimizer family/hyperparameters, and GBS/MBS 32/1. Use peak/minimum LR `5e-6`/`0`, 100 steps, 10 warmup steps, and decay through step 100. |
+| PEFT | Same SFT data contract plus the same adapter definition and GBS/MBS 32/1. Use peak/minimum LR `1e-4`/`0`, 100 steps, 10 warmup steps, and decay through step 100. Do not compare PEFT loss directly with full SFT. |
+
+Use the same numerical value for global batch size within a comparison cohort.
+If a model cannot use that value, change and validate its recipe separately,
+record the exception, and treat the result as support verification rather than
+an apples-to-apples convergence comparison. Compare progress at equal processed
+token counts as well as equal optimizer steps. Different model architectures
+and tokenizers make absolute cross-model loss values non-comparable; the shared
+contract supports comparisons of stability and loss trend, not a ranking by
+final loss.
+
+Pin the same raw-document selection across models, then tokenize it with each
+model's verified tokenizer unless a deliberately shared tokenizer is part of
+the cohort. Do not assume that one indexed token-ID prefix represents the same
+text under different tokenizers.
+
+Make every bounded convergence override explicit in the card command and apply
+the same cohort values across models; never tune these values merely to improve
+throughput. Library recipes own global and micro batch size. If a recipe batch
+disagrees with the cohort contract, update and validate the recipe separately
+instead of overriding it in the card. A canonical `perf_recipes` benchmark may
+intentionally use mock data, forced balancing, or a different batch and is not
+convergence evidence.
+
+### 5. Apply the verification gates
 
 Mark an item `verified` only after the workload represented by its command has
 completed with the recorded model, recipe, data, and checkpoint arguments and
@@ -189,15 +279,17 @@ values, zero skipped/NaN iterations, and complete reloadable artifacts.
 For ordered command lists, wait for the preceding workload to finish and verify
 its artifact before starting the next command. Reference and resumed checkpoint
 roots must be distinct; the resumed root must be new or empty. Use the same
-Bridge commit, public base container, accelerator topology, dataset, and
-configuration as the reference run.
+Bridge commit, public base container, accelerator topology, and convergence
+fingerprint as the reference run. Keep the execution fingerprint identical
+when possible. Record any necessary execution-only deviation, explain why it
+preserves semantics, and require the resume loss sentinels to pass.
 
 Use the batch sizes defined by the selected recipe. A model verification card
 must not override global or micro batch size. If a recipe batch size is wrong,
 change and validate the recipe separately instead of hiding the change in the
 card command.
 
-### 5. Record training metrics consistently
+### 6. Record training metrics consistently
 
 For every verified training item, record:
 
@@ -222,7 +314,7 @@ For Megatron-indexed data, command values are prefixes and omit `.bin` and
 `.idx`. A bounded RedPajama2 prefix such as `head_01` is suitable for a
 reproducible functional run; keep the physical dataset root private.
 
-### 6. Record only important enabled features
+### 7. Record only important enabled features
 
 Use `enabled_features` only on pretrain, SFT, long-context SFT, and PEFT. Keep
 it empty when none of these are central to the verification.
@@ -238,7 +330,7 @@ it empty when none of these are central to the verification.
 Do not list routine TP/PP/DP sizes, Transformer Engine, fused loss,
 distributed optimizer, ordinary communication overlap, LoRA, or DoRA.
 
-### 7. Validate before review
+### 8. Validate before review
 
 Run:
 
@@ -274,6 +366,10 @@ an item verified merely to make validation pass.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
 - Include GPU type and all four metrics for verified training items.
+- Audit the resolved convergence contract before each training run; align it
+  within the comparison cohort or record that the result is not comparable.
+- Change only the execution/performance contract while tuning throughput, and
+  recheck loss sentinels after numerically non-bitwise changes.
 - Leave recipe global and micro batch sizes unchanged in card commands.
 - Save full SFT, export it to HF, and record an exact deterministic N-token HF
   completion in a two-command ordered list.
