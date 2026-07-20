@@ -249,47 +249,29 @@ def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("mode", "recipe_name"),
+    ("mode", "task", "world_size", "recipe_name"),
     [
-        ("sft", "llama3_8b_sft_8gpu_gb200_bf16_config"),
-        ("lora", "llama3_70b_peft_8gpu_gb200_bf16_config"),
+        ("sft", "sft", 8, "llama3_8b_sft_8gpu_gb200_bf16_config"),
+        ("lora", "peft", 8, "llama3_70b_peft_8gpu_gb200_bf16_config"),
+        ("sft", "sft", 32, "llama3_70b_sft_32gpu_h100_bf16_config"),
+        ("lora", "peft", 8, "llama3_70b_peft_8gpu_h100_bf16_config"),
     ],
 )
-def test_performance_finetuning_recipes_remain_on_legacy_launcher(mode, recipe_name):
+def test_performance_finetuning_recipes_use_unified_runner(monkeypatch, mode, task, world_size, recipe_name):
     module, handles = _load_module()
-
-    with pytest.raises(ValueError, match="performance pretraining recipes only"):
-        module.main(
-            [
-                "--recipe",
-                recipe_name,
-                "--mode",
-                mode,
-            ]
-        )
-
-    handles.recipe_runner.load_recipe.assert_not_called()
-
-
-@pytest.mark.parametrize(
-    ("mode", "recipe_name"),
-    [
-        ("sft", "llama3_70b_sft_32gpu_h100_bf16_config"),
-        ("lora", "llama3_70b_peft_8gpu_h100_bf16_config"),
-    ],
-)
-def test_unsupported_finetuning_name_collisions_keep_library_behavior(mode, recipe_name):
-    module, handles = _load_module()
-    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+    monkeypatch.setenv("WORLD_SIZE", str(world_size))
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
 
     module.main(["--recipe", recipe_name, "--mode", mode])
 
-    handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
     handles.recipe_runner.load_recipe.assert_called_once_with(
         recipe_name,
         peft_scheme=mode if mode == "lora" else None,
     )
-    handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="finetune")
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    handles.recipe_runner.load_forward_step.assert_called_once_with("gpt_step", mode=task)
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
 def test_library_only_canonical_name_does_not_enable_performance_runtime():
@@ -397,7 +379,7 @@ def test_performance_recipe_accepts_user_selected_per_node_topology(monkeypatch)
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
 
 
-def test_performance_recipe_rejects_noncanonical_forward_step():
+def test_performance_recipe_rejects_incompatible_forward_step():
     module, handles = _load_module()
 
     with pytest.raises(ValueError, match="canonical gpt_step"):
@@ -415,21 +397,23 @@ def test_performance_recipe_rejects_noncanonical_forward_step():
     handles.recipe_runner.load_recipe.assert_not_called()
 
 
-def test_performance_recipe_rejects_deterministic_bypass():
+def test_performance_recipe_applies_deterministic_overrides(monkeypatch):
     module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", "16")
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
 
-    with pytest.raises(ValueError, match="--deterministic"):
-        module.main(
-            [
-                "--recipe",
-                "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
-                "--mode",
-                "pretrain",
-                "--deterministic",
-            ]
-        )
+    module.main(
+        [
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+            "--deterministic",
+        ]
+    )
 
-    handles.recipe_runner.load_recipe.assert_not_called()
+    handles.recipe_runner.apply_determinism.assert_called_once_with(config, deterministic=True)
 
 
 def test_performance_recipe_requires_distributed_world_size(monkeypatch):
@@ -474,19 +458,23 @@ def test_performance_recipe_rejects_public_dataset_replacement():
 
 
 @pytest.mark.parametrize(
-    "recipe_name",
+    ("recipe_name", "world_size", "step_name"),
     [
-        "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
-        "wan_14b_pretrain_16gpu_gb200_bf16_config",
+        ("qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config", 16, "qwen3_vl_step"),
+        ("wan_14b_pretrain_16gpu_gb200_bf16_config", 16, "wan_step"),
     ],
 )
-def test_non_text_performance_recipes_remain_on_legacy_launcher(recipe_name):
+def test_non_text_performance_recipes_use_modality_step(monkeypatch, recipe_name, world_size, step_name):
     module, handles = _load_module()
+    monkeypatch.setenv("WORLD_SIZE", str(world_size))
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
 
-    with pytest.raises(ValueError, match="text performance recipes only"):
-        module.main(["--recipe", recipe_name, "--mode", "pretrain"])
+    module.main(["--recipe", recipe_name, "--mode", "pretrain"])
 
-    handles.recipe_runner.load_recipe.assert_not_called()
+    handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
+    handles.recipe_runner.load_forward_step.assert_called_once_with(step_name, mode="pretrain")
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
 def test_performance_recipe_metadata_accepts_named_variant():
@@ -502,6 +490,7 @@ def test_performance_recipe_metadata_accepts_named_variant():
     assert metadata.family == "qwen"
     assert metadata.hardware == "h100"
     assert metadata.precision == "fp8cs"
+    assert metadata.task == "pretrain"
 
 
 @pytest.mark.parametrize(

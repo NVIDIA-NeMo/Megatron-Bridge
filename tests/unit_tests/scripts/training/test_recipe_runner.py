@@ -131,22 +131,31 @@ def test_duplicate_name_warns_and_selects_performance(
     library_finder.assert_not_called()
 
 
-def test_unsupported_finetuning_collision_stays_on_library(
-    recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "llama3_70b_sft_32gpu_h100_bf16_config",
+        "llama3_70b_peft_8gpu_h100_bf16_config",
+    ],
+)
+def test_finetuning_collision_selects_performance(
+    recipe_runner: ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    recipe_name: str,
 ) -> None:
-    recipe_name = "llama3_70b_sft_32gpu_h100_bf16_config"
     config = object()
 
-    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: None)
-    library_finder = Mock(return_value=lambda: config)
-    performance_finder = Mock()
+    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: object())
+    library_finder = Mock()
+    performance_finder = Mock(return_value=lambda: config)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
     monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
 
     assert recipe_runner.load_recipe(recipe_name) is config
-    assert "selecting the library definition" in caplog.text
-    library_finder.assert_called_once_with(recipe_name)
-    performance_finder.assert_not_called()
+    assert "selecting the performance definition" in caplog.text
+    performance_finder.assert_called_once_with(recipe_name)
+    library_finder.assert_not_called()
 
 
 def test_find_performance_recipe_imports_exporting_family_lazily(

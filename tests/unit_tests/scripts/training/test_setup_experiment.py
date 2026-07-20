@@ -16,7 +16,6 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
-from unittest.mock import Mock
 
 import pytest
 
@@ -110,16 +109,9 @@ def test_parser_forwards_and_auto_detects_performance_recipe():
     assert metadata.hardware == "h100"
 
 
-@pytest.mark.parametrize(
-    "recipe_name",
-    [
-        "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
-        "llama3_70b_sft_32gpu_h100_bf16_config",
-        "llama3_70b_peft_8gpu_h100_bf16_config",
-    ],
-)
-def test_library_resolved_recipe_does_not_enable_performance_executor(recipe_name):
+def test_library_resolved_recipe_does_not_enable_performance_executor():
     module = _load_setup_experiment_module()
+    recipe_name = "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config"
     _, training_args = module.parse_args(["--recipe", recipe_name])
 
     assert module.selected_performance_recipe(training_args) is None
@@ -171,22 +163,21 @@ def test_performance_recipe_accepts_user_selected_node_shape():
 
 
 @pytest.mark.parametrize(
-    ("recipe_name", "message"),
+    "recipe_name",
     [
-        ("llama3_8b_sft_8gpu_gb200_bf16_config", "performance pretraining recipes only"),
-        ("qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config", "text performance recipes only"),
-        ("wan_14b_pretrain_16gpu_gb200_bf16_config", "text performance recipes only"),
+        "llama3_8b_sft_8gpu_gb200_bf16_config",
+        "llama3_70b_peft_8gpu_gb200_bf16_config",
+        "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "wan_14b_pretrain_16gpu_gb200_bf16_config",
     ],
 )
-def test_unsupported_performance_scope_is_rejected_before_submission(monkeypatch, recipe_name, message):
+def test_all_performance_tasks_and_modalities_are_accepted_before_submission(recipe_name):
     module = _load_setup_experiment_module()
-    build_executor = Mock()
-    monkeypatch.setattr(module, "_build_executor", build_executor)
+    training_args = ["--recipe", recipe_name]
+    metadata = module.selected_performance_recipe(training_args)
 
-    with pytest.raises(ValueError, match=message):
-        module.main(["--recipe", recipe_name])
-
-    build_executor.assert_not_called()
+    assert metadata is not None
+    module.validate_selected_performance_recipe(training_args, metadata)
 
 
 def test_parser_consumes_repeatable_srun_args():
@@ -378,6 +369,7 @@ def test_performance_task_environment_preserves_explicit_process_values():
         family="qwen",
         hardware="gb200",
         precision="bf16",
+        task="pretrain",
     )
 
     environment = module._task_environment(

@@ -67,10 +67,17 @@ def test_every_flat_recipe_has_registered_family_and_topology():
 def test_every_exported_performance_name_has_canonical_metadata():
     module = _load_module()
     recipe_names = module.performance_recipe_names()
+    public_modes = {"pretrain": "pretrain", "sft": "sft", "peft": "lora"}
 
     assert len(recipe_names) > 300
     for recipe_name in recipe_names:
-        assert module.available_performance_recipe_metadata(recipe_name) is not None
+        metadata = module.available_performance_recipe_metadata(recipe_name)
+        assert metadata is not None
+        module.validate_performance_recipe_scope(
+            metadata,
+            mode=public_modes[metadata.task],
+            step_func=module.performance_recipe_step(metadata),
+        )
 
 
 def test_submission_metadata_is_inferred_from_exact_recipe_name():
@@ -82,6 +89,27 @@ def test_submission_metadata_is_inferred_from_exact_recipe_name():
     assert metadata.num_gpus == 16
     assert metadata.gpus_per_node == 8
     assert metadata.family == "qwen"
+    assert metadata.task == "pretrain"
+    assert module.performance_recipe_step(metadata) == "gpt_step"
+
+
+@pytest.mark.parametrize(
+    ("recipe_name", "task", "step_name"),
+    [
+        ("llama3_8b_sft_8gpu_gb200_bf16_config", "sft", "gpt_step"),
+        ("llama3_70b_peft_8gpu_gb200_bf16_config", "peft", "gpt_step"),
+        ("qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config", "pretrain", "qwen3_vl_step"),
+        ("wan_14b_pretrain_16gpu_gb200_bf16_config", "pretrain", "wan_step"),
+    ],
+)
+def test_performance_recipe_metadata_selects_task_and_step(recipe_name, task, step_name):
+    module = _load_module()
+
+    metadata = module.available_performance_recipe_metadata(recipe_name)
+
+    assert metadata is not None
+    assert metadata.task == task
+    assert module.performance_recipe_step(metadata) == step_name
 
 
 @pytest.mark.parametrize(

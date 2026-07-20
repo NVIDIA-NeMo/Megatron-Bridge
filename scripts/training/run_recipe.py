@@ -83,6 +83,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from performance_recipe import (  # noqa: E402
     PerformanceRecipeMetadata,
+    performance_recipe_step,
     resolved_performance_recipe_metadata,
     validate_performance_recipe_scope,
 )
@@ -160,7 +161,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--step-func",
         "--step_func",
         dest="step_func",
-        help="Forward-step registry name; defaults to llm_step or the selected performance recipe's gpt_step.",
+        help="Forward-step registry name; defaults to llm_step or the selected performance recipe's modality step.",
     )
 
     data = parser.add_argument_group("Data")
@@ -397,7 +398,6 @@ def main(argv: list[str] | None = None) -> None:
             metadata,
             mode=args.mode,
             step_func=args.step_func,
-            deterministic=args.deterministic,
             dataset=args.dataset,
         )
 
@@ -416,7 +416,7 @@ def main(argv: list[str] | None = None) -> None:
             argv=list(argv) if argv is not None else sys.argv[1:],
         )
         execution_mode = "pretrain"
-        step_mode = _recipe_task(args.mode)
+        step_mode = metadata.task
     else:
         recipe = apply_runtime_environment(recipe)
         execution_mode = configuration_mode
@@ -426,7 +426,7 @@ def main(argv: list[str] | None = None) -> None:
     recipe = sync_offline_packing_alignment(recipe)
     recipe = sync_model_dataset_sequence_length(recipe)
 
-    step_func_name = args.step_func or ("gpt_step" if metadata is not None else "llm_step")
+    step_func_name = args.step_func or (performance_recipe_step(metadata) if metadata is not None else "llm_step")
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,

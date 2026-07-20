@@ -2,12 +2,11 @@
 
 ## NOTE: This directory will change a lot over the coming weeks
 
-New canonical text-pretraining runs should use `scripts/training/train.sh --recipe <function_name>` with the exact
-flat recipe function name. The launcher discovers the recipe automatically. This directory is retained as a
-compatibility path while SFT/PEFT, VLM,
-diffusion, dataset replacement, topology resizing, and specialized benchmark controls migrate. The training launcher
-already preserves the flat text-pretrain path's GPU topology validation, NUMA binding, process environment, and core
-Pyxis `srun` setup.
+New runs of exact exported flat recipes should use `scripts/training/train.sh --recipe <function_name>`. The launcher
+discovers text pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining recipes automatically and selects
+their forward step. This directory remains the compatibility path for selector-based invocation, dataset replacement,
+topology resizing, and specialized benchmark controls. The training launcher preserves total GPU-count validation,
+NUMA binding, and the recipe process environment; cluster-specific `srun` arguments remain user supplied.
 
 - Scripts defined in `scripts/performance` launch performance-optimized experiments on Slurm-based clusters.
 

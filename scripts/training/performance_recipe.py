@@ -48,7 +48,7 @@ PERFORMANCE_RECIPE_FAMILY_PREFIXES = (
 )
 
 PERFORMANCE_RECIPE_PATTERN = re.compile(
-    r"_(?P<num_gpus>[1-9][0-9]*)gpu_"
+    r"_(?P<task>pretrain|sft|peft)_(?P<num_gpus>[1-9][0-9]*)gpu_"
     r"(?P<hardware>[a-z0-9]+)_"
     r"(?P<precision>bf16|fp8cs|fp8mx|fp8sc|nvfp4)"
     r"(?:_[a-z0-9_]+)?_config$"
@@ -56,25 +56,25 @@ PERFORMANCE_RECIPE_PATTERN = re.compile(
 
 PERFORMANCE_RECIPE_ROOT = Path(__file__).resolve().parents[2] / "src" / "megatron" / "bridge" / "perf_recipes"
 
-# These pretraining names are exported by both recipe packages today. Bare
-# recipe lookup selects the performance definition: the perf names landed
-# first and each library workload remains available through its generic alias.
+# These names are exported by both recipe packages today. Bare recipe lookup
+# selects the performance definition; each functional workload remains
+# available through its generic library alias.
 PERFORMANCE_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
     {
         "deepseek_v3_pretrain_1024gpu_h100_bf16_config",
         "gpt_oss_120b_pretrain_64gpu_h100_bf16_config",
+        "llama3_70b_peft_8gpu_h100_bf16_config",
+        "llama3_70b_sft_32gpu_h100_bf16_config",
         "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",
     }
 )
 
-# The unified performance path does not support SFT or PEFT yet. Preserve the
-# existing functional-library behavior for these two duplicate names.
-LIBRARY_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
-    {
-        "llama3_70b_peft_8gpu_h100_bf16_config",
-        "llama3_70b_sft_32gpu_h100_bf16_config",
-    }
-)
+LIBRARY_RECIPE_PRECEDENCE_COLLISIONS: frozenset[str] = frozenset()
+
+PERFORMANCE_FORWARD_STEPS = {
+    "qwen_vl": "qwen3_vl_step",
+    "wan": "wan_step",
+}
 
 
 @dataclass(frozen=True)
@@ -86,6 +86,7 @@ class PerformanceRecipeMetadata:
     family: str
     hardware: str
     precision: str
+    task: str
 
 
 def performance_recipe_family(recipe_name: str) -> str:
@@ -124,6 +125,7 @@ def performance_recipe_metadata(recipe_name: str) -> PerformanceRecipeMetadata:
         family=performance_recipe_family(recipe_name),
         hardware=hardware,
         precision=match.group("precision"),
+        task=match.group("task"),
     )
 
 
@@ -167,33 +169,28 @@ def resolved_performance_recipe_metadata(recipe_name: str) -> PerformanceRecipeM
     return available_performance_recipe_metadata(recipe_name)
 
 
+def performance_recipe_step(metadata: PerformanceRecipeMetadata) -> str:
+    """Return the default forward-step registry name for a performance recipe."""
+    return PERFORMANCE_FORWARD_STEPS.get(metadata.family, "gpt_step")
+
+
 def validate_performance_recipe_scope(
     metadata: PerformanceRecipeMetadata,
     *,
     mode: str,
     step_func: str | None = None,
-    deterministic: bool = False,
     dataset: str | None = None,
 ) -> None:
-    """Validate the canonical text-pretraining scope supported by the unified launcher."""
-    if mode != "pretrain":
+    """Validate task, forward step, and dataset selection for an exact performance recipe."""
+    requested_task = "peft" if mode in {"lora", "dora"} else mode
+    if requested_task != metadata.task:
+        raise ValueError(f"Mode '{mode}' is incompatible with performance task '{metadata.task}'.")
+
+    expected_step = performance_recipe_step(metadata)
+    if step_func is not None and step_func.lower() != expected_step:
         raise ValueError(
-            "The training launcher currently supports performance pretraining recipes only; continue using "
-            "scripts/performance for SFT and PEFT benchmarks during migration."
-        )
-    if metadata.family in {"qwen_vl", "wan"}:
-        raise ValueError(
-            "The training launcher currently supports text performance recipes only; continue using "
-            "scripts/performance for VLM and diffusion benchmarks during migration."
-        )
-    if step_func is not None and step_func.lower() != "gpt_step":
-        raise ValueError(
-            "Text performance recipes use the canonical gpt_step forward step; omit --step-func or pass gpt_step."
-        )
-    if deterministic:
-        raise ValueError(
-            "Performance recipes currently require their canonical benchmark settings; --deterministic is not "
-            "supported by the training launcher during migration."
+            f"Performance family '{metadata.family}' uses the canonical {expected_step} forward step; "
+            f"omit --step-func or pass {expected_step}."
         )
     if dataset is not None:
         raise ValueError(
@@ -220,7 +217,6 @@ def validate_selected_performance_recipe(argv: list[str], metadata: PerformanceR
     parser.add_argument("--recipe")
     parser.add_argument("--mode")
     parser.add_argument("--step-func", "--step_func", dest="step_func")
-    parser.add_argument("--deterministic", action="store_true")
     parser.add_argument("--dataset")
     args, _ = parser.parse_known_args(argv)
     mode = args.mode or _infer_recipe_mode(args.recipe or "")
@@ -230,7 +226,6 @@ def validate_selected_performance_recipe(argv: list[str], metadata: PerformanceR
         metadata,
         mode=mode,
         step_func=args.step_func,
-        deterministic=args.deterministic,
         dataset=args.dataset,
     )
 

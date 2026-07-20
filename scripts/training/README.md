@@ -51,9 +51,10 @@ requested adapter scheme.
 
 ### Performance recipe
 
-The training launcher can run canonical text-pretraining recipes from
-`src/megatron/bridge/perf_recipes`. The total allocation must match the GPU count encoded by the recipe name; the user
-selects the node shape, and the Slurm partition must provide the requested hardware:
+The training launcher can run exact exported recipes from `src/megatron/bridge/perf_recipes`, including text
+pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The total allocation must match the GPU count
+encoded by the recipe name; the user selects the node shape, and the Slurm partition must provide the requested
+hardware:
 
 ```bash
 ./scripts/training/train.sh \
@@ -75,18 +76,17 @@ For performance recipes, the launcher also preserves the compatibility path's ra
 benchmark environment. These are launcher semantics rather than model configuration and therefore do not belong in
 each recipe.
 
-SFT/PEFT, VLM, diffusion, topology resizing, dataset replacement, and other specialized performance controls remain
-on `scripts/performance/setup_experiment.py` while those paths migrate. The compatibility launcher remains available;
-new canonical text-pretraining invocations should use `scripts/training/train.sh`.
+The runner selects `gpt_step`, `qwen3_vl_step`, or `wan_step` from the recipe family. The compatibility launcher at
+`scripts/performance/setup_experiment.py` remains available for selector-based invocation, dataset replacement, and
+specialized legacy controls that are not part of the compact training CLI.
 
-Three legacy duplicate text-pretraining names resolve to the performance definition; their functional workloads remain
-available through the corresponding generic recipe aliases. Two duplicate SFT/PEFT names continue to resolve to the
-functional library until those performance workflows migrate. New recipe names should be unique across both packages.
+Five legacy duplicate names resolve to the performance definition; their functional workloads remain available through
+the corresponding generic recipe aliases. New recipe names should be unique across both packages.
 
 The default library forward step is `llm_step`. Pass `--step-func NAME` explicitly for a library recipe that needs
-another registered forward step. Text performance recipes use the same `gpt_step` path as the compatibility launcher.
-Common training, sequence-length, parallelism, optimization, and checkpoint fields also have convenience flags such
-as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`. Use trailing
+another registered forward step. Performance recipes infer their modality-specific forward step. Common training,
+sequence-length, parallelism, optimization, and checkpoint fields also have convenience flags such as
+`-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`. Use trailing
 `KEY=VALUE` overrides for every other `ConfigContainer` field.
 
 ## Dataset selection
@@ -278,5 +278,5 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
     model.sequence_parallel=true
 ```
 
-This entry point loads library recipes for functional pretraining, SFT, LoRA, and DoRA, and canonical text-pretraining
+This entry point loads library recipes for functional pretraining, SFT, LoRA, and DoRA, and all exact exported
 performance recipes when selected explicitly.

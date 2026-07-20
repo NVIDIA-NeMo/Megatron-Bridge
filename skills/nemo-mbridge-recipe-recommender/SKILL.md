@@ -78,12 +78,12 @@ user selects the node shape, and the selected partition must provide the
 requested hardware. The launcher preserves the compatibility path's rank-local NUMA
 binding and offline benchmark environment, but cluster-specific `srun` options
 must be supplied explicitly with repeated `--srun-arg=ARG` options. The unified
-launcher currently supports text pretraining only. Trailing `KEY=VALUE`
-overrides are accepted, but an overridden performance recipe no longer
-represents its canonical benchmark configuration. Use
-`scripts/performance/setup_experiment.py` for SFT/PEFT, VLM, diffusion, dataset
-replacement, topology resizing, and specialized benchmark controls until those
-paths migrate.
+launcher supports exact exported text pretraining, text SFT/PEFT, Qwen-VL
+pretraining, and Wan pretraining recipes and infers their forward step.
+Trailing `KEY=VALUE` overrides are accepted, but an overridden performance
+recipe no longer represents its canonical benchmark configuration. Use
+`scripts/performance/setup_experiment.py` for selector-based invocation,
+dataset replacement, topology resizing, and specialized benchmark controls.
 
 See the Performance Recipe Index for important caveats before using these for
 anything beyond throughput benchmarking.
@@ -106,12 +106,10 @@ recipe logic was split across multiple indirection layers, configs were not
 self-contained, and the two-level pipeline made maintenance and debugging
 difficult. Python functions are explicit, greppable, and composable.
 
-The training launcher discovers library recipes and canonical text-pretraining
-perf recipes from the complete exported function name. Three legacy duplicate
-text-pretraining names select the perf definition; use the corresponding
-generic alias for those functional workloads. Two duplicate SFT/PEFT names
-remain library-first until those perf workflows migrate. New recipe names
-should be unique across both packages.
+The training launcher discovers library and performance recipes from the
+complete exported function name. Five legacy duplicate names select the perf
+definition; use the corresponding generic alias for those functional
+workloads. New recipe names should be unique across both packages.
 
 ---
 
@@ -334,8 +332,8 @@ User wants to train a model
 │
 ├─ Want throughput benchmarks?
 │   ├─ Yes → Use perf recipes (src/megatron/bridge/perf_recipes/)
-│   │   ├─ Canonical text pretrain → scripts/training/train.sh --recipe <exact function name>
-│   │   └─ Other perf workflows → scripts/performance/setup_experiment.py during migration
+│   │   ├─ Exact exported recipe → scripts/training/train.sh --recipe <exact function name>
+│   │   └─ Selector/specialized workflow → scripts/performance/setup_experiment.py
 │   └─ No → Use library recipes (scripts/training/run_recipe.py)
 │
 └─ Long context?
