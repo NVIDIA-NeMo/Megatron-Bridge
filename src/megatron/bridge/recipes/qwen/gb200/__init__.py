@@ -13,12 +13,12 @@
 # limitations under the License.
 
 from megatron.bridge.recipes.qwen.gb200.qwen35 import (
-    qwen35_9b_pretrain_8gpu_gb200_bf16_config,
-    qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config,
+    qwen35_text_9b_pretrain_8gpu_gb200_bf16_config,
+    qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config,
 )
 
 
 __all__ = [
-    "qwen35_9b_pretrain_8gpu_gb200_bf16_config",
-    "qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config",
+    "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
+    "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
 ]

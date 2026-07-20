@@ -15,9 +15,12 @@
 from types import SimpleNamespace
 
 import pytest
+import torch
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.recipes import qwen as qwen_recipes
 from megatron.bridge.recipes.qwen.gb200 import qwen35 as qwen35_recipe
+from megatron.bridge.training import config as training_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
@@ -41,12 +44,12 @@ class _FakeBridge:
     ("recipe_name", "model_id", "architecture"),
     [
         (
-            "qwen35_9b_pretrain_8gpu_gb200_bf16_config",
+            "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config",
             "Qwen/Qwen3.5-9B-Base",
             "Qwen3_5ForCausalLM",
         ),
         (
-            "qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config",
+            "qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config",
             "Qwen/Qwen3.5-35B-A3B-Base",
             "Qwen3_5MoeForCausalLM",
         ),
@@ -94,7 +97,7 @@ def test_qwen35_text_recipe_uses_nested_language_model_config(
     assert cfg.model.cross_entropy_fusion_impl == "native"
     assert cfg.dataset.mmap_bin_files is True
 
-    if recipe_name == "qwen35_9b_pretrain_8gpu_gb200_bf16_config":
+    if recipe_name == "qwen35_text_9b_pretrain_8gpu_gb200_bf16_config":
         assert cfg.model.expert_model_parallel_size == 1
         assert cfg.train.global_batch_size == 128
         assert cfg.train.micro_batch_size == 2
@@ -125,7 +128,7 @@ def test_qwen35_text_recipe_uses_nested_language_model_config(
         assert cfg.ddp.check_for_nan_in_grad is True
 
 
-def test_qwen35_9b_recipe_validates_with_gb200_performance_settings(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_qwen35_text_9b_recipe_validates_with_gb200_performance_settings(monkeypatch: pytest.MonkeyPatch) -> None:
     """The dense scoped-graph recipe must pass combined config and provider validation."""
     text_config = SimpleNamespace(architectures=None)
     provider = GPTModelProvider(
@@ -150,10 +153,67 @@ def test_qwen35_9b_recipe_validates_with_gb200_performance_settings(monkeypatch:
         lambda _config: _FakeBridge(provider),
     )
 
-    cfg = qwen35_recipe.qwen35_9b_pretrain_8gpu_gb200_bf16_config()
+    cfg = qwen_recipes.qwen35_text_9b_pretrain_config()
     cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
     cfg.validate()
 
     assert text_config.architectures == ["Qwen3_5ForCausalLM"]
     assert cuda_graph_module_names(cfg.model) == ["attn", "mlp"]
     assert cfg.rerun_state_machine.check_for_nan_in_loss is False
+
+
+def test_qwen35_text_9b_matches_completed_48k_runtime_contract(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The main recipe must retain the exact 64-GPU contract used by the completed run."""
+    text_config = SimpleNamespace(architectures=None)
+    provider = GPTModelProvider(
+        num_layers=2,
+        hidden_size=128,
+        num_attention_heads=4,
+        num_query_groups=4,
+        ffn_hidden_size=512,
+        kv_channels=32,
+        vocab_size=128,
+        seq_length=4096,
+    )
+
+    monkeypatch.setattr(
+        qwen35_recipe.AutoConfig,
+        "from_pretrained",
+        lambda _model_id: SimpleNamespace(text_config=text_config),
+    )
+    monkeypatch.setattr(
+        qwen35_recipe.AutoBridge,
+        "from_hf_config",
+        lambda _config: _FakeBridge(provider),
+    )
+
+    cfg = qwen_recipes.qwen35_text_9b_pretrain_config()
+    cfg.train.train_iters = 48000
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 2
+
+    monkeypatch.setattr(training_config, "get_world_size_safe", lambda: 64)
+    training_config.runtime_config_update(cfg)
+
+    assert cfg.data_parallel_size == 64
+    assert cfg.train.train_iters == 48000
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.bf16 is True
+    assert cfg.model.params_dtype == torch.bfloat16
+    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mlp"]
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.check_for_nan_in_grad is False
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is False
+    assert cfg.ddp.overlap_grad_reduce is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.comm_overlap.tp_comm_overlap is False

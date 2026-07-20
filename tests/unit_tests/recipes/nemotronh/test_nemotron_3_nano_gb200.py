@@ -111,6 +111,7 @@ def test_nemotron_3_nano_gb200_aliases_are_discoverable() -> None:
 def test_nemotron_3_nano_gb200_validates_with_nemo_ci_overrides(monkeypatch: pytest.MonkeyPatch) -> None:
     """The 64-GPU runtime update should preserve topology and precision contracts."""
     config = nemotron_3_nano_gb200_pretrain_config()
+    config.train.train_iters = 48000
     config.train.global_batch_size = 512
     config.train.micro_batch_size = 2
 
@@ -122,6 +123,7 @@ def test_nemotron_3_nano_gb200_validates_with_nemo_ci_overrides(monkeypatch: pyt
     training_config.runtime_config_update(config)
 
     assert config.data_parallel_size == 64
+    assert config.train.train_iters == 48000
     assert config.train.global_batch_size == 512
     assert config.train.micro_batch_size == 2
     assert config.model.seq_length == 4096

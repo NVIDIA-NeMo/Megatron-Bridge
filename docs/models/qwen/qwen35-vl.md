@@ -60,16 +60,16 @@ provider from the nested Hugging Face `text_config`; no vision model,
 projection, processor, or multimodal dataset is created.
 
 ```python
-from megatron.bridge.recipes.qwen import qwen35_9b_pretrain_config
+from megatron.bridge.recipes.qwen import qwen35_text_9b_pretrain_config
 
-config = qwen35_9b_pretrain_config()
+config = qwen35_text_9b_pretrain_config()
 ```
 
 The canonical aliases select eight-GPU GB200 BF16 library recipes. The dense
-9B recipe, `qwen35_9b_pretrain_8gpu_gb200_bf16_config`, uses the same data
+9B recipe, `qwen35_text_9b_pretrain_8gpu_gb200_bf16_config`, uses the same data
 parallel topology as the Llama 3 8B GB200 performance recipe, with
 module-scoped CUDA graphs so library correctness checks remain enabled. The MoE recipe,
-`qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config`, uses the applicable Qwen3.5-VL
+`qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config`, uses the applicable Qwen3.5-VL
 GB200 HybridEP settings with learned routing. Both retain library-recipe
 training, evaluation, logging, checkpointing, and correctness defaults. Set
 `config.dataset.blend` (or `config.dataset.data_path`) to use a prepared

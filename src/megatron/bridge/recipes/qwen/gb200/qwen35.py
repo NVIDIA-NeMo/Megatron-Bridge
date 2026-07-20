@@ -41,7 +41,7 @@ def _qwen35_text_provider(model_id: str, architecture: str) -> GPTModelProvider 
     return AutoBridge.from_hf_config(text_config).to_megatron_provider(load_weights=False)
 
 
-def qwen35_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a text-only Qwen3.5-9B pretraining config for eight GB200 GPUs."""
     cfg = _pretrain_common()
 
@@ -110,7 +110,7 @@ def qwen35_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen35_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a text-only Qwen3.5-35B-A3B pretraining config for eight GB200 GPUs."""
     cfg = _pretrain_common()
 
