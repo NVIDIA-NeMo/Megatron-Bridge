@@ -148,7 +148,11 @@ result. Private executor configuration stays outside the card.
   token count, run twice, and record the literal completion including
   whitespace.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
-  Save a middle and final checkpoint when resume is in scope.
+  Save a middle and final checkpoint when resume is in scope. For expensive
+  workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
+  suitable support-verification run when it crosses the peak learning rate and
+  completes the configured decay; resume directly from step 50 through step
+  100. This verifies bounded training and resume behavior, not full convergence.
 - **SFT and PEFT:** Prefer about 100 optimizer steps with warmup and full-horizon
   decay. Use a public dataset name or preset, not its storage location. Save the
   final full-SFT checkpoint when export verification is in scope.
@@ -209,8 +213,10 @@ duplicate, skipped, NaN, or non-finite rows rather than excluding them.
 Every verified training item must execute at least 10 optimizer steps so this
 window is complete.
 
-For a resume that executes steps 201-400, use step 201 as `initial_loss`, step
-400 as `final_loss`, and average steps 391-400.
+For a resume, use the first optimizer step after the selected checkpoint as
+`initial_loss`, the final executed optimizer step as `final_loss`, and average
+the final 10 resumed steps. For example, a step-50-to-100 continuation uses
+step 51, step 100, and the average over steps 91-100.
 
 For Megatron-indexed data, command values are prefixes and omit `.bin` and
 `.idx`. A bounded RedPajama2 prefix such as `head_01` is suitable for a
