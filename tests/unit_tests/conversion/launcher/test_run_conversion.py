@@ -104,7 +104,7 @@ def test_cpu_import_resolves_hf_revision_before_dispatch(monkeypatch):
         ]
     )
 
-    assert calls[0]["hf_model"] == "/snapshots/hf--model/0123456789abcdef"
+    assert calls[0]["hf_model"] == "/snapshots/hf--model/0123456789abcdef"  # pragma: allowlist secret
 
 
 def test_gpu_export_enables_distributed_save_by_default():

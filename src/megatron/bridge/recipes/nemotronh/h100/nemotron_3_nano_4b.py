@@ -28,7 +28,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 _HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
-_HF_MODEL_REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"
+_HF_MODEL_REVISION = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"  # pragma: allowlist secret
 
 
 def _model_config(*, seq_length: int, context_parallel_size: int = 1) -> HybridModelProvider:

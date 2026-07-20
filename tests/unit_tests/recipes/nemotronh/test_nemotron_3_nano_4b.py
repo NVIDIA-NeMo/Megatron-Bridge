@@ -34,7 +34,9 @@ def _assert_exact_architecture(config: ConfigContainer) -> None:
     assert config.model.share_embeddings_and_output_weights is False
     assert config.model.position_embedding_type == "none"
     assert config.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16"
-    assert config.tokenizer.hf_tokenizer_kwargs["revision"] == "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"
+    assert config.tokenizer.hf_tokenizer_kwargs["revision"] == (
+        "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"  # pragma: allowlist secret
+    )
 
 
 @pytest.mark.unit
