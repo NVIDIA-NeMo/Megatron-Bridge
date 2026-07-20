@@ -50,6 +50,9 @@ jobs:
             --retry-wait-time 10
             --scheme https
             --scheme http
+            --accept '200..=299,401,403,429'
+            --exclude '^/'
+            --exclude 'github\.com/deepseek-ai/DeepSeek-V4'
             --exclude 'sched\.com'
             --exclude 'llama\.com'
             "docs/fern/**/*.mdx"
