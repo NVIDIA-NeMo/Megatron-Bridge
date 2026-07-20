@@ -75,9 +75,12 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 
 The total GPU allocation must match the count encoded in the recipe name. The
 user selects the node shape, and the selected partition must provide the
-requested hardware. The launcher preserves the compatibility path's rank-local NUMA
-binding and offline benchmark environment, but cluster-specific `srun` options
-must be supplied explicitly with repeated `--srun-arg=ARG` options. The unified
+requested hardware. The launcher does not inject benchmark offline defaults or
+cluster-specific launch policy. Use `--env NAME` for exported offline or NCCL
+fabric settings and repeated `--srun-arg=ARG` options for `srun`.
+Configure CPU/NUMA wrappers and Slurm segment sizing through the target cluster
+integration, or use `scripts/performance/setup_experiment.py` when its compatibility
+policies are required. The unified
 launcher supports exact exported text pretraining, text SFT/PEFT, Qwen-VL
 pretraining, and Wan pretraining recipes and infers their forward step. Text
 SFT/PEFT performance recipes retain the flat runner's mock-data default;

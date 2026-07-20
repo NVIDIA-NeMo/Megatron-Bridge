@@ -45,7 +45,7 @@ def _load_module():
     return module
 
 
-def test_every_flat_recipe_has_registered_family_and_topology():
+def test_every_flat_recipe_has_registered_family_and_metadata():
     module = _load_module()
     root = Path(__file__).resolve().parents[4] / "src" / "megatron" / "bridge" / "perf_recipes"
     definition_pattern = re.compile(r"^def ([a-zA-Z0-9_]+_config)\(", re.MULTILINE)
@@ -60,7 +60,6 @@ def test_every_flat_recipe_has_registered_family_and_topology():
     for recipe_name, owning_family in recipes:
         metadata = module.available_performance_recipe_metadata(recipe_name)
         assert metadata is not None
-        assert metadata.num_gpus % metadata.gpus_per_node == 0
         assert metadata.family == owning_family
 
 
@@ -87,10 +86,18 @@ def test_submission_metadata_is_inferred_from_exact_recipe_name():
     metadata = module.selected_performance_recipe(recipe_args)
     assert metadata is not None
     assert metadata.num_gpus == 16
-    assert metadata.gpus_per_node == 8
     assert metadata.family == "qwen"
     assert metadata.task == "pretrain"
     assert module.performance_recipe_step(metadata) == "gpt_step"
+
+
+def test_metadata_does_not_impose_a_hardware_node_shape():
+    module = _load_module()
+
+    metadata = module.performance_recipe_metadata("qwen3_30b_a3b_pretrain_4gpu_h100_bf16_config")
+
+    assert metadata.num_gpus == 4
+    assert metadata.hardware == "h100"
 
 
 @pytest.mark.parametrize(

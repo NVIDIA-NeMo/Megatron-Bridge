@@ -24,16 +24,6 @@ from dataclasses import dataclass
 from pathlib import Path
 
 
-PERFORMANCE_GPUS_PER_NODE = {
-    "h100": 8,
-    "b200": 8,
-    "b300": 8,
-    "gb200": 4,
-    "gb300": 4,
-    "vr200": 4,
-    "r100": 1,
-}
-
 PERFORMANCE_RECIPE_FAMILY_PREFIXES = (
     ("qwen3_vl_", "qwen_vl"),
     ("qwen35_vl_", "qwen_vl"),
@@ -84,7 +74,6 @@ class PerformanceRecipeMetadata:
     """Canonical dimensions encoded in a flat performance recipe name."""
 
     num_gpus: int
-    gpus_per_node: int
     family: str
     hardware: str
     precision: str
@@ -108,24 +97,10 @@ def performance_recipe_metadata(recipe_name: str) -> PerformanceRecipeMetadata:
             "..._<N>gpu_<hardware>_<precision>_config."
         )
 
-    hardware = match.group("hardware")
-    if hardware not in PERFORMANCE_GPUS_PER_NODE:
-        choices = ", ".join(PERFORMANCE_GPUS_PER_NODE)
-        raise ValueError(f"Performance recipe targets unsupported hardware '{hardware}'; choose from: {choices}.")
-
-    num_gpus = int(match.group("num_gpus"))
-    gpus_per_node = PERFORMANCE_GPUS_PER_NODE[hardware]
-    if num_gpus % gpus_per_node != 0:
-        raise ValueError(
-            f"Performance recipe requests {num_gpus} GPUs, which is not divisible by the canonical "
-            f"{gpus_per_node} GPUs per {hardware} node."
-        )
-
     return PerformanceRecipeMetadata(
-        num_gpus=num_gpus,
-        gpus_per_node=gpus_per_node,
+        num_gpus=int(match.group("num_gpus")),
         family=performance_recipe_family(recipe_name),
-        hardware=hardware,
+        hardware=match.group("hardware"),
         precision=match.group("precision"),
         task=match.group("task"),
     )

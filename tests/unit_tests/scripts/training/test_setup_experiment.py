@@ -104,7 +104,6 @@ def test_parser_forwards_and_auto_detects_performance_recipe():
     metadata = module.selected_performance_recipe(training_args)
     assert metadata is not None
     assert metadata.num_gpus == 16
-    assert metadata.gpus_per_node == 8
     assert metadata.family == "qwen"
     assert metadata.hardware == "h100"
 
@@ -332,23 +331,21 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.srun_args == []
 
 
-def test_performance_slurm_executor_preserves_binding_without_cluster_srun_defaults(tmp_path, monkeypatch):
+def test_performance_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monkeypatch):
     module = _load_setup_experiment_module()
 
     class _SlurmExecutor:
         def __init__(self, **kwargs):
             self.kwargs = kwargs
 
-    sentinel_launcher = object()
     module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
     module.run.Packager = object
     module.run.SlurmExecutor = _SlurmExecutor
     monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
-    monkeypatch.setattr(module, "_performance_slurm_launcher", lambda _metadata: sentinel_launcher)
     args, training_args = module.parse_args(
         [
             "--nodes",
-            "2",
+            "8",
             "--gpus-per-node",
             "8",
             "--account",
@@ -359,64 +356,32 @@ def test_performance_slurm_executor_preserves_binding_without_cluster_srun_defau
             "image.sqsh",
             "--srun-arg=--label",
             "--recipe",
-            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config",
         ]
     )
     metadata = module.selected_performance_recipe(training_args)
     assert metadata is not None
+    module._validate_args(args, metadata)
+    task_environment = module._task_environment()
 
-    executor = module._build_executor(args, [], [], performance_metadata=metadata)
+    executor = module._build_executor(args, [], [], task_environment=task_environment)
 
-    assert executor.kwargs["launcher"] is sentinel_launcher
     assert executor.kwargs["ntasks_per_node"] == 8
     assert executor.kwargs["gpus_per_node"] == 8
     assert executor.srun_args == ["--label"]
+    assert "launcher" not in executor.kwargs
     assert "segment" not in executor.kwargs
-    assert module._performance_numa_command(metadata) == (
-        "numactl --cpunodebind=$((SLURM_LOCALID/4)) --membind=$((SLURM_LOCALID/4))"
-    )
-    assert "{{ numa_command | safe }} {{ command | safe }}" in module.PERFORMANCE_SLURM_TEMPLATE
+    assert set(executor.container_env) == {"PYTHONPATH"}
 
 
-def test_performance_task_environment_preserves_explicit_process_values():
+def test_training_task_environment_does_not_inject_performance_offline_defaults():
     module = _load_setup_experiment_module()
-    metadata = module.PerformanceRecipeMetadata(
-        num_gpus=16,
-        gpus_per_node=4,
-        family="qwen",
-        hardware="gb200",
-        precision="bf16",
-        task="pretrain",
-    )
+    environment = module._task_environment()
 
-    environment = module._task_environment(
-        metadata,
-        inherited_env_names=["HF_TOKEN", "TRANSFORMERS_OFFLINE", "NCCL_NET_GDR_LEVEL"],
-    )
-
-    assert "HF_TOKEN" not in environment
     assert "TRANSFORMERS_OFFLINE" not in environment
-    assert "NCCL_NET_GDR_LEVEL" not in environment
-    assert environment["TOKENIZERS_PARALLELISM"] == "False"
-    assert environment["NCCL_NET_GDR_C2C"] == "1"
+    assert "TOKENIZERS_PARALLELISM" not in environment
+    assert "HF_HUB_OFFLINE" not in environment
     assert environment["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
-
-
-def test_performance_task_environment_enables_transformers_access_for_forwarded_hf_token():
-    module = _load_setup_experiment_module()
-    metadata = module.PerformanceRecipeMetadata(
-        num_gpus=16,
-        gpus_per_node=8,
-        family="qwen",
-        hardware="h100",
-        precision="bf16",
-        task="pretrain",
-    )
-
-    environment = module._task_environment(metadata, inherited_env_names=["HF_TOKEN"])
-
-    assert environment["TRANSFORMERS_OFFLINE"] == "0"
-    assert "HF_TOKEN" not in environment
 
 
 def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tmp_path, monkeypatch):

@@ -65,16 +65,16 @@ hardware:
     --mode pretrain
 ```
 
-Performance recipes provide benchmark defaults for their dataset, topology, batch sizes, sequence length, precision,
-dispatcher, CUDA-graph settings, and process environment. Trailing `KEY=VALUE` overrides are applied to their
+Performance recipes provide benchmark defaults for their dataset, parallelism topology, batch sizes, sequence length,
+precision, dispatcher, CUDA-graph settings, and process environment. Trailing `KEY=VALUE` overrides are applied to their
 `ConfigContainer` in the same way as library recipes; an overridden run no longer represents the canonical benchmark
 configuration. Performance recipes retain their selected dataset type, so `--dataset` is not supported on this path.
 Recipe environment defaults are installed before the launcher enters the training stack; values explicitly set by the
 shell or Slurm environment retain precedence.
 
-For performance recipes, the launcher also preserves the compatibility path's rank-local CPU/NUMA binding and offline
-benchmark environment. These are launcher semantics rather than model configuration and therefore do not belong in
-each recipe.
+The launcher does not infer offline mode, cluster-specific CPU/NUMA binding, Slurm segment sizing, or NCCL fabric
+settings from the recipe name. Supply those deployment settings explicitly through the target cluster's launcher
+configuration, repeated `--srun-arg` options, or exported values forwarded with `--env NAME`.
 
 The runner selects `gpt_step`, `qwen3_vl_step`, or `wan_step` from the recipe family. The compatibility launcher at
 `scripts/performance/setup_experiment.py` remains available for selector-based invocation, dataset replacement, and
@@ -238,9 +238,6 @@ Set `CONTAINER_IMAGE` to avoid repeating `--container-image`. On clusters that a
 forwarded implicitly. Export credentials in the launcher environment, then repeat `--env NAME` to forward names without
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
-For performance recipes, forwarding `HF_TOKEN` also sets the non-secret task default `TRANSFORMERS_OFFLINE=0`; forwarding
-`TRANSFORMERS_OFFLINE` explicitly preserves the user's value instead.
-
 The launcher adds no cluster-specific `srun` flags by default. Repeat `--srun-arg=ARG` for every flag required by the
 target cluster. For example, a Pyxis/Enroot cluster may use:
 
@@ -252,7 +249,9 @@ target cluster. For example, a Pyxis/Enroot cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
-Performance-recipe launches still prefix every rank with the hardware-specific `numactl` binding.
+The compact launcher does not add rank-command prefixes or extra sbatch parameters such as `segment`. Configure those
+through the target cluster integration, or use `scripts/performance/setup_experiment.py` when its compatibility NUMA
+and segment policies are required.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.

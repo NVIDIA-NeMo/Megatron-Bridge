@@ -6,8 +6,10 @@ New runs of exact exported flat recipes should use `scripts/training/train.sh --
 discovers text pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining recipes automatically and selects
 their forward step. This directory remains the compatibility path for selector-based invocation, dataset replacement,
 topology resizing, and specialized benchmark controls. The training launcher preserves total GPU-count validation,
-NUMA binding, the recipe process environment, and mock-data defaults for text SFT/PEFT; cluster-specific `srun`
-arguments remain user supplied.
+the recipe process environment, and mock-data defaults for text SFT/PEFT; it does not inject offline defaults. The
+performance compatibility launcher continues to own its benchmark offline environment.
+Cluster-specific CPU/NUMA binding, Slurm segment sizing, NCCL fabric settings, and `srun` arguments remain user
+supplied.
 
 - Scripts defined in `scripts/performance` launch performance-optimized experiments on Slurm-based clusters.
 

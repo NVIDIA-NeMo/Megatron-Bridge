@@ -348,10 +348,19 @@ def _validate_performance_world_size(metadata: PerformanceRecipeMetadata, *, dry
 def _apply_performance_runtime_defaults(
     recipe: ConfigContainer,
     metadata: PerformanceRecipeMetadata,
+    cli_overrides: list[str],
 ) -> ConfigContainer:
     """Preserve flat-runner defaults that are not yet encoded in the recipe factory."""
     optimizer = getattr(recipe, "optimizer", None)
-    if metadata.precision == "bf16" and getattr(optimizer, "optimizer", None) == "adam":
+    precision_aware_field = "optimizer.use_precision_aware_optimizer"
+    precision_aware_is_explicit = any(
+        override.lstrip("+~").split("=", 1)[0] in {"optimizer", precision_aware_field} for override in cli_overrides
+    )
+    if (
+        not precision_aware_is_explicit
+        and metadata.precision == "bf16"
+        and getattr(optimizer, "optimizer", None) == "adam"
+    ):
         optimizer.use_precision_aware_optimizer = True
     return recipe
 
@@ -428,10 +437,11 @@ def main(argv: list[str] | None = None) -> None:
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
+    if metadata is not None:
+        recipe = _apply_performance_runtime_defaults(recipe, metadata, cli_overrides)
     configuration_mode = _train_mode(args.mode)
 
     if metadata is not None:
-        recipe = _apply_performance_runtime_defaults(recipe, metadata)
         _validate_performance_world_size(metadata, dryrun=args.dryrun)
         recipe = bootstrap_recipe_environment(
             recipe,

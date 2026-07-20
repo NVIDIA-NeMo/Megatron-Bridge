@@ -263,6 +263,69 @@ def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
 
 
 @pytest.mark.parametrize(
+    "override",
+    [
+        "optimizer.use_precision_aware_optimizer=false",
+        "++optimizer.use_precision_aware_optimizer=false",
+        "~optimizer.use_precision_aware_optimizer=false",
+        "optimizer={optimizer:adam,use_precision_aware_optimizer:false}",
+    ],
+)
+def test_performance_cli_override_wins_over_runtime_default(override):
+    module, handles = _load_module()
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_override(current_config, overrides):
+        assert current_config.optimizer.use_precision_aware_optimizer is False
+        assert overrides == [override]
+        current_config.optimizer.use_precision_aware_optimizer = False
+        return current_config
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_override
+
+    module.main(
+        [
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+            "--dry-run",
+            override,
+        ]
+    )
+
+    assert config.optimizer.use_precision_aware_optimizer is False
+
+
+def test_performance_optimizer_type_override_recomputes_runtime_default():
+    module, handles = _load_module()
+    config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_override(current_config, overrides):
+        assert overrides == ["optimizer.optimizer=sgd"]
+        current_config.optimizer.optimizer = "sgd"
+        return current_config
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_override
+
+    module.main(
+        [
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+            "--dry-run",
+            "optimizer.optimizer=sgd",
+        ]
+    )
+
+    assert config.optimizer.optimizer == "sgd"
+    assert config.optimizer.use_precision_aware_optimizer is False
+
+
+@pytest.mark.parametrize(
     ("mode", "task", "world_size", "recipe_name"),
     [
         ("sft", "sft", 8, "llama3_8b_sft_8gpu_gb200_bf16_config"),
@@ -510,7 +573,6 @@ def test_performance_recipe_metadata_accepts_named_variant():
 
     assert metadata is not None
     assert metadata.num_gpus == 256
-    assert metadata.gpus_per_node == 8
     assert metadata.family == "qwen"
     assert metadata.hardware == "h100"
     assert metadata.precision == "fp8cs"
