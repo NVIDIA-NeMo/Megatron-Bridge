@@ -144,7 +144,9 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
                 for decorator in node.decorator_list
             )
 
-    assert len(builders) == 396
+    # Count updated 396 -> 397 for pre-existing main drift (a perf recipe was
+    # added upstream without bumping this inventory); unrelated to the MCore bump.
+    assert len(builders) == 397
     assert not invalid
 
 
@@ -185,7 +187,9 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
                 assert hybrid_ep_names == _HYBRID_EP_ENV_NAMES
                 deepseek_hybrid_ep_count += 1
 
-    assert len(recipes) == 396
+    # Count updated 396 -> 397 for pre-existing main drift (see the sibling
+    # inventory test); unrelated to the MCore bump.
+    assert len(recipes) == 397
     assert deepseek_recipe_count == 36
     assert deepseek_hybrid_ep_count == 34
 
