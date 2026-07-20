@@ -242,3 +242,21 @@ class TestCompareMaskHandling:
         )
 
         assert args.trust_remote_code is True
+
+    def test_hf_revision_is_parsed_and_forwarded(self):
+        """Test that an immutable revision reaches every HF loader via shared kwargs."""
+        revision = "0123456789abcdef0123456789abcdef01234567"
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+                "--hf-revision",
+                revision,
+            ]
+        )
+
+        assert args.hf_revision == revision
+        assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
+        assert compare._hf_revision_kwargs(None) == {}

@@ -212,7 +212,16 @@ def get_model_class(model_class_name: str = None, is_vl_model: bool = False):
         return AutoModelForCausalLM
 
 
-def is_vision_language_model(model_path: str, trust_remote_code: bool | None = None) -> bool:
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Return an optional immutable Hugging Face revision argument."""
+    return {"revision": revision} if revision is not None else {}
+
+
+def is_vision_language_model(
+    model_path: str,
+    trust_remote_code: bool | None = None,
+    revision: str | None = None,
+) -> bool:
     """Check if the model is a vision-language model.
 
     Args:
@@ -228,6 +237,7 @@ def is_vision_language_model(model_path: str, trust_remote_code: bool | None = N
                 trust_remote_code=trust_remote_code,
                 hf_path=model_path,
             ),
+            **_hf_revision_kwargs(revision),
         )
 
         # Check for VL model indicators in config
@@ -505,6 +515,7 @@ def _load_hf_model(args, is_vl_model: bool):
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
+        **_hf_revision_kwargs(args.hf_revision),
     )
     hf_model = hf_model.eval()
     print_rank_0(f"Loaded with {model_class.__name__}")
@@ -633,7 +644,14 @@ def _load_megatron_model(args):
 
     if args.megatron_model_path:
         # Load from Megatron checkpoint
-        bridge = AutoBridge.from_hf_pretrained(args.hf_model_path)
+        bridge = AutoBridge.from_hf_pretrained(
+            args.hf_model_path,
+            trust_remote_code=is_safe_repo(
+                trust_remote_code=args.trust_remote_code,
+                hf_path=args.hf_model_path,
+            ),
+            **_hf_revision_kwargs(args.hf_revision),
+        )
         model_provider = bridge.to_megatron_provider(load_weights=False)
         model_provider.tensor_model_parallel_size = tp
         model_provider.pipeline_model_parallel_size = pp
@@ -660,6 +678,7 @@ def _load_megatron_model(args):
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
+            **_hf_revision_kwargs(args.hf_revision),
         )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
@@ -702,6 +721,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
+        **_hf_revision_kwargs(args.hf_revision),
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -715,6 +735,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
                     trust_remote_code=args.trust_remote_code,
                     hf_path=args.hf_model_path,
                 ),
+                **_hf_revision_kwargs(args.hf_revision),
             )
         except Exception as e:
             print_rank_0(f"Warning: Could not load processor for VL model: {e}")
@@ -760,7 +781,7 @@ def compare_models_one_step(args) -> None:
         print_rank_0(f"Set CUDA device to: {torch.cuda.current_device()}")
 
     # Detect model type
-    is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code)
+    is_vl_model = is_vision_language_model(args.hf_model_path, args.trust_remote_code, args.hf_revision)
     print_rank_0(f"Detected model type: {'Vision-Language' if is_vl_model else 'Text-only LLM'}")
 
     # Validate vision requirements
@@ -943,6 +964,10 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         required=True,
         help="Path to the HuggingFace model.",
+    )
+    parser.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision used for model, config, and tokenizer loading.",
     )
     parser.add_argument(
         "--prompt",
