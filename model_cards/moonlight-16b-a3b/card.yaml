@@ -122,98 +122,106 @@ items:
       Louvre Museum, and Notre-Dame".
 
   pretrain:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     enabled_features: {}
     command: >
-      ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
-      --recipe moonlight_16b_pretrain_8gpu_h100_bf16_config
-      --dataset megatron-indexed --seq_length 4096 --max_steps 400
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+      --recipe moonlight_16b_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-      dataset.data_path=work/data/rp2/head_01
-      dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2
-      scheduler.lr_decay_iters=400
+      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2-convergence-v1
+      tokenizer.tokenizer_type=SentencePieceTokenizer
+      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+      dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
       dist.distributed_timeout_minutes=30
-      --save_dir work/model-verification/moonlight-16b-a3b/pretrain-reference-checkpoints
-      --save_interval 200 logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-19
+      --save_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-reference-checkpoints
+      --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+      logger.tensorboard_dir=null
+    last_verified: null
     metrics:
-      initial_loss: 12.41085
-      final_loss: 3.413953
-      last_10_steps_step_time_ms_avg: 25895.910
-      last_10_steps_model_tflops_per_gpu_avg: 86.840
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      The unchanged recipe batch completes exactly 400 bounded RP2 optimizer
-      steps with finite loss 12.41085 at step 1 and 3.413953 at step 400, no
-      skipped or NaN iterations, the recorded final-ten metrics, and complete
-      iter_0000200 and iter_0000400 checkpoints.
+      The pending uninterrupted 16-GPU bounded RP2 reference must complete
+      exactly 100 steps at recipe-owned GBS/MBS 1024/1 with finite losses and
+      no skipped or NaN iterations. It must reach peak learning rate at step
+      40, complete cosine decay at step 100, and save complete iter_0000050 and
+      iter_0000100 checkpoints before this cohort item can be marked verified.
 
   sft:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-      --recipe moonlight_16b_sft_8gpu_h100_bf16_config --mode sft
+      --recipe moonlight_16b_sft_8gpu_h100_bf16_tp1_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
       --max_steps 100 --seq_length 2048
       --lr 5e-6 --min_lr 0 --warmup_iters 10
-      "dataset.hf_dataset.split='train[:10000]'"
-      dataset.hf_output_root=work/data/tulu3
+      'dataset.hf_dataset.split="train[:10000]"'
+      'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+      '+tokenizer.hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'
+      dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-b14afda60f1b
+      dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
-      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
-      validation.eval_iters=0 validation.eval_interval=0
-      --save_dir work/model-verification/moonlight-16b-a3b/sft-checkpoints
+      dataset.enable_offline_packing=true
+      +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-19
+    last_verified: null
     metrics:
-      initial_loss: 1.280769
-      final_loss: 1.162448
-      last_10_steps_step_time_ms_avg: 16743.000
-      last_10_steps_model_tflops_per_gpu_avg: 30.820
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      Tulu3 offline packing completes exactly 100 full-SFT steps with finite
-      loss 1.280769 at step 1 and 1.162448 at step 100, no skipped or NaN
-      iterations, the recorded final-ten metrics, and a complete full-model
-      iter_0000100 checkpoint.
+      The pending TP1/PP1/EP8 run must preserve recipe-owned GBS/MBS 32/1 and
+      pad-1 offline packing, complete exactly 100 full-SFT steps with finite
+      losses and no skipped or NaN iterations, and save a complete full-model
+      iter_0000100 checkpoint. Packing efficiency and the actual supervised-
+      token count after label masking must be recorded before verification.
 
   sft_export_inference:
-    status: verified
+    status: unverified
     precision: bf16
     depends_on: sft
     commands:
       - >
-        ./scripts/conversion/convert.sh export --executor slurm --device cpu
-        --nodes 1
+        ./scripts/conversion/convert.sh export --executor slurm --device gpu
+        --nodes 1 --gpus-per-node 8
         --hf-model moonshotai/Moonlight-16B-A3B
-        --megatron-path work/model-verification/moonlight-16b-a3b/sft-checkpoints/iter_0000100
-        --hf-path work/model-verification/moonlight-16b-a3b/sft-hf-export
-        --torch-dtype bfloat16 --trust-remote-code
+        --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints/iter_0000100
+        --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
+        --torch-dtype bfloat16 --export-weight-dtype bfloat16
+        --distributed-save --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
       - >
         uv run python
         skills/create-model-verification-card/scripts/verify_hf_inference.py
-        --hf-model work/model-verification/moonlight-16b-a3b/sft-hf-export
+        --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
         --prompt "In one short sentence, explain why Paris is important to France."
         --max-new-tokens 32 --chat-template
-    last_verified: 2026-07-19
+    last_verified: null
     expected_result: >
-      The step-100 SFT checkpoint exports with its checkpoint-configured
-      163842-row embedding and output head, natively reloads with
-      trust_remote_code disabled and no missing or unexpected keys. Two
-      independent runs using greedy generation each produce exactly 32 new
-      tokens with identical token IDs and this coherent, byte-identical literal
-      completion, including whitespace,
-      "Paris is the capital city of France and is considered the cultural,
-      political, and economic center of the country. It is home to many of
-      France's most famous".
+      After the pending SFT run passes, its step-100 checkpoint must export with
+      a 163842-row embedding and output head, all index-referenced BF16 shards
+      must reload natively with no missing or unexpected keys, and the helper
+      must produce exactly 32 new tokens twice with identical token IDs. The
+      byte-identical literal completion must be recorded before verification.
 
   sft_long_context:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -221,96 +229,112 @@ items:
       context_parallel_size: 2
     command: >
       ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-      --recipe moonlight_16b_sft_8gpu_h100_bf16_config --mode sft
+      --recipe moonlight_16b_sft_8k_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
       --max_steps 20 --seq_length 8192 --context_parallel_size 2
       --lr 1e-6 --min_lr 0 --warmup_iters 2
-      "dataset.hf_dataset.split='train[:10000]'"
-      dataset.hf_output_root=work/data/tulu3-long-context
+      'dataset.hf_dataset.split="train[:10000]"'
+      'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+      '+tokenizer.hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'
+      dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-long-context-b14afda60f1b
+      dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
-      dataset.enable_offline_packing=true scheduler.lr_decay_iters=20
+      dataset.enable_offline_packing=true
+      +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=20
       validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.load=null checkpoint.save=null
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-19
+    last_verified: null
     metrics:
-      initial_loss: 1.264452
-      final_loss: 1.251715
-      last_10_steps_step_time_ms_avg: 59637.250
-      last_10_steps_model_tflops_per_gpu_avg: 41.490
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      The command completes exactly 20 Tulu3 SFT steps at the model's 8192-token
-      context limit with CP=2 and 99.69%-efficient offline packing, finite loss
-      1.264452 at step 1 and 1.251715 at step 20, no skipped or NaN iterations,
-      and the recorded final-ten metrics.
+      A fresh immutable-revision run must complete exactly 20 Tulu3 SFT steps
+      at the model's 8192-token context limit with recipe-owned
+      TP2/PP1/CP2/EP8/SP-on, GBS/MBS 128/1, and explicit pad-4 offline packing.
+      Losses must remain finite with no skipped or NaN iterations, and all four
+      metrics must be recorded before this item can be verified.
 
   peft:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
     command: >
-      ./scripts/training/train.sh --nodes 1 --gpus-per-node 2
-      --recipe moonlight_16b_peft_2gpu_h100_bf16_config --mode lora
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+      --recipe moonlight_16b_peft_4gpu_h100_bf16_config --mode lora
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
       --max_steps 100 --seq_length 2048
       --lr 1e-4 --min_lr 0 --warmup_iters 10
-      "dataset.hf_dataset.split='train[:10000]'"
-      dataset.hf_output_root=work/data/tulu3-lora
+      'dataset.hf_dataset.split="train[:10000]"'
+      'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+      '+tokenizer.hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'
+      dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-peft-b14afda60f1b
+      dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
-      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
-      validation.eval_iters=0 validation.eval_interval=0
-      --save_dir work/model-verification/moonlight-16b-a3b/peft-checkpoints
+      dataset.enable_offline_packing=true
+      +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      --save_dir work/model-verification/moonlight-16b-a3b/peft-convergence-v1-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-19
+    last_verified: null
     metrics:
-      initial_loss: 1.247692
-      final_loss: 1.115713
-      last_10_steps_step_time_ms_avg: 36894.370
-      last_10_steps_model_tflops_per_gpu_avg: 55.820
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      Tulu3 offline packing completes exactly 100 LoRA steps with finite loss
-      1.247692 at step 1 and 1.115713 at step 100, no skipped or NaN
-      iterations, the recorded final-ten metrics, and a complete iter_0000100
-      adapter checkpoint.
+      The pending TP4/PP1/EP4 run must preserve recipe-owned GBS/MBS 32/1 and
+      pad-4 offline packing, train only rank-8, alpha-16, zero-dropout LoRA on
+      Moonlight's model-native attention projections, and complete exactly 100
+      steps with finite losses and no skipped or NaN iterations. Packing
+      efficiency, actual supervised-token count, and a complete iter_0000100
+      adapter checkpoint must be recorded before verification.
 
   checkpoint_resume:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     depends_on: pretrain
     command: >
-      ./scripts/training/train.sh --nodes 8 --gpus-per-node 8
-      --recipe moonlight_16b_pretrain_8gpu_h100_bf16_config
-      --dataset megatron-indexed --seq_length 4096 --max_steps 400
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+      --recipe moonlight_16b_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
-      dataset.data_path=work/data/rp2/head_01
-      dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2
-      scheduler.lr_decay_iters=400
+      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      dataset.path_to_cache=work/cache/moonlight-16b-a3b/rp2-convergence-v1
+      tokenizer.tokenizer_type=SentencePieceTokenizer
+      tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+      dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true
       dist.distributed_timeout_minutes=30
-      --load_dir work/model-verification/moonlight-16b-a3b/pretrain-reference-checkpoints
-      --save_dir work/model-verification/moonlight-16b-a3b/pretrain-resumed-checkpoints
-      --save_interval 200 checkpoint.ckpt_step=200
-      logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-19
+      --load_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-reference-checkpoints
+      --save_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-resumed-checkpoints
+      --save_interval 50 checkpoint.ckpt_step=50
+      logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+    last_verified: null
     metrics:
-      initial_loss: 4.104850
-      final_loss: 3.413714
-      last_10_steps_step_time_ms_avg: 25707.450
-      last_10_steps_model_tflops_per_gpu_avg: 87.470
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     resume_comparison:
       reference_item: pretrain
-      sentinel_steps: [201, 400]
+      sentinel_steps: [51, 100]
       loss_relative_tolerance: 1.0e-2
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: true
+      sentinels_match: null
     expected_result: >
-      The command restores optimizer and RNG state directly from iter_0000200,
-      executes exactly steps 201–400 with finite losses and no skipped or NaN
-      iterations, and saves a complete iter_0000400 in the distinct output
-      root. Step-201 loss 4.104850 exactly matches the reference; step-400 loss
-      3.413714 differs from reference 3.413953 by 0.007001%, within the
-      one-percent gate. The recorded final-ten metrics cover steps 391–400.
+      After the pending uninterrupted reference completes, this command must
+      restore optimizer, scheduler, data-order, and RNG state directly from
+      iter_0000050, begin at step 51, and finish at step 100 in the distinct
+      resumed output root. Step-51 and step-100 loss must satisfy the declared
+      absolute-plus-relative tolerance against the reference, with finite
+      losses and no skipped or NaN iterations.

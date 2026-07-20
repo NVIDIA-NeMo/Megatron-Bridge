@@ -111,9 +111,8 @@ items:
       Brasília. The".
 
   pretrain:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       cuda_graph:
@@ -122,8 +121,8 @@ items:
       moe_dispatcher: hybridep
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_pretrain_config
-      --dataset megatron-indexed --max_steps 100
+      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       'dataset.blend=[["work/data/rp2/head_01"],null]'
       dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
@@ -136,28 +135,27 @@ items:
       validation.eval_iters=0 validation.eval_interval=0
       dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
       dist.distributed_timeout_minutes=30
-      --save_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
+      --save_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-reference-checkpoints
       --save_interval 50 logger.log_interval=1 logger.log_throughput=true
       logger.tensorboard_dir=null
-    last_verified: 2026-07-19
+    last_verified: null
     metrics:
-      initial_loss: 12.41145
-      final_loss: 6.139116
-      last_10_steps_step_time_ms_avg: 30289.550
-      last_10_steps_model_tflops_per_gpu_avg: 199.120
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      On two nodes with 16x H100, the generic library recipe's default EP
-      topology, batch, and precision-aware optimizer complete exactly 100
-      bounded RP2 optimizer steps with natural routing, finite losses, no
-      skipped or NaN iterations, and all four metrics recorded. Complete
-      iter_0000050 and iter_0000100 checkpoints are saved. HybridEP and
-      Transformer Engine CUDA graphs for moe_router and moe_preprocess remain
-      active throughout the run.
+      The pending 16x H100 reference must complete exactly 100 bounded RP2
+      optimizer steps with recipe-owned TP1/PP1/CP1/EP16/ETP1, DP16, SP off,
+      GBS/MBS 1024/1, and 64-way gradient accumulation. Natural routing,
+      HybridEP, and Transformer Engine CUDA graphs for moe_router and
+      moe_preprocess must remain active with finite losses and no skipped or
+      NaN iterations. Complete iter_0000050 and iter_0000100 checkpoints and
+      all four metrics are required before this cohort item can be verified.
 
   sft:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: 691b8c3fa37815842fb69a9eed4da519f2b19cd5  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -166,66 +164,67 @@ items:
       --recipe qwen3_30b_a3b_sft_config --mode sft
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
-      --max_steps 100
+      --max_steps 100 --seq_length 2048
+      --lr 5e-6 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
-      dataset.hf_output_root=work/data/tulu3
-      dataset.seed=1234
+      'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+      '+tokenizer.hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'
+      dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-sft-b14afda60f1b
+      dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
       dataset.enable_offline_packing=true
+      +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0
-      rng.seed=5678 model.moe_router_force_load_balancing=false
+      model.moe_router_force_load_balancing=false checkpoint.load=null
       ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
       rerun_state_machine.check_for_nan_in_loss=true
-      --save_dir work/model-verification/qwen3-30b-a3b/sft-checkpoints
+      --save_dir work/model-verification/qwen3-30b-a3b/sft-convergence-v1-checkpoints
       --save_interval 100
       logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-    last_verified: 2026-07-19
+    last_verified: null
     metrics:
-      initial_loss: 1.623911
-      final_loss: 0.8882903
-      last_10_steps_step_time_ms_avg: 1195.170
-      last_10_steps_model_tflops_per_gpu_avg: 64.620
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      On two nodes with 16x H100, the generic library recipe completes exactly
-      100 Tulu3 full-SFT steps using its default TP1/PP1/EP16 topology and
-      DP16/MBS1/GA2 batch layout while preserving GBS32. Offline packing is
-      99.30% efficient; losses and gradients remain finite with no skipped or
-      NaN iterations, all four metrics are recorded, and a reloadable
-      full-model iter_0000100 checkpoint is saved.
+      The pending 16x H100 run must use the immutable Tulu3 and tokenizer
+      revisions, fresh pad-1 offline packing, dataset seed 1234, model RNG seed
+      5678, and recipe-owned TP1/PP1/CP1/EP16/SP-off topology. Exactly 100
+      full-SFT steps must complete at GBS/MBS 32/1 with natural routing, finite
+      losses, no skipped or NaN iterations, all four metrics, packing
+      efficiency, the actual supervised-token count, and a complete reloadable
+      iter_0000100 checkpoint before this item can be verified.
 
   sft_export_inference:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: 691b8c3fa37815842fb69a9eed4da519f2b19cd5  # pragma: allowlist secret
     depends_on: sft
     commands:
       - >
         ./scripts/conversion/convert.sh export --executor slurm --device gpu
         --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B
-        --megatron-path work/model-verification/qwen3-30b-a3b/sft-checkpoints/iter_0000100
-        --hf-path work/model-verification/qwen3-30b-a3b/sft-hf-export
+        --megatron-path work/model-verification/qwen3-30b-a3b/sft-convergence-v1-checkpoints/iter_0000100
+        --hf-path work/model-verification/qwen3-30b-a3b/sft-convergence-v1-hf-export
         --torch-dtype bfloat16 --export-weight-dtype bfloat16
         --distributed-save --tp 1 --pp 1 --ep 16 --etp 1
       - >
         uv run python
         skills/create-model-verification-card/scripts/verify_hf_inference.py
-        --hf-model work/model-verification/qwen3-30b-a3b/sft-hf-export
+        --hf-model work/model-verification/qwen3-30b-a3b/sft-convergence-v1-hf-export
         --prompt "In one short sentence, explain why Paris is important to France."
         --max-new-tokens 32 --chat-template --disable-thinking
-    last_verified: 2026-07-19
+    last_verified: null
     expected_result: >
-      The step-100 full-SFT checkpoint exports into 16 BF16 safetensors shards
-      whose index covers all 18,867 weights, then reloads with Transformers
-      without missing or unexpected keys. Two independent executions using
-      greedy generation each produce exactly 32 new tokens with identical token
-      IDs and this coherent, byte-identical literal completion with no leading
-      or trailing whitespace,
-      "Paris is the capital city of France and is a major cultural, economic,
-      and political center in Europe. It is home to many famous landmarks,
-      such as the".
+      After the pending immutable-revision SFT run passes, its step-100
+      checkpoint must export into indexed BF16 shards whose index covers every
+      weight, reload with Transformers without missing or unexpected keys, and
+      produce exactly 32 new tokens in two independent greedy runs with
+      byte-identical token IDs. The exact literal completion must be recorded
+      before verification.
 
   sft_long_context:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -241,71 +240,83 @@ items:
       -tp 8 -pp 1 -ep 8
       --lr 1e-6 --min_lr 0 --warmup_iters 2
       'dataset.hf_dataset.split="train[:10000]"'
-      dataset.hf_output_root=work/data/tulu3
+      'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+      '+tokenizer.hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'
+      dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-long-context-b14afda60f1b
+      dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
-      dataset.enable_offline_packing=true model.cp_comm_type=p2p
+      dataset.enable_offline_packing=true
+      +dataset.offline_packing_specs.pad_seq_to_mult=16 model.cp_comm_type=p2p
       model.cross_entropy_loss_fusion=false model.recompute_granularity=full
       model.recompute_method=uniform model.recompute_num_layers=1
       scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
       checkpoint.load=null checkpoint.save=null
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-17
+    last_verified: null
     metrics:
-      initial_loss: 1.606502
-      final_loss: 1.480433
-      last_10_steps_step_time_ms_avg: 130528.550
-      last_10_steps_model_tflops_per_gpu_avg: 28.530
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      The two-node command completes exactly 20 Tulu3 SFT steps at sequence
-      length 32768 with CP=2 and offline packing, finite losses, no skipped or
-      NaN iterations, and all four metrics recorded. PP=1 keeps tokens, labels,
-      loss masks, and packed-sequence boundaries on one pipeline stage.
+      A fresh immutable-revision run must complete exactly 20 Tulu3 SFT steps
+      at sequence length 32768 with TP8/CP2/SP-on and explicit pad-16 offline
+      packing, finite losses, no skipped or NaN iterations, and all four
+      metrics. PP=1 must keep tokens, labels, loss masks, and packed-sequence
+      boundaries on one pipeline stage.
 
   peft:
-    status: verified
+    status: unverified
     precision: bf16
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
+      moe_dispatcher: deepep
     command: >
-      ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+      ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
       --recipe qwen3_30b_a3b_peft_4gpu_h100_bf16_config --mode lora
       --dataset tulu3
       --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
-      --max_steps 100 --seq_length 2048 -tp 1 -pp 1 -ep 16 -etp 1
+      --max_steps 100 --seq_length 2048
       --lr 1e-4 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
-      dataset.hf_output_root=work/data/tulu3
+      'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+      '+tokenizer.hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'
+      dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-peft-b14afda60f1b
+      dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
-      dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+      dataset.enable_offline_packing=true
+      +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100
       validation.eval_iters=0 validation.eval_interval=0
-      model.sequence_parallel=false model.bias_activation_fusion=true
-      model.apply_rope_fusion=true model.moe_router_fusion=true
-      model.moe_token_dispatcher_type=alltoall
-      model.moe_flex_dispatcher_backend=null checkpoint.load=null
-      --save_dir work/model-verification/qwen3-30b-a3b/peft-checkpoints
+      model.moe_router_force_load_balancing=false checkpoint.load=null
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true
+      --save_dir work/model-verification/qwen3-30b-a3b/peft-tp4-ep4-pad4-checkpoints
+      --save_interval 100
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: 2026-07-18
+    last_verified: null
     metrics:
-      initial_loss: 1.553515
-      final_loss: 1.000964
-      last_10_steps_step_time_ms_avg: 1107.380
-      last_10_steps_model_tflops_per_gpu_avg: 69.820
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     expected_result: >
-      Tulu3 offline packing and exactly 100 LoRA steps complete with finite
-      losses, no skipped or NaN iterations, and all four metrics recorded, then
-      iter_0000100 finalizes as an adapter checkpoint.
+      The pending 4x H100 run must use the immutable Tulu3 and tokenizer
+      revisions, fresh pad-4 offline packing, dataset seed 1234, model RNG seed
+      5678, and recipe-owned TP4/PP1/EP4/SP-on topology. Exactly 100 LoRA steps
+      must complete with natural routing, finite losses, no skipped or NaN
+      iterations, and all four metrics recorded before a complete
+      iter_0000100 adapter checkpoint can be verified.
 
   checkpoint_resume:
-    status: verified
+    status: unverified
     precision: bf16
-    bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
     gpu_type: H100
     depends_on: pretrain
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-      --recipe qwen3_30b_a3b_pretrain_config
-      --dataset megatron-indexed --max_steps 100
+      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
       --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
       'dataset.blend=[["work/data/rp2/head_01"],null]'
       dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
@@ -318,37 +329,36 @@ items:
       validation.eval_iters=0 validation.eval_interval=0
       dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
       dist.distributed_timeout_minutes=30
-      --load_dir work/model-verification/qwen3-30b-a3b/pretrain-reference-checkpoints
-      --save_dir work/model-verification/qwen3-30b-a3b/pretrain-resumed-checkpoints
+      --load_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-reference-checkpoints
+      --save_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-resumed-checkpoints
       --save_interval 50 checkpoint.ckpt_step=50
-      train.empty_unused_memory_level=2
       logger.log_interval=1 logger.log_throughput=true
       logger.tensorboard_dir=null
-    last_verified: 2026-07-19
+    last_verified: null
     metrics:
-      initial_loss: 6.989006
-      final_loss: 6.145390
-      last_10_steps_step_time_ms_avg: 31142.650
-      last_10_steps_model_tflops_per_gpu_avg: 193.640
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [51, 100]
       loss_relative_tolerance: 1.0e-2
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: true
+      sentinels_match: null
     expected_result: >
-      The command restores optimizer and RNG state directly from iter_0000050,
-      begins at step 51, and completes step 100 in the distinct resumed output
-      root with finite losses and no skipped or NaN iterations. Releasing
-      unused cached memory after each optimizer step preserves allocation
-      headroom without changing training math. Step 51 matches the
-      uninterrupted reference exactly at 6.989006; resumed step 100 is
-      6.145390 versus reference 6.139116. The 0.102197% relative difference is
-      within the 1% relative loss tolerance, so both resume sentinels match.
+      After the pending uninterrupted reference succeeds, the command must
+      restore optimizer, scheduler, data-order, and RNG state directly from
+      iter_0000050, begin at step 51, and finish at step 100 in the distinct
+      resumed output root with finite losses and no skipped or NaN iterations.
+      Step-51 and step-100 loss must satisfy the configured absolute-plus-
+      relative tolerance against the reference, and all four resumed-segment
+      metrics must be recorded before this item can be verified.
 
   pretrain_performance:
     status: verified
     precision: bf16
+    bridge_commit: 7160fd35c8f01f09d795e10f2057259d122c1e7e  # pragma: allowlist secret
     gpu_type: H100
     command: >
       ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
