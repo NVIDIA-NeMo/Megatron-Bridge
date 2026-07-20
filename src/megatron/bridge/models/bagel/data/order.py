@@ -101,18 +101,6 @@ def plan_vlm_sources(
     return [{"dataset_name": "vlm_sft", "source": {"jsonl": jsonl_name, "row": row}} for row, _ in planned]
 
 
-def choose_group(weights: Sequence[float], rng: random.Random) -> int:
-    """Draw one BAGEL dataset group with the caller's shared Python RNG."""
-    total = sum(weights)
-    if total <= 0:
-        raise ValueError("BAGEL group weights must have a positive sum")
-    value = rng.random()
-    for index in range(len(weights)):
-        if value < sum(weights[: index + 1]) / total:
-            return index
-    raise RuntimeError("BAGEL group draw fell outside cumulative weights")
-
-
 def plan_manifest_indices(
     manifest_path: Path,
     *,

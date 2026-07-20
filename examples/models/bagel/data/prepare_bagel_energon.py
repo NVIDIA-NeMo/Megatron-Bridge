@@ -25,14 +25,14 @@ logger = logging.getLogger(__name__)
 
 def parse_args() -> argparse.Namespace:
     """Parse command-line arguments."""
-    parser = argparse.ArgumentParser(description="Prepare one BAGEL T2I tar for Energon")
+    parser = argparse.ArgumentParser(description="Prepare one BAGEL WDS tar for Energon")
     parser.add_argument("--dataset-dir", type=Path, required=True)
     parser.add_argument("--num-workers", type=int, default=1)
     return parser.parse_args()
 
 
 def main() -> None:
-    """Prepare one BAGEL T2I tar as an Energon CrudeWebdataset."""
+    """Prepare one BAGEL tar as an Energon CrudeWebdataset."""
     args = parse_args()
     tar_paths = sorted(args.dataset_dir.rglob("*.tar"))
     if len(tar_paths) != 1:

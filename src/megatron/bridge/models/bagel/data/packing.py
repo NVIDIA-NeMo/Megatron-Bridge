@@ -20,12 +20,10 @@ from typing import Any, Self
 import numpy as np
 import torch
 
-from megatron.bridge.models.bagel.data.energon import BagelEditingSample, BagelT2ISample, BagelVLMSample
+from megatron.bridge.models.bagel.data.energon import BagelSample
 
 
 logger = logging.getLogger(__name__)
-
-BagelSample = BagelT2ISample | BagelEditingSample | BagelVLMSample
 
 
 def _patchify(image: torch.Tensor, patch_size: int) -> torch.Tensor:

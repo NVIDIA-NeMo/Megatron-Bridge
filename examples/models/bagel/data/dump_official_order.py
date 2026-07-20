@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import argparse
+import hashlib
 import json
 import sys
 from pathlib import Path
@@ -35,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--world-size", type=int, default=1)
     parser.add_argument("--num-workers", type=int, default=0)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--tensor-digests-output", type=Path, required=True)
     return parser.parse_args()
 
 
@@ -49,6 +51,20 @@ def to_jsonable(value: object) -> object:
     if isinstance(value, torch.Tensor):
         return value.detach().cpu().tolist()
     return value
+
+
+def tensor_digest(value: object) -> object:
+    """Record tensor identity without writing its full payload."""
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().cpu().contiguous()
+        return {
+            "shape": list(tensor.shape),
+            "dtype": str(tensor.dtype),
+            "sha256": hashlib.sha256(tensor.numpy().tobytes()).hexdigest(),
+        }
+    if isinstance(value, list):
+        return [tensor_digest(item) for item in value]
+    raise TypeError(f"cannot digest {type(value).__name__}")
 
 
 def configure_official_data(data_root: Path, dataset_meta: dict, dataset_info: dict) -> None:
@@ -140,10 +156,19 @@ def main() -> None:
         num_workers=args.num_workers,
     )
 
-    with args.output.open("w", encoding="utf-8") as stream:
+    with (
+        args.output.open("w", encoding="utf-8") as stream,
+        args.tensor_digests_output.open("w", encoding="utf-8") as digest_stream,
+    ):
         for step, batch in zip(range(args.num_batches), loader):
             packed = batch.to_dict()
-            for field in ("batch_data_indexes", "nested_attention_masks", "padded_images", "packed_vit_tokens"):
+            digests = {
+                field: tensor_digest(packed[field])
+                for field in ("nested_attention_masks", "padded_images", "packed_vit_tokens")
+                if field in packed
+            }
+            digest_stream.write(json.dumps({"step": step, **digests}, separators=(",", ":")) + "\n")
+            for field in ("batch_data_indexes", *digests):
                 packed.pop(field, None)
             record = {
                 "step": step,
@@ -153,7 +178,6 @@ def main() -> None:
                     vlm_rows,
                     args.num_workers,
                 ),
-                "batch_data_indexes": batch.batch_data_indexes,
                 **packed,
             }
             stream.write(json.dumps(to_jsonable(record), separators=(",", ":")) + "\n")

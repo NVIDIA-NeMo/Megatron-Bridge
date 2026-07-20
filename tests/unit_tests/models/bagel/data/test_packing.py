@@ -5,15 +5,15 @@ import numpy as np
 import pytest
 import torch
 
-from megatron.bridge.models.bagel.data.energon import BagelT2ISample, BagelVLMSample
-from megatron.bridge.models.bagel.data.packing import BagelPacker, BagelSample
+from megatron.bridge.models.bagel.data.energon import BagelSample
+from megatron.bridge.models.bagel.data.packing import BagelPacker
 
 
 pytestmark = pytest.mark.unit
 
 
-def _t2i(row: int) -> BagelT2ISample:
-    return BagelT2ISample(
+def _t2i(row: int) -> BagelSample:
+    return BagelSample(
         __key__=f"t2i-{row}",
         __restore_key__=("t2i", row),
         __subflavor__=None,
@@ -35,8 +35,8 @@ def _t2i(row: int) -> BagelT2ISample:
     )
 
 
-def _vlm(row: int) -> BagelVLMSample:
-    return BagelVLMSample(
+def _vlm(row: int) -> BagelSample:
+    return BagelSample(
         __key__=f"vlm-{row}",
         __restore_key__=("vlm", row),
         __subflavor__=None,

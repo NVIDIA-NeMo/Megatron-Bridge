@@ -13,12 +13,14 @@
 # limitations under the License.
 
 import argparse
+import hashlib
 import json
 import logging
 import random
 import sys
 from collections.abc import Iterator
 from pathlib import Path
+from typing import TextIO
 from unittest.mock import patch
 
 import numpy as np
@@ -26,7 +28,6 @@ import torch
 from megatron.energon import WorkerConfig, get_train_dataset
 from torch.utils.data._utils.worker import _generate_state
 from transformers import set_seed
-from verify_bagel_energon_100 import validate_batch
 
 from megatron.bridge.models.bagel.data.external import BagelExternalLoader
 from megatron.bridge.models.bagel.data.order import BagelPlannedLoader, plan_manifest_indices
@@ -63,6 +64,64 @@ def set_worker_rng(torch_initial_seed: int, worker_id: int) -> None:
 def identity(sample: dict[str, object]) -> dict[str, object]:
     """Keep one already-packed batch unchanged in the outer DataLoader."""
     return sample
+
+
+def to_jsonable(value: object) -> object:
+    """Recursively convert packed values to JSON-compatible objects."""
+    if isinstance(value, dict):
+        return {key: to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [to_jsonable(item) for item in value]
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, torch.Tensor):
+        return value.detach().cpu().tolist()
+    return value
+
+
+def tensor_digest(value: object) -> object:
+    """Record tensor identity without writing its full payload."""
+    if isinstance(value, torch.Tensor):
+        tensor = value.detach().cpu().contiguous()
+        return {
+            "shape": list(tensor.shape),
+            "dtype": str(tensor.dtype),
+            "sha256": hashlib.sha256(tensor.numpy().tobytes()).hexdigest(),
+        }
+    if isinstance(value, list):
+        return [tensor_digest(item) for item in value]
+    raise TypeError(f"cannot digest {type(value).__name__}")
+
+
+def validate_batch(batch: dict[str, object], step: int, official_stream: TextIO, digest_stream: TextIO) -> str:
+    """Compare one packed batch and return its deterministic trace line."""
+    actual_digests = {
+        field: tensor_digest(batch[field])
+        for field in ("nested_attention_masks", "padded_images", "packed_vit_tokens")
+        if field in batch
+    }
+    expected_digests = json.loads(next(digest_stream))
+    if {"step": step, **actual_digests} != expected_digests:
+        raise ValueError(f"tensor digest mismatch at packed batch {step}")
+
+    compact_batch = dict(batch)
+    for field in actual_digests:
+        compact_batch.pop(field)
+    actual = to_jsonable({"step": step, **compact_batch})
+    expected = json.loads(next(official_stream))
+    if actual != expected:
+        differing = sorted(key for key in actual.keys() | expected.keys() if actual.get(key) != expected.get(key))
+        raise ValueError(f"packed batch {step} differs in fields: {differing}")
+
+    canonical = json.dumps(actual, sort_keys=True, separators=(",", ":")).encode()
+    trace = {
+        "step": step,
+        "source_ids": actual["source_ids"],
+        "sequence_length": actual["sequence_length"],
+        "packed_sha256": hashlib.sha256(canonical).hexdigest(),
+        "tensor_digests": actual_digests,
+    }
+    return json.dumps(trace, sort_keys=True, separators=(",", ":")) + "\n"
 
 
 def build_raw_dataset(dataset_dir: Path, task_encoder: object, worker_config: WorkerConfig) -> object:

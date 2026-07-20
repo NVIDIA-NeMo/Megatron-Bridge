@@ -26,38 +26,8 @@ from transformers import PreTrainedTokenizerBase
 
 
 @dataclass
-class BagelT2IRawSample(Sample):
-    """Raw BAGEL text-to-image sample."""
-
-    image: bytes
-    metadata: dict[str, object]
-
-
-@dataclass
-class BagelT2ISample(Sample):
-    """BAGEL text-to-image sample ready for packing."""
-
-    image_tensor_list: list[torch.Tensor]
-    text_ids_list: list[list[int]]
-    num_tokens: int
-    sequence_plan: list[dict[str, object]]
-    metadata: dict[str, object]
-
-
-@dataclass
-class BagelEditingSample(Sample):
-    """BAGEL Editing sample ready for packing."""
-
-    image_tensor_list: list[torch.Tensor]
-    text_ids_list: list[list[int]]
-    num_tokens: int
-    sequence_plan: list[dict[str, object]]
-    metadata: dict[str, object]
-
-
-@dataclass
-class BagelVLMSample(Sample):
-    """BAGEL vision-language sample ready for packing."""
+class BagelSample(Sample):
+    """BAGEL sample ready for packing."""
 
     image_tensor_list: list[torch.Tensor]
     text_ids_list: list[list[int]]
@@ -88,8 +58,14 @@ def _decode_rgb(image_bytes: bytes) -> Image.Image:
         return image.convert("RGB")
 
 
-def cook_bagel_t2i(crude_sample: dict[str, object]) -> BagelT2IRawSample:
-    """Cook raw WebDataset fields without decoding image or caption data."""
+def cook_bagel_t2i_sample(
+    crude_sample: dict[str, object],
+    *,
+    tokenizer: PreTrainedTokenizerBase,
+    transform: Callable[[Image.Image], torch.Tensor],
+    image_stride: int,
+) -> BagelSample:
+    """Apply BAGEL's T2I image, caption, and sequence-plan processing."""
     missing = {"image", "json"}.difference(crude_sample)
     if missing:
         raise ValueError(f"missing required WebDataset fields: {sorted(missing)}")
@@ -97,26 +73,10 @@ def cook_bagel_t2i(crude_sample: dict[str, object]) -> BagelT2IRawSample:
     image = crude_sample["image"]
     if not isinstance(image, bytes):
         raise TypeError("WebDataset image field must contain bytes")
+    metadata = _load_metadata(crude_sample)
+    image_tensor = transform(_decode_rgb(image))
 
-    return BagelT2IRawSample(
-        **basic_sample_keys(crude_sample),
-        image=image,
-        metadata=_load_metadata(crude_sample),
-    )
-
-
-def cook_bagel_t2i_sample(
-    crude_sample: dict[str, object],
-    *,
-    tokenizer: PreTrainedTokenizerBase,
-    transform: Callable[[Image.Image], torch.Tensor],
-    image_stride: int,
-) -> BagelT2ISample:
-    """Apply BAGEL's T2I image, caption, and sequence-plan processing."""
-    raw_sample = cook_bagel_t2i(crude_sample)
-    image_tensor = transform(_decode_rgb(raw_sample.image))
-
-    captions = raw_sample.metadata["captions"]
+    captions = metadata["captions"]
     if not isinstance(captions, str):
         raise TypeError("BAGEL T2I captions metadata must contain text")
     caption_dict = json.loads(captions)
@@ -126,13 +86,13 @@ def cook_bagel_t2i_sample(
         {"type": "text", "enable_cfg": 1, "loss": 0, "special_token_loss": 0, "special_token_label": None},
         {"type": "vae_image", "enable_cfg": 0, "loss": 1, "special_token_loss": 0, "special_token_label": None},
     ]
-    return BagelT2ISample(
+    return BagelSample(
         **basic_sample_keys(crude_sample),
         image_tensor_list=[image_tensor],
         text_ids_list=[text_ids],
         num_tokens=image_tensor.shape[1] * image_tensor.shape[2] // image_stride**2 + len(text_ids),
         sequence_plan=sequence_plan,
-        metadata=raw_sample.metadata,
+        metadata=metadata,
     )
 
 
@@ -144,7 +104,7 @@ def cook_bagel_editing_sample(
     vit_transform: Callable[[Image.Image], torch.Tensor],
     image_stride: int,
     vit_image_stride: int,
-) -> BagelEditingSample:
+) -> BagelSample:
     """Apply BAGEL's Editing path choice, transforms, tokens, and sequence plan."""
     metadata = _load_metadata(crude_sample)
     image_count = metadata["image_count"]
@@ -236,7 +196,7 @@ def cook_bagel_editing_sample(
                 need_vit=index != end_idx,
             )
 
-    return BagelEditingSample(
+    return BagelSample(
         **basic_sample_keys(crude_sample),
         image_tensor_list=image_tensor_list,
         text_ids_list=text_ids_list,
@@ -252,7 +212,7 @@ def cook_bagel_vlm_sample(
     tokenizer: PreTrainedTokenizerBase,
     transform: Callable[[Image.Image, int], torch.Tensor],
     image_stride: int,
-) -> BagelVLMSample:
+) -> BagelSample:
     """Apply BAGEL's VLM image, conversation, token, and sequence-plan processing."""
     metadata = _load_metadata(crude_sample)
     image_count = metadata["image_count"]
@@ -315,7 +275,7 @@ def cook_bagel_vlm_sample(
     if not any(item["loss"] for item in sequence_plan):
         raise ValueError("BAGEL VLM sample has no loss-bearing text")
 
-    return BagelVLMSample(
+    return BagelSample(
         **basic_sample_keys(crude_sample),
         image_tensor_list=image_tensor_list,
         text_ids_list=text_ids_list,
@@ -323,12 +283,6 @@ def cook_bagel_vlm_sample(
         sequence_plan=sequence_plan,
         metadata=metadata,
     )
-
-
-class BagelT2IRawTaskEncoder(TaskEncoder):
-    """Register the BAGEL T2I raw sample cooker."""
-
-    cookers = [Cooker(cook_bagel_t2i)]
 
 
 class BagelT2ITaskEncoder(TaskEncoder):

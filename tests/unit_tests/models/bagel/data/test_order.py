@@ -1,4 +1,3 @@
-import random
 from pathlib import Path
 
 import pytest
@@ -6,7 +5,6 @@ from megatron.energon import WorkerConfig
 
 from megatron.bridge.models.bagel.data.order import (
     BagelPlannedLoader,
-    choose_group,
     plan_editing_sources,
     plan_manifest_indices,
     plan_t2i_sources,
@@ -70,11 +68,6 @@ def test_source_planners_keep_stable_raw_coordinates() -> None:
         world_size=1,
     )
     assert [item["source"]["row"] for item in vlm] == [4, 3, 2, 0, 1]
-
-
-def test_choose_group_uses_bagel_cumulative_weights_and_shared_rng() -> None:
-    rng = random.Random(42)
-    assert [choose_group([1, 1, 1], rng) for _ in range(5)] == [1, 0, 0, 0, 2]
 
 
 def test_manifest_plan_maps_official_sources_to_canonical_wds_indices(tmp_path: Path) -> None:
