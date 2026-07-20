@@ -30,7 +30,7 @@ import torch
 
 import megatron.bridge.recipes as recipes
 from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, apply_environment_variables
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.pretrain import pretrain
 from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
@@ -250,6 +250,7 @@ def _set_if_present(container: object, field_name: str, value: object | None) ->
 
 def apply_runtime_environment(config: ConfigContainer) -> ConfigContainer:
     """Apply environment settings derived from the resolved ConfigContainer."""
+    apply_environment_variables(config)
     if getattr(getattr(config, "ddp", None), "nccl_ub", False):
         os.environ["NCCL_NVLS_ENABLE"] = "1"
         os.environ["NCCL_CTA_POLICY"] = "1"
