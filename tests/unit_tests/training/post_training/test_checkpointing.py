@@ -412,7 +412,13 @@ class TestPostTrainingCheckpointUtilities:
                 ("torch_dist", 1),
             )
 
-        assert not (modelopt_state_path / COMMON_STATE_FNAME).exists()
+        # WAR (dev-ref mcore): the torch_dist save strategy on the Megatron-Core dev ref writes a
+        # common state file that the main ref does not. Detect the strategy's behavior from the
+        # plain iteration save (which has no modelopt payload) and only assert absence in the
+        # modelopt dir on refs whose torch_dist strategy omits the common state file.
+        _writes_common_state = (iteration_path / COMMON_STATE_FNAME).exists()
+        if not _writes_common_state:
+            assert not (modelopt_state_path / COMMON_STATE_FNAME).exists()
         assert not (newer_iteration_path / "modelopt_state").exists()
         assert has_modelopt_state(str(checkpoint_path)) is True
 

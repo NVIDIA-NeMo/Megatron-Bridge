@@ -40,6 +40,7 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4TEDotProductAttention,
     Gemma4TopKRouter,
     Gemma4TransformerLayer,
+    TransformerLayer,
     _attach_ple_modules,
     _compute_per_layer_inputs,
     _gemma4_block_spec,
@@ -1997,14 +1998,29 @@ class TestGemma4MoEHelpers:
             packed_seq_params=SimpleNamespace(tokens_per_sample=2),
         )
 
-        expected_router = hidden_states.view(2, 2, -1).transpose(0, 1).contiguous()
-        normalized = expected_router * torch.pow(expected_router.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
         expert, shared, router, routed_padding_mask = calls[0]
-        torch.testing.assert_close(expert, normalized * 2.0)
-        torch.testing.assert_close(shared, normalized * 3.0)
-        torch.testing.assert_close(router, expected_router)
-        torch.testing.assert_close(routed_padding_mask, padding_mask)
-        torch.testing.assert_close(output, (normalized * 2.0).transpose(0, 1).reshape(4, 1, 2))
+        if hasattr(TransformerLayer, "_maybe_unflatten_for_moe"):
+            expected_router = hidden_states.view(2, 2, -1).transpose(0, 1).contiguous()
+            normalized = expected_router * torch.pow(
+                expected_router.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5
+            )
+            torch.testing.assert_close(expert, normalized * 2.0)
+            torch.testing.assert_close(shared, normalized * 3.0)
+            torch.testing.assert_close(router, expected_router)
+            torch.testing.assert_close(routed_padding_mask, padding_mask)
+            torch.testing.assert_close(output, (normalized * 2.0).transpose(0, 1).reshape(4, 1, 2))
+        else:
+            # WAR (dev-ref mcore): TransformerLayer._maybe_unflatten_for_moe is absent on the
+            # Megatron-Core dev ref (see modeling_gemma4._forward_mlp guard, TODO e86c262ccd0c),
+            # so _forward_mlp passes hidden_states through unflattened and skips the reflatten.
+            normalized = hidden_states * torch.pow(
+                hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5
+            )
+            torch.testing.assert_close(expert, normalized * 2.0)
+            torch.testing.assert_close(shared, normalized * 3.0)
+            torch.testing.assert_close(router, hidden_states)
+            torch.testing.assert_close(routed_padding_mask, padding_mask)
+            torch.testing.assert_close(output, normalized * 2.0)
         torch.testing.assert_close(residual, hidden_states)
 
     def test_topk_router_routing_keeps_probs_when_map_missing(self, monkeypatch):
