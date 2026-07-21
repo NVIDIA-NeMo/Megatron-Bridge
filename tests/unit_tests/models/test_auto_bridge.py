@@ -1556,6 +1556,7 @@ class TestAutoBridge:
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
+        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
 
         # Test import_ckpt with kwargs
         AutoBridge.import_ckpt(
@@ -1563,16 +1564,22 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             torch_dtype=torch.float16,
             device_map="auto",
+            revision="0123456789abcdef",  # pragma: allowlist secret
         )
 
         # Assertions
-        mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
+        mock_from_hf_pretrained.assert_called_once_with(
+            "./local_model",
+            torch_dtype=torch.float16,
+            device_map="auto",
+            revision="0123456789abcdef",  # pragma: allowlist secret
+        )
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
             hf_tokenizer_path="./local_model",
-            hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            hf_tokenizer_kwargs={"revision": "0123456789abcdef"},  # pragma: allowlist secret
             low_memory_save=True,
         )
 

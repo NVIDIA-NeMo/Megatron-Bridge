@@ -1370,10 +1370,12 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_tokenizer_kwargs = {}
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+        if hf_tokenizer_kwargs is None:
+            hf_tokenizer_kwargs = {}
+        if kwargs.get("revision") is not None:
+            hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
         # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
         if kwargs.get("trust_remote_code"):
-            if hf_tokenizer_kwargs is None:
-                hf_tokenizer_kwargs = {}
             hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
         bridge.save_megatron_model(
             megatron_model,

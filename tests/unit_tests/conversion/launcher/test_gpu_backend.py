@@ -130,6 +130,7 @@ class TestImportHfToMegatron:
         class FakeBridge:
             _model_bridge = _FakeModelBridge()
             hf_pretrained = _FakeHfPretrained()
+            hf_model_revision = "0123456789abcdef"  # pragma: allowlist secret
 
             def to_megatron_provider(self, *args, **kwargs):
                 calls.append(("to_megatron_provider", args, kwargs))
@@ -153,6 +154,7 @@ class TestImportHfToMegatron:
 
         cli.import_checkpoint.__wrapped__(
             hf_model="hf",
+            hf_revision="0123456789abcdef",  # pragma: allowlist secret
             megatron_path="/ckpt",
             tp=1,
             pp=1,
@@ -168,7 +170,14 @@ class TestImportHfToMegatron:
         assert save_call[1] == (["megatron-model"], "/ckpt")
         assert "low_memory_save" not in save_call[2]
         assert save_call[2]["hf_tokenizer_path"] == "hf"
-        assert save_call[2]["hf_tokenizer_kwargs"] == {"padding_side": "left", "trust_remote_code": True}
+        assert save_call[2]["hf_tokenizer_kwargs"] == {
+            "padding_side": "left",
+            "trust_remote_code": True,
+            "revision": "0123456789abcdef",  # pragma: allowlist secret
+        }
+        from_hf_call = next(call for call in calls if call[0] == "from_hf_pretrained")
+        assert from_hf_call[1] == ("hf",)
+        assert from_hf_call[2]["revision"] == "0123456789abcdef"  # pragma: allowlist secret
         assert prepared_outputs == [(("/ckpt",), {"overwrite": False, "source_paths": ["hf"]})]
 
 

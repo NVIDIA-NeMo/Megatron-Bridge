@@ -27,6 +27,38 @@ DTYPE_MAP = {
 }
 
 
+def _validate_hf_revision_target(hf_model: str, hf_revision: str | None) -> None:
+    """Reject revision pinning for local model paths."""
+    if hf_revision is not None and Path(hf_model).expanduser().exists():
+        raise ValueError("--hf-revision applies only to Hugging Face Hub model IDs, not local paths.")
+
+
+def resolve_hf_commit_revision(hf_model: str, hf_revision: str | None) -> str | None:
+    """Resolve a Hub branch, tag, or commit to one immutable commit SHA.
+
+    Args:
+        hf_model: Hugging Face model ID or local path.
+        hf_revision: Hub branch, tag, or commit to resolve.
+
+    Returns:
+        The immutable Hub commit SHA, or ``None`` when no revision was supplied.
+
+    Raises:
+        ValueError: If a revision is paired with an existing local path.
+        RuntimeError: If the Hub response does not contain a commit SHA.
+    """
+    _validate_hf_revision_target(hf_model, hf_revision)
+    if hf_revision is None:
+        return None
+
+    from huggingface_hub import HfApi
+
+    resolved_revision = HfApi().model_info(repo_id=hf_model, revision=hf_revision).sha
+    if not resolved_revision:
+        raise RuntimeError(f"Hugging Face Hub did not return a commit SHA for {hf_model}@{hf_revision}.")
+    return resolved_revision
+
+
 def resolve_hf_model_revision(hf_model: str, hf_revision: str | None) -> str:
     """Resolve a remote Hugging Face model revision to an immutable local snapshot.
 
@@ -42,10 +74,9 @@ def resolve_hf_model_revision(hf_model: str, hf_revision: str | None) -> str:
     Raises:
         ValueError: If a revision is paired with an existing local path.
     """
+    _validate_hf_revision_target(hf_model, hf_revision)
     if hf_revision is None:
         return hf_model
-    if Path(hf_model).expanduser().exists():
-        raise ValueError("--hf-revision applies only to Hugging Face Hub model IDs, not local paths.")
 
     from huggingface_hub import snapshot_download
 

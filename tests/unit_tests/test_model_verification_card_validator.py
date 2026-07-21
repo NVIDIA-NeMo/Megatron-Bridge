@@ -16,6 +16,7 @@ VALIDATOR_PATH = REPO_ROOT / "skills/create-model-verification-card/scripts/vali
 COMPARE_PATH = REPO_ROOT / "examples/conversion/compare_hf_and_megatron/compare.py"
 CARD_PATH = REPO_ROOT / "model_cards/nemotron-3-nano-4b/card.yaml"
 CORRELATION_CARD_PATH = REPO_ROOT / "model_cards/qwen3-8b/card.yaml"
+CARD_PATHS = sorted((REPO_ROOT / "model_cards").glob("*/card.yaml"))
 
 
 def _load_validator() -> ModuleType:
@@ -58,8 +59,9 @@ def _assigned_float(path: Path, name: str) -> float:
     raise AssertionError(f"{name} is not assigned in {path}")
 
 
-def test_repository_model_card_is_valid() -> None:
-    assert _errors(_card()) == []
+@pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
+def test_repository_model_cards_are_valid(card_path: Path) -> None:
+    assert _errors(_card(card_path)) == []
 
 
 def test_manual_forward_requires_one_percent_correlation() -> None:
