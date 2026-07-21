@@ -35,7 +35,9 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.train.micro_batch_size = 2
 
+    cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
+    cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
     cfg.model.recompute_method = None

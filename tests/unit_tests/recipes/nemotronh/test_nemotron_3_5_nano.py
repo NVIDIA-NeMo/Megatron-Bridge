@@ -107,9 +107,9 @@ class TestNemotron35NanoPretrain:
         """CUDA-graph scope and full recompute must retain H100 resume headroom."""
         config = nemotron_3_5_nano_pretrain_config()
 
-        assert config.model.cuda_graph_impl == "transformer_engine"
-        assert config.model.cuda_graph_scope == ["mamba"]
-        assert config.model.cuda_graph_warmup_steps == 3
+        assert config.model.cuda_graph_impl == "none"
+        assert config.model.cuda_graph_scope == []
+        assert config.model.cuda_graph_warmup_steps == 0
         assert config.model.use_te_rng_tracker is True
 
         assert config.model.recompute_granularity == "full"
@@ -175,7 +175,9 @@ class TestNemotron35NanoPretrain:
         assert config.train.global_batch_size == 1024
         assert config.train.micro_batch_size == 2
         assert config.model.moe_router_force_load_balancing is False
+        assert config.model.cuda_graph_impl == "transformer_engine"
         assert config.model.cuda_graph_scope == ["attn", "mamba", "moe_router", "moe_preprocess"]
+        assert config.model.cuda_graph_warmup_steps == 3
         assert config.model.recompute_granularity is None
         assert config.model.recompute_modules is None
         assert config.model.recompute_method is None
