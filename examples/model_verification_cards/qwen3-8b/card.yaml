@@ -17,8 +17,8 @@ verification_index:
     verified: all
   training:
     H100:
-      verified: [sft, sft_export_inference, sft_long_context, peft]
-      unverified: [pretrain, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft]
+      unverified: [checkpoint_resume]
     GB200:
       unverified: all
 model:
@@ -125,12 +125,13 @@ items:
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
       enabled_features: {}
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe qwen3_8b_pretrain_config --mode pretrain
+        --recipe qwen3_8b_pretrain_16gpu_h100_bf16_config --mode pretrain
         --dataset megatron-indexed --seq_length 4096
         --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
@@ -145,18 +146,20 @@ items:
         rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
         --save_dir work/model-verification/qwen3-8b/pretrain-reference-checkpoints --save_interval 50
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-07-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 12.73617
+        final_loss: 6.190218
+        last_10_steps_step_time_ms_avg: 25070.320
+        last_10_steps_model_tflops_per_gpu_avg: 512.700
       expected_result: >
-        The pending uninterrupted bounded RP2 reference must complete exactly 100
-        steps at recipe-owned GBS/MBS 1024/1 with finite losses and no skipped or
-        NaN iterations. It must reach peak learning rate at step 40, complete
-        decay at step 100, and save complete iter_0000050 and iter_0000100
-        checkpoints before this cohort item can be marked verified.
+        The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at
+        TP1/PP1/CP1, DP16, GBS/MBS 1024/1, and 64-way gradient accumulation. It
+        reaches peak learning rate at step 40 and completes cosine decay at step
+        100. LM loss is finite from 12.73617 to 6.190218 with no skipped or NaN
+        iterations, all four metrics are recorded, the post-setup configuration
+        persists, and complete 16-shard iter_0000050 and iter_0000100 checkpoints
+        are saved.
 
   sft:
     H100:
@@ -314,7 +317,7 @@ items:
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe qwen3_8b_pretrain_config --mode pretrain
+        --recipe qwen3_8b_pretrain_16gpu_h100_bf16_config --mode pretrain
         --dataset megatron-indexed --seq_length 4096
         --max_steps 100
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
