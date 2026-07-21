@@ -140,6 +140,16 @@ if isinstance(run.KubeflowExecutor, type):
                 )
             return posixpath.join(self.workspace_root, relative_code_dir)
 
+        def get_job_body(self, name: str, command: List[str]) -> Dict[str, Any]:
+            """Preserve generated mounts when customizing the runtime container."""
+            manifest = super().get_job_body(name, command)
+            for override in manifest.get("spec", {}).get("podTemplateOverrides", []):
+                containers = override.get("spec", {}).get("containers", [])
+                for container in containers:
+                    if container.get("name") == "node":
+                        container.setdefault("volumeMounts", self.volume_mounts)
+            return manifest
+
 else:  # Minimal offline test doubles expose KubeflowExecutor as a function.
     WorkspaceRootKubeflowExecutor = None
 
