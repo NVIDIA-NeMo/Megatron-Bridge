@@ -9,7 +9,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc2
-  bridge_commit: dea776228d101193df5ddd7d906e7c9e50e94b79  # pragma: allowlist secret
+  bridge_commit: cd9f6e1082c11c7d7f0546c4cdbe4fa1ce56d6da  # pragma: allowlist secret
 summary: Nemotron 3.5 Nano MTP verification on eight GB200 GPUs.
 
 items:
@@ -92,8 +92,9 @@ items:
     expected_result: Two greedy runs return byte-identical token IDs and exactly two generated tokens.
 
   pretrain:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 054277bf28988412b08eb436ec7743bd6c2d0fe9  # pragma: allowlist secret
     gpu_type: GB200
     enabled_features:
       cuda_graph:
@@ -113,12 +114,12 @@ items:
       --save_dir work/model-verification/nemotron-3-5-nano-mtp-gb200/pretrain-reference-checkpoints
       --save_interval 50 logger.log_interval=1 logger.log_throughput=true
       logger.tensorboard_dir=null
-    last_verified: null
+    last_verified: 2026-07-20
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 12.17352
+      final_loss: 5.523595
+      last_10_steps_step_time_ms_avg: 30346.96
+      last_10_steps_model_tflops_per_gpu_avg: 472.94
     expected_result: >
       The natural-routing real-data run completes 100 finite-loss steps at recipe-owned GBS/MBS 1024/2,
       records loss and last-10 throughput metrics, and saves complete checkpoints at steps 50 and 100.
@@ -224,8 +225,9 @@ items:
     expected_result: Packed LoRA completes 100 finite-loss steps and saves a reloadable adapter checkpoint.
 
   checkpoint_resume:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 054277bf28988412b08eb436ec7743bd6c2d0fe9  # pragma: allowlist secret
     gpu_type: GB200
     depends_on: pretrain
     command: >
@@ -243,18 +245,37 @@ items:
       --save_dir work/model-verification/nemotron-3-5-nano-mtp-gb200/pretrain-resumed-checkpoints
       --save_interval 50 logger.log_interval=1 logger.log_throughput=true
       logger.tensorboard_dir=null
-    last_verified: null
+    last_verified: 2026-07-20
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 6.152757
+      final_loss: 5.528544
+      last_10_steps_step_time_ms_avg: 29189.47
+      last_10_steps_model_tflops_per_gpu_avg: 491.26
     resume_comparison:
       reference_item: pretrain
       sentinel_steps: [51, 100]
       loss_relative_tolerance: 1.0e-2
       loss_absolute_tolerance: 1.0e-6
-      sentinels_match: null
+      sentinels_match: true
     expected_result: >
       The continuation restores optimizer, scheduler, data-order, and RNG state from step 50, writes to a
       distinct output root, and matches uninterrupted losses at steps 51 and 100 within the declared tolerance.
+
+  pretrain_performance:
+    status: verified
+    precision: bf16
+    bridge_commit: c172dd0eb0dd9247033b2d74197dc7185b3fc232  # pragma: allowlist secret
+    gpu_type: GB200
+    command: >
+      ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+      --recipe nemotron_3_5_nano_mtp_pretrain_8gpu_gb200_bf16_config --max_steps 50
+    last_verified: 2026-07-20
+    metrics:
+      initial_loss: 12.18252
+      final_loss: 0.005027088
+      last_10_steps_step_time_ms_avg: 19755.35
+      last_10_steps_model_tflops_per_gpu_avg: 747.01
+    expected_result: >
+      On two nodes with 8x GB200, the exact mock-data BF16 performance recipe completes exactly 50 steps
+      with finite losses and no skipped or NaN iterations. Over steps 41-50, the run averages at most
+      22 seconds per step and at least 700 model TFLOP/s/GPU.
