@@ -21,8 +21,6 @@ from pathlib import Path
 
 import pytest
 
-from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
-
 
 def _has_dsv4_in_transformers() -> bool:
     try:
@@ -55,10 +53,6 @@ pytestmark = [
     pytest.mark.skipif(
         not _has_dsv4_in_mcore(),
         reason="megatron-core does not yet ship DSv4 prerequisites (PRs #3430 / #4458 / #4481 / #4518).",
-    ),
-    pytest.mark.skipif(
-        HAS_MCORE_DEV_BRANCH,
-        reason="DeepSeek-V4 DSA indexer per-layer placement changed on the mcore dev ref; the V4 conversion roundtrip is not yet dual-compatible. Guarded on the dev lane only (see tests/mcore_dev.py).",
     ),
 ]
 
@@ -150,7 +144,8 @@ def _hf_to_bridge_state_dict(hf_state_dict: dict, num_layers: int) -> dict:
 
         indexer_prefix = f"{compressor_prefix}.indexer"
         copy(f"{indexer_prefix}.q_b_proj.weight", f"{ckpt_prefix}.attn.indexer.wq_b.weight")
-        copy(f"{indexer_prefix}.weights_proj.weight", f"{ckpt_prefix}.attn.indexer.weights_proj.weight")
+        # HF transformers nests the indexer score projection under `.scorer.`.
+        copy(f"{indexer_prefix}.scorer.weights_proj.weight", f"{ckpt_prefix}.attn.indexer.weights_proj.weight")
         copy(f"{indexer_prefix}.kv_proj.weight", f"{ckpt_prefix}.attn.indexer.compressor.wkv.weight")
         copy(f"{indexer_prefix}.gate_proj.weight", f"{ckpt_prefix}.attn.indexer.compressor.wgate.weight")
         copy(f"{indexer_prefix}.position_bias", f"{ckpt_prefix}.attn.indexer.compressor.ape")
