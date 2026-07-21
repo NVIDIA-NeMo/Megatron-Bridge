@@ -98,7 +98,6 @@ def _has_te_with_nvfp4():
     """True when a real Transformer Engine >= 2.7.0.dev0 is importable (same gate as production)."""
     try:
         import transformer_engine  # noqa: F401
-
         from megatron.core.utils import is_te_min_version
 
         return is_te_min_version("2.7.0.dev0")
