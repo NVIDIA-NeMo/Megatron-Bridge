@@ -60,3 +60,46 @@ class TestNVFP4HealingConfig:
     def test_invalid_healing_iter_raises(self):
         with pytest.raises(ValueError, match="healing_iter"):
             make_config(healing_iter=0)
+
+
+def make_context(step):
+    ctx = Mock()
+    ctx.state.train_state.step = step
+    return ctx
+
+
+class TestHealingTrigger:
+    def test_fires_exactly_at_healing_iter(self):
+        cb = NVFP4HealingCallback(make_config(healing_iter=3))
+        with patch.object(cb, "_apply_healing") as apply:
+            cb.on_train_step_end(make_context(step=1))  # step+1 == 2 != 3
+            apply.assert_not_called()
+            assert cb.healed is False
+            cb.on_train_step_end(make_context(step=2))  # step+1 == 3
+            apply.assert_called_once()
+            assert cb.healed is True
+
+    def test_fires_only_once(self):
+        cb = NVFP4HealingCallback(make_config(healing_iter=1))
+        with patch.object(cb, "_apply_healing") as apply:
+            cb.on_train_step_end(make_context(step=0))
+            cb.on_train_step_end(make_context(step=0))
+            assert apply.call_count == 1
+
+    def test_does_not_fire_past_healing_iter(self):
+        cb = NVFP4HealingCallback(make_config(healing_iter=2))
+        with patch.object(cb, "_apply_healing") as apply:
+            cb.on_train_step_end(make_context(step=5))
+            apply.assert_not_called()
+            assert cb.healed is False
+
+
+class TestHookRegistration:
+    def test_registers_expected_hooks(self):
+        manager = CallbackManager()
+        manager.add(NVFP4HealingCallback(make_config()))
+        assert manager.has_callbacks("on_data_init_start")
+        assert manager.has_callbacks("on_train_step_end")
+        assert manager.has_callbacks("on_train_end")
+        assert not manager.has_callbacks("on_train_start")
+        assert not manager.has_callbacks("on_train_step_start")
