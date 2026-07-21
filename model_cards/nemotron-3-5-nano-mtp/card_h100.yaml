@@ -1,0 +1,260 @@
+# Agent-readable model support card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: nemotron_3_5_nano_mtp_h100
+model:
+  hf_id: nvidia/nemotron-nano-3.5-ea2
+  hf_revision: 68f54a60ad3c68abaeb585d57a29f1da5021665e  # pragma: allowlist secret
+  architecture: NemotronHForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.08.rc2
+  bridge_commit: dea776228d101193df5ddd7d906e7c9e50e94b79  # pragma: allowlist secret
+summary: Nemotron 3.5 Nano MTP verification on 16 H100 GPUs.
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model nvidia/nemotron-nano-3.5-ea2
+      --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+      --megatron-path work/model-verification/nemotron-3-5-nano-mtp-h100/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: The pinned BF16 checkpoint imports on CPU and creates a reloadable iter_0000000.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --tp 1 --ep 8
+      --hf-model nvidia/nemotron-nano-3.5-ea2
+      --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+      --megatron-path work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: The pinned BF16 checkpoint imports across eight ranks and creates a reloadable iter_0000000.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model nvidia/nemotron-nano-3.5-ea2
+      --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+      --megatron-path work/model-verification/nemotron-3-5-nano-mtp-h100/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/nemotron-3-5-nano-mtp-h100/cpu-hf-export
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: CPU export writes a native NemotronHForCausalLM checkpoint that reloads with Transformers.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --tp 1 --ep 8
+      --hf-model nvidia/nemotron-nano-3.5-ea2
+      --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+      --megatron-path work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
+      --hf-path work/model-verification/nemotron-3-5-nano-mtp-h100/hf-export
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: GPU export writes a native NemotronHForCausalLM checkpoint with all MTP tensors preserved.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=1
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path nvidia/nemotron-nano-3.5-ea2
+      --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+      --megatron_model_path work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
+      --tp 1 --ep 1 --prompt "The capital of France is the city of"
+    last_verified: null
+    expected_result: The next token matches and BF16 HF-to-Megatron logit cosine similarity is at least 0.99.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=1
+      examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path nvidia/nemotron-nano-3.5-ea2
+      --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+      --megatron_model_path work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
+      --tp 1 --ep 1 --prompt "The capital of France is" --max_new_tokens 2
+    last_verified: null
+    expected_result: Two greedy runs return byte-identical token IDs and exactly two generated tokens.
+
+  pretrain:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      cuda_graph:
+        implementation: transformer_engine
+        scopes: [attn, mamba]
+      moe_dispatcher: hybridep
+    command: >
+      ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
+      --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
+      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      dataset.path_to_cache=work/cache/nemotron-3-5-nano-mtp-h100/rp2
+      rng.seed=1234 dataset.random_seed=1234
+      validation.eval_iters=0 validation.eval_interval=0
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
+      --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/pretrain-reference-checkpoints
+      --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+      logger.tensorboard_dir=null
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: >
+      The natural-routing real-data run completes 100 finite-loss steps at recipe-owned GBS/MBS 1024/1,
+      records loss and last-10 throughput metrics, and saves complete checkpoints at steps 50 and 100.
+
+  sft:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      moe_dispatcher: hybridep
+    command: >
+      ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
+      --recipe nemotron_3_5_nano_sft_openmathinstruct2_config --mode sft
+      --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
+      --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
+      dataset.enable_offline_packing=true
+      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:1}'
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/sft-checkpoints
+      --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: Packed full SFT completes 100 finite-loss steps and saves a reloadable full-model checkpoint.
+
+  sft_export_inference:
+    status: unverified
+    precision: bf16
+    depends_on: sft
+    commands:
+      - >
+        ./scripts/conversion/convert.sh export --executor slurm --device gpu
+        --nodes 1 --gpus-per-node 8 --tp 1 --ep 8
+        --hf-model nvidia/nemotron-nano-3.5-ea2
+        --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
+        --megatron-path work/model-verification/nemotron-3-5-nano-mtp-h100/sft-checkpoints/iter_0000100
+        --hf-path work/model-verification/nemotron-3-5-nano-mtp-h100/sft-hf-export
+        --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      - >
+        uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py
+        --hf-model work/model-verification/nemotron-3-5-nano-mtp-h100/sft-hf-export
+        --prompt "Name the capital of France and explain its role in one sentence."
+        --max-new-tokens 45 --chat-template --disable-thinking
+    last_verified: null
+    expected_result: The SFT export reloads natively and produces deterministic greedy text in two independent runs.
+
+  sft_long_context:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      context_parallel_size: 2
+      moe_dispatcher: hybridep
+    command: >
+      ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
+      --recipe nemotron_3_5_nano_sft_openmathinstruct2_config --mode sft
+      --dataset openmathinstruct2 --max_steps 100 --seq_length 32768
+      --context_parallel_size 2
+      --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
+      dataset.enable_offline_packing=true
+      'dataset.offline_packing_specs={packed_sequence_size:32768,pad_seq_to_mult:4}'
+      model.cp_comm_type=a2a model.calculate_per_token_loss=true
+      ddp.average_in_collective=false validation.eval_iters=0 validation.eval_interval=0
+      checkpoint.load=null
+      --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/long-sft-checkpoints
+      --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: Packed CP2 SFT completes 100 finite-loss 32K steps and saves a reloadable checkpoint.
+
+  peft:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    enabled_features:
+      sequence_packing: offline
+      moe_dispatcher: hybridep
+    command: >
+      ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
+      --recipe nemotron_3_5_nano_peft_openmathinstruct2_config --mode lora
+      --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
+      --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
+      dataset.enable_offline_packing=true
+      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:1}'
+      validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/peft-checkpoints
+      --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    expected_result: Packed LoRA completes 100 finite-loss steps and saves a reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    status: unverified
+    precision: bf16
+    gpu_type: H100
+    depends_on: pretrain
+    command: >
+      ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
+      --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config --mode pretrain
+      --dataset megatron-indexed --seq_length 4096 --max_steps 100
+      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      dataset.path_to_cache=work/cache/nemotron-3-5-nano-mtp-h100/rp2
+      rng.seed=1234 dataset.random_seed=1234
+      validation.eval_iters=0 validation.eval_interval=0
+      ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+      rerun_state_machine.check_for_nan_in_loss=true
+      --load_dir work/model-verification/nemotron-3-5-nano-mtp-h100/pretrain-reference-checkpoints
+      checkpoint.ckpt_step=50
+      --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/pretrain-resumed-checkpoints
+      --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+      logger.tensorboard_dir=null
+    last_verified: null
+    metrics:
+      initial_loss: null
+      final_loss: null
+      last_10_steps_step_time_ms_avg: null
+      last_10_steps_model_tflops_per_gpu_avg: null
+    resume_comparison:
+      reference_item: pretrain
+      sentinel_steps: [51, 100]
+      loss_relative_tolerance: 1.0e-2
+      loss_absolute_tolerance: 1.0e-6
+      sentinels_match: null
+    expected_result: >
+      The continuation restores optimizer, scheduler, data-order, and RNG state from step 50, writes to a
+      distinct output root, and matches uninterrupted losses at steps 51 and 100 within the declared tolerance.
