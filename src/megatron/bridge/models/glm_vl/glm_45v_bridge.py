@@ -28,7 +28,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.glm_vl.glm_45v_provider import GLM45VModelProvider
 from megatron.bridge.models.glm_vl.modeling_glm_45v import GLM45VModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @MegatronModelBridge.register_bridge(source=Glm4vMoeForConditionalGeneration, target=GLM45VModel)
@@ -37,7 +37,7 @@ class GLM45VBridge(MegatronModelBridge):
     Megatron Bridge for GLM 4.5 Vision-Language (VL) Models.
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> GLM45VModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> GLM45VModelProvider:
         hf_config = hf_pretrained.config
 
         # GLM 4.5 has separate text_config and vision_config

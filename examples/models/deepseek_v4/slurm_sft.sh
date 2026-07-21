@@ -36,7 +36,7 @@
 #
 # DSv4 sparse attention (CSA/DSA indexer) rejects packed sequences
 # (csa.py asserts packed_seq_params is None), so SFT runs unpacked (SBHD).
-# Do not enable --packed_sequence.
+# Do not enable dataset.enable_offline_packing.
 # ==============================================================================
 
 #SBATCH --job-name=dsv4-sft
@@ -216,7 +216,8 @@ else
         set -euo pipefail
         export CUDA_DEVICE_MAX_CONNECTIONS=1
         cd /opt/Megatron-Bridge
-        $TORCHRUN examples/conversion/convert_checkpoints_multi_gpu.py import \
+        $TORCHRUN scripts/conversion/run_conversion.py import \
+            --device gpu \
             --hf-model '$HF_MODEL_ID' \
             --megatron-path '$MEGATRON_DIR' \
             --tp $TP --pp $PP --ep $EP \
@@ -228,9 +229,9 @@ fi
 # ------------------------------------------------------------------------------
 # Phase 2: full SFT
 #
-# No --dataset: the recipe ships an unpacked (SBHD) SQuAD config. To use your own
-# data, add 'dataset.dataset_name=gsm8k' (HF) or pass --dataset llm-finetune-preloaded
-# 'dataset.dataset_root=<path>' -- but never --packed_sequence (DSv4 rejects packed).
+# No --dataset: the recipe ships an unpacked (SBHD) SQuAD config. To use another
+# source, pass `--dataset gsm8k` or `--dataset local-jsonl dataset.dataset_root=<path>`.
+# Do not enable `dataset.enable_offline_packing`; DSv4 rejects packed sequences.
 # ------------------------------------------------------------------------------
 
 CLI_OVERRIDES=" \

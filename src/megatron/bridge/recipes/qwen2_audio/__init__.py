@@ -12,9 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from .qwen2_audio import qwen2_audio_7b_finetune_config
+from .qwen2_audio import qwen2_audio_7b_peft_config, qwen2_audio_7b_sft_config
 
 
 __all__ = [
-    "qwen2_audio_7b_finetune_config",
+    "qwen2_audio_7b_sft_config",
+    "qwen2_audio_7b_peft_config",
 ]

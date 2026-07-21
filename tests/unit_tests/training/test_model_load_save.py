@@ -20,20 +20,77 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.training import model_load_save
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
     load_megatron_model,
+    load_model_config,
     load_tokenizer,
     megatron_cpu_init_context,
     save_megatron_model,
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+
+
+class TestNormalizeMoeDispatcherSmConfig:
+    """Test compatibility migration for legacy MoE dispatcher SM-count fields."""
+
+    @pytest.mark.parametrize(
+        "backend,unified_value,expected",
+        [
+            ("deepep", None, 20),
+            ("hybridep", None, 16),
+            ("hybridep", 12, 12),
+        ],
+    )
+    def test_migrates_legacy_fields_for_unified_mcore(self, backend, unified_value, expected):
+        """Select the active backend's value and clear both deprecated aliases."""
+
+        class UnifiedTransformerConfig:
+            moe_flex_dispatcher_num_sms = None
+
+        model_dict = {
+            "moe_flex_dispatcher_backend": backend,
+            "moe_flex_dispatcher_num_sms": unified_value,
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
+
+        with patch.object(model_load_save, "TransformerConfig", UnifiedTransformerConfig):
+            model_load_save._normalize_moe_dispatcher_sm_config(model_dict)
+
+        assert model_dict["moe_flex_dispatcher_num_sms"] == expected
+        assert model_dict["moe_deepep_num_sms"] is None
+        assert model_dict["moe_hybridep_num_sms"] is None
+
+    def test_leaves_legacy_fields_for_mcore_without_unified_field(self):
+        """Keep the legacy fields intact for the current MCore dev config API."""
+
+        class LegacyTransformerConfig:
+            pass
+
+        model_dict = {
+            "moe_flex_dispatcher_backend": "hybridep",
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
+
+        with patch.object(model_load_save, "TransformerConfig", LegacyTransformerConfig):
+            model_load_save._normalize_moe_dispatcher_sm_config(model_dict)
+
+        assert model_dict == {
+            "moe_flex_dispatcher_backend": "hybridep",
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
 
 
 class TestTorchDtypeFromMcoreConfig:
@@ -190,6 +247,32 @@ class TestTemporaryDistributedContext:
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
 
+    def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
+        """Verify native checkpoints retain a finalized custom pipeline layout."""
+        provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        provider.pipeline_model_parallel_size = 2
+        provider.pipeline_model_parallel_layout = [["embedding", "decoder"], ["decoder", "loss"]]
+        provider.finalize()
+
+        assert isinstance(provider.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+        expected_layout = provider.pipeline_model_parallel_layout.input_data
+
+        config = ConfigContainer(
+            model=provider,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded_provider, _ = load_model_config(str(tmp_path))
+
+        assert loaded_provider.pipeline_model_parallel_layout == expected_layout
+
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
@@ -323,9 +406,9 @@ class TestLoadMegatronModel:
         assert result == [mock_model]
         mock_load_weights.assert_called_with(ckpt_path, [mock_model], return_state_dict=False)
 
-    @pytest.mark.parametrize("model_type", ["gpt", "mamba", "resnet"])
+    @pytest.mark.parametrize("model_type", ["gpt", "hybrid", "mamba", "resnet"])
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
-    @patch("megatron.bridge.training.mlm_compat.model._mamba_provider")
+    @patch("megatron.bridge.training.mlm_compat.model._hybrid_provider")
     @patch("megatron.bridge.training.mlm_compat.model._gpt_provider")
     @patch("megatron.bridge.training.mlm_compat.model._get_model")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
@@ -346,7 +429,7 @@ class TestLoadMegatronModel:
         mock_load_weights,
         mock_get_model,
         mock_gpt_provider,
-        mock_mamba_provider,
+        mock_hybrid_provider,
         mock_temp_dist,
         model_type,
     ):
@@ -380,15 +463,15 @@ class TestLoadMegatronModel:
         mock_provider = None
         if model_type == "gpt":
             mock_provider = mock_gpt_provider
-        elif model_type == "mamba":
-            mock_provider = mock_mamba_provider
+        elif model_type in ("hybrid", "mamba"):
+            mock_provider = mock_hybrid_provider
         mock_get_model.return_value = [mock_model]
 
         mock_transformer_cfg.return_value = mock_model_cfg
         expected_result = {"layer.weight": torch.randn(2, 2)}
         mock_load_weights.return_value = expected_result
 
-        if model_type in ("gpt", "mamba"):
+        if model_type in ("gpt", "hybrid", "mamba"):
             result = load_megatron_model(ckpt_path, model_type=model_type, return_state_dict=True, use_cpu_init=True)
 
             assert isinstance(result, dict)
@@ -1154,3 +1237,51 @@ class TestLoadTokenizer:
 
             tokenizer_path = os.path.join(ckpt_path, "tokenizer")
             assert mock_tokenizer_cfg.tokenizer_model == Path(tokenizer_path)
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_rejects_checkpoint_trust_remote_code(
+        self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer
+    ):
+        """Test that checkpoint tokenizer config cannot authorize remote code."""
+        mock_read_cfg.return_value = {"tokenizer": {}}
+        mock_instantiate.return_value = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="attacker/tokenizer",
+            hf_tokenizer_kwargs={"trust_remote_code": True},
+        )
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            with pytest.raises(ValueError, match="Checkpoint tokenizer config requested trust_remote_code=True"):
+                load_tokenizer(ckpt_path)
+
+        mock_build_tokenizer.assert_not_called()
+
+    @patch("megatron.bridge.training.model_load_save.build_tokenizer")
+    @patch("megatron.bridge.utils.instantiate_utils.instantiate")
+    @patch("megatron.bridge.training.checkpointing.read_run_config")
+    def test_load_tokenizer_allows_caller_trust_remote_code_override(
+        self, mock_read_cfg, mock_instantiate, mock_build_tokenizer, mock_tokenizer
+    ):
+        """Test that callers can explicitly trust checkpoint tokenizer code."""
+        mock_read_cfg.return_value = {"tokenizer": {}}
+        mock_tokenizer_cfg = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="trusted/tokenizer",
+            hf_tokenizer_kwargs={"trust_remote_code": True},
+        )
+        mock_instantiate.return_value = mock_tokenizer_cfg
+        mock_build_tokenizer.return_value = mock_tokenizer
+
+        with tempfile.TemporaryDirectory() as ckpt_path:
+            config_file = Path(ckpt_path) / "run_config.yaml"
+            config_file.touch()
+            result = load_tokenizer(ckpt_path, trust_remote_code=True)
+
+        assert result == mock_tokenizer
+        assert mock_tokenizer_cfg.trust_remote_code is True
+        mock_build_tokenizer.assert_called_once_with(mock_tokenizer_cfg)

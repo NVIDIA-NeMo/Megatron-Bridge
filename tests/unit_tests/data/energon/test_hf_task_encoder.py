@@ -75,7 +75,19 @@ def _make_chatml_sample(conversation, imgs=None, videos=None, key="k1"):
 def _make_collate_fn(pixel_values=None, seen_examples=None):
     """Build a tiny collate function with the same output keys as HF VLM collators."""
 
-    def _collate(examples, processor):  # noqa: ARG001 - processor is part of the collate contract
+    def _collate(
+        examples,
+        processor,  # noqa: ARG001 - processor is part of the collate contract
+        *,
+        visual_keys=None,  # noqa: ARG001 - generic HF collate contract
+        min_pixels=None,  # noqa: ARG001 - generic HF collate contract
+        max_pixels=None,  # noqa: ARG001 - generic HF collate contract
+        sequence_length=None,  # noqa: ARG001 - generic HF collate contract
+        pad_to_max_length=False,  # noqa: ARG001 - generic HF collate contract
+        pad_to_multiple_of=128,  # noqa: ARG001 - generic HF collate contract
+        enable_in_batch_packing=False,  # noqa: ARG001 - generic HF collate contract
+        in_batch_packing_pad_to_multiple_of=1,  # noqa: ARG001 - generic HF collate contract
+    ):
         if seen_examples is not None:
             seen_examples.extend(examples)
         batch_size = len(examples)
@@ -154,6 +166,35 @@ class TestHFTaskEncoderEncodeSample(unittest.TestCase):
         self.assertEqual(user_content[1]["type"], "image")
         self.assertIn("image", user_content[1])
         processor.assert_not_called()
+
+    def test_preserves_tools_and_tool_calls_from_wrapped_chatml(self):
+        processor = _make_processor()
+        seen_examples = []
+        encoder = HFTaskEncoder(
+            processor=processor,
+            seq_length=128,
+            collate_fn=_make_collate_fn(seen_examples=seen_examples),
+        )
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
+        tool_calls = [{"id": "call-1", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}]
+        sample = _make_chatml_sample(
+            conversation=json.dumps(
+                {
+                    "messages": [
+                        {"role": "user", "content": "Weather?"},
+                        {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                    ],
+                    "tools": tools,
+                }
+            )
+        )
+
+        encoded = encoder.encode_sample(sample)
+        encoder.batch([encoded])
+
+        self.assertEqual(encoded.example["tools"], tools)
+        self.assertEqual(encoded.example["conversation"][1]["tool_calls"], tool_calls)
+        self.assertEqual(seen_examples, [encoded.example])
 
 
 class TestHFTaskEncoderBatch(unittest.TestCase):
@@ -236,7 +277,19 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
             visual_keys,
             min_pixels=None,
             max_pixels=None,
+            sequence_length=None,
+            pad_to_max_length=False,
+            pad_to_multiple_of=128,
+            enable_in_batch_packing=False,
+            in_batch_packing_pad_to_multiple_of=1,
         ):
+            del (
+                sequence_length,
+                pad_to_max_length,
+                pad_to_multiple_of,
+                enable_in_batch_packing,
+                in_batch_packing_pad_to_multiple_of,
+            )
             seen_kwargs.update(
                 {
                     "examples": examples,

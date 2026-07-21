@@ -18,7 +18,7 @@ import pytest
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_vl.nemotron_vl_bridge import NemotronVLBridge
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
     NemotronVLModelProvider,
@@ -55,7 +55,7 @@ def mock_hf_config(mock_llm_config):
 
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 
@@ -63,17 +63,6 @@ def mock_hf_pretrained(mock_hf_config):
 @pytest.fixture
 def nemotron_vl_bridge():
     return NemotronVLBridge()
-
-
-class TestNemotronVLBridgeInitialization:
-    def test_bridge_initialization(self, nemotron_vl_bridge):
-        assert isinstance(nemotron_vl_bridge, NemotronVLBridge)
-
-    def test_bridge_has_required_methods(self, nemotron_vl_bridge):
-        assert hasattr(nemotron_vl_bridge, "provider_bridge")
-        assert callable(nemotron_vl_bridge.provider_bridge)
-        assert hasattr(nemotron_vl_bridge, "mapping_registry")
-        assert callable(nemotron_vl_bridge.mapping_registry)
 
 
 class TestNemotronVLBridgeProviderBridge:

@@ -12,18 +12,24 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import json
 import unittest
+from unittest.mock import patch
 
 import numpy as np
 import torch
+from megatron.energon.epathlib.epath import EPath
+from megatron.energon.flavors.webdataset import DefaultDecoderWebdatasetFactory
 
 from megatron.bridge.data.energon.task_encoder_utils import (
     IGNORE_INDEX,
+    ChatMLWebdataset,
     _images_to_pil,
     _tensor_to_pil,
     _videos_to_pil,
     cook_chatml_sample,
+    extract_chatml_tools,
     find_pattern_indices,
     get_ltor_masks_and_position_ids,
 )
@@ -139,6 +145,31 @@ class TestVideosToPil(unittest.TestCase):
         self.assertEqual(len(result[0]), 2)
 
 
+class TestChatMLWebdataset(unittest.TestCase):
+    def test_disables_parent_decoder_before_installing_bridge_handlers(self):
+        parent_signature = inspect.signature(DefaultDecoderWebdatasetFactory.__init__)
+        with (
+            patch("megatron.bridge.data.energon.task_encoder_utils.inspect.signature", return_value=parent_signature),
+            patch.object(DefaultDecoderWebdatasetFactory, "__init__", return_value=None) as parent_init,
+        ):
+            dataset = ChatMLWebdataset(EPath("/tmp/unused"))
+
+        expected_switch = {"decoder": None} if "decoder" in parent_signature.parameters else {"auto_decode": False}
+        parent_init.assert_called_once_with(EPath("/tmp/unused"), **expected_switch)
+        self.assertIsNotNone(dataset._decoder)
+
+    def test_uses_legacy_auto_decode_switch_when_decoder_parameter_is_unavailable(self):
+        legacy_parameters = {"self": object(), "path": object(), "auto_decode": object(), "kwargs": object()}
+        with (
+            patch("megatron.bridge.data.energon.task_encoder_utils.inspect.signature") as signature,
+            patch.object(DefaultDecoderWebdatasetFactory, "__init__", return_value=None) as parent_init,
+        ):
+            signature.return_value.parameters = legacy_parameters
+            ChatMLWebdataset(EPath("/tmp/unused"), auto_decode=False)
+
+        parent_init.assert_called_once_with(EPath("/tmp/unused"), auto_decode=False)
+
+
 class TestCookChatmlSample(unittest.TestCase):
     def test_role_content_format(self):
         conv = json.dumps(
@@ -215,6 +246,30 @@ class TestCookChatmlSample(unittest.TestCase):
         )
         result = cook_chatml_sample(conv)
         self.assertEqual(result[0]["content"], "Look at <image> please")
+
+    def test_preserves_tool_messages_and_extracts_top_level_tools(self):
+        tools = [{"type": "function", "function": {"name": "lookup"}}]
+        tool_calls = [
+            {
+                "id": "call-1",
+                "type": "function",
+                "function": {"name": "lookup", "arguments": '{"query":"weather"}'},
+            }
+        ]
+        payload = {
+            "messages": [
+                {"role": "user", "content": "Weather?"},
+                {"role": "assistant", "content": None, "tool_calls": tool_calls},
+                {"role": "tool", "content": "sunny", "tool_call_id": "call-1"},
+                {"role": "assistant", "content": "It is sunny."},
+            ],
+            "tools": tools,
+        }
+
+        result = cook_chatml_sample(json.dumps(payload))
+
+        self.assertEqual(result, payload["messages"])
+        self.assertEqual(extract_chatml_tools(payload), tools)
 
 
 if __name__ == "__main__":

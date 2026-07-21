@@ -17,9 +17,7 @@ from dataclasses import dataclass, field
 from typing import List, Literal, Optional
 
 import torch
-import torch.distributed as dist
 import torch.nn as nn
-import transformer_engine.pytorch as te
 from megatron.core import parallel_state
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
@@ -30,8 +28,6 @@ from megatron.bridge.peft.lora_layers import (
     LoRALinear,
     LoRATopKRouter,
     TEFusedLoRALinear,
-    TELinearAdapter,
-    patch_linear_module,
 )
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
@@ -48,13 +44,6 @@ from megatron.bridge.peft.utils import (
 
 
 logger = logging.getLogger(__name__)
-
-try:
-    import bitsandbytes
-
-    HAVE_BNB = True
-except ImportError:
-    HAVE_BNB = False
 
 
 @dataclass
@@ -84,6 +73,13 @@ class LoRA(PEFT, ModuleMatcher):
         dropout (float): Dropout rate for the low-rank projection. Defaults to 0.0.
         dropout_position (Literal['pre', 'post'], optional): Position for applying dropout.
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
+        sequence_parallel_input_regather (bool): Reduce retained activation memory for eligible
+            column-parallel LoRA-A projections. The full LayerNorm output consumed by LoRA-A is
+            gathered temporarily in forward, released after the LoRA-A computation, and gathered
+            again during backward for the LoRA-A weight gradient. MCore overlaps the backward
+            all-gather with dgrad computation when possible. This has no effect when sequence
+            parallelism is disabled and falls back for unsupported adapters or overlapping
+            activation recompute. Defaults to False.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
@@ -109,6 +105,7 @@ class LoRA(PEFT, ModuleMatcher):
     alpha: int = 32
     dropout: float = 0.0
     dropout_position: Literal["pre", "post"] = "pre"
+    sequence_parallel_input_regather: bool = False
     lora_A_init_method: str = "xavier"
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
@@ -130,29 +127,14 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter, TELinearAdapter)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         if isinstance(module, adapter_types):
             return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
-            if (isinstance(module, nn.Linear) or (module.__class__ == te.Linear)) and not is_modelopt_linear(module):
-                # Will use the `patch_linear_module` function if:
-                # - is FSDP v1
-                # - is DTensor (has _local_tensor attribute)
-                # - has quant_state attribute
-                if hasattr(module.weight.data, "_local_tensor") or (
-                    HAVE_BNB
-                    and getattr(module, "quant_state", None) is not None
-                    and module.quant_state.__class__ == bitsandbytes.functional.QuantState
-                ):
-                    lora_cls = patch_linear_module
-                elif module.__class__ == te.Linear:
-                    lora_cls = TELinearAdapter
-                else:
-                    lora_cls = LinearAdapter
-
-                return lora_cls(
+            if isinstance(module, nn.Linear) and not is_modelopt_linear(module):
+                return LinearAdapter(
                     module,
                     dim=self.dim,
                     alpha=self.alpha,
@@ -162,7 +144,11 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
+            attrs = get_adapter_attributes_from_linear(
+                module,
+                is_expert=is_expert,
+                sequence_parallel_input_regather=self.sequence_parallel_input_regather and not is_expert,
+            )
 
             dim = get_effective_lora_dim(
                 module, dim=self.dim, normalize_moe_lora=self.normalize_moe_lora, is_expert=is_expert
@@ -219,6 +205,7 @@ class LoRA(PEFT, ModuleMatcher):
                 adapter_kwargs.update(
                     is_expert=is_expert,
                     a2a_experimental=self.a2a_experimental,
+                    sequence_parallel_input_regather=self.sequence_parallel_input_regather,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 )
@@ -273,82 +260,3 @@ class VLMLoRA(LoRA):
                 model.module.train(mode=True)
             else:
                 model.train(mode=True)
-
-
-class LoRAMerge:
-    """
-    Tensor helper for merging LoRA adapter weights into base weights.
-    """
-
-    def merge(
-        self,
-        base_weight: torch.Tensor,
-        linear_out: torch.Tensor,
-        linear_in: torch.Tensor,
-        alpha: int,
-        dim: int,
-        *,
-        tp_size: int,
-        tp_group,
-    ) -> torch.Tensor:
-        """
-        Merges the LoRA adapter weights with the base model weights.
-        Handles tensor parallelism by gathering sharded dimensions.
-
-        For ColumnParallelLinear (e.g., linear_qkv, linear_fc1):
-            - base_weight: (out_features/TP, in_features)
-            - linear_in: (dim/TP, in_features) ← Need to gather this
-            - linear_out: (out_features/TP, dim)
-            - Target: (out_features/TP, dim) @ (dim, in_features) = (out_features/TP, in_features)
-
-        For RowParallelLinear (e.g., linear_proj, linear_fc2):
-            - base_weight: (out_features, in_features/TP)
-            - linear_in: (dim, in_features/TP)
-            - linear_out: (out_features/TP, dim) ← Need to gather this
-            - Target: (out_features, dim) @ (dim, in_features/TP) = (out_features, in_features/TP)
-
-        Args:
-            base_weight (torch.Tensor): The base model weights.
-            linear_out (torch.Tensor): LoRA's B matrix.
-            linear_in (torch.Tensor): LoRA's A matrix.
-            alpha (int): Weighting factor for the low-rank projection.
-            dim (int): Dimension of the low-rank projection space.
-            tp_size (int): Tensor-parallel world size for the adapter shard.
-            tp_group: Tensor-parallel process group for the adapter shard.
-
-        Returns:
-            torch.Tensor: The merged weights.
-        """
-
-        if tp_size == 1:
-            # No tensor parallelism, simple multiplication
-            lora_weight = alpha / dim * (linear_out @ linear_in)
-            return base_weight + lora_weight
-
-        # Case 1: ColumnParallelLinear - linear_in is sharded on dim 0
-        # linear_in: (dim/TP, in_features), linear_out: (out_features/TP, dim)
-        if linear_in.shape[0] * tp_size == dim and linear_out.shape[1] == dim:
-            # Gather linear_in along dimension 0 to get full dim
-            linear_in_list = [torch.empty_like(linear_in) for _ in range(tp_size)]
-            dist.all_gather(linear_in_list, linear_in, group=tp_group)
-            linear_in_full = torch.cat(linear_in_list, dim=0)
-
-            # Multiply: (out_features/TP, dim) @ (dim, in_features)
-            lora_weight = alpha / dim * (linear_out @ linear_in_full)
-
-        # Case 2: RowParallelLinear - linear_out is sharded on dim 0
-        # linear_in: (dim, in_features/TP), linear_out: (out_features/TP, dim)
-        elif linear_out.shape[0] * tp_size == base_weight.shape[0]:
-            # Gather linear_out along dimension 0 to get full out_features
-            linear_out_list = [torch.empty_like(linear_out) for _ in range(tp_size)]
-            dist.all_gather(linear_out_list, linear_out, group=tp_group)
-            linear_out_full = torch.cat(linear_out_list, dim=0)
-
-            # Multiply: (out_features, dim) @ (dim, in_features/TP)
-            lora_weight = alpha / dim * (linear_out_full @ linear_in)
-
-        else:
-            # Fallback: no gathering needed or already full-size
-            lora_weight = alpha / dim * (linear_out @ linear_in)
-
-        return base_weight + lora_weight

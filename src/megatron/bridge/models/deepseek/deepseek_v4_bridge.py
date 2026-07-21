@@ -102,6 +102,26 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
 }
 
 
+def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
+    """Return whether DSv4 Blackwell-only fused kernels should default on."""
+    if not torch.cuda.is_available():
+        return False
+
+    major, _minor = torch.cuda.get_device_capability()
+    return major >= 10
+
+
+def deepseek_v4_supports_fused_dsa_kernels() -> bool:
+    """Return whether DSv4 fused DSA kernels can be enabled."""
+    try:
+        from cudnn import DSA  # noqa: F401
+        from flash_mla import flash_mla_sparse_fwd  # noqa: F401
+    except ImportError:
+        return False
+
+    return True
+
+
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
     """Set an even DSv4 pipeline layout with MTP and loss on the last stage.
 
@@ -370,6 +390,8 @@ class DeepSeekV4Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MLAModelProvider:
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
+        use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
+        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -414,7 +436,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             compress_rope_params = rope_params
         provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
         provider.csa_compress_rotary_base = float(
-            compress_rope_params.get("rope_theta", getattr(hf_config, "compress_rope_theta", provider.rotary_base))
+            getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", provider.rotary_base))
         )  # 160000
         provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
         provider.original_max_position_embeddings = int(
@@ -447,10 +469,11 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
+        provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
 
         # ---- Hyper-Connections (mHC) ----
         provider.enable_hyper_connections = True
-        provider.use_fused_mhc = True
+        provider.use_fused_mhc = use_blackwell_fused_kernels
         provider.num_residual_streams = hf_config.hc_mult  # 4
         provider.mhc_sinkhorn_iterations = hf_config.hc_sinkhorn_iters  # 20
 
@@ -696,6 +719,16 @@ class DeepSeekV4Bridge(MegatronModelBridge):
                 "decoder.layers.*.mlp.experts.linear_fc2.weight*",
                 "layers.*.ffn.experts.*.w2.weight",
             ),
+            # Sequential (non-grouped) experts <-> per-expert HF (e.g. ModelOpt pruning).
+            GatedMLPMapping(
+                megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
+                gate="layers.*.ffn.experts.*.w1.weight",
+                up="layers.*.ffn.experts.*.w3.weight",
+            ),
+            AutoMapping(
+                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
+                "layers.*.ffn.experts.*.w2.weight",
+            ),
             # Shared expert MLP
             GatedMLPMapping(
                 megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
@@ -900,8 +933,13 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index."""
-        del task
+        """Recreate DSv4 quantized weight/scale pairs expected by the source shard index.
+
+        When ``task.weight_dtype`` is set, skip requantization and return the weights
+        unchanged — the generic export path casts the dtype.
+        """
+        if task.weight_dtype is not None:
+            return converted_weights_dict
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,

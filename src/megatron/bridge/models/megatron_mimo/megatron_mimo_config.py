@@ -1,7 +1,6 @@
 # Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
 from __future__ import annotations
 
-import warnings
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -15,45 +14,89 @@ class ModuleParallelismConfig:
     tensor_model_parallel_size: int = 1
     pipeline_model_parallel_size: int = 1
     context_parallel_size: int = 1
+    expert_model_parallel_size: int = 1
     expert_tensor_parallel_size: int = 1
     data_parallel_size: Optional[int] = None
     rank_offset: int = 0
 
     @property
+    def dense_model_parallel_size(self) -> int:
+        """Dense/token model-parallel size: TP * CP * PP."""
+        return self.tensor_model_parallel_size * self.context_parallel_size * self.pipeline_model_parallel_size
+
+    @property
     def total_model_parallel_size(self) -> int:
-        return (
-            self.tensor_model_parallel_size
-            * self.pipeline_model_parallel_size
-            * self.context_parallel_size
-            * self.expert_tensor_parallel_size
-        )
+        """Backward-compatible alias for the dense/token model-parallel size."""
+        return self.dense_model_parallel_size
 
     @property
     def total_ranks(self) -> int:
         if self.data_parallel_size is None:
             raise ValueError("data_parallel_size must be set before accessing total_ranks.")
-        return self.total_model_parallel_size * self.data_parallel_size
+        return self.dense_model_parallel_size * self.data_parallel_size
+
+    @property
+    def expert_data_parallel_size(self) -> int:
+        """Derived expert data-parallel size over this module's rank span."""
+        if self.data_parallel_size is None:
+            raise ValueError("data_parallel_size must be set before accessing expert_data_parallel_size.")
+        expert_model_parallel_span = (
+            self.expert_tensor_parallel_size * self.expert_model_parallel_size * self.pipeline_model_parallel_size
+        )
+        if self.total_ranks % expert_model_parallel_span != 0:
+            raise ValueError(
+                "total_ranks must be divisible by expert_tensor_parallel_size * "
+                "expert_model_parallel_size * pipeline_model_parallel_size."
+            )
+        return self.total_ranks // expert_model_parallel_span
 
     def finalize(self, world_size: Optional[int]) -> None:
         """Compute data_parallel_size if unset, and validate parallelism constraints."""
+        self._validate_positive_sizes(validate_data_parallel=False)
+
         if self.data_parallel_size is None:
             if world_size is None or world_size <= 0:
                 raise ValueError("world_size must be provided to compute data_parallel_size.")
-            if world_size % self.total_model_parallel_size != 0:
+            if world_size % self.dense_model_parallel_size != 0:
                 raise ValueError(
                     f"world_size ({world_size}) is not divisible by total_model_parallel_size "
                     f"({self.total_model_parallel_size})."
                 )
-            self.data_parallel_size = world_size // self.total_model_parallel_size
+            self.data_parallel_size = world_size // self.dense_model_parallel_size
 
-        if self.data_parallel_size <= 0:
-            raise ValueError("data_parallel_size must be positive.")
+        self._validate_positive_sizes(validate_data_parallel=True)
+        self._validate_expert_factorization()
 
-        if self.expert_tensor_parallel_size > 1 and self.pipeline_model_parallel_size > 1:
-            warnings.warn(
-                "Using expert_tensor_parallel_size > 1 with pipeline_model_parallel_size > 1 "
-                "is complex and may be unsupported.",
-                stacklevel=2,
+    def _validate_positive_sizes(self, *, validate_data_parallel: bool) -> None:
+        fields_to_validate = (
+            "tensor_model_parallel_size",
+            "pipeline_model_parallel_size",
+            "context_parallel_size",
+            "expert_model_parallel_size",
+            "expert_tensor_parallel_size",
+        )
+        if validate_data_parallel:
+            fields_to_validate += ("data_parallel_size",)
+
+        for field_name in fields_to_validate:
+            value = getattr(self, field_name)
+            if value is None or value <= 0:
+                raise ValueError(f"{field_name} must be positive.")
+
+        if self.rank_offset < 0:
+            raise ValueError("rank_offset must be non-negative.")
+
+    def _validate_expert_factorization(self) -> None:
+        if self.data_parallel_size is None:
+            return
+        dense_token_span = self.tensor_model_parallel_size * self.context_parallel_size * self.data_parallel_size
+        expert_span = self.expert_tensor_parallel_size * self.expert_model_parallel_size
+        if dense_token_span % expert_span != 0:
+            raise ValueError(
+                "TP * CP * DP must be divisible by expert_tensor_parallel_size * "
+                f"expert_model_parallel_size; got TP={self.tensor_model_parallel_size}, "
+                f"CP={self.context_parallel_size}, DP={self.data_parallel_size}, "
+                f"ETP={self.expert_tensor_parallel_size}, EP={self.expert_model_parallel_size}."
             )
 
 
@@ -61,8 +104,8 @@ class ModuleParallelismConfig:
 class MegatronMIMOParallelismConfig:
     """Configuration for multi-module (MegatronMIMO) heterogeneous parallelism.
 
-    Note: Phase 1 only supports heterogeneous deployment where each module
-    can have different parallelism configurations and rank offsets.
+    Supports heterogeneous deployment where each module can have different
+    parallelism configurations and rank offsets.
 
     The language module must be named MIMO_LANGUAGE_MODULE_KEY ("language") in module_parallelisms.
     """
@@ -83,8 +126,8 @@ class MegatronMIMOParallelismConfig:
         ranges = [p.rank_offset + p.total_ranks for p in self.module_parallelisms.values()]
         return max(ranges) if ranges else 0
 
-    def _validate_heterogeneous(self) -> None:
-        """Validate heterogeneous deployment: no overlapping rank ranges."""
+    def _validate_heterogeneous(self, world_size: int) -> None:
+        """Validate heterogeneous deployment: rank ranges tile [0, world_size)."""
         ranges = []
         for name, parallelism in self.module_parallelisms.items():
             if parallelism.data_parallel_size is None:
@@ -97,6 +140,33 @@ class MegatronMIMOParallelismConfig:
             cur_start = ranges[idx][0]
             if cur_start < prev_end:
                 raise ValueError("rank_offset ranges overlap in heterogeneous deployment.")
+
+        expected_start = 0
+        for start, end, name in ranges:
+            if start != expected_start:
+                raise ValueError(
+                    "rank_offset ranges must tile the distributed world with no gaps; "
+                    f"expected module '{name}' to start at rank {expected_start}, got {start}."
+                )
+            expected_start = end
+
+        if expected_start != world_size:
+            raise ValueError(
+                "rank_offset ranges must tile the distributed world with no gaps; "
+                f"covered ranks [0, {expected_start}), world_size is {world_size}."
+            )
+
+    def _validate_encoder_expert_parallelism(self) -> None:
+        for name, parallelism in self.module_parallelisms.items():
+            if name == MIMO_LANGUAGE_MODULE_KEY:
+                continue
+            if parallelism.expert_model_parallel_size != 1 or parallelism.expert_tensor_parallel_size != 1:
+                raise ValueError(
+                    "Encoder modules must remain dense for MegatronMIMO MoE; "
+                    f"module '{name}' has expert_model_parallel_size="
+                    f"{parallelism.expert_model_parallel_size}, expert_tensor_parallel_size="
+                    f"{parallelism.expert_tensor_parallel_size}."
+                )
 
     def _validate_parallelism_constraints(self) -> None:
         """Validate parallelism constraints for cross-module communication.
@@ -149,9 +219,6 @@ class MegatronMIMOParallelismConfig:
         for parallelism in self.module_parallelisms.values():
             parallelism.finalize(None)
 
-        self._validate_heterogeneous()
+        self._validate_heterogeneous(world_size)
+        self._validate_encoder_expert_parallelism()
         self._validate_parallelism_constraints()
-
-        expected = self.total_world_size
-        if expected and world_size != expected:
-            raise ValueError(f"MegatronMIMO world size mismatch: expected {expected}, got {world_size}.")

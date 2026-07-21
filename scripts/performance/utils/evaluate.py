@@ -42,6 +42,19 @@ except (ImportError, ModuleNotFoundError):
 logger = logging.getLogger(__name__)
 
 
+# Cap on the number of per-step entries persisted to a golden-values file. Long
+# convergence runs (e.g. 150k steps) would otherwise produce multi-MB files that
+# exceed the golden-values repo's 5 MiB/file push limit. The in-job convergence
+# check aligns current vs. golden by step key, so a downsampled (sparse) golden is
+# still compared correctly against the full-resolution run.
+MAX_PERSISTED_GOLDEN_STEPS = 10000
+
+# Step keys always retained when downsampling (in addition to the first and final
+# step): step "49" is the threshold step the downstream perf reporter
+# (nemo-ci report.py STEPS_THRESHOLD) requires to treat a golden file as comparable.
+_PINNED_GOLDEN_STEPS = ("0", "49")
+
+
 def get_metrics_from_logfiles(log_paths: List[str], metric: str):
     """
     Parse training log files and extract metrics.
@@ -556,20 +569,61 @@ def validate_memory(
     return results
 
 
+def downsample_golden_values(values: Dict[str, Any], max_steps: int = MAX_PERSISTED_GOLDEN_STEPS) -> Dict[str, Any]:
+    """Reduce per-step golden entries to at most ~``max_steps`` evenly-spaced points.
+
+    Scalar entries (``alloc``/``max_alloc``/``max_reserved``/``job_id``) and any other
+    non-step keys are preserved unchanged. When the number of per-step entries already
+    fits within ``max_steps`` the mapping is returned unchanged. Otherwise an evenly
+    strided subset of step keys is kept, always including the first step, the final step
+    (so final-loss validation is unaffected), and the pinned steps in
+    ``_PINNED_GOLDEN_STEPS`` when present.
+
+    The in-job convergence/perf check aligns current vs. golden by step key, so a
+    downsampled (sparse) golden is still compared correctly against a full-resolution
+    run; this only bounds the size of the persisted golden-values file.
+
+    Args:
+        values: Golden values mapping (step-keyed dicts plus scalar entries).
+        max_steps: Approximate upper bound on the number of per-step entries to keep.
+
+    Returns:
+        A new mapping with the per-step entries downsampled and all other keys intact.
+    """
+    step_keys = sorted((k for k in values if k.lstrip("-").isdigit()), key=int)
+    if len(step_keys) <= max_steps:
+        return dict(values)
+    stride = math.ceil(len(step_keys) / max_steps)
+    kept = set(step_keys[::stride])
+    kept.add(step_keys[-1])
+    kept.update(step for step in _PINNED_GOLDEN_STEPS if step in values)
+    return {k: v for k, v in values.items() if not k.lstrip("-").isdigit() or k in kept}
+
+
 def write_golden_values_to_disk(
-    current_values: Dict[str, Any], golden_values_path: str, wandb_run: Optional["wandb.Run"] = None
+    current_values: Dict[str, Any],
+    golden_values_path: str,
+    wandb_run: Optional["wandb.Run"] = None,
+    max_steps: int = MAX_PERSISTED_GOLDEN_STEPS,
 ):
     """
     Write golden values to a file.
+
+    Per-step entries are downsampled to at most ``max_steps`` points (see
+    ``downsample_golden_values``) so long-convergence runs stay under the golden-values
+    repo's file-size limit. Downsampling is applied only to the persisted copy; the
+    full-resolution ``current_values`` is left untouched for the caller (e.g. the
+    cumulative resume curve).
     """
+    persisted_values = downsample_golden_values(current_values, max_steps)
     os.makedirs(os.path.dirname(golden_values_path), exist_ok=True)
     with open(golden_values_path, "w") as f:
-        json.dump(current_values, f)
+        json.dump(persisted_values, f)
 
     if wandb_run is not None:
         artifact = wandb.Artifact("golden_values", type="dataset")
         with artifact.new_file("golden_values.json", "w") as f:
-            json.dump({datetime.now().strftime("%m.%d.%y"): current_values}, f)
+            json.dump({datetime.now().strftime("%m.%d.%y"): persisted_values}, f)
         wandb_run.log_artifact(artifact)
 
     logger.info(f"Golden values were saved for {golden_values_path}.")
@@ -598,6 +652,18 @@ def merge_golden_values(prior: Optional[Dict[str, Any]], segment: Dict[str, Any]
     if not prior:
         return segment
     return {**prior, **segment}
+
+
+def _unwrap_golden_values(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the step mapping from a flat or snapshot-wrapped golden file."""
+    for snapshot_key in ("baseline", "current"):
+        if snapshot_key not in values:
+            continue
+        snapshot = values[snapshot_key]
+        if not isinstance(snapshot, dict):
+            raise ValueError(f"Golden values snapshot {snapshot_key!r} must be a mapping.")
+        return snapshot
+    return values
 
 
 def calc_convergence_and_performance(
@@ -719,9 +785,7 @@ def calc_convergence_and_performance(
     with open(expected_golden_values_path, "r") as f:
         expected_golden_values = json.load(f)
 
-    # Normalize: new format stores baseline data under a "baseline" key.
-    if "baseline" in expected_golden_values:
-        expected_golden_values = expected_golden_values["baseline"]
+    expected_golden_values = _unwrap_golden_values(expected_golden_values)
 
     steps = []
     golden_train_loss = {}

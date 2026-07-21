@@ -21,6 +21,10 @@ from megatron.bridge.models.gemma.gemma3_bridge import Gemma3ModelBridge  # noqa
 from megatron.bridge.models.gemma.gemma3_provider import (
     Gemma3ModelProvider,
 )
+from megatron.bridge.models.gemma.gemma4_provider import (
+    Gemma4DenseProvider,
+    Gemma4ModelProvider,
+)
 from megatron.bridge.models.gemma.gemma_bridge import GemmaBridge  # noqa: F401
 from megatron.bridge.models.gemma.gemma_provider import (
     GemmaModelProvider,
@@ -31,4 +35,6 @@ __all__ = [
     "GemmaModelProvider",
     "Gemma2ModelProvider",
     "Gemma3ModelProvider",
+    "Gemma4DenseProvider",
+    "Gemma4ModelProvider",
 ]

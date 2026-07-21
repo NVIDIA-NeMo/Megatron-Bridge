@@ -20,7 +20,7 @@ the `AutoBridge`:
 > **Note:** You must be authenticated with Hugging Face to download the model. Run `hf auth login --token $HF_TOKEN` if needed.
 
 ```bash
-uv run python ../../conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model meta-llama/Llama-3.2-1B \
     --megatron-path ./checkpoints/llama32_1b
 ```
@@ -37,13 +37,20 @@ The [01_quickstart_finetune.py](01_quickstart_finetune.py) recipe finetunes Llam
 To plug in your own JSONL dataset, swap the dataset config in that script:
 
 ```python
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
-config.dataset = FinetuningDatasetConfig(
+config.dataset = GPTSFTDatasetConfig(
     dataset_root="/path/to/dataset_dir",  # contains training/validation/test jsonl files
     seq_length=config.model.seq_length,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    ),
 )
 ```
+
+See the [text-only SFT dataset tutorial](../../data/text-only-sft/README.md) for supported JSONL schemas, Hugging Face source materialization, offline packing, and all dataset knobs.
 
 ## Configuration
 
@@ -121,8 +128,8 @@ Example YAML (`conf/llama32_1b_finetune.yaml`):
 
 ```yaml
 # Each section maps to a ConfigContainer field
-dataset:                           # FinetuningDatasetConfig
-  dataset_root: /path/to/finetuning_dataset_dir
+dataset:                           # GPTSFTDatasetConfig
+  dataset_root: /path/to/gpt_sft_dataset_dir
   seq_length: 4096
 
 train:                             # TrainingConfig

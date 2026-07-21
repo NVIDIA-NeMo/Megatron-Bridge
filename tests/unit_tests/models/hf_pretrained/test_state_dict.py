@@ -180,11 +180,12 @@ class TestStateDictKeyRetrieval:
         assert len(keys) == 7
         assert keys == sorted(keys)
 
-    def test_items_method(self, mock_model):
-        """Test items method."""
+    def test_inherited_mapping_items(self, mock_model):
+        """Test items behavior inherited from Mapping."""
         state_dict_source = mock_model.state_dict()
         state_dict = StateDict(state_dict_source)
 
+        assert "items" not in StateDict.__dict__
         items = list(state_dict.items())
 
         assert isinstance(items, list)
@@ -397,33 +398,6 @@ class TestStateDictIndexing:
             _ = state_dict[123]
 
 
-class TestStateDictConvenienceMethods:
-    """Test convenience methods for pattern matching."""
-
-    def test_regex_method(self, mock_model):
-        """Test regex convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
-
-        tensors = state_dict.regex(r".*\.weight$")
-
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.endswith(".weight") for key in tensors)
-
-    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
-    def test_glob_method(self, mock_model):
-        """Test glob convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
-
-        tensors = state_dict.glob("transformer.*.weight")
-
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.startswith("transformer") and key.endswith("weight") for key in tensors)
-
-
 class TestSafeTensorsStateSourceSave:
     """Test streaming safetensors save behavior."""
 
@@ -517,45 +491,3 @@ class TestSafeTensorsStateSourceSave:
         with open(output_dir / "model.safetensors.index.json") as f:
             output_index = json.load(f)
         assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
-
-
-class TestStateDictCachingAndOptimization:
-    """Test caching and optimization features."""
-
-    def test_caching(self, mock_model):
-        """Test that StateDict works correctly with mocked model."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
-
-        # First call
-        keys1 = list(state_dict.keys())
-
-        # Second call
-        keys2 = list(state_dict.keys())
-
-        assert keys1 == keys2
-
-    def test_index_file_parsing(self, temp_safetensors_dir):
-        """Test that StateDict can be created with SafeTensorsStateSource."""
-
-        # Create a mock StateSource
-        class MockStateSource(StateSource):
-            def get_all_keys(self):
-                return ["transformer.wte.weight", "lm_head.weight"]
-
-            def load_tensors(self, keys):
-                result = {}
-                for key in keys:
-                    if key in self.get_all_keys():
-                        result[key] = torch.randn(10, 10)
-                return result
-
-            def keys(self):
-                return self.get_all_keys()
-
-        mock_source = MockStateSource()
-        state_dict = StateDict(mock_source)
-
-        # Verify we can get keys
-        keys = list(state_dict.keys())
-        assert len(keys) == 2

@@ -346,7 +346,7 @@ tests/unit_tests/models/<model>/
 ### Functional tests (GPU)
 
 ```text
-tests/functional_tests/models/<model>/
+tests/functional_tests/test_groups/models/<model>/
 ├── __init__.py
 ├── test_<model>_conversion.py  # Toy model HF↔Megatron roundtrip
 └── test_<model>_provider.py    # compare_provider_configs (optional)
@@ -363,13 +363,18 @@ Model examples: `examples/models/<family>/<model>/`
 ```text
 examples/models/<family>/<model>/
 ├── README.md
-├── conversion.sh        # HF↔Megatron conversion commands (real model)
 ├── inference.sh         # Generation commands (real model, reasonable output)
 ├── slurm_sft.sh         # SFT training on SLURM
 └── slurm_peft.sh        # PEFT training on SLURM
 ```
 
-**Key deliverable requirement:** `conversion.sh` and `inference.sh` must target a real published model (e.g. `Qwen/Qwen3-8B`, not a toy). The inference script must produce reasonable output — for LLMs a coherent text continuation, for VLMs a plausible image description. This is the acceptance bar: conversion runs cleanly and generation makes sense.
+**Key deliverable requirement:** The README must include working import and export commands for
+a real published model (e.g. `Qwen/Qwen3-8B`, not a toy) using
+`scripts/conversion/convert.sh`. Add a model-specific conversion wrapper only when the model
+requires preparation or verification that the shared CLI cannot express. The inference script
+must produce reasonable output — for LLMs a coherent text continuation, for VLMs a plausible
+image description. This is the acceptance bar: conversion runs cleanly and generation makes
+sense.
 
 ### Documentation
 
@@ -404,12 +409,12 @@ for i, (name, tensor) in enumerate(bridge.export_hf_weights(model, cpu=True)):
 ### 2. Conversion roundtrip (multi-GPU)
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model <org>/<model> \
     --megatron-path /workspace/<model> \
     --torch-dtype bfloat16
 
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model <org>/<model> \
     --megatron-path /workspace/<model>/iter_0000000 \
     --hf-path /workspace/<model>-hf-export
@@ -435,7 +440,7 @@ uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
 
 ```bash
 uv run python -m pytest tests/unit_tests/models/<model>/ -v
-uv run python -m pytest tests/functional_tests/models/<model>/ -v --run-gpu
+uv run python -m pytest tests/functional_tests/test_groups/models/<model>/ -v --run-gpu
 ```
 
 ## Quick Decision Tree

@@ -79,7 +79,7 @@ def <model>_<size>_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContai
 | `_peft_common_vlm()` | VLM PEFT |
 
 VLM variants additionally set:
-- `cfg.dataset` to `HFDatasetConversationProvider` (e.g., CORD-v2)
+- `cfg.dataset` to `HFConversationDatasetProvider` (e.g., CORD-v2)
 - `cfg.dataset.hf_processor_path` for the vision processor
 - `NullTokenizer` (tokenization handled by processor)
 - DDP without overlap (for vision model compatibility)
@@ -90,15 +90,15 @@ VLM variants additionally set:
 
 | Model Size | TP | PP | EP | CP | Notes |
 |-----------|----|----|----|----|-------|
-| < 3B | 1 | 1 | 1 | 1 | Single GPU |
+| &lt; 3B | 1 | 1 | 1 | 1 | Single GPU |
 | 3-8B | 2 | 1 | 1 | 1 | |
 | 8-13B | 4 | 1 | 1 | 1 | |
 | 13-70B | 4 | 4 | 1 | 1 | |
 | MoE (any) | 1-2 | 1-4 | 8-32 | 1 | EP dominates |
 
 **Rules:**
-- TP must be <= `num_key_value_heads`
-- When EP > 1 and TP > 1, `sequence_parallel` must be True
+- TP must be &lt;= `num_key_value_heads`
+- When EP &gt; 1 and TP &gt; 1, `sequence_parallel` must be True
 - PEFT typically uses smaller parallelism (TP=1, PP=1)
 
 ## Export / Registration

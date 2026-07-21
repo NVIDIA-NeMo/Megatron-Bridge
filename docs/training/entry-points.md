@@ -6,9 +6,24 @@ Megatron Bridge provides unified training entry points for pretraining, Supervis
 
 Use `pretrain()` for language-model pretraining jobs that use `GPTDatasetConfig` or `MockGPTDatasetConfig`. This includes training from scratch, continued pretraining on new corpora, and initializing model weights from `checkpoint.pretrained_checkpoint` before starting a new training run.
 
-Use `finetune()` for full SFT and PEFT. The function validates that either `checkpoint.pretrained_checkpoint` or `checkpoint.load` is set, then calls the same underlying training loop used by `pretrain()`. PEFT does not use a separate entry point: set `cfg.peft` to a LoRA or DoRA config, use a finetuning dataset config or provider, and launch through `finetune()`.
+Use `finetune()` for full SFT and PEFT. The function validates that either `checkpoint.pretrained_checkpoint` or `checkpoint.load` is set, then calls the same underlying training loop used by `pretrain()`. PEFT does not use a separate entry point: set `cfg.peft` to a LoRA or DoRA config, use `GPTSFTDatasetConfig`, `DirectHFSFTDatasetConfig`, or a specialized dataset provider, and launch through `finetune()`.
 
-The generic recipe launcher, `scripts/training/run_recipe.py`, follows the same split. Dataset types beginning with `llm-pretrain` run `pretrain()`. SFT, PEFT, VLM, and diffusion fine-tuning dataset types run `finetune()`.
+The public Slurm launcher is `scripts/training/train.sh`, backed by `setup_experiment.py`, which executes
+`run_recipe.py` inside the training container. Select exactly one model stem with `--model` or one complete library
+recipe function with `--recipe`, and always pass `--mode pretrain`, `sft`, `lora`, or `dora`. Public dataset names
+are distinct from data-source selectors. Named presets such as `openmathinstruct2` and `medpix` select specific
+datasets, while `megatron-indexed`, `local-jsonl`, and `local-vlm` select local input formats and `mock` selects
+generated data. Each choice resolves to a dataset config preset, and the config type selects the existing runtime
+builder. Trailing `dataset.*` values override that config directly; `--seq_length` is the only dataset-field
+convenience argument. Offline packing is selected independently with `dataset.enable_offline_packing=true`; it is not
+encoded in a dataset name. The default `--step-func` is
+`llm_step`; pass another registered step explicitly for non-LLM recipes. Common values accept convenience arguments
+such as `-gb 8`, `-sl 4096`, and `-tp 2`; `run_recipe.py --help` lists the complete mapping. Every value can also be set
+directly with `ConfigContainer` overrides such as `train.global_batch_size=8` and
+`model.tensor_model_parallel_size=2`. A trailing override takes precedence over a convenience argument for the same
+field.
+The launcher inherits only explicitly named `--env NAME` values and forwards `--mount HOST` or
+`--mount HOST:CONTAINER` paths. `pretrain` mode runs `pretrain()`; SFT, LoRA, and DoRA run `finetune()`.
 
 ## Checkpoint Source by Workflow
 

@@ -65,6 +65,10 @@ def set_user_overrides(config, args):
     if args.micro_batch_size:
         config.train.micro_batch_size = args.micro_batch_size
 
+    # Distributed init configuration
+    if args.distributed_timeout_minutes:
+        config.dist.distributed_timeout_minutes = args.distributed_timeout_minutes
+
     # Optimizer configuration
     if args.lr:
         config.optimizer.lr = args.lr
@@ -254,7 +258,7 @@ def main():
             from megatron.bridge.training.gpt_step import forward_step
 
         pretrain(config=recipe, forward_step_func=forward_step)
-    elif args.task in ["sft", "lora"]:
+    elif args.task in ["sft", "peft"]:
         logging.info("Starting finetuning")
         from megatron.bridge.training.finetune import finetune
 

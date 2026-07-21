@@ -9,23 +9,28 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers enabling sequence packing or long-context supervised fine-tuning in Megatron-Bridge, including configuring PackedSequenceSpecs for offline packed SFT, in-batch packing for VLM training, and context parallelism constraints. <br>
+Developers and engineers enabling sequence packing or long-context training in Megatron-Bridge, including configuring offline packed SFT for LLMs, in-batch packing for VLMs, and context parallelism constraints. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
+
+## Requirements / Dependencies: <br>
+**Requires API Key or External Credential:** [Not Specified] <br>
+**Credential Type(s):** [None identified] <br>
+
+Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
 ## Known Risks and Mitigations: <br>
 Risk: Review before execution as proposals could introduce incorrect or misleading guidance into skills. <br>
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Packed Sequences Documentation](docs/training/packed-sequences.md) <br>
-- [Performance Tuning Guide](docs/performance-guide.md) <br>
 - [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Performance Tuning Guide](docs/performance-guide.md) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Code] <br>
+**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
 **Output Format:** [Markdown with inline Python code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -37,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task with 2 attempts per task; positive skill-activation scenario covering offline packed SFT vs VLM in-batch packing comparison. <br>
+Evaluated against 1 internal skill task in the NVSkills-Eval external profile. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -61,11 +66,11 @@ Underlying evaluation signals used in this run: <br>
 ## Evaluation Results: <br>
 | Dimension | Num | `claude-code` | `codex` |
 |---|---:|---:|---:|
-| Security | 2 | 100% (+0%) | 100% (+0%) |
-| Correctness | 2 | 100% (+0%) | 83% (-1%) |
-| Discoverability | 2 | 100% (+0%) | 57% (-2%) |
-| Effectiveness | 2 | 96% (+4%) | 72% (-8%) |
-| Efficiency | 2 | 93% (-0%) | 39% (-15%) |
+| Security | 1 | 100% (+0%) | 100% (+0%) |
+| Correctness | 1 | 100% (+100%) | 97% (+42%) |
+| Discoverability | 1 | 100% (+100%) | 97% (+69%) |
+| Effectiveness | 1 | 95% (+95%) | 94% (+48%) |
+| Efficiency | 1 | 94% (+67%) | 96% (+77%) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>
@@ -73,7 +78,7 @@ Underlying evaluation signals used in this run: <br>
 **[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
-v0.2.0rc6-1529-g97db3553 (source: git tag) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

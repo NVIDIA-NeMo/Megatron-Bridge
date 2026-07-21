@@ -16,6 +16,7 @@ import os
 import re
 import types
 import warnings
+from datetime import timedelta
 from pathlib import Path
 
 import torch
@@ -27,6 +28,7 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
 from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
 
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 from megatron.bridge.utils.slurm_utils import (
     resolve_slurm_master_addr,
     resolve_slurm_master_port,
@@ -130,6 +132,29 @@ def print_rank_last(message: str) -> None:
             print(message, flush=True)
     else:
         print(message, flush=True)
+
+
+def maybe_initialize_distributed(timeout_minutes: int = 60) -> None:
+    """Initialize the default process group from the standard launcher env vars.
+
+    No-op when torch.distributed is unavailable or already initialized. This is the minimal
+    bring-up used by standalone (e.g. inference) entry points that set up model parallelism
+    separately; it does not perform MPU initialization (see ``training.initialize`` for the
+    full training path).
+
+    Args:
+        timeout_minutes: Process-group timeout in minutes (useful for slow multi-node setup).
+    """
+    if not torch.distributed.is_available() or torch.distributed.is_initialized():
+        return
+
+    os.environ["RANK"] = os.environ.get("RANK", str(get_rank_safe()))
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", str(get_world_size_safe()))
+    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", str(get_local_rank_preinit()))
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", get_master_addr_safe())
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(get_master_port_safe()))
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    torch.distributed.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
 
 
 def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn.Module:
@@ -236,7 +261,7 @@ def slice_batch_for_context_parallel(
 
     This function handles CP slicing AFTER vision-text embedding merge, ensuring
     image token positions are correctly preserved. It supports both:
-    - THD format (packed sequences): Uses TransformerEngine's thd_get_partitioned_indices
+    - THD format (packed sequences): Uses MCore's packed-sequence CP partitioning
     - BSHD format: Uses Megatron's get_batch_on_this_cp_rank with zigzag pattern
 
     Args:
@@ -262,21 +287,20 @@ def slice_batch_for_context_parallel(
     if inputs_embeds is not None:
         inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
-    # For THD (packed) format, use TE's thd_get_partitioned_indices
-    # This properly slices WITHIN each packed sequence, not across them
+    # MCore's THD path slices within each packed sequence rather than across them.
     if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
-        import transformer_engine_torch as tex
-
         if inputs_embeds is None:
             raise ValueError("inputs_embeds is required for THD CP slicing")
 
-        cu_seqlens = packed_seq_params.cu_seqlens_q
-        cu_seqlens_padded = (
-            packed_seq_params.cu_seqlens_q_padded if packed_seq_params.cu_seqlens_q_padded is not None else cu_seqlens
-        )
         seq_len = inputs_embeds.size(1)
-
-        index = tex.thd_get_partitioned_indices(cu_seqlens_padded, seq_len, cp_size, cp_rank)
+        index = get_packed_seq_cp_partition_indices(
+            packed_seq_params,
+            total_tokens=seq_len,
+            cp_size=cp_size,
+            cp_rank=cp_rank,
+            device=inputs_embeds.device,
+            cp_group=pg_collection.cp,
+        )
 
         # Slice all tensors using THD indices
         if inputs_embeds is not None:

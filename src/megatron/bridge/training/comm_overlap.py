@@ -22,7 +22,7 @@ from megatron.core.utils import get_te_version, is_te_min_version, is_torch_min_
 
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
-from megatron.bridge.models.mamba.mamba_builder import MambaModelConfig
+from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.utils.cuda_graph import has_cuda_graph_module
 
 
@@ -421,7 +421,7 @@ class CommOverlapConfig:
 
     def _get_model_comm_overlap_cfgs(
         self,
-        model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
+        model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> _CommOverlapConfig:
         comm_overlap_cfg = _CommOverlapConfig()
@@ -500,8 +500,8 @@ class CommOverlapConfig:
             assert not model_cfg.moe_shared_expert_overlap, (
                 "disable moe_shared_expert_overlap when enabling overlap_moe_expert_parallel_comm"
             )
-            assert model_cfg.mtp_num_layers is None or model_cfg.mtp_num_layers == 1, (
-                "MTP layernum only supports 1 when enabling overlap_moe_expert_parallel_comm."
+            assert model_cfg.mtp_num_layers in (None, 0, 1), (
+                "MTP supports at most one layer when enabling overlap_moe_expert_parallel_comm."
             )
 
         if self.user_comm_overlap_cfg.delay_wgrad_compute is True:
@@ -547,7 +547,7 @@ class CommOverlapConfig:
         return comm_overlap_cfg
 
     def _get_optimizer_overlap_cfgs(
-        self, model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig
+        self, model_cfg: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig
     ) -> _CommOverlapConfig:
         vp_size = model_cfg.virtual_pipeline_model_parallel_size
         if vp_size is None:
@@ -590,7 +590,7 @@ class CommOverlapConfig:
 
     def setup(
         self,
-        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | MambaModelConfig,
+        model_config: GPTModelProvider | T5ModelProvider | GPTModelConfig | HybridModelConfig,
         optimizer_config: OptimizerConfig,
         ddp_config: DistributedDataParallelConfig,
     ) -> None:

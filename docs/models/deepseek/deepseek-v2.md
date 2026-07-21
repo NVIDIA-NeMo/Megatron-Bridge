@@ -44,7 +44,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model deepseek-ai/DeepSeek-V2-Lite \
   --megatron-path /checkpoints/deepseek_v2_lite_megatron \
   --trust-remote-code
@@ -108,15 +108,16 @@ See: [bridge.recipes.deepseek.deepseek_v2](../../apidocs/bridge/bridge.recipes.d
 ```python
 from megatron.bridge.recipes.deepseek import deepseek_v2_lite_pretrain_config
 
-config = deepseek_v2_lite_pretrain_config(
-    name="deepseek_v2_lite_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/deepseek_v2_lite",
-    train_iters=500_000,
-    global_batch_size=512,
-    seq_length=4096,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
-)
+config = deepseek_v2_lite_pretrain_config()
+config.dataset.blend = [["/path/to/dataset_text_document"], None]
+config.checkpoint.save = "/results/deepseek_v2_lite/checkpoints"
+config.checkpoint.load = "/results/deepseek_v2_lite/checkpoints"
+config.logger.tensorboard_dir = "/results/deepseek_v2_lite/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 512
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 ```
 
 #### DeepSeek-V2 (236B)
@@ -124,15 +125,16 @@ config = deepseek_v2_lite_pretrain_config(
 ```python
 from megatron.bridge.recipes.deepseek import deepseek_v2_pretrain_config
 
-config = deepseek_v2_pretrain_config(
-    name="deepseek_v2_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/deepseek_v2",
-    train_iters=500_000,
-    global_batch_size=512,
-    seq_length=4096,
-    # Uses TP=1, PP=4, EP=32 (128 GPUs) automatically
-)
+config = deepseek_v2_pretrain_config()
+config.dataset.blend = [["/path/to/dataset_text_document"], None]
+config.checkpoint.save = "/results/deepseek_v2/checkpoints"
+config.checkpoint.load = "/results/deepseek_v2/checkpoints"
+config.logger.tensorboard_dir = "/results/deepseek_v2/tb_logs"
+config.train.train_iters = 500_000
+config.train.global_batch_size = 512
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+# Uses TP=1, PP=4, EP=32 (128 GPUs) automatically
 ```
 
 ### Finetuning Recipes
@@ -158,4 +160,3 @@ Finetuning recipes for DeepSeek V2 models are not currently available.
 - Recipe usage: [Recipe usage](../../recipe-usage.md)
 - Customizing the training recipe configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
-

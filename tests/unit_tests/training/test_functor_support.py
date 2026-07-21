@@ -320,8 +320,25 @@ class TestFunctorStateDetectionEdgeCases:
                 return "typed state"
 
         functor = TypedStateFunctor()
+        state = Mock(spec=GlobalState)
         needs_injection = needs_global_state_injection(functor)
+        wrapped_functor = maybe_inject_state(functor, state)
+
         assert needs_injection is True  # Has GlobalState type hint
+        assert isinstance(wrapped_functor, partial)
+        assert wrapped_functor.args == (state,)
+
+    def test_function_with_forward_reference_state_parameter(self):
+        """Test that a string GlobalState annotation triggers state injection."""
+
+        def forward_step(state: "GlobalState", data_iterator, model):
+            return state
+
+        state = Mock(spec=GlobalState)
+        wrapped_function = maybe_inject_state(forward_step, state)
+
+        assert isinstance(wrapped_function, partial)
+        assert wrapped_function(Mock(), Mock()) is state
 
     def test_functor_with_mixed_parameters(self):
         """Test functor with mixed typed and untyped parameters."""

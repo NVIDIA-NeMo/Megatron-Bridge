@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import MagicMock
+
 import numpy as np
 import pytest
 import torch
@@ -413,6 +415,39 @@ class TestFluxInferencePipelineIntegration:
         assert hasattr(pipeline, "scheduler")
         assert isinstance(pipeline.scheduler, FlowMatchEulerDiscreteScheduler)
         assert pipeline.scheduler.num_train_timesteps == 500
+
+    def test_load_text_encoders_uses_generic_fast_clip_tokenizer(self, monkeypatch):
+        """Test that CLIP tokenizer loading avoids the incompatible model wrapper."""
+        import transformers
+
+        mock_t5_tokenizer = MagicMock()
+        mock_fast_tokenizer = MagicMock()
+        mock_t5_encoder = MagicMock()
+        mock_clip_encoder = MagicMock()
+
+        monkeypatch.setattr(transformers.T5Tokenizer, "from_pretrained", MagicMock(return_value=mock_t5_tokenizer))
+        monkeypatch.setattr(transformers.T5EncoderModel, "from_pretrained", MagicMock(return_value=mock_t5_encoder))
+        monkeypatch.setattr(transformers.CLIPTextModel, "from_pretrained", MagicMock(return_value=mock_clip_encoder))
+        monkeypatch.setattr(
+            transformers.CLIPTokenizer,
+            "from_pretrained",
+            MagicMock(side_effect=TypeError("RobertaProcessing received an incompatible cls argument")),
+        )
+        monkeypatch.setattr(
+            transformers.PreTrainedTokenizerFast,
+            "from_pretrained",
+            MagicMock(return_value=mock_fast_tokenizer),
+        )
+
+        pipeline = FluxInferencePipeline.__new__(FluxInferencePipeline)
+        torch.nn.Module.__init__(pipeline)
+        pipeline.device = "cpu"
+
+        pipeline.load_text_encoders("t5-model", "clip-model")
+
+        transformers.PreTrainedTokenizerFast.from_pretrained.assert_called_once_with("openai/clip-vit-large-patch14")
+        transformers.CLIPTokenizer.from_pretrained.assert_not_called()
+        assert pipeline.clip_tokenizer is mock_fast_tokenizer
 
     def test_pack_unpack_latents_roundtrip(self):
         """Test that pack and unpack latents are inverse operations."""

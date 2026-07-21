@@ -139,3 +139,18 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].dtype == torch.bool
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
+
+    @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
+    def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):
+        """Test that compare.py accepts both trust_remote_code flag spellings."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "hf",
+                "--prompt",
+                "Hello",
+                flag,
+            ]
+        )
+
+        assert args.trust_remote_code is True

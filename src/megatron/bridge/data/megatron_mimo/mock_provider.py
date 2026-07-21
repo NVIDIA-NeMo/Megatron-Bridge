@@ -2,9 +2,8 @@
 """Mock dataset provider for MegatronMIMO testing with synthetic multimodal data.
 
 This module produces synthetic multimodal inputs (random images, audio, etc.)
-that are compatible with HuggingFace processors. It follows the same pattern
-as vlm_datasets/mock_provider.py - generating fake input data but using real
-processors for preprocessing.
+that are compatible with HuggingFace processors. It generates fake input data
+while using real processors for preprocessing.
 """
 
 from __future__ import annotations
@@ -16,10 +15,10 @@ from typing import Any, Callable, Dict, List, Literal, Optional, Tuple
 import numpy as np
 from PIL import Image
 
+from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.dataset import MegatronMIMODataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext
 
 
 def _generate_random_image(width: int, height: int, rng: np.random.Generator) -> Image.Image:
@@ -43,7 +42,7 @@ class MockMegatronMIMOProvider(MegatronMIMODatasetProvider):
     real HuggingFace processors to preprocess them. This tests the full data
     pipeline without requiring real datasets.
 
-    Follows the same pattern as vlm_datasets/MockVLMConversationProvider.
+    Follows the same synthetic-conversation pattern as MockVLMSFTDatasetBuilder.
 
     Args:
         seq_length: Total sequence length for the model (encoder placeholders + text tokens).

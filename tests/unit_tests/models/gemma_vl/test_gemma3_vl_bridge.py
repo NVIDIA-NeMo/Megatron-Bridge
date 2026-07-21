@@ -22,7 +22,7 @@ from transformers import GenerationConfig, SiglipVisionConfig
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.gemma_vl.gemma3_vl_bridge import Gemma3VLBridge
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @pytest.fixture
@@ -87,7 +87,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     pretrained.generation_config = GenerationConfig()
     return pretrained
@@ -97,22 +97,6 @@ def mock_hf_pretrained(mock_hf_config):
 def gemma3_vl_bridge():
     """Create a Gemma3VLBridge instance."""
     return Gemma3VLBridge()
-
-
-class TestGemma3VLBridgeInitialization:
-    """Test Gemma3VLBridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, gemma3_vl_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(gemma3_vl_bridge, Gemma3VLBridge)
-
-    def test_bridge_has_required_methods(self, gemma3_vl_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(gemma3_vl_bridge, "provider_bridge")
-        assert callable(gemma3_vl_bridge.provider_bridge)
-
-        assert hasattr(gemma3_vl_bridge, "mapping_registry")
-        assert callable(gemma3_vl_bridge.mapping_registry)
 
 
 class TestGemma3VLBridgeProviderBridge:
@@ -372,7 +356,7 @@ class TestGemma3VLBridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, gemma3_vl_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config

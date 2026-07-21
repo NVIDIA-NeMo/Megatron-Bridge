@@ -13,7 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 
 
-__all__ = ["PreTrainedCausalLM", "PreTrainedVLM"]
+__all__ = ["PreTrainedCausalLM", "PreTrainedMaskedLM"]

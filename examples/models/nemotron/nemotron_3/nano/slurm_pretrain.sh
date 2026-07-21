@@ -139,7 +139,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_pretrain_tp${TP}_pp${PP}_ep${EP}_sp${SP}_cp${CP} \
-        dataset.sequence_length=$SEQ_LENGTH \
+        dataset.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
         model.expert_model_parallel_size=$EP \

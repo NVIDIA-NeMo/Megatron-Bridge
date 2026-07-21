@@ -150,14 +150,15 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.context_parallel_size=$CP \
         model.calculate_per_token_loss=True \
         train.global_batch_size=$GLOBAL_BATCH_SIZE \
-        dataset.packed_sequence_specs.pad_seq_to_mult=$((CP * 2)) \
-        dataset.packed_sequence_specs.packed_sequence_size=$SEQ_LENGTH \
+        dataset.enable_offline_packing=true \
+        dataset.offline_packing_specs.pad_seq_to_mult=$((CP * 2)) \
+        dataset.offline_packing_specs.packed_sequence_size=$SEQ_LENGTH \
         dataset.seq_length=$SEQ_LENGTH \
         model.seq_length=$SEQ_LENGTH"
 
     CMD="uv run --no-sync python scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
-    CMD="$CMD --peft_scheme lora"
+    CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
+    CMD="$CMD --mode lora"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."

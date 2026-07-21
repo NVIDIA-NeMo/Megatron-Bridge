@@ -191,7 +191,7 @@ bash examples/models/nemotron/nemotron_3_omni/inference.sh
 
 All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
 pretrained checkpoint and enable in-batch sequence packing via
-`dataset.pack_sequences_in_batch=True`. Default GPU layout per script:
+`dataset.enable_in_batch_packing=True`. Default GPU layout per script:
 
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs
@@ -251,7 +251,8 @@ Prepare the Energon shards once. For the full walkthrough, see
 
 ```bash
 uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
-  --output_dir ${WORKSPACE}/datasets/valor32k_avqa
+  --data_root ${WORKSPACE}/datasets/valor32k_avqa \
+  --output_dir ${WORKSPACE}/datasets/valor32k_avqa/energon
 ```
 
 | Mode | Script | Recipe |

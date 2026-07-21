@@ -16,10 +16,12 @@
 
 from unittest.mock import patch
 
+import pytest
 import torch
 
 from megatron.bridge.models.transformer_config import (
     HeterogeneousTransformerConfig,
+    MLATransformerConfig,
     TransformerConfig,
     _resolve_string_fields,
 )
@@ -30,6 +32,7 @@ from megatron.bridge.models.transformer_config import (
 # ---------------------------------------------------------------------------
 
 _FINALIZE_PATCH = "megatron.bridge.models.transformer_config.MCoreTransformerConfig.__post_init__"
+_MLA_FINALIZE_PATCH = "megatron.bridge.models.transformer_config.MCoreMLATransformerConfig.__post_init__"
 _HETERO_FINALIZE_PATCH = "megatron.bridge.models.transformer_config.MCoreHeterogeneousTransformerConfig.__post_init__"
 
 
@@ -127,6 +130,11 @@ class TestTransformerConfigFinalize:
 
         assert cfg.activation_func is F.silu
 
+    def test_finalize_rejects_unregistered_activation_func(self):
+        cfg = _make_config(activation_func="attacker_pkg.payload.fn")
+        with pytest.raises(ValueError, match="attacker_pkg.payload.fn"):
+            cfg.finalize()
+
     def test_finalize_resolves_string_params_dtype(self):
         cfg = _make_config()
         cfg.params_dtype = "bf16"
@@ -185,6 +193,53 @@ class TestTransformerConfigFinalize:
         with patch(_FINALIZE_PATCH):
             cfg.finalize()
         assert cfg.pipeline_dtype is None
+
+    def test_moe_unset_expert_tensor_parallel_size_defaults_to_one(self):
+        cfg = _make_config(
+            tensor_model_parallel_size=2,
+            expert_model_parallel_size=4,
+            expert_tensor_parallel_size=None,
+        )
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+        assert cfg.expert_tensor_parallel_size == 1
+
+    def test_moe_explicit_expert_tensor_parallel_size_is_preserved(self):
+        cfg = _make_config(
+            tensor_model_parallel_size=4,
+            expert_model_parallel_size=2,
+            expert_tensor_parallel_size=2,
+        )
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+        assert cfg.expert_tensor_parallel_size == 2
+
+    def test_dense_unset_expert_tensor_parallel_size_is_not_changed_by_bridge(self):
+        cfg = _make_config(
+            tensor_model_parallel_size=2,
+            expert_model_parallel_size=1,
+            expert_tensor_parallel_size=None,
+        )
+        with patch(_FINALIZE_PATCH):
+            cfg.finalize()
+        assert cfg.expert_tensor_parallel_size is None
+
+
+class TestMLATransformerConfigFinalize:
+    """Tests for MLATransformerConfig.finalize()."""
+
+    def test_moe_unset_expert_tensor_parallel_size_defaults_to_one(self):
+        cfg = MLATransformerConfig(
+            num_layers=2,
+            hidden_size=64,
+            num_attention_heads=4,
+            tensor_model_parallel_size=2,
+            expert_model_parallel_size=4,
+            expert_tensor_parallel_size=None,
+        )
+        with patch(_MLA_FINALIZE_PATCH):
+            cfg.finalize()
+        assert cfg.expert_tensor_parallel_size == 1
 
 
 # ---------------------------------------------------------------------------
