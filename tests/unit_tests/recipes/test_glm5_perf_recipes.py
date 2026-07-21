@@ -20,9 +20,15 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    _validate_dsa_index_share_pipeline_split,
-)
+
+
+try:
+    from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
+        _validate_dsa_index_share_pipeline_split,
+    )
+except ImportError:
+    _validate_dsa_index_share_pipeline_split = None
+
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
@@ -164,6 +170,10 @@ def test_glm51_h100_uses_balanced_default_pipeline_layout(monkeypatch: pytest.Mo
     )
 
 
+@pytest.mark.skipif(
+    _validate_dsa_index_share_pipeline_split is None,
+    reason="megatron.core (dev) removed _validate_dsa_index_share_pipeline_split",
+)
 def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chunk(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
