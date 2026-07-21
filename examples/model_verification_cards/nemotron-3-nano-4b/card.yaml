@@ -1,7 +1,12 @@
-# Agent-readable model support card.
+# Agent-readable model verification card.
 # status: unverified | verified | unsupported | not_applicable
 
 title: nemotron_3_nano_4b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Nemotron 3 Nano 4B support verification covers conversion, inference,
+  and training.
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
   hf_revision: dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f  # pragma: allowlist secret
@@ -10,7 +15,6 @@ model:
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
   bridge_commit: 0e6c1837edeb442b07c9175b855b3d288c5cad33  # pragma: allowlist secret
-summary: Nemotron 3 Nano 4B support verification for conversion, inference, and training.
 
 items:
   hf_to_megatron_cpu:

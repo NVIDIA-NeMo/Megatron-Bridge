@@ -1,7 +1,12 @@
-# Agent-readable model support card.
+# Agent-readable model verification card.
 # status: unverified | verified | unsupported | not_applicable
 
 title: moonlight_16b_a3b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Moonlight-16B-A3B support verification covers conversion, inference,
+  and training.
 model:
   hf_id: moonshotai/Moonlight-16B-A3B
   hf_revision: 476b36a473d4467f94469414bef6cee75c9c8172  # pragma: allowlist secret
@@ -10,7 +15,6 @@ model:
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
   bridge_commit: 93c6930597fd3766acd177288b7a8607d7b96ad7  # pragma: allowlist secret
-summary: Moonlight-16B-A3B support verification for conversion, inference, and training.
 
 items:
   hf_to_megatron_cpu:

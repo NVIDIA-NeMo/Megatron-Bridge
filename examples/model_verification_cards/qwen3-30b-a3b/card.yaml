@@ -1,7 +1,12 @@
-# Agent-readable model support card.
+# Agent-readable model verification card.
 # status: unverified | verified | unsupported | not_applicable
 
 title: qwen3_30b_a3b
+summary: >
+  Performance scope: only pretrain_performance.H100 uses the tuned canonical
+  performance recipe; timing and throughput metrics from functional training
+  items remain sanity checks rather than optimized performance results.
+  Qwen3-30B-A3B support verification covers conversion, inference, and training.
 model:
   hf_id: Qwen/Qwen3-30B-A3B
   hf_revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39  # pragma: allowlist secret
@@ -10,7 +15,6 @@ model:
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
   bridge_commit: aabb29d0ed15fc7ed881f0538352c6bd2d2fd52d  # pragma: allowlist secret
-summary: Qwen3-30B-A3B support verification for conversion, inference, and training.
 
 items:
   hf_to_megatron_cpu:

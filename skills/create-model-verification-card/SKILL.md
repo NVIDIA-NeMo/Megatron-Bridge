@@ -5,9 +5,9 @@ description: Create or update concise, agent-readable Megatron Bridge model veri
 
 # Create Model Verification Card
 
-Create `model_cards/<model-slug>/card.yaml` from public model facts and verified
-commands. Keep the card small enough for an agent to scan without interpreting
-logs or reconstructing the execution environment.
+Create `examples/model_verification_cards/<model-slug>/card.yaml` from public
+model facts and verified commands. Keep the card small enough for an agent to
+scan without interpreting logs or reconstructing the execution environment.
 
 ## Use the repository resources
 
@@ -68,6 +68,24 @@ variant has a canonical public performance recipe. If no such recipe is
 exported, omit the item instead of adding an unverified placeholder. Once a
 canonical recipe exists, keep the item in the card even if its run is still
 unverified.
+
+A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
+performance recipe exists for that hardware. Its item status states whether
+the card's benchmark run has been verified; an `unverified` leaf still records
+the existence of the recipe. If the card has no concrete performance leaf,
+start `summary` with this exact disclaimer before the functional-support
+summary:
+
+```text
+Performance disclaimer: this model has not been performance-tuned; reported timing and throughput metrics are sanity checks, not optimized performance results.
+```
+
+Omit `pretrain_performance` entirely when no canonical recipe exists; do not
+add an `all` terminal placeholder. Routine timing and throughput metrics in
+functional pretrain, SFT, PEFT, long-context, and resume items remain sanity
+observations; they do not become optimized results merely because a separate
+performance recipe exists. When a tuned recipe exists, scope the summary to
+the exact `pretrain_performance.<hardware>` leaf.
 
 Keep conversion, manual-forward, and base-inference items as direct item
 records. Key every training item by its public hardware target, and key the
@@ -144,7 +162,7 @@ the caller's environment. Do not include `srun`, `sbatch`, concrete account or
 partition values, container image arguments, `--mount`, `--env`, shell exports,
 environment-variable references, cluster-specific `--srun-arg` values, or
 launcher overlays. That wiring is personal to the verifier and does not belong
-in a model support card.
+in a model verification card.
 
 Never record or reproduce:
 
@@ -486,7 +504,7 @@ Run:
 ```bash
 uv run --no-project --with pyyaml python \
   skills/create-model-verification-card/scripts/validate_card.py \
-  model_cards/<model-slug>/card.yaml
+  examples/model_verification_cards/<model-slug>/card.yaml
 ```
 
 When private terminology is known only at runtime, add:
@@ -504,6 +522,9 @@ an item verified merely to make validation pass.
 - Keep all twelve core inventory items and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
   performance recipe.
+- Start the summary with the exact untuned performance disclaimer unless at
+  least one concrete `pretrain_performance` hardware leaf exists; never use an
+  `all` placeholder, and scope any tuned claim to the exact concrete leaf.
 - Put the verified workload precision on every direct item or hardware leaf;
   use `fp8_mx` and `nvfp4` only for training leaves that ran in those modes.
 - Pin a public immutable HF revision, minimum Transformers version, public base

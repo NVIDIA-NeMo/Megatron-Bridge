@@ -91,6 +91,10 @@ CUDA_GRAPH_SCOPES = frozenset({"full_iteration", "attn", "mlp", "moe", "moe_rout
 MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
 MANUAL_FORWARD_COSINE_THRESHOLD = 0.99
 MANUAL_FORWARD_REVISION_PINNING_DATE = dt.date(2026, 7, 20)
+UNTUNED_PERFORMANCE_DISCLAIMER = (
+    "Performance disclaimer: this model has not been performance-tuned; "
+    "reported timing and throughput metrics are sanity checks, not optimized performance results."
+)
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "items"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
@@ -1395,6 +1399,8 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
 
     items = _as_mapping(card.get("items"), path=("items",), errors=errors)
     item_leaves: list[tuple[str, str | None, Mapping[str, Any], tuple[str, ...]]] = []
+    has_canonical_performance_recipe = False
+    concrete_performance_variants: dict[str, Mapping[str, Any]] = {}
     if items is not None:
         item_names = set(items)
         for name in sorted(item_names - set(ITEM_NAMES)):
@@ -1463,6 +1469,22 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             )
 
         item_leaves = list(_iter_item_leaves(items))
+        performance_variants = hardware_groups.get("pretrain_performance", {})
+        concrete_performance_variants = {
+            hardware: item for hardware, item in performance_variants.items() if hardware != "all"
+        }
+        has_canonical_performance_recipe = bool(concrete_performance_variants)
+        if "all" in performance_variants:
+            errors.append(
+                f"{_pointer('items', 'pretrain_performance', 'all')}: "
+                "omit pretrain_performance when no canonical hardware recipe exists"
+            )
+        for hardware, item in concrete_performance_variants.items():
+            if item.get("status") not in {"verified", "unverified"}:
+                errors.append(
+                    f"{_pointer('items', 'pretrain_performance', hardware, 'status')}: "
+                    "a canonical performance recipe must be verified or unverified"
+                )
 
         if environment is not None:
             default_bridge_commit = environment.get("bridge_commit")
@@ -1476,6 +1498,26 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                         f"{_pointer(*path, 'bridge_commit')}: "
                         "omit a redundant override of verification_environment.bridge_commit"
                     )
+
+    summary = card.get("summary")
+    if isinstance(summary, str) and items is not None:
+        normalized_summary = " ".join(summary.split())
+        has_untuned_disclaimer = normalized_summary.startswith(UNTUNED_PERFORMANCE_DISCLAIMER)
+        if not has_canonical_performance_recipe and not has_untuned_disclaimer:
+            errors.append(
+                f"{_pointer('summary')}: cards without a canonical pretrain_performance recipe "
+                "must start with the untuned performance disclaimer"
+            )
+        elif has_canonical_performance_recipe and has_untuned_disclaimer:
+            errors.append(
+                f"{_pointer('summary')}: remove the untuned performance disclaimer when a canonical "
+                "pretrain_performance recipe exists"
+            )
+        if has_canonical_performance_recipe:
+            for hardware in concrete_performance_variants:
+                performance_scope = f"pretrain_performance.{hardware}"
+                if performance_scope not in normalized_summary:
+                    errors.append(f"{_pointer('summary')}: scope the tuned claim to {performance_scope}")
 
     any_verified = any(item.get("status") == "verified" for _, _, item, _ in item_leaves)
     if model is not None and any_verified:

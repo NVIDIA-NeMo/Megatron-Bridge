@@ -1,4 +1,4 @@
-# Draft agent-readable model support card.
+# Draft agent-readable model verification card.
 # status: unverified | verified | unsupported | not_applicable
 # last_verified: YYYY-MM-DD or null
 # verified requires an immutable hf_revision, successful command(s), a concrete
@@ -7,6 +7,11 @@
 # Every training result is nested under its public hardware target.
 
 title: qwen3_8b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Qwen3-8B support verification covers conversion, inference, and
+  training.
 model:
   hf_id: Qwen/Qwen3-8B
   hf_revision: b968826d9c46dd6066d109eabc6255188de91218  # pragma: allowlist secret
@@ -15,7 +20,6 @@ model:
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
   bridge_commit: 5c56eab34c540fad08544c38b7cc39d662fb7475  # pragma: allowlist secret
-summary: Qwen3-8B support verification for conversion, inference, and training.
 
 items:
   hf_to_megatron_cpu:

@@ -14,9 +14,11 @@ import yaml
 REPO_ROOT = Path(__file__).resolve().parents[2]
 VALIDATOR_PATH = REPO_ROOT / "skills/create-model-verification-card/scripts/validate_card.py"
 COMPARE_PATH = REPO_ROOT / "examples/conversion/compare_hf_and_megatron/compare.py"
-CARD_PATH = REPO_ROOT / "model_cards/nemotron-3-nano-4b/card.yaml"
-CORRELATION_CARD_PATH = REPO_ROOT / "model_cards/qwen3-8b/card.yaml"
-CARD_PATHS = sorted((REPO_ROOT / "model_cards").glob("*/card.yaml"))
+CARD_PATH = REPO_ROOT / "examples/model_verification_cards/nemotron-3-nano-4b/card.yaml"
+CORRELATION_CARD_PATH = REPO_ROOT / "examples/model_verification_cards/qwen3-8b/card.yaml"
+PERFORMANCE_CARD_PATH = REPO_ROOT / "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+CARD_PATHS = sorted((REPO_ROOT / "examples/model_verification_cards").glob("*/card.yaml"))
+EXPECTED_CARD_SLUGS = {"moonlight-16b-a3b", "nemotron-3-nano-4b", "qwen3-30b-a3b", "qwen3-8b"}
 
 
 def _load_validator() -> ModuleType:
@@ -66,8 +68,12 @@ def _assigned_float(path: Path, name: str) -> float:
 
 
 @pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
-def test_repository_model_cards_are_valid(card_path: Path) -> None:
+def test_repository_model_verification_cards_are_valid(card_path: Path) -> None:
     assert _errors(_card(card_path)) == []
+
+
+def test_repository_model_verification_card_inventory_is_discovered() -> None:
+    assert {path.parent.name for path in CARD_PATHS} == EXPECTED_CARD_SLUGS
 
 
 @pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
@@ -80,6 +86,88 @@ def test_repository_training_items_are_hardware_scoped(card_path: Path) -> None:
         assert variants
         assert set(variants) <= VALIDATOR.PUBLIC_HARDWARE_KEYS | {"all"}
         assert all("gpu_type" not in leaf for leaf in variants.values())
+
+
+def test_untuned_card_requires_opening_performance_disclaimer() -> None:
+    card = _card()
+    disclaimer = VALIDATOR.UNTUNED_PERFORMANCE_DISCLAIMER
+    assert card["summary"].startswith(disclaimer)
+
+    card["summary"] = card["summary"].removeprefix(disclaimer).strip()
+    _assert_error(card, "must start with the untuned performance disclaimer")
+
+    card = _card()
+    card["summary"] = f"{card['summary'].removeprefix(disclaimer).strip()} {disclaimer}"
+    _assert_error(card, "must start with the untuned performance disclaimer")
+
+    card = _card()
+    card["summary"] = card["summary"].replace("; reported", ";\n  reported")
+    assert _errors(card) == []
+
+
+def test_verified_performance_card_scopes_its_tuned_result() -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    assert _hardware_item(card, "pretrain_performance")["status"] == "verified"
+    assert card["summary"].startswith("Performance scope: only pretrain_performance.H100")
+    assert _errors(card) == []
+
+    card["summary"] = "Qwen3-30B-A3B has a tuned canonical performance recipe."
+    _assert_error(card, "scope the tuned claim to pretrain_performance.H100")
+
+
+def test_unverified_canonical_performance_recipe_does_not_require_disclaimer() -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    performance = _hardware_item(card, "pretrain_performance")
+    performance["status"] = "unverified"
+    performance.pop("bridge_commit")
+    assert _errors(card) == []
+
+
+def test_canonical_performance_recipe_rejects_stale_untuned_disclaimer() -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    card["summary"] = f"{VALIDATOR.UNTUNED_PERFORMANCE_DISCLAIMER} {card['summary']}"
+    _assert_error(card, "remove the untuned performance disclaimer")
+
+
+def test_performance_recipe_cannot_use_global_terminal_placeholder() -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    performance = _hardware_item(card, "pretrain_performance")
+    performance.update(
+        status="unsupported",
+        precision=None,
+        command=None,
+        last_verified=None,
+        metrics={name: None for name in VALIDATOR.METRIC_NAMES},
+        expected_result="No canonical performance recipe is available for this model.",
+    )
+    performance.pop("bridge_commit")
+    card["items"]["pretrain_performance"] = {"all": performance}
+    _assert_error(card, "omit pretrain_performance when no canonical hardware recipe exists")
+
+
+@pytest.mark.parametrize("status", ["unsupported", "not_applicable"])
+def test_concrete_performance_recipe_rejects_terminal_status(status: str) -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    performance = _hardware_item(card, "pretrain_performance")
+    performance.update(
+        status=status,
+        precision=None,
+        command=None,
+        last_verified=None,
+        metrics={name: None for name in VALIDATOR.METRIC_NAMES},
+        expected_result="No canonical performance recipe is available for this hardware.",
+    )
+    performance.pop("bridge_commit")
+    _assert_error(card, "a canonical performance recipe must be verified or unverified")
+
+
+def test_summary_scopes_each_canonical_performance_hardware() -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    card["items"]["pretrain_performance"]["B200"] = copy.deepcopy(_hardware_item(card, "pretrain_performance"))
+    _assert_error(card, "scope the tuned claim to pretrain_performance.B200")
+
+    card["summary"] += " pretrain_performance.B200 is also a tuned canonical recipe."
+    assert _errors(card) == []
 
 
 def test_flat_training_item_is_rejected() -> None:
