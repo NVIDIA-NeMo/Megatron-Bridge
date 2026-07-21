@@ -9,7 +9,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc2
-  bridge_commit: cd9f6e1082c11c7d7f0546c4cdbe4fa1ce56d6da  # pragma: allowlist secret
+  bridge_commit: 80a6ad96ed9eb12239ad5dbf372f4a16aef90b32  # pragma: allowlist secret
 summary: Nemotron 3.5 Nano MTP verification on eight GB200 GPUs.
 
 items:
@@ -105,7 +105,7 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
       --recipe nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config --mode pretrain
       --dataset megatron-indexed --seq_length 4096 --max_steps 100
-      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
       dataset.path_to_cache=work/cache/nemotron-3-5-nano-mtp-gb200/rp2
       rng.seed=1234 dataset.random_seed=1234
       validation.eval_iters=0 validation.eval_interval=0
@@ -135,10 +135,13 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
       --recipe nemotron_3_5_nano_sft_openmathinstruct2_config --mode sft
       --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
+      --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1
+      --expert_model_parallel_size 8
       --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-gb200/imported-megatron/iter_0000000
       dataset.enable_offline_packing=true
-      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:1}'
+      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}'
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false
       --save_dir work/model-verification/nemotron-3-5-nano-mtp-gb200/sft-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
     last_verified: null
@@ -165,7 +168,7 @@ items:
       - >
         uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py
         --hf-model work/model-verification/nemotron-3-5-nano-mtp-gb200/sft-hf-export
-        --prompt "Name the capital of France and explain its role in one sentence."
+        --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
         --max-new-tokens 45 --chat-template --disable-thinking
     last_verified: null
     expected_result: The SFT export reloads natively and produces deterministic greedy text in two independent runs.
@@ -210,9 +213,11 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
       --recipe nemotron_3_5_nano_peft_openmathinstruct2_config --mode lora
       --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
+      --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1
+      --expert_model_parallel_size 8
       --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-gb200/imported-megatron/iter_0000000
       dataset.enable_offline_packing=true
-      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:1}'
+      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}'
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       --save_dir work/model-verification/nemotron-3-5-nano-mtp-gb200/peft-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
@@ -234,7 +239,7 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 4
       --recipe nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config --mode pretrain
       --dataset megatron-indexed --seq_length 4096 --max_steps 100
-      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
       dataset.path_to_cache=work/cache/nemotron-3-5-nano-mtp-gb200/rp2
       rng.seed=1234 dataset.random_seed=1234
       validation.eval_iters=0 validation.eval_interval=0

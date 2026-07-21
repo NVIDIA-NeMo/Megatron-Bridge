@@ -9,7 +9,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.08.rc2
-  bridge_commit: cd9f6e1082c11c7d7f0546c4cdbe4fa1ce56d6da  # pragma: allowlist secret
+  bridge_commit: 80a6ad96ed9eb12239ad5dbf372f4a16aef90b32  # pragma: allowlist secret
 summary: Nemotron 3.5 Nano MTP verification on 16 H100 GPUs.
 
 items:
@@ -26,7 +26,7 @@ items:
     expected_result: The pinned BF16 checkpoint imports on CPU and creates a reloadable iter_0000000.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -35,7 +35,7 @@ items:
       --hf-revision 68f54a60ad3c68abaeb585d57a29f1da5021665e
       --megatron-path work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-07-21
     expected_result: The pinned BF16 checkpoint imports across eight ranks and creates a reloadable iter_0000000.
 
   megatron_to_hf_cpu:
@@ -105,7 +105,7 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
       --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --seq_length 4096 --max_steps 100
-      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
       dataset.path_to_cache=work/cache/nemotron-3-5-nano-mtp-h100/rp2
       rng.seed=1234 dataset.random_seed=1234
       validation.eval_iters=0 validation.eval_interval=0
@@ -125,7 +125,7 @@ items:
       records loss and last-10 throughput metrics, and saves complete checkpoints at steps 50 and 100.
 
   sft:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -135,22 +135,25 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
       --recipe nemotron_3_5_nano_sft_openmathinstruct2_config --mode sft
       --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
+      --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1
+      --expert_model_parallel_size 8
       --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
       dataset.enable_offline_packing=true
-      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:1}'
+      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}'
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+      checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false
       --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/sft-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-21
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 0.4165863
+      final_loss: 0.2661655
+      last_10_steps_step_time_ms_avg: 11683.24
+      last_10_steps_model_tflops_per_gpu_avg: 74.76
     expected_result: Packed full SFT completes 100 finite-loss steps and saves a reloadable full-model checkpoint.
 
   sft_export_inference:
-    status: unverified
+    status: verified
     precision: bf16
     depends_on: sft
     commands:
@@ -165,10 +168,13 @@ items:
       - >
         uv run python skills/create-model-verification-card/scripts/verify_hf_inference.py
         --hf-model work/model-verification/nemotron-3-5-nano-mtp-h100/sft-hf-export
-        --prompt "Name the capital of France and explain its role in one sentence."
+        --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
         --max-new-tokens 45 --chat-template --disable-thinking
-    last_verified: null
-    expected_result: The SFT export reloads natively and produces deterministic greedy text in two independent runs.
+    last_verified: 2026-07-21
+    expected_result: "The SFT export reloaded natively, and two independent runs produced byte-identical
+      output. The exact 45-token completion was \"Subtract 5 from both sides: \u00243x = 15\u0024. Then
+      divide by 3: \u0024x = 5\u0024. The answer is \u0024\\boxed{5}\u0024. The answer is
+      \u0024\\boxed{5\"."
 
   sft_long_context:
     status: unverified
@@ -200,7 +206,7 @@ items:
     expected_result: Packed CP2 SFT completes 100 finite-loss 32K steps and saves a reloadable checkpoint.
 
   peft:
-    status: unverified
+    status: verified
     precision: bf16
     gpu_type: H100
     enabled_features:
@@ -210,18 +216,20 @@ items:
       ./scripts/training/train.sh --wait --nodes 1 --gpus-per-node 8
       --recipe nemotron_3_5_nano_peft_openmathinstruct2_config --mode lora
       --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
+      --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1
+      --expert_model_parallel_size 8
       --pretrained_checkpoint work/model-verification/nemotron-3-5-nano-mtp-h100/imported-megatron/iter_0000000
       dataset.enable_offline_packing=true
-      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:1}'
+      'dataset.offline_packing_specs={packed_sequence_size:4096,pad_seq_to_mult:2}'
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       --save_dir work/model-verification/nemotron-3-5-nano-mtp-h100/peft-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-21
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 0.4166172
+      final_loss: 0.2746561
+      last_10_steps_step_time_ms_avg: 22303.65
+      last_10_steps_model_tflops_per_gpu_avg: 78.40
     expected_result: Packed LoRA completes 100 finite-loss steps and saves a reloadable adapter checkpoint.
 
   checkpoint_resume:
@@ -233,7 +241,7 @@ items:
       ./scripts/training/train.sh --wait --nodes 2 --gpus-per-node 8
       --recipe nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config --mode pretrain
       --dataset megatron-indexed --seq_length 4096 --max_steps 100
-      'dataset.blend=[["work/data/rp2/head_01"],null]'
+      'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
       dataset.path_to_cache=work/cache/nemotron-3-5-nano-mtp-h100/rp2
       rng.seed=1234 dataset.random_seed=1234
       validation.eval_iters=0 validation.eval_interval=0
