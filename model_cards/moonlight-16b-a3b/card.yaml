@@ -101,7 +101,8 @@ items:
       (" Paris"). Cosine similarity is 0.999893, above the 0.99 correlation
       gate. The maximum absolute logit difference is 0.472656 and the mean
       absolute logit difference is 0.074414; both are report-only diagnostic
-      observations.
+      observations. This historical result predates explicit helper revision
+      pinning and is retained against the recorded immutable HF revision.
 
   inference:
     status: verified

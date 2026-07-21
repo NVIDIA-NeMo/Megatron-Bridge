@@ -79,6 +79,55 @@ def test_manual_forward_gate_matches_comparison_helper() -> None:
     assert _assigned_float(COMPARE_PATH, "SIMILARITY_THRESHOLD") == VALIDATOR.MANUAL_FORWARD_COSINE_THRESHOLD
 
 
+def test_manual_forward_grandfathers_documented_historical_evidence() -> None:
+    card = _card(CORRELATION_CARD_PATH)
+    manual = card["items"]["manual_forward_pass"]
+    assert "--hf-revision" not in manual["command"]
+    assert "historical" in manual["expected_result"]
+    assert _errors(card) == []
+
+    manual["expected_result"] = (
+        manual["expected_result"].replace("historical", "earlier").replace("predates", "preceded")
+    )
+    _assert_error(card, "missing --hf-revision is allowed only for verified historical evidence")
+
+    card = _card(CORRELATION_CARD_PATH)
+    card["items"]["manual_forward_pass"]["last_verified"] = "2026-07-20"
+    _assert_error(card, "evidence dated before 2026-07-20")
+
+
+def test_unverified_manual_forward_command_requires_matching_revision() -> None:
+    card = _card(CORRELATION_CARD_PATH)
+    manual = card["items"]["manual_forward_pass"]
+    manual["status"] = "unverified"
+    manual["last_verified"] = None
+    _assert_error(card, "missing --hf-revision is allowed only for verified historical evidence")
+
+    revision = card["model"]["hf_revision"]
+    manual["command"] += f" --hf-revision {revision}"
+    assert _errors(card) == []
+
+    manual["command"] = manual["command"].replace(revision, "1" * 40)
+    _assert_error(card, "--hf-revision must equal model.hf_revision")
+
+
+def test_manual_forward_revision_must_match_card() -> None:
+    card = _card()
+    manual = card["items"]["manual_forward_pass"]
+    revision = card["model"]["hf_revision"]
+    assert f"--hf-revision {revision}" in manual["command"]
+    manual["command"] = manual["command"].replace(revision, "1" * 40)
+    _assert_error(card, "--hf-revision must equal model.hf_revision")
+
+
+def test_manual_forward_revision_may_appear_only_once() -> None:
+    card = _card()
+    manual = card["items"]["manual_forward_pass"]
+    revision = card["model"]["hf_revision"]
+    manual["command"] += f" --hf-revision {revision}"
+    _assert_error(card, "specify --hf-revision at most once with a value")
+
+
 def test_manual_forward_absolute_differences_are_report_only() -> None:
     card = _card(CORRELATION_CARD_PATH)
     manual = card["items"]["manual_forward_pass"]

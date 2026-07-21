@@ -324,10 +324,15 @@ result. Private executor configuration stays outside the card.
 - **Manual forward pass:** Compare Hugging Face and Megatron logits on the same
   prompt with `examples/conversion/compare_hf_and_megatron/compare.py`. Record
   whether the next token matches, the cosine similarity, and the maximum and
-  mean absolute logit differences. Pass `--hf-revision` with the exact
-  `model.hf_revision` so the command itself is reproducibly pinned. Mark the
-  item verified when the next token matches and cosine similarity is at least
-  0.99 (cosine distance at most 1%). Numeric maximum and mean absolute
+  mean absolute logit differences. For new evidence, pass `--hf-revision` with
+  the exact `model.hf_revision` so the command itself is reproducibly pinned.
+  Historical evidence verified before 2026-07-20, when the helper gained
+  explicit revision pinning, may remain verified without a rerun when its
+  clean-run provenance is tied to the card's immutable `model.hf_revision`;
+  state this grandfathering explicitly in `expected_result`. Do not use the
+  exception for unverified items or evidence dated 2026-07-20 and later.
+  Mark the item verified when the next token matches and cosine similarity is
+  at least 0.99 (cosine distance at most 1%). Numeric maximum and mean absolute
   differences are required diagnostic observations, but are report-only and
   must not guard the item status. This gate establishes functional logit
   correlation, not strict numerical equality. Keep this result separate from
@@ -463,9 +468,10 @@ an item verified merely to make validation pass.
 - Use the public model name in commands.
 - Include commands and concrete expected results for verified items.
 - For manual forward pass, require a next-token match and cosine similarity of
-  at least 0.99; record numeric max/mean absolute logit differences without
-  guarding on them, and pass the exact `model.hf_revision` through
-  `--hf-revision`.
+  at least 0.99, and record numeric max/mean absolute logit differences without
+  guarding on them. New evidence must pass the exact `model.hf_revision`
+  through `--hf-revision`; retain older unpinned evidence only under the
+  explicitly documented grandfathering rule above.
 - Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.

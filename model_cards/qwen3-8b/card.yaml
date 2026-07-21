@@ -89,8 +89,10 @@ items:
       The one-step comparison of the eight-token prompt exits successfully; the
       Hugging Face and Megatron next-token predictions match at token ID 12095
       (" Paris"), and cosine similarity is 0.999969, above the 0.99 correlation
-      gate. The maximum and mean absolute logit differences are 0.187500 and
-      0.030649, respectively; both are report-only diagnostic observations.
+      gate. This historical result predates explicit helper revision pinning
+      and is retained against the recorded immutable HF revision. The maximum
+      and mean absolute logit differences are 0.187500 and 0.030649,
+      respectively; both are report-only diagnostic observations.
 
   inference:
     status: verified

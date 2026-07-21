@@ -73,6 +73,7 @@ CUDA_GRAPH_IMPLEMENTATIONS = frozenset({"local", "transformer_engine"})
 CUDA_GRAPH_SCOPES = frozenset({"full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"})
 MOE_DISPATCHERS = frozenset({"deepep", "hybridep"})
 MANUAL_FORWARD_COSINE_THRESHOLD = 0.99
+MANUAL_FORWARD_REVISION_PINNING_DATE = dt.date(2026, 7, 20)
 
 TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "items"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
@@ -764,18 +765,62 @@ def _validate_inference(
         errors.append(f"{_pointer(*resolved_command_path)}: inference verification must be deterministic")
 
 
-def _validate_manual_forward_pass(item: Mapping[str, Any], *, status: str, errors: list[str]) -> None:
-    if status != "verified":
-        return
+def _validate_manual_forward_pass(
+    item: Mapping[str, Any],
+    *,
+    status: str,
+    model_revision: str | None,
+    errors: list[str],
+) -> None:
     path = ("items", "manual_forward_pass")
     command = _command_value(item)
     expected = item.get("expected_result")
-    if command is None or not isinstance(expected, str):
+    if command is None:
         return
     try:
         tokens = shlex.split(command)
     except ValueError:
         tokens = []
+    revision_values = _argument_values(command, "--hf-revision")
+    revision_flags = [token for token in tokens if token == "--hf-revision" or token.startswith("--hf-revision=")]
+    if len(revision_flags) != len(revision_values) or len(revision_values) > 1:
+        errors.append(f"{_pointer(*path, 'command')}: specify --hf-revision at most once with a value")
+    elif revision_values and revision_values[0] != model_revision:
+        errors.append(f"{_pointer(*path, 'command')}: --hf-revision must equal model.hf_revision")
+    elif not revision_values:
+        last_verified = item.get("last_verified")
+        if isinstance(last_verified, dt.datetime):
+            last_verified_date = None
+        elif isinstance(last_verified, dt.date):
+            last_verified_date = last_verified
+        elif isinstance(last_verified, str) and _is_iso_date(last_verified):
+            last_verified_date = dt.date.fromisoformat(last_verified)
+        else:
+            last_verified_date = None
+        historical_date = (
+            status == "verified"
+            and last_verified_date is not None
+            and last_verified_date < MANUAL_FORWARD_REVISION_PINNING_DATE
+        )
+        historical = (
+            re.search(r"\b(?:grandfathered|historical|predates)\b", expected, re.IGNORECASE)
+            if isinstance(expected, str)
+            else None
+        )
+        recorded_revision = (
+            re.search(r"\brecorded immutable HF revision\b", expected, re.IGNORECASE)
+            if isinstance(expected, str)
+            else None
+        )
+        if not historical_date or historical is None or recorded_revision is None:
+            errors.append(
+                f"{_pointer(*path, 'command')}: missing --hf-revision is allowed only for verified historical "
+                "evidence dated before 2026-07-20 and tied to the recorded immutable HF revision"
+            )
+
+    if status != "verified" or not isinstance(expected, str):
+        return
+
     prefix = ["uv", "run", "python", "-m", "torch.distributed.run"]
     if tokens[:5] != prefix:
         errors.append(f"{_pointer(*path, 'command')}: manual forward pass must use uv distributed run")
@@ -945,7 +990,7 @@ def _validate_training_window(item: Mapping[str, Any], *, item_name: str, status
         errors.append(f"{_pointer(*path)}: last-10 metrics require at least 10 executed optimizer steps")
 
 
-def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
+def _validate_item(item_name: str, value: Any, errors: list[str], *, model_revision: str | None) -> None:
     path = ("items", item_name)
     item = _as_mapping(value, path=path, errors=errors)
     if item is None:
@@ -1093,7 +1138,7 @@ def _validate_item(item_name: str, value: Any, errors: list[str]) -> None:
     if item_name == "checkpoint_resume":
         _validate_resume(item, status=status, errors=errors)
     if item_name == "manual_forward_pass":
-        _validate_manual_forward_pass(item, status=status, errors=errors)
+        _validate_manual_forward_pass(item, status=status, model_revision=model_revision, errors=errors)
     if item_name == "inference":
         _validate_inference(item, item_name=item_name, status=status, errors=errors)
 
@@ -1234,9 +1279,12 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             errors.append(f"{_pointer('items', name)}: unknown verification item")
         for name in sorted(set(REQUIRED_ITEM_NAMES) - item_names):
             errors.append(f"{_pointer('items', name)}: required verification item is missing")
+        model_revision = model.get("hf_revision") if model is not None else None
+        if not isinstance(model_revision, str):
+            model_revision = None
         for name in ITEM_NAMES:
             if name in items:
-                _validate_item(name, items[name], errors)
+                _validate_item(name, items[name], errors, model_revision=model_revision)
         sft_item = items.get("sft")
         sft_export_item = items.get("sft_export_inference")
         if isinstance(sft_item, Mapping) and isinstance(sft_export_item, Mapping):
