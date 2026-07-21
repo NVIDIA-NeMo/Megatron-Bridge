@@ -1,7 +1,7 @@
 ---
 name: nemo-mbridge-recipe-recommender
 license: Apache-2.0
-description: Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes, and distinguishes convergence changes, semantics-preserving execution tuning, and benchmark-only shortcuts.
+description: Recommend and customize Megatron Bridge library and benchmark recipes for a user's model, GPU count, hardware, sequence length, and pretrain/SFT/PEFT goal. Use when selecting a starting recipe, comparing library and benchmark configs, resizing parallelism for a GPU allocation, or distinguishing convergence changes, semantics-preserving execution tuning, and benchmark-only shortcuts.
 ---
 
 # Auto Recipe — Recipe Index & Recommendation
@@ -24,14 +24,15 @@ index details:
 
 1. **Library recipes** under `src/megatron/bridge/recipes/` are for functional
    training and use `scripts/training/run_recipe.py`.
-2. **Performance recipes** under `scripts/performance/` are for upper-bound
-   throughput benchmarks. They use mock data and should not be presented as
-   production training recipes.
-3. For a first-time Bridge smoke test, recommend `llama3_8b_sft_config` with
-   mock data via `--dataset llm-pretrain-mock`. Do not use `llm-finetune` for
-   the setup-only tryout unless the user specifically asks for an SFT data path.
-4. For normal SFT recommendations, use `--dataset llm-finetune`; for pretrain
-   and mock validation recommendations, use `--dataset llm-pretrain-mock`.
+2. **Benchmark recipes** under `src/megatron/bridge/perf_recipes/` are for
+   upper-bound throughput benchmarks. They own their canonical benchmark data
+   and settings and should not be presented as production training recipes.
+3. For a first-time Bridge smoke test, recommend `llama3_8b_pretrain_config`
+   with mock data via `--dataset mock`.
+4. For normal SFT recommendations, select a finetuning preset such as
+   `--dataset squad` or `--dataset tulu3`; for pretrain and mock validation
+   recommendations, use `--dataset mock`. Do not pair the pretraining-only
+   `mock` preset with an SFT or PEFT mode.
 5. After the recipe and dataset, give the required resizing rules: TP must
    divide `num_key_value_heads`, keep TP within one node unless using
    NVL72-class interconnect, enable SP when TP > 1, configure CP for long
@@ -99,42 +100,61 @@ throughput.
 # Pretrain with mock data
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe <recipe_function_name> \
-    --dataset llm-pretrain-mock
+    --dataset mock
 
 # SFT with SQuAD
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe <recipe_function_name> \
-    --dataset llm-finetune
+    --dataset squad
 
 # Override any field via CLI
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe llama3_8b_pretrain_config \
-    --dataset llm-pretrain-mock \
+    --dataset mock \
     'model.tensor_model_parallel_size=2' \
-    'training.global_batch_size=64'
+    'train.global_batch_size=64'
 ```
 
-### Performance recipes (throughput benchmarks)
+### Benchmark recipes (throughput benchmarks)
 
 ```bash
-python scripts/performance/run_script.py \
-    --recipe <model_family> \
-    --gpu_type h100 \
-    --num_gpus 64 \
-    --data mock
+./scripts/training/train.sh \
+    --nodes 2 --gpus-per-node 8 \
+    --account ACCOUNT --partition PARTITION --container-image IMAGE \
+    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config \
+    --mode pretrain
 ```
 
-See the Performance Recipe Index for important caveats before using these for anything beyond throughput benchmarking.
+The total GPU allocation must match the count encoded in the recipe name. The
+user selects the node shape, and the selected partition must provide the
+requested hardware. The launcher does not inject benchmark offline defaults or
+cluster-specific launch policy. Use `--env NAME` for exported offline or NCCL
+fabric settings and repeated `--srun-arg=ARG` options for `srun`.
+Configure CPU/NUMA wrappers and Slurm segment sizing through the target cluster
+integration, or use `scripts/performance/setup_experiment.py` when its compatibility
+policies are required. The unified
+launcher supports exact exported text pretraining, text SFT/PEFT, Qwen-VL
+pretraining, and Wan pretraining recipes and infers their forward step. Text
+SFT/PEFT text benchmark recipes retain the flat runner's mock-data default;
+Qwen-VL and Wan retain their model-specific datasets. Exported benchmark PEFT
+recipes are fixed LoRA configs; use a configurable library recipe for DoRA.
+Trailing `KEY=VALUE` overrides are accepted, but an overridden benchmark
+recipe no longer represents its canonical benchmark configuration. Use
+`scripts/performance/setup_experiment.py` for selector-based invocation,
+dataset replacement, topology resizing, and specialized benchmark controls.
+
+See the Benchmark Recipe Index for important caveats before using these for
+anything beyond throughput benchmarking.
 
 ---
 
-## Perf Recipe Layout
+## Benchmark Recipe Layout
 
-Performance recipes use the same **Python function** format as library recipes,
+Benchmark recipes use the same **Python function** format as library recipes,
 but live in a dedicated namespace for throughput benchmarking:
 
-- Perf recipes live in `src/megatron/bridge/perf_recipes/<family>/<hardware>/<model>.py`
-- Each perf recipe is a **self-contained Python function** (e.g. `llama3_8b_pretrain_8gpu_h100_bf16_config()`)
+- Benchmark recipes live in `src/megatron/bridge/perf_recipes/<family>/<hardware>/<model>.py`
+- Each benchmark recipe is a **self-contained Python function** (e.g. `llama3_8b_pretrain_8gpu_h100_bf16_config()`)
 - Recipe names encode model, task, GPU count, hardware, precision, and optional variant
 - `scripts/performance/utils/utils.py` derives compatibility `WorkloadBaseConfig` views from the flat recipe itself
 - Shared helpers: `_benchmark_common()` (50 iters, timing, TE RNG), `_perf_precision()` (bf16 / fp8_cs / fp8_mx / nvfp4)
@@ -144,8 +164,10 @@ recipe logic was split across multiple indirection layers, configs were not
 self-contained, and the two-level pipeline made maintenance and debugging
 difficult. Python functions are explicit, greppable, and composable.
 
-The training launcher can invoke both library recipes and perf recipes without
-the removed legacy config package.
+The training launcher discovers library and benchmark recipes from the
+complete exported function name. Five legacy duplicate names select the
+benchmark definition; use the corresponding generic alias for those functional
+workloads. New recipe names should be unique across both packages.
 
 ---
 
@@ -199,8 +221,8 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 | `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 16 | — | 16 |
 | `qwen3_30b_a3b_sft_config` | SFT | 1 | 1 | 16 | — | 16 |
 | `qwen3_30b_a3b_peft_config` | PEFT | 4 | 1 | 4 | — | 4 |
-| `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 512+ |
-| `qwen3_235b_a22b_sft_config` | SFT | 4 | 8 | 8 | — | 256 |
+| `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 256 |
+| `qwen3_235b_a22b_sft_config` | SFT | 4 | 16 | 4 | — | 64 |
 | `qwen3_235b_a22b_peft_config` | PEFT | 1 | 4 | 4 | — | 16 |
 
 ### Qwen3-Next
@@ -252,7 +274,7 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 | Recipe | Mode | Notes |
 |--------|------|-------|
 | `moonlight_16b_pretrain_config` | Pretrain | 16 GPUs, TP1/PP1/EP16; bounded convergence cohort |
-| `moonlight_16b_sft_config` | SFT | 8 GPUs, TP4/PP2/EP4; 2K bounded convergence cohort |
+| `moonlight_16b_sft_config` | SFT | 8 GPUs, TP1/PP1/EP8; 2K bounded convergence cohort |
 | `moonlight_16b_peft_config` | PEFT | 4 GPUs, TP4/PP1/EP4; bounded LoRA/DoRA cohort |
 | `moonlight_16b_sft_8k_config` | SFT | 8 GPUs, TP2/PP1/CP2/EP8; separate 8K cohort |
 | `olmoe_7b_{pretrain,sft,peft}_config` | All | MoE EP=8 |
@@ -284,17 +306,17 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 ---
 
-## Performance Recipe Index
+## Benchmark Recipe Index
 
-Perf recipe source lives under `src/megatron/bridge/perf_recipes/`. The
-performance launcher in `scripts/performance/` resolves those flat recipe names
-and derives compatibility workload views from the selected flat recipe when
-legacy helper paths still need them.
+Benchmark recipe source lives under `src/megatron/bridge/perf_recipes/`. The
+compatibility launcher in `scripts/performance/` resolves those flat recipe
+names and derives compatibility workload views from the selected flat recipe
+when legacy helper paths still need them.
 
-> **Important:** Perf recipes are designed for **upper-bound throughput
-> benchmarks**, not production training. They run **50 iterations** on **mock
-> data** by default. Throughput numbers are aspirational targets, not validated
-> convergence configs.
+> **Important:** Benchmark recipes are designed for **upper-bound throughput
+> measurements**, not production training. Text benchmarks use mock data by
+> default; Qwen-VL and Wan retain their model-specific datasets. Throughput
+> numbers are aspirational targets, not validated convergence configs.
 
 ### Llama 3 / 3.1
 
@@ -372,8 +394,9 @@ User wants to train a model
 │   └─ 128+ GPUs → 405B+, large MoE (DeepSeek V3, Kimi K2)
 │
 ├─ Want throughput benchmarks?
-│   ├─ Yes → Use perf recipes (scripts/performance/)
-│   │   └─ ⚠️ These run on mock data for upper-bound perf only
+│   ├─ Yes → Use benchmark recipes (src/megatron/bridge/perf_recipes/)
+│   │   ├─ Exact exported recipe → scripts/training/train.sh --recipe <exact function name>
+│   │   └─ Selector/specialized workflow → scripts/performance/setup_experiment.py
 │   └─ No → Use library recipes (scripts/training/run_recipe.py)
 │
 └─ Long context?
@@ -427,7 +450,7 @@ When the user's GPU count differs from the recipe default:
 | `use_te_rng_tracker` not set | Assert on provider init when CUDA graphs enabled | Set `cfg.model.use_te_rng_tracker = True` and `cfg.rng.te_rng_tracker = True` |
 | FSDP + TP > 1 on H100 | Possible comm bottleneck | Prefer FSDP with TP=1 or TP=2 on H100; FSDP shines on GB/B-series |
 | Long context without CP | OOM on activations | Add CP=2/4/8; use `*_16k`, `*_64k`, or `*_128k` recipe variants |
-| MoE `overlap_grad_reduce` on H100 | May hurt perf (False in many H100 presets) | Set `overlap_grad_reduce=False` for MoE on H100 |
+| MoE `overlap_grad_reduce` on H100 | May hurt throughput (False in many H100 presets) | Set `overlap_grad_reduce=False` for MoE on H100 |
 | VLM SFT missing image data | Runs but produces garbage | Provide actual multimodal dataset or use mock VLM data |
 | Qwen35-VL MoE FSDP | Tested on Blackwell only | May not work on H100; validate first |
 
@@ -437,24 +460,24 @@ When the user's GPU count differs from the recipe default:
 # Scale Llama3 8B from 2 GPUs to 8 GPUs (increase DP)
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe llama3_8b_pretrain_config \
-    --dataset llm-pretrain-mock
+    --dataset mock
 
 # Run the native 4-GPU Qwen3-MoE 30B PEFT topology
 uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
     --recipe qwen3_30b_a3b_peft_config \
-    --dataset llm-finetune
+    --dataset tulu3
 
 # Add long context to an existing recipe
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe llama3_8b_pretrain_config \
-    --dataset llm-pretrain-mock \
+    --dataset mock \
     'model.seq_length=32768' \
     'model.context_parallel_size=4'
 
 # Enable CUDA graphs on any recipe
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
     --recipe qwen3_30b_a3b_pretrain_config \
-    --dataset llm-pretrain-mock \
+    --dataset mock \
     'model.cuda_graph_impl=transformer_engine' \
     'model.cuda_graph_scope=[attn,moe_router,moe_preprocess]' \
     'model.use_te_rng_tracker=True' \
@@ -467,13 +490,13 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 
 | I want to... | Start with | GPUs needed |
 |---|---|---|
-| Try Bridge for the first time | `llama3_8b_sft_config` + mock data | 2 |
+| Try Bridge for the first time | `llama3_8b_pretrain_config` + mock data | 2 |
 | Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–4 |
 | LoRA on 1 GPU | `llama3_8b_peft_config` or `qwen3_8b_peft_config` | 1 |
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
 | Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 16 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
-| Benchmark throughput | Perf recipes via `run_script.py` | Varies |
+| Benchmark text-pretrain throughput | Benchmark recipe via `train.sh --recipe <exact name>` | Exact encoded count |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |
 | VLM fine-tuning | `qwen3_vl_8b_sft_config` or `gemma3_vl_*_sft_config` | 4–8 |
 | Diffusion training | `wan_1_3B_pretrain_config` or `flux_12b_pretrain_config` | 8 |
@@ -488,7 +511,8 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | Recipe `__init__.py` (all exports) | `src/megatron/bridge/recipes/__init__.py` |
 | Common recipe helpers | `src/megatron/bridge/recipes/common.py` |
 | Training entry point | `scripts/training/run_recipe.py` |
-| Perf recipes root | `src/megatron/bridge/perf_recipes/` |
-| Perf entry point | `scripts/performance/run_script.py` |
-| Perf recipe helpers | `scripts/performance/utils/utils.py` |
-| Perf overrides (benchmark defaults) | `scripts/performance/utils/overrides.py` |
+| Training Slurm launcher | `scripts/training/train.sh` |
+| Benchmark recipes root | `src/megatron/bridge/perf_recipes/` |
+| Benchmark compatibility launcher | `scripts/performance/setup_experiment.py` |
+| Benchmark recipe helpers | `scripts/performance/utils/utils.py` |
+| Benchmark overrides | `scripts/performance/utils/overrides.py` |

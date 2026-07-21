@@ -237,8 +237,8 @@ class PreTrainedBase(ABC):
                         raise
 
                     logger.warning(
-                        "Generation config validation failed during export; preserving the source "
-                        "generation_config.json unchanged"
+                        "GenerationConfig.save_pretrained() rejected the source artifact; "
+                        "preserved the original generation_config.json instead."
                     )
 
         # Download/copy additional files if specified

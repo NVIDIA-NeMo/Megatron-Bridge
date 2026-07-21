@@ -24,6 +24,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.training.checkpointing import (
     _DIRECT_ITERATION_DIR_SENTINEL,
+    DATALOADER_STATE_SUBDIR,
     CheckpointLoadContext,
     CheckpointManager,
     CheckpointSaveContext,
@@ -38,6 +39,7 @@ from megatron.bridge.training.checkpointing import (
     _load_checkpoint_from_path,
     _load_hf_pretrained_checkpoint,
     _load_model_state_dict,
+    _record_dataloader_state_dir,
     _save_hf_adapter_weights,
     _save_hf_weights,
     checkpoint_exists,
@@ -53,6 +55,8 @@ from megatron.bridge.training.checkpointing import (
     get_rng_state,
     init_checkpointing_context,
     load_checkpoint,
+    maybe_load_dataloader_state,
+    maybe_save_dataloader_state,
     read_metadata,
     save_checkpoint,
 )
@@ -2059,6 +2063,121 @@ class TestLoadBaseCheckpoint:
         with patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration") as mock_get_np_iter:
             _load_base_checkpoint("/ckpt/iter_0001000", base_config, pg_collection=mock_pg_collection)
             mock_get_np_iter.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_dataloader_state_dir_under_load_dir_for_persistent(
+        self,
+        mock_resolve,
+        mock_get_np_iter,
+        mock_file_exists,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A persistent checkpoint records its dataloader-state dir under load_dir, for setup() to restore."""
+        mock_resolve.return_value = (100, False)
+        mock_get_np_iter.return_value = -1  # no non-persistent checkpoint
+        mock_file_exists.return_value = True
+        mock_get_format.return_value = "torch_dist"
+        base_config.ckpt_format = "torch_dist"
+        mock_load_global.return_value = ({"model": "x"}, "/ckpt/iter_0000100", False, CheckpointType.GLOBAL)
+
+        ctx = {}
+        _load_base_checkpoint("/ckpt", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection)
+
+        assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
+
+    @patch("megatron.bridge.training.checkpointing._load_non_persistent_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_dataloader_state_dir_under_save_for_non_persistent(
+        self,
+        mock_resolve,
+        mock_get_np_iter,
+        mock_file_exists,
+        mock_load_np,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A non-persistent/local checkpoint records its dataloader-state dir under checkpoint.save, not load."""
+        base_config.save = "/save_dir"
+        mock_resolve.return_value = (50, False)  # older persistent
+        mock_get_np_iter.return_value = 100  # newer non-persistent wins
+        mock_file_exists.return_value = False
+        mock_load_np.return_value = ({"model": "x"}, "np_name", False, CheckpointType.GLOBAL)
+
+        ctx = {}
+        _load_base_checkpoint("/load_dir", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection)
+
+        assert ctx["dataloader_state_dir"] == os.path.join("/save_dir", DATALOADER_STATE_SUBDIR)
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_dataloader_state_dir_one_level_up_for_direct_iteration(
+        self,
+        mock_resolve,
+        mock_get_format,
+        mock_load_global,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A direct iter_N directory records its dataloader-state dir one level up (the energon sibling)."""
+        mock_resolve.return_value = (_DIRECT_ITERATION_DIR_SENTINEL, False)
+        mock_get_format.return_value = "torch_dist"
+        mock_load_global.return_value = ({"model": "x"}, "/ckpt/iter_0001000", False, CheckpointType.GLOBAL)
+
+        ctx = {}
+        _load_base_checkpoint(
+            "/ckpt/iter_0001000", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection
+        )
+
+        assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
+
+    @patch("megatron.bridge.training.checkpointing.file_exists")
+    @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration")
+    def test_records_none_when_no_checkpoint_found(
+        self,
+        mock_resolve,
+        mock_get_np_iter,
+        mock_file_exists,
+        base_config,
+        mock_pg_collection,
+    ):
+        """No checkpoint selected => dataloader_state_dir is None so resume restores nothing."""
+        mock_resolve.return_value = (-1, False)
+        mock_get_np_iter.return_value = -1
+        mock_file_exists.return_value = False
+
+        ctx = {}
+        _load_base_checkpoint("/ckpt", base_config, checkpointing_context=ctx, pg_collection=mock_pg_collection)
+
+        assert ctx["dataloader_state_dir"] is None
+
+
+class TestRecordDataloaderStateDir:
+    """Tests for _record_dataloader_state_dir, which captures where setup() restores dataloader state."""
+
+    def test_joins_energon_subdir(self):
+        ctx = {}
+        _record_dataloader_state_dir(ctx, "/ckpt")
+        assert ctx["dataloader_state_dir"] == os.path.join("/ckpt", DATALOADER_STATE_SUBDIR)
+
+    def test_none_base_records_none(self):
+        ctx = {}
+        _record_dataloader_state_dir(ctx, None)
+        assert ctx["dataloader_state_dir"] is None
+
+    def test_none_context_is_noop(self):
+        """Must not raise when there is no context to record into."""
+        _record_dataloader_state_dir(None, "/ckpt")
 
 
 class TestLoadModelWeightsFromCheckpoint:
@@ -4449,3 +4568,182 @@ class TestLayerWiseOptimizerCheckpointing:
         # Standard load_state_dict must be called; per-rank file loader must NOT be called.
         mock_layer_wise_optim.load_state_dict.assert_called_once_with(mock_state_dict["optimizer"])
         mock_layer_wise_optim.load_state_dict_from_file.assert_not_called()
+
+
+class TestMaybeLoadDataloaderState:
+    """Tests for restoring Energon dataloader stream-position state on resume."""
+
+    @pytest.fixture(autouse=True)
+    def _dist_initialized(self):
+        """megatron.core.utils.get_pg_rank returns 0 for every group unless torch.distributed is
+        initialized. Stub is_initialized=True so the real get_pg_rank resolves each mock group's rank
+        (while still mapping a None group to 0), and stub get_rank=0 so print_rank_0 -> safe_get_rank
+        does not hit the uninitialized default process group."""
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+        ):
+            yield
+
+    @staticmethod
+    def _pg(cp: int | None = 0, pp: int = 0, tp: int = 0, dp: int = 0):
+        """Mock a ProcessGroupCollection with the given per-dimension ranks. Only cp may be None —
+        modeling a collection configured without context parallelism (tp/pp/dp are always
+        populated); the real get_pg_rank then reads the absent cp group as rank 0."""
+        pg = Mock()
+        if cp is None:
+            pg.cp = None
+        else:
+            pg.cp.rank.return_value = cp
+        pg.pp.rank.return_value = pp
+        pg.tp.rank.return_value = tp
+        pg.dp.rank.return_value = dp
+        return pg
+
+    def test_noop_when_no_path(self):
+        """No load path => nothing restored."""
+        train_iterator = Mock()
+        maybe_load_dataloader_state(train_iterator, 10, None, pg_collection=self._pg())
+        train_iterator.iterable.restore_state.assert_not_called()
+
+    def test_noop_when_iterator_is_none(self):
+        """No iterator => no-op (must not raise)."""
+        maybe_load_dataloader_state(None, 10, "/some/path", pg_collection=self._pg())
+
+    def test_noop_when_train_iterator_is_list(self, tmp_path):
+        """VPP yields a list of iterators; the single-iterator case is the only one handled."""
+        maybe_load_dataloader_state([Mock()], 10, str(tmp_path), pg_collection=self._pg())
+
+    def test_noop_when_iterable_lacks_restore_state(self, tmp_path):
+        """Non-Energon iterables (no restore_state) are skipped without error."""
+        train_iterator = Mock(spec=["iterable"])
+        train_iterator.iterable = Mock(spec=[])  # hasattr(..., "restore_state") is False
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+    def test_missing_dir_warns_and_skips(self, tmp_path):
+        """A missing state directory is tolerated so pre-feature checkpoints still resume."""
+        train_iterator = Mock()
+        missing = tmp_path / "energon"  # never created
+        maybe_load_dataloader_state(train_iterator, 10, str(missing), pg_collection=self._pg())
+        train_iterator.iterable.restore_state.assert_not_called()
+
+    def test_existing_dir_missing_file_raises(self, tmp_path):
+        """If the state dir exists but this rank's file does not, fail loudly (likely a DP-size change)."""
+        train_iterator = Mock()
+        # tmp_path exists (the energon root) but contains no per-rank file for this iteration.
+        with pytest.raises(RuntimeError, match="data-parallel size"):
+            maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+    @patch("megatron.bridge.training.checkpointing.torch.load")
+    def test_restores_on_every_cp_tp_pp_rank(self, mock_load, tmp_path):
+        """Unlike save, restore must run on every cp/tp/pp because
+        each rank pulls from its own data iterator. Keyed by the pure DP rank."""
+        train_iterator = Mock()
+        iter_dir = get_checkpoint_name(str(tmp_path), 10)
+        os.makedirs(iter_dir, exist_ok=True)
+        Path(iter_dir, "train_dataloader_dprank000.pt").touch()
+        mock_load.return_value = {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}
+
+        # cp=1, pp=1, tp=1 would have been skipped by save-style (cp0,pp0,tp0) gating; restore must not skip.
+        maybe_load_dataloader_state(
+            train_iterator,
+            10,
+            str(tmp_path),
+            pg_collection=self._pg(cp=1, pp=1, tp=1, dp=0),
+        )
+
+        train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
+
+    @patch("megatron.bridge.training.checkpointing.torch.load")
+    def test_restores_from_file(self, mock_load, tmp_path):
+        """Happy path: the per-DP-rank file is loaded and restore_state is called with the saved dict."""
+        train_iterator = Mock()
+        iter_dir = get_checkpoint_name(str(tmp_path), 10)
+        os.makedirs(iter_dir, exist_ok=True)
+        # dp_rank defaults to 0 => dprank000.
+        Path(iter_dir, "train_dataloader_dprank000.pt").touch()
+        mock_load.return_value = {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}
+
+        maybe_load_dataloader_state(train_iterator, 10, str(tmp_path), pg_collection=self._pg())
+
+        train_iterator.iterable.restore_state.assert_called_once_with({"dummy_energon_state": "xyz"})
+
+
+class TestMaybeSaveDataloaderState:
+    """Tests for gating which rank writes the Energon dataloader stream-position state."""
+
+    @pytest.fixture(autouse=True)
+    def _dist_initialized(self):
+        """megatron.core.utils.get_pg_rank returns 0 for every group unless torch.distributed is
+        initialized. Stub is_initialized=True so the real get_pg_rank resolves each mock group's rank
+        (while still mapping a None group to 0), and stub get_rank=0 so print_rank_0 -> safe_get_rank
+        does not hit the uninitialized default process group."""
+        with (
+            patch("torch.distributed.is_initialized", return_value=True),
+            patch("torch.distributed.get_rank", return_value=0),
+        ):
+            yield
+
+    @staticmethod
+    def _pg(cp: int | None = 0, pp: int = 0, tp: int = 0, dp: int = 0):
+        """Mock a ProcessGroupCollection with the given per-dimension ranks. Only cp may be None —
+        modeling a collection configured without context parallelism (tp/pp/dp are always
+        populated); the real get_pg_rank then reads the absent cp group as rank 0."""
+        pg = Mock()
+        if cp is None:
+            pg.cp = None
+        else:
+            pg.cp.rank.return_value = cp
+        pg.pp.rank.return_value = pp
+        pg.tp.rank.return_value = tp
+        pg.dp.rank.return_value = dp
+        return pg
+
+    @staticmethod
+    def _iterator():
+        """Mock train iterator whose iterable.save_state() returns a sentinel state dict."""
+        train_iterator = Mock()
+        train_iterator.iterable.save_state.return_value = {"dummy_energon_state": "xyz"}
+        return train_iterator
+
+    def test_noop_when_no_path(self):
+        """No save path => nothing is saved."""
+        train_iterator = self._iterator()
+        maybe_save_dataloader_state(Mock(), train_iterator, 10, None, pg_collection=self._pg())
+        train_iterator.iterable.save_state.assert_not_called()
+
+    @pytest.mark.parametrize("ranks", [{"cp": 1}, {"tp": 1}, {"pp": 1}], ids=["cp", "tp", "pp"])
+    def test_skips_nonzero_cp_tp_pp_rank(self, ranks):
+        """Tensor/pipeline/context-parallel ranks all replicate the per-DP-rank state, so only the
+        tp0/pp0/cp0 leader writes preventing racing on the same train_dataloader_dprank{dp}.pt file."""
+        train_iterator = self._iterator()
+        maybe_save_dataloader_state(Mock(), train_iterator, 10, "/some/path", pg_collection=self._pg(**ranks))
+        train_iterator.iterable.save_state.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing.torch.save")
+    def test_writes_on_zero_cp_tp_pp_rank(self, mock_save, tmp_path):
+        """The single tp0/pp0/cp0 writer saves the state under the per-DP-rank filename."""
+        train_iterator = self._iterator()
+        # patch barrier: no real process group exists in a unit test.
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
+            maybe_save_dataloader_state(Mock(), train_iterator, 10, str(tmp_path), pg_collection=self._pg(dp=2))
+
+        train_iterator.iterable.save_state.assert_called_once_with()
+        saved_dict, saved_path = mock_save.call_args[0]
+        assert saved_dict == {"dataloader_state_dict": {"dummy_energon_state": "xyz"}}
+        assert saved_path.endswith("train_dataloader_dprank002.pt")
+
+    @patch("megatron.bridge.training.checkpointing.torch.save")
+    def test_writes_when_cp_group_is_none(self, mock_save, tmp_path):
+        """A run without context parallelism leaves cp=None. get_pg_rank reads a
+        None group as rank 0, so the (pp0, tp0, cp0) leader still writes instead of raising on
+        None.rank()."""
+        train_iterator = self._iterator()
+        with patch("megatron.bridge.training.checkpointing.torch.distributed.barrier"):
+            maybe_save_dataloader_state(
+                Mock(), train_iterator, 10, str(tmp_path), pg_collection=self._pg(cp=None, dp=2)
+            )
+
+        train_iterator.iterable.save_state.assert_called_once_with()
+        _, saved_path = mock_save.call_args[0]
+        assert saved_path.endswith("train_dataloader_dprank002.pt")

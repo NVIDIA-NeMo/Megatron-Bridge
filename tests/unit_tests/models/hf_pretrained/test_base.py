@@ -275,24 +275,24 @@ def test_save_artifacts_without_model_name_or_path():
         print("✅ test_save_artifacts_without_model_name_or_path passed")
 
 
-def test_save_artifacts_preserves_source_generation_config_after_validation_failure():
-    """Test invalid loaded generation configs are copied unchanged from the source."""
+def test_save_artifacts_preserves_rejected_source_generation_config():
+    """Test invalid-but-loadable source generation metadata is preserved verbatim."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         source_dir = tmp_path / "source"
         source_dir.mkdir()
-        generation_config = '{"do_sample": false, "top_p": 0.95}\n'
-        (source_dir / "generation_config.json").write_text(generation_config)
-
+        source_generation_config = '{"do_sample": false, "temperature": 0.000001}\n'
+        (source_dir / "generation_config.json").write_text(source_generation_config)
         target_dir = tmp_path / "target"
+
         base = MockPreTrainedBase(model_name_or_path=str(source_dir))
-        base._config = Mock()
+        base._config = Mock(save_pretrained=Mock())
         base._generation_config = Mock()
         base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
 
         base.save_artifacts(target_dir)
 
-        assert (target_dir / "generation_config.json").read_text() == generation_config
+        assert (target_dir / "generation_config.json").read_text() == source_generation_config
 
 
 def test_save_artifacts_preserves_generation_config_from_pinned_hub_revision(tmp_path):
@@ -324,14 +324,14 @@ def test_save_artifacts_preserves_generation_config_from_pinned_hub_revision(tmp
 
 
 def test_save_artifacts_reraises_generation_config_error_without_source_file():
-    """Test generation config validation errors remain fatal without a source artifact."""
+    """Test generation config save errors are not hidden without a source artifact."""
     with tempfile.TemporaryDirectory() as tmp_dir:
         tmp_path = Path(tmp_dir)
         source_dir = tmp_path / "source"
         source_dir.mkdir()
 
         base = MockPreTrainedBase(model_name_or_path=str(source_dir))
-        base._config = Mock()
+        base._config = Mock(save_pretrained=Mock())
         base._generation_config = Mock()
         base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
 
