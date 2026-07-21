@@ -2870,6 +2870,55 @@ class TestCalcParamsL2Norm:
                 expert_tp_group=_patch_pg_collection.expt_tp,
             )
 
+    def test_moe_param_norm_counts_logical_parameter_when_tp_ranks_differ(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+    ):
+        """Expert parameters use the expert-TP rank when it differs from regular TP."""
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        class _MixedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert.allreduce = False
+
+        regular_tp_group = _RankGroup(rank=1)
+        expert_tp_group = _RankGroup(rank=0)
+        reduce_group = _RankGroup(rank=0)
+        pg_collection = SimpleNamespace(
+            tp=regular_tp_group,
+            expt_tp=expert_tp_group,
+            dp_cp=reduce_group,
+            expt_dp=reduce_group,
+            mp=reduce_group,
+            tp_ep_pp=reduce_group,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: pg_collection,
+        )
+
+        with (
+            mock.patch(
+                "megatron.core.tensor_parallel.layers.get_tensor_model_parallel_rank",
+                return_value=regular_tp_group.rank(),
+            ),
+            mock.patch("torch.distributed.get_process_group_ranks", return_value=[0]),
+            mock.patch("torch.distributed.all_reduce"),
+        ):
+            actual_norm = calc_params_l2_norm(_MixedModel(), mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(2.0)
+
     @mock.patch("megatron.bridge.training.utils.train_utils.calc_dtensor_params_l2_norm")
     def test_megatron_fsdp_path(self, mock_calc_dtensor_norm, mock_model_config_fp32):
         """Test calc_params_l2_norm with use_megatron_fsdp=True."""
