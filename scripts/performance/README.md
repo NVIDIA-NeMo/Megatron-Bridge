@@ -2,7 +2,16 @@
 
 ## NOTE: This directory will change a lot over the coming weeks
 
-- Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
+New runs of exact exported flat recipes should use `scripts/training/train.sh --recipe <function_name>`. The launcher
+discovers text pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining recipes automatically and selects
+their forward step. This directory remains the compatibility path for selector-based invocation, dataset replacement,
+topology resizing, and specialized benchmark controls. The training launcher preserves total GPU-count validation,
+the recipe process environment, and mock-data defaults for text SFT/PEFT; it does not inject offline defaults. The
+performance compatibility launcher continues to own its benchmark offline environment.
+Cluster-specific CPU/NUMA binding, Slurm segment sizing, NCCL fabric settings, and `srun` arguments remain user
+supplied.
+
+- Scripts defined in `scripts/performance` launch performance-optimized experiments on Slurm-based clusters.
 
 ## Performance recipe configs
 
@@ -11,7 +20,7 @@ launcher resolves recipes from that package by model, task, GPU count, GPU type,
 and config variant.
 
 `setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
-applies recipe-owned process settings before importing Torch, then replaces itself with
+applies recipe-owned process settings before importing the training loop, then replaces itself with
 either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
 Each training entrypoint therefore executes only once.
 
