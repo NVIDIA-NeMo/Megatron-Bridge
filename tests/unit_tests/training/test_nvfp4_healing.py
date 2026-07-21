@@ -197,6 +197,91 @@ class TestCudaGraphReset:
         assert FullCudaGraphWrapper.curr_iteration == {"training": 0, "validation": 0}
 
 
+class FakeLayer(torch.nn.Module):
+    def __init__(self, layer_number):
+        super().__init__()
+        self.layer_number = layer_number
+        self.linear = torch.nn.Linear(4, 4)
+
+
+def make_fake_chunk(layer_numbers, num_layers=None, first_last_bf16=False, start_bf16=0, end_bf16=0, op_fuser=False):
+    layers = torch.nn.ModuleList([FakeLayer(n) for n in layer_numbers])
+    config = SimpleNamespace(
+        num_layers=num_layers if num_layers is not None else len(layer_numbers),
+        first_last_layers_bf16=first_last_bf16,
+        num_layers_at_start_in_bf16=start_bf16,
+        num_layers_at_end_in_bf16=end_bf16,
+        use_transformer_engine_op_fuser=op_fuser,
+        fp8_dot_product_attention=False,
+    )
+    return SimpleNamespace(decoder=SimpleNamespace(layers=layers), config=config)
+
+
+def linear_is_target(module):
+    return isinstance(module, torch.nn.Linear)
+
+
+def patch_target_module():
+    return patch.object(NVFP4HealingCallback, "_is_target_module", staticmethod(linear_is_target))
+
+
+class TestUnwrapModelChunk:
+    def test_returns_object_without_module_attr(self):
+        chunk = make_fake_chunk([1])
+        assert _unwrap_model_chunk(chunk) is chunk
+
+    def test_follows_nested_module_chain(self):
+        inner = make_fake_chunk([1])
+        wrapped = SimpleNamespace(module=SimpleNamespace(module=inner))
+        assert _unwrap_model_chunk(wrapped) is inner
+
+
+class TestLayerIteration:
+    def test_yields_all_target_modules(self):
+        model = [make_fake_chunk([1, 2, 3])]
+        cb = NVFP4HealingCallback(make_config())
+        with patch_target_module():
+            found = list(cb._iter_quantizable_modules(model))
+        assert len(found) == 3
+        assert all(isinstance(m, torch.nn.Linear) for _, m in found)
+
+    def test_skips_first_and_last_bf16_layers(self):
+        model = [make_fake_chunk([1, 2, 3, 4], first_last_bf16=True, start_bf16=1, end_bf16=1)]
+        cb = NVFP4HealingCallback(make_config())
+        with patch_target_module():
+            found = list(cb._iter_quantizable_modules(model))
+        assert {layer.layer_number for layer, _ in found} == {2, 3}
+
+    def test_bf16_skip_ignored_when_flag_off(self):
+        model = [make_fake_chunk([1, 2, 3, 4], first_last_bf16=False, start_bf16=1, end_bf16=1)]
+        cb = NVFP4HealingCallback(make_config())
+        with patch_target_module():
+            found = list(cb._iter_quantizable_modules(model))
+        assert len(found) == 4
+
+    def test_pipeline_rank_uses_global_layer_numbers(self):
+        # Simulates the last PP rank holding global layers 3..4 of a 4-layer model
+        # with the final layer kept in BF16.
+        model = [make_fake_chunk([3, 4], num_layers=4, first_last_bf16=True, start_bf16=1, end_bf16=1)]
+        cb = NVFP4HealingCallback(make_config())
+        with patch_target_module():
+            found = list(cb._iter_quantizable_modules(model))
+        assert {layer.layer_number for layer, _ in found} == {3}
+
+    def test_iterates_across_virtual_pipeline_chunks(self):
+        chunk_a = make_fake_chunk([1, 2], num_layers=4)
+        chunk_b = make_fake_chunk([3, 4], num_layers=4)
+        cb = NVFP4HealingCallback(make_config())
+        with patch_target_module():
+            found = list(cb._iter_quantizable_modules([chunk_a, chunk_b]))
+        assert [layer.layer_number for layer, _ in found] == [1, 2, 3, 4]
+
+    def test_unsupported_model_structure_raises(self):
+        cb = NVFP4HealingCallback(make_config())
+        with pytest.raises(RuntimeError, match="decoder.layers"):
+            list(cb._iter_quantizable_modules([SimpleNamespace(config=SimpleNamespace())]))
+
+
 class TestHookRegistration:
     def test_registers_expected_hooks(self):
         manager = CallbackManager()
