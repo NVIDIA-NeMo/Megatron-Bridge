@@ -22,8 +22,8 @@ Full-model conversion and inference in BF16 requires **at least 8 nodes (64 GPUs
 
 - EP must divide 256 (number of routed experts). Valid: 1, 2, 4, 8, 16, 32, 64, 128, 256.
 - TP does **not** reduce expert memory — increase EP instead.
-- Minimum recommended: `TP=2, EP=32, PP=1` (64 GPUs, 8 nodes).
-- `TP=1, EP=64` works for conversion but may cause empty-dispatch issues during autoregressive inference with single-token batches. Use `TP >= 2` for inference.
+- Minimum recommended: `TP=1, PP=2, EP=32` (64 GPUs, 8 nodes). PP splits the 78 transformer layers evenly, with 39 layers per stage, and EP places 8 routed experts per GPU.
+- `TP=1, PP=1, EP=64` works for conversion but may cause empty-dispatch issues during autoregressive inference with single-token batches. Prefer `PP=2, EP=32` for inference on 64 GPUs.
 
 ### Pre-requisites
 
@@ -38,7 +38,7 @@ The PyPI source distribution is incomplete; install from the git repo.
 
 ## Inference (Megatron)
 
-[slurm_inference.sh](slurm_inference.sh) loads the HF checkpoint, converts to Megatron in-memory, and runs greedy text generation with `TP=2, EP=32` across 64 GPUs.
+[slurm_inference.sh](slurm_inference.sh) loads the HF checkpoint, converts to Megatron in-memory, and runs greedy text generation with `TP=1, PP=2, EP=32` across 64 GPUs. TP remains disabled because AbsorbedMLA requires sequence parallelism when `TP > 1`.
 
 ```bash
 sbatch examples/models/glm/glm5/slurm_inference.sh
@@ -68,7 +68,7 @@ export SLURM_ACCOUNT=your_account
 bash examples/models/glm/glm5/slurm_conversion.sh
 ```
 
-The script uses 8 nodes (64 GPUs) with `TP=2`, `PP=1`, and `EP=32`.
+The script uses 8 nodes (64 GPUs) with `TP=1`, `PP=2`, and `EP=32`.
 
 > **Note:** The round-trip verification step (comparing ~63K weight tensors on rank 0)
 > may hit Lustre I/O contention at this model scale. The HF→Megatron conversion

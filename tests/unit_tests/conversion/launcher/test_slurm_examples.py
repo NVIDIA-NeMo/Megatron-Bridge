@@ -30,7 +30,7 @@ WRAPPER_CASES = [
             "nodes": "8",
             "time": "01:00:00",
             "hf_model": "zai-org/GLM-5",
-            "config": ("2", "1", "32", "1"),
+            "config": ("1", "2", "32", "1"),
             "trust_remote_code": False,
         },
     ),
@@ -133,6 +133,44 @@ def test_slurm_conversion_readmes_use_login_node_wrappers():
         relative_script = script.relative_to(REPO_ROOT)
         assert f"bash {relative_script}" in contents, readme
         assert not re.search(r"sbatch[^\n]*slurm_conversion\.sh", contents), readme
+
+
+def test_glm5_inference_launcher_keeps_hf_token_out_of_process_arguments(tmp_path):
+    launcher = tmp_path / "srun"
+    launcher.write_text('#!/usr/bin/env bash\nprintf "CALL\\n"\nprintf "ARG=%s\\n" "$@"\nexit 7\n')
+    launcher.chmod(0o755)
+    snapshot = tmp_path / "hf-cache" / "hub" / "models--zai-org--GLM-5" / "snapshots" / "revision"
+    snapshot.mkdir(parents=True)
+    env = os.environ.copy()
+    env.update(
+        {
+            "BRIDGE_PATH": "/shared/Megatron-Bridge",
+            "CONTAINER_IMAGE": "/shared/container.sqsh",
+            "HF_HOME": str(tmp_path / "hf-cache"),
+            "HF_TOKEN": "sensitive-token-value",
+            "PATH": f"{tmp_path}:{env['PATH']}",
+            "SLURM_JOB_ID": "1234",
+            "SLURM_JOB_NUM_NODES": "8",
+        }
+    )
+
+    result = subprocess.run(
+        ["bash", str(REPO_ROOT / "examples/models/glm/glm5/slurm_inference.sh")],
+        capture_output=True,
+        cwd=tmp_path,
+        env=env,
+        text=True,
+    )
+
+    assert result.returncode == 7
+    (arguments,) = _parse_stub_calls(result.stdout)
+    assert "sensitive-token-value" not in result.stdout
+    assert all("sensitive-token-value" not in argument for argument in arguments)
+    assert "--export=ALL" not in arguments
+    assert any(argument.startswith("--export=") and "HF_TOKEN" in argument for argument in arguments)
+    assert any(argument.startswith("--container-env=") and "HF_TOKEN" in argument for argument in arguments)
+    assert "TP=1 PP=2 EP=32 (Total GPUs: 64)" in result.stdout
+    assert "Inference completed (exit 7)" in result.stdout
 
 
 @pytest.mark.parametrize(("relative_script", "expected"), WRAPPER_CASES)
