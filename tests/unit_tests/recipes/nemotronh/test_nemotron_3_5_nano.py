@@ -147,7 +147,7 @@ class TestNemotron35NanoPretrain:
         assert config.optimizer.optimizer_cpu_offload is False
         assert config.optimizer.optimizer_offload_fraction == 0.0
         assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
-        assert config.optimizer.overlap_param_gather is False
+        assert config.optimizer.overlap_param_gather is True
         assert config.scheduler.lr_warmup_iters == 40
         assert config.scheduler.lr_decay_iters == 100
         assert config.scheduler.lr_decay_style == "cosine"
@@ -158,17 +158,17 @@ class TestNemotron35NanoPretrain:
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
         assert config.comm_overlap.tp_comm_overlap is True
-        assert config.comm_overlap.overlap_param_gather is False
+        assert config.comm_overlap.overlap_param_gather is True
         assert config.comm_overlap.delay_wgrad_compute is False
         assert config.comm_overlap.overlap_moe_expert_parallel_comm is False
-        assert config.ddp.overlap_param_gather is False
+        assert config.ddp.overlap_param_gather is True
 
-    def test_pretrain_config_memory_release(self):
+    def test_pretrain_config_memory_defaults(self):
         config = nemotron_3_5_nano_pretrain_config()
 
-        assert config.train.manual_gc is True
-        assert config.train.manual_gc_interval == 100
-        assert config.train.empty_unused_memory_level == 2
+        assert config.train.manual_gc is False
+        assert config.train.manual_gc_interval == 0
+        assert config.train.empty_unused_memory_level == 0
 
     def test_pretrain_config_checkpoint_settings(self):
         config = nemotron_3_5_nano_pretrain_config()
@@ -335,7 +335,7 @@ class TestNemotron35NanoCommon:
     @pytest.mark.parametrize(
         ("recipe_fn", "overlap_param_gather"),
         [
-            (nemotron_3_5_nano_pretrain_config, False),
+            (nemotron_3_5_nano_pretrain_config, True),
             (nemotron_3_5_nano_sft_config, True),
             (nemotron_3_5_nano_peft_config, True),
         ],
