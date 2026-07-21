@@ -104,18 +104,18 @@ class TestNemotron35NanoPretrain:
         assert config.mixed_precision == "bf16_mixed"
 
     def test_pretrain_config_cuda_graph_and_recompute(self):
-        """CUDA-graph scope and full recompute must retain H100 resume headroom."""
+        """CUDA graphs and selective recompute must match the H100 convergence preset."""
         config = nemotron_3_5_nano_pretrain_config()
 
-        assert config.model.cuda_graph_impl == "none"
-        assert config.model.cuda_graph_scope == []
-        assert config.model.cuda_graph_warmup_steps == 0
+        assert config.model.cuda_graph_impl == "transformer_engine"
+        assert config.model.cuda_graph_scope == ["mamba"]
+        assert config.model.cuda_graph_warmup_steps == 3
         assert config.model.use_te_rng_tracker is True
 
-        assert config.model.recompute_granularity == "full"
-        assert config.model.recompute_modules is None
-        assert config.model.recompute_method == "uniform"
-        assert config.model.recompute_num_layers == 1
+        assert config.model.recompute_granularity == "selective"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn", "mlp"]
+        assert config.model.recompute_method is None
+        assert config.model.recompute_num_layers is None
 
     def test_pretrain_config_moe_settings(self):
         config = nemotron_3_5_nano_pretrain_config()
@@ -144,6 +144,9 @@ class TestNemotron35NanoPretrain:
         assert config.optimizer.weight_decay == 0.1
         assert config.optimizer.adam_beta1 == 0.9
         assert config.optimizer.adam_beta2 == 0.95
+        assert config.optimizer.optimizer_cpu_offload is True
+        assert config.optimizer.optimizer_offload_fraction == 0.25
+        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is True
         assert config.scheduler.lr_warmup_iters == 40
         assert config.scheduler.lr_decay_iters == 100
         assert config.scheduler.lr_decay_style == "cosine"
@@ -182,6 +185,9 @@ class TestNemotron35NanoPretrain:
         assert config.model.recompute_modules is None
         assert config.model.recompute_method is None
         assert config.model.recompute_num_layers is None
+        assert config.optimizer.optimizer_cpu_offload is False
+        assert config.optimizer.optimizer_offload_fraction == 0.0
+        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
         assert config.checkpoint.async_save is False
         assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
         assert config.env_vars["USE_MNNVL"] == 1

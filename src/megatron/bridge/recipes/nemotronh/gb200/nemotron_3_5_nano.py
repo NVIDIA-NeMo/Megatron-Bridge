@@ -43,6 +43,10 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
 
+    cfg.optimizer.optimizer_cpu_offload = False
+    cfg.optimizer.optimizer_offload_fraction = 0.0
+    cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
+
     cfg.env_vars = {
         **cfg.env_vars,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,

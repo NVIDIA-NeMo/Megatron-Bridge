@@ -37,9 +37,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     This recipe follows the model-card convergence contract: 100 steps at
     sequence length 4096 and global batch size 1024 with natural MoE routing.
-    The H100-specific execution policy uses micro batch size 1, eager execution,
-    and full per-layer activation recompute for safe checkpoint resume on 80GB
-    GPUs.
+    The H100-specific execution policy uses micro batch size 1, a Mamba-only
+    CUDA graph scope, selective activation recompute, and 25% optimizer-state
+    CPU offload for safe checkpoint resume on 80GB GPUs.
 
     Returns:
         ConfigContainer: Pre-training configuration for Nemotron 3.5 Nano.
@@ -96,18 +96,16 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # Transformer Engine (TE)
     cfg.model.transformer_impl = "transformer_engine"
 
-    # CUDA Graph — current MCore requires full recompute to run without scoped
-    # Transformer Engine graphs. The perf recipe restores its measured Mamba scope.
-    cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = []
-    cfg.model.cuda_graph_warmup_steps = 0
+    # CUDA Graph — MTP needs the Mamba-only scope to bound graph-private pools on 80GB H100
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["mamba"]
+    cfg.model.cuda_graph_warmup_steps = 3
 
-    # Activation Recompute — full per-layer recompute retains safe headroom after
-    # distributed optimizer and RNG state are restored from a checkpoint.
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_modules = None
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    # Activation Recompute — cover the memory-intensive Transformer submodules.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "mlp"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # Kernel Selections
     cfg.model.attention_backend = "fused"
@@ -132,6 +130,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
     cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.optimizer_cpu_offload = True
+    cfg.optimizer.optimizer_offload_fraction = 0.25
+    cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = True
     cfg.scheduler.lr_warmup_iters = 40
     cfg.scheduler.lr_decay_iters = 100
     cfg.scheduler.lr_decay_style = "cosine"
