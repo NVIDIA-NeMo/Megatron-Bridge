@@ -110,6 +110,7 @@ class TestMegatronMIMOCollateFn:
         # Vision should only have 1 item (from first sample)
         if "vision" in result["modality_inputs"]:
             assert result["modality_inputs"]["vision"]["pixel_values"].shape[0] == 1
+        torch.testing.assert_close(result["_mimo_sample_indices"]["vision"], torch.tensor([0]))
 
     def test_multiple_tensors_per_modality(self):
         """Test modality with multiple tensor outputs."""

@@ -10,6 +10,8 @@ import torch
 import torch.distributed as dist
 from megatron.core.models.mimo.config.role import MIMO_LANGUAGE_MODULE_KEY
 
+from megatron.bridge.data.megatron_mimo.collate import _MIMO_SAMPLE_INDICES_KEY
+
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
@@ -71,7 +73,6 @@ def _slice_patch_packed_visual_dict(value: Dict[str, Any], dp_rank: int, dp_size
     slices remain sample-aligned instead of only image-aligned.
     """
     g = value["grid_thw"]  # [num_images, 3]
-    hs = value["hidden_states"]  # [sum(patches), feat]
     n_images = int(g.size(0))
     if n_images % dp_size != 0:
         raise ValueError(
@@ -82,6 +83,19 @@ def _slice_patch_packed_visual_dict(value: Dict[str, Any], dp_rank: int, dp_size
     imgs_per_shard = n_images // dp_size
     img_lo = dp_rank * imgs_per_shard
     img_hi = img_lo + imgs_per_shard
+
+    return _slice_patch_packed_visual_dict_by_image_range(value, img_lo, img_hi)
+
+
+def _slice_patch_packed_visual_dict_by_image_range(
+    value: Dict[str, Any],
+    img_lo: int,
+    img_hi: int,
+) -> Dict[str, Any]:
+    """Slice patch-packed inputs over a contiguous range of image rows."""
+    g = value["grid_thw"]
+    hs = value["hidden_states"]
+    n_images = int(g.size(0))
 
     patches_per_image = g.prod(dim=-1).to(torch.long)  # [num_images]
     total_patches = int(patches_per_image.sum().item())
@@ -107,6 +121,47 @@ def _slice_patch_packed_visual_dict(value: Dict[str, Any], dp_rank: int, dp_size
             # outer slicer's "non-divisible list" branch.
             out[key] = sub_value
     return out
+
+
+def _slice_sparse_modality_value(
+    value: Any,
+    selected: torch.Tensor,
+    *,
+    modality_name: str,
+) -> Any:
+    """Select the compacted modality rows owned by one sample DP shard."""
+    num_present_samples = int(selected.numel())
+    if _is_patch_packed_visual_dict(value):
+        num_images = int(value["grid_thw"].size(0))
+        if num_images != num_present_samples:
+            raise ValueError(
+                f"Sparse modality '{modality_name}' has {num_present_samples} present samples "
+                f"but {num_images} patch-packed images. Per-sample image counts are required "
+                "to preserve DP ownership for multi-image sparse batches."
+            )
+        selected_images = selected.nonzero(as_tuple=True)[0]
+        if selected_images.numel() == 0:
+            return _slice_patch_packed_visual_dict_by_image_range(value, 0, 0)
+        img_lo = int(selected_images[0].item())
+        img_hi = int(selected_images[-1].item()) + 1
+        if selected_images.numel() != img_hi - img_lo:
+            raise ValueError(f"Sparse modality '{modality_name}' must have contiguous sample ownership per DP shard.")
+        return _slice_patch_packed_visual_dict_by_image_range(value, img_lo, img_hi)
+    if isinstance(value, torch.Tensor):
+        if value.dim() == 0 or value.size(0) != num_present_samples:
+            raise ValueError(
+                f"Sparse modality '{modality_name}' tensor has leading size "
+                f"{value.size(0) if value.dim() > 0 else 'scalar'}, expected {num_present_samples}."
+            )
+        return value[selected]
+    if isinstance(value, dict):
+        return {
+            key: _slice_sparse_modality_value(sub_value, selected, modality_name=modality_name)
+            for key, sub_value in value.items()
+        }
+    if isinstance(value, list) and len(value) == num_present_samples:
+        return [item for item, keep in zip(value, selected.tolist()) if keep]
+    return value
 
 
 def _find_rank_module(
@@ -234,11 +289,35 @@ def slice_batch_for_megatron_mimo(
         >>> local_batch = slice_batch_for_megatron_mimo(global_batch, dp_rank=1, dp_size=3)
         >>> local_batch['tokens'].shape  # torch.Size([4, 2048])
     """
-    if dp_size == 1:
+    modality_sample_indices = batch.get(_MIMO_SAMPLE_INDICES_KEY)
+    if dp_size == 1 and modality_sample_indices is None:
         return batch
 
-    sliced = {}
+    global_batch_size: int | None = None
+    for key in ("input_ids", "labels", "loss_mask"):
+        value = batch.get(key)
+        if isinstance(value, torch.Tensor):
+            global_batch_size = value.size(_batch_dim_for_tensor(key, value))
+            break
+    if modality_sample_indices is not None and global_batch_size is None:
+        raise ValueError("Sparse MegatronMIMO modality inputs require a sample-batched tensor.")
+
+    sample_start = 0
+    sample_end = global_batch_size if global_batch_size is not None else 0
+    if global_batch_size is not None and dp_size > 1:
+        if global_batch_size % dp_size != 0:
+            raise ValueError(
+                f"Batch size {global_batch_size} is not divisible by DP size {dp_size}. "
+                "Ensure micro_batch_size is divisible by every module's data_parallel_size."
+            )
+        local_batch_size = global_batch_size // dp_size
+        sample_start = dp_rank * local_batch_size
+        sample_end = sample_start + local_batch_size
+
+    sliced: Dict[str, Any] = {}
     for key, value in batch.items():
+        if key == _MIMO_SAMPLE_INDICES_KEY:
+            continue
         if isinstance(value, torch.Tensor):
             batch_dim = _batch_dim_for_tensor(key, value)
             batch_size = value.size(batch_dim)
@@ -255,10 +334,29 @@ def slice_batch_for_megatron_mimo(
             index[batch_dim] = builtins.slice(start_idx, end_idx)
             sliced[key] = value[tuple(index)]
         elif isinstance(value, dict):
+            if key == "modality_inputs" and isinstance(modality_sample_indices, dict):
+                local_modalities = {}
+                for modality_name, modality_value in value.items():
+                    sample_indices = modality_sample_indices.get(modality_name)
+                    if not isinstance(sample_indices, torch.Tensor):
+                        local_modalities[modality_name] = slice_batch_for_megatron_mimo(
+                            modality_value,
+                            dp_rank,
+                            dp_size,
+                        )
+                        continue
+                    selected = (sample_indices >= sample_start) & (sample_indices < sample_end)
+                    if selected.any():
+                        local_modalities[modality_name] = _slice_sparse_modality_value(
+                            modality_value,
+                            selected,
+                            modality_name=modality_name,
+                        )
+                sliced[key] = local_modalities
             # Patch-packed visual encoder inputs use dim 0 for different units
             # across fields (patches for hidden_states, images for grid_thw), so
             # they need joint slicing instead of normal recursive tensor slicing.
-            if _is_patch_packed_visual_dict(value):
+            elif _is_patch_packed_visual_dict(value):
                 sliced[key] = _slice_patch_packed_visual_dict(value, dp_rank, dp_size)
             else:
                 # Recurse into nested dicts (e.g. modality_inputs)

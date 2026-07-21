@@ -5,6 +5,7 @@ import pytest
 import torch
 import torch.distributed as dist
 
+from megatron.bridge.data.megatron_mimo.collate import megatron_mimo_collate_fn
 from megatron.bridge.data.megatron_mimo.dp_utils import (
     get_megatron_mimo_dp_info,
     get_megatron_mimo_sampling_info,
@@ -230,6 +231,98 @@ class TestSliceBatchForMegatronMIMO:
         assert sliced["tokens"].shape[0] == 2
         assert sliced["modality_inputs"]["vision"]["pixel_values"].shape[0] == 2
 
+    def test_preserves_sparse_modality_sample_ownership(self):
+        """Compacted modality inputs must remain with their sample DP shard."""
+
+        def make_sample(sample_id: int, *, has_vision: bool) -> dict:
+            input_ids = torch.tensor([sample_id, sample_id])
+            modalities = {}
+            if has_vision:
+                modalities = {"vision": {"pixel_values": torch.full((1,), sample_id)}}
+            return {
+                "input_ids": input_ids,
+                "labels": input_ids.clone(),
+                "loss_mask": torch.ones(2),
+                "attention_mask": torch.ones(2),
+                "position_ids": torch.arange(2),
+                "modality_inputs": modalities,
+            }
+
+        batch = megatron_mimo_collate_fn(
+            [
+                make_sample(0, has_vision=False),
+                make_sample(1, has_vision=False),
+                make_sample(2, has_vision=True),
+                make_sample(3, has_vision=True),
+            ],
+            modality_names=["vision"],
+        )
+
+        text_only_shard = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
+        vision_shard = slice_batch_for_megatron_mimo(batch, dp_rank=1, dp_size=2)
+
+        assert text_only_shard["modality_inputs"] == {}
+        torch.testing.assert_close(
+            vision_shard["modality_inputs"]["vision"]["pixel_values"],
+            torch.tensor([[2], [3]]),
+        )
+
+    def test_preserves_sparse_ownership_after_encoder_adapter_nesting(self):
+        batch = {
+            "input_ids": torch.arange(8).reshape(4, 2),
+            "labels": torch.arange(8).reshape(4, 2),
+            "loss_mask": torch.ones(4, 2),
+            "modality_inputs": {"vision": {"clip": {"x": torch.tensor([[1], [3]])}}},
+            "_mimo_sample_indices": {"vision": torch.tensor([1, 3])},
+        }
+
+        shard_0 = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
+        shard_1 = slice_batch_for_megatron_mimo(batch, dp_rank=1, dp_size=2)
+
+        torch.testing.assert_close(shard_0["modality_inputs"]["vision"]["clip"]["x"], torch.tensor([[1]]))
+        torch.testing.assert_close(shard_1["modality_inputs"]["vision"]["clip"]["x"], torch.tensor([[3]]))
+
+    def test_sparse_metadata_keeps_dense_patch_packed_slicing(self):
+        grids = torch.tensor([(1, 2, 2), (1, 3, 3), (1, 4, 4), (1, 5, 5)])
+        patches_per_image = grids.prod(dim=-1)
+        hidden_states = torch.cat(
+            [torch.full((int(num_patches), 1), image_idx) for image_idx, num_patches in enumerate(patches_per_image)]
+        )
+        batch = {
+            "input_ids": torch.arange(8).reshape(4, 2),
+            "labels": torch.arange(8).reshape(4, 2),
+            "loss_mask": torch.ones(4, 2),
+            "modality_inputs": {
+                "images": {"encoder": {"hidden_states": hidden_states, "grid_thw": grids}},
+                "audio": {"encoder": {"x": torch.tensor([[1], [3]])}},
+            },
+            "_mimo_sample_indices": {"audio": torch.tensor([1, 3])},
+        }
+
+        shard_1 = slice_batch_for_megatron_mimo(batch, dp_rank=1, dp_size=2)
+
+        vision = shard_1["modality_inputs"]["images"]["encoder"]
+        assert set(vision["hidden_states"].unique().tolist()) == {2, 3}
+        torch.testing.assert_close(vision["grid_thw"], grids[2:])
+        torch.testing.assert_close(
+            shard_1["modality_inputs"]["audio"]["encoder"]["x"],
+            torch.tensor([[3]]),
+        )
+
+    def test_dp_size_one_removes_sparse_ownership_metadata(self):
+        batch = {
+            "input_ids": torch.arange(4).reshape(2, 2),
+            "labels": torch.arange(4).reshape(2, 2),
+            "loss_mask": torch.ones(2, 2),
+            "modality_inputs": {"vision": {"pixel_values": torch.tensor([[1]])}},
+            "_mimo_sample_indices": {"vision": torch.tensor([1])},
+        }
+
+        sliced = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=1)
+
+        assert "_mimo_sample_indices" not in sliced
+        torch.testing.assert_close(sliced["modality_inputs"]["vision"]["pixel_values"], torch.tensor([[1]]))
+
     def test_preserves_non_tensor_values(self):
         batch = {
             "tokens": torch.randn(4, 10),
@@ -345,6 +438,27 @@ class TestPatchPackedVisualSlice:
         # And each rank's patch rows correspond to its assigned images.
         assert set(e0["hidden_states"].unique().tolist()) == {0.0, 1.0}
         assert set(e1["hidden_states"].unique().tolist()) == {2.0, 3.0}
+
+    def test_sparse_patch_packed_inputs_follow_sample_ownership(self):
+        batch = self._make_batch([(1, 2, 2), (1, 3, 3)])
+        batch.update(
+            {
+                "input_ids": torch.arange(8).reshape(4, 2),
+                "labels": torch.arange(8).reshape(4, 2),
+                "loss_mask": torch.ones(4, 2),
+                "_mimo_sample_indices": {"images": torch.tensor([1, 3])},
+            }
+        )
+
+        shard_0 = slice_batch_for_megatron_mimo(batch, dp_rank=0, dp_size=2)
+        shard_1 = slice_batch_for_megatron_mimo(batch, dp_rank=1, dp_size=2)
+
+        encoder_0 = shard_0["modality_inputs"]["images"]["vision_encoder"]
+        encoder_1 = shard_1["modality_inputs"]["images"]["vision_encoder"]
+        torch.testing.assert_close(encoder_0["grid_thw"], torch.tensor([[1, 2, 2]]))
+        torch.testing.assert_close(encoder_1["grid_thw"], torch.tensor([[1, 3, 3]]))
+        assert encoder_0["hidden_states"].unique().tolist() == [0.0]
+        assert encoder_1["hidden_states"].unique().tolist() == [1.0]
 
     def test_dp4_with_variable_grids(self):
         """4-way joint slice across 4 variable-size images."""

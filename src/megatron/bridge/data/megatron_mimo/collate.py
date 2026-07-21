@@ -9,6 +9,9 @@ from typing import Any, Dict, List
 import torch
 
 
+_MIMO_SAMPLE_INDICES_KEY = "_mimo_sample_indices"
+
+
 def megatron_mimo_collate_fn(
     batch: List[Dict[str, Any]],
     modality_names: List[str],
@@ -65,6 +68,7 @@ def megatron_mimo_collate_fn(
 
     # Collate modality inputs
     modality_inputs: Dict[str, Dict[str, Any]] = {}
+    modality_sample_indices: Dict[str, torch.Tensor] = {}
 
     for modality_name in modality_names:
         # Collect all tensors for this modality across the batch
@@ -75,12 +79,15 @@ def megatron_mimo_collate_fn(
             continue
 
         # Get all keys from the first non-empty item
-        first_non_empty = next((item for item in modality_batch_items if item), {})
+        first_non_empty: Dict[str, Any] = next((item for item in modality_batch_items if item), {})
 
         if not first_non_empty:
             continue
 
         modality_inputs[modality_name] = {}
+        present_sample_indices = [sample_idx for sample_idx, item in enumerate(modality_batch_items) if item]
+        if len(present_sample_indices) != len(batch):
+            modality_sample_indices[modality_name] = torch.tensor(present_sample_indices, dtype=torch.long)
 
         for key in first_non_empty.keys():
             values = []
@@ -110,7 +117,7 @@ def megatron_mimo_collate_fn(
                 # Keep non-tensor values as list
                 modality_inputs[modality_name][key] = values
 
-    return {
+    collated = {
         "input_ids": input_ids,
         "labels": labels,
         "loss_mask": loss_mask,
@@ -118,3 +125,6 @@ def megatron_mimo_collate_fn(
         "position_ids": position_ids,
         "modality_inputs": modality_inputs,
     }
+    if modality_sample_indices:
+        collated[_MIMO_SAMPLE_INDICES_KEY] = modality_sample_indices
+    return collated
