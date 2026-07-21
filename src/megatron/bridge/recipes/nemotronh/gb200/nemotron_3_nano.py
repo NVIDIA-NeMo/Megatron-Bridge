@@ -41,6 +41,10 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).to_megatron_provider(load_weights=False)
+    # Pretraining may use a tokenizer other than the HF checkpoint tokenizer.
+    # Defer the model vocabulary size to the runtime tokenizer, matching the
+    # pre-migration MambaModelProvider recipe behavior.
+    cfg.model.vocab_size = None
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MODEL_ID
 
     cfg.model.seq_length = 4096

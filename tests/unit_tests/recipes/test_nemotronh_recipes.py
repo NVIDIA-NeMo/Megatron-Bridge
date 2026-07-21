@@ -139,6 +139,13 @@ def test_nemotronh_recipe_rejects_unknown_cli_override():
     assert not hasattr(cfg.model, "not_a_real_field")
 
 
+def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
+    """The GB200 pretraining model vocabulary must follow its runtime tokenizer."""
+    cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+
+    assert cfg.model.vocab_size is None
+
+
 def test_nemotron_nano_9b_v2_lora_defaults():
     """Test that Nemotron Nano 9B v2 LoRA has correct default parallelism."""
     from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_peft_config
