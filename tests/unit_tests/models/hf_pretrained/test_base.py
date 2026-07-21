@@ -20,6 +20,7 @@ import tempfile
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
 from transformers.configuration_utils import PretrainedConfig
 
 
@@ -272,6 +273,42 @@ def test_save_artifacts_without_model_name_or_path():
         base.save_artifacts(target_dir)
 
         print("✅ test_save_artifacts_without_model_name_or_path passed")
+
+
+def test_save_artifacts_preserves_rejected_source_generation_config():
+    """Test invalid-but-loadable source generation metadata is preserved verbatim."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+        source_generation_config = '{"do_sample": false, "temperature": 0.000001}\n'
+        (source_dir / "generation_config.json").write_text(source_generation_config)
+        target_dir = tmp_path / "target"
+
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+        base._config = Mock(save_pretrained=Mock())
+        base._generation_config = Mock()
+        base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+        base.save_artifacts(target_dir)
+
+        assert (target_dir / "generation_config.json").read_text() == source_generation_config
+
+
+def test_save_artifacts_reraises_generation_config_error_without_source_file():
+    """Test generation config save errors are not hidden without a source artifact."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        tmp_path = Path(tmp_dir)
+        source_dir = tmp_path / "source"
+        source_dir.mkdir()
+
+        base = MockPreTrainedBase(model_name_or_path=str(source_dir))
+        base._config = Mock(save_pretrained=Mock())
+        base._generation_config = Mock()
+        base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+        with pytest.raises(ValueError, match="invalid generation config"):
+            base.save_artifacts(tmp_path / "target")
 
 
 def test_copy_handles_permission_errors():
