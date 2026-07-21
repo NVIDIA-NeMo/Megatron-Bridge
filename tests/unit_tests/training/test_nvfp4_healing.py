@@ -169,6 +169,34 @@ class TestHealingRecipeConstruction:
         assert isinstance(recipe, MXFP8BlockScaling)
 
 
+class TestCudaGraphReset:
+    def test_resets_graph_and_result_state(self, monkeypatch):
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+        monkeypatch.setattr(FullCudaGraphWrapper, "cuda_graph", {"training": "g", "validation": "g"}, raising=False)
+        monkeypatch.setattr(FullCudaGraphWrapper, "result", {"training": "r", "validation": "r"}, raising=False)
+        monkeypatch.setattr(FullCudaGraphWrapper, "curr_iteration", {"training": 5, "validation": 4}, raising=False)
+
+        cb = NVFP4HealingCallback(make_config())
+        cb._reset_cuda_graphs()
+
+        assert FullCudaGraphWrapper.cuda_graph == {"training": None, "validation": None}
+        assert FullCudaGraphWrapper.result == {"training": None, "validation": None}
+        assert FullCudaGraphWrapper.curr_iteration == {"training": 5, "validation": 4}
+
+    def test_reset_warmup_counters_when_configured(self, monkeypatch):
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+        monkeypatch.setattr(FullCudaGraphWrapper, "cuda_graph", {"training": "g", "validation": "g"}, raising=False)
+        monkeypatch.setattr(FullCudaGraphWrapper, "result", {"training": "r", "validation": "r"}, raising=False)
+        monkeypatch.setattr(FullCudaGraphWrapper, "curr_iteration", {"training": 5, "validation": 4}, raising=False)
+
+        cb = NVFP4HealingCallback(make_config(reset_cuda_graph_warmup=True))
+        cb._reset_cuda_graphs()
+
+        assert FullCudaGraphWrapper.curr_iteration == {"training": 0, "validation": 0}
+
+
 class TestHookRegistration:
     def test_registers_expected_hooks(self):
         manager = CallbackManager()

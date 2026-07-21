@@ -226,5 +226,21 @@ class NVFP4HealingCallback(Callback):
         fp4_utils.get_fp4_recipe = self._original_get_fp4_recipe
         self._patched = False
 
+    def _reset_cuda_graphs(self) -> None:
+        """Clear captured full-iteration CUDA graphs so they re-capture with the new recipe."""
+        if torch.distributed.is_initialized():
+            torch.distributed.barrier()
+        try:
+            from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+        except ImportError:
+            return
+        if not hasattr(FullCudaGraphWrapper, "cuda_graph"):
+            return
+        for stage in ("training", "validation"):
+            FullCudaGraphWrapper.cuda_graph[stage] = None
+            FullCudaGraphWrapper.result[stage] = None
+            if self.config.reset_cuda_graph_warmup:
+                FullCudaGraphWrapper.curr_iteration[stage] = 0
+
     def _pre_quantize(self, model: list[torch.nn.Module]) -> None:
         raise NotImplementedError  # implemented in a later task
