@@ -53,7 +53,7 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
-from tests.unit_tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 def _config(**kwargs):

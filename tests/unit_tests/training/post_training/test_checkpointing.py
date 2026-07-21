@@ -30,7 +30,7 @@ from megatron.bridge.training.post_training.checkpointing import (
     load_modelopt_state,
 )
 from megatron.bridge.training.state import TrainState
-from tests.unit_tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 @pytest.fixture

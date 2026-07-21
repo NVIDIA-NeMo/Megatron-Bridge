@@ -30,6 +30,7 @@ from megatron.bridge.recipes.gemma4_vl.gemma4_vl import (
     gemma4_vl_26b_sft_config,
 )
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_recipe_test
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 # Shared model overrides: trim the 26B-A4B architecture down to fit on 2 GPUs.
@@ -69,6 +70,10 @@ GEMMA4_VL_PEFT_RECIPES = [
 class TestGemma4VLRecipes:
     """Functional smoke tests for Gemma 4 VL recipe configurations."""
 
+    # Skipped only on the unreleased Megatron-Core dev ref: the dev TransformerLayer
+    # passes input_ids into _forward_mlp, which Gemma4's override does not yet accept.
+    # Stays active on main. TODO: realign Gemma4TransformerLayer._forward_mlp.
+    @pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="Broken by the Megatron-Core dev ref; realignment pending.")
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("config_func,recipe_name,model_overrides", GEMMA4_VL_FINETUNE_RECIPES)
     def test_gemma4_vl_sft_recipes(self, config_func, recipe_name, model_overrides, tmp_path):

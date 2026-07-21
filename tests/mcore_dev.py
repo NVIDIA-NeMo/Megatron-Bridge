@@ -26,7 +26,7 @@ import subprocess
 from pathlib import Path
 
 
-_REPO_ROOT = Path(__file__).resolve().parents[2]
+_REPO_ROOT = Path(__file__).resolve().parents[1]
 
 
 def _read_commit_file(name: str) -> str:
