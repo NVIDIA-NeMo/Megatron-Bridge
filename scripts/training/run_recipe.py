@@ -15,7 +15,7 @@
 """Run a Megatron Bridge recipe in an existing distributed environment.
 
 Select either a model name with --model or a complete recipe function with
---recipe. The launcher discovers complete functional and performance recipes
+--recipe. The launcher discovers complete library and benchmark recipes
 by their exported function name. It accepts one training mode, a direct dataset
 name, runner controls, common convenience arguments, and trailing KEY=VALUE
 ConfigContainer overrides. Slurm resources, containers, mounts, and environment
@@ -81,11 +81,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from performance_recipe import (  # noqa: E402
-    PerformanceRecipeMetadata,
-    performance_recipe_step,
-    resolved_performance_recipe_metadata,
-    validate_performance_recipe_scope,
+from recipe_metadata import (  # noqa: E402
+    BenchmarkRecipeMetadata,
+    infer_recipe_mode,
+    recipe_step,
+    recipe_steps_match,
+    recipe_task,
+    resolved_benchmark_recipe_metadata,
+    validate_benchmark_recipe_scope,
 )
 from recipe_runner import (  # noqa: E402
     apply_cli_overrides,
@@ -161,7 +164,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--step-func",
         "--step_func",
         dest="step_func",
-        help="Forward-step registry name; defaults to llm_step or the selected performance recipe's modality step.",
+        help="Forward-step registry name; defaults to the selected recipe's registered modality step.",
     )
 
     data = parser.add_argument_group("Data")
@@ -272,46 +275,18 @@ def _train_mode(mode: PublicMode) -> TrainMode:
     return "pretrain" if mode == "pretrain" else "finetune"
 
 
-def _recipe_task(mode: PublicMode) -> str:
-    """Map the public mode to a library recipe suffix."""
-    return "peft" if mode in {"lora", "dora"} else mode
-
-
-def _infer_recipe_mode(recipe_name: str) -> PublicMode | None:
-    """Infer a public mode from a conventional library recipe name."""
-    name = f"_{recipe_name.lower().strip('_')}_"
-    if "_pretrain_" in name:
-        return "pretrain"
-    if "_sft_" in name or "_finetune_" in name:
-        return "sft"
-    if "_dora_" in name:
-        return "dora"
-    if "_peft_" in name or "_lora_" in name:
-        return "lora"
-    return None
-
-
 def _infer_mode(args: argparse.Namespace) -> None:
     """Infer an omitted training mode from a conventional recipe name."""
     if args.mode is None and args.recipe:
-        args.mode = _infer_recipe_mode(args.recipe)
+        args.mode = infer_recipe_mode(args.recipe)
     if args.mode is None:
         raise ValueError("Unable to infer training mode; pass --mode or use a conventional --recipe name.")
 
 
 def _validate_recipe_mode(recipe_name: str, mode: PublicMode) -> None:
     """Reject a conventional full recipe name that contradicts ``--mode``."""
-    name = f"_{recipe_name.lower().strip('_')}_"
-    recipe_mode: str | None = None
-    if "_pretrain_" in name:
-        recipe_mode = "pretrain"
-    elif "_sft_" in name or "_finetune_" in name:
-        recipe_mode = "sft"
-    elif any(marker in name for marker in ("_peft_", "_lora_", "_dora_")):
-        recipe_mode = "peft"
-
-    expected = _recipe_task(mode)
-    if recipe_mode is not None and recipe_mode != expected:
+    recipe_mode = infer_recipe_mode(recipe_name)
+    if recipe_mode is not None and recipe_task(recipe_mode) != recipe_task(mode):
         raise ValueError(f"Mode '{mode}' is incompatible with recipe '{recipe_name}'.")
 
 
@@ -328,26 +303,26 @@ def _current_world_size() -> int | None:
     return None
 
 
-def _validate_performance_world_size(metadata: PerformanceRecipeMetadata, *, dryrun: bool) -> None:
+def _validate_benchmark_world_size(metadata: BenchmarkRecipeMetadata, *, dryrun: bool) -> None:
     """Require the recipe's total GPU count for an executable run."""
     if dryrun:
         return
     world_size = _current_world_size()
     if world_size is None:
         raise ValueError(
-            "Performance recipes require an existing distributed environment with the world size set by torchrun "
+            "Benchmark recipes require an existing distributed environment with the world size set by torchrun "
             "or Slurm."
         )
     if world_size != metadata.num_gpus:
         raise ValueError(
-            f"Performance recipe requires exactly {metadata.num_gpus} GPUs, but the distributed world size is "
+            f"Benchmark recipe requires exactly {metadata.num_gpus} GPUs, but the distributed world size is "
             f"{world_size}. Select a recipe matching the allocation."
         )
 
 
-def _apply_performance_runtime_defaults(
+def _apply_benchmark_runtime_defaults(
     recipe: ConfigContainer,
-    metadata: PerformanceRecipeMetadata,
+    metadata: BenchmarkRecipeMetadata,
     cli_overrides: list[str],
 ) -> ConfigContainer:
     """Preserve flat-runner defaults that are not yet encoded in the recipe factory."""
@@ -365,12 +340,12 @@ def _apply_performance_runtime_defaults(
     return recipe
 
 
-def _apply_performance_dataset_defaults(
+def _apply_benchmark_dataset_defaults(
     recipe: ConfigContainer,
-    metadata: PerformanceRecipeMetadata,
+    metadata: BenchmarkRecipeMetadata,
 ) -> ConfigContainer:
     """Preserve the flat runner's mock-data default for text finetuning benchmarks."""
-    if metadata.task in {"sft", "peft"} and performance_recipe_step(metadata) == "gpt_step":
+    if metadata.task in {"sft", "peft"} and recipe_steps_match(recipe_step(metadata.recipe_name), "llm_step"):
         source_dataset = getattr(recipe, "dataset", None)
         mock_dataset = build_dataset_config(recipe, "mock")
         for field_name in ("num_workers", "pin_memory", "persistent_workers"):
@@ -386,10 +361,15 @@ def _apply_performance_dataset_defaults(
     return recipe
 
 
+def _selected_recipe_name(args: argparse.Namespace) -> str:
+    """Return the complete recipe function name selected by public arguments."""
+    return args.recipe or f"{args.model}_{recipe_task(args.mode)}_config"
+
+
 def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
     """Load the requested recipe by its complete name or model-derived library name."""
     peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
-    recipe_name = args.recipe or f"{args.model}_{_recipe_task(args.mode)}_config"
+    recipe_name = _selected_recipe_name(args)
     if args.recipe:
         _validate_recipe_mode(recipe_name, args.mode)
     return load_recipe(recipe_name, peft_scheme=peft_scheme)
@@ -418,38 +398,39 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 
 
 def main(argv: list[str] | None = None) -> None:
-    """Load, configure, and execute one library or performance recipe."""
+    """Load, configure, and execute one library or benchmark recipe."""
     logging.basicConfig(level=logging.INFO)
     args, cli_overrides = parse_args(argv)
 
-    metadata = resolved_performance_recipe_metadata(args.recipe) if args.recipe is not None else None
-    if metadata is not None:
-        validate_performance_recipe_scope(
-            metadata,
+    recipe_name = _selected_recipe_name(args)
+    benchmark_metadata = resolved_benchmark_recipe_metadata(recipe_name)
+    if benchmark_metadata is not None:
+        validate_benchmark_recipe_scope(
+            benchmark_metadata,
             mode=args.mode,
             step_func=args.step_func,
             dataset=args.dataset,
         )
 
     recipe = _load_selected_recipe(args)
-    if metadata is not None:
-        recipe = _apply_performance_dataset_defaults(recipe, metadata)
+    if benchmark_metadata is not None:
+        recipe = _apply_benchmark_dataset_defaults(recipe, benchmark_metadata)
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
-    if metadata is not None:
-        recipe = _apply_performance_runtime_defaults(recipe, metadata, cli_overrides)
+    if benchmark_metadata is not None:
+        recipe = _apply_benchmark_runtime_defaults(recipe, benchmark_metadata, cli_overrides)
     configuration_mode = _train_mode(args.mode)
 
-    if metadata is not None:
-        _validate_performance_world_size(metadata, dryrun=args.dryrun)
+    if benchmark_metadata is not None:
+        _validate_benchmark_world_size(benchmark_metadata, dryrun=args.dryrun)
         recipe = bootstrap_recipe_environment(
             recipe,
             script_path=str(Path(__file__).resolve()),
             argv=list(argv) if argv is not None else sys.argv[1:],
         )
         execution_mode = "pretrain"
-        step_mode = metadata.task
+        step_mode = benchmark_metadata.task
     else:
         recipe = apply_runtime_environment(recipe)
         execution_mode = configuration_mode
@@ -459,14 +440,14 @@ def main(argv: list[str] | None = None) -> None:
     recipe = sync_offline_packing_alignment(recipe)
     recipe = sync_model_dataset_sequence_length(recipe)
 
-    step_func_name = args.step_func or (performance_recipe_step(metadata) if metadata is not None else "llm_step")
+    step_func_name = args.step_func or recipe_step(recipe_name)
     forward_step = load_forward_step(step_func_name, mode=step_mode)
     run_config(
         config=recipe,
         mode=execution_mode,
         step_func=forward_step,
         dryrun=args.dryrun,
-        dryrun_world_size=metadata.num_gpus if metadata is not None else None,
+        dryrun_world_size=benchmark_metadata.num_gpus if benchmark_metadata is not None else None,
         dump_environment=args.dump_env,
     )
 

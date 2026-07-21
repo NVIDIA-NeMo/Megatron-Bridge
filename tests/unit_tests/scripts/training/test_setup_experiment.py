@@ -80,7 +80,7 @@ def test_parser_forwards_training_selection_and_overrides():
     ]
 
 
-def test_parser_forwards_and_auto_detects_performance_recipe():
+def test_parser_forwards_and_auto_detects_benchmark_recipe():
     module = _load_setup_experiment_module()
 
     args, training_args = module.parse_args(
@@ -101,22 +101,22 @@ def test_parser_forwards_and_auto_detects_performance_recipe():
         "--mode",
         "pretrain",
     ]
-    metadata = module.selected_performance_recipe(training_args)
+    metadata = module.selected_benchmark_recipe(training_args)
     assert metadata is not None
     assert metadata.num_gpus == 16
     assert metadata.family == "qwen"
     assert metadata.hardware == "h100"
 
 
-def test_library_resolved_recipe_does_not_enable_performance_executor():
+def test_library_resolved_recipe_does_not_enable_benchmark_executor():
     module = _load_setup_experiment_module()
     recipe_name = "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config"
     _, training_args = module.parse_args(["--recipe", recipe_name])
 
-    assert module.selected_performance_recipe(training_args) is None
+    assert module.selected_benchmark_recipe(training_args) is None
 
 
-def test_performance_recipe_validates_total_submission_size():
+def test_benchmark_recipe_validates_total_submission_size():
     module = _load_setup_experiment_module()
     args, training_args = module.parse_args(
         [
@@ -136,10 +136,10 @@ def test_performance_recipe_validates_total_submission_size():
     )
 
     with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
-        module._validate_args(args, module.selected_performance_recipe(training_args))
+        module._validate_args(args, module.selected_benchmark_recipe(training_args))
 
 
-def test_performance_recipe_accepts_user_selected_node_shape():
+def test_benchmark_recipe_accepts_user_selected_node_shape():
     module = _load_setup_experiment_module()
     args, training_args = module.parse_args(
         [
@@ -158,7 +158,7 @@ def test_performance_recipe_accepts_user_selected_node_shape():
         ]
     )
 
-    module._validate_args(args, module.selected_performance_recipe(training_args))
+    module._validate_args(args, module.selected_benchmark_recipe(training_args))
 
 
 @pytest.mark.parametrize(
@@ -170,30 +170,30 @@ def test_performance_recipe_accepts_user_selected_node_shape():
         "wan_14b_pretrain_16gpu_gb200_bf16_config",
     ],
 )
-def test_all_performance_tasks_and_modalities_are_accepted_before_submission(recipe_name):
+def test_all_benchmark_tasks_and_modalities_are_accepted_before_submission(recipe_name):
     module = _load_setup_experiment_module()
     training_args = ["--recipe", recipe_name]
-    metadata = module.selected_performance_recipe(training_args)
+    metadata = module.selected_benchmark_recipe(training_args)
 
     assert metadata is not None
-    module.validate_selected_performance_recipe(training_args, metadata)
+    module.validate_selected_benchmark_recipe(training_args, metadata)
 
 
 @pytest.mark.parametrize(
     ("mode", "message"),
     [
-        ("peft", "Unsupported performance mode 'peft'"),
+        ("peft", "Unsupported benchmark mode 'peft'"),
         ("dora", "fixed LoRA configs"),
     ],
 )
-def test_invalid_performance_peft_mode_is_rejected_before_submission(mode, message):
+def test_invalid_benchmark_peft_mode_is_rejected_before_submission(mode, message):
     module = _load_setup_experiment_module()
     training_args = ["--recipe", "llama3_70b_peft_8gpu_h100_bf16_config", "--mode", mode]
-    metadata = module.selected_performance_recipe(training_args)
+    metadata = module.selected_benchmark_recipe(training_args)
 
     assert metadata is not None
     with pytest.raises(ValueError, match=message):
-        module.validate_selected_performance_recipe(training_args, metadata)
+        module.validate_selected_benchmark_recipe(training_args, metadata)
 
 
 def test_parser_consumes_repeatable_srun_args():
@@ -331,7 +331,7 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.srun_args == []
 
 
-def test_performance_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monkeypatch):
+def test_benchmark_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monkeypatch):
     module = _load_setup_experiment_module()
 
     class _SlurmExecutor:
@@ -359,7 +359,7 @@ def test_performance_slurm_executor_uses_the_generic_cluster_policy(tmp_path, mo
             "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config",
         ]
     )
-    metadata = module.selected_performance_recipe(training_args)
+    metadata = module.selected_benchmark_recipe(training_args)
     assert metadata is not None
     module._validate_args(args, metadata)
     task_environment = module._task_environment()
@@ -374,7 +374,7 @@ def test_performance_slurm_executor_uses_the_generic_cluster_policy(tmp_path, mo
     assert set(executor.container_env) == {"PYTHONPATH"}
 
 
-def test_training_task_environment_does_not_inject_performance_offline_defaults():
+def test_training_task_environment_does_not_inject_benchmark_offline_defaults():
     module = _load_setup_experiment_module()
     environment = module._task_environment()
 

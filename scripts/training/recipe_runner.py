@@ -30,11 +30,11 @@ from collections.abc import Callable
 from types import ModuleType
 from typing import cast
 
-from performance_recipe import (
+from recipe_metadata import (
+    BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS,
     LIBRARY_RECIPE_PRECEDENCE_COLLISIONS,
-    PERFORMANCE_RECIPE_PRECEDENCE_COLLISIONS,
-    performance_recipe_family,
-    resolved_performance_recipe_metadata,
+    benchmark_recipe_family,
+    resolved_benchmark_recipe_metadata,
 )
 
 from megatron.bridge.training.config import ConfigContainer, apply_environment_variables
@@ -161,7 +161,7 @@ def _load_with_optional_kwargs(
 
 @functools.lru_cache(maxsize=1)
 def library_recipe_package() -> ModuleType:
-    """Import the functional recipe package only when that source is selected."""
+    """Import the library recipe package only when that source is selected."""
     import megatron.bridge.recipes as recipes
 
     return recipes
@@ -212,10 +212,10 @@ def find_library_recipe(recipe_name: str, *, model_family_name: str | None = Non
     return None
 
 
-def find_performance_recipe(recipe_name: str) -> Callable | None:
-    """Find one flat performance recipe by its exported function name."""
+def find_benchmark_recipe(recipe_name: str) -> Callable | None:
+    """Find one flat benchmark recipe by its exported function name."""
     try:
-        family = performance_recipe_family(recipe_name)
+        family = benchmark_recipe_family(recipe_name)
     except ValueError:
         return None
     module_name = f"megatron.bridge.perf_recipes.{family}"
@@ -228,15 +228,15 @@ def load_recipe(
     peft_scheme: str | None = None,
     seq_length: int | None = None,
 ) -> ConfigContainer:
-    """Load an exact performance recipe when exported, otherwise a library recipe."""
-    if resolved_performance_recipe_metadata(recipe_name) is not None:
-        config_builder = find_performance_recipe(recipe_name)
+    """Load an exact benchmark recipe when exported, otherwise a library recipe."""
+    if resolved_benchmark_recipe_metadata(recipe_name) is not None:
+        config_builder = find_benchmark_recipe(recipe_name)
         package_name = "megatron.bridge.perf_recipes"
-        recipe_kind = "performance"
-        if recipe_name in PERFORMANCE_RECIPE_PRECEDENCE_COLLISIONS:
+        recipe_kind = "benchmark"
+        if recipe_name in BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS:
             logger.warning(
-                "Recipe '%s' is exported by both packages; selecting the performance definition. "
-                "Use the generic library recipe alias for functional training.",
+                "Recipe '%s' is exported by both packages; selecting the benchmark definition. "
+                "Use the corresponding generic alias from megatron.bridge.recipes.",
                 recipe_name,
             )
     else:
@@ -246,7 +246,7 @@ def load_recipe(
         if recipe_name in LIBRARY_RECIPE_PRECEDENCE_COLLISIONS:
             logger.warning(
                 "Recipe '%s' is exported by both packages; selecting the library definition until unified "
-                "performance finetuning is supported.",
+                "benchmark finetuning is supported.",
                 recipe_name,
             )
 

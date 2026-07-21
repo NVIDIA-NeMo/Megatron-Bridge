@@ -31,10 +31,10 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from performance_recipe import (  # noqa: E402
-    PerformanceRecipeMetadata,
-    selected_performance_recipe,
-    validate_selected_performance_recipe,
+from recipe_metadata import (  # noqa: E402
+    BenchmarkRecipeMetadata,
+    selected_benchmark_recipe,
+    validate_selected_benchmark_recipe,
 )
 
 
@@ -44,7 +44,7 @@ CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
 def _build_parser() -> argparse.ArgumentParser:
     """Build the lightweight head-node parser."""
     parser = argparse.ArgumentParser(
-        description="Launch Megatron Bridge library or exact performance recipes through Slurm.",
+        description="Launch Megatron Bridge library or exact benchmark recipes through Slurm.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
         epilog="""
@@ -147,7 +147,7 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(
     args: argparse.Namespace,
-    performance_metadata: PerformanceRecipeMetadata | None = None,
+    benchmark_metadata: BenchmarkRecipeMetadata | None = None,
 ) -> None:
     """Validate launcher requirements before creating an executor."""
     if any(not value.strip() for value in args.srun_args):
@@ -160,11 +160,11 @@ def _validate_args(
         raise ValueError("Slurm execution requires --account and --partition.")
     if not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
-    if performance_metadata is not None:
+    if benchmark_metadata is not None:
         requested_gpus = args.nodes * args.gpus_per_node
-        if requested_gpus != performance_metadata.num_gpus:
+        if requested_gpus != benchmark_metadata.num_gpus:
             raise ValueError(
-                f"Performance recipe requires exactly {performance_metadata.num_gpus} GPUs, but --nodes and "
+                f"Benchmark recipe requires exactly {benchmark_metadata.num_gpus} GPUs, but --nodes and "
                 f"--gpus-per-node request {requested_gpus}."
             )
 
@@ -223,10 +223,10 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
-    performance_metadata = selected_performance_recipe(training_args)
-    if performance_metadata is not None:
-        validate_selected_performance_recipe(training_args, performance_metadata)
-    _validate_args(args, performance_metadata)
+    benchmark_metadata = selected_benchmark_recipe(training_args)
+    if benchmark_metadata is not None:
+        validate_selected_benchmark_recipe(training_args, benchmark_metadata)
+    _validate_args(args, benchmark_metadata)
 
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)

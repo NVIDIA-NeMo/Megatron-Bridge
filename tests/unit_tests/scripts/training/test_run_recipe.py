@@ -224,7 +224,28 @@ def test_full_recipe_uses_library_recipe_and_default_llm_step():
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
+@pytest.mark.parametrize(
+    ("recipe_name", "mode", "step_name"),
+    [
+        ("qwen25_vl_7b_sft_config", "sft", "vlm_step"),
+        ("qwen3_vl_8b_sft_config", "sft", "qwen3_vl_step"),
+        ("qwen2_audio_7b_sft_config", "sft", "audio_lm_step"),
+        ("flux_12b_pretrain_config", "pretrain", "flux_step"),
+    ],
+)
+def test_library_recipe_infers_modality_step(recipe_name, mode, step_name):
+    module, handles = _load_module()
+    handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
+
+    module.main(["--recipe", recipe_name, "--mode", mode])
+
+    handles.recipe_runner.load_forward_step.assert_called_once_with(
+        step_name,
+        mode="pretrain" if mode == "pretrain" else "finetune",
+    )
+
+
+def test_full_recipe_auto_detects_benchmark_recipe(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "16")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
@@ -251,7 +272,7 @@ def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
     bootstrap_call = handles.recipe_runner.bootstrap_recipe_environment.call_args
     assert bootstrap_call.args == (config,)
     assert bootstrap_call.kwargs["script_path"].endswith("scripts/training/run_recipe.py")
-    handles.recipe_runner.load_forward_step.assert_called_once_with("gpt_step", mode="pretrain")
+    handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
     handles.recipe_runner.run_config.assert_called_once_with(
         config=config,
         mode="pretrain",
@@ -271,7 +292,7 @@ def test_full_recipe_auto_detects_performance_recipe(monkeypatch):
         "optimizer={optimizer:adam,use_precision_aware_optimizer:false}",
     ],
 )
-def test_performance_cli_override_wins_over_runtime_default(override):
+def test_benchmark_cli_override_wins_over_runtime_default(override):
     module, handles = _load_module()
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
     handles.recipe_runner.load_recipe.return_value = config
@@ -298,7 +319,7 @@ def test_performance_cli_override_wins_over_runtime_default(override):
     assert config.optimizer.use_precision_aware_optimizer is False
 
 
-def test_performance_optimizer_type_override_recomputes_runtime_default():
+def test_benchmark_optimizer_type_override_recomputes_runtime_default():
     module, handles = _load_module()
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
     handles.recipe_runner.load_recipe.return_value = config
@@ -334,7 +355,7 @@ def test_performance_optimizer_type_override_recomputes_runtime_default():
         ("lora", "peft", 8, "llama3_70b_peft_8gpu_h100_bf16_config"),
     ],
 )
-def test_performance_finetuning_recipes_use_unified_runner(monkeypatch, mode, task, world_size, recipe_name):
+def test_benchmark_finetuning_recipes_use_unified_runner(monkeypatch, mode, task, world_size, recipe_name):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", str(world_size))
     config = SimpleNamespace(
@@ -356,11 +377,11 @@ def test_performance_finetuning_recipes_use_unified_runner(monkeypatch, mode, ta
     assert config.dataset.pin_memory is True
     assert config.dataset.persistent_workers is True
     assert config.dataset.split == "99990,8,2"
-    handles.recipe_runner.load_forward_step.assert_called_once_with("gpt_step", mode=task)
+    handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode=task)
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
-def test_library_only_canonical_name_does_not_enable_performance_runtime():
+def test_library_only_canonical_name_does_not_enable_benchmark_runtime():
     module, handles = _load_module()
     handles.recipe_runner.load_recipe.return_value = SimpleNamespace()
 
@@ -377,7 +398,7 @@ def test_library_only_canonical_name_does_not_enable_performance_runtime():
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
 
 
-def test_performance_dry_run_accepts_config_overrides(monkeypatch):
+def test_benchmark_dry_run_accepts_config_overrides(monkeypatch):
     module, handles = _load_module()
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     monkeypatch.delenv("SLURM_NTASKS", raising=False)
@@ -425,7 +446,7 @@ def test_performance_dry_run_accepts_config_overrides(monkeypatch):
     )
 
 
-def test_performance_recipe_rejects_noncanonical_world_size(monkeypatch):
+def test_benchmark_recipe_rejects_noncanonical_world_size(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "8")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "8")
@@ -446,7 +467,7 @@ def test_performance_recipe_rejects_noncanonical_world_size(monkeypatch):
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
 
 
-def test_performance_recipe_accepts_user_selected_per_node_topology(monkeypatch):
+def test_benchmark_recipe_accepts_user_selected_per_node_topology(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "16")
     monkeypatch.setenv("LOCAL_WORLD_SIZE", "4")
@@ -465,10 +486,10 @@ def test_performance_recipe_accepts_user_selected_per_node_topology(monkeypatch)
     handles.recipe_runner.bootstrap_recipe_environment.assert_called_once()
 
 
-def test_performance_recipe_rejects_incompatible_forward_step():
+def test_benchmark_recipe_rejects_incompatible_forward_step():
     module, handles = _load_module()
 
-    with pytest.raises(ValueError, match="canonical gpt_step"):
+    with pytest.raises(ValueError, match="canonical llm_step"):
         module.main(
             [
                 "--recipe",
@@ -476,14 +497,14 @@ def test_performance_recipe_rejects_incompatible_forward_step():
                 "--mode",
                 "pretrain",
                 "--step-func",
-                "llm_step",
+                "vlm_step",
             ]
         )
 
     handles.recipe_runner.load_recipe.assert_not_called()
 
 
-def test_performance_recipe_applies_deterministic_overrides(monkeypatch):
+def test_benchmark_recipe_applies_deterministic_overrides(monkeypatch):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", "16")
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
@@ -502,7 +523,7 @@ def test_performance_recipe_applies_deterministic_overrides(monkeypatch):
     handles.recipe_runner.apply_determinism.assert_called_once_with(config, deterministic=True)
 
 
-def test_performance_recipe_requires_distributed_world_size(monkeypatch):
+def test_benchmark_recipe_requires_distributed_world_size(monkeypatch):
     module, handles = _load_module()
     monkeypatch.delenv("WORLD_SIZE", raising=False)
     monkeypatch.delenv("SLURM_NTASKS", raising=False)
@@ -525,7 +546,7 @@ def test_performance_recipe_requires_distributed_world_size(monkeypatch):
     handles.recipe_runner.bootstrap_recipe_environment.assert_not_called()
 
 
-def test_performance_recipe_rejects_public_dataset_replacement():
+def test_benchmark_recipe_rejects_public_dataset_replacement():
     module, handles = _load_module()
 
     with pytest.raises(ValueError, match="own their canonical dataset"):
@@ -550,7 +571,7 @@ def test_performance_recipe_rejects_public_dataset_replacement():
         ("wan_14b_pretrain_16gpu_gb200_bf16_config", 16, "wan_step"),
     ],
 )
-def test_non_text_performance_recipes_use_modality_step(monkeypatch, recipe_name, world_size, step_name):
+def test_non_text_benchmark_recipes_use_modality_step(monkeypatch, recipe_name, world_size, step_name):
     module, handles = _load_module()
     monkeypatch.setenv("WORLD_SIZE", str(world_size))
     config = SimpleNamespace(optimizer=SimpleNamespace(optimizer="adam", use_precision_aware_optimizer=False))
@@ -564,10 +585,10 @@ def test_non_text_performance_recipes_use_modality_step(monkeypatch, recipe_name
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
-def test_performance_recipe_metadata_accepts_named_variant():
+def test_benchmark_recipe_metadata_accepts_named_variant():
     module, _ = _load_module()
 
-    metadata = module.resolved_performance_recipe_metadata(
+    metadata = module.resolved_benchmark_recipe_metadata(
         "qwen3_235b_a22b_pretrain_256gpu_h100_fp8cs_large_scale_config"
     )
 
@@ -590,10 +611,10 @@ def test_performance_recipe_metadata_accepts_named_variant():
         ("wan_14b_pretrain_32gpu_h100_bf16_config", "wan"),
     ],
 )
-def test_performance_recipe_metadata_selects_one_family(recipe_name, family):
+def test_benchmark_recipe_metadata_selects_one_family(recipe_name, family):
     module, _ = _load_module()
 
-    metadata = module.resolved_performance_recipe_metadata(recipe_name)
+    metadata = module.resolved_benchmark_recipe_metadata(recipe_name)
 
     assert metadata is not None
     assert metadata.family == family
@@ -682,7 +703,7 @@ def test_step_function_option_accepts_hyphen_and_underscore_spellings(option):
     assert args.step_func == "value"
 
 
-def test_help_and_module_docstring_document_common_performance_overrides():
+def test_help_and_module_docstring_document_common_recipe_overrides():
     module, _ = _load_module()
     help_text = module._build_parser().format_help()
     module_docstring = module.__doc__
@@ -706,10 +727,10 @@ def test_help_and_module_docstring_document_common_performance_overrides():
     )
 
     assert module_docstring is not None
-    for performance_option, config_override in expected_mappings:
-        assert performance_option in module_docstring
+    for recipe_option, config_override in expected_mappings:
+        assert recipe_option in module_docstring
         assert config_override in module_docstring
-        assert performance_option in help_text
+        assert recipe_option in help_text
         assert config_override in help_text
     assert "--seq_length" in help_text
     assert "dataset.seq_length=LENGTH" in help_text

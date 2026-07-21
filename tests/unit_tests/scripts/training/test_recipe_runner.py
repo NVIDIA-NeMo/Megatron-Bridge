@@ -65,7 +65,7 @@ def test_recipe_without_configurable_scheme_allows_default_lora(recipe_runner: M
     assert recipe_runner._load_with_optional_kwargs(lora_only_recipe, peft_scheme="lora") is config
 
 
-def test_load_recipe_falls_back_to_library_when_name_is_not_performance(
+def test_load_recipe_falls_back_to_library_when_name_is_not_benchmark(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = object()
@@ -74,60 +74,60 @@ def test_load_recipe_falls_back_to_library_when_name_is_not_performance(
         return config
 
     library_finder = Mock(return_value=library_recipe)
-    performance_finder = Mock()
-    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: None)
+    benchmark_finder = Mock()
+    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: None)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
-    monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
+    monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
 
     assert recipe_runner.load_recipe("shared_recipe_config") is config
     library_finder.assert_called_once_with("shared_recipe_config")
-    performance_finder.assert_not_called()
+    benchmark_finder.assert_not_called()
 
 
-def test_load_recipe_auto_detects_exact_performance_export(
+def test_load_recipe_auto_detects_exact_benchmark_export(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = object()
 
-    def performance_recipe() -> object:
+    def benchmark_recipe() -> object:
         return config
 
     library_finder = Mock()
-    performance_finder = Mock(return_value=performance_recipe)
-    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: object())
+    benchmark_finder = Mock(return_value=benchmark_recipe)
+    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: object())
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
-    monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
+    monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
 
     assert recipe_runner.load_recipe("shared_recipe_config") is config
-    performance_finder.assert_called_once_with("shared_recipe_config")
+    benchmark_finder.assert_called_once_with("shared_recipe_config")
     library_finder.assert_not_called()
 
 
 def test_load_recipe_reports_both_packages_when_missing(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: None)
+    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: None)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", lambda _name: None)
 
     with pytest.raises(AttributeError, match=r"megatron\.bridge\.recipes or megatron\.bridge\.perf_recipes"):
         recipe_runner.load_recipe("missing_recipe_config")
 
 
-def test_duplicate_name_warns_and_selects_performance(
+def test_duplicate_name_warns_and_selects_benchmark(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
 ) -> None:
     recipe_name = "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config"
     config = object()
 
-    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: object())
-    performance_finder = Mock(return_value=lambda: config)
+    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: object())
+    benchmark_finder = Mock(return_value=lambda: config)
     library_finder = Mock()
-    monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
+    monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
 
     assert recipe_runner.load_recipe(recipe_name) is config
-    assert "selecting the performance definition" in caplog.text
-    performance_finder.assert_called_once_with(recipe_name)
+    assert "selecting the benchmark definition" in caplog.text
+    benchmark_finder.assert_called_once_with(recipe_name)
     library_finder.assert_not_called()
 
 
@@ -138,7 +138,7 @@ def test_duplicate_name_warns_and_selects_performance(
         "llama3_70b_peft_8gpu_h100_bf16_config",
     ],
 )
-def test_finetuning_collision_selects_performance(
+def test_finetuning_collision_selects_benchmark(
     recipe_runner: ModuleType,
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -146,44 +146,44 @@ def test_finetuning_collision_selects_performance(
 ) -> None:
     config = object()
 
-    monkeypatch.setattr(recipe_runner, "resolved_performance_recipe_metadata", lambda _name: object())
+    monkeypatch.setattr(recipe_runner, "resolved_benchmark_recipe_metadata", lambda _name: object())
     library_finder = Mock()
-    performance_finder = Mock(return_value=lambda: config)
+    benchmark_finder = Mock(return_value=lambda: config)
     monkeypatch.setattr(recipe_runner, "find_library_recipe", library_finder)
-    monkeypatch.setattr(recipe_runner, "find_performance_recipe", performance_finder)
+    monkeypatch.setattr(recipe_runner, "find_benchmark_recipe", benchmark_finder)
 
     assert recipe_runner.load_recipe(recipe_name) is config
-    assert "selecting the performance definition" in caplog.text
-    performance_finder.assert_called_once_with(recipe_name)
+    assert "selecting the benchmark definition" in caplog.text
+    benchmark_finder.assert_called_once_with(recipe_name)
     library_finder.assert_not_called()
 
 
-def test_find_performance_recipe_imports_exporting_family_lazily(
+def test_find_benchmark_recipe_imports_exporting_family_lazily(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    config_builder = Mock(name="performance_recipe")
-    family = SimpleNamespace(target_performance_recipe_config=config_builder)
+    config_builder = Mock(name="benchmark_recipe")
+    family = SimpleNamespace(target_benchmark_recipe_config=config_builder)
     imported_modules: list[str] = []
 
     def import_module(module_name: str) -> SimpleNamespace:
         imported_modules.append(module_name)
         return family
 
-    monkeypatch.setattr(recipe_runner, "performance_recipe_family", lambda _name: "qwen")
+    monkeypatch.setattr(recipe_runner, "benchmark_recipe_family", lambda _name: "qwen")
     monkeypatch.setattr(recipe_runner.importlib, "import_module", import_module)
 
-    assert recipe_runner.find_performance_recipe("target_performance_recipe_config") is config_builder
+    assert recipe_runner.find_benchmark_recipe("target_benchmark_recipe_config") is config_builder
     assert imported_modules == ["megatron.bridge.perf_recipes.qwen"]
 
 
-def test_find_performance_recipe_does_not_import_unregistered_family(
+def test_find_benchmark_recipe_does_not_import_unregistered_family(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import_module = Mock()
-    monkeypatch.setattr(recipe_runner, "performance_recipe_family", Mock(side_effect=ValueError("unknown family")))
+    monkeypatch.setattr(recipe_runner, "benchmark_recipe_family", Mock(side_effect=ValueError("unknown family")))
     monkeypatch.setattr(recipe_runner.importlib, "import_module", import_module)
 
-    assert recipe_runner.find_performance_recipe("unknown_recipe_config") is None
+    assert recipe_runner.find_benchmark_recipe("unknown_recipe_config") is None
     import_module.assert_not_called()
 
 
@@ -219,7 +219,7 @@ def test_qwen_vl_registry_loads_its_specialized_forward_step(
     recipe_runner._load_step_function.cache_clear()
 
 
-def test_wan_registry_constructs_forward_step_with_performance_mode(
+def test_wan_registry_constructs_forward_step_with_recipe_mode(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     class WanForwardStep:
@@ -398,7 +398,7 @@ def test_determinism_defers_process_environment_until_after_cli_overrides(
     assert "NCCL_ALGO" not in recipe_runner.os.environ
 
 
-def test_performance_bootstrap_applies_environment_before_self_exec(
+def test_benchmark_bootstrap_applies_environment_before_self_exec(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = object()
@@ -423,7 +423,7 @@ def test_performance_bootstrap_applies_environment_before_self_exec(
         recipe_runner.bootstrap_recipe_environment(
             config,
             script_path="/repo/scripts/training/run_recipe.py",
-            argv=["--recipe", "perf_recipe_config"],
+            argv=["--recipe", "benchmark_recipe_config"],
         )
 
     assert events == ["environment", "exec"]
@@ -433,13 +433,13 @@ def test_performance_bootstrap_applies_environment_before_self_exec(
         recipe_runner.sys.executable,
         "/repo/scripts/training/run_recipe.py",
         "--recipe",
-        "perf_recipe_config",
+        "benchmark_recipe_config",
     ]
     assert environment["RECIPE_DEFAULT"] == "enabled"
     assert environment[recipe_runner.RECIPE_ENV_BOOTSTRAP_MARKER] == str(recipe_runner.os.getpid())
 
 
-def test_performance_bootstrap_marker_skips_second_exec(
+def test_benchmark_bootstrap_marker_skips_second_exec(
     recipe_runner: ModuleType, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     config = object()

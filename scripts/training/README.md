@@ -17,9 +17,9 @@ resolving the full GPU training dependency set on the login node.
 ## Selection rules
 
 Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. A complete
-recipe is discovered automatically from its exported function name, whether it is functional or performance-oriented;
-there is no separate source flag. Every invocation requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
-`--mode dora`.
+recipe is discovered automatically from its exported function name, whether it is a library or benchmark recipe;
+there is no separate source flag. A model selector requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
+`--mode dora`; a conventional complete recipe name infers its mode when `--mode` is omitted.
 
 ### Library recipe
 
@@ -49,12 +49,15 @@ requested adapter scheme.
     --mode pretrain --dataset mock
 ```
 
-### Performance recipe
+### Benchmark recipe
 
 The training launcher can run exact exported recipes from `src/megatron/bridge/perf_recipes`, including text
 pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining. The total allocation must match the GPU count
 encoded by the recipe name; the user selects the node shape, and the Slurm partition must provide the requested
 hardware:
+
+`benchmark` is the unified runner's user-facing term. The existing `perf_recipes` package and `scripts/performance/`
+compatibility paths retain their legacy names.
 
 ```bash
 ./scripts/training/train.sh \
@@ -65,10 +68,10 @@ hardware:
     --mode pretrain
 ```
 
-Performance recipes provide benchmark defaults for their dataset, parallelism topology, batch sizes, sequence length,
+Benchmark recipes provide canonical defaults for their dataset, parallelism topology, batch sizes, sequence length,
 precision, dispatcher, CUDA-graph settings, and process environment. Trailing `KEY=VALUE` overrides are applied to their
 `ConfigContainer` in the same way as library recipes; an overridden run no longer represents the canonical benchmark
-configuration. Performance recipes retain their selected dataset type, so `--dataset` is not supported on this path.
+configuration. Benchmark recipes retain their selected dataset type, so `--dataset` is not supported on this path.
 Recipe environment defaults are installed before the launcher enters the training stack; values explicitly set by the
 shell or Slurm environment retain precedence.
 
@@ -76,19 +79,20 @@ The launcher does not infer offline mode, cluster-specific CPU/NUMA binding, Slu
 settings from the recipe name. Supply those deployment settings explicitly through the target cluster's launcher
 configuration, repeated `--srun-arg` options, or exported values forwarded with `--env NAME`.
 
-The runner selects `gpt_step`, `qwen3_vl_step`, or `wan_step` from the recipe family. The compatibility launcher at
+The runner selects the registered text, multimodal, audio, omni, or diffusion forward step from the recipe identity,
+regardless of which recipe package exports it. The compatibility launcher at
 `scripts/performance/setup_experiment.py` remains available for selector-based invocation, dataset replacement, and
 specialized legacy controls that are not part of the compact training CLI.
 
-Text SFT/PEFT performance recipes retain the flat runner's mock-data default. Qwen-VL and Wan recipes retain their
-model-specific dataset configuration. Exported performance PEFT recipes are fixed LoRA configs; DoRA remains available
-through configurable library recipes. Explicit performance dataset replacement remains on the compatibility launcher.
+Text SFT/PEFT benchmark recipes retain the flat runner's mock-data default. Qwen-VL and Wan recipes retain their
+model-specific dataset configuration. Exported benchmark PEFT recipes are fixed LoRA configs; DoRA remains available
+through configurable library recipes. Explicit benchmark dataset replacement remains on the compatibility launcher.
 
-Five legacy duplicate names resolve to the performance definition; their functional workloads remain available through
+Five legacy duplicate names resolve to the benchmark definition; their library workloads remain available through
 the corresponding generic recipe aliases. New recipe names should be unique across both packages.
 
-The default library forward step is `llm_step`. Pass `--step-func NAME` explicitly for a library recipe that needs
-another registered forward step. Performance recipes infer their modality-specific forward step. Common training,
+Text recipes default to `llm_step`; all recipes infer their modality-specific forward step from the same registry.
+Pass `--step-func NAME` to override that selection. Common training,
 sequence-length, parallelism, optimization, and checkpoint fields also have convenience flags such as
 `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`. Use trailing
 `KEY=VALUE` overrides for every other `ConfigContainer` field.
@@ -99,7 +103,7 @@ For library recipes, `--dataset` accepts source selectors and named dataset pres
 Each name selects a `DatasetConfig` preset; the config type selects the existing runtime builder. Trailing
 `dataset.*` overrides are applied directly after preset selection. Use typed fields for source, preprocessing, packing,
 and loader settings; use `dataset.dataset_kwargs={...}` only for extra options consumed by a dataset implementation.
-Performance recipes retain their recipe-owned dataset and reject `--dataset`.
+Benchmark recipes retain their recipe-owned dataset and reject `--dataset`.
 
 | Value | Kind | Mode | Behavior |
 |---|---|---|---|
@@ -159,7 +163,8 @@ shared mounted storage.
 
 The hosted VLM names use the existing Hugging Face dataset adapters and retain the processor and in-batch packing
 settings from the selected VLM recipe. `raven`, `rdr`, and `llava-video-178k` derive deterministic 95/5 train and
-validation slices; `cord-v2` and `medpix` use their published validation splits. Pass a VLM forward step explicitly.
+validation slices; `cord-v2` and `medpix` use their published validation splits. The runner selects the registered VLM
+forward step from the recipe name; pass `--step-func` only to override it.
 
 For local JSON/JSONL, select `local-vlm` and set
 `dataset.source.load_kwargs.data_files.train=/path/to/train.jsonl`. Optional split overrides are
@@ -219,7 +224,7 @@ Precedence is recipe defaults, the selected dataset configuration, common conven
 `ConfigContainer` overrides. A trailing override therefore wins when it targets the same field as a convenience
 argument.
 
-Overrides take a performance recipe outside its canonical benchmark configuration. Use
+Overrides take a benchmark recipe outside its canonical configuration. Use
 `scripts/performance/setup_experiment.py` for specialized workflows that the unified launcher has not migrated yet.
 
 ## Slurm and containers
@@ -266,7 +271,7 @@ uv run python scripts/training/run_recipe.py \
     --dry-run logger.save_config_filepath=/tmp/config.yaml
 ```
 
-For a performance dry run, use the complete flat recipe name and omit `--dataset`. The rank-local dry run discovers the
+For a benchmark dry run, use the complete flat recipe name and omit `--dataset`. The rank-local dry run discovers the
 recipe and validates the final config against the total GPU count encoded in that name without
 requiring a live allocation; the submission dry run additionally validates `--nodes` and `--gpus-per-node`.
 
@@ -283,5 +288,5 @@ uv run python -m torch.distributed.run --nproc_per_node=2 \
     model.sequence_parallel=true
 ```
 
-This entry point loads library recipes for functional pretraining, SFT, LoRA, and DoRA, and all exact exported
-performance recipes when selected explicitly.
+This entry point loads library recipes for pretraining, SFT, LoRA, and DoRA, and all exact exported
+benchmark recipes when selected explicitly.
