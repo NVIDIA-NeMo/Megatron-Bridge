@@ -223,8 +223,9 @@ items:
       byte-identical literal completion must be recorded before verification.
 
   sft_long_context:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: f3ae2767b5e18aeb67b726cd8d5f1db58216dcc9  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -247,18 +248,19 @@ items:
       validation.eval_iters=0 validation.eval_interval=0
       checkpoint.load=null checkpoint.save=null
       logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-20
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 1.306440
+      final_loss: 1.228019
+      last_10_steps_step_time_ms_avg: 60599.310
+      last_10_steps_model_tflops_per_gpu_avg: 40.840
     expected_result: >
-      A fresh immutable-revision run must complete exactly 20 Tulu3 SFT steps
-      at the model's 8192-token context limit with recipe-owned
+      The immutable-revision 8-GPU run completes exactly 20 Tulu3 SFT steps at
+      the model's 8192-token context limit with recipe-owned
       TP2/PP1/CP2/EP8/SP-on, GBS/MBS 128/1, and explicit pad-4 offline packing.
-      Losses must remain finite with no skipped or NaN iterations, and all four
-      metrics must be recorded before this item can be verified.
+      LM loss is 1.306440 to 1.228019; skipped/NaN totals are 0/0. The persisted
+      post-setup runtime config matches the command, packing is 99.69%, and the
+      sampled training window contains 13,765,732 actual supervised tokens.
 
   peft:
     status: unverified

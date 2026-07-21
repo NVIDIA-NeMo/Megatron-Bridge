@@ -82,8 +82,12 @@ class TestTokenizers:
     @pytest.mark.parametrize(
         ("model_id", "revision", "trust_remote_code"),
         [
-            ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", False),
-            ("moonshotai/Moonlight-16B-A3B", "476b36a473d4467f94469414bef6cee75c9c8172", True),
+            ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", False),  # pragma: allowlist secret
+            (
+                "moonshotai/Moonlight-16B-A3B",
+                "476b36a473d4467f94469414bef6cee75c9c8172",  # pragma: allowlist secret
+                True,
+            ),
         ],
     )
     @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
