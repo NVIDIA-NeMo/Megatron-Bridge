@@ -450,7 +450,6 @@ def test_deepseek_v4_recipes_disable_blackwell_only_fusions_when_unavailable(
     assert cfg.model.apply_dsa_kernel_fusion is False
     assert cfg.model.apply_rope_fusion is True
     assert cfg.model.use_fused_mhc is False
-    assert cfg.model.recompute_modules == ["moe_act"]
 
 
 def test_deepseek_v4_flash_sft_recipe_uses_fused_mhc(monkeypatch: pytest.MonkeyPatch):

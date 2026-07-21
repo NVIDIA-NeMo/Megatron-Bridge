@@ -101,7 +101,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cross_entropy_fusion_impl = "te"
 
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
@@ -175,7 +175,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_fp8mx_config() -> ConfigContainer:
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
 
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
@@ -247,7 +247,7 @@ def deepseek_v4_flash_pretrain_32gpu_h100_bf16_muon_config() -> ConfigContainer:
     cfg.model.dsa_indexer_use_sparse_loss = False
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
     set_deepseek_v4_pipeline_model_parallel_layout(cfg.model)
 
     opt_cfg, scheduler_cfg = distributed_muon_with_cosine_annealing(
@@ -340,7 +340,7 @@ def deepseek_v4_flash_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # --- memory (selective recompute, same as pretrain) ---
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.cuda_graph_impl = "none"
@@ -410,7 +410,7 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
 
     # --- memory (selective recompute, same as pretrain) ---
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe_act"]
+    cfg.model.recompute_modules = ["moe_act", "mhc"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.cuda_graph_impl = "none"
