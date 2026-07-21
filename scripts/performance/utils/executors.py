@@ -141,8 +141,16 @@ if isinstance(run.KubeflowExecutor, type):
             return posixpath.join(self.workspace_root, relative_code_dir)
 
         def get_job_body(self, name: str, command: List[str]) -> Dict[str, Any]:
-            """Preserve generated mounts when customizing the runtime container."""
+            """Preserve runtime-owned resources and generated container mounts."""
             manifest = super().get_job_body(name, command)
+            trainer = manifest.get("spec", {}).get("trainer", {})
+            resources = trainer.get("resourcesPerNode", {})
+            if resources.get("claims"):
+                # The installed Trainer accepts claims in the TrainJob but does
+                # not propagate them to the realized pod. The run-scoped
+                # runtime already contains the complete requests, limits, and
+                # claims, so avoid replacing that ResourceRequirements object.
+                trainer.pop("resourcesPerNode", None)
             for override in manifest.get("spec", {}).get("podTemplateOverrides", []):
                 containers = override.get("spec", {}).get("containers", [])
                 for container in containers:
