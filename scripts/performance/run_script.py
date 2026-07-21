@@ -12,21 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Run flat performance training after process environment bootstrap."""
+
 import logging
 import os
 import re
 import sys
 
-import torch
 from argument_parser import parse_cli_args
-from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
-from utils.utils import get_perf_optimized_recipe
-
-from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
-from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-from megatron.bridge.training.gpt_step import forward_step
-from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+from utils.utils import get_perf_recipe_by_name
 
 
 logger = logging.getLogger(__name__)
@@ -62,49 +56,78 @@ def _dump_env_rank0() -> None:
         logger.warning(f"Failed to write environment dump to {env_path}: {e}")
 
 
-def main():
-    """Main function to run the pretraining/finetuning script."""
-    # Parse known args and treat any unknown args as Hydra-style config overrides.
-    # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
-    parser = parse_cli_args()
-    args, cli_overrides = parser.parse_known_args()
+def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
+    """Apply Hydra and argparse overrides to a flat performance recipe."""
+    from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
+    from utils.utils import explicit_environment_override_names
+
+    base_env_vars = dict(recipe.env_vars)
+    base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
+    comm_overlap = getattr(recipe, "comm_overlap", None)
+    base_moe_a2a_overlap = bool(
+        comm_overlap is not None and getattr(comm_overlap, "overlap_moe_expert_parallel_comm", False)
+    )
+    recipe = set_cli_overrides(recipe, cli_overrides)
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    hydra_env_vars = {name: recipe.env_vars[name] for name in protected_env_names if name in recipe.env_vars}
+    recipe = set_user_overrides(recipe, args)
+    # Argparse normally has higher precedence than Hydra in the flat runner,
+    # but explicit Hydra env selections remain final. Restore changed, added,
+    # and removed env keys after argparse features such as --deterministic.
+    for name in protected_env_names:
+        if name in hydra_env_vars:
+            recipe.env_vars[name] = hydra_env_vars[name]
+        else:
+            recipe.env_vars.pop(name, None)
+    return _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=base_dispatcher_backend,
+        base_moe_a2a_overlap=base_moe_a2a_overlap,
+        protected_env_names=protected_env_names,
+    )
+
+
+def _prepare_perf_recipe(args, cli_overrides: list[str]):
+    """Build a flat performance recipe with all user overrides applied."""
+    recipe = get_perf_recipe_by_name(
+        model_recipe_name=args.model_recipe_name,
+        task=args.task,
+        num_gpus=args.num_gpus,
+        gpu=args.gpu,
+        precision=args.compute_dtype,
+        config_variant=getattr(args, "config_variant", None),
+    )
+    return _apply_perf_recipe_overrides(recipe, cli_overrides, args)
+
+
+def _run_training(args, cli_overrides: list[str]) -> None:
+    """Import the training stack after env bootstrap and run the workload."""
+    from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
+    from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+    from megatron.bridge.training.config import runtime_config_update
+    from megatron.bridge.training.gpt_step import forward_step
+    from megatron.bridge.training.pretrain import pretrain
+    from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+
+    recipe = _prepare_perf_recipe(args, cli_overrides)
 
     if args.dump_env:
         _dump_env_rank0()
 
-    recipe = get_perf_optimized_recipe(
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        train_task=args.task,
-        gpu=args.gpu,
-        compute_dtype=args.compute_dtype,
-        mock=args.data == "mock",
-        config_variant=args.config_variant,
-        optimizer_type=getattr(args, "optimizer_type", None),
-    )
-
-    recipe = set_cli_overrides(recipe, cli_overrides)
-    recipe = set_user_overrides(recipe, args)
-    recipe = set_post_overrides(
-        recipe,
-        args.model_family_name,
-        args.model_recipe_name,
-        args.gpu,
-        args.num_gpus,
-        args.compute_dtype,
-        args.task,
-        user_gbs=args.global_batch_size,
-        config_variant=args.config_variant,
-    )
-
-    # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
-    if getattr(recipe.ddp, "nccl_ub", False):
-        os.environ["NCCL_NVLS_ENABLE"] = "1"
-        os.environ["NCCL_CTA_POLICY"] = "1"
+    # Preserve BF16 Adam precision-aware behavior from the previous script path. Parallelism-dependent
+    # optimizer-step overlap is encoded directly in the flat perf recipes.
+    if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
+        recipe.optimizer.use_precision_aware_optimizer = True
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
         os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
+        if "WORLD_SIZE" not in os.environ and "SLURM_NTASKS" not in os.environ:
+            os.environ["WORLD_SIZE"] = str(args.num_gpus)
+        if "RANK" not in os.environ and "SLURM_PROCID" not in os.environ:
+            os.environ["RANK"] = "0"
+        runtime_config_update(recipe)
         recipe.to_yaml(save_path)
         logger.info(f"ConfigContainer saved to: {os.path.abspath(save_path)}")
         recipe.print_yaml()
@@ -122,9 +145,12 @@ def main():
 
     pretrain(config=recipe, forward_step_func=forward_step_func)
 
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
+
+def main() -> None:
+    """Parse the final training arguments and run the workload once."""
+    parser = parse_cli_args()
+    args, cli_overrides = parser.parse_known_args()
+    _run_training(args, cli_overrides)
 
 
 if __name__ == "__main__":

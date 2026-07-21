@@ -75,7 +75,7 @@ the authoritative rules. For judgment calls not covered by tooling, see
 
 See @CONTRIBUTING.md for the full contributor guide, including:
 
-- Commit and PR title format (`[{areas}] {type}: {description}`)
+- Commit and PR title format ([Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/): `<type>(<scope>): <description>`)
 - PR labeling taxonomy (type, area, state, risk labels)
 - Testing conventions (unit preferred, functional max 2 GPUs, L0/L1/L2 tiers)
 - Dependency management policy

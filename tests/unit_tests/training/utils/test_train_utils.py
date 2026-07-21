@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import math
 import random
 import time
@@ -26,7 +27,11 @@ import torch
 
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.utils.train_utils import (
+    LinearForLastLayer,
     calc_params_l2_norm,
+    create_value_head_hook,
+    freeze_moe_router,
+    make_value_model,
     maybe_inject_state,
     needs_global_state_injection,
     param_is_not_shared,
@@ -414,6 +419,145 @@ class TestTrainingLog:
         # Verify tensorboard logging was called
         mock_global_state.tensorboard_logger.add_scalar.assert_called()
         mock_global_state.timers.write.assert_called()
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_max_attention_logit_logged(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """max-attention-logit must reach the writers when a value is provided (qk_clip path)."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+
+        mock_global_state.train_state.step = 100
+        mock_config.logger.tensorboard_log_interval = 10
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+            log_max_attention_logit=12.5,
+        )
+
+        mock_global_state.tensorboard_logger.add_scalar.assert_any_call("max-attention-logit", 12.5, 100)
+        wandb_metric_calls = [
+            call for call in mock_global_state.wandb_logger.log.call_args_list if "max-attention-logit" in call.args[0]
+        ]
+        assert wandb_metric_calls, "max-attention-logit was not logged to wandb"
+
+    def test_optional_params_are_keyword_only(self):
+        """Optional params must stay keyword-only so a positional call cannot bind to the wrong slot.
+
+        Regression guard: log_max_attention_logit used to be passed as the 15th positional
+        argument in train.py, silently binding to pg_collection instead.
+        """
+        sig = inspect.signature(training_log)
+        for name in ("pg_collection", "log_max_attention_logit", "loaded_iteration", "seq_length"):
+            assert sig.parameters[name].kind is inspect.Parameter.KEYWORD_ONLY
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_throughput_uses_interval_flops_delta(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_print_rank_last,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Logged TFLOP/s is the interval FLOPs delta ÷ interval time ÷ world size.
+
+        Regression guard for the THD logging fix: ``training_log`` must derive
+        throughput from the cumulative ``floating_point_operations_so_far`` delta
+        since the last log (over the full interval elapsed time), not from a single
+        step's FLOPs over the per-iteration average. It must also advance the
+        ``_flops_at_last_log`` anchor.
+        """
+        total_loss_dict = self.get_fresh_total_loss_dict()
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 8
+
+        # Log boundary (10 % 5 == 0). interval-time mock returns 0.5s (see fixture).
+        mock_global_state.train_state.step = 10
+        mock_config.logger.log_throughput_to_tensorboard = True
+        # Interval FLOPs = so_far - anchor = 8e12; per_gpu_tf = 8e12 / 0.5 / 8 / 1e12 = 2.0
+        prev_flops = 100.0e12
+        mock_global_state._flops_at_last_log = prev_flops
+        mock_global_state.train_state.floating_point_operations_so_far = prev_flops + 8.0e12
+        expected_per_gpu_tf = 8.0e12 / 0.5 / 8 / 1e12  # == 2.0
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        device_tf_logs = [
+            call.args[0]["throughput/tflops/device"]
+            for call in mock_global_state.wandb_logger.log.call_args_list
+            if call.args and isinstance(call.args[0], dict) and "throughput/tflops/device" in call.args[0]
+        ]
+        assert device_tf_logs, "throughput/tflops/device was not logged"
+        assert device_tf_logs[-1] == pytest.approx(expected_per_gpu_tf)
+        # Anchor advanced to the current cumulative for the next interval.
+        assert mock_global_state._flops_at_last_log == pytest.approx(prev_flops + 8.0e12)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -1305,10 +1449,11 @@ class TestTrainingLog:
         mock_profiling_config.record_memory_history = True
         mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
         mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_step_end = 10
         mock_config.profiling = mock_profiling_config
         mock_config.logger.tensorboard_dir = "/tmp/tb"
 
-        # Set iteration (snapshot itself is not gated by tensorboard log interval anymore)
+        # Set iteration to the configured snapshot dump step.
         mock_global_state.train_state.step = 10
 
         training_log(
@@ -1333,6 +1478,79 @@ class TestTrainingLog:
         mock_open.assert_called_once_with("/tmp/memory_snapshot_7.pkl", "wb")
         mock_pickle_dump.assert_called_once_with({"mock": "snapshot"}, mock_file_handle)
         mock_print_rank_0.assert_any_call("Saved memory snapshot to /tmp/memory_snapshot_7.pkl")
+
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
+    @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_world_size_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.get_rank_safe")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_0")
+    @mock.patch("megatron.bridge.training.utils.train_utils.print_rank_last")
+    @mock.patch("torch.cuda.memory._snapshot")
+    @mock.patch("builtins.open")
+    @mock.patch("pickle.dump")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_runtime")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_throughput")
+    @mock.patch("megatron.bridge.training.utils.train_utils.report_l2_norm_grad")
+    def test_profiling_memory_snapshot_skips_non_stop_step(
+        self,
+        mock_report_l2_norm_grad,
+        mock_report_throughput,
+        mock_report_runtime,
+        mock_pickle_dump,
+        mock_open,
+        mock_memory_snapshot,
+        mock_print_rank_last,
+        mock_print_rank_0,
+        mock_get_rank_safe,
+        mock_get_world_size,
+        mock_reduce_lr,
+        mock_get_microbatches,
+        mock_config,
+        mock_global_state,
+        loss_dict,
+    ):
+        """Test memory snapshot is not dumped before the profiling stop step."""
+        total_loss_dict = self.get_fresh_total_loss_dict()
+
+        mock_report_l2_norm_grad.return_value = {}
+        mock_report_throughput.return_value = {}
+        mock_report_runtime.return_value = {}
+        mock_get_microbatches.return_value = 8
+        mock_reduce_lr.return_value = 1e-4
+        mock_get_world_size.return_value = 32
+        mock_get_rank_safe.return_value = 7
+
+        mock_profiling_config = mock.MagicMock()
+        mock_profiling_config.record_memory_history = True
+        mock_profiling_config.memory_snapshot_path = "/tmp/memory_snapshot.pkl"
+        mock_profiling_config.profile_ranks = [7]
+        mock_profiling_config.profile_step_end = 10
+        mock_config.profiling = mock_profiling_config
+        mock_config.logger.tensorboard_dir = "/tmp/tb"
+        mock_global_state.train_state.step = 9
+
+        training_log(
+            loss_dict=loss_dict,
+            total_loss_dict=total_loss_dict,
+            learning_rate=1e-4,
+            decoupled_learning_rate=None,
+            loss_scale=1024.0,
+            report_memory_flag=False,
+            skipped_iter=0,
+            grad_norm=2.5,
+            params_norm=15.2,
+            num_zeros_in_grad=0,
+            config=mock_config,
+            global_state=mock_global_state,
+            history_wct=None,
+            model=None,
+        )
+
+        mock_get_rank_safe.assert_not_called()
+        mock_memory_snapshot.assert_not_called()
+        mock_open.assert_not_called()
+        mock_pickle_dump.assert_not_called()
+        mock_print_rank_0.assert_not_called()
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_num_microbatches")
     @mock.patch("megatron.bridge.training.utils.train_utils.reduce_max_stat_across_model_parallel_group")
@@ -3422,3 +3640,117 @@ class TestMoeMetricFanoutWriter:
             ({"moe/load_balancing_loss_layer_1": 0.2}, 200),
             ({"moe/load_balancing_loss_layer_2": 0.3}, 200),
         ]
+
+
+def test_linear_for_last_layer_returns_megatron_style_tuple() -> None:
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=False)
+    with torch.no_grad():
+        head.weight.fill_(2.0)
+
+    logits, bias = head(torch.ones(3, 2))
+
+    assert torch.equal(logits, torch.full((3, 1), 4.0))
+    assert logits.dtype == torch.float32
+    assert bias is None
+
+
+def test_linear_for_last_layer_gathers_sequence_parallel_output(monkeypatch) -> None:
+    head = LinearForLastLayer(input_size=2, output_size=1, sequence_parallel=True)
+    with torch.no_grad():
+        head.weight.fill_(1.0)
+
+    calls = {}
+
+    def fake_gather(tensor, tensor_parallel_output_grad):
+        calls["tensor"] = tensor
+        calls["tensor_parallel_output_grad"] = tensor_parallel_output_grad
+        return tensor + 1
+
+    monkeypatch.setattr(
+        "megatron.bridge.training.utils.train_utils.tensor_parallel.gather_from_sequence_parallel_region",
+        fake_gather,
+    )
+
+    logits, bias = head(torch.ones(2, 2))
+
+    assert torch.equal(logits, torch.full((2, 1), 3.0))
+    assert torch.equal(calls["tensor"], torch.full((2, 1), 2.0))
+    assert calls["tensor_parallel_output_grad"] is False
+    assert bias is None
+
+
+def _patch_virtual_pipeline_last_stage(monkeypatch, last_vp_stage: int) -> None:
+    from megatron.core import parallel_state
+
+    def fake_is_pipeline_last_stage(ignore_virtual=False, vp_stage=None) -> bool:
+        del ignore_virtual
+        return vp_stage == last_vp_stage
+
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: 2)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", fake_is_pipeline_last_stage)
+
+
+def _patch_single_pipeline_last_stage(monkeypatch) -> None:
+    from megatron.core import parallel_state
+
+    monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 1)
+    monkeypatch.setattr(parallel_state, "get_virtual_pipeline_model_parallel_world_size", lambda: None)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda: True)
+
+
+def test_create_value_head_hook_replaces_last_virtual_pipeline_chunk(monkeypatch) -> None:
+    _patch_virtual_pipeline_last_stage(monkeypatch, 1)
+
+    model_chunks = [torch.nn.Module(), torch.nn.Module()]
+    hook = create_value_head_hook(hidden_size=4, output_size=2, sequence_parallel=True)
+
+    result = hook(model_chunks)
+
+    assert result is model_chunks
+    assert not hasattr(model_chunks[0], "output_layer")
+    output_layer = model_chunks[1].output_layer
+    assert isinstance(output_layer, LinearForLastLayer)
+    assert output_layer.in_features == 4
+    assert output_layer.out_features == 2
+    assert output_layer.sequence_parallel is True
+
+
+def test_create_value_head_hook_requires_chunk_count_to_match_pipeline_flags(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+
+    hook = create_value_head_hook(hidden_size=4, sequence_parallel=False)
+
+    with pytest.raises(ValueError, match="Model list length"):
+        hook([torch.nn.Module(), torch.nn.Module()])
+
+
+def test_make_value_model_alias_creates_value_head_hook(monkeypatch) -> None:
+    _patch_single_pipeline_last_stage(monkeypatch)
+
+    model_chunks = [torch.nn.Module()]
+    hook = make_value_model(hidden_size=8, sequence_parallel=False)
+
+    result = hook(model_chunks)
+
+    assert result is model_chunks
+    assert isinstance(model_chunks[0].output_layer, LinearForLastLayer)
+    assert model_chunks[0].output_layer.in_features == 8
+
+
+def test_freeze_moe_router_freezes_router_and_shared_expert_gates() -> None:
+    router = torch.nn.Linear(2, 2)
+    shared_experts = SimpleNamespace(
+        gate_weight=torch.nn.Parameter(torch.ones(2, 2)),
+        gate_bias=torch.nn.Parameter(torch.ones(2)),
+    )
+    layer = SimpleNamespace(mlp=SimpleNamespace(router=router, shared_experts=shared_experts))
+    model = SimpleNamespace(decoder=SimpleNamespace(layers=[layer]))
+
+    result = freeze_moe_router([model])
+
+    assert result == [model]
+    assert router.weight.requires_grad is False
+    assert router.bias.requires_grad is False
+    assert shared_experts.gate_weight.requires_grad is False
+    assert shared_experts.gate_bias.requires_grad is False

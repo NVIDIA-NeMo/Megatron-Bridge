@@ -23,6 +23,12 @@ import torch
 from transformers import GenerationConfig
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import (
+    AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
+    GatedMLPMapping,
+)
 from megatron.bridge.models.glm.glm45_bridge import GLM45Bridge
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -30,6 +36,12 @@ from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 class TestGLM45Bridge:
     """Test cases for GLM45Bridge."""
+
+    @staticmethod
+    def _expert_mappings(registry):
+        return [
+            mapping for mapping in registry.mappings if "mlp.experts" in str(getattr(mapping, "megatron_param", ""))
+        ]
 
     @pytest.fixture
     def glm45_355b_config(self):
@@ -230,6 +242,53 @@ class TestGLM45Bridge:
         # Check LM head mapping
         assert "output_layer.weight" in mapping_dict
         assert mapping_dict["output_layer.weight"] == "lm_head.weight"
+
+    def test_mapping_registry_config_only_uses_unfused_expert_mappings(self, mock_pretrained_355b):
+        """Test config-only bridge builds mappings without HF state and defaults to unfused experts."""
+        bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b.config
+        bridge.hf_config = mock_pretrained_355b.config
+        registry = bridge.mapping_registry()
+
+        expert_mappings = self._expert_mappings(registry)
+        assert not any(
+            isinstance(mapping, (FusedGatedExpertMapping, FusedExpertMapping)) for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, GatedMLPMapping)
+            and mapping.hf_param["gate"] == "model.layers.*.mlp.experts.*.gate_proj.weight"
+            and mapping.hf_param["up"] == "model.layers.*.mlp.experts.*.up_proj.weight"
+            for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, AutoMapping) and mapping.hf_param == "model.layers.*.mlp.experts.*.down_proj.weight"
+            for mapping in expert_mappings
+        )
+
+    def test_mapping_registry_uses_fused_expert_mappings_from_state_source(self, mock_pretrained_355b):
+        """Test fused expert layout is detected from HF state source without enumerating all keys."""
+        source = mock_pretrained_355b.state.source
+        source.get_all_keys.side_effect = AssertionError("mapping registry should not enumerate all HF keys")
+        source.has_glob.side_effect = lambda pattern: pattern in {
+            "*mlp.experts.gate_up_proj*",
+            "*mlp.experts.down_proj*",
+        }
+
+        bridge = GLM45Bridge()
+        bridge.hf_pretrained = mock_pretrained_355b
+        bridge.hf_config = mock_pretrained_355b.config
+        registry = bridge.mapping_registry()
+
+        expert_mappings = self._expert_mappings(registry)
+        assert any(
+            isinstance(mapping, FusedGatedExpertMapping)
+            and mapping.hf_param == "model.layers.*.mlp.experts.gate_up_proj"
+            for mapping in expert_mappings
+        )
+        assert any(
+            isinstance(mapping, FusedExpertMapping) and mapping.hf_param == "model.layers.*.mlp.experts.down_proj"
+            for mapping in expert_mappings
+        )
 
     def test_dtype_mapping_fp16(self, glm45_355b_config):
         """Test dtype mapping for FP16 models."""

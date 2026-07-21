@@ -12,14 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from functools import partial
+from types import SimpleNamespace
+
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import (
-    NemotronNano12Bv2VLModelProvider,
+    NemotronVLModelProvider,
+    get_language_mlp_submodules,
 )
 
 
-class TestNemotronNano12Bv2VLModelProvider:
+class TestNemotronVLModelProvider:
     def test_provider_initialization_minimal(self):
-        provider = NemotronNano12Bv2VLModelProvider(
+        provider = NemotronVLModelProvider(
             hybrid_layer_pattern="M-M-M-M*-M-M-M-M*-M-M-M-M-M*",
             hidden_size=5120,
             num_attention_heads=40,
@@ -49,7 +53,7 @@ class TestNemotronNano12Bv2VLModelProvider:
         assert callable(provider.provide_language_model)
 
     def test_provider_freeze_overrides(self):
-        provider = NemotronNano12Bv2VLModelProvider(
+        provider = NemotronVLModelProvider(
             hidden_size=5120,
             num_attention_heads=40,
             freeze_language_model=True,
@@ -61,3 +65,27 @@ class TestNemotronNano12Bv2VLModelProvider:
         assert provider.freeze_language_model is True
         assert provider.freeze_vision_model is True
         assert provider.freeze_vision_projection is True
+
+    def test_language_mlp_submodules_from_object_specs(self):
+        mlp_submodules = SimpleNamespace(linear_fc1=object(), linear_fc2=object())
+        language_spec = SimpleNamespace(
+            submodules=SimpleNamespace(
+                mlp_layer=SimpleNamespace(submodules=SimpleNamespace(mlp=SimpleNamespace(submodules=mlp_submodules)))
+            )
+        )
+
+        assert get_language_mlp_submodules(language_spec) is mlp_submodules
+
+    def test_language_mlp_submodules_from_partial_specs(self):
+        mlp_submodules = SimpleNamespace(linear_fc1=object(), linear_fc2=object())
+        language_spec = partial(
+            object,
+            submodules=SimpleNamespace(
+                mlp_layer=partial(
+                    object,
+                    submodules=SimpleNamespace(mlp=partial(object, submodules=mlp_submodules)),
+                )
+            ),
+        )
+
+        assert get_language_mlp_submodules(language_spec) is mlp_submodules

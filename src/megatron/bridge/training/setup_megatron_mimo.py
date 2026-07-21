@@ -6,7 +6,6 @@ This module provides the setup logic for MegatronMIMO training, mirroring the st
 
 Key components:
 - setup_megatron_mimo(): MegatronMIMO-specific setup helper (analogous to setup())
-- _set_megatron_mimo_random_seeds(): Per-module TP/PP seed initialization
 - _update_megatron_mimo_model_config_funcs(): Model config hooks (analogous to _update_model_config_funcs)
 - MegatronMIMOSetupOutput: Dataclass containing all setup outputs
 """
@@ -21,18 +20,15 @@ import torch.distributed as dist
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import CheckpointManager, create_checkpoint_manager, load_checkpoint
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.checkpointing import CheckpointLoadContext, CheckpointManager, create_checkpoint_manager
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
     build_pg_collection_for_schedule,
     get_active_module_pg,
     get_module_to_grid_tuple,
-    is_current_rank_in_grid,
     unwrap_megatron_mimo_model,
-    validate_no_stub_ranks,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists
+from megatron.bridge.training.utils.checkpoint_utils import checkpoint_exists, is_hf_checkpoint_dir
 
 
 if TYPE_CHECKING:
@@ -45,52 +41,6 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
-
-
-def _set_megatron_mimo_random_seeds(
-    cfg: ConfigContainer,
-    megatron_mimo_infra: "MegatronMIMOInfra",
-) -> None:
-    """Initialize random seeds with per-module TP/PP awareness.
-
-    Mirrors the standard path's ``_set_random_seed()`` but derives TP/PP ranks
-    from the per-module HyperCommGrids instead of global MPU state.
-
-    Must be called **after** ``build_infra()`` (grids exist) and **before**
-    ``provide_distributed_model()`` (weight init needs the CUDA RNG tracker).
-    """
-    import random
-
-    import numpy as np
-    import torch
-    from megatron.core import tensor_parallel
-
-    seed = cfg.rng.seed
-
-    current_rank = dist.get_rank()
-
-    # Find which module this rank belongs to and get its TP/PP ranks.
-    tp_rank = 0
-    pp_rank = 0
-    for module_name, grid in megatron_mimo_infra.module_to_grid_map.items():
-        if is_current_rank_in_grid(grid):
-            tp_rank = dist.get_group_rank(grid.get_pg(["tp"]), current_rank)
-            pp_rank = dist.get_group_rank(grid.get_pg(["pp"]), current_rank)
-            break
-
-    # Different PP stages get different seeds (consistent with standard path).
-    seed = seed + (100 * pp_rank)
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-
-    if torch.cuda.device_count() > 0:
-        tensor_parallel.model_parallel_cuda_manual_seed(seed, tp_rank=tp_rank, ep_rank=0, etp_rank=0)
-
-    logger.info(
-        f"Rank {current_rank}: Initialized MegatronMIMO random seeds (base_seed={seed}, tp_rank={tp_rank}, pp_rank={pp_rank})"
-    )
 
 
 @dataclass
@@ -211,34 +161,22 @@ def setup_megatron_mimo(
             getattr(cfg.train, "decrease_batch_size_if_needed", False),
         )
 
-    # Finalize provider and build infrastructure.
-    # cfg.model.finalize() is called here (not in megatron_mimo_runtime_config_update)
-    # because it validates parallelism config which depends on distributed state.
+    # Build the distributed MIMO model + infra. This single call replaces
+    # the previously-inlined finalize / build_infra / validate-no-stub /
+    # set-per-module-seeds / provide_distributed_model / parallel_state-bridge
+    # sequence. The same helper is the entry point for the conversion CLI,
+    # which is why it lives under ``models/megatron_mimo`` rather than
+    # inside this training-setup module.
+    from megatron.bridge.models.megatron_mimo import build_megatron_mimo_model
+
     megatron_mimo_provider = cfg.model
-    megatron_mimo_provider.finalize()
-    megatron_mimo_infra = megatron_mimo_provider.build_infra()
-
-    # Validate no stub ranks
-    world_size = dist.get_world_size()
-    validate_no_stub_ranks(megatron_mimo_infra.module_to_grid_map, world_size)
-
-    # Initialize per-module random seeds before model construction.
-    # MegatronMIMO bypasses initialize_megatron() (to avoid global MPU corruption), which
-    # also skips model_parallel_cuda_manual_seed(). Without it, GPU weight init and
-    # TP-region dropout crash because CudaRNGStatesTracker is empty. We look up the
-    # per-module TP/PP ranks from HyperCommGrids and pass them explicitly.
-    _set_megatron_mimo_random_seeds(cfg, megatron_mimo_infra)
-
-    logger.info(f"Rank {dist.get_rank()}: Building distributed model")
-
-    # Use cfg.ddp directly (already finalized by megatron_mimo_runtime_config_update).
-    # Matches the standard path which passes cfg.ddp to provide_distributed_model.
-    model_list = megatron_mimo_provider.provide_distributed_model(
+    model, megatron_mimo_infra = build_megatron_mimo_model(
+        megatron_mimo_provider,
         ddp_config=cfg.ddp,
         fp16=getattr(cfg.model, "fp16", False),
         bf16=getattr(cfg.model, "bf16", True),
+        seed=cfg.rng.seed,
     )
-    model = model_list[0]
 
     logger.info(f"Rank {dist.get_rank()}: Creating multimodule communicator")
 
@@ -317,31 +255,24 @@ def setup_megatron_mimo(
     _update_megatron_mimo_model_config_funcs(model, optimizer, megatron_mimo_infra, module_to_grid_tuple)
 
     # Select rank-local PG collection for non-colocated MegatronMIMO.
+    # ``build_megatron_mimo_model`` has already bridged
+    # ``parallel_state`` globals from this rank's pg_collection.
     active_module_name, local_pg_collection = get_active_module_pg(megatron_mimo_infra)
 
-    # Initialize checkpoint manager (owns checkpointing_context internally).
+    # Initialize checkpoint manager.
     checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
-
-    # Bridge MegatronMIMO's per-module process groups into Megatron's global parallel
-    # state.  MegatronMIMO intentionally skips global MPU init (see
-    # MegatronMIMOProvider.initialize_model_parallel), but checkpoint save/load
-    # paths (sharded_state_dict, ensure_metadata_has_dp_cp_group) rely on the
-    # globals.  For non-colocated MegatronMIMO every rank is active in exactly one
-    # module, so we can safely set the globals from that module's collection.
-    from megatron.core import parallel_state as mpu
-
-    mpu._TENSOR_MODEL_PARALLEL_GROUP = local_pg_collection.tp
-    mpu._DATA_PARALLEL_GROUP = local_pg_collection.dp
-    mpu._DATA_PARALLEL_GROUP_WITH_CP = getattr(local_pg_collection, "dp_cp", local_pg_collection.dp)
-    if hasattr(local_pg_collection, "pp"):
-        mpu._PIPELINE_MODEL_PARALLEL_GROUP = local_pg_collection.pp
 
     # Load checkpoint if one exists (persistent, pretrained, or non-persistent).
     first_scheduler = next(iter(schedulers.values()), None) if schedulers else None
 
-    has_persistent = cfg.checkpoint.load is not None and checkpoint_exists(cfg.checkpoint.load)
-    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and checkpoint_exists(
-        cfg.checkpoint.pretrained_checkpoint
+    # HF directories are included in load detection only to route to the
+    # targeted checkpoint.load error in checkpointing.
+    has_persistent = cfg.checkpoint.load is not None and (
+        checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+    )
+    has_pretrained = cfg.checkpoint.pretrained_checkpoint is not None and (
+        checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+        or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
     wants_non_persistent = cfg.checkpoint.non_persistent_ckpt_type is not None
     should_load = has_persistent or has_pretrained or wants_non_persistent
@@ -349,14 +280,15 @@ def setup_megatron_mimo(
     if should_load:
         timers = global_state.timers
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            global_state,
-            model=[model],
-            optimizer=optimizer,
-            opt_param_scheduler=first_scheduler,
-            checkpointing_context=checkpoint_manager.checkpointing_context,
-            pg_collection=local_pg_collection,
-            module_name=active_module_name,
+        checkpoint_manager.load(
+            CheckpointLoadContext(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer,
+                opt_param_scheduler=first_scheduler,
+                pg_collection=local_pg_collection,
+                module_name=active_module_name,
+            )
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

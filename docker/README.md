@@ -96,7 +96,7 @@ docker build \
   --build-arg NEMO_FW_FINAL_BASE_IMAGE=megatron-bridge:latest \
   --build-arg NEMO_COMMIT=<commit-sha> \
   --build-arg NEMO_EXPORT_DEPLOY_COMMIT=<commit-sha> \
-  --build-arg NEMO_EVAL_COMMIT=<commit-sha> \
+  --build-arg NEMO_EVALUATOR_COMMIT=<commit-sha> \
   --build-arg NEMO_RUN_COMMIT=<commit-sha> \
   -t fw-final:latest \
   .
@@ -139,6 +139,7 @@ docker build \
 | `BASE_IMAGE` | Base container; set to the fw-base image when building the full stack |
 | `INSTALL_DEEPEP` | Set to `True` to build and install DeepEP and nvshmem |
 | `DEEPEP_COMMIT` | DeepEP git commit SHA |
+| `REINSTALL_NVSHMEM` | Set to `True` to reinstall nvshmem (`nvidia-nvshmem-cu13`) over the base image version; only applied when `INSTALL_DEEPEP=True` |
 | `MCORE_TRIGGERED_TESTING` | Skip uv lockfile check for cross-version Megatron-LM testing |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments for `uv cache prune` |
 
@@ -149,7 +150,7 @@ docker build \
 | `NEMO_FW_FINAL_BASE_IMAGE` | Base image; must be a megatron-bridge image |
 | `NEMO_COMMIT` | NeMo git commit SHA |
 | `NEMO_EXPORT_DEPLOY_COMMIT` | NeMo Export-Deploy git commit SHA |
-| `NEMO_EVAL_COMMIT` | NeMo Evaluator git commit SHA |
+| `NEMO_EVALUATOR_COMMIT` | NeMo Evaluator git commit SHA |
 | `NEMO_RUN_COMMIT` | NeMo Run git commit SHA |
 
 ---

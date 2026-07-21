@@ -16,6 +16,7 @@
 """Tests for common_utils module."""
 
 import os
+from datetime import timedelta
 from unittest.mock import patch
 
 import pytest
@@ -27,6 +28,7 @@ from megatron.bridge.utils.common_utils import (
     get_rank_safe,
     get_world_size_safe,
     is_last_rank,
+    maybe_initialize_distributed,
     print_rank_0,
     print_rank_last,
 )
@@ -73,11 +75,10 @@ class TestGetRankSafe:
     @patch("torch.distributed.is_initialized")
     @patch.dict(os.environ, {"RANK": "invalid"})
     def test_invalid_rank_env_var(self, mock_is_initialized):
-        """Test get_rank_safe with invalid RANK environment variable."""
+        """Test get_rank_safe falls back to 0 when RANK is malformed."""
         mock_is_initialized.return_value = False
 
-        with pytest.raises(ValueError):
-            get_rank_safe()
+        assert get_rank_safe() == 0
 
 
 class TestGetWorldSizeSafe:
@@ -411,3 +412,57 @@ class TestSLURMFallback:
         """Test warning issued when defaulting to 29500."""
         with pytest.warns(UserWarning, match="Could not determine master port"):
             assert get_master_port_safe() == 29500
+
+
+class TestMaybeInitializeDistributed:
+    """Test maybe_initialize_distributed (minimal launcher-env process-group bring-up)."""
+
+    @patch("torch.distributed.is_available", return_value=False)
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.init_process_group")
+    @patch("torch.cuda.set_device")
+    def test_noop_when_dist_unavailable(self, mock_set_device, mock_init_pg, *_):
+        maybe_initialize_distributed(timeout_minutes=1)
+        mock_init_pg.assert_not_called()
+        mock_set_device.assert_not_called()
+
+    @patch("torch.distributed.is_available", return_value=True)
+    @patch("torch.distributed.is_initialized", return_value=True)
+    @patch("torch.distributed.init_process_group")
+    @patch("torch.cuda.set_device")
+    def test_noop_when_already_initialized(self, mock_set_device, mock_init_pg, *_):
+        maybe_initialize_distributed(timeout_minutes=1)
+        mock_init_pg.assert_not_called()
+        mock_set_device.assert_not_called()
+
+    @patch.dict(os.environ, {}, clear=True)
+    @patch("torch.distributed.is_available", return_value=True)
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.init_process_group")
+    @patch("torch.cuda.set_device")
+    @patch("megatron.bridge.utils.common_utils.get_master_port_safe", return_value=23456)
+    @patch("megatron.bridge.utils.common_utils.get_master_addr_safe", return_value="node-0")
+    @patch("megatron.bridge.utils.common_utils.get_local_rank_preinit", return_value=3)
+    @patch("megatron.bridge.utils.common_utils.get_world_size_safe", return_value=16)
+    @patch("megatron.bridge.utils.common_utils.get_rank_safe", return_value=7)
+    def test_populates_env_and_initializes(
+        self,
+        _rank,
+        _world,
+        _local,
+        _addr,
+        _port,
+        mock_set_device,
+        mock_init_pg,
+        *_,
+    ):
+        # @patch.dict(clear=True) isolates os.environ so the vars set below do not leak.
+        maybe_initialize_distributed(timeout_minutes=11)
+
+        assert os.environ["RANK"] == "7"
+        assert os.environ["WORLD_SIZE"] == "16"
+        assert os.environ["LOCAL_RANK"] == "3"
+        assert os.environ["MASTER_ADDR"] == "node-0"
+        assert os.environ["MASTER_PORT"] == "23456"
+        mock_set_device.assert_called_once_with(3)
+        mock_init_pg.assert_called_once_with("nccl", timeout=timedelta(minutes=11))

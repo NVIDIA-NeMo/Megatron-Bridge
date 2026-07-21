@@ -12,28 +12,116 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import copy
-import importlib
 import logging
-import os
-import warnings
-from dataclasses import dataclass, is_dataclass
 from dataclasses import fields as dataclass_fields
-from functools import lru_cache
-from typing import Any, Mapping, Optional, Type, TypeVar
+from dataclasses import is_dataclass
+from typing import Any, Mapping
 
-import yaml
-from megatron.core.msc_utils import MultiStorageClientFeature
-from omegaconf import OmegaConf
-
-from megatron.bridge.models.common import Serializable
-from megatron.bridge.utils.instantiate_utils import InstantiationMode, instantiate
-from megatron.bridge.utils.yaml_utils import safe_yaml_representers
+from megatron.core.quantization.quant_config import GlobMatcher, Matcher, RecipeConfig
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
+from megatron.training.config.container import ConfigContainerBase as _MCoreConfigContainerBase
+from megatron.training.config.utils import (
+    _get_init_false_fields,  # noqa: F401
+    _resolve_target_class,  # noqa: F401
+)
+from megatron.training.config.utils import (
+    sanitize_dataclass_config as _sanitize_dataclass_config,
+)
+from transformers import PreTrainedConfig
 
 
 logger = logging.getLogger(__name__)
 
-T = TypeVar("T", bound="_ConfigContainerBase")
+
+class _ConfigContainerBase(_MCoreConfigContainerBase):
+    """Bridge config container that lets composite HF configs construct their children.
+
+    Nested ``PreTrainedConfig`` values are emitted as plain mappings because their
+    parent config owns child construction. Other dataclasses retain MCore's recursive
+    ``_target_`` serialization.
+    """
+
+    @classmethod
+    def _convert_value_to_dict(cls, value: Any) -> Any:
+        if isinstance(value, PipelineParallelLayerLayout):
+            return cls._convert_value_to_dict(value.input_data)
+        if isinstance(value, RecipeConfig) and not hasattr(value, "to_cfg_dict"):
+            if type(value) is not RecipeConfig:
+                recipe_type = f"{type(value).__module__}.{type(value).__qualname__}"
+                raise TypeError(
+                    f"Unsupported quantization recipe type: {recipe_type}. "
+                    "RecipeConfig subclasses must implement to_cfg_dict()."
+                )
+            return cls._convert_recipe_config_to_dict(value)
+        if isinstance(value, PreTrainedConfig) and not hasattr(value, "to_cfg_dict"):
+            return cls._convert_pretrained_config_to_dict(value, include_target=True)
+        return super()._convert_value_to_dict(value)
+
+    @classmethod
+    def _convert_recipe_config_to_dict(cls, value: RecipeConfig) -> dict[str, Any]:
+        """Convert an MCore quantization recipe to an instantiable mapping."""
+        serialized_matchers: list[dict[str, Any]] = []
+        for matcher in value.matchers:
+            serialized_matchers.append(cls._convert_recipe_matcher_to_dict(matcher))
+
+        return {
+            "_target_": f"{RecipeConfig.__module__}.{RecipeConfig.__qualname__}",
+            "matchers": serialized_matchers,
+            "config_dict": cls._convert_value_to_dict(value.configs),
+        }
+
+    @classmethod
+    def _convert_recipe_matcher_to_dict(cls, matcher: Matcher) -> dict[str, Any]:
+        """Convert a quantization recipe matcher to an instantiable mapping."""
+        if type(matcher) is GlobMatcher:
+            return {
+                "_target_": f"{GlobMatcher.__module__}.{GlobMatcher.__qualname__}",
+                "pattern": matcher.pattern,
+                "config_key": matcher.config_key,
+            }
+
+        serialized_matcher = super()._convert_value_to_dict(matcher)
+        if not isinstance(serialized_matcher, dict) or "_target_" not in serialized_matcher:
+            matcher_type = f"{type(matcher).__module__}.{type(matcher).__qualname__}"
+            raise TypeError(
+                f"Unsupported quantization recipe matcher type: {matcher_type}. "
+                "Custom matchers must be dataclasses or implement to_cfg_dict()."
+            )
+        return serialized_matcher
+
+    @classmethod
+    def _convert_pretrained_config_to_dict(
+        cls,
+        value: PreTrainedConfig,
+        *,
+        include_target: bool,
+    ) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        if include_target:
+            result["_target_"] = f"{value.__class__.__module__}.{value.__class__.__qualname__}"
+
+        if include_target and is_dataclass(value):
+            config_items = (
+                (field.name, getattr(value, field.name))
+                for field in dataclass_fields(value)
+                if not field.name.startswith("_")
+            )
+        else:
+            config_items = ((key, item) for key, item in value.to_dict().items() if not key.startswith("_"))
+
+        for key, item in config_items:
+            result[key] = cls._convert_pretrained_config_value_to_dict(item)
+        return result
+
+    @classmethod
+    def _convert_pretrained_config_value_to_dict(cls, value: Any) -> Any:
+        if isinstance(value, PreTrainedConfig):
+            return cls._convert_pretrained_config_to_dict(value, include_target=False)
+        if isinstance(value, (list, tuple)):
+            return [cls._convert_pretrained_config_value_to_dict(item) for item in value]
+        if isinstance(value, dict):
+            return {key: cls._convert_pretrained_config_value_to_dict(item) for key, item in value.items()}
+        return cls._convert_value_to_dict(value)
 
 
 def create_ddp_config(
@@ -43,13 +131,15 @@ def create_ddp_config(
     overrides: Mapping[str, object] | None = None,
     finalize: bool = True,
 ) -> object | None:
-    """Create a Bridge DDP config for external model construction."""
+    """Create a finalized Bridge DDP config for external model construction."""
     if not wrap_with_ddp:
         return None
 
     from megatron.bridge.training.config import DistributedDataParallelConfig
 
-    ddp_config = {"use_distributed_optimizer": use_distributed_optimizer}
+    ddp_config = {
+        "use_distributed_optimizer": use_distributed_optimizer,
+    }
     if use_megatron_fsdp:
         ddp_config.update(
             {
@@ -84,306 +174,3 @@ def apply_run_config_backward_compat(config_dict: dict[str, Any]) -> dict[str, A
         The config dictionary with backward compatibility fixes applied.
     """
     return _sanitize_dataclass_config(config_dict)
-
-
-def _sanitize_dataclass_config(config: dict[str, Any], _visited: set | None = None) -> dict[str, Any]:
-    """Remove init=False fields from a dataclass config dict for backward compatibility.
-
-    This function automatically detects fields with init=False by inspecting the
-    target class specified in the config's _target_ field. This handles cases where
-    older checkpoints serialized computed fields that should not be passed to __init__.
-
-    The function recursively processes nested dicts that may also be dataclass configs.
-
-    Args:
-        config: A configuration dictionary, potentially with a _target_ field.
-        _visited: Internal set to track visited objects and prevent infinite recursion.
-
-    Returns:
-        The sanitized configuration with init=False fields removed.
-    """
-    if not isinstance(config, dict):
-        return config
-
-    if _visited is None:
-        _visited = set()
-    config_id = id(config)
-    if config_id in _visited:
-        return config
-    _visited.add(config_id)
-
-    target = config.get("_target_")
-    init_false_fields: frozenset[str] = frozenset()
-
-    if isinstance(target, str):
-        target_class = _resolve_target_class(target)
-        if target_class is not None:
-            init_false_fields = _get_init_false_fields(target_class)
-
-    # Process all values, filtering init=False fields and recursing into nested dicts
-    sanitized = {}
-    for key, value in config.items():
-        if key in init_false_fields:
-            if target_class is not None:
-                logger.debug(
-                    f"Removing init=False field '{key}' from {target_class.__name__} config for backward compatibility"
-                )
-            continue
-
-        # Recursively sanitize nested dicts (which may be nested dataclass configs)
-        if isinstance(value, dict):
-            value = _sanitize_dataclass_config(value, _visited)
-        elif isinstance(value, list):
-            value = [_sanitize_dataclass_config(item, _visited) if isinstance(item, dict) else item for item in value]
-
-        sanitized[key] = value
-
-    return sanitized
-
-
-@lru_cache(maxsize=128)
-def _get_init_false_fields(target_class: type) -> frozenset[str]:
-    """Get the set of field names with init=False for a dataclass.
-
-    Args:
-        target_class: A dataclass type to inspect.
-
-    Returns:
-        A frozenset of field names that have init=False.
-    """
-    if not is_dataclass(target_class):
-        return frozenset()
-
-    return frozenset(f.name for f in dataclass_fields(target_class) if not f.init)
-
-
-def _resolve_target_class(target: str) -> type | None:
-    """Resolve a _target_ string to a class.
-
-    Args:
-        target: A fully qualified class path (e.g., "module.submodule.ClassName").
-
-    Returns:
-        The resolved class, or None if resolution fails.
-    """
-    try:
-        module_path, class_name = target.rsplit(".", 1)
-        module = importlib.import_module(module_path)
-        return getattr(module, class_name, None)
-    except (ValueError, ImportError, AttributeError) as e:
-        logger.warning(f"Could not resolve target '{target}': {e}")
-        return None
-
-
-@dataclass(kw_only=True)
-class _ConfigContainerBase:
-    """
-    Base configuration container for Megatron Bridge configurations.
-
-    Provides:
-    - Custom validation
-    - Versioning metadata
-    - YAML/Dict serialization and deserialization
-    - Dictionary-style attribute access (config["attr"] and config.get("attr", default))
-    """
-
-    __version__: str = "0.1.0"
-
-    @classmethod
-    def from_dict(
-        cls: Type[T],
-        config_dict: dict[str, Any],
-        mode: InstantiationMode = InstantiationMode.STRICT,
-    ) -> T:
-        """
-        Create a config container from a dictionary using instantiate.
-
-        Args:
-            config_dict: Dictionary containing configuration
-            mode: Serialization mode (strict or lenient)
-
-        Returns:
-            A new instance of this class initialized with the dictionary values
-        """
-        # Make a copy to avoid modifying the input
-        config_dict = copy.deepcopy(config_dict)
-
-        assert "_target_" in config_dict
-
-        # Apply backward compatibility: remove init=False fields that may have been
-        # serialized by older versions (these are computed in __post_init__)
-        config_dict = _sanitize_dataclass_config(config_dict)
-
-        # Check for extra keys in strict mode
-        expected_fields = {f.name for f in dataclass_fields(cls) if not f.name.startswith("_")}
-        expected_fields.add("_target_")  # Add _target_ as a valid field
-        extra_keys = set(config_dict.keys()) - expected_fields
-
-        if extra_keys:
-            if mode == InstantiationMode.STRICT:
-                raise ValueError(f"Dictionary contains extra keys not in {cls.__qualname__}: {extra_keys}")
-            else:
-                # In lenient mode, remove extra keys
-                for key in extra_keys:
-                    config_dict.pop(key)
-
-        # Use instantiate to create the object
-        instance = instantiate(config_dict, mode=mode)
-
-        return instance
-
-    @classmethod
-    def from_yaml(cls: Type[T], yaml_path: str, mode: InstantiationMode = InstantiationMode.LENIENT) -> T:
-        """
-        Create a config container from a YAML file.
-
-        Args:
-            yaml_path: Path to the YAML file
-            mode: Serialization mode (strict or lenient)
-
-        Returns:
-            A new instance of this class initialized with the YAML file values
-        """
-        if MultiStorageClientFeature.is_enabled():
-            msc = MultiStorageClientFeature.import_package()
-            yaml_path_exists = msc.os.path.exists(yaml_path)
-        else:
-            yaml_path_exists = os.path.exists(yaml_path)
-
-        if not yaml_path_exists:
-            raise FileNotFoundError(f"YAML file not found: {yaml_path}")
-
-        if MultiStorageClientFeature.is_enabled():
-            msc = MultiStorageClientFeature.import_package()
-            with msc.open(yaml_path, "r") as f:
-                config_dict = yaml.safe_load(f)
-        else:
-            with open(yaml_path, "r") as f:
-                config_dict = yaml.safe_load(f)
-
-        # Convert to OmegaConf first for better compatibility with instantiate
-        conf = OmegaConf.create(config_dict)
-
-        return cls.from_dict(OmegaConf.to_container(conf, resolve=True), mode=mode)
-
-    def to_dict(self) -> dict[str, Any]:
-        """
-        Convert the config container to a dictionary.
-
-        Also converts any nested dataclasses (both ConfigContainer and regular dataclasses)
-        to dictionaries recursively.
-
-        Returns:
-            Dictionary representation of this config
-        """
-        result = {}
-        result["_target_"] = f"{self.__class__.__module__}.{self.__class__.__qualname__}"
-
-        for f in dataclass_fields(self):
-            if f.name.startswith("_"):
-                continue
-
-            value = getattr(self, f.name)
-            result[f.name] = self._convert_value_to_dict(value)
-
-        return result
-
-    @classmethod
-    def _convert_value_to_dict(cls, value: Any) -> Any:
-        """
-        Recursively convert a value to a dictionary representation.
-
-        Handles:
-        - ConfigContainer instances (using to_dict)
-        - Serializable instances (using as_dict)
-        - Classes which implement a to_cfg_dict method
-        - Regular dataclasses (converting each non-private field)
-        - Lists and tuples (converting each element)
-        - Dictionaries (converting each value)
-        - Other types (kept as-is)
-
-        Args:
-            value: The value to convert
-
-        Returns:
-            The converted value
-        """
-        if isinstance(value, _ConfigContainerBase):
-            return value.to_dict()
-        elif isinstance(value, Serializable):
-            return value.as_dict()
-        elif hasattr(value, "to_cfg_dict"):
-            # Allow non-Container classes to implement own custom method
-            return value.to_cfg_dict()
-        elif is_dataclass(value) and not isinstance(value, type):
-            # Handle regular dataclasses
-            result = {}
-
-            # Add _target_ field for instantiation
-            result["_target_"] = f"{value.__class__.__module__}.{value.__class__.__qualname__}"
-
-            # Convert each field, handling nested dataclasses properly
-            for field in dataclass_fields(value):
-                if field.name.startswith("_"):
-                    continue
-
-                field_value = getattr(value, field.name)
-                result[field.name] = cls._convert_value_to_dict(field_value)
-
-            return result
-        elif isinstance(value, (list, tuple)):
-            return [cls._convert_value_to_dict(item) for item in value]
-        elif isinstance(value, dict):
-            return {k: cls._convert_value_to_dict(v) for k, v in value.items()}
-        else:
-            return value
-
-    def to_yaml(self, yaml_path: Optional[str] = None) -> None:
-        """
-        Save the config container to a YAML file.
-
-        Args:
-            yaml_path: Path where to save the YAML file. If None, prints to stdout.
-
-        Note:
-            Printing to stdout is deprecated and will be removed in a future version.
-            Use print_yaml() instead.
-        """
-        config_dict = self.to_dict()
-
-        with safe_yaml_representers():
-            if yaml_path is None:
-                warnings.warn(
-                    "Calling to_yaml() without a path in order to print to stdout is deprecated "
-                    "and will be removed in a future version. Use print_yaml() instead.",
-                    DeprecationWarning,
-                    stacklevel=2,
-                )
-                print(yaml.safe_dump(config_dict, default_flow_style=False))
-            else:
-                if MultiStorageClientFeature.is_enabled():
-                    msc = MultiStorageClientFeature.import_package()
-                    with msc.open(yaml_path, "w") as f:
-                        yaml.safe_dump(config_dict, f, default_flow_style=False)
-                else:
-                    with open(yaml_path, "w") as f:
-                        yaml.safe_dump(config_dict, f, default_flow_style=False)
-
-    def print_yaml(self) -> None:
-        """
-        Print the config container to the console in YAML format.
-        """
-        config_dict = self.to_dict()
-        with safe_yaml_representers():
-            print(yaml.safe_dump(config_dict, default_flow_style=False))
-
-    def __deepcopy__(self, memo):
-        """Support for deep copying."""
-        cls = self.__class__
-        result = cls.__new__(cls)
-        memo[id(self)] = result
-
-        for f in dataclass_fields(self):
-            setattr(result, f.name, copy.deepcopy(getattr(self, f.name), memo))
-
-        return result

@@ -36,6 +36,7 @@ from pathlib import Path
 
 import pytest
 import torch
+from PIL import Image
 from transformers import AutoTokenizer, Qwen3VLForConditionalGeneration
 from transformers.models.qwen3_vl import Qwen3VLConfig
 
@@ -177,13 +178,22 @@ class TestQwen3VLQuantizationWorkflow:
         print(f"Created toy model at: {model_dir}")
         return str(model_dir)
 
-    def _run_quantization(self, model_path, base_dir, quant_cfg="fp8", tp=1, pp=1):
+    @pytest.fixture(scope="class")
+    def qwen3_vl_test_image_path(self, tmp_path_factory):
+        """Create a deterministic local image for offline VLM CI tests."""
+        temp_dir = tmp_path_factory.mktemp("qwen3_vl_quantization_image")
+        image_path = temp_dir / "test_image.png"
+        Image.new("RGB", (400, 300), color=(64, 128, 192)).save(image_path)
+        return str(image_path)
+
+    def _run_quantization(self, model_path, base_dir, image_path, quant_cfg="fp8", tp=1, pp=1):
         """
         Helper method to run quantization step for Qwen3 VL models.
 
         Args:
             model_path: Path to the HuggingFace model directory
             base_dir: Base directory to save the quantized checkpoint
+            image_path: Local test image path for post-quantization generation
             quant_cfg: Quantization configuration to use
             tp: Tensor parallelism size
             pp: Pipeline parallelism size
@@ -225,7 +235,7 @@ class TestQwen3VLQuantizationWorkflow:
             "--calib-size",
             "8",  # Use small calib size for testing
             "--test-image-path",
-            "https://picsum.photos/id/237/400/300",  # Reliable placeholder image service
+            image_path,
             "--use-random-calib",  # Use random images for offline CI environments
         ]
 
@@ -240,13 +250,14 @@ class TestQwen3VLQuantizationWorkflow:
         )
         return result, output_dir
 
-    def _run_generation(self, model_path, checkpoint_dir, tp=1, pp=1):
+    def _run_generation(self, model_path, checkpoint_dir, image_path, tp=1, pp=1):
         """
         Helper method to run generation step for Qwen3 VL models.
 
         Args:
             model_path: Path to the HuggingFace model directory
             checkpoint_dir: Directory containing the quantized checkpoint
+            image_path: Local image path for VLM generation
             tp: Tensor parallelism size for generation
             pp: Pipeline parallelism size for generation
 
@@ -278,7 +289,7 @@ class TestQwen3VLQuantizationWorkflow:
             "--megatron-load-path",
             str(checkpoint_dir),
             "--image-path",
-            "https://picsum.photos/id/237/400/300",  # Reliable placeholder image service
+            image_path,
             "--prompts",
             "Describe this image.",
             "--osl",
@@ -296,7 +307,7 @@ class TestQwen3VLQuantizationWorkflow:
         )
 
     @pytest.mark.run_only_on("GPU")
-    def test_qwen3_vl_quantization_and_generation(self, qwen3_vl_toy_model_path, tmp_path):
+    def test_qwen3_vl_quantization_and_generation(self, qwen3_vl_toy_model_path, qwen3_vl_test_image_path, tmp_path):
         """
         Test complete Qwen3 VL workflow: quantize with tensor parallelism (tp=2),
         then generate with tensor parallelism (tp=2).
@@ -323,7 +334,12 @@ class TestQwen3VLQuantizationWorkflow:
             print("=== STEP 1: Quantizing Qwen3 VL toy model with TP=2, PP=1 ===")
             # Step 1: Quantize the model with tensor parallelism
             quantize_result, quantized_checkpoint_dir = self._run_quantization(
-                qwen3_vl_toy_model_path, base_dir, quant_cfg="fp8", tp=2, pp=1
+                qwen3_vl_toy_model_path,
+                base_dir,
+                qwen3_vl_test_image_path,
+                quant_cfg="fp8",
+                tp=2,
+                pp=1,
             )
 
             if quantize_result.returncode != 0:
@@ -348,7 +364,9 @@ class TestQwen3VLQuantizationWorkflow:
 
             print("=== STEP 2: Testing generation from quantized Qwen3 VL checkpoint with TP=2, PP=1 ===")
             # Step 2: Test generation from the quantized checkpoint with same parallelism
-            generation_result = self._run_generation(qwen3_vl_toy_model_path, quantized_checkpoint_dir, tp=2, pp=1)
+            generation_result = self._run_generation(
+                qwen3_vl_toy_model_path, quantized_checkpoint_dir, qwen3_vl_test_image_path, tp=2, pp=1
+            )
 
             if generation_result.returncode != 0:
                 print(f"Generation STDOUT: {generation_result.stdout}")
@@ -383,7 +401,15 @@ class TestQwen3VLQuantizationWorkflow:
         ],
     )
     def test_qwen3_vl_quantization_and_generation_parallelism(
-        self, qwen3_vl_toy_model_path, tmp_path, quant_tp, quant_pp, gen_tp, gen_pp, test_name
+        self,
+        qwen3_vl_toy_model_path,
+        qwen3_vl_test_image_path,
+        tmp_path,
+        quant_tp,
+        quant_pp,
+        gen_tp,
+        gen_pp,
+        test_name,
     ):
         """
         Test Qwen3 VL quantization and generation with different parallelism configurations.
@@ -405,7 +431,12 @@ class TestQwen3VLQuantizationWorkflow:
             print(f"=== STEP 1: Quantizing Qwen3 VL toy model with TP={quant_tp}, PP={quant_pp} ===")
             # Step 1: Quantize the model with specified parallelism
             quantize_result, quantized_checkpoint_dir = self._run_quantization(
-                qwen3_vl_toy_model_path, base_dir, quant_cfg="fp8", tp=quant_tp, pp=quant_pp
+                qwen3_vl_toy_model_path,
+                base_dir,
+                qwen3_vl_test_image_path,
+                quant_cfg="fp8",
+                tp=quant_tp,
+                pp=quant_pp,
             )
 
             if quantize_result.returncode != 0:
@@ -435,7 +466,11 @@ class TestQwen3VLQuantizationWorkflow:
             print(f"=== STEP 2: Testing generation with TP={gen_tp}, PP={gen_pp} ===")
             # Step 2: Test generation with different parallelism configuration
             generation_result = self._run_generation(
-                qwen3_vl_toy_model_path, quantized_checkpoint_dir, tp=gen_tp, pp=gen_pp
+                qwen3_vl_toy_model_path,
+                quantized_checkpoint_dir,
+                qwen3_vl_test_image_path,
+                tp=gen_tp,
+                pp=gen_pp,
             )
 
             if generation_result.returncode != 0:

@@ -15,12 +15,11 @@
 import fnmatch
 import json
 import logging
-import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from collections.abc import Mapping
 from functools import lru_cache
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import (
     Dict,
     Iterable,
@@ -37,6 +36,48 @@ import torch
 
 
 logger = logging.getLogger(__name__)
+
+
+def _validate_safetensors_shard_filename(filename: object, *, tensor_key: str, index_file: Path) -> str:
+    """Validate a shard filename loaded from a safetensors index."""
+    if not isinstance(filename, str) or not filename:
+        raise ValueError(
+            f"Invalid shard filename for tensor '{tensor_key}' in {index_file}: expected a non-empty string."
+        )
+
+    path = Path(filename)
+    windows_path = PureWindowsPath(filename)
+    if (
+        "\x00" in filename
+        or "\\" in filename
+        or path.is_absolute()
+        or windows_path.is_absolute()
+        or windows_path.drive
+        or ".." in path.parts
+    ):
+        raise ValueError(
+            f"Invalid shard filename for tensor '{tensor_key}' in {index_file}: {filename!r} must be a relative "
+            "path within the checkpoint directory."
+        )
+
+    if path.suffix != ".safetensors":
+        raise ValueError(
+            f"Invalid shard filename for tensor '{tensor_key}' in {index_file}: {filename!r} must end with "
+            "'.safetensors'."
+        )
+
+    return filename
+
+
+def _resolve_output_shard_path(output_path: Path, filename: str) -> Path:
+    """Resolve a shard output path and ensure it remains inside output_path."""
+    output_root = output_path.resolve()
+    output_file_path = (output_root / filename).resolve()
+    try:
+        output_file_path.relative_to(output_root)
+    except ValueError:
+        raise ValueError(f"Shard filename {filename!r} escapes output directory {output_root}.") from None
+    return output_file_path
 
 
 class StateDict(Mapping[str, torch.Tensor]):
@@ -76,7 +117,7 @@ class StateDict(Mapping[str, torch.Tensor]):
         ['model.layer.0.weight', 'model.layer.1.weight']
         >>>
         >>> # 3. Access with a glob pattern
-        >>> sorted(list(state.glob("model.layer.*.bias").keys()))
+        >>> sorted(list(state["model.layer.*.bias"].keys()))
         ['model.layer.0.bias', 'model.layer.1.bias']
         >>>
         >>> # 4. Access with a compiled regex pattern
@@ -98,7 +139,7 @@ class StateDict(Mapping[str, torch.Tensor]):
 
         # You can query it just like the in-memory dictionary. Only the required
         # tensors (e.g., all weight tensors) will be loaded from disk.
-        weights = state_from_disk.glob("model.layer.*.weight")
+        weights = state_from_disk["model.layer.*.weight"]
     """
 
     source: "StateSource"
@@ -236,60 +277,6 @@ class StateDict(Mapping[str, torch.Tensor]):
         else:
             raise TypeError(f"Key must be str, list of str, or compiled regex, got {type(key)}")
 
-    def regex(self, pattern: str) -> Dict[str, torch.Tensor]:
-        """
-        Queries the state dict with a regular expression pattern.
-
-        This is a convenience method that compiles the pattern string and uses it
-        to retrieve all matching tensors.
-
-        Args:
-            pattern: The regular expression string to match against tensor keys.
-
-        Returns:
-            A dictionary mapping matching tensor names to their `torch.Tensor` objects.
-
-        Examples:
-            >>> d = {
-            ...     "model.layers.0.self_attn.weight": torch.randn(1, 1),
-            ...     "model.layers.1.self_attn.weight": torch.randn(1, 1),
-            ...     "model.layers.1.mlp.weight": torch.randn(1, 1)
-            ... }
-            >>> state = StateDict(d)
-            >>> # Get all attention-related weights
-            >>> attention_weights = state.regex(r"model\\.layers\\.\\d+\\.self_attn.*")
-            >>> sorted(attention_weights.keys())
-            ['model.layers.0.self_attn.weight', 'model.layers.1.self_attn.weight']
-        """
-        return self[re.compile(pattern)]
-
-    def glob(self, pattern: str) -> Dict[str, torch.Tensor]:
-        """
-        Queries the state dict with a glob pattern.
-
-        This is a convenience method for pattern matching using Unix shell-style
-        wildcards.
-
-        Args:
-            pattern: The glob pattern string to match against tensor keys.
-
-        Returns:
-            A dictionary mapping matching tensor names to their `torch.Tensor` objects.
-
-        Examples:
-            >>> d = {
-            ...     "model.layers.0.mlp.weight": torch.randn(1, 1),
-            ...     "model.layers.0.mlp.bias": torch.randn(1, 1),
-            ...     "model.layers.1.mlp.weight": torch.randn(1, 1)
-            ... }
-            >>> state = StateDict(d)
-            >>> # Get all mlp weights and biases from the first layer
-            >>> layer_0_mlp = state.glob("model.layers.0.mlp.*")
-            >>> sorted(layer_0_mlp.keys())
-            ['model.layers.0.mlp.bias', 'model.layers.0.mlp.weight']
-        """
-        return self[pattern]
-
     def __call__(self) -> Dict[str, torch.Tensor]:
         """
         Loads and returns the entire state dict as a dictionary.
@@ -310,10 +297,6 @@ class StateDict(Mapping[str, torch.Tensor]):
     def keys(self) -> List[str]:
         """Get all state dict keys."""
         return self._get_all_keys()
-
-    def items(self) -> List[tuple]:
-        """Get all state dict items."""
-        return list(self().items())
 
     def __contains__(self, key: str) -> bool:
         """Check if a key exists in the state dict."""
@@ -462,6 +445,19 @@ class SafeTensorsStateSource(StateSource):
         self._resolved_path_cache: Optional[Path] = None
         self._keys_cache: Optional[List[str]] = None
         self._key_to_filename_map_cache: Optional[Dict[str, str]] = None
+
+    @staticmethod
+    def _ignore_source_key_prefixes(
+        key_to_filename_map: Mapping[str, str] | None,
+        ignored_source_key_prefixes: Iterable[str] | None,
+    ) -> Dict[str, str]:
+        if not key_to_filename_map:
+            return {}
+        if not ignored_source_key_prefixes:
+            return dict(key_to_filename_map)
+
+        prefixes = tuple(ignored_source_key_prefixes)
+        return {key: filename for key, filename in key_to_filename_map.items() if not key.startswith(prefixes)}
 
     @property
     def path(self) -> Path:
@@ -693,6 +689,7 @@ class SafeTensorsStateSource(StateSource):
         strict: bool = True,
         distributed_save: bool = False,
         save_every_n_ranks: int = 1,
+        ignored_source_key_prefixes: Iterable[str] | None = None,
     ):
         """
         Saves tensors from a generator to `.safetensors` files, preserving the
@@ -719,11 +716,17 @@ class SafeTensorsStateSource(StateSource):
                 part of weights independently.
             save_every_n_ranks: Interval for saving weights across ranks in distributed mode.
                 For example, if set to 2, only ranks 0, 2, 4, ... will save weights.
+            ignored_source_key_prefixes: Source tensor key prefixes to omit from the expected
+                source sharding map when saving.
 
         """
         if distributed_save:
             return self._save_generator_distributed(
-                generator, output_path, strict, save_every_n_ranks=save_every_n_ranks
+                generator,
+                output_path,
+                strict,
+                save_every_n_ranks=save_every_n_ranks,
+                ignored_source_key_prefixes=ignored_source_key_prefixes,
             )
 
         # In a distributed environment, only rank 0 should write to disk.
@@ -743,7 +746,7 @@ class SafeTensorsStateSource(StateSource):
         output_path = Path(output_path)
         output_path.mkdir(parents=True, exist_ok=True)
 
-        key_to_filename_map = self.key_to_filename_map
+        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
         all_expected_keys = set(key_to_filename_map.keys())
 
         if not key_to_filename_map:
@@ -757,6 +760,7 @@ class SafeTensorsStateSource(StateSource):
             filename_to_keys_map[filename].add(key)
 
         files_to_save = dict(filename_to_keys_map)
+        remaining_keys_by_file = {filename: set(keys) for filename, keys in files_to_save.items()}
         buffered_tensors = {}
         all_yielded_keys = set()
         all_saved_keys = set()
@@ -767,7 +771,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -775,23 +779,32 @@ class SafeTensorsStateSource(StateSource):
 
             buffered_tensors[name] = tensor
 
-            # Check if any file is complete and can be saved.
-            # Iterate over a copy of keys since we might modify the dict.
-            for filename in list(files_to_save.keys()):
+            # Update only the shard containing this tensor. Scanning every shard
+            # for every yielded tensor becomes prohibitively expensive for models
+            # with tens of thousands of tensors.
+            filename = key_to_filename_map[name]
+            remaining_keys = remaining_keys_by_file.get(filename)
+            if remaining_keys is None:
+                # The shard was already saved. Preserve the previous duplicate-key
+                # behavior by leaving the tensor buffered for final reporting.
+                continue
+
+            remaining_keys.discard(name)
+            if not remaining_keys:
                 keys_for_file = files_to_save[filename]
-                if keys_for_file.issubset(buffered_tensors.keys()):
-                    # This shard is complete, save it.
-                    tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
+                tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
 
-                    output_file_path = output_path / filename
-                    save_file(tensors_to_save, output_file_path)
+                output_file_path = _resolve_output_shard_path(output_path, filename)
+                output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                save_file(tensors_to_save, output_file_path)
 
-                    # Free memory by removing saved tensors from the buffer.
-                    for key in keys_for_file:
-                        del buffered_tensors[key]
+                # Free memory by removing saved tensors from the buffer.
+                for key in keys_for_file:
+                    del buffered_tensors[key]
 
-                    all_saved_keys.update(keys_for_file)
-                    del files_to_save[filename]
+                all_saved_keys.update(keys_for_file)
+                del files_to_save[filename]
+                del remaining_keys_by_file[filename]
 
         # --- Final Reporting ---
         if files_to_save:
@@ -804,8 +817,8 @@ class SafeTensorsStateSource(StateSource):
                     "Warning: The following files are different from the source because the generator did not yield all "
                     "of their tensors. However they are still saved because strict=False."
                 )
-            for filename, keys_for_file in files_to_save.items():
-                missing_for_file = keys_for_file - all_yielded_keys
+            for filename in files_to_save:
+                missing_for_file = remaining_keys_by_file[filename]
                 if missing_for_file:
                     print(f"  - {filename}: missing {len(missing_for_file)} tensors:")
                     for key in sorted(list(missing_for_file)):
@@ -814,14 +827,21 @@ class SafeTensorsStateSource(StateSource):
                 for filename in list(files_to_save.keys()):
                     keys_for_file = files_to_save[filename]
                     tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
-                    output_file_path = output_path / filename
+                    output_file_path = _resolve_output_shard_path(output_path, filename)
+                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
                     save_file(tensors_to_save, output_file_path)
 
                     # Free memory by removing saved tensors from the buffer.
                     for key in tensors_to_save.keys():
                         del buffered_tensors[key]
 
-                    all_saved_keys.update(keys_for_file)
+                    # Only the keys we actually wrote belong in the
+                    # post-save index. Using ``keys_for_file`` here would
+                    # claim unsaved keys as written and produce a
+                    # ``model.safetensors.index.json`` that maps keys to a
+                    # file which doesn't contain them — HF loading then
+                    # crashes when it tries to read the missing tensor.
+                    all_saved_keys.update(tensors_to_save.keys())
                     del files_to_save[filename]
 
         if buffered_tensors:
@@ -831,6 +851,14 @@ class SafeTensorsStateSource(StateSource):
 
         # Final check on whether all original tensors were written.
         unsaved_keys = all_expected_keys - all_saved_keys
+        if unsaved_keys and strict:
+            print(f"\nError: {len(unsaved_keys)} tensors from the original checkpoint were not written:")
+            for key in sorted(unsaved_keys):
+                print(f"  - {key}")
+            raise RuntimeError(
+                f"{len(unsaved_keys)} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
         if not unsaved_keys:
             extra_keys = all_yielded_keys - all_expected_keys
             if extra_keys:
@@ -863,9 +891,6 @@ class SafeTensorsStateSource(StateSource):
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)
 
-    def _get_key_to_filename_map(self) -> Optional[Dict[str, str]]:
-        return self._cached_get_key_to_filename_map(self.path)
-
     @staticmethod
     @lru_cache(maxsize=None)
     def _cached_get_key_to_filename_map(model_name_or_path: Union[str, Path]) -> Optional[Dict[str, str]]:
@@ -876,7 +901,14 @@ class SafeTensorsStateSource(StateSource):
                 try:
                     index_data = json.load(f)
                     if "weight_map" in index_data and isinstance(index_data["weight_map"], dict):
-                        return index_data["weight_map"]
+                        return {
+                            key: _validate_safetensors_shard_filename(
+                                filename,
+                                tensor_key=key,
+                                index_file=index_file,
+                            )
+                            for key, filename in index_data["weight_map"].items()
+                        }
                 except json.JSONDecodeError:
                     return None
         return None
@@ -887,6 +919,7 @@ class SafeTensorsStateSource(StateSource):
         output_path: Union[str, Path],
         strict: bool = True,
         save_every_n_ranks: int = 1,
+        ignored_source_key_prefixes: Iterable[str] | None = None,
     ):
         is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
         if is_distributed:
@@ -913,7 +946,7 @@ class SafeTensorsStateSource(StateSource):
         if is_distributed:
             torch.distributed.barrier()
 
-        key_to_filename_map = self.key_to_filename_map
+        key_to_filename_map = self._ignore_source_key_prefixes(self.key_to_filename_map, ignored_source_key_prefixes)
 
         # Fallback: no sharding map, single-file save
         if not key_to_filename_map:
@@ -960,7 +993,7 @@ class SafeTensorsStateSource(StateSource):
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
-                        "To ignore, set strict=False."
+                        "Re-run with strict=False to save the partial checkpoint instead of failing."
                     )
                 else:
                     print(f"Warning: tensor '{name}' from generator not found in original model structure. Skipping.")
@@ -975,34 +1008,74 @@ class SafeTensorsStateSource(StateSource):
         if is_saver_rank:
             missing_keys = assigned_expected_keys - set(buffered_tensors.keys())
             if missing_keys:
-                missing_str = ", ".join(sorted(missing_keys))
-                print(f"Rank {rank}: Missing tensors for keys: {missing_str}", flush=True)
+                missing_keys_sorted = sorted(missing_keys)
+                missing_preview = ", ".join(missing_keys_sorted[:20])
+                missing_suffix = ""
+                if len(missing_keys_sorted) > 20:
+                    missing_suffix = f", ... (+{len(missing_keys_sorted) - 20} more)"
+                print(
+                    f"Rank {rank}: Missing {len(missing_keys_sorted)} tensors for keys: "
+                    f"{missing_preview}{missing_suffix}",
+                    flush=True,
+                )
 
             for fname in assigned_filenames:
                 keys_for_file = filename_to_keys_map[fname]
                 tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file if k in buffered_tensors}
                 if not tensors_to_save:
                     continue
-                save_file(tensors_to_save, output_path / fname)
+                output_file_path = _resolve_output_shard_path(output_path, fname)
+                output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                save_file(tensors_to_save, output_file_path)
                 actually_saved_keys.update(tensors_to_save.keys())
 
-        # Gather all saved keys from all ranks to rank 0
+        # Strict-mode check: ensure all expected tensors were written. Aggregate
+        # per-rank missing counts so all ranks raise consistently (avoids hangs
+        # on the trailing barriers).
+        if is_saver_rank:
+            local_unsaved_keys = assigned_expected_keys - actually_saved_keys
+        else:
+            local_unsaved_keys = set()
+
         if is_distributed:
-            # Convert set to list for gathering
-            local_saved_keys_list = list(actually_saved_keys) if is_saver_rank else []
-            gathered_keys = [None] * world_size
-            torch.distributed.all_gather_object(gathered_keys, local_saved_keys_list)
+            gathered_counts: list[int | None] = [None] * world_size
+            torch.distributed.all_gather_object(gathered_counts, len(local_unsaved_keys))
+            total_unsaved_count = sum(c for c in gathered_counts if c is not None)
+        else:
+            total_unsaved_count = len(local_unsaved_keys)
+
+        if total_unsaved_count and strict:
+            if local_unsaved_keys:
+                keys_sorted = sorted(local_unsaved_keys)
+                preview = ", ".join(keys_sorted[:20])
+                suffix = f", ... (+{len(keys_sorted) - 20} more)" if len(keys_sorted) > 20 else ""
+                print(
+                    f"Rank {rank}: Error: {len(keys_sorted)} tensors not written: {preview}{suffix}",
+                    flush=True,
+                )
+            raise RuntimeError(
+                f"{total_unsaved_count} tensors from the original checkpoint were not written. "
+                "Re-run with strict=False to save the partial checkpoint instead of failing."
+            )
+
+        # Rank 0 builds the index from the files that were actually written.
+        # This avoids all_gather_object on very large key lists, which can
+        # allocate excessive CUDA memory in distributed runs.
+        if is_distributed:
+            torch.distributed.barrier()
 
             if rank == 0:
-                # Aggregate all saved keys from all ranks
+                from safetensors import safe_open
+
                 all_saved_keys_aggregated = set()
-                for keys_list in gathered_keys:
-                    if keys_list:
-                        all_saved_keys_aggregated.update(keys_list)
+                for fname in all_filenames:
+                    file_path = _resolve_output_shard_path(output_path, fname)
+                    if not file_path.exists():
+                        continue
+                    with safe_open(file_path, framework="pt", device="cpu") as f:
+                        all_saved_keys_aggregated.update(f.keys())
             else:
                 all_saved_keys_aggregated = set()
-
-            torch.distributed.barrier()
         else:
             all_saved_keys_aggregated = actually_saved_keys
 
@@ -1024,3 +1097,6 @@ class SafeTensorsStateSource(StateSource):
                 output_index_file = output_path / "model.safetensors.index.json"
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)
+
+        if is_distributed:
+            torch.distributed.barrier()

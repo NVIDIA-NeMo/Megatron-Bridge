@@ -15,9 +15,7 @@ def test_converts_qwen_valid_mask_for_te(monkeypatch):
     monkeypatch.setattr(attention_module, "TEDotProductAttention", _FakeTEDotProductAttention)
     valid_mask = torch.tensor([[True, True, False], [False, True, True]])
 
-    actual = _qwen_attention_mask_for_core_attention(
-        _FakeTEDotProductAttention(), valid_mask, packed_seq_params=None
-    )
+    actual = _qwen_attention_mask_for_core_attention(_FakeTEDotProductAttention(), valid_mask, packed_seq_params=None)
 
     expected = torch.tensor([[[[False, False, True]]], [[[True, False, False]]]])
     torch.testing.assert_close(actual, expected)
@@ -28,9 +26,7 @@ def test_drops_all_valid_qwen_mask_for_te(monkeypatch):
     valid_mask = torch.ones((2, 4), dtype=torch.bool)
 
     assert (
-        _qwen_attention_mask_for_core_attention(
-            _FakeTEDotProductAttention(), valid_mask, packed_seq_params=None
-        )
+        _qwen_attention_mask_for_core_attention(_FakeTEDotProductAttention(), valid_mask, packed_seq_params=None)
         is None
     )
 

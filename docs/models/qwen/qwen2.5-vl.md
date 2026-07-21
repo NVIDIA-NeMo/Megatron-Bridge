@@ -1,0 +1,140 @@
+# Qwen2.5-VL
+
+Qwen2.5-VL is a series of vision-language models developed by Alibaba Cloud that enable multimodal understanding across text, images, and videos. The models support various vision-language tasks including image understanding, visual question answering, and multimodal reasoning.
+
+NeMo Megatron Bridge supports finetuning Qwen2.5-VL models (3B, 7B, 32B, and 72B variants) on single-image and multi-image datasets.
+The finetuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
+
+```{tip}
+We use the following environment variables throughout this page
+- `HF_MODEL_PATH=Qwen/Qwen2.5-VL-3B-Instruct` (it can also be set to `Qwen/Qwen2.5-VL-7B-Instruct`, `Qwen/Qwen2.5-VL-32B-Instruct`, `Qwen/Qwen2.5-VL-72B-Instruct`)
+- `MEGATRON_MODEL_PATH=/models/Qwen2.5-VL-3B-Instruct` (feel free to set your own path)
+
+Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number
+`iter_xxxxxx`. For more details on checkpointing, please see
+[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents)
+```
+
+## Conversion with 🤗 Hugging Face
+
+### Import HF → Megatron
+To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
+```bash
+./scripts/conversion/convert.sh import \
+--hf-model $HF_MODEL_PATH \
+--megatron-path $MEGATRON_MODEL_PATH
+```
+
+### Export Megatron → HF
+You can export a trained model with the following command.
+```bash
+./scripts/conversion/convert.sh export \
+--hf-model $HF_MODEL_PATH \
+--megatron-path <trained megatron model path> \
+--hf-path <output hf model path>
+```
+
+### Run In-Framework Inference on Converted Checkpoint
+You can run a quick sanity check on the converted checkpoint with the following command.
+```bash
+uv run python examples/conversion/hf_to_megatron_generate_vlm.py \
+--hf_model_path $HF_MODEL_PATH \
+--megatron_model_path $MEGATRON_MODEL_PATH \
+--image_path <example image path> \
+--prompt "Describe this image." \
+--max_new_tokens 100
+```
+
+Note:
+- `--megatron_model_path` is optional. If not specified, the script will convert the model and then run forward. If
+  specified, the script will just load the megatron model
+- `--max_new_tokens` controls the number of tokens to generate.
+- You can also use image URLs: `--image_path="https://example.com/image.jpg"`
+
+
+## Finetuning Recipes
+Before training, ensure the following environment variables are set.
+1. `SAVE_DIR`: to specify a checkpoint and log saving directory, used in the commands below.
+2. `HF_TOKEN`: to download models from HF Hub (if required).
+3. `HF_HOME`: (optional) to avoid re-downloading models and datasets every time.
+4. `WANDB_API_KEY`: (optional) to enable WandB logging.
+
+### Full Finetuning
+
+Example usage for 3B full-parameter finetuning on one H100:
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_sft_config \
+  --mode sft \
+  --dataset cord-v2 \
+  --step-func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-sft \
+  train.global_batch_size=2 \
+  train.train_iters=1000
+```
+
+Note:
+- Full-SFT recipes are `qwen25_vl_{3b,7b,32b,72b}_sft_config`; their defaults require 1, 2, 16, and 32 GPUs respectively.
+- Config fields can also be overridden directly with trailing `KEY=VALUE` arguments.
+- The dataset format should be JSONL with conversation format (see dataset section below).
+- After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint.
+  You can also export the trained checkpoint to Hugging Face format.
+
+### Parameter-Efficient Finetuning (PEFT)
+Parameter-efficient finetuning (PEFT) using LoRA or DoRA is selected with `--mode lora` or `--mode dora`:
+
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_peft_config \
+  --mode lora \
+  --dataset cord-v2 \
+  --step-func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora
+```
+
+Use an SFT recipe with `--mode sft` for full finetuning.
+
+You can also combine PEFT with freeze options to control which components are trainable:
+- `model.freeze_language_model`: Set to `True` to freeze the language model
+- `model.freeze_vision_model`: Set to `True` to freeze the vision encoder
+- `model.freeze_vision_projection`: Set to `True` to freeze the vision projection layer
+
+Example with LoRA and freeze options:
+```bash
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_peft_config \
+  --mode lora \
+  --dataset cord-v2 \
+  --step-func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora \
+  model.freeze_language_model=True \
+  model.freeze_vision_model=False \
+  model.freeze_vision_projection=False
+```
+
+For local processor-native image JSONL and sharded Energon preparation patterns, see the [multimodal data tutorials](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/README.md).
+
+## Example Datasets
+
+Megatron Bridge supports various vision-language dataset examples which can be used to finetune Qwen 2.5 VL:
+| Dataset | Dataset preset | Description |
+|---------|------------|-------------|
+| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `cord_v2` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
+| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `medpix` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
+| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `raven` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
+
+Select built-in datasets with `--dataset cord-v2`, `--dataset medpix`, or `--dataset raven`; the launcher configures their available validation and test splits. For local processor-native conversations, use `--dataset local-vlm dataset.source.load_kwargs.data_files.train=PATH`; optional validation and test files use the corresponding `dataset.validation_source` and `dataset.test_source` fields. Custom non-native schemas require a registered `dataset.source.schema_adapter` in Python configuration.
+
+
+## Hugging Face Model Cards
+- Qwen2.5-VL-3B: `https://huggingface.co/Qwen/Qwen2.5-VL-3B-Instruct`
+- Qwen2.5-VL-7B: `https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct`
+- Qwen2.5-VL-32B: `https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct`
+- Qwen2.5-VL-72B: `https://huggingface.co/Qwen/Qwen2.5-VL-72B-Instruct`

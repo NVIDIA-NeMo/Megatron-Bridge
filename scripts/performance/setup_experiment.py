@@ -15,10 +15,12 @@
 # limitations under the License.
 
 import glob
+import json
 import logging
 import os
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,14 +32,22 @@ from nemo_run.config import get_nemorun_home
 
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
-    from utils.utils import get_exp_name_config, select_config_variant_interactive
+    from utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
+    from utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import dgxc_executor, kubeflow_executor, slurm_executor
-    from .utils.utils import get_exp_name_config, select_config_variant_interactive
+    from .utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
+    from .utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -47,20 +57,221 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
-    from resiliency_plugins import FaultTolerancePlugin
+    from perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
-    from .resiliency_plugins import FaultTolerancePlugin
-
+    from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script.py"
-ENTRYPOINT_RECIPE = "run_recipe.py"
+ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't suppress INFO
+
+
+def _filter_run_script_args(argv: List[str]) -> List[str]:
+    """Drop launcher-only args before forwarding argv to the rank-local script.
+
+    The launcher (this script) and the rank-local training scripts share one
+    parser, but some args are meaningful only to the launcher and must not
+    reach the rank-local scripts:
+
+    * ``--additional_slurm_params`` — Slurm orchestration only.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
+      Slurm executor before submission.
+    * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
+      script forwards unrecognized args to Hydra, which rejects ``--csp``.
+    * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
+      carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
+      shell in the generated launch command, corrupting argv and leaking tokens
+      into the training entrypoint's Hydra override parser.
+
+    All of these take a value, passed either as ``--flag value`` (two tokens) or
+    ``--flag=value`` (one token).
+    """
+
+    def _is_launcher_only(flag: str) -> bool:
+        return flag in (
+            "-lgc",
+            "-vb",
+            "--additional_slurm_params",
+            "--csp",
+            "--enable_vboost",
+            "--lock_gpu_freq",
+        ) or flag.startswith("--kubeflow_")
+
+    filtered_args = []
+    skip_next = False
+
+    for arg in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        if _is_launcher_only(arg.split("=", 1)[0]):
+            skip_next = "=" not in arg
+            continue
+        filtered_args.append(arg)
+
+    return filtered_args
+
+
+def _build_nemorun_script(
+    *,
+    script_path: str,
+    script_dir: str,
+    args: List[str],
+    kubeflow_namespace: Optional[str],
+    custom_env_vars: Dict[str, str],
+) -> run.Script:
+    """Build the rank-local task and apply optional Kubeflow NUMA binding."""
+    task = run.Script(
+        path=script_path,
+        entrypoint="python",
+        env={"PYTHONPATH": f"{script_dir}:$PYTHONPATH"},
+        args=args,
+    )
+    if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
+        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
+        return _kubeflow_numa_binding_script(task)
+    return task
+
+
+def _build_csp_plugin(csp: str) -> Any:
+    """Build a CSP plugin lazily so Slurm/login-node launch does not import Kubeflow helpers."""
+    try:
+        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
+
+    if csp == "aws":
+        return EKSEnvPlugin()
+    if csp == "gcp":
+        return GKEEnvPlugin()
+    raise ValueError(f"Unsupported CSP plugin: {csp}")
+
+
+def _calc_convergence_and_performance(**kwargs: Any) -> Any:
+    """Load the evaluator only after training finishes and validation is requested."""
+    try:
+        from utils.evaluate import calc_convergence_and_performance
+    except (ImportError, ModuleNotFoundError):
+        from .utils.evaluate import calc_convergence_and_performance
+
+    return calc_convergence_and_performance(**kwargs)
+
+
+def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
+    """Re-glob ``glob_pattern`` and wait until the matched log files stop growing.
+
+    On Kubeflow the all-ranks log is aggregated from the per-rank pods and can
+    keep growing after ``run.run()`` returns; parsing too early sees only the
+    live lm-loss rank and misses the rank-0 memory / GPU-util lines, which makes
+    the golden-values check crash on a ``None`` current metric. Polling for
+    size-stability lets the metric parse see the fully merged log. Returns the
+    globbed paths (whatever exists at timeout).
+    """
+    deadline = time.time() + timeout_s
+    prev_sizes: Dict[str, int] = {}
+    stable_since: Optional[float] = None
+    while time.time() < deadline:
+        paths = sorted(glob.glob(glob_pattern))
+        sizes = {p: os.path.getsize(p) for p in paths if os.path.exists(p)}
+        if sizes and sizes == prev_sizes:
+            stable_since = stable_since if stable_since is not None else time.time()
+            if time.time() - stable_since >= stable_s:
+                logger.info(f"Logs settled ({len(sizes)} file(s)) after size-stability wait")
+                return paths
+        else:
+            stable_since = None
+        prev_sizes = sizes
+        time.sleep(poll_s)
+    logger.warning(f"Logs did not settle within {timeout_s}s; parsing what exists")
+    return sorted(glob.glob(glob_pattern))
+
+
+def _cumulative_golden_values_dir(save_dir: Optional[str]) -> Optional[str]:
+    """Directory holding the cross-slice cumulative golden values in the persistent dir.
+
+    ``save_dir`` is the checkpoints dir (``…/<recipe>/checkpoints``); the cumulative
+    cache lives one level up — alongside ``checkpoints/`` and ``wandb/`` — so it
+    survives across resume slices on the same persistent volume. Returns ``None`` when
+    no ``save_dir`` is configured (the run keeps nothing across slices).
+    """
+    if not save_dir:
+        return None
+    return os.path.join(os.path.dirname(os.path.normpath(save_dir)), "golden_values_cumulative")
+
+
+def read_cumulative_golden_values(
+    executor, save_dir: Optional[str], golden_values_path: str, _logger
+) -> Optional[Dict[str, Any]]:
+    """Read the accumulated per-step golden values carried over from earlier slices.
+
+    Reads directly when the persistent dir is visible to the launcher (e.g. Slurm /
+    shared filesystem); otherwise (Kubeflow PVC) pulls the cache through the executor's
+    ``copy_from_workspace`` data-mover. Best-effort — returns ``None`` when absent
+    (first slice) or unreadable.
+    """
+    remote_dir = _cumulative_golden_values_dir(save_dir)
+    if not remote_dir:
+        return None
+    name = os.path.basename(golden_values_path)
+    direct = os.path.join(remote_dir, name)
+    if os.path.isfile(direct):
+        try:
+            with open(direct) as f:
+                return json.load(f)
+        except Exception as e:
+            _logger.warning(f"Could not read cumulative golden values {direct}: {e}")
+            return None
+    if isinstance(executor, run.KubeflowExecutor):
+        with tempfile.TemporaryDirectory() as td:
+            try:
+                executor.copy_from_workspace(remote_dir, td, label="gv-cache-read")
+            except Exception as e:
+                # Absent on the first slice — expected, not an error.
+                _logger.info(f"No cumulative golden values pulled from {remote_dir}: {e}")
+                return None
+            matches = glob.glob(os.path.join(td, "**", name), recursive=True)
+            if not matches:
+                return None
+            try:
+                with open(matches[0]) as f:
+                    return json.load(f)
+            except Exception as e:
+                _logger.warning(f"Could not parse cumulative golden values from PVC {remote_dir}: {e}")
+    return None
+
+
+def write_cumulative_golden_values(
+    executor, save_dir: Optional[str], golden_values_path: str, values: Dict[str, Any], _logger
+) -> None:
+    """Persist the merged per-step golden values so the next resume slice extends them.
+
+    Writes directly when the persistent dir is launcher-visible; otherwise (Kubeflow
+    PVC) pushes the cache through the executor's ``copy_to_workspace`` data-mover.
+    Best-effort — never raises into the run.
+    """
+    remote_dir = _cumulative_golden_values_dir(save_dir)
+    if not remote_dir or not values:
+        return
+    name = os.path.basename(golden_values_path)
+    if isinstance(executor, run.KubeflowExecutor):
+        with tempfile.TemporaryDirectory() as td:
+            with open(os.path.join(td, name), "w") as f:
+                json.dump(values, f)
+            try:
+                executor.copy_to_workspace(td, remote_dir, label="gv-cache-write")
+            except Exception as e:
+                _logger.warning(f"Could not persist cumulative golden values to {remote_dir}: {e}")
+        return
+    try:
+        os.makedirs(remote_dir, exist_ok=True)
+        with open(os.path.join(remote_dir, name), "w") as f:
+            json.dump(values, f)
+        _logger.info(f"Wrote cumulative golden values to {os.path.join(remote_dir, name)}")
+    except Exception as e:
+        _logger.warning(f"Could not write cumulative golden values to {remote_dir}: {e}")
 
 
 def check_training_finished(log_file_paths: List[str], is_long_convergence_run: bool = True) -> bool:
@@ -119,6 +330,9 @@ def is_flaky_failure(log_file_path: str) -> bool:
         or "illegal memory access" in log
         or "illegal instruction" in log
         or "torch.distributed.DistNetworkError" in log
+        or "torch.distributed.DistBackendError" in log
+        or "ncclRemoteError" in log
+        or "Watchdog caught collective operation timeout" in log
         or "Segmentation fault" in log
         or "found NaN in" in log
         or "For debugging consider passing CUDA_LAUNCH_BLOCKING=1" in log
@@ -180,20 +394,48 @@ def get_job_dir_and_status_from_run(exp_name: str):
     return job_dir, job_status
 
 
+def max_iteration_in_logs(log_file_paths: List[str]) -> int:
+    """Return the highest training iteration number found across the logs (0 if none)."""
+    max_iter = 0
+    for log_path in log_file_paths:
+        try:
+            with open(log_path, "r", errors="replace") as f:
+                for line in f:
+                    m = re.search(r"iteration\s+(\d+)/\s*\d+", line)
+                    if m:
+                        max_iter = max(max_iter, int(m.group(1)))
+        except OSError:
+            continue
+    return max_iter
+
+
 def maybe_increase_n_attempts_on_flaky_failure(
     n_attempts: int,
     max_retries: int,
     is_finished_experiment: bool,
     is_long_convergence_run: bool,
     log_file_paths: List[str],
+    made_progress: bool = True,
 ):
-    """Maybe increase number of attempts."""
-    if not is_finished_experiment and not is_long_convergence_run:
-        if is_flaky_failure(log_file_paths[-1]):
-            n_attempts += 1
-        else:
-            n_attempts = max_retries  # On non-flaky failures, we don't need to restart the experiment.
+    """Maybe increase number of attempts.
 
+    Long-convergence runs resume across walltime slices, so an attempt that made
+    forward progress (advanced the training step count) is a legitimate resume
+    and must not consume the retry budget. An attempt that made NO forward
+    progress — e.g. a crash during initialization before any step — would
+    otherwise resume from the same point and loop forever, so it is bounded
+    exactly like a normal run's failure.
+    """
+    if is_finished_experiment:
+        return n_attempts
+    if is_long_convergence_run and made_progress:
+        return n_attempts
+    if any(is_flaky_failure(p) for p in log_file_paths):
+        n_attempts += 1  # flaky: retry, bounded by max_retries
+    else:
+        # non-flaky: give up now. max_retries + 1 (not max_retries) so the outer
+        # `while n_attempts <= max_retries` loop actually exits.
+        n_attempts = max_retries + 1
     return n_attempts
 
 
@@ -244,11 +486,11 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
-    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
+    preempt_time: int,
     additional_slurm_params: Optional[Dict[str, Any]],
     enable_pct_binding: bool,
     golden_values_path: str,
@@ -256,20 +498,25 @@ def main(
     performance_params: Dict[str, Any],
     memory_params: Dict[str, Any],
     max_retries: int,
-    dgxc_base_url: str,
-    dgxc_cluster: str,
-    dgxc_kube_apiserver_url: str,
-    dgxc_app_id: str,
-    dgxc_app_secret: str,
-    dgxc_project_name: str,
-    dgxc_pvc_claim_name: str,
-    dgxc_pvc_mount_path: str,
+    retry_on_testing_failure: bool,
     kubeflow_namespace: str,
+    csp: Optional[str],
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
+    kubeflow_workdir_local_path: Optional[str],
     kubeflow_image_pull_secrets: List[str],
-    deterministic: bool = False,
-    config_variant: str = "v1",
+    kubeflow_volumes_json: Optional[str],
+    kubeflow_volume_mounts_json: Optional[str],
+    kubeflow_tolerations_json: Optional[str],
+    kubeflow_affinity_json: Optional[str],
+    kubeflow_env_list_json: Optional[str],
+    kubeflow_extra_resource_requests_json: Optional[str],
+    kubeflow_extra_resource_limits_json: Optional[str],
+    kubeflow_pod_spec_overrides_json: Optional[str],
+    kubeflow_container_kwargs_json: Optional[str],
+    kubeflow_labels_json: Optional[str],
+    kubeflow_pod_annotations_json: Optional[str],
+    config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
 ):
@@ -291,15 +538,20 @@ def main(
 
     # Disable PCT binding for certain models on specific hardware/precision combos
     if (
-        model_family_name == "nemotronh"
-        and model_recipe_name == "nemotron_3_super"
-        and compute_dtype == "bf16"
-        and gpu == "b300"
-    ) or (
-        model_family_name == "deepseek"
-        and model_recipe_name == "deepseek_v3"
-        and gpu == "b300"
-        and config_variant != "large_scale"
+        (
+            model_family_name == "nemotronh"
+            and model_recipe_name == "nemotron_3_super"
+            and compute_dtype == "bf16"
+            and gpu == "b300"
+        )
+        or (
+            model_family_name == "deepseek"
+            and model_recipe_name == "deepseek_v3"
+            and gpu == "b300"
+            and config_variant != "large_scale"
+        )
+        or (model_family_name == "llama" and task == "pretrain" and gpu == "b300")
+        or (model_family_name == "kimi" and task == "pretrain" and gpu == "b300")
     ):
         enable_pct_binding = False
 
@@ -311,8 +563,8 @@ def main(
     if export_nsys_sqlite and not enable_nsys:
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
+    script_name = ENTRYPOINT_BOOTSTRAP
     if use_recipes:
-        script_name = ENTRYPOINT_RECIPE
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
@@ -320,44 +572,63 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
-        # Create a simple namespace with the args needed by get_exp_name_config
-        args_for_config = SimpleNamespace(
-            num_gpus=num_gpus,
-            tensor_model_parallel_size=tp_size,
-            pipeline_model_parallel_size=pp_size,
-            context_parallel_size=cp_size,
-            virtual_pipeline_model_parallel_size=vp_size,
-            expert_model_parallel_size=ep_size,
-            expert_tensor_parallel_size=etp_size,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-        )
-        exp_config = get_exp_name_config(
-            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-        )
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
-        )
+        if wandb_experiment_name is not None:
+            # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
+            # login node in this path: recipe imports belong in the training container.
+            exp_name = wandb_experiment_name
+        else:
+            # Create a simple namespace with the args needed by get_exp_name_config
+            args_for_config = SimpleNamespace(
+                num_gpus=num_gpus,
+                tensor_model_parallel_size=tp_size,
+                pipeline_model_parallel_size=pp_size,
+                context_parallel_size=cp_size,
+                virtual_pipeline_model_parallel_size=vp_size,
+                expert_model_parallel_size=ep_size,
+                expert_tensor_parallel_size=etp_size,
+                micro_batch_size=micro_batch_size,
+                global_batch_size=global_batch_size,
+            )
+            exp_config = get_exp_name_config(
+                args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            )
+            exp_name = f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
 
-    if not dgxc_cluster and save_dir:
+    if save_dir:
         save_dir_path = Path(save_dir).resolve()
-        save_dir_path.mkdir(parents=True, exist_ok=True)
-        save_dir_mount = f"{save_dir_path}:{save_dir_path}"
-        if save_dir_mount not in custom_mounts:
-            custom_mounts.append(save_dir_mount)
-            logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
+        # On Kubeflow, save_dir typically lives on a PVC that's only mounted
+        # inside the trainer pod, not on the launcher pod where this script
+        # runs. Creating the dir from the launcher would either fail (PVC
+        # not present) or create a useless dir on the launcher's local FS.
+        # Let the trainer container create its own dirs on first write.
+        if kubeflow_namespace is None:
+            save_dir_path.mkdir(parents=True, exist_ok=True)
+            save_dir_mount = f"{save_dir_path}:{save_dir_path}"
+            if save_dir_mount not in custom_mounts:
+                custom_mounts.append(save_dir_mount)
+                logger.info(f"Added checkpoint save directory mount for container: {save_dir_mount}")
 
     run_script_path = SCRIPT_DIR / script_name
     logger.info(f"Run script path: {run_script_path}")
     if not run_script_path.is_file():
         logger.error(f"Specified run script not found: {run_script_path}")
         sys.exit(1)
+
+    # Script path + PYTHONPATH as seen INSIDE the execution environment. On
+    # SLURM the launcher's SCRIPT_DIR is bind-mounted into the container (see
+    # custom_mounts below), so the launcher-local path resolves there. On
+    # Kubeflow the trainer pod runs the image — which ships Megatron-Bridge at
+    # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
+    # /tmp path does not exist in the pod; use the image's script path instead.
+    if kubeflow_namespace:
+        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+        in_container_script_path = f"{in_container_script_dir}/{script_name}"
+    else:
+        in_container_script_dir = str(SCRIPT_DIR)
+        in_container_script_path = str(run_script_path)
 
     custom_mounts.extend(
         [
@@ -366,10 +637,9 @@ def main(
         ]
     )
 
-    if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
-
     if kubeflow_namespace:
+        if enable_vboost or lock_gpu_freq is not None:
+            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -377,27 +647,29 @@ def main(
             container_image=container_image,
             workdir_pvc=kubeflow_workdir_pvc,
             workdir_pvc_path=kubeflow_workdir_pvc_path,
+            workdir_local_path=kubeflow_workdir_local_path,
+            train_job_basename=f"mb-{model_recipe_name}",
             image_pull_secrets=kubeflow_image_pull_secrets,
             custom_env_vars=custom_env_vars,
             wandb_key=wandb_key,
             hf_token=hf_token,
-        )
-    elif dgxc_cluster:
-        executor = dgxc_executor(
-            dgxc_base_url=dgxc_base_url,
-            dgxc_cluster=dgxc_cluster,
-            dgxc_kube_apiserver_url=dgxc_kube_apiserver_url,
-            dgxc_app_id=dgxc_app_id,
-            dgxc_app_secret=dgxc_app_secret,
-            dgxc_project_name=dgxc_project_name,
-            dgxc_pvc_claim_name=dgxc_pvc_claim_name,
-            dgxc_pvc_mount_path=dgxc_pvc_mount_path,
-            custom_env_vars=custom_env_vars,
-            nodes=-(num_gpus // -gpus_per_node),
-            num_gpus_per_node=gpus_per_node,
-            container_image=container_image,
-            wandb_key=wandb_key,
-            hf_token=hf_token,
+            volumes=json.loads(kubeflow_volumes_json) if kubeflow_volumes_json else None,
+            volume_mounts=json.loads(kubeflow_volume_mounts_json) if kubeflow_volume_mounts_json else None,
+            tolerations=json.loads(kubeflow_tolerations_json) if kubeflow_tolerations_json else None,
+            affinity=json.loads(kubeflow_affinity_json) if kubeflow_affinity_json else None,
+            env_list=json.loads(kubeflow_env_list_json) if kubeflow_env_list_json else None,
+            extra_resource_requests=(
+                json.loads(kubeflow_extra_resource_requests_json) if kubeflow_extra_resource_requests_json else None
+            ),
+            extra_resource_limits=(
+                json.loads(kubeflow_extra_resource_limits_json) if kubeflow_extra_resource_limits_json else None
+            ),
+            pod_spec_overrides=(
+                json.loads(kubeflow_pod_spec_overrides_json) if kubeflow_pod_spec_overrides_json else None
+            ),
+            container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
+            labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
+            pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
     else:
         executor = slurm_executor(
@@ -422,28 +694,28 @@ def main(
             packager=packager,
             enable_pct_binding=enable_pct_binding,
         )
+        configure_slurm_gpu_tuning(
+            executor,
+            enable_vboost=enable_vboost,
+            lock_gpu_freq=lock_gpu_freq,
+        )
 
     plugins = []
 
-    if not use_recipes:
-        plugins.append(
-            PerfEnvPlugin(
-                enable_vboost=enable_vboost,
-                lock_gpu_freq=lock_gpu_freq,
-                moe_a2a_overlap=moe_a2a_overlap,
-                tp_size=tp_size,
-                pp_size=pp_size,
-                cp_size=cp_size,
-                ep_size=ep_size,
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                gpu=gpu,
-                compute_dtype=compute_dtype,
-                train_task=task,
-                config_variant=config_variant,
-                deterministic=deterministic,
-            )
-        )
+    # Long-convergence runs are split across walltime slices and resume from the last
+    # checkpoint each slice. Without a preemption signal, Slurm hard-kills the slice at
+    # the time limit before a checkpoint is written, so no progress persists and the
+    # resume loop stalls. The PreemptionPlugin sends SIGTERM `preempt_time` seconds
+    # before the limit and enables the training exit handler, so each slice saves and
+    # exits gracefully and the next slice resumes from it (inert off Slurm).
+    if is_long_convergence_run:
+        plugins.append(PreemptionPlugin(preempt_time=preempt_time, enable_exit_handler=True))
+
+    # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
+    # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
+    # architecture and performance settings stay in the recipe.
+    if csp is not None:
+        plugins.append(_build_csp_plugin(csp))
 
     if enable_nsys:
         if nsys_trace is None:
@@ -472,23 +744,12 @@ def main(
             )
         )
 
-    if use_recipes and dgxc_cluster is not None:
-        plugins.append(
-            FaultTolerancePlugin(
-                enable_ft_package=True,
-                calc_ft_timeouts=True,
-                num_in_job_restarts=10,
-                num_job_retries_on_failure=10,
-                initial_rank_heartbeat_timeout=1800,
-                rank_heartbeat_timeout=300,
-            )
-        )
-
-    nemorun_script = run.Script(
-        path=str(run_script_path),
-        entrypoint="python",
-        env={"PYTHONPATH": f"{SCRIPT_DIR}:$PYTHONPATH"},
-        args=list(sys.argv[1:]),
+    nemorun_script = _build_nemorun_script(
+        script_path=in_container_script_path,
+        script_dir=in_container_script_dir,
+        args=_filter_run_script_args(sys.argv[1:]),
+        kubeflow_namespace=kubeflow_namespace,
+        custom_env_vars=custom_env_vars,
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
@@ -497,10 +758,11 @@ def main(
     is_testing_passed = False  # Whether the testing passed convergence and performance validation.
     error_msg = None
     n_attempts = 0
-    exp_name = (
-        exp_name[:33] if (dgxc_cluster is not None or kubeflow_namespace is not None) else exp_name
-    )  # Some k8s clusters have a limit on the length of the experiment name.
+    # The K8s TrainJob name is generated independently by the executor
+    # (mb-<model>-<uuid6>), so the experiment name is no longer length-bound by
+    # k8s — keep it full and descriptive for nemo-run bookkeeping + wandb.
     wandb_run_id = None
+    max_iter_so_far = 0
     while n_attempts <= max_retries:
         while is_finished_experiment is False:
             if HAVE_WANDB:
@@ -550,8 +812,20 @@ def main(
 
             # Raise on terminal failures only if training didn't actually complete —
             # a job can time out due to hanging on teardown after all steps finished.
-            if terminal_failure and not is_finished_experiment:
+            # Long-convergence runs are intentionally split across walltime slices
+            # (slurm cancels at TIME_LIMIT, we resume from the saved checkpoint on
+            # the next outer-loop iteration), so the walltime-cap path is expected
+            # and must not raise.
+            if terminal_failure and not is_finished_experiment and not is_long_convergence_run:
                 raise Exception(f"Experiment failed for {exp_name} with status: {job_status}.")
+
+            # Forward-progress check: a long-convergence attempt that advanced the
+            # training step count is a legitimate walltime-slice resume; one that
+            # did not (e.g. crashed in init before any step) must be bounded so it
+            # cannot resume-loop forever.
+            attempt_max_iter = max_iteration_in_logs(log_file_paths)
+            made_progress = attempt_max_iter > max_iter_so_far
+            max_iter_so_far = max(max_iter_so_far, attempt_max_iter)
 
             n_attempts = maybe_increase_n_attempts_on_flaky_failure(
                 n_attempts=n_attempts,
@@ -559,6 +833,7 @@ def main(
                 is_finished_experiment=is_finished_experiment,
                 is_long_convergence_run=is_long_convergence_run,
                 log_file_paths=log_file_paths,
+                made_progress=made_progress,
             )
 
             if not is_finished_experiment and n_attempts <= max_retries:
@@ -568,9 +843,8 @@ def main(
                 break
 
         if is_finished_experiment is True and detach is False:
-            log_paths = sorted(
-                list(glob.glob(f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"))
-            )
+            log_glob = f"{get_nemorun_home()}/experiments/{exp_name}/{exp_name}_*/{exp_name}/log*.out"
+            log_paths = sorted(glob.glob(log_glob))
 
             logger.info(f"Starting convergence check for {model_family_name}_{model_recipe_name}")
 
@@ -592,10 +866,23 @@ def main(
                     resume="allow",
                 )
 
-                logger.info("Waiting 10 seconds for I/O to settle")
-                time.sleep(10)
+                # The K8s all-ranks log is aggregated from the per-rank pods and
+                # can keep growing after run.run() returns; parse too early and the
+                # rank-0 memory / GPU-util lines are missing (only the live lm-loss
+                # rank is present). Wait for the files to stop growing, then re-glob.
+                log_paths = wait_for_logs_to_settle(log_glob)
 
-                is_testing_passed, error_msg = calc_convergence_and_performance(
+                # Long-convergence runs resume across walltime slices; this slice's
+                # logs only cover its own steps. Carry the per-step values recorded by
+                # earlier slices (from the persistent dir) into this slice so the
+                # written golden values span the whole run rather than just the tail.
+                prior_values = (
+                    read_cumulative_golden_values(executor, save_dir, golden_values_path, logger)
+                    if is_long_convergence_run
+                    else None
+                )
+
+                is_testing_passed, error_msg, merged_values = _calc_convergence_and_performance(
                     model_family_name=model_family_name,
                     model_recipe_name=model_recipe_name,
                     assets_dir=os.path.join(job_dir, exp_name),
@@ -610,7 +897,13 @@ def main(
                     memory_config=memory_params,
                     wandb_run=wandb_run,
                     _logger=logger,
+                    prior_values=prior_values,
                 )
+
+                # Persist the merged per-step values so the next resume slice extends
+                # them instead of overwriting with its own partial curve.
+                if is_long_convergence_run:
+                    write_cumulative_golden_values(executor, save_dir, golden_values_path, merged_values, logger)
 
                 wandb_run.finish()
                 wandb.teardown(exit_code=int(not is_testing_passed))
@@ -618,9 +911,28 @@ def main(
             logger.removeHandler(_dup_handler)
             _dup_file.close()
 
-            if not is_long_convergence_run:
+            if not retry_on_testing_failure:
+                # Train-then-test: each experiment runs the convergence/perf
+                # check exactly once. Force-exit the outer loop here — the
+                # post-loop block raises AssertionError(error_msg) when testing
+                # failed. Without this, a long-convergence run whose testing
+                # fails would otherwise spin re-evaluating the same finished
+                # training forever until the slurm walltime cap killed it.
                 n_attempts = max_retries + 1
-                is_finished_experiment = True
+            elif not is_testing_passed:
+                # Opt-in retry: redo training + testing in the next outer-loop
+                # iteration. Bump n_attempts so the outer loop bounds the
+                # retries. Reset is_finished_experiment so the inner training
+                # loop runs again; clear wandb_run_id so the retry logs to a
+                # fresh wandb run instead of resuming the failed one.
+                n_attempts += 1
+                if n_attempts <= max_retries:
+                    is_finished_experiment = False
+                    wandb_run_id = None
+                    logger.error(
+                        f"Testing failed; retrying full train+test "
+                        f"({n_attempts + 1} of {max_retries + 1}) for {exp_name}"
+                    )
 
         if is_finished_experiment and is_testing_passed:
             break
@@ -720,11 +1032,11 @@ if __name__ == "__main__":
         custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
-        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
+        preempt_time=args.preempt_time,
         additional_slurm_params=args.additional_slurm_params,
         enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,
@@ -748,19 +1060,24 @@ if __name__ == "__main__":
             "memory_threshold": args.memory_threshold,
         },
         max_retries=args.max_retries,
-        dgxc_base_url=args.dgxc_base_url,
-        dgxc_cluster=args.dgxc_cluster,
-        dgxc_kube_apiserver_url=args.dgxc_kube_apiserver_url,
-        dgxc_app_id=args.dgxc_app_id,
-        dgxc_app_secret=args.dgxc_app_secret,
-        dgxc_project_name=args.dgxc_project_name,
-        dgxc_pvc_claim_name=args.dgxc_pvc_claim_name,
-        dgxc_pvc_mount_path=args.dgxc_pvc_mount_path,
+        retry_on_testing_failure=args.retry_on_testing_failure,
         kubeflow_namespace=args.kubeflow_namespace,
+        csp=args.csp,
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
+        kubeflow_workdir_local_path=args.kubeflow_workdir_local_path,
         kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
-        deterministic=args.deterministic,
+        kubeflow_volumes_json=args.kubeflow_volumes_json,
+        kubeflow_volume_mounts_json=args.kubeflow_volume_mounts_json,
+        kubeflow_tolerations_json=args.kubeflow_tolerations_json,
+        kubeflow_affinity_json=args.kubeflow_affinity_json,
+        kubeflow_env_list_json=args.kubeflow_env_list_json,
+        kubeflow_extra_resource_requests_json=args.kubeflow_extra_resource_requests_json,
+        kubeflow_extra_resource_limits_json=args.kubeflow_extra_resource_limits_json,
+        kubeflow_pod_spec_overrides_json=args.kubeflow_pod_spec_overrides_json,
+        kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
+        kubeflow_labels_json=args.kubeflow_labels_json,
+        kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,

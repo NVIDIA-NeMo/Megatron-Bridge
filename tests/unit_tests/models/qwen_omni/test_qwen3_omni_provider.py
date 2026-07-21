@@ -130,7 +130,8 @@ class TestQwen3OmniModelProvider:
             provider.provide()
 
         _, kwargs = mock_model_cls.call_args
-        self_attention_spec = kwargs["language_transformer_layer_spec"].submodules.self_attention
+        language_spec = kwargs["language_transformer_layer_spec"]
+        self_attention_spec = language_spec.submodules.self_attention
         assert self_attention_spec.module is Qwen3VLSelfAttention
         assert self_attention_spec.submodules.core_attention is DotProductAttention
 
@@ -159,7 +160,7 @@ class TestQwen3OmniModelProvider:
         assert self_attention_spec.module is Qwen3VLSelfAttention
         assert self_attention_spec.submodules.core_attention is DotProductAttention
 
-    def test_default_backend_uses_qwen3_vl_attention_when_te_is_available(self):
+    def test_default_backend_keeps_te_core_attention_when_available(self):
         if not qwen3_omni_provider.HAVE_TE:
             pytest.skip("Transformer Engine is not available")
 

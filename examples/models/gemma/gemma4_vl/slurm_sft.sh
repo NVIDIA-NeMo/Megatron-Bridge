@@ -39,7 +39,6 @@ WORKSPACE=${WORKSPACE:-/workspace}
 
 PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gemma-4-26B-A4B}
 RECIPE=${RECIPE:-gemma4_vl_26b_sft_config}
-PEFT_SCHEME=${PEFT_SCHEME:-}           # Set to "lora" to run LoRA instead of full SFT
 DATASET_NAME=${DATASET_NAME:-cord_v2}
 SEQ_LENGTH=${SEQ_LENGTH:-4096}
 TRAIN_ITERS=${TRAIN_ITERS:-40}   # 40 iters fits 30-min wall time with checkpoint save
@@ -84,11 +83,6 @@ export MASTER_PORT=${MASTER_PORT:-29501}
 # Job
 # ==============================================================================
 
-PEFT_FLAG=""
-if [[ -n "${PEFT_SCHEME}" ]]; then
-    PEFT_FLAG="--peft_scheme ${PEFT_SCHEME}"
-fi
-
 echo "======================================"
 echo "Gemma 4 VL 26B-A4B SFT"
 echo "======================================"
@@ -96,7 +90,6 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "Total tasks: $SLURM_NTASKS"
 echo "Recipe: $RECIPE"
-echo "PEFT: ${PEFT_SCHEME:-none}"
 echo "TP=$TP PP=$PP EP=$EP"
 echo "Checkpoint: $PRETRAINED_CHECKPOINT"
 echo "Save: $SAVE_DIR"
@@ -107,8 +100,8 @@ CMD="cd /opt/Megatron-Bridge && "
 CMD="${CMD}export RANK=\$SLURM_PROCID LOCAL_RANK=\$SLURM_LOCALID WORLD_SIZE=\$SLURM_NTASKS && "
 CMD="${CMD}uv run --no-sync python scripts/training/run_recipe.py"
 CMD="${CMD} --recipe ${RECIPE}"
+CMD="${CMD} --mode sft"
 CMD="${CMD} --step_func vlm_step"
-CMD="${CMD} ${PEFT_FLAG}"
 CMD="${CMD} checkpoint.pretrained_checkpoint=${PRETRAINED_CHECKPOINT}"
 CMD="${CMD} model.tensor_model_parallel_size=${TP}"
 CMD="${CMD} model.pipeline_model_parallel_size=${PP}"
@@ -122,7 +115,7 @@ CMD="${CMD} optimizer.lr=${LR}"
 CMD="${CMD} optimizer.min_lr=${MIN_LR}"
 CMD="${CMD} scheduler.lr_warmup_iters=${LR_WARMUP_ITERS}"
 CMD="${CMD} checkpoint.save=${SAVE_DIR}"
-CMD="${CMD} dataset.maker_name=make_${DATASET_NAME}_dataset"
+CMD="${CMD} dataset.source.dataset_name=${DATASET_NAME}"
 CMD="${CMD} dataset.seq_length=${SEQ_LENGTH}"
 
 echo "Running training..."

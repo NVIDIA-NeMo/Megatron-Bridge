@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
+import torch
+from transformers import Mistral3Config
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.ministral3.ministral3_bridge import Ministral3Bridge
 from megatron.bridge.models.ministral3.ministral3_provider import Ministral3ModelProvider
 
@@ -31,6 +34,8 @@ def mock_text_config():
     config.intermediate_size = 9216
     config.num_attention_heads = 32
     config.num_key_value_heads = 8
+    config.head_dim = 96
+    config.max_position_embeddings = 262144
     config.vocab_size = 131072
     config.rope_parameters = {
         "rope_theta": 1000000,
@@ -60,9 +65,11 @@ def mock_hf_config(mock_text_config, mock_vision_config):
     config = Mock()
     config.text_config = mock_text_config
     config.vision_config = mock_vision_config
+    config.tie_word_embeddings = True
+    config.torch_dtype = torch.bfloat16
 
     # VL-specific token IDs
-    config.image_token_id = 10
+    config.image_token_index = 10
 
     return config
 
@@ -70,7 +77,7 @@ def mock_hf_config(mock_text_config, mock_vision_config):
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
     """Create a mock HF pretrained VLM."""
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 
@@ -79,22 +86,6 @@ def mock_hf_pretrained(mock_hf_config):
 def ministral3_bridge():
     """Create a Ministral3Bridge instance."""
     return Ministral3Bridge()
-
-
-class TestMinistral3BridgeInitialization:
-    """Test Ministral3Bridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, ministral3_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(ministral3_bridge, Ministral3Bridge)
-
-    def test_bridge_has_required_methods(self, ministral3_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(ministral3_bridge, "provider_bridge")
-        assert callable(ministral3_bridge.provider_bridge)
-
-        assert hasattr(ministral3_bridge, "mapping_registry")
-        assert callable(ministral3_bridge.mapping_registry)
 
 
 class TestMinistral3BridgeProviderBridge:
@@ -129,12 +120,12 @@ class TestMinistral3BridgeProviderBridge:
     def test_provider_bridge_tie_word_embeddings(self, ministral3_bridge, mock_hf_pretrained):
         """Test provider_bridge handles tie_word_embeddings correctly."""
         # Test with tie_word_embeddings=True
-        mock_hf_pretrained.config.text_config.tie_word_embeddings = True
+        mock_hf_pretrained.config.tie_word_embeddings = True
         provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
         assert provider.share_embeddings_and_output_weights is True
 
         # Test with tie_word_embeddings=False
-        mock_hf_pretrained.config.text_config.tie_word_embeddings = False
+        mock_hf_pretrained.config.tie_word_embeddings = False
         provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
         assert provider.share_embeddings_and_output_weights is False
 
@@ -299,7 +290,7 @@ class TestMinistral3BridgeEdgeCases:
 
     def test_provider_bridge_with_minimal_config(self, ministral3_bridge):
         """Test provider_bridge with minimal HF config."""
-        minimal_pretrained = Mock(spec=PreTrainedVLM)
+        minimal_pretrained = Mock(spec=PreTrainedCausalLM)
         minimal_config = Mock()
 
         # Create minimal text config
@@ -307,11 +298,18 @@ class TestMinistral3BridgeEdgeCases:
         text_config.num_hidden_layers = 26
         text_config.hidden_size = 3072
         text_config.intermediate_size = 9216
+        text_config.num_attention_heads = 32
+        text_config.num_key_value_heads = 8
+        text_config.head_dim = 96
+        text_config.max_position_embeddings = 262144
         text_config.vocab_size = 131072
         text_config.rope_parameters = {"rope_theta": 1000000}
         text_config.tie_word_embeddings = False
 
         minimal_config.text_config = text_config
+        minimal_config.tie_word_embeddings = False
+        minimal_config.torch_dtype = torch.bfloat16
+        minimal_config.image_token_index = 10
         minimal_pretrained.config = minimal_config
 
         provider = ministral3_bridge.provider_bridge(minimal_pretrained)
@@ -399,3 +397,173 @@ class TestMinistral3BridgeCompatibility:
         assert provider.hidden_size == 5120
         assert provider.ffn_hidden_size == 16384
         assert provider.rotary_base == 1000000000.0
+
+    def test_provider_bridge_uses_composite_config_contract(self, ministral3_bridge):
+        """Test the real composite config maps text dimensions and top-level fields."""
+        hf_config = Mistral3Config(
+            architectures=["Mistral3ForConditionalGeneration"],
+            dtype="float16",
+            image_token_index=42,
+            tie_word_embeddings=False,
+            text_config={
+                "model_type": "ministral3",
+                "hidden_size": 256,
+                "intermediate_size": 768,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "head_dim": 64,
+                "max_position_embeddings": 4096,
+                "vocab_size": 16384,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
+                "tie_word_embeddings": True,
+            },
+            vision_config={
+                "hidden_size": 128,
+                "intermediate_size": 256,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "patch_size": 14,
+                "image_size": 28,
+            },
+        )
+        hf_pretrained = Mock(spec=PreTrainedCausalLM)
+        hf_pretrained.config = hf_config
+
+        provider = ministral3_bridge.provider_bridge(hf_pretrained)
+
+        assert provider.hidden_size == hf_config.text_config.hidden_size
+        assert provider.ffn_hidden_size == hf_config.text_config.intermediate_size
+        assert provider.num_layers == hf_config.text_config.num_hidden_layers
+        assert provider.num_attention_heads == hf_config.text_config.num_attention_heads
+        assert provider.num_query_groups == hf_config.text_config.num_key_value_heads
+        assert provider.kv_channels == hf_config.text_config.head_dim
+        assert provider.seq_length == hf_config.text_config.max_position_embeddings
+        assert provider.vocab_size == hf_config.text_config.vocab_size
+        assert provider.share_embeddings_and_output_weights is hf_config.tie_word_embeddings
+        assert provider.params_dtype == torch.float16
+        assert provider.fp16 is True
+        assert provider.bf16 is False
+        assert provider.image_token_id == hf_config.image_token_index
+        assert provider.hf_config is hf_config
+
+    def test_auto_config_export_preserves_composite_config_semantics(self, ministral3_bridge, tmp_path):
+        """Test the production auto-config path synthesizes a valid composite config."""
+        checkpoint_config = Mistral3Config(
+            architectures=["Mistral3ForConditionalGeneration"],
+            dtype="bfloat16",
+            tie_word_embeddings=False,
+            text_config={
+                "model_type": "ministral3",
+                "hidden_size": 256,
+                "intermediate_size": 768,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "num_key_value_heads": 2,
+                "head_dim": 64,
+                "max_position_embeddings": 4096,
+                "vocab_size": 16384,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 1000000.0},
+                "tie_word_embeddings": True,
+            },
+            vision_config={
+                "hidden_size": 128,
+                "intermediate_size": 256,
+                "num_hidden_layers": 2,
+                "num_attention_heads": 4,
+                "head_dim": 32,
+                "patch_size": 14,
+                "image_size": 28,
+            },
+        )
+        checkpoint_pretrained = Mock(spec=PreTrainedCausalLM)
+        checkpoint_pretrained.config = checkpoint_config
+        checkpoint_provider = ministral3_bridge.provider_bridge(checkpoint_pretrained)
+
+        reference_config = Mistral3Config(
+            architectures=["Mistral3ForConditionalGeneration"],
+            dtype="float16",
+            image_token_index=99,
+            multimodal_projector_bias=True,
+            projector_hidden_act="silu",
+            spatial_merge_size=4,
+            tie_word_embeddings=True,
+            vision_feature_layer=-2,
+            text_config={
+                "model_type": "ministral3",
+                "hidden_size": 512,
+                "intermediate_size": 1536,
+                "num_hidden_layers": 4,
+                "num_attention_heads": 8,
+                "num_key_value_heads": 2,
+                "head_dim": 64,
+                "max_position_embeddings": 8192,
+                "vocab_size": 32768,
+                "rope_parameters": {"rope_type": "default", "rope_theta": 2000000.0},
+                "sliding_window": 2048,
+                "tie_word_embeddings": True,
+                "use_cache": False,
+            },
+            vision_config={
+                "hidden_size": 192,
+                "intermediate_size": 384,
+                "num_hidden_layers": 3,
+                "num_attention_heads": 6,
+                "head_dim": 32,
+                "patch_size": 16,
+                "image_size": 32,
+            },
+        )
+        reference_rope_parameters = dict(reference_config.text_config.rope_parameters)
+        reference_vision_config = reference_config.vision_config.to_dict()
+
+        checkpoint_dir = tmp_path / "checkpoint"
+        checkpoint_dir.mkdir()
+        (checkpoint_dir / "run_config.yaml").write_text("model: {}\n")
+
+        with (
+            patch("transformers.AutoConfig.from_pretrained", return_value=reference_config),
+            patch(
+                "megatron.bridge.training.model_load_save.load_model_config",
+                return_value=(checkpoint_provider, None),
+            ),
+        ):
+            auto_bridge = AutoBridge.from_auto_config(str(checkpoint_dir), "mistralai/reference")
+
+        synthesized_config = auto_bridge.hf_pretrained
+        assert isinstance(synthesized_config, Mistral3Config)
+
+        assert synthesized_config.text_config.hidden_size == checkpoint_provider.hidden_size
+        assert synthesized_config.text_config.intermediate_size == checkpoint_provider.ffn_hidden_size
+        assert synthesized_config.text_config.num_hidden_layers == checkpoint_provider.num_layers
+        assert synthesized_config.text_config.num_attention_heads == checkpoint_provider.num_attention_heads
+        assert synthesized_config.text_config.num_key_value_heads == checkpoint_provider.num_query_groups
+        assert synthesized_config.text_config.head_dim == checkpoint_provider.kv_channels
+        assert synthesized_config.text_config.max_position_embeddings == checkpoint_provider.seq_length
+        assert synthesized_config.text_config.vocab_size == checkpoint_provider.vocab_size
+
+        assert synthesized_config.architectures == ["Mistral3ForConditionalGeneration"]
+        assert synthesized_config.model_type == "mistral3"
+        assert synthesized_config.tie_word_embeddings is checkpoint_provider.share_embeddings_and_output_weights
+        assert synthesized_config.dtype == checkpoint_provider.params_dtype
+
+        assert synthesized_config.image_token_index == reference_config.image_token_index
+        assert synthesized_config.multimodal_projector_bias is reference_config.multimodal_projector_bias
+        assert synthesized_config.projector_hidden_act == reference_config.projector_hidden_act
+        assert synthesized_config.spatial_merge_size == reference_config.spatial_merge_size
+        assert synthesized_config.vision_feature_layer == reference_config.vision_feature_layer
+        assert synthesized_config.text_config.model_type == reference_config.text_config.model_type
+        assert synthesized_config.text_config.rope_parameters == reference_rope_parameters
+        assert synthesized_config.text_config.sliding_window == reference_config.text_config.sliding_window
+        assert synthesized_config.text_config.tie_word_embeddings is reference_config.text_config.tie_word_embeddings
+        assert synthesized_config.text_config.use_cache is reference_config.text_config.use_cache
+        assert synthesized_config.vision_config.to_dict() == reference_vision_config
+
+        synthesized_provider = auto_bridge.to_megatron_provider(load_weights=False)
+        assert synthesized_provider.num_attention_heads == checkpoint_provider.num_attention_heads
+        assert synthesized_provider.num_query_groups == checkpoint_provider.num_query_groups
+        assert synthesized_provider.kv_channels == checkpoint_provider.kv_channels
+        assert synthesized_provider.share_embeddings_and_output_weights is False
+        assert synthesized_provider.params_dtype == torch.bfloat16
+        assert synthesized_provider.fp16 is False
+        assert synthesized_provider.bf16 is True

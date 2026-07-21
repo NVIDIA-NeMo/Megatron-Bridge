@@ -7,7 +7,7 @@ every training step.
 This page is the stable guide for what CUDA graphs are, when they help, and
 what tradeoffs to expect. For exact enablement knobs, code anchors, and
 verification commands, see
-[skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md).
+[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
 
 ## What It Is
 
@@ -107,13 +107,13 @@ If you choose `local` with `full_iteration`, disable the loss and gradient NaN
 checks that conflict with full capture.
 
 For exact config snippets and runnable commands, see
-[skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md).
+[skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md).
 
 ## Minimal Runnable Example
 
 For a minimal Bridge-facing example, start from the functional smoke test:
 
-- `tests/functional_tests/recipes/test_llama_recipes_pretrain_cuda_graphs.py`
+- `tests/functional_tests/test_groups/recipes/test_llama_recipes_pretrain_cuda_graphs.py`
 
 For a lightweight CLI-driven path, use the performance harness with scoped
 capture and a small model recipe.
@@ -172,6 +172,10 @@ Larger MoE runs can become memory-gated before graph replay pays off:
 - treat CUDA graphs as a throughput optimization for runs with margin, not as a
   fit-enabling technique
 
+## Optimizer CUDA graph
+
+The `OptimizerCudaGraphWrapper` is an experimental utility that enables CUDA graph capture of the ADAM optimizer step. By encapsulating optimizer updates into a replayable CUDA graph, it can further reduce host launch overhead, especially when optimizer has additional CPU overhead such as additional cast when using low-precision native parameters. This feature can be enabled by passing `optimizer_cuda_graph=True` to `OptimizerConfig`. Avoid using it if your optimizer step is includes conditional logic, or uses operations that are not graph-compatible, as these may cause capture or replay failures.
+
 ## Common Failure Modes
 
 - Missing TE RNG tracker settings causes an assertion before training starts.
@@ -196,4 +200,4 @@ Larger MoE runs can become memory-gated before graph replay pays off:
 
 - [Performance Guide](../performance-guide.md)
 - [Communication Overlap](communication-overlap.md)
-- [skills/perf-cuda-graphs/SKILL.md](../skills/perf-cuda-graphs/SKILL.md)
+- [skills/nemo-mbridge-perf-cuda-graphs/SKILL.md](../skills/nemo-mbridge-perf-cuda-graphs/SKILL.md)

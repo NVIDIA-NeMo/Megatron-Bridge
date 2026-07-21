@@ -15,7 +15,7 @@
 #
 # Test purpose:
 # - Parametrize over all exported Moonlight recipe functions in `megatron.bridge.recipes.moonlight`.
-# - For each recipe, monkeypatch `MoonlightModelProvider16B` with a lightweight fake to avoid I/O.
+# - For each recipe, monkeypatch `MLAModelProvider` with a lightweight fake to avoid I/O.
 # - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
 # - Verify tokenizer selection and sanity-check parallelism fields.
 #
@@ -24,6 +24,8 @@ import importlib
 from typing import Callable
 
 import pytest
+
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _moonlight_module = importlib.import_module("megatron.bridge.recipes.moonlight")
@@ -73,8 +75,8 @@ def _apply_test_overrides(cfg, name: str):
     return cfg
 
 
-class _FakeMoonlightModelProvider16B:
-    """Fake MoonlightModelProvider16B for testing without model I/O."""
+class _FakeMoonlightModelProvider:
+    """Fake Moonlight model provider for testing without model I/O."""
 
     def __init__(self, *args, **kwargs):
         # Store all the kwargs that would be passed to the real provider
@@ -132,8 +134,8 @@ def test_each_moonlight_recipe_builds_config(recipe_func: Callable, monkeypatch:
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
 
-    # Monkeypatch the MoonlightModelProvider16B class
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    # Monkeypatch the MLAModelProvider class
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()
@@ -168,7 +170,7 @@ def test_moonlight_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.
     """Test that each Moonlight SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = recipe_func()
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -193,7 +195,7 @@ def test_moonlight_peft_config_builds(recipe_func: Callable, monkeypatch: pytest
     """Test that each Moonlight PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = recipe_func(peft_scheme="lora")
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -219,7 +221,7 @@ def test_moonlight_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeyp
     """Test that PEFT configurations are correctly applied with different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -235,7 +237,7 @@ def test_moonlight_16b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = moonlight_16b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "moonlight_16b_peft_config")
@@ -258,7 +260,7 @@ def test_moonlight_16b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.moonlight import moonlight_16b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = moonlight_16b_peft_config(peft_scheme="dora")
     _apply_test_overrides(cfg, "moonlight_16b_peft_config")
@@ -281,7 +283,7 @@ def test_moonlight_16b_sft_full_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = moonlight_16b_sft_config()
     _apply_test_overrides(cfg, "moonlight_16b_sft_config")
@@ -304,7 +306,7 @@ def test_moonlight_16b_sft_precision_aware_optimizer(monkeypatch: pytest.MonkeyP
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = moonlight_16b_sft_config()
     _apply_test_overrides(cfg, "moonlight_16b_sft_config")
@@ -326,7 +328,7 @@ def test_moonlight_16b_sft_tokenizer_with_trust_remote_code(monkeypatch: pytest.
     from megatron.bridge.recipes.moonlight import moonlight_16b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.moonlight.moonlight_16b")
-    monkeypatch.setattr(mod, "MLAModelProvider", _FakeMoonlightModelProvider16B)
+    patch_recipe_module_global(monkeypatch, mod, "MLAModelProvider", _FakeMoonlightModelProvider)
 
     cfg = moonlight_16b_sft_config()
 

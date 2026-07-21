@@ -29,6 +29,7 @@ LOG_FILE=./qwen2_audio_7b_asr.log
 exec > >(tee "${LOG_FILE}") 2>&1
 
 export TORCHDYNAMO_DISABLE=1
+export WANDB_MODE=${WANDB_MODE:-disabled}
 
 set -euo pipefail
 
@@ -37,9 +38,8 @@ WORKSPACE=${WORKSPACE:-/workspace/Megatron-Bridge/examples/models/qwen/qwen2_aud
 NPROC=${NPROC:-8}
 HF_MODEL=${HF_MODEL:-Qwen/Qwen2-Audio-7B}
 
-# Before training, make sure to set WANDB_API_KEY or disable wandb logging
+# Before training, set WANDB_MODE=online and WANDB_API_KEY to enable wandb logging.
 # export WANDB_API_KEY=<your_wandb_api_key>
-# export WANDB_MODE=disabled
 
 # Common configurations
 MODEL_NAME=qwen2_audio_7b
@@ -48,7 +48,7 @@ MEGATRON_CKPT_DIR=${WORKSPACE}/megatron_ckpts/${MODEL_NAME}
 # Convert HF checkpoint to Megatron format if not already done
 if [ ! -d "${MEGATRON_CKPT_DIR}/iter_0000000" ]; then
     echo "Converting HF model to Megatron format..."
-    uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+    ./scripts/conversion/convert.sh import \
         --hf-model ${HF_MODEL} \
         --megatron-path ${MEGATRON_CKPT_DIR}
 fi
@@ -79,11 +79,11 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
     uv run --no-sync python -m torch.distributed.run --nproc_per_node=${NPROC} scripts/training/run_recipe.py \
         --recipe qwen2_audio_7b_finetune_config \
         --step_func audio_lm_step \
-        --hf_path ${HF_MODEL} \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         checkpoint.save=${WORKSPACE}/exp/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
         checkpoint.save_interval=$SAVE_INTERVAL \
         checkpoint.save_optim=False \
+        dataset.hf_processor_path=$HF_MODEL \
         model.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
@@ -101,15 +101,12 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_asr_tp${TP}_pp${PP} \
-        dataset.maker_name=make_default_audio_dataset \
-        "dataset.maker_kwargs.path_or_dataset=yuekai/aishell" \
-        "dataset.maker_kwargs.subset=train" \
-        "dataset.maker_kwargs.split=test" \
-        "+dataset.maker_kwargs.prompt='Detect the language and recognize the speech: <|zh|>'" \
-        "dataset.val_maker_kwargs.subset=dev" \
-        "dataset.val_maker_kwargs.split=test" \
-        dataset.skip_test=true \
-        dataset.pack_sequences_in_batch=true \
+        dataset.source.dataset_name=cv17 \
+        dataset.source.split=train \
+        dataset.validation_source.dataset_name=cv17 \
+        dataset.validation_source.split=validation \
+        dataset.do_test=false \
+        dataset.enable_in_batch_packing=true \
         rng.seed=42 \
         ddp.grad_reduce_in_fp32=false
 done

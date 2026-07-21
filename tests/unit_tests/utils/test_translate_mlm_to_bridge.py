@@ -33,9 +33,11 @@ _spec.loader.exec_module(_mod)
 _try_numeric = _mod._try_numeric
 _try_parse_value = _mod._try_parse_value
 parse_raw_args = _mod.parse_raw_args
+parse_yaml_config = _mod.parse_yaml_config
 translate = _mod.translate
 TranslationResult = _mod.TranslationResult
 emit_overrides = _mod.emit_overrides
+emit_recipe = _mod.emit_recipe
 parse_bridge_overrides = _mod.parse_bridge_overrides
 translate_bridge_to_mlm = _mod.translate_bridge_to_mlm
 ReverseTranslationResult = _mod.ReverseTranslationResult
@@ -376,9 +378,9 @@ class TestTranslateSeqLength:
     """Tests for seq-length dual mapping."""
 
     def test_seq_length_maps_to_both(self):
-        """--seq-length maps to both dataset.sequence_length and model.seq_length."""
+        """--seq-length maps to both dataset.seq_length and model.seq_length."""
         r = translate({"seq-length": 4096})
-        assert r.overrides["dataset.sequence_length"] == 4096
+        assert r.overrides["dataset.seq_length"] == 4096
         assert r.overrides["model.seq_length"] == 4096
 
 
@@ -427,6 +429,70 @@ class TestTranslateEnvVars:
         """Default env_vars is empty dict."""
         r = translate({})
         assert r.env_vars == {}
+
+    @pytest.mark.skipif(not _mod.HAS_YAML, reason="PyYAML is not installed")
+    def test_yaml_env_vars_preserve_scalar_types_and_colons(self, tmp_path):
+        """MLM ENV_VARS blocks should survive parsing without losing special values."""
+        config_path = tmp_path / "model.yaml"
+        config_path.write_text(
+            """ENV_VARS:
+  NVTE_FWD_LAYERNORM_SM_MARGIN: 16
+  TORCHINDUCTOR_WORKER_START: fork
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+  USE_MNNVL: 1
+MODEL_ARGS:
+  --num-layers: 2
+"""
+        )
+
+        _, env_vars = parse_yaml_config(str(config_path))
+
+        assert env_vars == {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "USE_MNNVL": 1,
+        }
+
+    def test_env_vars_are_emitted_in_generated_recipe(self):
+        """Generated recipes preserve scalar and colon-bearing environment values."""
+        env_vars = {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "QUANTIZATION_TYPE_DEBUG": 1,
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+            "USE_MNNVL": 1,
+        }
+
+        output = emit_recipe(translate({}, env_vars=env_vars), recipe_name="translated_model")
+
+        assert f"env_vars={env_vars!r}" in output
+
+    def test_env_vars_are_emitted_as_hydra_override(self):
+        """Override output should preserve values containing colons without shell splitting."""
+        from hydra.core.override_parser.overrides_parser import OverridesParser
+
+        result = translate(
+            {},
+            env_vars={
+                "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+                "QUANTIZATION_TYPE_DEBUG": 1,
+            },
+        )
+
+        output = emit_overrides(result)
+
+        override = next(line.strip().removesuffix(" \\") for line in output.splitlines() if "++env_vars=" in line)
+        override = override.removeprefix("'").removesuffix("'")
+        parsed = OverridesParser.create().parse_overrides([override])
+
+        assert len(parsed) == 1
+        assert parsed[0].key_or_group == "env_vars"
+        assert parsed[0].value() == {
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+            "QUANTIZATION_TYPE_DEBUG": 1,
+        }
 
 
 class TestTranslateMlaMoe:
@@ -722,14 +788,14 @@ class TestTranslateBridgeToMlmSeqLength:
         r = translate_bridge_to_mlm({"model.seq_length": 4096})
         assert r.mlm_args.get("seq-length") == 4096
 
-    def test_dataset_sequence_length(self):
-        """dataset.sequence_length → --seq-length."""
-        r = translate_bridge_to_mlm({"dataset.sequence_length": 4096})
+    def test_dataset_seq_length(self):
+        """dataset.seq_length → --seq-length."""
+        r = translate_bridge_to_mlm({"dataset.seq_length": 4096})
         assert r.mlm_args.get("seq-length") == 4096
 
     def test_both_seq_length_not_duplicated(self):
         """Both seq_length fields produce only one --seq-length entry."""
-        r = translate_bridge_to_mlm({"model.seq_length": 4096, "dataset.sequence_length": 4096})
+        r = translate_bridge_to_mlm({"model.seq_length": 4096, "dataset.seq_length": 4096})
         count = list(r.mlm_args.keys()).count("seq-length")
         assert count == 1
 
@@ -919,7 +985,7 @@ class TestRoundTripMlmToBridge:
         """--seq-length maps to both dataset and model fields."""
         args, env = parse_raw_args("--seq-length 4096")
         r = translate(args, env)
-        assert r.overrides.get("dataset.sequence_length") == 4096
+        assert r.overrides.get("dataset.seq_length") == 4096
         assert r.overrides.get("model.seq_length") == 4096
 
 
@@ -950,7 +1016,7 @@ class TestRoundTripBridgeToMlm:
         assert r.mlm_args.get("num-layers") == 32
 
     def test_bridge_to_mlm_seq_length(self):
-        """dataset.sequence_length → --seq-length."""
-        overrides = parse_bridge_overrides("dataset.sequence_length=4096")
+        """dataset.seq_length → --seq-length."""
+        overrides = parse_bridge_overrides("dataset.seq_length=4096")
         r = translate_bridge_to_mlm(overrides)
         assert r.mlm_args.get("seq-length") == 4096

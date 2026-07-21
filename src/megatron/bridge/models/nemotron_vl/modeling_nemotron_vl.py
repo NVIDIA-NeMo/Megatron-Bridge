@@ -18,7 +18,7 @@ import torch
 from megatron.core.models.multimodal.llava_model import LLaVAModel
 from megatron.core.transformer.module import MegatronModule
 
-from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronNano12Bv2VLModelProvider
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 class NemotronVLModel(MegatronModule):
@@ -31,7 +31,7 @@ class NemotronVLModel(MegatronModule):
 
     def __init__(
         self,
-        config: Optional["NemotronNano12Bv2VLModelProvider"] = None,
+        config: Optional["NemotronVLModelProvider"] = None,
         *,
         llava_model: Optional[LLaVAModel] = None,
         pre_process: bool | None = True,
@@ -106,15 +106,15 @@ class NemotronVLModel(MegatronModule):
         modules: list[torch.nn.Module] = []
         module_names: list[str] = []
 
-        if freeze_language_model:
+        if freeze_language_model and self.llava_model.language_model is not None:
             modules.append(self.llava_model.language_model)
             module_names.append("language_model")
 
-        if freeze_vision_model:
+        if freeze_vision_model and self.llava_model.vision_model is not None:
             modules.append(self.llava_model.vision_model)
             module_names.append("vision_model")
 
-        if freeze_vision_projection:
+        if freeze_vision_projection and self.llava_model.vision_projection is not None:
             modules.append(self.llava_model.vision_projection)
             module_names.append("vision_projection")
 

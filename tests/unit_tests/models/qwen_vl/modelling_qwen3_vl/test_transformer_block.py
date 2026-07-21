@@ -103,6 +103,7 @@ class TestQwen3VLTransformerBlock:
         """Teardown Megatron parallel state."""
         parallel_state.destroy_model_parallel()
 
+    @pytest.mark.timeout(30)
     @pytest.mark.parametrize(
         ("recompute_method", "recompute_num_layers"),
         [("uniform", 1), ("uniform", 3), ("block", 1)],
@@ -113,6 +114,7 @@ class TestQwen3VLTransformerBlock:
 
         # Update config for specific recompute method
         transformer_config.recompute_method = recompute_method
+        transformer_config.num_layers = 3 if recompute_method == "uniform" else 2
         transformer_config.recompute_num_layers = recompute_num_layers
         layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,

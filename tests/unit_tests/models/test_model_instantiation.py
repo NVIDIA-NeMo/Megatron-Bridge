@@ -95,6 +95,10 @@ class MockModelProvider(ModelProviderMixin):
         """Provide a mock model instance."""
         return self.model_instance
 
+    def finalize(self) -> None:
+        """Finalize mock provider."""
+        pass
+
 
 class TestCreateModel:
     """Test cases for _create_model function."""
@@ -150,6 +154,7 @@ class TestCreateModel:
         assert isinstance(result, list)
         assert len(result) == 2
         assert all(model.model_type == ModelType.encoder_or_decoder for model in result)
+        assert [model.vp_stage for model in result] == [0, 1]
         assert model_provider.provide.call_count == 2
 
     @patch("megatron.bridge.models.model_provider.tensor_parallel")
@@ -205,7 +210,7 @@ class TestCreateModel:
 class TestDDPWrap:
     """Test cases for _ddp_wrap function."""
 
-    @patch("megatron.bridge.models.common.unimodal.DistributedDataParallel")
+    @patch("megatron.training.models.dist_utils.DistributedDataParallel")
     def test_ddp_wrap_standard(self, mock_ddp):
         """Test wrapping models with standard DDP."""
         # Setup
@@ -242,7 +247,7 @@ class TestDDPWrap:
         for ddp_instance in mock_ddp_instances:
             ddp_instance.broadcast_params.assert_called_once()
 
-    @patch("megatron.bridge.models.common.unimodal.TorchFullyShardedDataParallel")
+    @patch("megatron.training.models.dist_utils.TorchFullyShardedDataParallel")
     def test_ddp_wrap_fsdp2(self, mock_fsdp):
         """Test wrapping models with FSDP2."""
         # Setup
@@ -270,7 +275,7 @@ class TestDDPWrap:
 
     def test_ddp_wrap_overlap_param_gather(self):
         """Test DDP wrapping with overlap_param_gather_with_optimizer_step."""
-        with patch("megatron.bridge.models.common.unimodal.DistributedDataParallel") as mock_ddp:
+        with patch("megatron.training.models.dist_utils.DistributedDataParallel") as mock_ddp:
             # Setup
             config = create_test_config()
             models = [MockMegatronModule(config)]

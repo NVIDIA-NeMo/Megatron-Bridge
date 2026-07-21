@@ -4,11 +4,19 @@
 
 - Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
 
-## Configuration files
+## Performance recipe configs
 
-There are configuration files- `workload_base_configs.py` for supported models in `scripts/performance/configs`.
+Performance-optimized recipes live in `src/megatron/bridge/perf_recipes`. The performance
+launcher resolves recipes from that package by model, task, GPU count, GPU type, precision,
+and config variant.
 
-- You can override the default configs using these files using command line arguments (recommended) or directly updating these files  
+`setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
+applies recipe-owned process settings before importing Torch, then replaces itself with
+either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
+Each training entrypoint therefore executes only once.
+
+- Prefer command-line overrides for one-off changes.
+- Add or update flat perf recipe functions in `src/megatron/bridge/perf_recipes` for reusable benchmark configs.
 
 ## Setup Instructions
 
@@ -87,7 +95,7 @@ uv run python scripts/performance/setup_experiment.py \
 
 - `-m/--model_family_name`: Model family name to use for experiment. E.g. `llama` (not llama3).
 - `-mr/--model_recipe_name`: Model recipe name to use for experiment. E.g. `llama31_405b`.
-- `--use_recipes`: Use library recipes. Disabled by default.
+- `--use_recipes`: Use model recipes instead of flat performance recipes. Disabled by default.
 - `-nh/--nemo_home`: Directory to expose as `NEMO_HOME` on the compute node. Defaults to `~/.cache/nemo`.
 - `--detach`: Detach the experiment from the terminal. Pass `true` or `false`. Default `true`.
 - `--max_retries`: Maximum number of retries. Default `2`.
@@ -96,11 +104,11 @@ uv run python scripts/performance/setup_experiment.py \
 
 ##### Training arguments
 
-- `--task`: Workflow to run (`pretrain`, `sft`, `lora`). Default `pretrain`.
+- `--task`: Workflow to run (`pretrain`, `sft`, `peft`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
-- `-sl/--seq_length`: Sequence length.
+- `-sl/--seq_length`: Override model sequence length and the LLM dataset sequence length.
 
 ##### Optimizer arguments
 
@@ -198,16 +206,25 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `--additional_slurm_params`: Additional SLURM parameters as key=value pairs. Use semicolons (`;`) to separate parameters when values contain commas. Examples: `nodelist=node001,node002;constraint=gpu` or `reservation=my_res;exclusive`.
 - `--packager`: How code is packaged for the job. `git` snapshots the repo at submission time (default). `none` skips snapshotting — use when code is pre-installed in the container image or available via a shared filesystem.
 
-##### DGXCloud arguments
+##### Kubeflow arguments
 
-- `--dgxc_cluster`: DGXCloud cluster to use for experiment.
-- `--dgxc_base_url`: DGXCloud base URL.
-- `--dgxc_kube_apiserver_url`: DGXCloud Kube API server URL.
-- `--dgxc_app_id`: DGXCloud app ID.
-- `--dgxc_app_secret`: DGXCloud app secret.
-- `--dgxc_project_name`: DGXCloud project name.
-- `--dgxc_pvc_claim_name`: DGXCloud PVC claim name.
-- `--dgxc_pvc_mount_path`: DGXCloud PVC mount path.
+- `--kubeflow_namespace`: Kubernetes namespace for the Kubeflow TrainJob. Setting this routes the experiment through the Kubeflow executor instead of Slurm.
+- `--csp`: cloud provider whose fabric plugin to apply to the Kubeflow executor — `aws` applies `EKSEnvPlugin` (EFA: `FI_PROVIDER=efa`, `FI_EFA_USE_HUGE_PAGE=0`, EFA device requests + privileged container) and `gcp` applies `GKEEnvPlugin` (gIB RDMA-NIC pod annotations). No-op for the Slurm executor.
+- `--kubeflow_workdir_pvc`: PVC name for syncing the job workdir (launch scripts, packaged code) into the cluster before launch.
+- `--kubeflow_workdir_pvc_path`: Mount path for the workdir PVC inside the training pod. Default `/nemo_run`.
+- `--kubeflow_workdir_local_path`: Local directory whose contents nemo-run's `KubeflowExecutor.package()` rsyncs into the workdir PVC via a temporary alpine pod before launch. Used to overlay a `--mbridge-ref` checkout onto `/opt/Megatron-Bridge` in the trainer container without rebuilding the image.
+- `--kubeflow_image_pull_secrets`: Comma-separated list of Kubernetes image pull secret names.
+- `--kubeflow_volumes_json`: JSON-encoded list of Kubernetes `Volume` dicts attached to the training pod (PVC, emptyDir, hostPath).
+- `--kubeflow_volume_mounts_json`: JSON-encoded list of Kubernetes `VolumeMount` dicts applied to the training container (must match a name in `--kubeflow_volumes_json`).
+- `--kubeflow_tolerations_json`: JSON-encoded list of Kubernetes `Toleration` dicts applied to the training pods (e.g. to land on lease-tainted nodes such as `gpu-wrangler.nvidia.com/lease`).
+- `--kubeflow_affinity_json`: JSON-encoded Kubernetes `Affinity` dict applied to the training pods (e.g. node affinity onto GPULease-allocated nodes).
+- `--kubeflow_env_list_json`: JSON-encoded list of Kubernetes `EnvVar` dicts (supports `valueFrom.secretKeyRef` for secret-backed env vars such as `WANDB_API_KEY` / `HF_TOKEN`).
+- `--kubeflow_extra_resource_requests_json`: JSON-encoded dict of extra container resource requests (e.g. `{"vpc.amazonaws.com/efa": "32"}` for EFA on AWS).
+- `--kubeflow_extra_resource_limits_json`: JSON-encoded dict of extra container resource limits (paired with the requests above).
+- `--kubeflow_pod_spec_overrides_json`: JSON-encoded dict merged into the pod spec — escape hatch for `nodeSelector`, `hostNetwork`, etc.
+- `--kubeflow_container_kwargs_json`: JSON-encoded dict of extra fields set on the training container (e.g. `{"securityContext": {"privileged": true}}` for EFA / RDMA).
+- `--kubeflow_pod_annotations_json`: JSON-encoded dict of annotations applied to the trainer pod template metadata (e.g. GKE `networking.gke.io/interfaces` to attach the RDMA NICs for gIB). Usually set for you by `--csp gcp`.
+- `--kubeflow_labels_json`: JSON-encoded dict of labels applied to the TrainJob's pods.
 
 ##### Performance arguments
 
@@ -246,7 +263,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 
 ##### Config variant arguments
 
-- `-cv/--config_variant`: Config variant to use (e.g., `"v1"`, `"v2"`). Defaults to `"v2"` (`"v1"` if `"v2"` doens't exist). Use `--list_config_variants` to see available options.
+- `-cv/--config_variant`: Config variant to use. Omit to use the suffix-less canonical flat perf recipe. Named variants such as `"large_scale"` are supported when a matching flat recipe exists. Use `--list_config_variants` to see available options.
 - `--list_config_variants`: List available config variants for the specified model/task/gpu/dtype and interactively select one (with 15s timeout).
 
 ##### Testing arguments
@@ -270,7 +287,7 @@ Deterministic training guarantees that two runs with identical inputs produce id
 
 ### What `--deterministic` does
 
-**Environment variables** (set on the Slurm executor via `PerfEnvPlugin`):
+**Environment variables** (stored in `cfg.env_vars` and applied before the training process imports Torch):
 
 | Variable | Value | Reason |
 |---|---|---|
@@ -304,21 +321,22 @@ python scripts/performance/setup_experiment.py \
   --deterministic
 ```
 
-### Using the recipe library directly
+### Using model recipes directly
 
 `apply_determinism_overrides` is also importable for use outside the performance script layer:
 
 ```python
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_deterministic_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config
 
-cfg = llama3_70b_pretrain_deterministic_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_deterministic_config()
 
 # Or, apply overrides to any existing recipe:
 from megatron.bridge.recipes.utils import apply_determinism_overrides
-from megatron.bridge.recipes.llama import llama3_70b_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama3_70b_pretrain_32gpu_h100_bf16_config
 
-cfg = llama3_70b_pretrain_config(mock=True)
+cfg = llama3_70b_pretrain_32gpu_h100_bf16_config()
 apply_determinism_overrides(cfg)
 ```
 
-Note: bit-exact reproducibility additionally requires the executor-side env vars listed above. The recipe-only path covers the model config, not the runtime environment.
+`apply_determinism_overrides(cfg)` adds both the model overrides and these runtime environment defaults to the recipe.
+Explicit shell or launcher environment values retain precedence when the recipe is launched.

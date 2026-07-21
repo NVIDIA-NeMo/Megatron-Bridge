@@ -37,6 +37,9 @@ from megatron.core.transformer.utils import sharded_state_dict_default
 from megatron.core.utils import WrappedTensor, deprecate_inference_params, make_viewless_tensor
 from torch import Tensor, nn
 
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
+
 
 try:
     import transformer_engine.pytorch as te  # noqa: F401 # pylint: disable=unused-import
@@ -48,9 +51,6 @@ except ImportError:
 te_checkpoint = None
 if HAVE_TE:
     from megatron.core.extensions.transformer_engine import te_checkpoint
-
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import Qwen3VLTransformerConfig
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import Qwen3VLVisionPatchMerger
 
 
 class Qwen3VLVisionTransformerBlock(TransformerBlock):
@@ -93,6 +93,7 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
                     config,
                     patch_merger_spec,
                     use_postshuffle_norm=True,
+                    tp_group=self.tp_group,
                 )
                 for _ in range(len(config.deepstack_visual_indexes))
             ]

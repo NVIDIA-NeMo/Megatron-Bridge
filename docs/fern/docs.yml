@@ -1,0 +1,23 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+instances:
+- url: https://megatron-bridge.docs.buildwithfern.com/nemo/megatron-bridge
+  custom-domain: docs.nvidia.com/nemo/megatron-bridge
+title: Megatron Bridge
+global-theme: nvidia
+logo:
+  href: /nemo/megatron-bridge/latest
+  right-text: Megatron Bridge
+navbar-links:
+- type: github
+  value: https://github.com/NVIDIA-NeMo/Megatron-Bridge
+experimental:
+  basepath-aware: true
+versions:
+- display-name: 0.4.2 (latest) · 26.04.01
+  path: versions/latest.yml
+  slug: latest
+- display-name: nightly
+  path: versions/nightly.yml
+  slug: nightly

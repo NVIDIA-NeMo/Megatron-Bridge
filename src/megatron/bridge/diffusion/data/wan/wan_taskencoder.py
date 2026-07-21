@@ -23,6 +23,7 @@ from megatron.energon import SkipSample
 from megatron.energon.task_encoder.base import stateless
 from megatron.energon.task_encoder.cooking import Cooker, basic_sample_keys
 
+from megatron.bridge.data.energon.metadata import sample_metadata_kwargs
 from megatron.bridge.diffusion.data.common.diffusion_sample import DiffusionSample
 from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import (
     DiffusionTaskEncoderWithSequencePacking,
@@ -30,6 +31,7 @@ from megatron.bridge.diffusion.data.common.diffusion_task_encoder_with_sp import
 from megatron.bridge.diffusion.models.wan.utils import grid_sizes_calculation, patchify
 
 
+@stateless
 def cook(sample: dict) -> dict:
     """
     Processes a raw sample dictionary from energon dataset and returns a new dictionary with specific keys.
@@ -128,6 +130,7 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         if seq_len_q < seq_len_q_padded:
             video_latent = F.pad(video_latent, (0, 0, 0, seq_len_q_padded - seq_len_q))
             loss_mask = F.pad(loss_mask, (0, seq_len_q_padded - seq_len_q))
+        if seq_len_kv < seq_len_kv_padded:
             context_embeddings = F.pad(context_embeddings, (0, 0, 0, seq_len_kv_padded - seq_len_kv))
 
         ### Note: shape of sample's values
@@ -136,10 +139,11 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         # context_embeddings: [context_seq_len, text_embedding_dim]
 
         return DiffusionSample(
-            __key__=sample["__key__"],
-            __restore_key__=sample["__restore_key__"],
-            __subflavor__=None,
-            __subflavors__=sample["__subflavors__"],
+            **sample_metadata_kwargs(
+                key=sample["__key__"],
+                restore_key=sample["__restore_key__"],
+                subflavors=sample["__subflavors__"],
+            ),
             video=video_latent,
             context_embeddings=context_embeddings,
             latent_shape=torch.tensor(grid_size, dtype=torch.int32),

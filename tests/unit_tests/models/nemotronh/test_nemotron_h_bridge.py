@@ -12,8 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import pytest
@@ -23,8 +25,9 @@ from transformers.configuration_utils import PretrainedConfig
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
+from megatron.bridge.models.conversion.quant_mapping import AmaxFanoutMapping, AmaxMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
-from megatron.bridge.models.mamba.mamba_provider import MambaModelProvider
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import (
     NemotronHBridge,
     _MTPFlatteningMapping,
@@ -123,8 +126,8 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained_nemotronh)
         result.finalize()
 
-        # Check that it returns a MambaModelProvider instance
-        assert isinstance(result, MambaModelProvider)
+        # Check that it returns a HybridModelProvider instance
+        assert isinstance(result, HybridModelProvider)
 
         # Check basic configuration mapping
         assert result.num_layers == mock_nemotronh_config.num_hidden_layers
@@ -214,6 +217,25 @@ class TestNemotronHBridge:
         assert any([isinstance(m, AutoMapping) for m in mapping_registry.mappings])
         # assert any([isinstance(m, PrunedVocabMapping) for m in mapping_registry.mappings])
         assert any([isinstance(m, QKVMapping) for m in mapping_registry.mappings])
+
+    def test_mapping_registry_contains_mamba_conv1d_compat_mappings(self):
+        """Test that Mamba conv mappings support old and new Megatron-Core names."""
+        registry = NemotronHBridge().mapping_registry()
+
+        new_weight = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d_weight")
+        new_bias = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d_bias")
+        old_weight = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d.weight")
+        old_bias = registry.megatron_to_hf_lookup("decoder.layers.0.mixer.conv1d.bias")
+
+        assert new_weight.hf_param == "backbone.layers.0.mixer.conv1d.weight"
+        assert new_bias.hf_param == "backbone.layers.0.mixer.conv1d.bias"
+        assert old_weight.hf_param == "backbone.layers.0.mixer.conv1d.weight"
+        assert old_bias.hf_param == "backbone.layers.0.mixer.conv1d.bias"
+
+        reverse_weight = registry.hf_to_megatron_lookup("backbone.layers.0.mixer.conv1d.weight")
+        reverse_bias = registry.hf_to_megatron_lookup("backbone.layers.0.mixer.conv1d.bias")
+        assert reverse_weight.megatron_param == "decoder.layers.0.mixer.conv1d_weight"
+        assert reverse_bias.megatron_param == "decoder.layers.0.mixer.conv1d_bias"
 
     def test_provider_bridge_fixed_settings(self, mock_pretrained_nemotronh):
         """Test fixed settings that should always be set regardless of config."""
@@ -355,7 +377,7 @@ class TestNemotronHBridge:
         result = bridge.provider_bridge(mock_pretrained)
 
         # Should work without MoE configs - provider should still be created
-        assert isinstance(result, MambaModelProvider)
+        assert isinstance(result, HybridModelProvider)
         assert not hasattr(result, "num_moe_experts") or result.num_moe_experts is None
 
     def test_mapping_registry_contains_moe_mappings(self):
@@ -463,6 +485,66 @@ class TestNemotronHBridgeTokenizerKwargs:
         """Test get_hf_tokenizer_kwargs returns use_fast=True."""
         kwargs = NemotronHBridge.get_hf_tokenizer_kwargs()
         assert kwargs.get("use_fast") is True
+
+
+class TestNemotronHBridgeMegatronToHFConfig:
+    """Test Megatron provider config export for Nemotron-H."""
+
+    def test_megatron_to_hf_config_splits_unified_mtp_pattern(self):
+        """Export HF hybrid_override_pattern without Megatron's unified MTP separator."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="ME|ME/*E",
+            mtp_num_layers=1,
+        )
+
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["hybrid_override_pattern"] == "MEME"
+        assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
+        assert hf_cfg["num_nextn_predict_layers"] == 1
+
+    def test_megatron_to_hf_config_keeps_repeated_identical_mtp_pattern_separate(self):
+        """Collapse repeated unified MTP blocks to the HF MTP block pattern field."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEME/*E/*E",
+            mtp_num_layers=2,
+        )
+
+        hf_cfg = NemotronHBridge.megatron_to_hf_config(provider)
+
+        assert hf_cfg["hybrid_override_pattern"] == "MEME"
+        assert hf_cfg["mtp_hybrid_override_pattern"] == "*E"
+        assert hf_cfg["num_nextn_predict_layers"] == 2
+
+    def test_megatron_to_hf_config_rejects_unknown_main_pattern_characters(self):
+        """Preserve validation for unknown main hybrid_override_pattern characters."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="MEZ",
+            mtp_num_layers=0,
+        )
+
+        with pytest.raises(ValueError, match="Unknown layer type characters in hybrid_override_pattern"):
+            NemotronHBridge.megatron_to_hf_config(provider)
+
+    def test_megatron_to_hf_config_rejects_unknown_mtp_pattern_characters(self):
+        """Validate MTP block patterns split from Megatron's unified pattern."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="ME/*Z",
+            mtp_num_layers=1,
+        )
+
+        with pytest.raises(ValueError, match="Unknown layer type characters in mtp_hybrid_override_pattern"):
+            NemotronHBridge.megatron_to_hf_config(provider)
+
+    def test_megatron_to_hf_config_rejects_mismatched_mtp_patterns(self):
+        """Unified MTP blocks must be identical when exported to a single HF MTP pattern."""
+        provider = SimpleNamespace(
+            hybrid_layer_pattern="ME/*E/*M",
+            mtp_num_layers=2,
+        )
+
+        with pytest.raises(ValueError, match="All MTP patterns in hybrid_override_pattern must be identical"):
+            NemotronHBridge.megatron_to_hf_config(provider)
 
 
 class TestAutoBridgeIntegration:
@@ -943,6 +1025,76 @@ class TestNemotronHBridgeMTPIntegration:
         # Should contain _MTPFlatteningQKVMapping
         qkv_mappings = [m for m in registry.mappings if isinstance(m, _MTPFlatteningQKVMapping)]
         assert len(qkv_mappings) == 1
+
+    def test_mapping_registry_resolves_representative_mtp_params(self):
+        """Verify current MTP mappings resolve to concrete HF parameter names."""
+        bridge = NemotronHBridge()
+        bridge._mtp_layers_per_block = 2
+
+        registry = bridge.mapping_registry()
+
+        mlp_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.1.mtp_model_layer.layers.0.mlp.experts.linear_fc1.weight5"
+        )
+        qkv_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.1.mtp_model_layer.layers.1.self_attention.linear_qkv.weight"
+        )
+
+        assert isinstance(mlp_mapping, AutoMapping)
+        assert mlp_mapping.hf_param == "mtp.layers.2.mixer.experts.5.up_proj.weight"
+        assert isinstance(qkv_mapping, QKVMapping)
+        assert qkv_mapping.hf_param["q"] == "mtp.layers.3.mixer.q_proj.weight"
+
+    def test_quantized_mtp_amax_mappings_preserve_flattened_layer_indices(self):
+        bridge = NemotronHBridge()
+        bridge._mtp_layers_per_block = 5
+
+        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}):
+            registry = bridge.mapping_registry()
+
+        mlp_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.weight_quantizer._amax"
+        )
+        input_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.input_quantizer._amax"
+        )
+        outer_mapping = registry.megatron_to_hf_lookup("mtp.layers.3.eh_proj.weight_quantizer._amax")
+        reverse_mapping = registry.hf_to_megatron_lookup("mtp.layers.17.mixer.up_proj.weight_quantizer._amax")
+        qkv_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.self_attention.linear_qkv.weight_quantizer._amax"
+        )
+        grouped_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.mlp.experts.linear_fc1.weight_quantizer._amax"
+        )
+
+        assert isinstance(mlp_mapping, AmaxMapping)
+        assert mlp_mapping.hf_param == "mtp.layers.17.mixer.up_proj.weight_quantizer._amax"
+        assert isinstance(input_mapping, AmaxMapping)
+        assert input_mapping.hf_param == "mtp.layers.17.mixer.up_proj.input_quantizer._amax"
+        assert isinstance(outer_mapping, AmaxMapping)
+        assert outer_mapping.hf_param == "mtp.layers.15.eh_proj.weight_quantizer._amax"
+        assert isinstance(reverse_mapping, AmaxMapping)
+        assert (
+            reverse_mapping.megatron_param
+            == "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.weight_quantizer._amax"
+        )
+        assert isinstance(qkv_mapping, AmaxFanoutMapping)
+        assert set(qkv_mapping.hf_targets) == {
+            "mtp.layers.17.mixer.q_proj.weight_quantizer._amax",
+            "mtp.layers.17.mixer.k_proj.weight_quantizer._amax",
+            "mtp.layers.17.mixer.v_proj.weight_quantizer._amax",
+        }
+        assert grouped_mapping is None
+
+    def test_mapping_registry_resolves_final_norm_aliases(self):
+        """Export trunk final norm for both HybridModel and TransformerBlock key names."""
+        registry = NemotronHBridge().mapping_registry()
+
+        final_norm_mapping = registry.megatron_to_hf_lookup("decoder.final_norm.weight")
+        final_layernorm_mapping = registry.megatron_to_hf_lookup("decoder.final_layernorm.weight")
+
+        assert final_norm_mapping.hf_param == "backbone.norm_f.weight"
+        assert final_layernorm_mapping.hf_param == "backbone.norm_f.weight"
 
     def test_mapping_registry_without_mtp_logs_warning(self):
         """Test mapping_registry logs warning when mtp_layers_per_block is 0."""

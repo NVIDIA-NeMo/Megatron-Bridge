@@ -180,11 +180,12 @@ class TestStateDictKeyRetrieval:
         assert len(keys) == 7
         assert keys == sorted(keys)
 
-    def test_items_method(self, mock_model):
-        """Test items method."""
+    def test_inherited_mapping_items(self, mock_model):
+        """Test items behavior inherited from Mapping."""
         state_dict_source = mock_model.state_dict()
         state_dict = StateDict(state_dict_source)
 
+        assert "items" not in StateDict.__dict__
         items = list(state_dict.items())
 
         assert isinstance(items, list)
@@ -397,70 +398,96 @@ class TestStateDictIndexing:
             _ = state_dict[123]
 
 
-class TestStateDictConvenienceMethods:
-    """Test convenience methods for pattern matching."""
+class TestSafeTensorsStateSourceSave:
+    """Test streaming safetensors save behavior."""
 
-    def test_regex_method(self, mock_model):
-        """Test regex convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
+    def test_save_generator_ignores_source_key_prefixes(self, tmp_path, capsys):
+        from safetensors.torch import save_file
 
-        tensors = state_dict.regex(r".*\.weight$")
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "mtp.0.weight": torch.ones(1),
+            },
+            source_dir / "model-00001-of-00001.safetensors",
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": "model-00001-of-00001.safetensors",
+                        "mtp.0.weight": "model-00001-of-00001.safetensors",
+                    },
+                },
+                f,
+            )
 
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.endswith(".weight") for key in tensors)
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            ignored_source_key_prefixes=("mtp.",),
+        )
 
-    @pytest.mark.pleasefixme  # This test is too slow for unit tests (>0.5s)
-    def test_glob_method(self, mock_model):
-        """Test glob convenience method."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
+        output = capsys.readouterr().out
+        assert "Error:" not in output
+        assert "Success: All tensors from the original checkpoint were written." in output
 
-        tensors = state_dict.glob("transformer.*.weight")
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}
 
-        assert isinstance(tensors, dict)
-        assert len(tensors) > 0
-        assert all(key.startswith("transformer") and key.endswith("weight") for key in tensors)
+    def test_ignore_source_key_prefixes_filters_expected_map(self):
+        source_map = {
+            "model.weight": "model.safetensors",
+            "mtp.0.weight": "model.safetensors",
+            "mtp_extra.weight": "model.safetensors",
+        }
 
+        assert SafeTensorsStateSource._ignore_source_key_prefixes(None, ("mtp.",)) == {}
+        assert SafeTensorsStateSource._ignore_source_key_prefixes(source_map, None) == source_map
+        assert SafeTensorsStateSource._ignore_source_key_prefixes(source_map, ("mtp.",)) == {
+            "model.weight": "model.safetensors",
+            "mtp_extra.weight": "model.safetensors",
+        }
 
-class TestStateDictCachingAndOptimization:
-    """Test caching and optimization features."""
+    def test_distributed_save_generator_ignores_source_key_prefixes_without_initialized_dist(self, tmp_path):
+        from safetensors.torch import save_file
 
-    def test_caching(self, mock_model):
-        """Test that StateDict works correctly with mocked model."""
-        state_dict_source = mock_model.state_dict()
-        state_dict = StateDict(state_dict_source)
+        source_dir = tmp_path / "source"
+        output_dir = tmp_path / "output"
+        source_dir.mkdir()
+        save_file(
+            {
+                "model.weight": torch.ones(1),
+                "mtp.0.weight": torch.ones(1),
+            },
+            source_dir / "model-00001-of-00001.safetensors",
+        )
+        with open(source_dir / "model.safetensors.index.json", "w") as f:
+            json.dump(
+                {
+                    "metadata": {},
+                    "weight_map": {
+                        "model.weight": "model-00001-of-00001.safetensors",
+                        "mtp.0.weight": "model-00001-of-00001.safetensors",
+                    },
+                },
+                f,
+            )
 
-        # First call
-        keys1 = list(state_dict.keys())
+        source = SafeTensorsStateSource(source_dir)
+        source.save_generator(
+            iter([("model.weight", torch.zeros(1))]),
+            output_dir,
+            distributed_save=True,
+            ignored_source_key_prefixes=("mtp.",),
+        )
 
-        # Second call
-        keys2 = list(state_dict.keys())
-
-        assert keys1 == keys2
-
-    def test_index_file_parsing(self, temp_safetensors_dir):
-        """Test that StateDict can be created with SafeTensorsStateSource."""
-
-        # Create a mock StateSource
-        class MockStateSource(StateSource):
-            def get_all_keys(self):
-                return ["transformer.wte.weight", "lm_head.weight"]
-
-            def load_tensors(self, keys):
-                result = {}
-                for key in keys:
-                    if key in self.get_all_keys():
-                        result[key] = torch.randn(10, 10)
-                return result
-
-            def keys(self):
-                return self.get_all_keys()
-
-        mock_source = MockStateSource()
-        state_dict = StateDict(mock_source)
-
-        # Verify we can get keys
-        keys = list(state_dict.keys())
-        assert len(keys) == 2
+        with open(output_dir / "model.safetensors.index.json") as f:
+            output_index = json.load(f)
+        assert output_index["weight_map"] == {"model.weight": "model-00001-of-00001.safetensors"}

@@ -84,7 +84,7 @@ Sign-off + signed-commit + PR title format per @CONTRIBUTING.md and
 
 ```bash
 git add pyproject.toml uv.lock
-git commit -S -s -m "[build] chore: bump <package> to <ref>"
+git commit -S -s -m "build: bump <package> to <ref>"
 git push -u origin <branch-name>
 ```
 
@@ -105,7 +105,7 @@ Title and labels per @CONTRIBUTING.md. Two bump-specific requirements:
 
 The PR body template — this is the durable record of the bump:
 
-```markdown
+````markdown
 <details><summary>Claude summary</summary>
 
 ## What
@@ -125,7 +125,7 @@ Updated <package> <old> -> <new>
 _None yet — will be appended as flakes are identified during CI iteration._
 
 </details>
-```
+````
 
 To update the PR title or body later, use `gh api -X PATCH
 "repos/NVIDIA-NeMo/Megatron-Bridge/pulls/<N>" -F "body=@/tmp/pr-body.md"`
@@ -276,7 +276,7 @@ When a `JOB <name> -> failure` event fires:
 4. **Commit, push, retrigger**:
 
    ```bash
-   git commit -S -s -m "[ci] chore: quarantine flaky <test> for <package> bump"
+   git commit -S -s -m "ci: quarantine flaky <test> for <package> bump"
    git push
    gh pr comment <N> --repo NVIDIA-NeMo/Megatron-Bridge \
      --body "/ok to test $(git rev-parse HEAD)"

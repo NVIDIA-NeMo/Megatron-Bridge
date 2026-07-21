@@ -13,19 +13,17 @@
 # limitations under the License.
 
 # Build layer variables
-# To install trtllm set FW_DEP_BUILDER=trtllm_builder, FW_BASE_FINAL=trtllm_install
-# To exclude trtllm set FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# Supported mode: FW_DEP_BUILDER=base, FW_BASE_FINAL=fw_toolkit_builder
+# TRT-LLM stages are not present in this Dockerfile.
 ARG FW_DEP_BUILDER
 ARG FW_BASE_FINAL
 
 ARG NEMO_FW_BASE_IMAGE
 FROM ${NEMO_FW_BASE_IMAGE} AS base
 
-ENV NVIDIA_PRODUCT_NAME="NeMo Framework"
-ENV PIP_NO_CACHE_DIR=1
-ENV DEBIAN_FRONTEND=noninteractive
-
-WORKDIR /opt
+ENV NVIDIA_PRODUCT_NAME="NeMo Framework" \
+    PIP_NO_CACHE_DIR=1 \
+    DEBIAN_FRONTEND=noninteractive
 
 ##############################################################################
 ##
@@ -35,14 +33,14 @@ WORKDIR /opt
 
 FROM base AS vllm_wheel
 
-ARG VLLM_VERSION
+ARG VLLM_VERSION=v0.14.1
 ARG MAX_JOBS=4
 ENV VLLM_VERSION=$VLLM_VERSION
 
-WORKDIR /src/vllm
-
 # Build vllm
-RUN git clone https://github.com/vllm-project/vllm.git . && \
+RUN mkdir -p /src/vllm && \
+    git clone https://github.com/vllm-project/vllm.git /src/vllm && \
+    cd /src/vllm && \
     echo "Building vLLM version: $VLLM_VERSION" && \
     git checkout $VLLM_VERSION && \
     python use_existing_torch.py && \
@@ -53,7 +51,6 @@ RUN git clone https://github.com/vllm-project/vllm.git . && \
 ##
 ## Top layer of FW_BASE container
 ##
-## When TRTLLM is re-installed, FW_DEP_BUILDER=trtllm_builder
 ## default, FW_DEP_BUILDER=base
 ##
 ##############################################################################
@@ -69,11 +66,11 @@ FROM ${FW_DEP_BUILDER} AS fw_dep_builder
 ##
 ##############################################################################
 
-ARG UV_VERSION
-ENV UV_PROJECT_ENVIRONMENT=/opt/venv
-ENV UV_CACHE_DIR=/opt/uv_cache
-ENV PATH="$UV_PROJECT_ENVIRONMENT/bin:$PATH"
-ENV UV_LINK_MODE=copy
+ARG UV_VERSION=0.9.17
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_CACHE_DIR=/opt/uv_cache \
+    PATH="/opt/venv/bin:$PATH" \
+    UV_LINK_MODE=copy
 RUN curl -LsSf https://astral.sh/uv/${UV_VERSION}/install.sh | XDG_BIN_HOME=/usr/local/bin sh && \
     uv venv ${UV_PROJECT_ENVIRONMENT} --system-site-packages && \
     python -m ipykernel install --name=python3 --display-name="Python 3 (ipykernel)" && \
@@ -92,7 +89,6 @@ FROM fw_dep_builder AS fw_toolkit_builder
 ##############################################################################
 ##
 ## Reinstall CUDA toolkit packages
-##
 ##############################################################################
 
 ARG REINSTALL_NSYS
@@ -130,8 +126,10 @@ RUN --mount=type=bind,source=docker/common/install_nsys.sh,target=/opt/install_n
 
 # Copy Wheels
 RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
+    --mount=type=bind,source=docker/patches/vllm.patch,target=/opt/vllm.patch \
     pip install /tmp/vllm/vllm*.whl && \
     pushd /usr/local/lib/python3.12/dist-packages/vllm && \
+    patch -p1 < /opt/vllm.patch && \
     popd
 
 ##############################################################################
@@ -144,4 +142,13 @@ RUN --mount=type=bind,from=vllm_wheel,source=/src/vllm/,target=/tmp/vllm/ \
 
 FROM ${FW_BASE_FINAL} AS nemo_fw_base_final
 
-WORKDIR /opt
+##############################################################################
+##
+## Remove nvidia-modelopt
+##
+## nvidia-modelopt ships in the NeMo FW base image but is not used by
+## Megatron-Bridge; uninstall it to keep the final image lean.
+##
+##############################################################################
+
+RUN cd /opt && pip uninstall -y nvidia-modelopt || true

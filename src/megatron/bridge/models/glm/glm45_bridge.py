@@ -23,12 +23,10 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
+    FusedExpertMapping,
+    FusedGatedExpertMapping,
     GatedMLPMapping,
     QKVMapping,
-)
-from megatron.bridge.models.glm.glm_moe_mappings import (
-    GLMExpertDownProjMapping,
-    GLMExpertGateUpProjMapping,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -168,11 +166,11 @@ class GLM45Bridge(MegatronModelBridge):
         if use_fused_experts:
             mapping_list.extend(
                 [
-                    GLMExpertGateUpProjMapping(
+                    FusedGatedExpertMapping(
                         megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
                         hf_param=f"model.layers.*.mlp.experts.gate_up_proj{gate_up_suffix}",
                     ),
-                    GLMExpertDownProjMapping(
+                    FusedExpertMapping(
                         megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
                         hf_param=f"model.layers.*.mlp.experts.down_proj{down_suffix}",
                     ),
@@ -240,7 +238,7 @@ class GLM45Bridge(MegatronModelBridge):
                 if use_fused_experts:
                     mapping_list.extend(
                         [
-                            GLMExpertGateUpProjMapping(
+                            FusedGatedExpertMapping(
                                 megatron_param=(
                                     f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.experts.linear_fc1.weight*"
                                 ),
@@ -249,7 +247,7 @@ class GLM45Bridge(MegatronModelBridge):
                                     f"{gate_up_suffix}"
                                 ),
                             ),
-                            GLMExpertDownProjMapping(
+                            FusedExpertMapping(
                                 megatron_param=(
                                     f"mtp.layers.{mtp_layer}.{layer_prefix}.mlp.experts.linear_fc2.weight*"
                                 ),
@@ -303,36 +301,23 @@ class GLM45Bridge(MegatronModelBridge):
 
         return MegatronMappingRegistry(*mapping_list)
 
-    def _hf_source_and_keys(self):
-        """Return HF state source and cached key order for expert-mapping helpers."""
-        hf_source = self.hf_pretrained.state.source
-        if getattr(self, "_cached_hf_state_source", None) is not hf_source:
-            self._cached_hf_state_source = hf_source
-            self._cached_hf_keys = hf_source.get_all_keys()
-        return hf_source, self._cached_hf_keys
+    def _hf_state_source(self):
+        """Return HF state source when mappings can inspect checkpoint weights."""
+        hf_state = getattr(self.hf_pretrained, "state", None)
+        if hf_state is None:
+            return None
+        return getattr(hf_state, "source", None)
 
     def _uses_fused_experts(self) -> bool:
-        hf_source, hf_keys = self._hf_source_and_keys()
-        if hf_keys:
-            if any("mlp.experts.gate_up_proj" in key for key in hf_keys) or any(
-                "mlp.experts.down_proj" in key for key in hf_keys
-            ):
-                return True
-
-        if hf_source is not None:
-            return hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*")
-
-        # Config-only path (no HF weights to inspect): GLM 4.5 HuggingFace models
-        # always use fused expert weights (gate_up_proj / down_proj), so default True.
-        return True
+        hf_source = self._hf_state_source()
+        return bool(
+            hf_source is not None
+            and (hf_source.has_glob("*mlp.experts.gate_up_proj*") or hf_source.has_glob("*mlp.experts.down_proj*"))
+        )
 
     def _hf_expert_suffix(self, base_name: str) -> str:
-        hf_source, hf_keys = self._hf_source_and_keys()
-        if any(f"{base_name}.weight" in key for key in hf_keys):
-            return ".weight"
-
+        hf_source = self._hf_state_source()
         if hf_source is not None and hf_source.has_glob(f"*{base_name}.weight"):
             return ".weight"
 
-        # Config-only path: GLM 4.5 fused expert tensors have no .weight suffix.
         return ""

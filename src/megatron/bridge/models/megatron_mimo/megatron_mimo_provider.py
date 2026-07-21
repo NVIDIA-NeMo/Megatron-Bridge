@@ -13,6 +13,7 @@ Key differences from standard providers:
 from __future__ import annotations
 
 import copy
+import inspect
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Dict, List, Optional, Union
 
@@ -28,6 +29,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
+    EXPERT_VIEW_NAME,
     build_hypercomm_grids,
     is_pp_first_stage,
     is_pp_last_stage,
@@ -101,6 +103,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
         >>> infra = provider.build_infra()
     """
 
+    # Durable input state for conversion-generated providers. Derived specs are
+    # cleared before YAML save and rebuilt from this provider on load.
+    standard_provider: Optional[object] = None
+
     # Model specs (user provides, like llava_vlm.py example).
     # Optional so subclasses (e.g. LlavaMegatronMIMOProvider) can build it in __post_init__.
     language_model_spec: Optional[ModuleSpec] = None
@@ -132,6 +138,89 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
     bf16: bool = True
     use_cpu_initialization: bool = False
     init_model_with_meta_device: bool = False
+
+    def __post_init__(self) -> None:
+        if self.standard_provider is not None:
+            self._rebuild_derived_specs_from_standard_provider()
+
+    @classmethod
+    def from_standard_provider(
+        cls,
+        standard_provider: object,
+        megatron_mimo_parallelism_config: MegatronMIMOParallelismConfig,
+    ) -> "MegatronMIMOProvider":
+        """Build a MegatronMIMO provider from a standard modality-aware provider."""
+        return cls(
+            standard_provider=standard_provider,
+            megatron_mimo_parallelism_config=megatron_mimo_parallelism_config,
+        )
+
+    def _rebuild_derived_specs_from_standard_provider(self) -> None:
+        standard_provider = self.standard_provider
+        if standard_provider is None:
+            return
+
+        self._sync_standard_provider_language_parallelism()
+
+        # MIMO conversion does not import/export MTP routes yet.
+        if hasattr(standard_provider, "mtp_num_layers"):
+            setattr(standard_provider, "mtp_num_layers", None)
+
+        if self.language_model_spec is None:
+            self.language_model_spec = self._build_standard_language_model_spec(pp_rank=0)
+
+        if not self.modality_submodules_spec:
+            build_modality_specs = getattr(standard_provider, "build_mimo_modality_submodules_spec", None)
+            if callable(build_modality_specs):
+                self.modality_submodules_spec = build_modality_specs()
+            else:
+                self.modality_submodules_spec = _build_default_mimo_modality_submodules_spec(standard_provider)
+
+        if not self.special_token_ids:
+            special_token_ids = getattr(standard_provider, "special_token_ids", None)
+            if callable(special_token_ids):
+                special_token_ids = special_token_ids()
+            if special_token_ids is None:
+                raise TypeError("standard_provider must define special_token_ids.")
+            self.special_token_ids = dict(special_token_ids)
+
+    def _sync_standard_provider_language_parallelism(self) -> None:
+        """Apply the language component's parallelism to the wrapped provider."""
+        standard_provider = self.standard_provider
+        if standard_provider is None or self.megatron_mimo_parallelism_config is None:
+            return
+
+        language_parallelism = self.megatron_mimo_parallelism_config.module_parallelisms.get(MIMO_LANGUAGE_MODULE_KEY)
+        if language_parallelism is None:
+            return
+
+        for attr, value in (
+            ("tensor_model_parallel_size", language_parallelism.tensor_model_parallel_size),
+            ("pipeline_model_parallel_size", language_parallelism.pipeline_model_parallel_size),
+            ("context_parallel_size", language_parallelism.context_parallel_size),
+            ("expert_model_parallel_size", language_parallelism.expert_model_parallel_size),
+            ("expert_tensor_parallel_size", language_parallelism.expert_tensor_parallel_size),
+        ):
+            if hasattr(standard_provider, attr):
+                setattr(standard_provider, attr, value)
+
+    def _build_standard_language_model_spec(self, pp_rank: int) -> ModuleSpec:
+        standard_provider = self.standard_provider
+        if standard_provider is None:
+            raise TypeError("standard_provider must be set to build a standard language model spec.")
+
+        self._sync_standard_provider_language_parallelism()
+        build_language_model_spec = getattr(standard_provider, "build_language_model_spec", None)
+        if not callable(build_language_model_spec):
+            raise TypeError("standard_provider must define build_language_model_spec().")
+        signature = inspect.signature(build_language_model_spec)
+        if "pp_rank" not in signature.parameters and not any(
+            param.kind == inspect.Parameter.VAR_KEYWORD for param in signature.parameters.values()
+        ):
+            if pp_rank != 0:
+                raise TypeError("standard_provider.build_language_model_spec() must accept pp_rank for MIMO PP > 1.")
+            return build_language_model_spec()
+        return build_language_model_spec(pp_rank=pp_rank)
 
     def build_infra(self) -> MegatronMIMOInfra:
         """Build MegatronMIMO parallelism infrastructure.
@@ -197,22 +286,32 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
             # dist.new_group() is a collective on the default PG — all ranks must
             # call it in the same global order regardless of module membership.
-            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
+            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(grid.get_rank_enum(["pp"]))
 
             # Only build a full PG collection for ranks that participate in this module.
             if grid.is_current_rank_in_grid():
                 first_stage = is_pp_first_stage(pp_group)
                 last_stage = is_pp_last_stage(pp_group)
+                dp_cp_group = grid.get_pg(["dp", "cp"])
+                expt_dp_group = grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME)
 
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
                     dp=grid.get_pg(["dp"]),
                     pp=pp_group,
                     cp=grid.get_pg(["cp"]),
-                    ep=grid.get_pg(["ep"]),
-                    dp_cp=grid.get_pg(["dp", "cp"]),
+                    ep=grid.get_pg(["ep"], view=EXPERT_VIEW_NAME),
+                    expt_tp=grid.get_pg(["expt_tp"], view=EXPERT_VIEW_NAME),
+                    expt_dp=expt_dp_group,
+                    dp_cp=dp_cp_group,
+                    intra_dp_cp=dp_cp_group,
+                    tp_cp=grid.get_pg(["tp", "cp"]),
+                    tp_dp_cp=grid.get_pg(["tp", "dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
-                    tp_ep_pp=grid.get_pg(["tp", "ep", "pp"]),
+                    tp_ep=grid.get_pg(["expt_tp", "ep"], view=EXPERT_VIEW_NAME),
+                    tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME),
+                    intra_expt_dp=expt_dp_group,
+                    intra_dist_opt=grid.get_pg(["tp", "cp", "dp", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
                 )
@@ -253,6 +352,9 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 if encoder_spec.params is None:
                     encoder_spec.params = {}
                 encoder_spec.params["pg_collection"] = pg_collection
+                transformer_config = encoder_spec.params.get("transformer_config")
+                if transformer_config is not None and getattr(pg_collection, "tp", None) is not None:
+                    transformer_config.tensor_model_parallel_size = pg_collection.tp.size()
 
         # Inject tp_group into projections
         if spec.submodules and "input_projections" in spec.submodules:
@@ -304,9 +406,12 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
+        llm_pg = None
         if self.megatron_mimo_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
+                if self.standard_provider is not None:
+                    language_spec = self._build_standard_language_model_spec(pp_rank=dist.get_rank(group=llm_pg.pp))
                 language_spec = self._inject_pg_collection_into_language_spec(
                     language_spec,
                     llm_pg,
@@ -322,6 +427,10 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                 spec = self._inject_pg_collection_into_modality_spec(spec, module_pg)
             modality_specs[module_name] = spec
 
+        # Specs may carry nested TransformerConfig instances that have not
+        # passed through the standard provider finalization path.
+        _finalize_transformer_configs_in_specs(language_spec, modality_specs)
+
         # Create MimoModel
         mimo_model_config = MimoModelConfig(
             language_model_spec=language_spec,
@@ -332,7 +441,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ),
         )
 
-        megatron_mimo_model = MimoModel(mimo_model_config)
+        mimo_model_kwargs = {}
+        if llm_pg is not None:
+            mimo_model_kwargs["cp_group"] = llm_pg.cp
+            mimo_model_kwargs["tp_group"] = llm_pg.tp
+        megatron_mimo_model = MimoModel(mimo_model_config, **mimo_model_kwargs)
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)
@@ -585,3 +698,60 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
                     "Call torch.distributed.init_process_group() first."
                 )
             self.megatron_mimo_parallelism_config.finalize(dist.get_world_size())
+
+
+def _build_default_mimo_modality_submodules_spec(standard_provider: object) -> Dict[str, ModuleSpec]:
+    """Build default MIMO modality specs from provider metadata."""
+    from megatron.core.models.mimo.submodules.vision import VisionModalitySubmodules
+
+    modality_keys = getattr(standard_provider, "modality_keys", None)
+    build_vision_encoder_spec = getattr(standard_provider, "build_vision_encoder_spec", None)
+    if modality_keys is None or not callable(build_vision_encoder_spec):
+        raise TypeError(
+            "standard_provider must define build_mimo_modality_submodules_spec() or "
+            "both modality_keys and build_vision_encoder_spec()."
+        )
+
+    return {
+        modality_name: ModuleSpec(
+            module=VisionModalitySubmodules,
+            params={},
+            submodules={
+                "encoders": {encoder_key: build_vision_encoder_spec()},
+                "input_projections": [],
+            },
+        )
+        for modality_name, encoder_key in modality_keys.items()
+    }
+
+
+def _finalize_transformer_configs_in_specs(
+    language_spec: ModuleSpec,
+    modality_specs: Dict[str, ModuleSpec],
+) -> None:
+    """Idempotently finalise any TransformerConfig found inside spec params."""
+    from megatron.bridge.models.transformer_config import TransformerConfig
+
+    def _maybe_finalize(obj: object) -> None:
+        if isinstance(obj, TransformerConfig) and hasattr(obj, "finalize"):
+            obj.finalize()
+
+    def _walk(spec: Optional[ModuleSpec]) -> None:
+        if spec is None or spec.params is None:
+            return
+        for value in spec.params.values():
+            _maybe_finalize(value)
+
+    _walk(language_spec)
+    for spec in modality_specs.values():
+        if spec is None:
+            continue
+        submodules = getattr(spec, "submodules", None) or {}
+        for encoder_spec in (submodules.get("encoders") or {}).values():
+            _walk(encoder_spec)
+        for proj_spec in submodules.get("input_projections") or []:
+            _walk(proj_spec)
+        for proj_spec in submodules.get("output_projections") or []:
+            _walk(proj_spec)
+        for decoder_spec in (submodules.get("decoders") or {}).values():
+            _walk(decoder_spec)

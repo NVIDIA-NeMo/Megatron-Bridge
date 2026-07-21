@@ -121,9 +121,8 @@ class FalconH1Bridge(MegatronModelBridge):
             "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.feed_forward.down_proj.weight",
             # Attention output projection
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # Layer norms for TELayerNormColumnParallelLinear layers
-            "decoder.layers.*.mamba_mixer.in_proj.layer_norm_weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": "model.layers.*.input_layernorm.weight",
+            # Shared input norm for parallel Mamba and attention branches
+            "decoder.layers.*.norm.weight": "model.layers.*.input_layernorm.weight",
             "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": "model.layers.*.pre_ff_layernorm.weight",
             "decoder.final_norm.weight": "model.final_layernorm.weight",
             # Embeddings and output
@@ -162,12 +161,17 @@ class FalconH1Bridge(MegatronModelBridge):
             )
         )
 
-        # Mamba conv1d components
-        for conv_component in ["weight", "bias"]:
+        # Mamba conv1d components. Keep legacy dotted names for older Megatron-Core pins.
+        for megatron_conv1d_param, hf_conv1d_param in [
+            ("conv1d_weight", "conv1d.weight"),
+            ("conv1d_bias", "conv1d.bias"),
+            ("conv1d.weight", "conv1d.weight"),
+            ("conv1d.bias", "conv1d.bias"),
+        ]:
             mapping_list.append(
                 MambaConv1dMapping(
-                    megatron_param=f"decoder.layers.*.mamba_mixer.conv1d.{conv_component}",
-                    hf_param=f"model.layers.*.mamba.conv1d.{conv_component}",
+                    megatron_param=f"decoder.layers.*.mamba_mixer.{megatron_conv1d_param}",
+                    hf_param=f"model.layers.*.mamba.{hf_conv1d_param}",
                 )
             )
 

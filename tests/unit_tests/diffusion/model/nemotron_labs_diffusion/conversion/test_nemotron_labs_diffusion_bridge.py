@@ -234,3 +234,94 @@ class TestNemotronLabsDiffusionBridgeMappingRegistryVLM:
         ]
         assert len(out_mappings) == 1
         assert out_mappings[0].hf_param == "language_model.lm_head.weight"
+
+
+class _MockConfig:
+    """A mutable config class with to_dict, simulating a trust_remote_code PretrainedConfig."""
+
+    def __init__(self, **kwargs):
+        for k, v in kwargs.items():
+            setattr(self, k, v)
+
+    def to_dict(self):
+        return {k: v for k, v in self.__dict__.items() if not k.startswith("_")}
+
+
+class TestToCfgDictMonkeyPatch:
+    """Tests for the to_cfg_dict monkey-patch in provider_bridge()."""
+
+    def _make_mock_hf_config(self):
+        text_cfg = _MockConfig(
+            hidden_size=1024,
+            intermediate_size=4096,
+            num_hidden_layers=8,
+            tie_word_embeddings=False,
+            rope_parameters={"rope_theta": 10000.0},
+            vocab_size=32000,
+        )
+        hf_cfg = _MockConfig(text_config=text_cfg)
+        return hf_cfg
+
+    def test_to_cfg_dict_added_when_config_has_to_dict(self):
+        """provider_bridge adds to_cfg_dict to config classes that have to_dict."""
+        bridge = NemotronLabsDiffusionBridge()
+        hf_cfg = self._make_mock_hf_config()
+        hf = DummyHFPretrained(hf_cfg)
+
+        assert not hasattr(_MockConfig, "to_cfg_dict")
+        bridge.provider_bridge(hf)
+        assert hasattr(_MockConfig, "to_cfg_dict")
+
+        # Clean up monkey-patch so it doesn't leak to other tests
+        delattr(_MockConfig, "to_cfg_dict")
+
+    def test_to_cfg_dict_returns_correct_target(self):
+        """to_cfg_dict must produce a _target_ using cls.__module__ and cls.__qualname__."""
+        bridge = NemotronLabsDiffusionBridge()
+        hf_cfg = self._make_mock_hf_config()
+        hf = DummyHFPretrained(hf_cfg)
+        bridge.provider_bridge(hf)
+
+        result = hf_cfg.to_cfg_dict()
+        expected_target = f"{_MockConfig.__module__}.{_MockConfig.__qualname__}.from_dict"
+        assert result["_target_"] == expected_target
+        assert result["_call_"] is True
+        assert "config_dict" in result
+
+        delattr(_MockConfig, "to_cfg_dict")
+
+    def test_to_cfg_dict_preserves_dynamic_attributes(self):
+        """to_cfg_dict must capture dynamic attributes like rope_parameters via to_dict."""
+        bridge = NemotronLabsDiffusionBridge()
+        hf_cfg = self._make_mock_hf_config()
+        hf_cfg.llama_4_scaling_beta = 0.7  # dynamic attribute
+        hf = DummyHFPretrained(hf_cfg)
+        bridge.provider_bridge(hf)
+
+        result = hf_cfg.to_cfg_dict()
+        assert result["config_dict"]["llama_4_scaling_beta"] == 0.7
+
+        delattr(_MockConfig, "to_cfg_dict")
+
+    def test_to_cfg_dict_not_added_to_simplenamespace(self):
+        """SimpleNamespace has no to_dict, so to_cfg_dict must not be added."""
+        bridge = NemotronLabsDiffusionBridge()
+        hf_cfg = _make_hf_config()  # uses SimpleNamespace
+        hf = DummyHFPretrained(hf_cfg)
+        bridge.provider_bridge(hf)
+
+        assert not hasattr(types.SimpleNamespace, "to_cfg_dict")
+
+    def test_to_cfg_dict_not_added_twice(self):
+        """If to_cfg_dict already exists, provider_bridge must not overwrite it."""
+        bridge = NemotronLabsDiffusionBridge()
+        hf_cfg = self._make_mock_hf_config()
+        hf = DummyHFPretrained(hf_cfg)
+
+        sentinel = lambda self: {"sentinel": True}
+        _MockConfig.to_cfg_dict = sentinel
+
+        bridge.provider_bridge(hf)
+        assert _MockConfig.to_cfg_dict is sentinel
+
+        delattr(_MockConfig, "to_cfg_dict")

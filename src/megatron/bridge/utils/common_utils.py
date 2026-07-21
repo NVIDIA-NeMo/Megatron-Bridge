@@ -16,19 +16,22 @@ import os
 import re
 import types
 import warnings
+from datetime import timedelta
 from pathlib import Path
 
 import torch
 import torch.distributed
 from megatron.core import DistributedDataParallel as DDP
+from megatron.core._rank_utils import safe_get_rank as get_rank_safe  # noqa: F401
+from megatron.core._rank_utils import safe_get_world_size as get_world_size_safe  # noqa: F401
 from megatron.core.transformer.module import Float16Module
+from megatron.core.utils import get_batch_on_this_cp_rank
+from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
 
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 from megatron.bridge.utils.slurm_utils import (
-    resolve_slurm_local_rank,
     resolve_slurm_master_addr,
     resolve_slurm_master_port,
-    resolve_slurm_rank,
-    resolve_slurm_world_size,
 )
 
 
@@ -40,88 +43,11 @@ except ImportError:
     ALL_MODULE_WRAPPER_CLASSNAMES = (DDP, Float16Module)
 
 
-def get_rank_safe() -> int:
-    """Get the distributed rank safely, even if torch.distributed is not initialized.
-
-    Fallback order:
-    1. torch.distributed.get_rank() (if initialized)
-    2. RANK environment variable (torchrun/torchelastic)
-    3. SLURM_PROCID environment variable (SLURM)
-    4. Default: 0 (with warning)
-
-    Returns:
-        The current process rank.
-    """
-    if torch.distributed.is_initialized():
-        return torch.distributed.get_rank()
-
-    if "RANK" in os.environ:
-        return int(os.environ["RANK"])
-
-    slurm_rank = resolve_slurm_rank()
-    if slurm_rank is not None:
-        return slurm_rank
-
-    warnings.warn("Could not determine rank from torch.distributed, RANK, or SLURM_PROCID. Defaulting to rank 0.")
-    return 0
-
-
-def get_world_size_safe() -> int:
-    """Get the distributed world size safely, even if torch.distributed is not initialized.
-
-    Fallback order:
-    1. torch.distributed.get_world_size() (if initialized)
-    2. WORLD_SIZE environment variable (torchrun/torchelastic)
-    3. SLURM_NTASKS environment variable (SLURM)
-    4. Default: 1 (with warning)
-
-    Returns:
-        The total number of processes in the distributed job.
-    """
-    if torch.distributed.is_initialized():
-        return torch.distributed.get_world_size()
-
-    if "WORLD_SIZE" in os.environ:
-        return int(os.environ["WORLD_SIZE"])
-
-    slurm_world_size = resolve_slurm_world_size()
-    if slurm_world_size is not None:
-        return slurm_world_size
-
-    warnings.warn(
-        "Could not determine world size from torch.distributed, WORLD_SIZE, or SLURM_NTASKS. "
-        "Defaulting to world size 1."
-    )
-    return 1
-
-
 def get_last_rank() -> int:
     """Get the last rank in the distributed group"""
     if not torch.distributed.is_initialized():
         return 0
     return torch.distributed.get_world_size() - 1
-
-
-def get_local_rank_preinit() -> int:
-    """Get the local rank from the environment variable, intended for use before full init.
-
-    Fallback order:
-    1. LOCAL_RANK environment variable (torchrun/torchelastic)
-    2. SLURM_LOCALID environment variable (SLURM)
-    3. Default: 0 (with warning)
-
-    Returns:
-        The local rank of the current process.
-    """
-    if "LOCAL_RANK" in os.environ:
-        return int(os.environ["LOCAL_RANK"])
-
-    slurm_local_rank = resolve_slurm_local_rank()
-    if slurm_local_rank is not None:
-        return slurm_local_rank
-
-    warnings.warn("Could not determine local rank from LOCAL_RANK or SLURM_LOCALID. Defaulting to local rank 0.")
-    return 0
 
 
 def get_master_addr_safe() -> str:
@@ -208,6 +134,29 @@ def print_rank_last(message: str) -> None:
         print(message, flush=True)
 
 
+def maybe_initialize_distributed(timeout_minutes: int = 60) -> None:
+    """Initialize the default process group from the standard launcher env vars.
+
+    No-op when torch.distributed is unavailable or already initialized. This is the minimal
+    bring-up used by standalone (e.g. inference) entry points that set up model parallelism
+    separately; it does not perform MPU initialization (see ``training.initialize`` for the
+    full training path).
+
+    Args:
+        timeout_minutes: Process-group timeout in minutes (useful for slow multi-node setup).
+    """
+    if not torch.distributed.is_available() or torch.distributed.is_initialized():
+        return
+
+    os.environ["RANK"] = os.environ.get("RANK", str(get_rank_safe()))
+    os.environ["WORLD_SIZE"] = os.environ.get("WORLD_SIZE", str(get_world_size_safe()))
+    os.environ["LOCAL_RANK"] = os.environ.get("LOCAL_RANK", str(get_local_rank_preinit()))
+    os.environ["MASTER_ADDR"] = os.environ.get("MASTER_ADDR", get_master_addr_safe())
+    os.environ["MASTER_PORT"] = os.environ.get("MASTER_PORT", str(get_master_port_safe()))
+    torch.cuda.set_device(int(os.environ["LOCAL_RANK"]))
+    torch.distributed.init_process_group("nccl", timeout=timedelta(minutes=timeout_minutes))
+
+
 def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn.Module:
     """Mark params for TP grad sync and hook __setattr__ on a module and its children.
 
@@ -253,18 +202,26 @@ def hook_hf_module_setattr_for_tp_grad_sync(module: torch.nn.Module) -> torch.nn
 
 def extract_expert_number_from_param(param_name: str) -> int:
     """Extract the expert number from a parameter name.
+
     Args:
         param_name: The parameter name to extract the expert number from.
+
     Returns:
         The expert number.
     """
-    pattern = r"(?:experts\.|weight|bias)(\d+)"
-    match = re.search(pattern, param_name)
-    if not match:
-        raise ValueError(
-            f"No expert number found in parameter name: {param_name}. Please update the regex {pattern} if necessary."
-        )
-    return int(match.group(1))
+    patterns = (
+        r"local_experts\.(\d+)",
+        r"(?:weight|bias)(\d+)",
+        r"experts\.(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, param_name)
+        if match:
+            return int(match.group(1))
+    raise ValueError(
+        f"No expert number found in parameter name: {param_name}. "
+        f"Please update the regex patterns {patterns} if necessary."
+    )
 
 
 def disable_mtp_for_inference(m: torch.nn.Module) -> None:
@@ -304,7 +261,7 @@ def slice_batch_for_context_parallel(
 
     This function handles CP slicing AFTER vision-text embedding merge, ensuring
     image token positions are correctly preserved. It supports both:
-    - THD format (packed sequences): Uses TransformerEngine's thd_get_partitioned_indices
+    - THD format (packed sequences): Uses MCore's packed-sequence CP partitioning
     - BSHD format: Uses Megatron's get_batch_on_this_cp_rank with zigzag pattern
 
     Args:
@@ -320,8 +277,6 @@ def slice_batch_for_context_parallel(
         Tuple of (inputs_embeds, labels, loss_mask, position_ids, attention_mask)
         with all tensors sliced for this CP rank. inputs_embeds remains in (T, B, D) format.
     """
-    from megatron.core.utils import get_batch_on_this_cp_rank
-
     cp_size = pg_collection.cp.size()
     if cp_size <= 1:
         return inputs_embeds, labels, loss_mask, position_ids, attention_mask
@@ -332,21 +287,20 @@ def slice_batch_for_context_parallel(
     if inputs_embeds is not None:
         inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
-    # For THD (packed) format, use TE's thd_get_partitioned_indices
-    # This properly slices WITHIN each packed sequence, not across them
+    # MCore's THD path slices within each packed sequence rather than across them.
     if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
-        import transformer_engine_torch as tex
-
         if inputs_embeds is None:
             raise ValueError("inputs_embeds is required for THD CP slicing")
 
-        cu_seqlens = packed_seq_params.cu_seqlens_q
-        cu_seqlens_padded = (
-            packed_seq_params.cu_seqlens_q_padded if packed_seq_params.cu_seqlens_q_padded is not None else cu_seqlens
-        )
         seq_len = inputs_embeds.size(1)
-
-        index = tex.thd_get_partitioned_indices(cu_seqlens_padded, seq_len, cp_size, cp_rank)
+        index = get_packed_seq_cp_partition_indices(
+            packed_seq_params,
+            total_tokens=seq_len,
+            cp_size=cp_size,
+            cp_rank=cp_rank,
+            device=inputs_embeds.device,
+            cp_group=pg_collection.cp,
+        )
 
         # Slice all tensors using THD indices
         if inputs_embeds is not None:
@@ -369,6 +323,7 @@ def slice_batch_for_context_parallel(
                 "position_ids": position_ids,
                 "attention_mask": attention_mask,
             },
+            is_hybrid_cp=False,
             cp_group=cp_group,
         )
 

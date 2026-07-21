@@ -2,7 +2,7 @@
 
 This directory contains example scripts for Qwen 3 vision-language models.
 
-For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/vlm/qwen3-vl.md).
+For model introduction and architecture details, see the [Qwen 3 - VL documentation](../../../../docs/models/qwen/qwen3-vl.md).
 
 ## Workspace Configuration
 
@@ -21,14 +21,14 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
   --megatron-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
   --hf-model Qwen/Qwen3-VL-8B-Instruct \
   --megatron-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen3-VL-8B-Instruct-hf-export
@@ -84,11 +84,12 @@ Here is a breakdown of the key specifications:
 
 ## Finetune Recipes
 
-- Available recipes:
-  - `qwen3_vl_8b_finetune_config`: Finetuning for 8B VL model with PEFT support
-  - `qwen3_vl_30b_a3b_finetune_config`: Finetuning for 30B-A3B VL model with PEFT support
-  - `qwen3_vl_235b_a22b_finetune_config`: Finetuning for 235B-A22B VL model with PEFT support
-    
+| Model | Full SFT | PEFT |
+| --- | --- | --- |
+| 8B | `qwen3_vl_8b_sft_config` (2 GPUs) | `qwen3_vl_8b_peft_config` (1 GPU) |
+| 30B-A3B | `qwen3_vl_30b_a3b_sft_config` (8 GPUs) | `qwen3_vl_30b_a3b_peft_config` (4 GPUs) |
+| 235B-A22B | `qwen3_vl_235b_a22b_sft_config` (32 GPUs) | `qwen3_vl_235b_a22b_peft_config` (16 GPUs) |
+
 Before training, ensure the following environment variables are set:
 1. `HF_TOKEN`: to download models from HF Hub (if required)
 2. `HF_HOME`: (optional) to avoid re-downloading models and datasets
@@ -96,10 +97,7 @@ Before training, ensure the following environment variables are set:
 
 ### Pretrain
 
-- Available recipes:
-  - `qwen3_vl_8b_pretrain_config`: Pretraining for 8B VL model with PEFT support
-  - `qwen3_vl_30b_a3b_pretrain_config`: Pretraining for 30B-A3B VL model with PEFT support
-  - `qwen3_vl_235b_a22b_pretrain_config`: Pretraining for 235B-A22B VL model with PEFT support
+The shipped pretraining recipes use synthetic VLM data for bring-up: `qwen3_vl_8b_pretrain_mock_config`, `qwen3_vl_30b_a3b_pretrain_mock_config`, and `qwen3_vl_235b_a22b_pretrain_mock_config`.
 
 ### Supervised Fine-Tuning (SFT)
 
@@ -113,23 +111,52 @@ See the [peft.sh](peft.sh) script for LoRA fine-tuning with sequence-packing.
 
 **Note:** LoRA/DoRA significantly reduces memory requirements, allowing for larger batch sizes and fewer GPUs.
 
+For hosted or local Hugging Face data and a complete one-GPU Qwen3-VL run, start with the
+[Hugging Face multimodal tutorial](../../../../tutorials/data/hf-multimodal/README.md). For sharded WebDataset data,
+use the [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md).
+
+## Controlling Energon visual-token computation budget
+
+These fields belong to `QwenVLEnergonTaskEncoderConfig`; they do not configure the Direct-HF source.
+
+Three independent CLI-overridable controls bound a sample's GPU cost. They compose:
+- **`dataset.task_encoder.min_pixels` / `dataset.task_encoder.max_pixels`** — image/frame resolution lower and upper bounds (defaults `200704` / `1003520`).
+- **`dataset.task_encoder.max_num_images` / `dataset.task_encoder.max_num_frames`** — image/frame count limits (defaults `10` / `60`). Too many images cause a sample to be dropped; excess frames are truncated.
+- **`dataset.task_encoder.max_visual_tokens`** — total visual-token limit across all images and frames, computed post-rescaling as `prod(T,H,W) // merge_size²` (default `16384`; set to `None` to disable). This catches cases the other two limits miss. Exceeding samples are dropped.
+
 ## Finetuning with Energon Dataset
 
-Follow the instructions [here](https://github.com/NVIDIA/Megatron-LM/tree/main/examples/multimodal#pretraining) to prepare `LLaVA-Pretrain` dataset in Energon format. Change the file `.nv-meta/dataset.yaml` to the following:
-
-```yaml
-__module__: megatron.bridge.recipes.qwen_vl.data.energon.task_encoder
-__class__: ChatMLWebdataset
-field_map:
-  imgs: jpg
-  conversation: json
-```
-
-Then, update the dataset path (`dataset.path=/path/to/energon/dataset`) in [peft_energon.sh](peft_energon.sh) and run the script.
-
+The [multimodal Energon tutorial](../../../../tutorials/data/energon/README.md) documents the tar-member contract, version-compatible indexing, canonical `ChatMLWebdataset` YAML, and a one-GPU launch. [peft_energon.sh](peft_energon.sh) provides a larger packing/CP experiment matrix after the baseline works.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/lczz4ixx) for the expected loss curves and grad norms.
+
+## Dataset with Multiple Images
+
+Below is an example for finetuning on a dataset containing multiple images in a sample, using a subset of [TIGER-Lab/Mantis-Instruct](https://huggingface.co/datasets/TIGER-Lab/Mantis-Instruct) dataset.
+
+1. Download the `llava_665k_multi` subset of TIGER-Lab/Mantis-Instruct dataset from Hugging Face and unzip the images folder (NOTE: 44GB of disk space required):
+
+    ```
+    pip install -U "huggingface_hub[cli]"
+    huggingface-cli download TIGER-Lab/Mantis-Instruct \
+        --include "llava_665k_multi/*" \
+        --repo-type dataset \
+        --local-dir /path/to/Mantis-Instruct-LLaVA    
+    ```
+
+2. Convert and index the downloaded subsets. The helper writes deterministic train/validation shards, calls Energon's preparation API, and writes `.nv-meta/dataset.yaml`:
+
+    ```bash
+    uv run python examples/models/qwen/qwen3_vl/prepare_mantis_energon.py \
+        --source-dir /path/to/Mantis-Instruct-LLaVA \
+        --output-dir /path/to/Mantis-Instruct-LLaVA/wds \
+        --max-samples-per-tar 10000 \
+        --validation-fraction 0.01
+    ```
+
+3. Set `dataset.path=/path/to/Mantis-Instruct-LLaVA/wds` in the canonical Energon launch. No interactive class selection or manual YAML replacement is required.
+
 
 ## Evaluation
 

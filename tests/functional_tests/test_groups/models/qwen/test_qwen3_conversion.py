@@ -27,21 +27,21 @@ HF_QWEN3_TOY_MODEL_CONFIG = {
     "bos_token_id": 151643,
     "eos_token_id": 151643,
     "hidden_act": "silu",
-    "hidden_size": 1536,  # Matches Qwen3ModelProvider1P7B
+    "hidden_size": 1536,  # Matches the Qwen3 1.7B reference config
     "initializer_range": 0.02,
-    "intermediate_size": 8960,  # Matches Qwen3ModelProvider1P7B
-    "max_position_embeddings": 8192,  # Matches Qwen3ModelProvider1P7B
+    "intermediate_size": 8960,  # Matches the Qwen3 1.7B reference config
+    "max_position_embeddings": 8192,  # Matches the Qwen3 1.7B reference config
     "model_type": "qwen2",  # Qwen3 models use qwen2 model type in transformers
-    "num_attention_heads": 12,  # Matches Qwen3ModelProvider1P7B
+    "num_attention_heads": 12,  # Matches the Qwen3 1.7B reference config
     "num_hidden_layers": 2,  # Reduced for toy model testing
-    "num_key_value_heads": 2,  # Matches Qwen3ModelProvider1P7B
+    "num_key_value_heads": 2,  # Matches the Qwen3 1.7B reference config
     "rms_norm_eps": 1e-06,
     "rope_theta": 1000000.0,
     "tie_word_embeddings": True,
     "torch_dtype": "bfloat16",
     "transformers_version": "4.40.1",
     "use_cache": True,
-    "vocab_size": 151936,  # Matches Qwen3ModelProvider1P7B
+    "vocab_size": 151936,  # Matches the Qwen3 1.7B reference config
 }
 
 

@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -88,6 +88,30 @@ def text_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     return model(**forward_args), loss_func
 
 
+def _tokenize_prompt(tokenizer, prompt: str, *, apply_chat_template: bool, thinking_mode: str) -> torch.Tensor:
+    """Tokenize a raw prompt, optionally formatting it as a user chat turn."""
+    if not apply_chat_template:
+        return tokenizer.encode(prompt, return_tensors="pt")
+
+    encoded = tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+        thinking_mode=thinking_mode,
+    )
+    return encoded["input_ids"]
+
+
+def _decode_completion(tokenizer, generated_ids: torch.Tensor, prompt_length: int) -> str:
+    """Decode generated tokens without echoing the prompt or special tokens."""
+    return tokenizer.decode(
+        generated_ids[0, prompt_length:].tolist(),
+        skip_special_tokens=True,
+    )
+
+
 def main(args) -> None:
     """Main function for text generation from HuggingFace or Megatron models.
 
@@ -127,6 +151,23 @@ def main(args) -> None:
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
         model_provider.pipeline_dtype = torch.bfloat16
+
+        # Read pipeline layout from checkpoint for PP > 1
+        if pp > 1:
+            from pathlib import Path
+
+            import yaml
+
+            ckpt_path = Path(args.megatron_model_path)
+            for candidate in [ckpt_path, *ckpt_path.glob("iter_*")]:
+                rc = candidate / "run_config.yaml"
+                if rc.exists():
+                    with open(rc) as f:
+                        cfg = yaml.safe_load(f)
+                    saved_layout = cfg.get("model", {}).get("pipeline_model_parallel_layout")
+                    if isinstance(saved_layout, list):
+                        model_provider.pipeline_model_parallel_layout = saved_layout
+                        break
 
         # Once all overrides are set, finalize the model provider to ensure the post initialization logic is run
         model_provider.finalize()
@@ -185,7 +226,13 @@ def main(args) -> None:
 
     # Tokenize the input prompt
     prompt = args.prompt
-    input_ids = tokenizer.encode(prompt, return_tensors="pt").cuda()
+    input_ids = _tokenize_prompt(
+        tokenizer,
+        prompt,
+        apply_chat_template=args.apply_chat_template,
+        thinking_mode=args.thinking_mode,
+    ).cuda()
+    prompt_length = input_ids.size(1)
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
@@ -250,8 +297,9 @@ def main(args) -> None:
             if next_token_ids.item() in stop_tokens:
                 break
 
-    # Decode the generated sequence
-    generated_text = tokenizer.decode(list(generated_ids[0]))
+    # Decode only the completion. Passing CUDA tensor objects directly to the
+    # tokenizer can produce corrupt text with some remote-code tokenizers.
+    generated_text = _decode_completion(tokenizer, generated_ids, prompt_length)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     print_rank_0(f"Prompt: {prompt}")
     print_rank_0(f"Generated: {generated_text}")
@@ -277,6 +325,17 @@ if __name__ == "__main__":
         type=int,
         default=20,
         help="Maximum number of new tokens to generate.",
+    )
+    parser.add_argument(
+        "--apply-chat-template",
+        action="store_true",
+        help="Format the prompt as a user turn using the tokenizer's chat template.",
+    )
+    parser.add_argument(
+        "--thinking-mode",
+        choices=("enabled", "adaptive", "disabled"),
+        default="adaptive",
+        help="Thinking mode passed to the chat template when --apply-chat-template is set.",
     )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")

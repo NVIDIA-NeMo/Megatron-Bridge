@@ -22,8 +22,8 @@ from typing import Any, Dict, Literal
 from megatron.energon import DefaultTaskEncoder, get_train_dataset
 from torch import int_repr
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.energon.base_energon_datamodule import EnergonMultiModalDataModule
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)
@@ -60,7 +60,6 @@ class DiffusionDataModule(EnergonMultiModalDataModule):
     Attributes:
     path (str): Path to the energon dataset.
     tokenizer (Tokenizer): The tokenizer used for processing text.
-    image_processor (ImageProcessor): The image processor used for preprocessing images.
     seq_length (int): The maximum sequence length for tokenized text.
     micro_batch_size (int): The batch size for training and validation.
     num_workers (int): Number of workers for data loading.
@@ -92,7 +91,6 @@ class DiffusionDataModule(EnergonMultiModalDataModule):
         Parameters:
         path (str): Path to the dataset.
         tokenizer (Tokenizer): The tokenizer used for processing text.
-        image_processor (ImageProcessor): The image processor used for preprocessing images.
         seq_length (int, optional): The maximum sequence length for tokenized text. Defaults to 2048.
         micro_batch_size (int, optional): The batch size for training and validation. Defaults to 1.
         num_workers (int, optional): Number of workers for data loading. Defaults to 1.
@@ -102,16 +100,15 @@ class DiffusionDataModule(EnergonMultiModalDataModule):
         super().__init__(
             path=path,
             tokenizer=None,
-            image_processor=None,
             seq_length=seq_length,
             micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
             num_workers=num_workers,
             packing_buffer_size=packing_buffer_size,
             pin_memory=pin_memory,
             task_encoder=task_encoder,
             pg_collection=pg_collection,
         )
+        self.global_batch_size = global_batch_size
         self.use_train_split_for_val = use_train_split_for_val
 
     def datasets_provider(self, worker_config, split: Literal["train", "val"] = "val"):

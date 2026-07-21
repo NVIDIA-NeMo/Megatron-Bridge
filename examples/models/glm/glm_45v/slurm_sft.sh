@@ -45,7 +45,7 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Model and training configurations
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/GLM-4.5V
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/GLM-4.5V/iter_0000000}
 MODEL_NAME=glm_45v
 DATASET_NAME=cord_v2
 SEQ_LENGTH=8192
@@ -125,7 +125,7 @@ CLI_OVERRIDES="\
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_tp${TP}_pp${PP}_ep${EP} \
-    dataset.maker_name=make_${DATASET_NAME}_dataset \
+    dataset.source.dataset_name=${DATASET_NAME} \
     dataset.seq_length=$SEQ_LENGTH \
     model.tensor_model_parallel_size=$TP \
     model.pipeline_model_parallel_size=$PP \
@@ -135,7 +135,7 @@ CLI_OVERRIDES="\
 # If mounting a workspace that requires re-syncing dependencies, uncomment the uv sync line:
 # CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 2; fi && "
 CMD="uv run --no-sync python scripts/training/run_recipe.py"
-CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
+CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
 CMD="$CMD --step_func vlm_step"
 CMD="$CMD $CLI_OVERRIDES"
 
@@ -159,7 +159,9 @@ if [ -n "$CONTAINER_MOUNTS" ]; then
 fi
 
 $SRUN_CMD bash -c "$CMD"
+RUN_EXIT=$?
 
 echo "======================================"
-echo "Job completed"
+echo "Training job finished. EXIT=$RUN_EXIT"
 echo "======================================"
+exit $RUN_EXIT

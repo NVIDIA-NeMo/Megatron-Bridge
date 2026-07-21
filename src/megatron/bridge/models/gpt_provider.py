@@ -41,6 +41,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
 from megatron.bridge.models.transformer_config import TransformerConfig
 from megatron.bridge.utils import fusions
+from megatron.bridge.utils.cuda_graph import validate_cuda_graph_configuration
 from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
@@ -49,12 +50,13 @@ logger = logging.getLogger(__name__)
 
 def transformer_engine_layer_spec(config: "GPTModelProvider") -> ModuleSpec:
     """Create a Transformer Engine layer specification based on the provided config."""
-    if "use_te_op_fuser" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
+    spec_params = inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters
+    if "use_te_op_fuser" in spec_params:
         kwargs = {"use_te_op_fuser": config.use_transformer_engine_op_fuser}
     else:
         kwargs = {}
-    if "dense_grouped_gemm" in inspect.signature(get_gpt_layer_with_transformer_engine_spec).parameters:
-        kwargs["dense_grouped_gemm"] = config.dense_grouped_gemm
+    if "use_grouped_gemm_for_dense_mlp" in spec_params:
+        kwargs["use_grouped_gemm_for_dense_mlp"] = config.dense_grouped_gemm
     return get_gpt_layer_with_transformer_engine_spec(
         num_experts=config.num_moe_experts,
         moe_grouped_gemm=config.moe_grouped_gemm,
@@ -224,6 +226,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if not fusions.validate_rope_fusion_compatibility(self):
             self.apply_rope_fusion = False
 
+        validate_cuda_graph_configuration(self)
         if self.cuda_graph_impl != "none":
             assert getattr(self, "use_te_rng_tracker", False), (
                 "Transformer engine's RNG tracker is required for cudagraphs, it can be "
@@ -268,11 +271,6 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
         if self.init_model_with_meta_device:
             model_init_device_context = partial(torch.device, device="meta")
 
-        # Guard for main/dev branch submodule compat: mtp_block_spec was added in the dev branch.
-        # TODO: remove guard once the addition lands in main and Bridge pins the new main commit.
-        kwargs = {}
-        if "mtp_block_spec" in inspect.signature(MCoreGPTModel.__init__).parameters:
-            kwargs["mtp_block_spec"] = mtp_block_spec(self, vp_stage=vp_stage)
         if self.attention_backend == AttnBackend.local:
             if hasattr(transformer_layer_spec, "submodules"):
                 transformer_layer_spec.submodules.self_attention.submodules.core_attention = MCoreDotProductAttention
@@ -308,7 +306,7 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
                 scatter_embedding_sequence_parallel=self.scatter_embedding_sequence_parallel,
                 pg_collection=self._pg_collection,
                 vp_stage=vp_stage,
-                **kwargs,
+                mtp_block_spec=mtp_block_spec(self, vp_stage=vp_stage),
             )
 
         # If using full TE layer, need to set TP, CP group since the module call
@@ -377,27 +375,6 @@ def mtp_block_spec(config: "GPTModelProvider", vp_stage: Optional[int] = None) -
         return None
 
 
-@dataclass
-class GPTProvider175B(GPTModelProvider):
-    """Configuration for a 175B parameter GPT model.
-
-    Predefined configuration for a massive GPT model with 96 layers,
-    12288 hidden size, and 96 attention heads.
-    """
-
-    seq_length: int = 2048
-    num_layers: int = 96
-    hidden_size: int = 12288
-    ffn_hidden_size: int = 49152
-    num_attention_heads: int = 96
-    hidden_dropout: float = 0.0
-    attention_dropout: float = 0.0
-    bias_activation_fusion: bool = True
-    bias_dropout_add_fusion: bool = True
-    use_transformer_engine_full_layer_spec: bool = True
-    layernorm_zero_centered_gamma: bool = True
-
-
 def _patch_yarn_concentration_factor():
     """Patch MCore _yarn_get_concentration_factor_from_config for None handling.
 
@@ -430,45 +407,3 @@ def _patch_yarn_concentration_factor():
 
 
 _patch_yarn_concentration_factor()
-
-
-def _patch_te_grouped_linear_single_grouped_weight():
-    """Guard for main/dev branch submodule compat: single_grouped_weight/bias kwargs.
-
-    MCore dev (commit 5c544844) passes ``single_grouped_weight`` and
-    ``single_grouped_bias`` to TE ``GroupedLinear.__init__`` when
-    ``is_te_min_version("2.14.0")``.  However some TE 2.14.0 builds only
-    expose a single ``single_grouped_parameter`` kwarg.  Remap so both
-    APIs work.
-
-    TODO: remove guard once TE ships the split weight/bias API in a
-    stable release and the CI container is updated.
-    """
-    try:
-        import transformer_engine.pytorch as te_pytorch
-
-        _te_gl_init_params = set(inspect.signature(te_pytorch.GroupedLinear.__init__).parameters)
-
-        # Nothing to patch if TE already accepts the split kwargs.
-        if "single_grouped_weight" in _te_gl_init_params:
-            return
-
-        # Nothing to patch if TE has neither API (older TE without the feature).
-        if "single_grouped_parameter" not in _te_gl_init_params:
-            return
-
-        _original_init = te_pytorch.GroupedLinear.__init__
-
-        def _patched_init(self, *args, **kwargs):
-            sgw = kwargs.pop("single_grouped_weight", False)
-            sgb = kwargs.pop("single_grouped_bias", False)
-            if sgw or sgb:
-                kwargs["single_grouped_parameter"] = True
-            _original_init(self, *args, **kwargs)
-
-        te_pytorch.GroupedLinear.__init__ = _patched_init
-    except ImportError:
-        pass
-
-
-_patch_te_grouped_linear_single_grouped_weight()

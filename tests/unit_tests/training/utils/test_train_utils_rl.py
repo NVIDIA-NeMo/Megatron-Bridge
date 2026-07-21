@@ -39,7 +39,9 @@ def test_freeze_moe_router_freezes_router_and_shared_expert_gate():
         gate_weight=torch.nn.Parameter(torch.ones(1)),
         gate_bias=torch.nn.Parameter(torch.ones(1)),
     )
-    model = SimpleNamespace(decoder=SimpleNamespace(layers=[SimpleNamespace(mlp=SimpleNamespace(router=router, shared_experts=shared))]))
+    model = SimpleNamespace(
+        decoder=SimpleNamespace(layers=[SimpleNamespace(mlp=SimpleNamespace(router=router, shared_experts=shared))])
+    )
 
     result = freeze_moe_router(model)
 

@@ -15,7 +15,7 @@
 import json
 import re
 from abc import ABC, abstractmethod
-from typing import Any, Dict, Generic, List, Optional, Tuple, TypeVar, Union
+from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar, Union
 
 import torch
 import torch.distributed
@@ -112,6 +112,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Cache for metadata and tensor_spec_output
         self._broadcast_obj_cache = {}
         self._tensor_spec_output_cache = {}
+        self._pg_collection = None
 
         if mpu.is_initialized():
             self.pp_group = mpu.get_pipeline_model_parallel_group()
@@ -140,6 +141,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         if pg_collection is None:
             return
+        self._pg_collection = pg_collection
         for attr, field in (
             ("pp_group", "pp"),
             ("ep_group", "ep"),
@@ -149,6 +151,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             group = getattr(pg_collection, field, None)
             if group is not None:
                 setattr(self, attr, group)
+        for child in vars(self).values():
+            if isinstance(child, MegatronParamMapping):
+                child.set_process_groups_from_pg_collection(pg_collection)
 
     @property
     def tp_group(self):
@@ -201,10 +206,12 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
     def is_expert(self) -> bool:
         """Check if this mapping is for an expert parameter.
 
-        Matches both TEGroupedMLP (.mlp.experts.linear_fc) and
-        SequentialMLP (.mlp.experts.local_experts.*.linear_fc) patterns.
+        Matches both TEGroupedMLP (.experts.linear_fc) and
+        SequentialMLP (.experts.local_experts.*.linear_fc) patterns.
+        Uses ``.experts.`` rather than ``.mlp.experts.`` so models with an
+        intermediate sub-module (e.g. ``.mlp.<pool>.experts.``) are matched too.
         """
-        return ".mlp.experts.linear_fc" in self.megatron_param or ".mlp.experts.local_experts." in self.megatron_param
+        return ".experts.linear_fc" in self.megatron_param or ".experts.local_experts." in self.megatron_param
 
     @property
     def is_adapter(self) -> bool:
@@ -325,6 +332,17 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         ...
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron format with quantization."""
+        raise NotImplementedError("megatron_to_hf_quant not implemented for this mapping")
+
     def broadcast_from_pp_rank(
         self, tensor: Optional[torch.Tensor], cache_key: Optional[str] = None
     ) -> Optional[torch.Tensor]:
@@ -386,7 +404,11 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
 
         if target_tensor_spec is None:
             # No rank had the tensor – this is an error in the caller.
-            raise ValueError("Object must exist on at least one PP rank")
+            raise ValueError(
+                f"Object must exist on at least one PP rank. "
+                f"megatron_param={self.megatron_param}, hf_param={self.hf_param}, "
+                f"cache_key={cache_key}"
+            )
 
         # ------------------------------------------------------------------
         # 3.  Ensure every rank has an allocated tensor with the right shape
@@ -752,6 +774,10 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
             to the corresponding expert tensors gathered from each EP rank.
         """
+        # Fast path for EP=1: no gathering needed, just return with the given name.
+        if self.ep_size == 1:
+            return {str(hf_param_name): megatron_weights}
+
         if megatron_module is None:
             num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
         else:
@@ -790,6 +816,68 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
                 weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
         for param_name in weights_dict:
             weights_dict[param_name] = weights_dict[param_name].squeeze()
+        return weights_dict
+
+    def gather_from_ep_ranks_scale(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[MegatronModule],
+        hf_param_name: Optional[str],
+    ) -> Dict[str, torch.Tensor]:
+        """The difference from gather_from_ep_ranks is that we add an extra unsqueeze before we return a tensor.
+
+        Args:
+            megatron_weights (Optional[torch.Tensor]): The local expert weight tensor
+                (after any TP handling) on this EP rank.
+            megatron_module (Optional[MegatronModule]): The Megatron module containing
+                configuration (used to determine E and E/S). Can be None on non-owning PP
+                ranks; values will be broadcast across PP.
+            hf_param_name (Optional[str]): HF parameter name template for the current
+                (local) expert on this rank. The expert id within this string is replaced
+                with the appropriate global expert ids for each EP rank.
+
+        Returns:
+            Dict[str, torch.Tensor]: Mapping from HF parameter names (one per EP rank)
+            to the corresponding expert tensors gathered from each EP rank.
+        """
+        if megatron_module is None:
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(None, "num_experts_per_rank")
+        else:
+            model_config = self._get_config(megatron_module)
+            num_experts = model_config.num_moe_experts
+            num_experts_per_rank = num_experts // self.ep_size
+            num_experts_per_rank = self.broadcast_obj_from_pp_rank(num_experts_per_rank, "num_experts_per_rank")
+
+        global_expert_number = extract_expert_number_from_param(self.megatron_param)
+        local_expert_number = global_expert_number % num_experts_per_rank
+
+        # Compute global expert numbers for all EP ranks
+        # use regex to replace the local expert number with the global expert number
+        gathered_expert_param_names = [
+            re.sub(
+                r"experts\.(\d+)", f"experts.{int(local_expert_number) + num_experts_per_rank * i}", str(hf_param_name)
+            )
+            for i in range(self.ep_size)
+        ]
+        assert str(hf_param_name) in gathered_expert_param_names, (
+            f"hf_param_name {hf_param_name} not in gathered_expert_param_names {gathered_expert_param_names}"
+        )
+
+        # Gather weights from all EP ranks
+        gathered_weights = [torch.empty_like(megatron_weights) for _ in range(self.ep_size)]
+        torch.distributed.all_gather(gathered_weights, megatron_weights, group=self.ep_group)
+
+        # this should be in the right order because of the all-gather
+        weights_dict = {}
+        for i, param_name in enumerate(gathered_expert_param_names):
+            if param_name in weights_dict:
+                weights_dict[param_name] = torch.cat(
+                    [weights_dict[param_name], gathered_weights[i].unsqueeze(0)], dim=0
+                )
+            else:
+                weights_dict[param_name] = gathered_weights[i].unsqueeze(0)
+        for param_name in weights_dict:
+            weights_dict[param_name] = weights_dict[param_name].squeeze().unsqueeze(dim=-1)
         return weights_dict
 
     def maybe_dequantize(self, tensor: torch.Tensor) -> torch.Tensor:
@@ -904,6 +992,14 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
                     )
                 hf_weights = hf_weights.to(target_param.dtype)
 
+            actual_dim0_size = hf_weights.shape[0]
+            expect_dim0_size = target_param.shape[0] * self.tp_size
+            if actual_dim0_size != expect_dim0_size:
+                assert self.megatron_param in {"embedding.word_embeddings.weight", "output_layer.weight"}, (
+                    f"{hf_weights.shape=} {target_param.shape=} {self.tp_size=} {self.megatron_param=} {self.hf_param=}"
+                )
+                hf_weights = _pad_right_dim0(hf_weights, pad_size=expect_dim0_size - actual_dim0_size)
+
             # For bias (1D), we still split along dim 0
             # For weight (2D), we split along dim 0 (output dimension)
             full_size = hf_weights.shape[0]
@@ -952,6 +1048,60 @@ class ColumnParallelMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(full_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): full_weights}
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather from all TP ranks and concatenate with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        q_weight, scale = None, None
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+            assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
+            q_weight, scale = quant_fn(megatron_weights, quant_block_size)
+
+        q_weight = self.broadcast_from_pp_rank(q_weight, cache_key=str(self.hf_param) + "_q")
+        if q_weight is None:
+            return {}
+
+        scale = self.broadcast_from_pp_rank(scale, cache_key=str(self.hf_param) + "_scale")
+
+        if self.tp_size == 1:
+            full_q_weight = q_weight
+            full_scale = scale
+        else:
+            gathered_q = self.gather_from_tp_ranks(q_weight)
+            full_q_weight = torch.cat(gathered_q, dim=0)
+
+            gathered_s = self.gather_from_tp_ranks(scale)
+            full_scale = torch.cat(gathered_s, dim=0)
+
+        if self.is_expert and not self.is_adapter:
+            q_weight_dict = self.gather_from_ep_ranks(full_q_weight, megatron_module, self.hf_param)
+            s_dict = self.gather_from_ep_ranks_scale(full_scale, megatron_module, self.hf_param)
+            for k, v in s_dict.items():
+                scale_name = k + "_scale_inv"
+                q_weight_dict[scale_name] = v
+            return q_weight_dict
+
+        hf_name = str(self.hf_param)
+        scale_name = hf_name + "_scale_inv"
+
+        quant_result = {hf_name: full_q_weight, scale_name: full_scale}
+
+        return quant_result
+
+
+def _pad_right_dim0(x: torch.Tensor, pad_size: int) -> torch.Tensor:
+    padder = torch.zeros((pad_size, *x.shape[1:]), dtype=x.dtype, device=x.device)
+    return torch.cat([x, padder], dim=0)
 
 
 class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
@@ -1062,6 +1212,56 @@ class RowParallelMapping(MegatronParamMapping[torch.Tensor]):
 
         return {str(self.hf_param): full_weights}
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Gather from all TP ranks and concatenate with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        q_weight, scale = None, None
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+            assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
+            q_weight, scale = quant_fn(megatron_weights, quant_block_size)
+
+        q_weight = self.broadcast_from_pp_rank(q_weight, cache_key=str(self.hf_param) + "_q")
+        if q_weight is None:
+            return {}
+
+        scale = self.broadcast_from_pp_rank(scale, cache_key=str(self.hf_param) + "_scale")
+
+        if self.tp_size == 1 or len(q_weight.shape) == 1:
+            # bias is unsharded in row parallel, so we can just return it
+            full_q_weight = q_weight
+            full_scale = scale
+        else:
+            gathered_q = self.gather_from_tp_ranks(q_weight)
+            full_q_weight = torch.cat(gathered_q, dim=1)
+            # scale is typically not sharded along dim 1, so we do not concatenate it.
+            gathered_scale = self.gather_from_tp_ranks(scale)
+            full_scale = torch.cat(gathered_scale, dim=1)
+
+        if self.is_expert and not self.is_adapter:
+            q_weight_dict = self.gather_from_ep_ranks(full_q_weight, megatron_module, self.hf_param)
+            s_dict = self.gather_from_ep_ranks_scale(full_scale, megatron_module, self.hf_param)
+            for k, v in s_dict.items():
+                scale_name = k + "_scale_inv"
+                q_weight_dict[scale_name] = v
+            return q_weight_dict
+
+        hf_name = str(self.hf_param)
+        scale_name = hf_name + "_scale_inv"
+
+        quant_result = {hf_name: full_q_weight, scale_name: full_scale}
+
+        return quant_result
+
 
 class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
     """Mapping for weights that are **fully replicated** across TP ranks.
@@ -1120,6 +1320,17 @@ class ReplicatedMapping(MegatronParamMapping[torch.Tensor]):
             return self.gather_from_ep_ranks(megatron_weights, megatron_module, self.hf_param)
 
         return {str(self.hf_param): megatron_weights}
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        # ReplicatedMapping doesn't need quantization, so we just call megatron_to_hf
+        return self.megatron_to_hf(megatron_weights, megatron_module)
 
 
 class AutoMapping(MegatronParamMapping[torch.Tensor]):
@@ -1185,6 +1396,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         "column": {
             "ColumnParallelLinear",
             "LinearCrossEntropyModule",
+            "QuantColumnParallelLinear",
             "TEColumnParallelLinear",
             "TELayerNormColumnParallelLinear",
             "InferenceLayerNormColumnParallelLinear",
@@ -1195,6 +1407,7 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         },
         "row": {
             "RowParallelLinear",
+            "QuantRowParallelLinear",
             "TERowParallelLinear",
             "InferenceRowParallelLinear",
             "TERowParallelGroupedLinear",
@@ -1210,9 +1423,11 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             # Other non-parallel modules
             "InferenceTopKRouter",
             "IdentityOp",
+            "LinearForLastLayer",
             "TopKRouter",
         },
     }
+    _FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING = "LayerNormColumnParallelLinear"
 
     @classmethod
     def register_module_type(cls, module_name: str, parallelism_type: str):
@@ -1251,13 +1466,18 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
     def _get_or_create_mapping(self, parallelism_type: str) -> MegatronParamMapping[torch.Tensor]:
         """Get or create the appropriate mapping for the given type."""
         if parallelism_type == "column":
-            return ColumnParallelMapping(self.megatron_param, self.hf_param)
+            mapping = ColumnParallelMapping(self.megatron_param, self.hf_param)
         elif parallelism_type == "row":
-            return RowParallelMapping(self.megatron_param, self.hf_param)
+            mapping = RowParallelMapping(self.megatron_param, self.hf_param)
         elif parallelism_type == "replicated":
-            return ReplicatedMapping(self.megatron_param, self.hf_param)
+            mapping = ReplicatedMapping(self.megatron_param, self.hf_param)
         else:
             raise ValueError(f"Unknown parallelism type: {parallelism_type}")
+
+        # AutoMapping materializes this delegate lazily, after task construction.
+        if self._pg_collection is not None:
+            mapping.set_process_groups_from_pg_collection(self._pg_collection)
+        return mapping
 
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
@@ -1269,7 +1489,8 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         # Handle fused modules like TELayerNormColumnParallelLinear
         # These modules have both column-parallel weights (weight, bias)
         # and replicated layer norm weights (layer_norm_weight, layer_norm_bias)
-        if module_type in ("TELayerNormColumnParallelLinear", "InferenceLayerNormColumnParallelLinear"):
+        is_layernorm_column_parallel = self._FUSED_LAYER_NORM_COLUMN_PARALLEL_SUBSTRING in module_type
+        if is_layernorm_column_parallel:
             # Check the actual parameter name to determine the correct parallelism type
             if self.megatron_param and (
                 self.megatron_param.endswith("layer_norm_weight") or self.megatron_param.endswith("layer_norm_bias")
@@ -1326,8 +1547,11 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
         megatron_module: nn.Module,
     ) -> torch.Tensor:
         """Delegate to appropriate mapping based on module type."""
-        # Apply permutation if specified (before distribution)
-        if self.permute_dims is not None and self.tp_rank == 0:
+        # Apply permutation if specified (before distribution).
+        # Must be applied on ALL ranks (not just tp_rank 0) because some delegate
+        # mappings (e.g. ReplicatedMapping) expect hf_weights to have the correct
+        # shape on every rank.
+        if self.permute_dims is not None:
             hf_weights = torch.permute(hf_weights, self.permute_dims).contiguous()
 
         # Detect type and create delegate on first use
@@ -1358,6 +1582,12 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
                     # PP group likely has 1 member - skipping.
                     return {}
 
+            # If no PP rank detected a type (e.g. Megatron parameter without an
+            # HF counterpart, such as MoE modules on dense layers created by
+            # moe_layer_freq), skip export gracefully.
+            if self._detected_type is None:
+                return {}
+
             self._mapping = self._get_or_create_mapping(self._detected_type)
 
         result = self._mapping.megatron_to_hf(megatron_weights, megatron_module)
@@ -1374,6 +1604,40 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
             # Update the result with the correct HF param name
             result = {str(self.hf_param): permuted_tensor}
 
+        return result
+
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Delegate to appropriate mapping based on module type with quantization before PP broadcast."""
+        assert self.megatron_param is not None, "`megatron_param` is required for AutoMapping."
+
+        if self._mapping is None:
+            if megatron_module is not None:
+                self._detected_type = self._detect_parallelism_type(megatron_module)
+                self._detected_type = self.broadcast_obj_from_pp_rank(self._detected_type, "detected_type")
+            else:
+                self._detected_type = self.broadcast_obj_from_pp_rank(None, "detected_type")
+            self._mapping = self._get_or_create_mapping(self._detected_type)
+
+        result = self._mapping.megatron_to_hf_quant(
+            megatron_weights, megatron_module, quantization_checker, quant_fn, quant_block_size
+        )
+
+        # Apply reverse permutation if specified (after gathering)
+        if self.permute_dims is not None and result:
+            # We assume result has the main tensor at self.hf_param key.
+            # Scale tensors (if any) shouldn't be permuted, or handled depending on structure.
+            key = str(self.hf_param)
+            tensor = result[key]
+
+            permuted_tensor = torch.permute(tensor, self.permute_dims).contiguous()
+            result[key] = permuted_tensor
         return result
 
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
@@ -1513,6 +1777,79 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             self.hf_param["v"]: v,
         }
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron format with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkv_config")
+        else:
+            config = self._get_config(megatron_module)
+            import copy
+
+            config = remove_non_pickleables(copy.copy(config), max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config, "qkv_config")
+
+        head_num = config.num_attention_heads
+        head_size = config.kv_channels or (config.hidden_size // head_num)
+        hidden_size = config.hidden_size
+        assert quant_block_size is not None, "quant_block_size must be provided for quantization"
+        assert head_size % quant_block_size[0] == 0, (
+            f"head_size {head_size} is not divisible by quant_block_size {quant_block_size[0]}"
+        )
+        assert hidden_size % quant_block_size[1] == 0, (
+            f"hidden_size {hidden_size} is not divisible by quant_block_size {quant_block_size[1]}"
+        )
+        # Delegate TP/PP gathering and quantization.
+        packed_dict = self._tp_mapping.megatron_to_hf_quant(
+            megatron_weights, megatron_module, lambda _: True, quant_fn, quant_block_size
+        )
+
+        if not packed_dict:
+            return {}
+
+        packed_qkv = packed_dict.get(self.megatron_param)
+        scale_name = self.megatron_param + "_scale_inv"
+        packed_scale = packed_dict.get(scale_name)
+
+        if packed_qkv is None:
+            # Fallback to finding the tensor if exact string match fails
+            for k, v in packed_dict.items():
+                if ".scale" in k or "_scale" in k:
+                    packed_scale = v
+                else:
+                    packed_qkv = v
+
+        # Check if we're dealing with biases (1D) or weights (2D)
+        if packed_qkv.ndim == 1:
+            # Split biases
+            raise ValueError("Biases are usually not quantized. Biases are not supported for quantization.")
+        else:
+            # Split weights
+            q_q, k_q, v_q = split_qkv_weights(config, packed_qkv)
+            q_scale, k_scale, v_scale = split_qkv_weights_scale(config, packed_scale, quant_block_size)
+
+        quant_result = {}
+
+        def add_to_result(result, q_tensor, scale_tensor, hf_name):
+            result[hf_name] = q_tensor
+            scale_name = hf_name + "_scale_inv"
+            result[scale_name] = scale_tensor
+
+        add_to_result(quant_result, q_q, q_scale, self.hf_param["q"])
+        add_to_result(quant_result, k_q, k_scale, self.hf_param["k"])
+        add_to_result(quant_result, v_q, v_scale, self.hf_param["v"])
+
+        return quant_result
+
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* QKVMapping instance."""
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
@@ -1522,6 +1859,86 @@ class QKVMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
             resolved_hf_param["q"],
             resolved_hf_param["k"],
             resolved_hf_param["v"],
+        )
+
+
+class QKVGMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
+    """QKV mapping that also fuses a per-head scalar gate (``g_proj``).
+
+    Megatron format follows the attention module selected by the provider. For
+    regular QKV modules, gate rows are appended after the standard
+    GQA-interleaved QKV block. For Megatron-Core ``attention_output_gate``
+    modules, the scalar gate is expanded across each head dimension and
+    interleaved as the module's output-gate block.
+
+    External (HF) format: four separate tensors ``q_proj``, ``k_proj``,
+    ``v_proj``, ``g_proj``.
+    """
+
+    def __init__(self, megatron_param: str, q: str, k: str, v: str, g: str):
+        super().__init__(megatron_param, {"q": q, "k": k, "v": v, "g": g})
+        self._tp_mapping = AutoMapping(megatron_param, megatron_param)
+
+    def hf_to_megatron(
+        self,
+        hf_weights: Dict[str, torch.Tensor],
+        megatron_module: nn.Module,
+    ) -> torch.Tensor:
+        if self.tp_rank == 0:
+            config = self._get_config(megatron_module)
+            if hf_weights["q"].ndim == 1:
+                # Biases not supported for the fused gate variant (Step-3.5 has
+                # add_qkv_bias=False and g_proj has no bias).
+                raise NotImplementedError("QKVGMapping does not support bias tensors; add_qkv_bias must be False.")
+            merged = merge_qkvg_weights(
+                config,
+                hf_weights["q"],
+                hf_weights["k"],
+                hf_weights["v"],
+                hf_weights["g"],
+            )
+        else:
+            merged = None
+        return self._tp_mapping.hf_to_megatron(merged, megatron_module)
+
+    def megatron_to_hf(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+    ) -> Dict[str, torch.Tensor]:
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+        if megatron_module is None:
+            config = self.broadcast_obj_from_pp_rank(None, "qkvg_config")
+        else:
+            config = self._get_config(megatron_module)
+            config = remove_non_pickleables(config, max_depth=3)
+            config = self.broadcast_obj_from_pp_rank(config, "qkvg_config")
+
+        packed_dict = self._tp_mapping.megatron_to_hf(megatron_weights, megatron_module)
+        if not packed_dict:
+            return {}
+
+        packed_qkvg = next(iter(packed_dict.values()))
+        if packed_qkvg.ndim == 1:
+            raise NotImplementedError("QKVGMapping does not support bias tensors; add_qkv_bias must be False.")
+        q, k, v, g = split_qkvg_weights(config, packed_qkvg)
+        return {
+            self.hf_param["q"]: q,
+            self.hf_param["k"]: k,
+            self.hf_param["v"]: v,
+            self.hf_param["g"]: g,
+        }
+
+    def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
+        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
+        return type(self)(
+            resolved_megatron_param,
+            resolved_hf_param["q"],
+            resolved_hf_param["k"],
+            resolved_hf_param["v"],
+            resolved_hf_param["g"],
         )
 
 
@@ -2304,6 +2721,105 @@ class GatedMLPMapping(MegatronParamMapping[Dict[str, torch.Tensor]]):
 
         return {self.hf_param["gate"]: gate, self.hf_param["up"]: up}
 
+    def megatron_to_hf_quant(
+        self,
+        megatron_weights: Optional[torch.Tensor],
+        megatron_module: Optional[nn.Module],
+        quantization_checker: Callable[[str], bool],
+        quant_fn: Callable[..., Tuple[torch.Tensor, torch.Tensor]],
+        quant_block_size: Optional[Tuple[int, int]] = None,
+    ) -> Dict[str, torch.Tensor]:
+        """Convert weights FROM Megatron format with quantization before PP broadcast."""
+        if not quantization_checker(str(self.megatron_param)):
+            return self.megatron_to_hf(megatron_weights, megatron_module)
+
+        fused_q, fused_scale = None, None
+
+        if megatron_weights is not None:
+            megatron_weights = self.maybe_dequantize(megatron_weights)
+
+            assert quant_block_size is not None, "quant_block_size must be provided for quantization"
+
+            if len(megatron_weights.shape) == 2:
+                # Calculate the shape of gate and up shards without performing the actual chunk
+                dim0_chunk = megatron_weights.shape[0] // 2
+                dim1_chunk = megatron_weights.shape[1]
+
+                if dim0_chunk % quant_block_size[0] != 0 or dim1_chunk % quant_block_size[1] != 0:
+                    raise ValueError(
+                        f"gate_shard and up_shard shape ({dim0_chunk}, {dim1_chunk}) cannot be divided by quant_block_size {quant_block_size}"
+                    )
+
+            assert len(megatron_weights.shape) == 2, "Megatron weights must be 2D for quantization"
+            fused_q, fused_scale = quant_fn(megatron_weights, quant_block_size)
+
+        fused_q = self.broadcast_from_pp_rank(fused_q, cache_key=str(self.hf_param["gate"]) + "_fused_q")
+        fused_scale = self.broadcast_from_pp_rank(fused_scale, cache_key=str(self.hf_param["gate"]) + "_fused_scale")
+
+        if fused_q is None:
+            return {}
+
+        if self.tp_size == 1:
+            full_gate_q, full_up_q = torch.chunk(fused_q, 2, dim=0)
+            if len(fused_scale.shape) > 0:
+                full_gate_scale, full_up_scale = torch.chunk(fused_scale, 2, dim=0)
+            else:
+                raise ValueError(f"fused_scale cannot be splitted, {self.megatron_param} has {fused_scale.shape=}")
+        else:
+            gathered_fused_q = self.gather_from_tp_ranks(fused_q)
+            gate_q_parts = []
+            up_q_parts = []
+            for shard in gathered_fused_q:
+                gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
+                gate_q_parts.append(gate_shard)
+                up_q_parts.append(up_shard)
+            full_gate_q = torch.cat(gate_q_parts, dim=0)
+            full_up_q = torch.cat(up_q_parts, dim=0)
+
+            if len(fused_scale.shape) > 0:
+                gathered_fused_scale = self.gather_from_tp_ranks(fused_scale)
+                gate_scale_parts = []
+                up_scale_parts = []
+                for shard in gathered_fused_scale:
+                    gate_shard, up_shard = torch.chunk(shard, 2, dim=0)
+                    gate_scale_parts.append(gate_shard)
+                    up_scale_parts.append(up_shard)
+                full_gate_scale = torch.cat(gate_scale_parts, dim=0)
+                full_up_scale = torch.cat(up_scale_parts, dim=0)
+            else:
+                raise ValueError(f"fused_scale cannot be splitted, {self.megatron_param} has {fused_scale.shape=}")
+        if self.is_expert:
+            ep_gate_dict = self.gather_from_ep_ranks(full_gate_q, megatron_module, self.hf_param["gate"])
+            ep_up_dict = self.gather_from_ep_ranks(full_up_q, megatron_module, self.hf_param["up"])
+
+            quant_result = {**ep_gate_dict, **ep_up_dict}
+
+            ep_gate_scale_dict = self.gather_from_ep_ranks_scale(
+                full_gate_scale, megatron_module, self.hf_param["gate"]
+            )
+            for k, v in ep_gate_scale_dict.items():
+                scale_name = k + "_scale_inv"
+                quant_result[scale_name] = v
+
+            ep_up_scale_dict = self.gather_from_ep_ranks_scale(full_up_scale, megatron_module, self.hf_param["up"])
+            for k, v in ep_up_scale_dict.items():
+                scale_name = k + "_scale_inv"
+                quant_result[scale_name] = v
+
+            return quant_result
+
+        quant_result = {}
+
+        def add_to_result(result, q_tensor, scale_tensor, hf_name):
+            result[hf_name] = q_tensor
+            scale_name = hf_name + "_scale_inv"
+            result[scale_name] = scale_tensor
+
+        add_to_result(quant_result, full_gate_q, full_gate_scale, self.hf_param["gate"])
+        add_to_result(quant_result, full_up_q, full_up_scale, self.hf_param["up"])
+
+        return quant_result
+
     def resolve(self, captures: Tuple[str, ...]) -> "MegatronParamMapping":
         """Return a new *resolved* GatedMLPMapping instance."""
         resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
@@ -2679,6 +3195,61 @@ def merge_qkv_weights(provider: TransformerConfig, q: torch.Tensor, k: torch.Ten
         return qkv.reshape([-1, hidden_size])
 
 
+def merge_qkvg_weights(
+    provider: TransformerConfig,
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    g: torch.Tensor,
+) -> torch.Tensor:
+    """Merge Q, K, V, and per-head scalar gate into Megatron's fused linear_qkv format.
+
+    Layout is selected by ``provider.attention_output_gate``:
+
+    * ``False``: standard GQA-interleaved QKV block followed by ``num_heads``
+      scalar gate rows.
+    * ``True``: Megatron-Core gated-attention layout ``[Q, gate, K, V]`` per
+      query group. The HF scalar gate row for each head is expanded across the
+      head dimension so MCore can apply it elementwise after attention.
+
+    Args:
+        provider: Model configuration provider.
+        q/k/v: Same as :func:`merge_qkv_weights`.
+        g: Per-head gate projection weights ``[num_heads, hidden_size]`` (bias
+            shape ``[num_heads]``).
+    """
+    if getattr(provider, "attention_output_gate", False):
+        head_num = provider.num_attention_heads
+        num_query_groups = provider.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = provider.kv_channels or (provider.hidden_size // head_num)
+        hidden_size = provider.hidden_size
+
+        if g.ndim != q.ndim:
+            raise ValueError(f"QKV/gate tensor rank mismatch: q.ndim={q.ndim}, g.ndim={g.ndim}")
+        if g.shape[0] != head_num:
+            raise ValueError(f"Expected scalar gate rows for {head_num} heads, got shape={tuple(g.shape)}")
+
+        q_reshaped = q.view(head_num, head_size, hidden_size)
+        k_reshaped = k.view(num_query_groups, head_size, hidden_size)
+        v_reshaped = v.view(num_query_groups, head_size, hidden_size)
+        g_reshaped = g.view(head_num, 1, hidden_size).expand(-1, head_size, -1)
+
+        qkvg_weights = []
+        for i in range(num_query_groups):
+            q_group = q_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            g_group = g_reshaped[i * heads_per_group : (i + 1) * heads_per_group]
+            k_group = k_reshaped[i : i + 1]
+            v_group = v_reshaped[i : i + 1]
+            qkvg_weights.extend([q_group, g_group, k_group, v_group])
+        return torch.cat(qkvg_weights, dim=0).reshape(-1, hidden_size)
+
+    qkv = merge_qkv_weights(provider, q, k, v)
+    if g.ndim != qkv.ndim:
+        raise ValueError(f"QKV/gate tensor rank mismatch: qkv.ndim={qkv.ndim}, g.ndim={g.ndim}")
+    return torch.cat([qkv, g], dim=0)
+
+
 def split_qkv_weights(
     provider: TransformerConfig,
     qkv: torch.Tensor,
@@ -2719,7 +3290,7 @@ def split_qkv_weights(
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
         # NOTE: For standard (BF16/FP16) weights, `head_size` is the usual kv_channels/head_dim.
-        # For blockwise FP8 scale tensors (e.g. Float8BlockwiseQTensor._rowwise_scale_inv),
+        # For blockwise FP8 scale tensors (e.g. the rowwise_scale_inv metadata tensor),
         # the last dim is typically compressed by a block-size factor (e.g. 4096 -> 32).
         # In that case we infer a divisor and scale down `head_size` accordingly so that the
         # same QKV slicing logic works for both weight tensors and their scale tensors.
@@ -2791,6 +3362,136 @@ def split_qkv_weights(
         v = v.reshape(-1, hidden_size)
 
     return q, k, v
+
+
+def split_qkv_weights_scale(
+    provider: TransformerConfig, qkv: torch.Tensor, quant_block_size: Tuple[int, int]
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split Megatron's interleaved QKV tensor into separate Q, K, V matrices.
+
+    Args:
+        provider (TransformerConfig): Model configuration provider.
+        qkv (torch.Tensor): Interleaved QKV weights in Megatron format.
+
+    Returns:
+        Tuple[torch.Tensor, torch.Tensor, torch.Tensor]: Tuple of (Q, K, V)
+            weight matrices.
+    """
+    head_num = provider.num_attention_heads
+    num_query_groups = provider.num_query_groups
+    heads_per_group = head_num // num_query_groups
+    head_size = (provider.kv_channels or (provider.hidden_size // head_num)) // quant_block_size[0]
+
+    if getattr(provider, "attention_output_gate", False):
+        qkv_total_dim = 2 * head_num + 2 * num_query_groups
+        total_heads_per_group = 2 * heads_per_group + 2
+    else:
+        qkv_total_dim = head_num + 2 * num_query_groups
+        total_heads_per_group = heads_per_group + 2
+    is_bias = qkv.ndim == 1
+
+    if is_bias:
+        hidden_size = 1
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size)
+    else:
+        hidden_size = qkv.shape[1]
+        qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
+
+    # Extract Q, K, V from interleaved pattern
+    q_slice = torch.cat(
+        [
+            torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+            for i in range(num_query_groups)
+        ]
+    )
+    k_slice = torch.arange(total_heads_per_group - 2, qkv_total_dim, total_heads_per_group)
+    v_slice = torch.arange(total_heads_per_group - 1, qkv_total_dim, total_heads_per_group)
+
+    if getattr(provider, "attention_output_gate", False):
+        z_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        # In HF implementation, matrix Q and Z are mixed, so we need to concatenate them.
+        q = torch.cat([qkv_reshaped[q_slice], qkv_reshaped[z_slice]], dim=1)
+    else:
+        q = qkv_reshaped[q_slice]
+    k = qkv_reshaped[k_slice]
+    v = qkv_reshaped[v_slice]
+
+    assert q.numel() + k.numel() + v.numel() == qkv.numel(), (
+        f"QKV weights are not correctly merged, {q.shape=}, {k.shape=}, {v.shape=}, {qkv.shape=}"
+    )
+
+    if is_bias:
+        q = q.reshape(-1)
+        k = k.reshape(-1)
+        v = v.reshape(-1)
+    else:
+        q = q.reshape(-1, hidden_size, 1)
+        k = k.reshape(-1, hidden_size, 1)
+        v = v.reshape(-1, hidden_size, 1)
+
+    return q, k, v
+
+
+def split_qkvg_weights(
+    provider: TransformerConfig,
+    qkvg: torch.Tensor,
+    feature_dim: Optional[int] = None,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Split Megatron's fused linear_qkv tensor into (Q, K, V, gate).
+
+    Inverse of :func:`merge_qkvg_weights`.
+    """
+    head_num = provider.num_attention_heads
+    if getattr(provider, "attention_output_gate", False):
+        num_query_groups = provider.num_query_groups
+        heads_per_group = head_num // num_query_groups
+        head_size = provider.kv_channels or (provider.hidden_size // head_num)
+        hidden_size = feature_dim or qkvg.shape[-1]
+        total_heads_per_group = 2 * heads_per_group + 2
+        qkvg_total_dim = 2 * head_num + 2 * num_query_groups
+        qkvg_reshaped = qkvg.view(qkvg_total_dim, head_size, hidden_size)
+
+        q_slice = torch.cat(
+            [
+                torch.arange(total_heads_per_group * i, total_heads_per_group * i + heads_per_group)
+                for i in range(num_query_groups)
+            ]
+        )
+        g_slice = torch.cat(
+            [
+                torch.arange(
+                    total_heads_per_group * i + heads_per_group,
+                    total_heads_per_group * i + heads_per_group * 2,
+                )
+                for i in range(num_query_groups)
+            ]
+        )
+        k_slice = torch.arange(total_heads_per_group - 2, qkvg_total_dim, total_heads_per_group)
+        v_slice = torch.arange(total_heads_per_group - 1, qkvg_total_dim, total_heads_per_group)
+
+        q = qkvg_reshaped[q_slice].reshape(-1, hidden_size)
+        k = qkvg_reshaped[k_slice].reshape(-1, hidden_size)
+        v = qkvg_reshaped[v_slice].reshape(-1, hidden_size)
+        g = qkvg_reshaped[g_slice].reshape(head_num, head_size, hidden_size)[:, 0, :]
+        return q, k, v, g
+
+    gate_rows = head_num
+    if qkvg.shape[0] <= gate_rows:
+        raise ValueError(
+            f"fused qkvg tensor too small for gate split: shape={tuple(qkvg.shape)}, gate_rows={gate_rows}"
+        )
+    qkv = qkvg[:-gate_rows]
+    g = qkvg[-gate_rows:]
+    q, k, v = split_qkv_weights(provider, qkv, feature_dim=feature_dim)
+    return q, k, v, g
 
 
 def merge_gdn_linear_weights(
