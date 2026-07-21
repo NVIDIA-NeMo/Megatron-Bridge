@@ -111,6 +111,7 @@ def _pretrain_common() -> ConfigContainer:
         tokenizer=TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
             tokenizer_model=None,  # Must be set by each recipe
+            use_tokenizer_vocab_size=True,
         ),
         # Checkpoint config
         checkpoint=CheckpointConfig(
