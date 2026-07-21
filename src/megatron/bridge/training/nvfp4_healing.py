@@ -244,3 +244,53 @@ class NVFP4HealingCallback(Callback):
 
     def _pre_quantize(self, model: list[torch.nn.Module]) -> None:
         raise NotImplementedError  # implemented in a later task
+
+    # ------------------------------------------------------------- traversal
+
+    @staticmethod
+    def _get_model_config(model: list[torch.nn.Module]) -> TransformerConfig:
+        """Return the Megatron-Core ``TransformerConfig`` of the (unwrapped) first chunk."""
+        return _unwrap_model_chunk(model[0]).config
+
+    @staticmethod
+    def _is_target_module(module: torch.nn.Module) -> bool:
+        """Whether ``module`` is a quantizable Transformer Engine linear with a weight."""
+        import transformer_engine.pytorch as te
+
+        return isinstance(module, (te.Linear, te.LayerNormLinear)) and getattr(module, "weight", None) is not None
+
+    @staticmethod
+    def _keep_layer_in_bf16(global_layer_idx: int, model_config: TransformerConfig) -> bool:
+        """Mirror Megatron-Core's first/last-layers-in-BF16 selection (see ``get_fp4_context``)."""
+        if not model_config.first_last_layers_bf16:
+            return False
+        if global_layer_idx < model_config.num_layers_at_start_in_bf16:
+            return True
+        return global_layer_idx >= model_config.num_layers - model_config.num_layers_at_end_in_bf16
+
+    def _iter_quantizable_modules(
+        self, model: list[torch.nn.Module]
+    ) -> Iterator[tuple[torch.nn.Module, torch.nn.Module]]:
+        """Yield ``(layer, module)`` for every quantizable TE linear, in deterministic order.
+
+        Iterates all model chunks (virtual pipeline stages) and uses each layer's global
+        ``layer_number`` (1-based) so BF16 first/last-layer selection is correct under
+        pipeline parallelism. Layers Megatron-Core keeps in BF16 are skipped.
+        """
+        model_config = self._get_model_config(model)
+        for chunk in model:
+            unwrapped = _unwrap_model_chunk(chunk)
+            try:
+                layers = unwrapped.decoder.layers
+            except AttributeError as err:
+                raise RuntimeError(
+                    "NVFP4HealingCallback requires a Megatron-Core GPT-style model exposing "
+                    f"`decoder.layers`; got {type(unwrapped).__name__}."
+                ) from err
+            for local_idx, layer in enumerate(layers):
+                global_idx = getattr(layer, "layer_number", local_idx + 1) - 1
+                if self._keep_layer_in_bf16(global_idx, model_config):
+                    continue
+                for _, module in layer.named_modules():
+                    if self._is_target_module(module):
+                        yield layer, module
