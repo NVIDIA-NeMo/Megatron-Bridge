@@ -36,6 +36,7 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.gb200 import nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_5_nano import (
     NEMOTRON_3_5_NANO_HF_MODEL_ID,
+    NEMOTRON_3_5_NANO_HF_REVISION,
     nemotron_3_5_nano_peft_config,
     nemotron_3_5_nano_pretrain_config,
     nemotron_3_5_nano_sft_config,
@@ -94,6 +95,10 @@ class TestNemotron35NanoPretrain:
         # Tokenizer
         assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
         assert config.tokenizer.tokenizer_model == NEMOTRON_3_5_NANO_HF_MODEL_ID
+        assert config.tokenizer.hf_tokenizer_kwargs == {
+            "revision": NEMOTRON_3_5_NANO_HF_REVISION,
+            "use_fast": True,
+        }
 
         # Mixed precision
         assert config.mixed_precision == "bf16_mixed"

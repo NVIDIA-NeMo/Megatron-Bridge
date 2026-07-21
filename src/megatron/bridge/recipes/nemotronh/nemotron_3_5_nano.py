@@ -14,7 +14,10 @@
 # ruff: noqa: F401
 """Compatibility aliases for concise Nemotron 3.5 Nano recipe names."""
 
-from megatron.bridge.recipes.nemotronh.h100.nemotron_3_5_nano import NEMOTRON_3_5_NANO_HF_MODEL_ID
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_5_nano import (
+    NEMOTRON_3_5_NANO_HF_MODEL_ID,
+    NEMOTRON_3_5_NANO_HF_REVISION,
+)
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_5_nano import (
     nemotron_3_5_nano_peft_8gpu_h100_bf16_config as nemotron_3_5_nano_peft_config,
 )
@@ -34,6 +37,7 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_5_nano import (
 
 __all__ = [
     "NEMOTRON_3_5_NANO_HF_MODEL_ID",
+    "NEMOTRON_3_5_NANO_HF_REVISION",
     "nemotron_3_5_nano_peft_config",
     "nemotron_3_5_nano_peft_openmathinstruct2_config",
     "nemotron_3_5_nano_pretrain_config",

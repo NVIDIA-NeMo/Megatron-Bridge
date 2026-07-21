@@ -29,6 +29,7 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 NEMOTRON_3_5_NANO_HF_MODEL_ID = "nvidia/nemotron-nano-3.5-ea2"
+NEMOTRON_3_5_NANO_HF_REVISION = "68f54a60ad3c68abaeb585d57a29f1da5021665e"  # pragma: allowlist secret
 
 
 def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
@@ -45,7 +46,10 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model Configuration (Hybrid Mamba + MoE with MTP) — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_5_NANO_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        NEMOTRON_3_5_NANO_HF_MODEL_ID,
+        revision=NEMOTRON_3_5_NANO_HF_REVISION,
+    ).to_megatron_provider(load_weights=False)
 
     # Parallelism Settings — H100 BF16 perf preset (also valid on Blackwell, see docstring)
     cfg.model.tensor_model_parallel_size = 1
@@ -61,6 +65,7 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_5_NANO_HF_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": NEMOTRON_3_5_NANO_HF_REVISION, "use_fast": True}
 
     # Dataset Configuration
     cfg.dataset.seq_length = 4096
@@ -181,7 +186,10 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_5_NANO_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        NEMOTRON_3_5_NANO_HF_MODEL_ID,
+        revision=NEMOTRON_3_5_NANO_HF_REVISION,
+    ).to_megatron_provider(load_weights=False)
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -232,6 +240,7 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_5_NANO_HF_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": NEMOTRON_3_5_NANO_HF_REVISION, "use_fast": True}
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -283,7 +292,10 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(
     cfg = _peft_common()
 
     # Model config — derived from HF config via AutoBridge
-    cfg.model = AutoBridge.from_hf_pretrained(NEMOTRON_3_5_NANO_HF_MODEL_ID).to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        NEMOTRON_3_5_NANO_HF_MODEL_ID,
+        revision=NEMOTRON_3_5_NANO_HF_REVISION,
+    ).to_megatron_provider(load_weights=False)
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 1
@@ -351,6 +363,7 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(
 
     # Tokenizer
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_5_NANO_HF_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": NEMOTRON_3_5_NANO_HF_REVISION, "use_fast": True}
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
