@@ -649,7 +649,8 @@ def _validate_and_set_vocab_size(
         ValueError: If model vocab size is invalid
     """
     if use_tokenizer_vocab_size or model_vocab_size is None:
-        # If model vocab size is not set, use the tokenizer's vocab size
+        # Use the tokenizer's vocab size when the model vocab is unset, or when
+        # use_tokenizer_vocab_size forces it for from-scratch pretraining.
         # Enable padding since this came from tokenizer
         return tokenizer_vocab_size, True
     elif model_vocab_size < tokenizer_vocab_size:
