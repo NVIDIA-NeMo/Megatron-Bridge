@@ -38,7 +38,8 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     This recipe follows the model-card convergence contract: 100 steps at
     sequence length 4096 and global batch size 1024 with natural MoE routing.
     The H100-specific execution policy uses micro batch size 1, a Mamba-only
-    CUDA graph scope, and selective recompute of MoE and layernorm modules.
+    CUDA graph scope, and selective recompute of MoE, layernorm, and core
+    attention modules.
 
     Returns:
         ConfigContainer: Pre-training configuration for Nemotron 3.5 Nano.
@@ -100,9 +101,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["mamba"]
     cfg.model.cuda_graph_warmup_steps = 3
 
-    # Activation Recompute — H100 BF16 preset selectively recomputes MoE + layernorm
+    # Activation Recompute — MTP needs core attention recompute for natural-routing headroom
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn"]
 
     # Kernel Selections
     cfg.model.attention_backend = "fused"

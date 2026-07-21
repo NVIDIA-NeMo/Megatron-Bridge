@@ -75,6 +75,7 @@ def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]
     assert cfg.train.global_batch_size == 1024
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.cuda_graph_scope == ["mamba"]
+    assert "core_attn" in cfg.model.recompute_modules
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
 

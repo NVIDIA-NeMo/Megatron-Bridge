@@ -113,7 +113,7 @@ class TestNemotron35NanoPretrain:
         assert config.model.use_te_rng_tracker is True
 
         assert config.model.recompute_granularity == "selective"
-        assert config.model.recompute_modules == ["moe", "layernorm"]
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn"]
 
     def test_pretrain_config_moe_settings(self):
         config = nemotron_3_5_nano_pretrain_config()

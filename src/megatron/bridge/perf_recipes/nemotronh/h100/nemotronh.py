@@ -164,7 +164,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
 
 def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Nemotron 3.5 Nano MTP pretrain: 16× H100, BF16, recompute MoE+layernorm."""
+    """Nemotron 3.5 Nano MTP pretrain: 16× H100, BF16, selective recompute."""
     cfg = nemotron_3_5_nano_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.recompute_granularity = "selective"
@@ -185,7 +185,7 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["mamba"]
 
-    cfg.model.recompute_modules = ["moe", "layernorm"]
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn"]
 
     cfg.comm_overlap.tp_comm_overlap = True
 
