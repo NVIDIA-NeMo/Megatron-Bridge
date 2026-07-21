@@ -1,7 +1,7 @@
 ---
 name: nemo-mbridge-recipe-recommender
 license: Apache-2.0
-description: Recommend and customize Megatron Bridge library and benchmark recipes for a user's model, GPU count, hardware, sequence length, and pretrain/SFT/PEFT goal. Use when selecting a starting recipe or training config, comparing library and benchmark recipes, resizing parallelism for a GPU allocation, or answering which recipe to use for a model or fine-tuning workload.
+description: Recommend and customize Megatron Bridge library and benchmark recipes for a user's model, GPU count, hardware, sequence length, and pretrain/SFT/PEFT goal. Use when selecting a starting recipe, comparing library and benchmark configs, resizing parallelism for a GPU allocation, or distinguishing convergence changes, semantics-preserving execution tuning, and benchmark-only shortcuts.
 ---
 
 # Auto Recipe — Recipe Index & Recommendation
@@ -37,6 +37,58 @@ index details:
    divide `num_key_value_heads`, keep TP within one node unless using
    NVL72-class interconnect, enable SP when TP > 1, configure CP for long
    context, DP is implicit, and reduce `micro_batch_size` first on OOM.
+6. State whether each proposed override changes the convergence contract or
+   only the execution/performance mapping. Do not trade convergence semantics
+   for throughput without calling it a new experiment.
+
+## Configuration Layers and Change Control
+
+Separate training semantics from their hardware mapping before recommending or
+tuning a recipe.
+
+**Convergence configuration** includes the starting checkpoint and trainable
+parameters; dataset/revision/split/order/seeds; tokenizer, masking, truncation,
+and packing; sequence length; global batch and token budget; objective and loss
+coefficients; natural or forced MoE routing and token-dropping policy;
+optimizer, LR, schedule, warmup, betas, epsilon, weight decay, clipping, and
+dropout; arithmetic and optimizer-state precision; and PEFT adapter settings.
+Changing one of these creates a new convergence experiment.
+
+**Execution/performance configuration** includes hardware count and topology;
+TP/PP/VP/CP/EP/ETP/DP/SP; recompute and offload; distributed optimizer/FSDP;
+communication overlap; fusions and attention backends; CUDA graphs and
+compilation; checkpoint I/O; and MoE transport through all-to-all, DeepEP, or
+HybridEP when the routing policy is unchanged. These settings should preserve
+the objective and effective updates, although floating-point reduction order
+can produce small numerical drift that still needs validation.
+
+Treat micro batch size and gradient accumulation as execution fingerprints.
+Tune them only with fixed global batch size, global batch membership/order,
+normalization, optimizer boundaries, and token budget, and validate fresh loss
+sentinels for each layout. Packing, precision, forced MoE load balancing, token
+dropping/capacity, and router/auxiliary loss changes are never performance-only
+knobs.
+
+Treat mock data, forced balancing, disabled correctness checks, and timing-only
+schedules as benchmark-only shortcuts. They may be appropriate in
+`perf_recipes`, but their losses and checkpoints are not convergence evidence.
+
+For comparable model-verification recipes, choose a cohort-wide convergence
+contract before tuning performance. Keep the same bounded data selection,
+preprocessing, sequence length, global batch, optimizer/schedule, precision,
+seeds, routing policy, optimizer-step horizon, and processed-token checkpoints
+where the architectures permit. Record any necessary model-specific deviation
+and do not present that result as apples-to-apples convergence evidence.
+Absolute losses from different architectures or tokenizers are not directly
+rankable; compare stability and trend at equal token counts.
+
+When a recipe's batch disagrees with the chosen convergence contract, modify
+and validate the library recipe separately. A declared bounded-verification
+protocol may explicitly apply the same LR, schedule, sequence, and data
+overrides across a cohort, but do not make one-off convergence changes merely
+to improve throughput. Conversely, first try TP/PP/CP/EP, recompute/offload,
+dispatcher transport, overlap, fusion, and CUDA graphs when optimizing fit or
+throughput.
 
 ---
 
@@ -153,22 +205,24 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 ### Qwen3 (Dense)
 
-| Recipe | Mode | TP | PP | CP | Sizes |
-|--------|------|----|----|-----|-------|
-| `qwen3_*_pretrain_config` | Pretrain | 1–8 | 1–2 | — | 600M–32B |
-| `qwen3_*_sft_config` | SFT | 1–8 | 1–2 | — | 600M–32B |
-| `qwen3_600m_sft_128k_config` | SFT | 1 | 1 | 8 | 600M (128K seq) |
-| `qwen3_*_peft_config` | PEFT | 1 | 1 | — | 600M–32B |
+| Recipe | Mode | TP | PP | CP | GPUs | Sizes / notes |
+|--------|------|----|----|----|------|---------------|
+| `qwen3_8b_pretrain_config` | Pretrain | 1 | 1 | — | 16 | Bounded convergence cohort |
+| `qwen3_8b_sft_config` | SFT | 4 | 1 | — | 4 | 2K bounded convergence cohort |
+| `qwen3_8b_sft_32k_config` | SFT | 4 | 1 | 2 | 8 | Separate 32K long-context cohort |
+| `qwen3_8b_peft_config` | PEFT | 1 | 1 | — | 1 | Bounded LoRA/DoRA cohort |
+| `qwen3_*_{pretrain,sft,peft}_config` | All | 1–8 | 1–2 | — | varies | Other dense sizes, 600M–32B |
+| `qwen3_600m_sft_128k_config` | SFT | 1 | 1 | 8 | 8 | 600M, 128K sequence |
 
 ### Qwen3 MoE
 
 | Recipe | Mode | TP | PP | EP | CP | GPUs |
 |--------|------|----|----|----|----|------|
-| `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 8 | — | 8 |
-| `qwen3_30b_a3b_sft_config` | SFT | 1 | 1 | 8 | — | 8 |
-| `qwen3_30b_a3b_peft_config` | PEFT | 1 | 1 | 1 | — | 1 |
-| `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 512+ |
-| `qwen3_235b_a22b_sft_config` | SFT | 4 | 8 | 8 | — | 256 |
+| `qwen3_30b_a3b_pretrain_config` | Pretrain | 1 | 1 | 16 | — | 16 |
+| `qwen3_30b_a3b_sft_config` | SFT | 1 | 1 | 16 | — | 16 |
+| `qwen3_30b_a3b_peft_config` | PEFT | 4 | 1 | 4 | — | 4 |
+| `qwen3_235b_a22b_pretrain_config` | Pretrain | 4 | 16 | 8 | 2 | 256 |
+| `qwen3_235b_a22b_sft_config` | SFT | 4 | 16 | 4 | — | 64 |
 | `qwen3_235b_a22b_peft_config` | PEFT | 1 | 4 | 4 | — | 16 |
 
 ### Qwen3-Next
@@ -219,7 +273,10 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 | Recipe | Mode | Notes |
 |--------|------|-------|
-| `moonlight_16b_{pretrain,sft,peft}_config` | All | MoE EP=8 |
+| `moonlight_16b_pretrain_config` | Pretrain | 16 GPUs, TP1/PP1/EP16; bounded convergence cohort |
+| `moonlight_16b_sft_config` | SFT | 8 GPUs, TP1/PP1/EP8; 2K bounded convergence cohort |
+| `moonlight_16b_peft_config` | PEFT | 4 GPUs, TP4/PP1/EP4; bounded LoRA/DoRA cohort |
+| `moonlight_16b_sft_8k_config` | SFT | 8 GPUs, TP2/PP1/CP2/EP8; separate 8K cohort |
 | `olmoe_7b_{pretrain,sft,peft}_config` | All | MoE EP=8 |
 | `ministral3_{3b,8b,14b}_{sft,peft}_config` | SFT/PEFT | Dense |
 | `gpt_oss_20b_*_config` | All | MoE + FP8/MXFP8 variants |
@@ -368,8 +425,11 @@ When the user's GPU count differs from the recipe default:
    copies and is essentially free.
 6. **CP requires all-to-all or ring attention.** Check `cp_comm_type`. For
    GQA models, `a2a+p2p` hierarchical CP allows CP > num_kv_heads.
-7. **world_size = DP × TP × PP × CP × EP.** DP is implicit. Make sure the
-   product of explicit parallelisms divides your total GPU count.
+7. **Dense and expert meshes overlap.** Do not multiply TP and EP together.
+   The minimum MoE world size is `PP × max(TP × CP, EP × ETP)`. Dense DP is
+   `world_size / (TP × PP × CP)` and expert EDP is
+   `world_size / (PP × EP × ETP)`; both quotients must be integral, and the
+   expert count must be divisible by EP.
 
 ### Batch Size Tuning
 
@@ -402,11 +462,10 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
     --recipe llama3_8b_pretrain_config \
     --dataset mock
 
-# Reduce parallelism for Qwen3-MoE 30B to fit on 4 GPUs
+# Run the native 4-GPU Qwen3-MoE 30B PEFT topology
 uv run python -m torch.distributed.run --nproc_per_node=4 scripts/training/run_recipe.py \
-    --recipe qwen3_30b_a3b_sft_config \
-    --dataset squad \
-    'model.expert_model_parallel_size=4'
+    --recipe qwen3_30b_a3b_peft_config \
+    --dataset tulu3
 
 # Add long context to an existing recipe
 uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
@@ -432,10 +491,10 @@ uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_r
 | I want to... | Start with | GPUs needed |
 |---|---|---|
 | Try Bridge for the first time | `llama3_8b_pretrain_config` + mock data | 2 |
-| Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–8 |
+| Fine-tune a 7-8B model | `llama3_8b_sft_config` or `qwen3_8b_sft_config` | 2–4 |
 | LoRA on 1 GPU | `llama3_8b_peft_config` or `qwen3_8b_peft_config` | 1 |
 | Pretrain a dense 70B | `llama3_70b_pretrain_config` | 32–64 |
-| Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 8 |
+| Train a small MoE | `qwen3_30b_a3b_pretrain_config` | 16 |
 | Train a large MoE (235B+) | `qwen3_235b_a22b_pretrain_config` | 256–512 |
 | Benchmark text-pretrain throughput | Benchmark recipe via `train.sh --recipe <exact name>` | Exact encoded count |
 | Long-context training | `llama3_8b_128k_pretrain_config` or add CP override | 16+ |

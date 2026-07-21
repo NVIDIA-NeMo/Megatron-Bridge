@@ -422,8 +422,10 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
 @pytest.mark.parametrize(
     ("extra_options", "expected_run", "expected_dryrun"),
     [
-        ([], [{"detach": True}], 0),
-        (["--dry_run"], [{"detach": True}], 0),
+        ([], [{"detach": True, "tail_logs": False}], 0),
+        (["--wait"], [{"detach": False, "tail_logs": True}], 0),
+        (["--dry_run"], [{"detach": True, "tail_logs": False}], 0),
+        (["--wait", "--dry_run"], [{"detach": False, "tail_logs": True}], 0),
         (["--submission-dry-run"], [], 1),
         (["--dry-run"], [], 1),
     ],
@@ -499,7 +501,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     assert scripts[0].env == {
         "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
     }
-    submission_options = {"--submission-dry-run", "--dry-run"}
+    submission_options = {"--submission-dry-run", "--dry-run", "--wait"}
     expected_training_options = [option for option in extra_options if option not in submission_options]
     assert scripts[0].args == [*training_args, *expected_training_options]
 

@@ -279,6 +279,9 @@ class AutoBridge(Generic[MegatronModelT]):
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
+        init_kwargs = getattr(hf_pretrained, "init_kwargs", {})
+        revision = init_kwargs.get("revision") if isinstance(init_kwargs, dict) else None
+        self.hf_model_revision: str | None = revision if isinstance(revision, str) else None
         trust_remote_code = getattr(hf_pretrained, "trust_remote_code", False)
         self.trust_remote_code = trust_remote_code if isinstance(trust_remote_code, bool) else False
 
@@ -1367,10 +1370,12 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_tokenizer_kwargs = {}
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+        if hf_tokenizer_kwargs is None:
+            hf_tokenizer_kwargs = {}
+        if kwargs.get("revision") is not None:
+            hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
         # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
         if kwargs.get("trust_remote_code"):
-            if hf_tokenizer_kwargs is None:
-                hf_tokenizer_kwargs = {}
             hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
         bridge.save_megatron_model(
             megatron_model,
@@ -1681,6 +1686,8 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if hf_identifier:
             setattr(provider, "hf_model_id", hf_identifier)
+        if hf_path is None and self.hf_model_revision:
+            setattr(provider, "hf_model_revision", self.hf_model_revision)
 
         return provider
 

@@ -25,38 +25,16 @@ from megatron.bridge.perf_recipes.qwen.common import (
     qwen3_235b_a22b_pretrain_config,
     qwen3_next_80b_a3b_pretrain_config,
 )
+from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
+    qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config as _qwen3_30b_a3b_default_pretrain_config,
+)
 
 
 def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 16× H100, BF16, EP=16."""
-    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg = _qwen3_30b_a3b_default_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
-    cfg.model.bias_activation_fusion = True
-    cfg.model.recompute_granularity = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
-    cfg.model.moe_router_fusion = True
-    cfg.model.seq_length = 4096
-    cfg.dataset.seq_length = 4096
     cfg.model.moe_router_force_load_balancing = True
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
-    cfg.model.expert_model_parallel_size = 16
-    cfg.model.sequence_parallel = False
-    cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_a2a_overlap = False
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
-
-    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
