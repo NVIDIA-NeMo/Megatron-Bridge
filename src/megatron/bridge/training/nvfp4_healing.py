@@ -242,8 +242,73 @@ class NVFP4HealingCallback(Callback):
             if self.config.reset_cuda_graph_warmup:
                 FullCudaGraphWrapper.curr_iteration[stage] = 0
 
+    # ------------------------------------------------------- pre-quantization
+
+    def _build_quantizers(self) -> tuple[Any, Any]:
+        """Build the NVFP4 quantizer and the FP8 quantizer matching ``healing_recipe``."""
+        _require_te()
+        import transformer_engine_torch as tex
+        from transformer_engine.pytorch.tensor.float8_tensor import Float8Quantizer
+        from transformer_engine.pytorch.tensor.mxfp8_tensor import MXFP8Quantizer
+        from transformer_engine.pytorch.tensor.nvfp4_tensor import NVFP4Quantizer
+
+        nvfp4_quantizer = NVFP4Quantizer()
+        if self.config.healing_recipe == "delayed":
+            device = torch.cuda.current_device()
+            fp8_quantizer = Float8Quantizer(
+                scale=torch.ones(1, dtype=torch.float32, device=device),
+                amax=torch.zeros(1, dtype=torch.float32, device=device),
+                fp8_dtype=tex.DType.kFloat8E4M3,
+            )
+        else:
+            fp8_quantizer = MXFP8Quantizer(tex.DType.kFloat8E4M3)
+        return nvfp4_quantizer, fp8_quantizer
+
+    def _validate_quantized(self, qparam: Any, kind: str) -> None:
+        """Check that a quantized tensor carries the storages its kind requires."""
+        if kind in ("nvfp4", "mxfp8"):
+            if qparam._rowwise_data is None or qparam._columnwise_data is None:
+                raise RuntimeError(f"Quantized '{kind}' tensor is missing rowwise/columnwise data.")
+        else:
+            if qparam._data is None:
+                raise RuntimeError("Quantized FP8 tensor is missing data.")
+
+    def _stash_fp8_copy(self, qparam: Any) -> None:
+        """Clone a quantized FP8 tensor and stash it (pinned host memory by default)."""
+        qparam = qparam.clone()
+        if not self.config.store_quantized_params_on_gpu:
+            # Pinned host memory enables fast async H2D transfer at healing time.
+            if self.config.healing_recipe == "mxfp8":
+                qparam._rowwise_data = qparam._rowwise_data.cpu().pin_memory()
+                qparam._columnwise_data = qparam._columnwise_data.cpu().pin_memory()
+            else:
+                qparam._data = qparam._data.cpu().pin_memory()
+                if getattr(qparam, "_transpose", None) is not None:
+                    qparam._transpose = qparam._transpose.cpu().pin_memory()
+        self._fp8_stash.append(qparam)
+
     def _pre_quantize(self, model: list[torch.nn.Module]) -> None:
-        raise NotImplementedError  # implemented in a later task
+        """Replace frozen base weights with NVFP4 tensors and stash FP8 copies for healing."""
+        nvfp4_quantizer, fp8_quantizer = self._build_quantizers()
+        fp8_kind = self.config.healing_recipe
+        count = 0
+        with torch.no_grad():
+            for _, module in self._iter_quantizable_modules(model):
+                weight = module.weight
+                if weight.requires_grad:
+                    raise ValueError(
+                        "pre_quantize_base_weights=True requires frozen base weights "
+                        f"(e.g. PEFT/LoRA fine-tuning); found a trainable weight on {type(module).__name__}."
+                    )
+                fp8_param = fp8_quantizer(weight.detach())
+                self._validate_quantized(fp8_param, fp8_kind)
+                self._stash_fp8_copy(fp8_param)
+
+                nvfp4_param = nvfp4_quantizer(weight.detach())
+                self._validate_quantized(nvfp4_param, "nvfp4")
+                setattr(module, "weight", torch.nn.Parameter(nvfp4_param, requires_grad=False))
+                count += 1
+        print_rank_0(f"NVFP4 healing: pre-quantized {count} weights (NVFP4 on device, FP8 stashed).")
 
     # ------------------------------------------------------------- traversal
 
