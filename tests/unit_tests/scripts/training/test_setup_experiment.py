@@ -326,7 +326,7 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["gpus_per_node"] == 1
     assert executor.env_vars == {}
     assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
-    assert executor.additional_parameters == {"export": "HF_TOKEN"}
+    assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
     assert executor.srun_args == []
 
@@ -415,7 +415,7 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
 
     assert executor.kwargs["ntasks_per_node"] == 8
     assert "gpus_per_node" not in executor.kwargs
-    assert executor.additional_parameters == {"export": "NIL"}
+    assert executor.additional_parameters == {"export": "PATH"}
     assert executor.srun_args == ["--mpi=pmix", "--container-writable"]
 
 

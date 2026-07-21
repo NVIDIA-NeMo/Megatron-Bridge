@@ -210,7 +210,10 @@ def _build_executor(
     # environment. Name every task variable here while keeping secret values in
     # the inherited Slurm environment only.
     executor.container_env = sorted(set(env_names) | set(task_env_names))
-    executor.additional_parameters = {"export": ",".join(env_names) if env_names else "NIL"}
+    # Keep Slurm control commands available to the batch script without
+    # forwarding the host PATH into the training container.
+    slurm_env_names = list(dict.fromkeys(["PATH", *env_names]))
+    executor.additional_parameters = {"export": ",".join(slurm_env_names)}
     executor.srun_args = srun_args
     return executor
 
