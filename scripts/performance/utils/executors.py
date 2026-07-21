@@ -145,12 +145,17 @@ else:  # Minimal offline test doubles expose KubeflowExecutor as a function.
 
 
 if WorkspaceRootKubeflowExecutor is not None:
-    # NeMo-Run selects its TorchX scheduler with an exact-class lookup rather
-    # than isinstance(). Register the workspace-scoped subclass as Kubeflow so
-    # Experiment.dryrun() can package and submit it normally.
+    # NeMo-Run selects its TorchX scheduler and parallel-execution support with
+    # exact-class lookups rather than isinstance(). Register the workspace-
+    # scoped subclass anywhere upstream grants KubeflowExecutor support.
+    from nemo_run.run.experiment import Experiment
     from nemo_run.run.torchx_backend.schedulers.api import EXECUTOR_MAPPING
 
     EXECUTOR_MAPPING[WorkspaceRootKubeflowExecutor] = EXECUTOR_MAPPING[run.KubeflowExecutor]
+    Experiment._PARALLEL_SUPPORTED_EXECUTORS = (
+        *Experiment._PARALLEL_SUPPORTED_EXECUTORS,
+        WorkspaceRootKubeflowExecutor,
+    )
 
 
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
