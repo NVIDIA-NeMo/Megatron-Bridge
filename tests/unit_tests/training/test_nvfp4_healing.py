@@ -94,6 +94,81 @@ class TestHealingTrigger:
             assert cb.healed is False
 
 
+def _has_te_with_nvfp4():
+    """True when a real Transformer Engine >= 2.7.0.dev0 is importable (same gate as production)."""
+    try:
+        import transformer_engine  # noqa: F401
+
+        from megatron.core.utils import is_te_min_version
+
+        return is_te_min_version("2.7.0.dev0")
+    except Exception:
+        return False
+
+
+requires_te = pytest.mark.skipif(not _has_te_with_nvfp4(), reason="requires Transformer Engine >= 2.7.0.dev0")
+
+
+class TestRecipePatchAndRestore:
+    def test_patch_replaces_and_on_train_end_restores(self):
+        import megatron.core.fp4_utils as fp4_utils
+
+        original = fp4_utils.get_fp4_recipe
+        cb = NVFP4HealingCallback(make_config())
+        sentinel = object()
+        try:
+            cb._patch_fp4_recipe(sentinel)
+            assert fp4_utils.get_fp4_recipe(Mock()) is sentinel
+            cb.on_train_end(Mock())
+            assert fp4_utils.get_fp4_recipe is original
+        finally:
+            fp4_utils.get_fp4_recipe = original
+
+    def test_double_patch_keeps_true_original(self):
+        import megatron.core.fp4_utils as fp4_utils
+
+        original = fp4_utils.get_fp4_recipe
+        cb = NVFP4HealingCallback(make_config())
+        try:
+            cb._patch_fp4_recipe(object())
+            cb._patch_fp4_recipe(object())
+            cb._restore_fp4_recipe()
+            assert fp4_utils.get_fp4_recipe is original
+        finally:
+            fp4_utils.get_fp4_recipe = original
+
+    def test_restore_without_patch_is_noop(self):
+        import megatron.core.fp4_utils as fp4_utils
+
+        original = fp4_utils.get_fp4_recipe
+        cb = NVFP4HealingCallback(make_config())
+        cb.on_train_end(Mock())
+        assert fp4_utils.get_fp4_recipe is original
+
+
+class TestHealingRecipeConstruction:
+    @requires_te
+    def test_delayed_recipe_fields(self):
+        from transformer_engine.common.recipe import DelayedScaling
+
+        cb = NVFP4HealingCallback(
+            make_config(healing_recipe="delayed", fp8_amax_history_len=16, fp8_amax_compute_algo="max")
+        )
+        model_config = SimpleNamespace(fp8_dot_product_attention=False)
+        recipe = cb._build_healing_recipe(model_config)
+        assert isinstance(recipe, DelayedScaling)
+        assert recipe.amax_history_len == 16
+        assert recipe.amax_compute_algo == "max"
+
+    @requires_te
+    def test_mxfp8_recipe(self):
+        from transformer_engine.common.recipe import MXFP8BlockScaling
+
+        cb = NVFP4HealingCallback(make_config(healing_recipe="mxfp8"))
+        recipe = cb._build_healing_recipe(SimpleNamespace(fp8_dot_product_attention=False))
+        assert isinstance(recipe, MXFP8BlockScaling)
+
+
 class TestHookRegistration:
     def test_registers_expected_hooks(self):
         manager = CallbackManager()
