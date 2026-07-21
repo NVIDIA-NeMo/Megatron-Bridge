@@ -23,7 +23,21 @@ uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage
   -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
   tests/functional_tests/test_groups/training/test_nvrx_straggler.py
 
-if command -v ft_launcher >/dev/null 2>&1; then
+# HAS_MCORE_DEV_BRANCH: skip the ft_launcher inprocess-restart path on the Megatron-Core dev
+# lane only. mcore dev pins nvidia-resiliency-ext to a git build whose ft_launcher imports
+# mcp.types, which the resolved mcp prerelease drops (ModuleNotFoundError). The gitlink tracks
+# main again after the dev branch's phase-B revert, so this runs normally on main.
+BRIDGE_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || echo /opt/Megatron-Bridge)"
+GITLINK="$(git -C "$BRIDGE_ROOT" rev-parse HEAD:3rdparty/Megatron-LM 2>/dev/null || true)"
+DEV_COMMIT="$(tr -d '[:space:]' < "$BRIDGE_ROOT/.dev.commit" 2>/dev/null || true)"
+MAIN_COMMIT="$(tr -d '[:space:]' < "$BRIDGE_ROOT/.main.commit" 2>/dev/null || true)"
+if [ -n "$GITLINK" ] && [ "$GITLINK" = "$DEV_COMMIT" ] && [ "$DEV_COMMIT" != "$MAIN_COMMIT" ]; then
+  HAS_MCORE_DEV_BRANCH=1
+else
+  HAS_MCORE_DEV_BRANCH=0
+fi
+
+if [ "$HAS_MCORE_DEV_BRANCH" != "1" ] && command -v ft_launcher >/dev/null 2>&1; then
   echo "ft_launcher found, running inprocess restart tests..."
 
   export TORCH_CPP_LOG_LEVEL="error"
@@ -38,6 +52,8 @@ if command -v ft_launcher >/dev/null 2>&1; then
     --ft-restart-policy=any-failed \
     -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
     tests/functional_tests/test_groups/training/test_inprocess_restart.py
+else
+  echo "Skipping ft_launcher inprocess restart tests (HAS_MCORE_DEV_BRANCH=$HAS_MCORE_DEV_BRANCH)"
 fi
 
 coverage combine -q

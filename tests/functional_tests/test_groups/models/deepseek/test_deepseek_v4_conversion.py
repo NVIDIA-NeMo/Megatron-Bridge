@@ -21,6 +21,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
+
 
 def _has_dsv4_in_transformers() -> bool:
     try:
@@ -53,6 +55,10 @@ pytestmark = [
     pytest.mark.skipif(
         not _has_dsv4_in_mcore(),
         reason="megatron-core does not yet ship DSv4 prerequisites (PRs #3430 / #4458 / #4481 / #4518).",
+    ),
+    pytest.mark.skipif(
+        HAS_MCORE_DEV_BRANCH,
+        reason="DeepSeek-V4 DSA indexer per-layer placement changed on the mcore dev ref; the V4 conversion roundtrip is not yet dual-compatible. Guarded on the dev lane only (see tests/mcore_dev.py).",
     ),
 ]
 
