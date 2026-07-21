@@ -104,7 +104,7 @@ def test_verification_index_rejects_training_drift_and_invalid_all() -> None:
     card = _card(CORRELATION_CARD_PATH)
     card["verification_index"]["training"]["H100"] = {"verified": "all"}
     _assert_error(card, "all is allowed only when every detailed item in the scope has status verified")
-    _assert_error(card, "pretrain is indexed as verified but detailed items project to unverified")
+    _assert_error(card, "checkpoint_resume is indexed as verified but detailed items project to unverified")
 
 
 def test_verification_index_requires_each_concrete_training_hardware() -> None:
