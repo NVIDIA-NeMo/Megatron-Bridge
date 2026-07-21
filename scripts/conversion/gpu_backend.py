@@ -356,11 +356,20 @@ def export_checkpoint(
 
     print_rank_0(f"GPU export: {megatron_path} -> {hf_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
+    trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
-        trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
+        trust_remote_code=trusted,
         torch_dtype=dtype,
     )
+    checkpoint_config_bridge = AutoBridge.from_auto_config(
+        megatron_path,
+        hf_model,
+        trust_remote_code=trusted,
+    )
+    # Preserve the reference wrapper's streaming state source and shard map while
+    # exporting the checkpoint-derived architecture and vocabulary configuration.
+    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     model_provider = bridge.to_megatron_provider(load_weights=False)
     _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
     _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)
