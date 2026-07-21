@@ -39,7 +39,9 @@ class TokenizerConfig(MTrainTokenizerConfig):
     Enable this for from-scratch pretraining, where the tokenizer selected for
     the dataset defines the embedding and output vocabulary. Keep it disabled
     when model or checkpoint compatibility requires an explicitly configured
-    model vocabulary size.
+    model vocabulary size. This policy also applies during checkpoint loading;
+    disable it and configure the checkpoint's original model vocabulary when
+    resuming a run created with a different vocabulary policy.
     """
 
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)

@@ -693,19 +693,25 @@ tokenizer_config = TokenizerConfig(
 
 #### Vocab Size Priority
 
-In Megatron Bridge, vocabulary size can be specified in either the model provider or derived from the tokenizer. The priority order is:
+In Megatron Bridge, vocabulary size can be specified in the model provider or derived from the runtime tokenizer. The priority order is:
 
-1. **Model provider `vocab_size` is set**: Uses the model's vocab size
-   - Must be `>= tokenizer.vocab_size` (raises error if smaller)
-   - Sets `should_pad_vocab=False` (no automatic padding)
-   - Useful when you need a specific vocab size (e.g., for checkpoint compatibility)
+1. **`TokenizerConfig.use_tokenizer_vocab_size=True`**: Uses the tokenizer's vocab size
+   - Overrides a preset model-provider `vocab_size`.
+   - Sets `should_pad_vocab=True` (enables padding for efficient parallelism).
+   - Intended for from-scratch pretraining, where the dataset tokenizer defines the vocabulary.
+   - This policy remains active during checkpoint loading; disable it when checkpoint compatibility requires the explicit model vocabulary.
 
-2. **Model provider `vocab_size` is None**: Uses tokenizer's vocab size
+2. **Model provider `vocab_size` is set**: Uses the model's vocab size
+   - Must be `>= tokenizer.vocab_size` (raises an error if smaller).
+   - Sets `should_pad_vocab=False` (no automatic padding).
+   - Useful when a specific vocabulary is required for model or checkpoint compatibility.
+
+3. **Model provider `vocab_size` is `None`**: Uses the tokenizer's vocab size
    - Automatically derived from `tokenizer.vocab_size` after building the tokenizer.
-   - Sets `should_pad_vocab=True` (enables padding for efficient parallelism)
+   - Sets `should_pad_vocab=True`.
 
 ```python
-# Option 1: Let tokenizer determine vocab size
+# Option 1: Let tokenizer determine vocab size when the model has no preset
 config = ConfigContainer(
     model=GPTModelProvider(
         # vocab_size not set - will use tokenizer's vocab size
@@ -717,7 +723,19 @@ config = ConfigContainer(
     ),
 )
 
-# Option 2: Explicitly set vocab size in model
+# Option 2: Override a preset model vocab for from-scratch pretraining
+config = ConfigContainer(
+    model=GPTModelProvider(
+        vocab_size=128256,  # Ignored whenever the flag is enabled
+    ),
+    tokenizer=TokenizerConfig(
+        tokenizer_type="HuggingFaceTokenizer",
+        tokenizer_model="my-org/my-pretraining-tokenizer",
+        use_tokenizer_vocab_size=True,
+    ),
+)
+
+# Option 3: Explicitly set vocab size in model
 config = ConfigContainer(
     model=GPTModelProvider(
         vocab_size=128256,  # Explicitly set (must be >= tokenizer vocab size)
@@ -725,6 +743,17 @@ config = ConfigContainer(
     tokenizer=TokenizerConfig(...),
 )
 ```
+
+Pretraining recipes enable `use_tokenizer_vocab_size` by default. For a new run, use an empty checkpoint directory so the runtime tokenizer defines the model vocabulary. A checkpoint created by that policy can be resumed with the same tokenizer and recipe configuration.
+
+Checkpoints created before a recipe enabled `use_tokenizer_vocab_size` may have used the model provider's larger explicit vocabulary. To preserve their embedding and output tensor shapes, disable the new policy and retain the vocabulary used to create the checkpoint:
+
+```python
+config.tokenizer.use_tokenizer_vocab_size = False
+config.model.vocab_size = 128256  # The vocabulary used to create the checkpoint
+```
+
+Do not change this setting partway through a run. Switching vocabulary policies changes model tensor shapes and is not a checkpoint migration mechanism.
 
 
 ### Parallelism Configuration Migration
