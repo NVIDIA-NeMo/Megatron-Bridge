@@ -331,8 +331,10 @@ def apply_scheduler_max_steps(config: Any, args: Any) -> int | None:
 
     When ``--max_steps`` is supplied without ``--scheduler_max_steps``, the
     scheduler horizon follows the training horizon for backward compatibility.
-    A larger explicit scheduler horizon allows a short run to reproduce the
-    prefix of a longer run's learning-rate schedule.
+    This flag is intended for testing: ``--max_steps=x`` and
+    ``--scheduler_max_steps=y`` run only the first ``x`` steps of a full
+    ``y``-step training run, where ``y`` must be greater than or equal to
+    ``x``.
 
     Args:
         config: Training configuration to update.
@@ -365,7 +367,7 @@ def apply_scheduler_max_steps(config: Any, args: Any) -> int | None:
             f"--max_steps ({train_iters})."
         )
 
-    config.scheduler.lr_decay_iters = scheduler_max_steps
+    config.scheduler.max_steps = scheduler_max_steps
     if scheduler_max_steps > 100:
         config.scheduler.lr_warmup_iters = int(0.01 * scheduler_max_steps)
     return scheduler_max_steps

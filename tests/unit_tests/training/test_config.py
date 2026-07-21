@@ -680,6 +680,39 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_scheduler_max_steps_runs_prefix_of_longer_schedule(self, monkeypatch):
+        """A short test run can preserve the scheduler horizon of a full run."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=1000, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(max_steps=48000)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            container.validate()
+            assert container.train.train_iters == 1000
+            assert container.scheduler.max_steps == 48000
+            assert container.scheduler.lr_decay_iters == 48000
+            assert container.scheduler.lr_decay_steps == 48000 * train_cfg.global_batch_size
+            assert container.scheduler.wd_incr_steps == 48000 * train_cfg.global_batch_size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_scheduler_max_steps_rejects_horizon_shorter_than_training(self, monkeypatch):
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=1000)
+        sched_cfg = create_test_scheduler_config(max_steps=999)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.raises(ValueError, match="must be greater than or equal to train.train_iters"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_scheduler_wd_incr_steps(self, monkeypatch):
         """Test `wd_incr_steps` calculation."""
         gpt_model_cfg = create_test_gpt_config()

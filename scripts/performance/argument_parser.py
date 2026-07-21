@@ -282,8 +282,9 @@ def parse_cli_args():
         "--scheduler_max_steps",
         type=int,
         help=(
-            "Number of steps used to configure the learning-rate schedule. Defaults to --max_steps and must be "
-            "greater than or equal to --max_steps."
+            "Testing only: use --max_steps=x and --scheduler_max_steps=y to run the first x steps of a full "
+            "y-step training run with the same scheduler prefix. Defaults to --max_steps and must be greater "
+            "than or equal to it."
         ),
     )
     training_args.add_argument(

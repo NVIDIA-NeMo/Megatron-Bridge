@@ -71,7 +71,7 @@ def test_scheduler_max_steps_preserves_longer_schedule(tmp_path, apply_overrides
     )
 
     assert updated.train.train_iters == 1000
-    assert updated.scheduler.lr_decay_iters == 48000
+    assert updated.scheduler.max_steps == 48000
     assert updated.scheduler.lr_warmup_iters == 480
 
 
@@ -82,7 +82,7 @@ def test_scheduler_max_steps_defaults_to_training_steps(tmp_path, apply_override
     updated = apply_overrides(recipe, _parse_args(tmp_path, "--max_steps", "1000"))
 
     assert updated.train.train_iters == 1000
-    assert updated.scheduler.lr_decay_iters == 1000
+    assert updated.scheduler.max_steps == 1000
     assert updated.scheduler.lr_warmup_iters == 10
 
 
