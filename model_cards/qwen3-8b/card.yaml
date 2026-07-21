@@ -161,7 +161,7 @@ items:
       --lr 5e-6 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
       'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
-      '+tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
+      '++tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
       dataset.hf_output_root=work/data/tulu3/qwen3-8b-sft-b14afda60f1b
       dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
@@ -228,7 +228,7 @@ items:
       --lr 1e-6 --min_lr 0 --warmup_iters 2
       'dataset.hf_dataset.split="train[:10000]"'
       'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
-      '+tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
+      '++tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
       dataset.hf_output_root=work/data/tulu3/qwen3-8b-long-context-b14afda60f1b
       dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null
@@ -267,7 +267,7 @@ items:
       --lr 1e-4 --min_lr 0 --warmup_iters 10
       'dataset.hf_dataset.split="train[:10000]"'
       'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
-      '+tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
+      '++tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
       dataset.hf_output_root=work/data/tulu3/qwen3-8b-peft-b14afda60f1b
       dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
       dataset.do_validation=false dataset.hf_validation_proportion=null

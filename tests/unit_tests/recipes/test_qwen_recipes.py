@@ -68,8 +68,13 @@ class _FakeBridge:
         return _FakeModelCfg()
 
     @staticmethod
-    def from_hf_pretrained(hf_path: str):
-        # Ignore hf_path; return a bridge that yields a fake provider
+    def from_hf_pretrained(hf_path: str, **kwargs):
+        expected_revisions = {
+            "Qwen/Qwen3-8B": "b968826d9c46dd6066d109eabc6255188de91218",  # pragma: allowlist secret
+            "Qwen/Qwen3-30B-A3B": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39",  # pragma: allowlist secret
+        }
+        if hf_path in expected_revisions:
+            assert kwargs == {"revision": expected_revisions[hf_path]}
         return _FakeBridge()
 
 
@@ -239,6 +244,17 @@ def test_qwen3_8b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.ddp.use_distributed_optimizer is True
     assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+    }
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    process_config_with_overrides(
+        cfg.tokenizer,
+        cli_overrides=[
+            '++hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'  # pragma: allowlist secret
+        ],
+    )
 
 
 def test_qwen3_8b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
@@ -260,6 +276,9 @@ def test_qwen3_8b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
     assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+    }
     _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
 
 
@@ -282,6 +301,9 @@ def test_qwen3_8b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch):
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
     assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+    }
     _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=1.0e-4)
     assert cfg.peft is not None
     assert cfg.peft.target_modules == ["linear_qkv", "linear_proj"]
@@ -402,6 +424,9 @@ def test_qwen3_30b_a3b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
     assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+    }
     _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=1.0e-4)
 
 
@@ -470,6 +495,9 @@ def test_qwen3_30b_a3b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
     assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+    }
     assert cfg.peft is None
     _assert_qwen_finetune_optimizer_contract(cfg, expected_lr=5.0e-6)
 
@@ -568,6 +596,17 @@ def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.optimizer.use_distributed_optimizer is True
     assert cfg.mixed_precision.bf16 is True
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+    }
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    process_config_with_overrides(
+        cfg.tokenizer,
+        cli_overrides=[
+            '++hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'  # pragma: allowlist secret
+        ],
+    )
     assert cfg.mixed_precision.params_dtype == torch.bfloat16
     assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.load is None

@@ -25,6 +25,10 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
+_QWEN3_30B_A3B_MODEL_ID = "Qwen/Qwen3-30B-A3B"
+_QWEN3_30B_A3B_MODEL_REVISION = "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
+
+
 def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3-30B-A3B MoE.
 
@@ -33,10 +37,13 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer (--tokenizer-model)
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -348,10 +355,13 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
 
     # Parallelism settings (MoE-specific: includes expert parallelism)
     cfg.model.tensor_model_parallel_size = 4
@@ -684,10 +694,13 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
 
     # Parallelism settings (MoE-specific: includes expert parallelism)
     # PEFT uses PP=1 (less parallelism needed since only adapters are trained)

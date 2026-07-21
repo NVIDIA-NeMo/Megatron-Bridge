@@ -129,8 +129,11 @@ class _FakeBridge:
     """Return the checkpoint-compatible fake provider without model I/O."""
 
     @classmethod
-    def from_hf_pretrained(cls, model_id: str) -> "_FakeBridge":
+    def from_hf_pretrained(cls, model_id: str, **kwargs) -> "_FakeBridge":
         assert model_id == "moonshotai/Moonlight-16B-A3B"
+        assert kwargs == {
+            "revision": "476b36a473d4467f94469414bef6cee75c9c8172"  # pragma: allowlist secret
+        }
         return cls()
 
     def to_megatron_provider(self, *, load_weights: bool) -> _FakeMoonlightModelProvider:
@@ -390,7 +393,18 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.checkpoint.load is None
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
     assert cfg.tokenizer.tokenizer_model == "moonshotai/Moonlight-16B-A3B"
-    assert cfg.tokenizer.hf_tokenizer_kwargs == {"trust_remote_code": True}
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "476b36a473d4467f94469414bef6cee75c9c8172",  # pragma: allowlist secret
+        "trust_remote_code": True,
+    }
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+    process_config_with_overrides(
+        cfg.tokenizer,
+        cli_overrides=[
+            '++hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'  # pragma: allowlist secret
+        ],
+    )
     assert cfg.model.moe_token_dispatcher_type == "alltoall"
     assert cfg.model.moe_flex_dispatcher_backend is None
     assert cfg.model.moe_hybridep_num_sms is None
@@ -456,6 +470,11 @@ def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.checkpoint.save_interval == 100
     assert cfg.checkpoint.load is None
+    assert cfg.tokenizer.tokenizer_model == "moonshotai/Moonlight-16B-A3B"
+    assert cfg.tokenizer.hf_tokenizer_kwargs == {
+        "revision": "476b36a473d4467f94469414bef6cee75c9c8172",  # pragma: allowlist secret
+        "trust_remote_code": True,
+    }
     assert isinstance(cfg.peft, LoRA)
     expected_targets = ["linear_q_proj", "linear_kv_down_proj", "linear_kv_up_proj", "linear_proj"]
     assert cfg.peft.target_modules == expected_targets

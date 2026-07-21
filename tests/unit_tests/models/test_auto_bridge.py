@@ -662,6 +662,23 @@ class TestAutoBridge:
 
         assert provider.hf_model_id == "hf/model-id"
 
+    def test_to_megatron_provider_persists_hf_model_revision(self):
+        """to_megatron_provider records the immutable revision used for config loading."""
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        mock_hf_model = PreTrainedCausalLM(model_name_or_path="hf/model-id", revision=revision)
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_provider.hf_model_id = None
+        mock_provider.hf_model_revision = None
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        assert provider.hf_model_id == "hf/model-id"
+        assert provider.hf_model_revision == revision
+
     def test_get_hf_model_id_from_checkpoint_delegates(self):
         """AutoBridge helper delegates to checkpoint utilities."""
         with patch(

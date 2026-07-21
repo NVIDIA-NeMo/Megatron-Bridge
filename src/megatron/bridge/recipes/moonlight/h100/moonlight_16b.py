@@ -27,12 +27,15 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
 
 
 _MOONLIGHT_16B_MODEL_ID = "moonshotai/Moonlight-16B-A3B"
+_MOONLIGHT_16B_MODEL_REVISION = "476b36a473d4467f94469414bef6cee75c9c8172"  # pragma: allowlist secret
 _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE = 163842
 
 
 def _moonlight_16b_model_provider() -> MLAModelProvider:
     """Build the Moonlight architecture from its Hugging Face configuration."""
-    return AutoBridge.from_hf_pretrained(_MOONLIGHT_16B_MODEL_ID).to_megatron_provider(load_weights=False)
+    return AutoBridge.from_hf_pretrained(
+        _MOONLIGHT_16B_MODEL_ID, revision=_MOONLIGHT_16B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
 
 def _moonlight_16b_finetuning_model_provider(
@@ -457,8 +460,11 @@ def moonlight_16b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
 
     # Tokenizer - HuggingFace tokenizer with trust_remote_code
-    cfg.tokenizer.tokenizer_model = "moonshotai/Moonlight-16B-A3B"
-    cfg.tokenizer.hf_tokenizer_kwargs = {"trust_remote_code": True}
+    cfg.tokenizer.tokenizer_model = _MOONLIGHT_16B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {
+        "revision": _MOONLIGHT_16B_MODEL_REVISION,
+        "trust_remote_code": True,
+    }
     # Uncomment below if using a pretrained checkpoint and provide path to the directory containing pretrained model for finetuning
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
@@ -730,8 +736,11 @@ def moonlight_16b_peft_2gpu_h100_bf16_config(
     )
 
     # Tokenizer - HuggingFace tokenizer with trust_remote_code
-    cfg.tokenizer.tokenizer_model = "moonshotai/Moonlight-16B-A3B"
-    cfg.tokenizer.hf_tokenizer_kwargs = {"trust_remote_code": True}
+    cfg.tokenizer.tokenizer_model = _MOONLIGHT_16B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {
+        "revision": _MOONLIGHT_16B_MODEL_REVISION,
+        "trust_remote_code": True,
+    }
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 50

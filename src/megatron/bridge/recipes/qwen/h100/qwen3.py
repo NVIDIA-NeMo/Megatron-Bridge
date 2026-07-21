@@ -25,6 +25,10 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
+_QWEN3_8B_MODEL_ID = "Qwen/Qwen3-8B"
+_QWEN3_8B_MODEL_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+
+
 def qwen3_600m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Qwen3 0.6B.
 
@@ -288,10 +292,13 @@ def qwen3_8b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_8B_MODEL_ID, revision=_QWEN3_8B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_8B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_8B_MODEL_REVISION}
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -994,10 +1001,13 @@ def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_8B_MODEL_ID, revision=_QWEN3_8B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_8B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_8B_MODEL_REVISION}
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 4
@@ -1628,10 +1638,13 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_8B_MODEL_ID, revision=_QWEN3_8B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_8B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_8B_MODEL_REVISION}
 
     # Parallelism settings - TP=1 for PEFT (only training adapters)
     cfg.model.tensor_model_parallel_size = 1

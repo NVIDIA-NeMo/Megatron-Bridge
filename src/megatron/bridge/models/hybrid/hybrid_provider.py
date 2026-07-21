@@ -159,14 +159,17 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     vocab_size: int | None = None
     should_pad_vocab: bool = False
     hf_model_id: str | None = None
+    """Optional HuggingFace model identifier associated with this provider."""
+
+    hf_model_revision: str | None = None
+    """Optional immutable HuggingFace revision used to construct this provider."""
+
     _pg_collection: ProcessGroupCollection | None = None
 
     # MTP
     mtp_num_layers: int | None = 0
     mtp_hybrid_override_pattern: str | None = None
     keep_mtp_spec_in_bf16: bool = False
-
-    """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore modelopt_state that contains quantization, sparsity, and speculative decoding state.
     restore_modelopt_state: bool = False
