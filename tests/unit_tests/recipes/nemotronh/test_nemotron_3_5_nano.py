@@ -108,7 +108,7 @@ class TestNemotron35NanoPretrain:
         config = nemotron_3_5_nano_pretrain_config()
 
         assert config.model.cuda_graph_impl == "transformer_engine"
-        assert config.model.cuda_graph_scope == ["attn", "mamba"]
+        assert config.model.cuda_graph_scope == ["mamba"]
         assert config.model.cuda_graph_warmup_steps == 3
         assert config.model.use_te_rng_tracker is True
 

@@ -183,7 +183,7 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba"]
+    cfg.model.cuda_graph_scope = ["mamba"]
 
     cfg.model.recompute_modules = ["moe", "layernorm"]
 
