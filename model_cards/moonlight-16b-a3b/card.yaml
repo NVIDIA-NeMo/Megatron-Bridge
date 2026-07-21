@@ -159,8 +159,9 @@ items:
       iter_0000100 checkpoints before this cohort item can be marked verified.
 
   sft:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -182,18 +183,20 @@ items:
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-21
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 1.362357
+      final_loss: 1.065960
+      last_10_steps_step_time_ms_avg: 2008.240
+      last_10_steps_model_tflops_per_gpu_avg: 64.110
     expected_result: >
-      The pending TP1/PP1/EP8 run must preserve recipe-owned GBS/MBS 32/1 and
-      pad-1 offline packing, complete exactly 100 full-SFT steps with finite
-      losses and no skipped or NaN iterations, and save a complete full-model
-      iter_0000100 checkpoint. Packing efficiency and the actual supervised-
-      token count after label masking must be recorded before verification.
+      The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at
+      TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 32/1, and four-way gradient
+      accumulation. Pad-1 offline packing is 99.20% efficient, and the sampled
+      6,553,600 token slots contain 4,308,035 supervised tokens after label
+      masking. LM loss is finite from 1.362357 to 1.065960 with no skipped or
+      NaN iterations, all four metrics are recorded, and the complete
+      eight-shard iter_0000100 full-model checkpoint reloads successfully.
 
   sft_export_inference:
     status: unverified
@@ -263,8 +266,9 @@ items:
       sampled training window contains 13,765,732 actual supervised tokens.
 
   peft:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
     gpu_type: H100
     enabled_features:
       sequence_packing: offline
@@ -286,19 +290,22 @@ items:
       validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
       --save_dir work/model-verification/moonlight-16b-a3b/peft-convergence-v1-checkpoints
       --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-    last_verified: null
+    last_verified: 2026-07-21
     metrics:
-      initial_loss: null
-      final_loss: null
-      last_10_steps_step_time_ms_avg: null
-      last_10_steps_model_tflops_per_gpu_avg: null
+      initial_loss: 1.265733
+      final_loss: 1.099398
+      last_10_steps_step_time_ms_avg: 18790.150
+      last_10_steps_model_tflops_per_gpu_avg: 13.740
     expected_result: >
-      The pending TP4/PP1/EP4 run must preserve recipe-owned GBS/MBS 32/1 and
-      pad-4 offline packing, train only rank-8, alpha-16, zero-dropout LoRA on
-      Moonlight's model-native attention projections, and complete exactly 100
-      steps with finite losses and no skipped or NaN iterations. Packing
-      efficiency, actual supervised-token count, and a complete iter_0000100
-      adapter checkpoint must be recorded before verification.
+      The immutable-revision 4-GPU run completes exactly 100 PEFT steps at
+      TP4/PP1/CP1/EP4/ETP1, DP1, SP on, GBS/MBS 32/1, and 32-way gradient
+      accumulation. Pad-4 offline packing is 99.29% efficient, and the sampled
+      6,553,600 token slots contain 4,291,091 supervised tokens after label
+      masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_q_proj,
+      linear_kv_down_proj, linear_kv_up_proj, and linear_proj is trainable. LM
+      loss is finite from 1.265733 to 1.099398 with no skipped or NaN
+      iterations, all four metrics are recorded, and the complete four-shard
+      iter_0000100 adapter checkpoint covers all 216 expected adapter entries.
 
   checkpoint_resume:
     status: unverified
