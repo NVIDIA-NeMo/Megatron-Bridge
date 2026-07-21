@@ -28,7 +28,7 @@ import torch
 from megatron.core.msc_utils import MultiStorageClientFeature
 
 from megatron.bridge.models.common import Serializable
-from megatron.bridge.training.utils.config_utils import _ConfigContainerBase
+from megatron.bridge.training.utils.config_utils import _ConfigContainerBase, create_ddp_config
 from megatron.bridge.utils.instantiate_utils import InstantiationMode
 
 
@@ -1316,3 +1316,27 @@ class TestConfigContainerBackwardCompat:
 
         assert result.name == "test_from_dict"
         assert result.value == 42
+
+
+def test_create_ddp_config_can_skip_wrapping():
+    assert create_ddp_config(wrap_with_ddp=False) is None
+
+
+def test_create_ddp_config_applies_overrides_before_finalize():
+    config = create_ddp_config(
+        use_distributed_optimizer=False,
+        overrides={"check_for_nan_in_grad": True},
+        finalize=False,
+    )
+
+    assert config.use_distributed_optimizer is False
+    assert config.check_for_nan_in_grad is True
+
+
+def test_create_ddp_config_sets_megatron_fsdp_defaults():
+    config = create_ddp_config(use_distributed_optimizer=False, use_megatron_fsdp=True, finalize=False)
+
+    assert config.use_distributed_optimizer is True
+    assert config.use_megatron_fsdp is True
+    assert config.data_parallel_sharding_strategy == "optim_grads_params"
+    assert config.overlap_grad_reduce is True

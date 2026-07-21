@@ -16,7 +16,7 @@ import abc
 import os
 import warnings
 from pathlib import Path
-from typing import Any, Callable, Generic, TypedDict, TypeVar, Union
+from typing import Any, Callable, Generic, Mapping, Self, TypedDict, TypeVar, Union
 
 from megatron.bridge.models.common.unimodal import _ddp_wrap, _print_num_params
 
@@ -103,6 +103,25 @@ class ModelProviderMixin(abc.ABC, Generic[ModelT]):
             ModelT: The Megatron model instance.
         """
         pass
+
+    def apply_overrides_and_finalize(
+        self,
+        dtype: torch.dtype | None = None,
+        overrides: Mapping[str, object] | None = None,
+    ) -> Self:
+        """Apply runtime overrides before finalizing the provider configuration."""
+        if dtype is not None:
+            self.params_dtype = dtype
+            self.fp16 = dtype == torch.float16
+            self.bf16 = dtype == torch.bfloat16
+
+        for name, value in (overrides or {}).items():
+            if not hasattr(self, name):
+                raise AttributeError(f"{type(self).__name__} has no attribute {name!r}.")
+            setattr(self, name, value)
+
+        self.finalize()
+        return self
 
     def provide_distributed_model(
         self,

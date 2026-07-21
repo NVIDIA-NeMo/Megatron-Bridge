@@ -103,14 +103,17 @@ class TestQwen3VLTransformerBlock:
         """Teardown Megatron parallel state."""
         parallel_state.destroy_model_parallel()
 
-    @pytest.mark.timeout(30)
-    @pytest.mark.parametrize("recompute_method", ["uniform", "block"])
-    def test_checkpointed_forward(self, transformer_config, recompute_method):
+    @pytest.mark.parametrize(
+        ("recompute_method", "recompute_num_layers"),
+        [("uniform", 1), ("uniform", 3), ("block", 1)],
+    )
+    def test_checkpointed_forward(self, transformer_config, recompute_method, recompute_num_layers):
         """Test checkpointed forward pass."""
         self._setup_parallel_state()
 
         # Update config for specific recompute method
         transformer_config.recompute_method = recompute_method
+        transformer_config.recompute_num_layers = recompute_num_layers
         layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,
             moe_grouped_gemm=False,

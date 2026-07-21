@@ -20,10 +20,11 @@ import time
 from collections import defaultdict
 from datetime import datetime
 from functools import partial
-from typing import TYPE_CHECKING, Any, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 import torch
 import torch.nn as nn
+from megatron.core import tensor_parallel
 from megatron.core.num_microbatches_calculator import get_num_microbatches
 from megatron.core.tensor_parallel import param_is_not_tensor_parallel_duplicate
 from megatron.core.transformer.module import MegatronModule
@@ -46,6 +47,117 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+ModelList = list[MegatronModule]
+ModelHook = Callable[[ModelList], ModelList | None]
+
+
+class LinearForLastLayer(nn.Linear):
+    """Final replicated projection head compatible with Megatron output-layer calls."""
+
+    def __init__(self, input_size: int, output_size: int, sequence_parallel: bool) -> None:
+        super().__init__(in_features=input_size, out_features=output_size, bias=False)
+        self.sequence_parallel = sequence_parallel
+        if sequence_parallel:
+            setattr(self.weight, "sequence_parallel", True)
+
+    def forward(
+        self,
+        input_: torch.Tensor,
+        weight: torch.Tensor | None = None,
+        runtime_gather_output: bool | None = None,
+    ) -> tuple[torch.Tensor, None]:
+        del weight, runtime_gather_output
+        logits = super().forward(input_).float()
+        if self.sequence_parallel:
+            logits = tensor_parallel.gather_from_sequence_parallel_region(
+                logits,
+                tensor_parallel_output_grad=False,
+            )
+        return logits, None
+
+
+def create_value_head_hook(hidden_size: int, sequence_parallel: bool, output_size: int = 1) -> ModelHook:
+    """Create a model hook that installs a replicated value projection head."""
+    from megatron.core import parallel_state
+
+    _register_linear_for_last_layer_mapping()
+
+    def hook(model: ModelList | MegatronModule) -> ModelList:
+        model_chunks = _ensure_model_list(model)
+        model_post_process: list[bool] = []
+        if (
+            parallel_state.get_pipeline_model_parallel_world_size() > 1
+            and parallel_state.get_virtual_pipeline_model_parallel_world_size() is not None
+        ):
+            for vp_stage in range(parallel_state.get_virtual_pipeline_model_parallel_world_size()):
+                model_post_process.append(parallel_state.is_pipeline_last_stage(ignore_virtual=False, vp_stage=vp_stage))
+        else:
+            model_post_process.append(parallel_state.is_pipeline_last_stage())
+
+        if len(model_post_process) != len(model_chunks):
+            raise ValueError(
+                "Model list length and pipeline post-process list length must match. "
+                f"Got {len(model_chunks)} model chunks and {len(model_post_process)} post-process flags."
+            )
+
+        for index, model_chunk in enumerate(model_chunks):
+            if model_post_process[index]:
+                model_chunk.output_layer = LinearForLastLayer(
+                    input_size=hidden_size,
+                    output_size=output_size,
+                    sequence_parallel=sequence_parallel,
+                )
+
+        return model_chunks
+
+    return hook
+
+
+def make_value_model(hidden_size: int, sequence_parallel: bool) -> ModelHook:
+    """Create the default scalar value-head hook used by RL trainers."""
+    return create_value_head_hook(hidden_size=hidden_size, sequence_parallel=sequence_parallel)
+
+
+def freeze_moe_router(model: ModelList | MegatronModule) -> ModelList:
+    """Freeze MoE router and shared-expert gate parameters in each model chunk."""
+    model_chunks = _ensure_model_list(model)
+    for model_chunk in model_chunks:
+        decoder = getattr(model_chunk, "decoder", None)
+        layers = getattr(decoder, "layers", None)
+        if layers is None:
+            continue
+        for layer in layers:
+            mlp = getattr(layer, "mlp", None)
+            if mlp is None:
+                continue
+            router = getattr(mlp, "router", None)
+            if router is not None:
+                _freeze_parameter_if_present(router, "weight")
+                _freeze_parameter_if_present(router, "bias")
+
+            shared_experts = getattr(mlp, "shared_experts", None)
+            if shared_experts is not None:
+                _freeze_parameter_if_present(shared_experts, "gate_weight")
+                _freeze_parameter_if_present(shared_experts, "gate_bias")
+
+    return model_chunks
+
+
+def _ensure_model_list(model: ModelList | MegatronModule) -> ModelList:
+    return model if isinstance(model, list) else [model]
+
+
+def _freeze_parameter_if_present(module: object, name: str) -> None:
+    parameter = getattr(module, name, None)
+    if parameter is not None:
+        parameter.requires_grad = False
+
+
+def _register_linear_for_last_layer_mapping() -> None:
+    from megatron.bridge.models.conversion.param_mapping import AutoMapping
+
+    AutoMapping.register_module_type("LinearForLastLayer", "replicated")
 
 
 def start_memory_history_recording(profiling: ProfilingConfig | None) -> None:

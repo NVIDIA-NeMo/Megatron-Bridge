@@ -32,8 +32,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.transformer_config import
 
 
 class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
-    """Multimodal Rotary Embedding for language model.
-    only support for qwen3vl
+    """Multimodal Rotary Embedding for Qwen3-VL/Qwen3-Omni language model.
 
     Args:
         kv_channels (int): Projection weights dimension in multi-head attention. Obtained
@@ -63,7 +62,6 @@ class Qwen3VLMultimodalRotaryEmbedding(nn.Module):
         if rotary_percent < 1.0:
             dim = int(dim * rotary_percent)
         self.rotary_interleaved = rotary_interleaved
-        assert not self.rotary_interleaved, "only support qwen3vl"
 
         self.seq_len_interpolation_factor = seq_len_interpolation_factor
         self.inv_freq = 1.0 / (

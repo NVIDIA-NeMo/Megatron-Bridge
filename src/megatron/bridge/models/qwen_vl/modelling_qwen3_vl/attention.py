@@ -13,7 +13,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import torch
 from einops import rearrange
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer.attention import (
     HAVE_FA3,
     BaseInferenceContext,
@@ -27,6 +29,25 @@ from megatron.core.transformer.attention import (
 from torch import Tensor
 
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.rope import apply_rotary_pos_emb_absolute
+
+
+def _qwen_attention_mask_for_core_attention(
+    core_attention: object,
+    attention_mask: Tensor | None,
+    packed_seq_params: PackedSeqParams | None,
+) -> Tensor | None:
+    """Translate Qwen's 2D valid-token mask to TE's masked-token convention."""
+    if (
+        not isinstance(core_attention, TEDotProductAttention)
+        or packed_seq_params is not None
+        or not isinstance(attention_mask, Tensor)
+        or attention_mask.ndim != 2
+        or attention_mask.dtype != torch.bool
+    ):
+        return attention_mask
+    if bool(attention_mask.all().item()):
+        return None
+    return (~attention_mask).unsqueeze(1).unsqueeze(1)
 
 
 class Qwen3VLSelfAttention(SelfAttention):
@@ -217,12 +238,17 @@ class Qwen3VLSelfAttention(SelfAttention):
         # ==================================
 
         nvtx_range_push(suffix="core_attention")
+        core_attention_mask = _qwen_attention_mask_for_core_attention(
+            self.core_attention,
+            attention_mask,
+            packed_seq_params,
+        )
         if self.checkpoint_core_attention and self.training:
             core_attn_out = self._checkpointed_attention_forward(
                 query,
                 key,
                 value,
-                attention_mask,
+                core_attention_mask,
                 attn_mask_type=attn_mask_type,
                 attention_bias=attention_bias,
                 packed_seq_params=packed_seq_params,
@@ -234,7 +260,7 @@ class Qwen3VLSelfAttention(SelfAttention):
                     query,
                     key,
                     value,
-                    attention_mask,
+                    core_attention_mask,
                     attn_mask_type=attn_mask_type,
                     attention_bias=attention_bias,
                     packed_seq_params=packed_seq_params,

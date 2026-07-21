@@ -187,8 +187,9 @@ class Qwen3VLVisionTransformerBlock(TransformerBlock):
             layer_idx = 0
 
             while layer_idx < self.num_layers_per_pipeline_rank:
+                chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
                 hidden_states, layer_deepstack_feature_lists, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
+                    custom(layer_idx, chunk_end)
                 )
 
                 layer_idx += self.config.recompute_num_layers
@@ -589,9 +590,8 @@ class Qwen3VLTransformerBlock(TransformerBlock):
             # A method to further reduce memory usage reducing checkpoints.
             layer_idx = 0
             while layer_idx < self.num_layers_per_pipeline_rank:
-                hidden_states, context = checkpoint_handler(
-                    custom(layer_idx, layer_idx + self.config.recompute_num_layers)
-                )
+                chunk_end = min(layer_idx + self.config.recompute_num_layers, self.num_layers_per_pipeline_rank)
+                hidden_states, context = checkpoint_handler(custom(layer_idx, chunk_end))
 
                 layer_idx += self.config.recompute_num_layers
 
