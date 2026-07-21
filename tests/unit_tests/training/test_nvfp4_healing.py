@@ -341,6 +341,61 @@ class TestValidateQuantized:
         cb._validate_quantized(SimpleNamespace(_data=torch.zeros(1)), "delayed")
 
 
+class TestApplyHealing:
+    def test_missing_stash_raises_when_prequantize_configured(self):
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True))
+        ctx = make_context(step=2)
+        ctx.model = [make_fake_chunk([1])]
+        with (
+            patch.object(cb, "_reset_cuda_graphs"),
+            patch.object(cb, "_swap_in_fp8_weights"),
+            patch.object(cb, "_build_healing_recipe", return_value=object()),
+            patch.object(cb, "_patch_fp4_recipe"),
+        ):
+            with pytest.raises(RuntimeError, match="stash"):
+                cb._apply_healing(ctx)
+
+    def test_healing_order_with_prequantized_weights(self):
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True))
+        cb._fp8_stash = [object()]
+        ctx = make_context(step=2)
+        ctx.model = [make_fake_chunk([1])]
+        call_order = []
+        recipe = object()
+        with (
+            patch.object(cb, "_reset_cuda_graphs", side_effect=lambda: call_order.append("reset")),
+            patch.object(cb, "_swap_in_fp8_weights", side_effect=lambda m: call_order.append("swap")),
+            patch.object(cb, "_build_healing_recipe", return_value=recipe),
+            patch.object(cb, "_patch_fp4_recipe", side_effect=lambda r: call_order.append("patch")),
+        ):
+            cb._apply_healing(ctx)
+        assert call_order == ["reset", "swap", "patch"]
+
+    def test_recipe_switch_only_without_prequantize(self):
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=False))
+        ctx = make_context(step=2)
+        ctx.model = [make_fake_chunk([1])]
+        with (
+            patch.object(cb, "_reset_cuda_graphs"),
+            patch.object(cb, "_swap_in_fp8_weights") as swap,
+            patch.object(cb, "_build_healing_recipe", return_value=object()),
+            patch.object(cb, "_patch_fp4_recipe") as patch_recipe,
+        ):
+            cb._apply_healing(ctx)
+        swap.assert_not_called()
+        patch_recipe.assert_called_once()
+
+
+class TestSwapInFP8Weights:
+    def test_stash_count_mismatch_raises(self):
+        model = [make_fake_chunk([1, 2])]
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True))
+        cb._fp8_stash = [object()]  # 1 stash entry vs 2 modules
+        with patch_target_module():
+            with pytest.raises(RuntimeError, match="stash"):
+                cb._swap_in_fp8_weights(model)
+
+
 class TestHookRegistration:
     def test_registers_expected_hooks(self):
         manager = CallbackManager()
