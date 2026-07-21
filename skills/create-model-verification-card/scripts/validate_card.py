@@ -57,6 +57,23 @@ ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
 TRAINING_ITEMS = frozenset(
     {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
 )
+HARDWARE_SCOPED_ITEMS = TRAINING_ITEMS | {"sft_export_inference"}
+PUBLIC_HARDWARE_KEYS = frozenset(
+    {
+        "A100",
+        "A800",
+        "B100",
+        "B200",
+        "B300",
+        "GB200",
+        "GB300",
+        "H20",
+        "H100",
+        "H200",
+        "H800",
+        "R100",
+    }
+)
 CONVERSION_ITEMS = frozenset({"hf_to_megatron_cpu", "hf_to_megatron_gpu", "megatron_to_hf_cpu", "megatron_to_hf_gpu"})
 FEATURE_ITEMS = frozenset({"pretrain", "sft", "sft_long_context", "peft"})
 METRIC_NAMES = frozenset(
@@ -88,7 +105,6 @@ ITEM_KEYS = frozenset(
         "commands",
         "last_verified",
         "expected_result",
-        "gpu_type",
         "enabled_features",
         "metrics",
         "resume_comparison",
@@ -221,6 +237,67 @@ def _as_mapping(value: Any, *, path: tuple[str, ...], errors: list[str]) -> Mapp
     return value
 
 
+def _hardware_variants(
+    value: Any,
+    *,
+    item_name: str,
+    errors: list[str],
+) -> dict[str, Mapping[str, Any]]:
+    """Return hardware-keyed item leaves after validating the group shape."""
+    path = ("items", item_name)
+    variants = _as_mapping(value, path=path, errors=errors)
+    if variants is None:
+        return {}
+    if any(key in ITEM_KEYS for key in variants):
+        errors.append(f"{_pointer(*path)}: hardware-scoped items must be keyed by hardware, for example H100")
+        return {}
+    if not variants:
+        errors.append(f"{_pointer(*path)}: expected at least one hardware entry")
+        return {}
+
+    result: dict[str, Mapping[str, Any]] = {}
+    normalized_keys: set[str] = set()
+    for hardware, leaf_value in variants.items():
+        if not isinstance(hardware, str) or hardware not in PUBLIC_HARDWARE_KEYS | {"all"}:
+            errors.append(
+                f"{_pointer(*path, str(hardware))}: expected a supported public hardware key; "
+                f"choose from {sorted(PUBLIC_HARDWARE_KEYS)} or all"
+            )
+            continue
+        normalized = hardware.casefold()
+        if normalized in normalized_keys:
+            errors.append(f"{_pointer(*path, hardware)}: hardware keys must be case-insensitively unique")
+            continue
+        normalized_keys.add(normalized)
+        leaf = _as_mapping(leaf_value, path=(*path, hardware), errors=errors)
+        if leaf is not None:
+            result[hardware] = leaf
+
+    if "all" in variants:
+        if len(variants) != 1:
+            errors.append(f"{_pointer(*path, 'all')}: the global hardware key cannot be mixed with concrete hardware")
+        all_leaf = variants.get("all")
+        status = all_leaf.get("status") if isinstance(all_leaf, Mapping) else None
+        if status not in {"unsupported", "not_applicable"}:
+            errors.append(f"{_pointer(*path, 'all', 'status')}: all is reserved for global terminal limitations")
+    return result
+
+
+def _iter_item_leaves(
+    items: Mapping[str, Any],
+) -> Iterable[tuple[str, str | None, Mapping[str, Any], tuple[str, ...]]]:
+    """Yield ordinary items and nested hardware leaves with their JSON-pointer paths."""
+    for item_name, value in items.items():
+        if not isinstance(value, Mapping):
+            continue
+        if item_name in HARDWARE_SCOPED_ITEMS and "status" not in value:
+            for hardware, leaf in value.items():
+                if isinstance(leaf, Mapping):
+                    yield item_name, hardware, leaf, ("items", item_name, hardware)
+        else:
+            yield item_name, None, value, ("items", item_name)
+
+
 def _is_iso_date(value: Any) -> bool:
     if isinstance(value, dt.datetime):
         return False
@@ -267,8 +344,8 @@ def _command_values(item: Mapping[str, Any]) -> list[str]:
     return []
 
 
-def _validate_enabled_features(value: Any, *, item_name: str, errors: list[str]) -> None:
-    path = ("items", item_name, "enabled_features")
+def _validate_enabled_features(value: Any, *, item_path: tuple[str, ...], errors: list[str]) -> None:
+    path = (*item_path, "enabled_features")
     features = _as_mapping(value, path=path, errors=errors)
     if features is None:
         return
@@ -314,8 +391,14 @@ def _validate_enabled_features(value: Any, *, item_name: str, errors: list[str])
         errors.append(f"{_pointer(*path, 'moe_dispatcher')}: expected deepep or hybridep")
 
 
-def _validate_metrics(item: Mapping[str, Any], *, item_name: str, status: str, errors: list[str]) -> None:
-    path = ("items", item_name, "metrics")
+def _validate_metrics(
+    item: Mapping[str, Any],
+    *,
+    item_path: tuple[str, ...],
+    status: str,
+    errors: list[str],
+) -> None:
+    path = (*item_path, "metrics")
     metrics = _as_mapping(item.get("metrics"), path=path, errors=errors)
     if metrics is None:
         return
@@ -495,8 +578,8 @@ def _validate_conversion_launcher(
         errors.append(f"{_pointer(*path)}: verified conversion must wait for completion")
 
 
-def _validate_training_launcher(command: str, *, item_name: str, errors: list[str]) -> None:
-    path = ("items", item_name, "command")
+def _validate_training_launcher(command: str, *, item_path: tuple[str, ...], errors: list[str]) -> None:
+    path = (*item_path, "command")
     try:
         tokens = shlex.split(command)
     except ValueError:
@@ -524,10 +607,19 @@ def _validate_command_text(command: str, *, path: tuple[str, ...], errors: list[
         errors.append(f"{_pointer(*path)}: card commands must use recipe batch sizes")
 
 
-def _validate_resume(item: Mapping[str, Any], *, status: str, errors: list[str]) -> None:
-    path = ("items", "checkpoint_resume")
+def _validate_resume(
+    item: Mapping[str, Any],
+    *,
+    item_path: tuple[str, ...],
+    status: str,
+    errors: list[str],
+) -> None:
+    path = item_path
     if item.get("depends_on") != "pretrain":
         errors.append(f"{_pointer(*path, 'depends_on')}: must be pretrain")
+
+    if status in {"unsupported", "not_applicable"} and item.get("resume_comparison") is None:
+        return
 
     comparison = _as_mapping(item.get("resume_comparison"), path=(*path, "resume_comparison"), errors=errors)
     if comparison is None:
@@ -622,19 +714,20 @@ def _validate_resume_against_pretrain(
     item: Mapping[str, Any],
     pretrain_item: Mapping[str, Any],
     *,
+    resume_path: tuple[str, ...],
+    pretrain_path: tuple[str, ...],
     default_bridge_commit: str | None,
     errors: list[str],
 ) -> None:
     """Require a direct resume to use its reference run's checkpoint and settings."""
     if item.get("status") == "verified":
         if pretrain_item.get("status") != "verified":
-            errors.append(f"{_pointer('items', 'checkpoint_resume', 'depends_on')}: pretrain must be verified first")
+            errors.append(f"{_pointer(*resume_path, 'depends_on')}: pretrain must be verified first")
         reference_commit = pretrain_item.get("bridge_commit") or default_bridge_commit
         resume_commit = item.get("bridge_commit") or default_bridge_commit
         if reference_commit != resume_commit:
             errors.append(
-                f"{_pointer('items', 'checkpoint_resume', 'bridge_commit')}: "
-                "resume and pretrain must use the same Bridge commit"
+                f"{_pointer(*resume_path, 'bridge_commit')}: resume and pretrain must use the same Bridge commit"
             )
 
     resume_command = _command_value(item)
@@ -642,31 +735,35 @@ def _validate_resume_against_pretrain(
     if resume_command is None or pretrain_command is None:
         return
 
-    resume_path = ("items", "checkpoint_resume", "command")
-    pretrain_path = ("items", "pretrain", "command")
+    resume_command_path = (*resume_path, "command")
+    pretrain_command_path = (*pretrain_path, "command")
     reference_save_dirs = _argument_values(pretrain_command, "--save_dir")
     resume_load_dirs = _argument_values(resume_command, "--load_dir")
     if len(reference_save_dirs) != 1:
-        errors.append(f"{_pointer(*pretrain_path)}: checkpoint resume requires exactly one reference --save_dir")
+        errors.append(
+            f"{_pointer(*pretrain_command_path)}: checkpoint resume requires exactly one reference --save_dir"
+        )
     if len(resume_load_dirs) != 1:
-        errors.append(f"{_pointer(*resume_path)}: checkpoint resume requires exactly one --load_dir")
+        errors.append(f"{_pointer(*resume_command_path)}: checkpoint resume requires exactly one --load_dir")
     if len(reference_save_dirs) == 1 and len(resume_load_dirs) == 1:
         if reference_save_dirs[0].rstrip("/") != resume_load_dirs[0].rstrip("/"):
-            errors.append(f"{_pointer(*resume_path)}: --load_dir must equal the pretrain --save_dir")
+            errors.append(f"{_pointer(*resume_command_path)}: --load_dir must equal the pretrain --save_dir")
 
     if _argument_values(pretrain_command, "--load_dir"):
-        errors.append(f"{_pointer(*pretrain_path)}: uninterrupted reference pretrain must not use --load_dir")
+        errors.append(f"{_pointer(*pretrain_command_path)}: uninterrupted reference pretrain must not use --load_dir")
     if _config_override_values(pretrain_command, "checkpoint.ckpt_step"):
         errors.append(
-            f"{_pointer(*pretrain_path)}: uninterrupted reference pretrain must not set checkpoint.ckpt_step"
+            f"{_pointer(*pretrain_command_path)}: uninterrupted reference pretrain must not set checkpoint.ckpt_step"
         )
     reference_load_values = _config_override_values(pretrain_command, "checkpoint.load")
     if len(reference_load_values) > 1:
-        errors.append(f"{_pointer(*pretrain_path)}: checkpoint.load must not be overridden more than once")
+        errors.append(f"{_pointer(*pretrain_command_path)}: checkpoint.load must not be overridden more than once")
     elif reference_load_values and reference_load_values[0].lower() not in {"none", "null"}:
-        errors.append(f"{_pointer(*pretrain_path)}: uninterrupted reference checkpoint.load must be null")
+        errors.append(f"{_pointer(*pretrain_command_path)}: uninterrupted reference checkpoint.load must be null")
     if _config_override_values(pretrain_command, "checkpoint.save"):
-        errors.append(f"{_pointer(*pretrain_path)}: use the canonical --save_dir argument, not checkpoint.save")
+        errors.append(
+            f"{_pointer(*pretrain_command_path)}: use the canonical --save_dir argument, not checkpoint.save"
+        )
 
     required_reference_values = {
         "checkpoint.finetune": "false",
@@ -676,9 +773,11 @@ def _validate_resume_against_pretrain(
     for field, expected_value in required_reference_values.items():
         values = _config_override_values(pretrain_command, field)
         if len(values) > 1:
-            errors.append(f"{_pointer(*pretrain_path)}: {field} must not be overridden more than once")
+            errors.append(f"{_pointer(*pretrain_command_path)}: {field} must not be overridden more than once")
         elif values and values[0].lower() != expected_value:
-            errors.append(f"{_pointer(*pretrain_path)}: {field} must remain {expected_value} for checkpoint resume")
+            errors.append(
+                f"{_pointer(*pretrain_command_path)}: {field} must remain {expected_value} for checkpoint resume"
+            )
 
     reference_settings = _resume_reference_settings(pretrain_command)
     resume_settings = _resume_reference_settings(resume_command)
@@ -691,7 +790,7 @@ def _validate_resume_against_pretrain(
         if reference_settings.count(setting) != resume_settings.count(setting)
     ]
     errors.append(
-        f"{_pointer(*resume_path)}: reference and resume launch settings must match; "
+        f"{_pointer(*resume_command_path)}: reference and resume launch settings must match; "
         f"differences found in {_resume_setting_names(differing_settings)}"
     )
 
@@ -700,6 +799,7 @@ def _validate_inference(
     item: Mapping[str, Any],
     *,
     item_name: str,
+    item_path: tuple[str, ...] | None = None,
     status: str,
     errors: list[str],
     command_override: str | None = None,
@@ -707,7 +807,7 @@ def _validate_inference(
 ) -> None:
     if status != "verified":
         return
-    path = ("items", item_name)
+    path = item_path or ("items", item_name)
     resolved_command_path = command_path or (*path, "command")
     command = command_override if command_override is not None else _command_value(item)
     expected = item.get("expected_result")
@@ -879,8 +979,15 @@ def _validate_manual_forward_pass(
             )
 
 
-def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[str, Any], *, errors: list[str]) -> None:
-    path = ("items", "sft_export_inference")
+def _validate_sft_export_inference(
+    item: Mapping[str, Any],
+    sft_item: Mapping[str, Any],
+    *,
+    item_path: tuple[str, ...],
+    sft_path: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    path = item_path
     if item.get("depends_on") != "sft":
         errors.append(f"{_pointer(*path, 'depends_on')}: must be sft")
     status = item.get("status")
@@ -939,6 +1046,7 @@ def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[st
     _validate_inference(
         item,
         item_name="sft_export_inference",
+        item_path=item_path,
         status=status,
         errors=errors,
         command_override=inference_command,
@@ -951,9 +1059,7 @@ def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[st
         save_dir = _argument_value(sft_command, "--save_dir")
         max_steps = _argument_value(sft_command, "--max_steps")
         if save_dir is None or max_steps is None or not max_steps.isdigit():
-            errors.append(
-                f"{_pointer('items', 'sft', 'command')}: verified SFT export requires a final save directory"
-            )
+            errors.append(f"{_pointer(*sft_path, 'command')}: verified SFT export requires a final save directory")
         else:
             expected_megatron_path = f"{save_dir.rstrip('/')}/iter_{int(max_steps):07d}"
             if megatron_path != expected_megatron_path:
@@ -967,10 +1073,17 @@ def _validate_sft_export_inference(item: Mapping[str, Any], sft_item: Mapping[st
         errors.append(f"{_pointer(*path, 'expected_result')}: state that the HF export reloads")
 
 
-def _validate_training_window(item: Mapping[str, Any], *, item_name: str, status: str, errors: list[str]) -> None:
+def _validate_training_window(
+    item: Mapping[str, Any],
+    *,
+    item_name: str,
+    item_path: tuple[str, ...],
+    status: str,
+    errors: list[str],
+) -> None:
     if status != "verified":
         return
-    path = ("items", item_name, "command")
+    path = (*item_path, "command")
     command = _command_value(item)
     if command is None:
         return
@@ -990,8 +1103,14 @@ def _validate_training_window(item: Mapping[str, Any], *, item_name: str, status
         errors.append(f"{_pointer(*path)}: last-10 metrics require at least 10 executed optimizer steps")
 
 
-def _validate_item(item_name: str, value: Any, errors: list[str], *, model_revision: str | None) -> None:
-    path = ("items", item_name)
+def _validate_item(
+    item_name: str,
+    value: Any,
+    errors: list[str],
+    *,
+    path: tuple[str, ...],
+    model_revision: str | None,
+) -> None:
     item = _as_mapping(value, path=path, errors=errors)
     if item is None:
         return
@@ -1001,7 +1120,7 @@ def _validate_item(item_name: str, value: Any, errors: list[str], *, model_revis
     else:
         required |= frozenset({"command"})
     if item_name in TRAINING_ITEMS:
-        required |= frozenset({"gpu_type", "metrics"})
+        required |= frozenset({"metrics"})
     if item_name in FEATURE_ITEMS:
         required |= frozenset({"enabled_features"})
     if item_name == "checkpoint_resume":
@@ -1102,22 +1221,23 @@ def _validate_item(item_name: str, value: Any, errors: list[str], *, model_revis
             )
 
     if item_name in TRAINING_ITEMS:
-        gpu_type = item.get("gpu_type")
-        if status == "verified" and (not isinstance(gpu_type, str) or not gpu_type.strip()):
-            errors.append(f"{_pointer(*path, 'gpu_type')}: verified training requires a public GPU type")
-        if status in {"unsupported", "not_applicable"} and gpu_type is not None:
-            errors.append(f"{_pointer(*path, 'gpu_type')}: must be null for status {status}")
-        _validate_metrics(item, item_name=item_name, status=status, errors=errors)
-        _validate_training_window(item, item_name=item_name, status=status, errors=errors)
+        _validate_metrics(item, item_path=path, status=status, errors=errors)
+        _validate_training_window(
+            item,
+            item_name=item_name,
+            item_path=path,
+            status=status,
+            errors=errors,
+        )
         if status == "verified":
             complete_command = _command_value(item)
             if complete_command is not None:
-                _validate_training_launcher(complete_command, item_name=item_name, errors=errors)
-    elif item.get("metrics") is not None or item.get("gpu_type") is not None:
-        errors.append(f"{_pointer(*path)}: metrics and gpu_type are training-only fields")
+                _validate_training_launcher(complete_command, item_path=path, errors=errors)
+    elif item.get("metrics") is not None:
+        errors.append(f"{_pointer(*path)}: metrics are allowed only on training items")
 
     if item_name in FEATURE_ITEMS:
-        _validate_enabled_features(item.get("enabled_features"), item_name=item_name, errors=errors)
+        _validate_enabled_features(item.get("enabled_features"), item_path=path, errors=errors)
         if item_name == "sft_long_context" and status == "verified":
             features = item.get("enabled_features")
             if isinstance(features, Mapping):
@@ -1136,11 +1256,13 @@ def _validate_item(item_name: str, value: Any, errors: list[str], *, model_revis
         errors.append(f"{_pointer(*path, 'enabled_features')}: field is not allowed on this item")
 
     if item_name == "checkpoint_resume":
-        _validate_resume(item, status=status, errors=errors)
+        _validate_resume(item, item_path=path, status=status, errors=errors)
+    if item_name == "sft_export_inference" and item.get("depends_on") != "sft":
+        errors.append(f"{_pointer(*path, 'depends_on')}: must be sft")
     if item_name == "manual_forward_pass":
         _validate_manual_forward_pass(item, status=status, model_revision=model_revision, errors=errors)
     if item_name == "inference":
-        _validate_inference(item, item_name=item_name, status=status, errors=errors)
+        _validate_inference(item, item_name=item_name, item_path=path, status=status, errors=errors)
 
 
 def _walk_keys(value: Any, path: tuple[str, ...] = ()) -> Iterable[tuple[tuple[str, ...], str]]:
@@ -1188,14 +1310,13 @@ def _validate_privacy(raw: str, card: Mapping[str, Any], deny_terms: tuple[str, 
     commands: list[str] = []
     items = card.get("items")
     if isinstance(items, Mapping):
-        for item in items.values():
-            if isinstance(item, Mapping):
-                command = item.get("command")
-                if isinstance(command, str):
-                    commands.append(command)
-                command_list = item.get("commands")
-                if isinstance(command_list, list):
-                    commands.extend(value for value in command_list if isinstance(value, str))
+        for _, _, item, _ in _iter_item_leaves(items):
+            command = item.get("command")
+            if isinstance(command, str):
+                commands.append(command)
+            command_list = item.get("commands")
+            if isinstance(command_list, list):
+                commands.extend(value for value in command_list if isinstance(value, str))
     if any("$(" in command or "`" in command for command in commands):
         errors.append("/: shell command substitution is forbidden in cards")
     if any(SECRET_FLAG_RE.search(command) for command in commands):
@@ -1273,6 +1394,7 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
             )
 
     items = _as_mapping(card.get("items"), path=("items",), errors=errors)
+    item_leaves: list[tuple[str, str | None, Mapping[str, Any], tuple[str, ...]]] = []
     if items is not None:
         item_names = set(items)
         for name in sorted(item_names - set(ITEM_NAMES)):
@@ -1282,41 +1404,80 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         model_revision = model.get("hf_revision") if model is not None else None
         if not isinstance(model_revision, str):
             model_revision = None
+        hardware_groups: dict[str, dict[str, Mapping[str, Any]]] = {}
         for name in ITEM_NAMES:
-            if name in items:
-                _validate_item(name, items[name], errors, model_revision=model_revision)
-        sft_item = items.get("sft")
-        sft_export_item = items.get("sft_export_inference")
-        if isinstance(sft_item, Mapping) and isinstance(sft_export_item, Mapping):
-            _validate_sft_export_inference(sft_export_item, sft_item, errors=errors)
-        pretrain_item = items.get("pretrain")
-        resume_item = items.get("checkpoint_resume")
-        if isinstance(pretrain_item, Mapping) and isinstance(resume_item, Mapping):
-            default_bridge_commit = environment.get("bridge_commit") if environment is not None else None
+            if name not in items:
+                continue
+            if name in HARDWARE_SCOPED_ITEMS:
+                variants = _hardware_variants(items[name], item_name=name, errors=errors)
+                hardware_groups[name] = variants
+                for hardware, item in variants.items():
+                    _validate_item(
+                        name,
+                        item,
+                        errors,
+                        path=("items", name, hardware),
+                        model_revision=model_revision,
+                    )
+            else:
+                _validate_item(
+                    name,
+                    items[name],
+                    errors,
+                    path=("items", name),
+                    model_revision=model_revision,
+                )
+
+        for hardware, export_item in hardware_groups.get("sft_export_inference", {}).items():
+            export_path = ("items", "sft_export_inference", hardware)
+            if export_item.get("status") in {"unsupported", "not_applicable"}:
+                continue
+            sft_item = hardware_groups.get("sft", {}).get(hardware)
+            if sft_item is None:
+                errors.append(f"{_pointer(*export_path, 'depends_on')}: missing sft.{hardware}")
+                continue
+            _validate_sft_export_inference(
+                export_item,
+                sft_item,
+                item_path=export_path,
+                sft_path=("items", "sft", hardware),
+                errors=errors,
+            )
+
+        default_bridge_commit = environment.get("bridge_commit") if environment is not None else None
+        for hardware, resume_item in hardware_groups.get("checkpoint_resume", {}).items():
+            resume_path = ("items", "checkpoint_resume", hardware)
+            if resume_item.get("status") in {"unsupported", "not_applicable"}:
+                continue
+            pretrain_item = hardware_groups.get("pretrain", {}).get(hardware)
+            if pretrain_item is None:
+                errors.append(f"{_pointer(*resume_path, 'depends_on')}: missing pretrain.{hardware}")
+                continue
             _validate_resume_against_pretrain(
                 resume_item,
                 pretrain_item,
+                resume_path=resume_path,
+                pretrain_path=("items", "pretrain", hardware),
                 default_bridge_commit=default_bridge_commit if isinstance(default_bridge_commit, str) else None,
                 errors=errors,
             )
 
+        item_leaves = list(_iter_item_leaves(items))
+
         if environment is not None:
             default_bridge_commit = environment.get("bridge_commit")
-            for name, item in items.items():
+            for _, _, item, path in item_leaves:
                 if (
                     isinstance(default_bridge_commit, str)
-                    and isinstance(item, Mapping)
                     and "bridge_commit" in item
                     and item.get("bridge_commit") == default_bridge_commit
                 ):
                     errors.append(
-                        f"{_pointer('items', str(name), 'bridge_commit')}: "
+                        f"{_pointer(*path, 'bridge_commit')}: "
                         "omit a redundant override of verification_environment.bridge_commit"
                     )
 
-    any_verified = bool(
-        items and any(isinstance(item, Mapping) and item.get("status") == "verified" for item in items.values())
-    )
+    any_verified = any(item.get("status") == "verified" for _, _, item, _ in item_leaves)
     if model is not None and any_verified:
         hf_id = model.get("hf_id")
         revision = model.get("hf_revision")

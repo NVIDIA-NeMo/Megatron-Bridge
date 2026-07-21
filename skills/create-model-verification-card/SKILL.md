@@ -39,11 +39,11 @@ identifier and the exact Bridge commit used for verification. Put them in
 the container, record the mounted checkout commit. Never substitute a private
 image path for the public base container identifier.
 
-The top-level Bridge commit is the default for every item. If one verified item
-was run from a different clean checkout, put that exact 40-hex commit in the
-item's optional `bridge_commit` field. Omit the field when it would repeat the
-top-level value, and never use a commit field to disguise uncommitted runtime
-changes. Items that are not verified must not carry a commit override.
+The top-level Bridge commit is the default for every item leaf. If one verified
+item was run from a different clean checkout, put that exact 40-hex commit in
+the leaf's optional `bridge_commit` field. Omit the field when it would repeat
+the top-level value, and never use a commit field to disguise uncommitted
+runtime changes. Items that are not verified must not carry a commit override.
 
 ### 2. Create the core inventory and add performance when available
 
@@ -69,15 +69,49 @@ exported, omit the item instead of adding an unverified placeholder. Once a
 canonical recipe exists, keep the item in the card even if its run is still
 unverified.
 
+Keep conversion, manual-forward, and base-inference items as direct item
+records. Key every training item by its public hardware target, and key the
+dependent SFT export/inference item the same way:
+
+```yaml
+items:
+  pretrain:
+    H100:
+      status: verified
+      precision: bf16
+      enabled_features: {}
+      command: ...
+      last_verified: 2026-07-21
+      metrics: ...
+      expected_result: ...
+```
+
+The hardware-scoped names are `pretrain`, `sft`, `sft_export_inference`,
+`sft_long_context`, `peft`, `checkpoint_resume`, and optional
+`pretrain_performance`. Use canonical public accelerator identifiers such as
+`H100`, `B200`, or `GB200`, never a private cluster name. The validator's
+public-hardware allowlist is authoritative and must be updated when a new
+accelerator target is introduced. The hardware key replaces the old `gpu_type`
+field. Each hardware leaf is independent and must carry its own status plus the
+command or commands, date, metrics, features, and optional commit override that
+apply to that item. Dependencies resolve within the same hardware key:
+`checkpoint_resume.H100` consumes `pretrain.H100`, and
+`sft_export_inference.H100` consumes `sft.H100`. Never fall back across
+hardware targets. Use the reserved key `all` only as the sole leaf for a
+model-wide `unsupported` or `not_applicable` limitation. A terminal dependency
+leaf still names its logical dependency but does not require a matching `all`
+or concrete-hardware dependency leaf.
+
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
 
 For `unsupported` and `not_applicable`, leave `command` or `commands`, date,
-precision, GPU type, and metrics null, then state the public product limitation
-in `expected_result`.
+precision, and metrics null, then state the public product limitation in
+`expected_result`.
 
-Put a scalar `precision` on every item. It describes the workload that was
-actually verified, not every precision the model might support:
+Put a scalar `precision` on every direct item or hardware leaf. It describes
+the workload that was actually verified, not every precision the model might
+support:
 
 - for conversion, record the imported or exported weight precision;
 - for forward pass and inference, record the compute precision;
@@ -470,8 +504,8 @@ an item verified merely to make validation pass.
 - Keep all twelve core inventory items and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
   performance recipe.
-- Put the verified workload precision on every item; use `fp8_mx` and `nvfp4`
-  only for training items that ran in those modes.
+- Put the verified workload precision on every direct item or hardware leaf;
+  use `fp8_mx` and `nvfp4` only for training leaves that ran in those modes.
 - Pin a public immutable HF revision, minimum Transformers version, public base
   container, and exact Bridge verification commit; use an item override only
   for a verified workload run from a different clean commit.
@@ -485,7 +519,9 @@ an item verified merely to make validation pass.
 - Use `convert.sh --executor slurm` for conversion and `train.sh` for training.
 - Keep private executor wiring out of commands: no mounts, environment
   forwarding, concrete accounts/partitions/images, or remote-launch setup.
-- Include GPU type and all four metrics for verified training items.
+- Put every training result under its canonical public hardware key and include
+  all four metrics for each verified training leaf; never record a private
+  cluster name or retain the old `gpu_type` field.
 - Audit the resolved convergence contract before each training run; align it
   with `qwen3_30b_a3b_convergence_v1` or record the exception and classify the
   result as support verification rather than cross-model convergence evidence.

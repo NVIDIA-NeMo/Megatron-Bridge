@@ -47,6 +47,12 @@ def _assert_error(card: dict[str, Any], fragment: str) -> None:
     assert any(fragment in error for error in errors), errors
 
 
+def _hardware_item(card: dict[str, Any], item_name: str, hardware: str = "H100") -> dict[str, Any]:
+    item = card["items"][item_name][hardware]
+    assert isinstance(item, dict)
+    return item
+
+
 def _assigned_float(path: Path, name: str) -> float:
     tree = ast.parse(path.read_text(encoding="utf-8"))
     for node in tree.body:
@@ -62,6 +68,108 @@ def _assigned_float(path: Path, name: str) -> float:
 @pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
 def test_repository_model_cards_are_valid(card_path: Path) -> None:
     assert _errors(_card(card_path)) == []
+
+
+@pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
+def test_repository_training_items_are_hardware_scoped(card_path: Path) -> None:
+    card = _card(card_path)
+    for item_name in VALIDATOR.HARDWARE_SCOPED_ITEMS:
+        if item_name not in card["items"]:
+            continue
+        variants = card["items"][item_name]
+        assert variants
+        assert set(variants) <= VALIDATOR.PUBLIC_HARDWARE_KEYS | {"all"}
+        assert all("gpu_type" not in leaf for leaf in variants.values())
+
+
+def test_flat_training_item_is_rejected() -> None:
+    card = _card()
+    card["items"]["pretrain"] = _hardware_item(card, "pretrain")
+    _assert_error(card, "hardware-scoped items must be keyed by hardware")
+
+
+def test_hardware_group_must_be_nonempty_and_canonical() -> None:
+    card = _card()
+    card["items"]["pretrain"] = {}
+    _assert_error(card, "expected at least one hardware entry")
+
+    card = _card()
+    card["items"]["pretrain"]["private_cluster"] = card["items"]["pretrain"].pop("H100")
+    _assert_error(card, "expected a supported public hardware key")
+
+    card = _card()
+    card["items"]["pretrain"]["FOO"] = card["items"]["pretrain"].pop("H100")
+    _assert_error(card, "expected a supported public hardware key")
+
+
+def test_hardware_key_replaces_gpu_type() -> None:
+    card = _card()
+    _hardware_item(card, "pretrain")["gpu_type"] = "H100"
+    _assert_error(card, "/items/pretrain/H100/gpu_type: unknown key")
+
+
+def test_hardware_dependencies_do_not_fall_back_across_variants() -> None:
+    card = _card()
+    card["items"]["checkpoint_resume"]["B200"] = copy.deepcopy(_hardware_item(card, "checkpoint_resume"))
+    _assert_error(card, "/items/checkpoint_resume/B200/depends_on: missing pretrain.B200")
+
+    card = _card()
+    card["items"]["sft_export_inference"]["B200"] = copy.deepcopy(_hardware_item(card, "sft_export_inference"))
+    _assert_error(card, "/items/sft_export_inference/B200/depends_on: missing sft.B200")
+
+
+def test_additional_hardware_variants_validate_independently() -> None:
+    card = _card()
+    for item_name in ("pretrain", "checkpoint_resume", "sft", "sft_export_inference"):
+        card["items"][item_name]["B200"] = copy.deepcopy(_hardware_item(card, item_name))
+    assert _errors(card) == []
+
+
+def test_global_hardware_key_is_terminal_only() -> None:
+    card = _card()
+    card["items"]["pretrain"]["all"] = card["items"]["pretrain"].pop("H100")
+    _assert_error(card, "all is reserved for global terminal limitations")
+
+
+def test_global_terminal_dependencies_do_not_require_global_sources() -> None:
+    card = _card()
+    resume = copy.deepcopy(_hardware_item(card, "checkpoint_resume"))
+    resume.update(
+        status="unsupported",
+        precision=None,
+        command=None,
+        last_verified=None,
+        metrics={name: None for name in VALIDATOR.METRIC_NAMES},
+        resume_comparison=None,
+        expected_result="Checkpoint resume is not supported for this model.",
+    )
+    resume.pop("bridge_commit", None)
+    card["items"]["checkpoint_resume"] = {"all": resume}
+
+    export = copy.deepcopy(_hardware_item(card, "sft_export_inference"))
+    export.update(
+        status="not_applicable",
+        precision=None,
+        commands=None,
+        last_verified=None,
+        expected_result="SFT export is not applicable to this model.",
+    )
+    export.pop("bridge_commit", None)
+    card["items"]["sft_export_inference"] = {"all": export}
+
+    assert _errors(card) == []
+
+
+def test_nested_commit_override_must_be_nonredundant() -> None:
+    card = _card()
+    _hardware_item(card, "pretrain")["bridge_commit"] = card["verification_environment"]["bridge_commit"]
+    _assert_error(card, "/items/pretrain/H100/bridge_commit: omit a redundant override")
+
+
+def test_nested_training_commands_receive_privacy_validation() -> None:
+    card = _card()
+    _hardware_item(card, "pretrain")["command"] += " $(whoami)"
+    _assert_error(card, "shell command substitution is forbidden")
 
 
 def test_manual_forward_requires_one_percent_correlation() -> None:
@@ -94,6 +202,12 @@ def test_manual_forward_grandfathers_documented_historical_evidence() -> None:
         manual["expected_result"].replace("historical", "earlier").replace("predates", "preceded")
     )
     _assert_error(card, "missing --hf-revision is allowed only for verified historical evidence")
+
+    card = _card(CORRELATION_CARD_PATH)
+    card["items"]["manual_forward_pass"]["expected_result"] = card["items"]["manual_forward_pass"][
+        "expected_result"
+    ].replace("recorded immutable HF revision", "model revision")
+    _assert_error(card, "tied to the recorded immutable HF revision")
 
     card = _card(CORRELATION_CARD_PATH)
     card["items"]["manual_forward_pass"]["last_verified"] = "2026-07-20"
@@ -201,7 +315,7 @@ def test_manual_forward_rejects_negative_absolute_differences() -> None:
 
 def test_resume_must_load_the_reference_save_directory() -> None:
     card = _card()
-    resume = card["items"]["checkpoint_resume"]
+    resume = _hardware_item(card, "checkpoint_resume")
     resume["command"] = resume["command"].replace(
         "pretrain-reference-checkpoints",
         "another-reference",
@@ -211,7 +325,7 @@ def test_resume_must_load_the_reference_save_directory() -> None:
 
 def test_resume_must_keep_reference_launch_settings() -> None:
     card = _card()
-    resume = card["items"]["checkpoint_resume"]
+    resume = _hardware_item(card, "checkpoint_resume")
     resume["command"] = resume["command"].replace(
         "nemotron_3_nano_4b_pretrain_8gpu_h100_bf16_config",
         "another_recipe",
@@ -221,7 +335,7 @@ def test_resume_must_keep_reference_launch_settings() -> None:
 
 def test_resume_cannot_disable_canonical_checkpoint_paths() -> None:
     card = _card()
-    resume = card["items"]["checkpoint_resume"]
+    resume = _hardware_item(card, "checkpoint_resume")
     resume["command"] += " checkpoint.load=null checkpoint.save=null"
     errors = _errors(card)
     assert any("not checkpoint.load" in error for error in errors), errors
@@ -230,19 +344,19 @@ def test_resume_cannot_disable_canonical_checkpoint_paths() -> None:
 
 def test_reference_must_save_resume_state() -> None:
     card = _card()
-    pretrain = card["items"]["pretrain"]
+    pretrain = _hardware_item(card, "pretrain")
     pretrain["command"] += " checkpoint.save_rng=false"
     _assert_error(card, "checkpoint.save_rng must remain true")
 
 
 def test_verified_resume_requires_matching_verified_commit() -> None:
     card = _card()
-    pretrain = card["items"]["pretrain"]
+    pretrain = _hardware_item(card, "pretrain")
     pretrain["status"] = "unverified"
     _assert_error(card, "pretrain must be verified first")
 
     card = _card()
-    resume = card["items"]["checkpoint_resume"]
+    resume = _hardware_item(card, "checkpoint_resume")
     resume["bridge_commit"] = "1" * 40
     _assert_error(card, "resume and pretrain must use the same Bridge commit")
 
