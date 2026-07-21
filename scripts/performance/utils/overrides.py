@@ -586,6 +586,8 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
         if args.num_layers is not None:
             recipe.model.num_layers = args.num_layers
         recipe.model.moe_layer_freq = [0] * num_dense_layers + [1] * (recipe.model.num_layers - num_dense_layers)
+    if args.num_moe_experts is not None:
+        recipe.model.num_moe_experts = args.num_moe_experts
     if args.pipeline_model_parallel_layout is not None:
         recipe.model.pipeline_model_parallel_layout = args.pipeline_model_parallel_layout
 
