@@ -144,6 +144,15 @@ else:  # Minimal offline test doubles expose KubeflowExecutor as a function.
     WorkspaceRootKubeflowExecutor = None
 
 
+if WorkspaceRootKubeflowExecutor is not None:
+    # NeMo-Run selects its TorchX scheduler with an exact-class lookup rather
+    # than isinstance(). Register the workspace-scoped subclass as Kubeflow so
+    # Experiment.dryrun() can package and submit it normally.
+    from nemo_run.run.torchx_backend.schedulers.api import EXECUTOR_MAPPING
+
+    EXECUTOR_MAPPING[WorkspaceRootKubeflowExecutor] = EXECUTOR_MAPPING[run.KubeflowExecutor]
+
+
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
     """Wrap a task with per-rank GPU-local NUMA binding without dropping task metadata."""
     training_command = shlex.join(task.to_command(with_entrypoint=True))
