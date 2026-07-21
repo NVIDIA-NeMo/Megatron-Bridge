@@ -101,6 +101,7 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: 78ecfad7644ee67efa4e8af4b0e7cf09f6bc9ecc  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=1
       examples/conversion/hf_to_megatron_generate_text.py
@@ -112,7 +113,7 @@ items:
     expected_result: >
       Two independent runs use greedy decoding, produce byte-identical token
       IDs, and return exactly 2 generated tokens with this literal completion,
-      including its leading space: " Paris.".
+      including its leading space: ' Paris."'.
 
   pretrain:
     status: verified
