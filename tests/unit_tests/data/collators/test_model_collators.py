@@ -880,10 +880,10 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     monkeypatch.setattr(
         glm_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0, dtype=torch.long)
     )
-    monkeypatch.setattr(glm_vl_collate, "infer_assistant_mask_boundary_config", lambda processor: None)
+    monkeypatch.setattr(glm_vl_collate, "_glm4v_assistant_mask_boundary_config", lambda processor: None)
     monkeypatch.setattr(
         glm_vl_collate,
-        "build_assistant_loss_mask",
+        "_build_glm4v_assistant_loss_mask",
         lambda example, input_ids, *args, **kwargs: (input_ids != 0).to(dtype=torch.float32),
     )
     examples = [
@@ -904,6 +904,59 @@ def test_glm4v_collate_packs_mm_token_type_ids_and_restores_padding(monkeypatch)
     assert batch["visual_inputs"].mm_token_type_ids.tolist() == [[0, 1, 0, 0, 0, 2, 2, 0]]
     assert processor.padding_values == [False, False]
     assert processor.tokenizer.padding_side == "left"
+
+
+@pytest.mark.parametrize(
+    ("input_ids", "expected_mask"),
+    [
+        (
+            [100, 1, 102, 55, 56, 15, 3, 4, 100, 2, 102, 55, 56, 15, 5, 6],
+            [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1],
+        ),
+        (
+            [100, 1, 102, 55, 56, 15, 3, 4, 99, 99],
+            [0, 0, 0, 0, 0, 0, 1, 1, 0, 0],
+        ),
+        (
+            [100, 1, 102, 55, 56, 15, 70, 71, 107, 8, 102, 55, 56, 15, 3, 4],
+            [0, 0, 0, 0, 0, 0, 1, 1, 0, 0, 0, 0, 0, 0, 1, 1],
+        ),
+    ],
+)
+def test_glm4v_assistant_mask_uses_role_boundaries_and_virtual_final_terminator(input_ids, expected_mask):
+    class _GlmProcessor:
+        class _Tokenizer:
+            chat_template = "<|user|>...<|assistant|>...<|observation|>"
+            eos_token_id = 99
+
+            def encode(self, text, add_special_tokens=False):
+                return self(text, add_special_tokens=add_special_tokens)["input_ids"]
+
+            def __call__(self, text, add_special_tokens=False):
+                mapping = {
+                    "<|assistant|>\n": [102],
+                    "<|endoftext|>": [99],
+                    "<|system|>\n": [105],
+                    "<|user|>\n": [100],
+                    "<|observation|>\n": [107],
+                    "<think></think>\n": [55, 56, 15],
+                }
+                return {"input_ids": mapping[text]}
+
+        tokenizer = _Tokenizer()
+
+    processor = _GlmProcessor()
+    boundary_config = glm_vl_collate._glm4v_assistant_mask_boundary_config(processor)
+
+    mask = glm_vl_collate._build_glm4v_assistant_loss_mask(
+        {"conversation": []},
+        torch.tensor(input_ids),
+        processor,
+        torch.empty(0, dtype=torch.long),
+        boundary_config,
+    )
+
+    assert mask.tolist() == expected_mask
 
 
 def test_expand_image_tokens_handles_multiple_images_and_temporal_grids():
