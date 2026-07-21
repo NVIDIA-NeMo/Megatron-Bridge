@@ -327,7 +327,7 @@ class NemotronOmniModelProvider(NemotronVLModelProvider):
             # label-only expansion use those counts directly as well.
             llava_model.img_seq_len = 1
 
-        model = NemotronOmniModel(llava_model=llava_model)
+        model = NemotronOmniModel(config=self, llava_model=llava_model)
 
         llava_model.img_start_token_id = self.img_start_token_id
         llava_model.img_end_token_id = self.img_end_token_id
