@@ -53,7 +53,6 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
-from tests.mcore_dev import HAS_MCORE_DEV_BRANCH
 
 
 def _config(**kwargs):
@@ -1974,7 +1973,6 @@ class TestGemma4MoEHelpers:
 
     # Skipped only on the unreleased Megatron-Core dev ref: packed-MoE reshape
     # semantics changed upstream. Stays active on main. TODO: realign _forward_mlp.
-    @pytest.mark.skipif(HAS_MCORE_DEV_BRANCH, reason="Broken by the Megatron-Core dev ref; realignment pending.")
     def test_transformer_layer_preserves_packed_moe_batch_semantics(self):
         calls = []
 
