@@ -55,7 +55,7 @@ import gc
 import logging
 from collections.abc import Iterator
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 import torch
 
@@ -120,9 +120,7 @@ def _require_te() -> None:
     try:
         import transformer_engine  # noqa: F401
     except ImportError as err:
-        raise RuntimeError(
-            "NVFP4 healing requires Transformer Engine >= 2.7.0.dev0, which is not installed."
-        ) from err
+        raise RuntimeError("NVFP4 healing requires Transformer Engine >= 2.7.0.dev0, which is not installed.") from err
     if not is_te_min_version("2.7.0.dev0"):
         raise RuntimeError("NVFP4 healing requires Transformer Engine >= 2.7.0.dev0 for NVFP4BlockScaling support.")
 
@@ -302,7 +300,7 @@ class NVFP4HealingCallback(Callback):
         count = 0
         with torch.no_grad():
             for _, module in self._iter_quantizable_modules(model):
-                weight = module.weight
+                weight: Any = module.weight
                 if weight.requires_grad:
                     raise ValueError(
                         "pre_quantize_base_weights=True requires frozen base weights "
@@ -340,9 +338,9 @@ class NVFP4HealingCallback(Callback):
             )
         model_config = self._get_model_config(model)
         device = torch.cuda.current_device()
-        transfer_stream = torch.cuda.Stream()
+        transfer_stream = torch.cuda.Stream()  # type: ignore[no-untyped-call]
         swaps: list[tuple[torch.nn.Module, Any, Any]] = []
-        fuser_layers: dict[int, torch.nn.Module] = {}
+        fuser_layers: dict[int, Any] = {}
 
         with torch.no_grad():
             # Batch all H2D transfers on a dedicated stream, synchronize once, then swap
@@ -377,14 +375,16 @@ class NVFP4HealingCallback(Callback):
     @staticmethod
     def _get_model_config(model: list[torch.nn.Module]) -> TransformerConfig:
         """Return the Megatron-Core ``TransformerConfig`` of the (unwrapped) first chunk."""
-        return _unwrap_model_chunk(model[0]).config
+        unwrapped: Any = _unwrap_model_chunk(model[0])
+        return cast("TransformerConfig", unwrapped.config)
 
     @staticmethod
     def _is_target_module(module: torch.nn.Module) -> bool:
         """Whether ``module`` is a quantizable Transformer Engine linear with a weight."""
         import transformer_engine.pytorch as te
 
-        return isinstance(module, (te.Linear, te.LayerNormLinear)) and getattr(module, "weight", None) is not None
+        is_te_linear = bool(isinstance(module, (te.Linear, te.LayerNormLinear)))
+        return is_te_linear and getattr(module, "weight", None) is not None
 
     @staticmethod
     def _keep_layer_in_bf16(global_layer_idx: int, model_config: TransformerConfig) -> bool:
@@ -393,7 +393,7 @@ class NVFP4HealingCallback(Callback):
             return False
         if global_layer_idx < model_config.num_layers_at_start_in_bf16:
             return True
-        return global_layer_idx >= model_config.num_layers - model_config.num_layers_at_end_in_bf16
+        return bool(global_layer_idx >= model_config.num_layers - model_config.num_layers_at_end_in_bf16)
 
     def _iter_quantizable_modules(
         self, model: list[torch.nn.Module]
@@ -406,7 +406,7 @@ class NVFP4HealingCallback(Callback):
         """
         model_config = self._get_model_config(model)
         for chunk in model:
-            unwrapped = _unwrap_model_chunk(chunk)
+            unwrapped: Any = _unwrap_model_chunk(chunk)
             try:
                 layers = unwrapped.decoder.layers
             except AttributeError as err:

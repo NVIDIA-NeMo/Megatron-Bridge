@@ -19,11 +19,11 @@ import os
 from collections.abc import Callable
 from dataclasses import dataclass
 
+import megatron.core.fp4_utils as fp4_utils
 import pytest
 import torch
 import torch.nn.functional as F
 
-import megatron.core.fp4_utils as fp4_utils
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.callbacks import Callback, CallbackContext
