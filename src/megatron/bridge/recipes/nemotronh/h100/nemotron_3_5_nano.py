@@ -145,7 +145,7 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.checkpoint.load = None
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
-    cfg.checkpoint.async_save = True
+    cfg.checkpoint.async_save = False
 
     # DDP Configuration
     cfg.ddp.overlap_grad_reduce = True

@@ -162,7 +162,7 @@ class TestNemotron35NanoPretrain:
         assert config.checkpoint.load is None
         assert config.checkpoint.ckpt_assume_constant_structure is True
         assert config.checkpoint.dist_ckpt_strictness == "log_all"
-        assert config.checkpoint.async_save is True
+        assert config.checkpoint.async_save is False
 
     def test_gb200_pretrain_config_defaults(self):
         config = nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config()
@@ -176,6 +176,7 @@ class TestNemotron35NanoPretrain:
         assert config.model.cuda_graph_scope == ["attn", "mamba", "moe_router", "moe_preprocess"]
         assert config.model.recompute_granularity is None
         assert config.model.recompute_modules is None
+        assert config.checkpoint.async_save is False
         assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
         assert config.env_vars["USE_MNNVL"] == 1
 
