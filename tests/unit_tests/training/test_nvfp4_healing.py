@@ -282,6 +282,65 @@ class TestLayerIteration:
             list(cb._iter_quantizable_modules([SimpleNamespace(config=SimpleNamespace())]))
 
 
+class TestPreQuantization:
+    def test_rejects_trainable_weights(self):
+        model = [make_fake_chunk([1])]
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True))
+        with (
+            patch_target_module(),
+            patch.object(cb, "_build_quantizers", return_value=(Mock(), Mock())),
+        ):
+            with pytest.raises(ValueError, match="frozen"):
+                cb._pre_quantize(model)
+
+    def test_stashes_fp8_and_replaces_weights_with_nvfp4(self):
+        model = [make_fake_chunk([1, 2])]
+        for layer in model[0].decoder.layers:
+            layer.linear.weight.requires_grad_(False)
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True, store_quantized_params_on_gpu=True))
+        fake_nvfp4 = Mock(side_effect=lambda w: torch.zeros_like(w))
+        fake_fp8 = Mock(side_effect=lambda w: torch.ones_like(w))
+        with (
+            patch_target_module(),
+            patch.object(cb, "_build_quantizers", return_value=(fake_nvfp4, fake_fp8)),
+            patch.object(cb, "_validate_quantized"),
+        ):
+            cb._pre_quantize(model)
+
+        assert len(cb._fp8_stash) == 2
+        assert all(torch.all(stashed == 1) for stashed in cb._fp8_stash)
+        for layer in model[0].decoder.layers:
+            weight = layer.linear.weight
+            assert isinstance(weight, torch.nn.Parameter)
+            assert weight.requires_grad is False
+            assert torch.all(weight == 0)
+
+    def test_on_data_init_start_noop_without_flag(self):
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=False))
+        ctx = Mock()
+        with patch.object(cb, "_pre_quantize") as pre_quantize:
+            cb.on_data_init_start(ctx)
+            pre_quantize.assert_not_called()
+
+
+class TestValidateQuantized:
+    def test_nvfp4_missing_storage_raises(self):
+        cb = NVFP4HealingCallback(make_config())
+        bad = SimpleNamespace(_rowwise_data=None, _columnwise_data=torch.zeros(1))
+        with pytest.raises(RuntimeError, match="rowwise"):
+            cb._validate_quantized(bad, "nvfp4")
+
+    def test_delayed_missing_data_raises(self):
+        cb = NVFP4HealingCallback(make_config())
+        with pytest.raises(RuntimeError, match="data"):
+            cb._validate_quantized(SimpleNamespace(_data=None), "delayed")
+
+    def test_valid_tensors_pass(self):
+        cb = NVFP4HealingCallback(make_config())
+        cb._validate_quantized(SimpleNamespace(_rowwise_data=torch.zeros(1), _columnwise_data=torch.zeros(1)), "mxfp8")
+        cb._validate_quantized(SimpleNamespace(_data=torch.zeros(1)), "delayed")
+
+
 class TestHookRegistration:
     def test_registers_expected_hooks(self):
         manager = CallbackManager()
