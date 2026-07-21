@@ -40,12 +40,17 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointManager,
+    _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
+from megatron.bridge.training.optim import (
+    memory_efficient_fp32_optimizer_state_loading,
+    setup_optimizer,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -107,11 +112,15 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
+        cfg.checkpoint.load, cfg.checkpoint
+    )
 
     if cfg.peft is not None:
-        return cfg.checkpoint.load is not None and (
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
             checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
         )
+        return load_checkpoint_exists or has_global_non_persistent_checkpoint
 
     load_checkpoint_exists = cfg.checkpoint.load is not None and (
         checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
@@ -120,7 +129,12 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
         or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
-    should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
+    should_load_checkpoint = (
+        load_checkpoint_exists
+        or has_pretrained_checkpoint
+        or has_local_checkpoint
+        or has_global_non_persistent_checkpoint
+    )
 
     if cfg._checkpoint_load_required and not should_load_checkpoint:
         raise FileNotFoundError(
@@ -336,15 +350,17 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_manager.load(
-            CheckpointLoadContext(
-                state=state,
-                model=model,
-                optimizer=optimizer,
-                opt_param_scheduler=scheduler,
-                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
+        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
+            checkpoint_manager.load(
+                CheckpointLoadContext(
+                    state=state,
+                    model=model,
+                    optimizer=optimizer,
+                    opt_param_scheduler=scheduler,
+                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+                )
             )
-        )
         # Workaround for upstream mcore: reload_model_params() only refreshes the
         # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
         # clones and level-3 FP32 working copies retain their random init.  Without

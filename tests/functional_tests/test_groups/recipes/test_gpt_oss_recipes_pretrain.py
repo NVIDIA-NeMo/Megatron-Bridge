@@ -26,12 +26,7 @@ GPT_OSS_PRETRAIN_RECIPES = [
         gpt_oss_20b_pretrain_config,
         "gpt_oss_20b",
         {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1, "expert_model_parallel_size": 1},
-        {
-            "num_layers": 4,
-            "hybrid_layer_pattern": "*E*E",
-            "window_attn_skip_freq": [True, False, False, False],
-            "sequence_parallel": False,
-        },
+        {"num_layers": 2, "sequence_parallel": False},
     ),
 ]
 

@@ -6,18 +6,19 @@ Megatron Bridge training provides a small public Slurm launcher:
 ./scripts/training/train.sh [launch options] [runner options] [KEY=VALUE overrides]
 ```
 
-`train.sh` invokes `setup_experiment.py` on a Slurm login node and submits `run_recipe.py` directly through Slurm. The
-setup layer only owns resources, the container, explicitly forwarded environment variables, and explicit mounts.
-Recipe selection, dataset construction, and ConfigContainer overrides are resolved inside the training environment.
-Without an active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than
-resolving the full GPU training dependency set on the login node.
+`train.sh` invokes `setup_experiment.py` on a Slurm login node. Library recipes run through `run_recipe.py`; an exact
+flat performance recipe name is translated to the selector interface already supported by `run_script.py`. The setup
+layer owns resources, the container, explicitly forwarded environment variables, and explicit mounts. Without an
+active virtual environment, the shell entry point creates an isolated `nemo-run` environment rather than resolving
+the full GPU training dependency set on the login node.
 
 `launch_with_nemo_run.py` and `launch_with_sbatch.sh` remain available for their existing specialized workflows; `train.sh` is the compact recipe-oriented path.
 
 ## Selection rules
 
-Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. Every
-invocation requires one of `--mode pretrain`, `--mode sft`, `--mode lora`, or `--mode dora`.
+Choose exactly one of a complete recipe or a model selector. `--recipe` and `--model` are mutually exclusive. The mode
+is inferred from a conventional complete recipe name; pass one of `--mode pretrain`, `--mode sft`, `--mode lora`, or
+`--mode dora` when using `--model` or when the name does not encode it.
 
 ### Complete recipe
 
@@ -52,6 +53,27 @@ forward step. Common training, sequence-length, parallelism, optimization, and c
 flags such as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`.
 Use trailing `KEY=VALUE` overrides for every other `ConfigContainer` field.
 
+### Performance recipe
+
+Pass the complete exported performance recipe name through the same `--recipe` option; recipe type is inferred:
+
+```bash
+./scripts/training/train.sh \
+    --nodes 2 --gpus-per-node 8 \
+    --account ACCOUNT --partition PARTITION \
+    --container-image /path/to/container.sqsh \
+    --env HF_TOKEN \
+    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+```
+
+The GPU count encoded in the recipe name must equal `--nodes × --gpus-per-node`; the user-provided
+`--gpus-per-node` determines the node shape. This compact route supports exact exported recipe names only;
+model-family selectors and advanced performance-launcher controls remain on `scripts/performance` during migration.
+The launcher discovers the exact public export from source and derives the existing runner selectors from its name;
+the performance parser and runner remain unchanged. Use an image containing the same Bridge revision and recipe
+export. Two SFT/PEFT names exported by both recipe packages retain their existing library route. Forward `HF_TOKEN`
+with `--env HF_TOKEN` when the selected recipe needs online Hugging Face access.
+
 ## Dataset selection
 
 `--dataset` accepts source selectors and named dataset presets rather than internal dataset config class names.
@@ -66,6 +88,7 @@ and loader settings; use `dataset.dataset_kwargs={...}` only for extra options c
 | `local-jsonl` | Source selector | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
 | `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
 | `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
+| `tulu3` | Named preset | sft/lora/dora | Ai2 Tulu 3 SFT mixture (`allenai/tulu-3-sft-mixture`) |
 | `openmathinstruct2` | Named preset | sft/lora/dora | OpenMathInstruct-2 prompt/completion preset |
 | `openmathinstruct2-thinking` | Named preset | sft/lora/dora | OpenMathInstruct-2 analysis/final channel format |
 | `gsm8k` | Named preset | sft/lora/dora | GSM8K preset |
@@ -96,10 +119,17 @@ The launcher does not infer the source corpus from the files. For one preprocess
 `openmathinstruct2` uses prompt/completion records. `openmathinstruct2-thinking` changes only the semantic output
 format: chain-of-thought goes to the analysis channel and the answer goes to the final channel.
 
+### Tulu
+
+`tulu3` uses the canonical current Tulu SFT dataset, `allenai/tulu-3-sft-mixture`. The preset reads its published
+`train` split and its native `messages` chat schema; it reserves 5% for validation by default. The mixture is licensed
+under ODC-BY-1.0, but individual subsets can carry additional terms, including non-commercial restrictions. Review the
+Hugging Face dataset card and its linked subset licenses before use.
+
 ### Offline packing
 
 Offline packing is a text SFT option, not a dataset name. Set `dataset.enable_offline_packing=true` for `squad`, either
-OpenMathInstruct-2 format, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
+OpenMathInstruct-2 format, `tulu3`, `gsm8k`, or `local-jsonl`. The launcher aligns packed padding for the resolved CP/TP and
 sequence-parallel configuration. Packed training requires `train.micro_batch_size=1`. The builder materializes packed
 data automatically, so a separate packing Slurm job is not required. The selected recipe/model must support packed THD
 sequences; for example, GLM-4.5 and Qwen3-Next recipes currently do not. On multiple nodes, keep the dataset cache on
@@ -186,7 +216,7 @@ forwarded implicitly. Export credentials in the launcher environment, then repea
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use
 `--mount HOST:CONTAINER` when the paths differ. Mount every dataset, checkpoint, cache, and output path the job needs.
 
-No cluster-specific `srun` flags are added by default. Repeat
+The launcher adds no cluster-specific `srun` flags. Repeat
 `--srun-arg=ARG` for every flag required by the target cluster. For example,
 a Pyxis/Enroot cluster may use:
 
@@ -197,6 +227,9 @@ a Pyxis/Enroot cluster may use:
 ```
 
 The `=` form is required when `ARG` begins with `-`.
+
+Common NCCL, Transformer Engine, tokenizer, and allocator environment defaults are applied to both library and
+performance recipes. Explicitly inherited environment names take precedence over these defaults.
 
 The launcher submits the experiment in detached mode and returns after Slurm accepts the job. Inspect its state and
 logs with the cluster's normal `squeue`, `sacct`, and log-file workflow.

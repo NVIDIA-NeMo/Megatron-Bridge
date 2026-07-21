@@ -29,7 +29,9 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
+PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
+DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
 DCLM_README = REPO_ROOT / "tutorials" / "data" / "dclm" / "README.md"
 GEMMA3_VL_README = REPO_ROOT / "examples" / "models" / "gemma" / "gemma3_vl" / "README.md"
@@ -80,9 +82,12 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions and public aliases under src/.../recipes/**."""
+    """All recipe-config functions and public aliases under src/.../recipes/** and perf_recipes/**."""
     names: set[str] = set()
-    for py in RECIPES_DIR.rglob("*.py"):
+    recipe_files = list(RECIPES_DIR.rglob("*.py"))
+    if PERF_RECIPES_DIR.is_dir():
+        recipe_files += list(PERF_RECIPES_DIR.rglob("*.py"))
+    for py in recipe_files:
         tree = ast.parse(_read(py), filename=str(py))
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
@@ -107,6 +112,25 @@ def test_training_readme_recipes_exist():
     referenced = set(re.findall(r"--recipe\s+(\w+)", _read(TRAINING_README)))
     missing = sorted(r for r in referenced if r not in defined)
     assert not missing, f"README references nonexistent recipes: {missing}"
+
+
+def test_training_readme_dataset_table_matches_public_presets():
+    """Every public dataset preset is documented once in the launcher README."""
+    tree = ast.parse(_read(DATASET_UTILS), filename=str(DATASET_UTILS))
+    registry = next(
+        node.value
+        for node in tree.body
+        if isinstance(node, ast.AnnAssign)
+        and isinstance(node.target, ast.Name)
+        and node.target.id == "DATASET_PRESETS"
+    )
+    assert isinstance(registry, ast.Dict)
+    registered = {key.value for key in registry.keys if isinstance(key, ast.Constant) and isinstance(key.value, str)}
+    documented = re.findall(r"^\| `([^`]+)` \|", _read(TRAINING_README), re.MULTILINE)
+
+    assert len(documented) == len(set(documented))
+    assert set(documented) == registered
+    assert "allenai/tulu-3-sft-mixture" in _read(TRAINING_README)
 
 
 def test_gemma3_vl_readme_recipes_are_exported():
