@@ -28,14 +28,8 @@ the same field, the trailing KEY=VALUE override takes precedence.
 
 Training:
   -ms, --max_steps STEPS                 train.train_iters=STEPS
-  --scheduler_max_steps STEPS            scheduler.max_steps=STEPS
   -gb, --global_batch_size SIZE          train.global_batch_size=SIZE
   -mb, --micro_batch_size SIZE           train.micro_batch_size=SIZE
-
-``--scheduler_max_steps`` is intended for testing only. Use ``--max_steps x
---scheduler_max_steps y`` to run the first ``x`` steps of a full ``y``-step
-training run with the same learning-rate and weight-decay schedule prefix.
-The scheduler horizon ``y`` must be greater than or equal to ``x``.
 
 Sequence length:
   -sl, --seq_length LENGTH               dataset.seq_length=LENGTH
@@ -106,7 +100,6 @@ TrainMode = Literal["pretrain", "finetune"]
 
 COMMON_OVERRIDE_FIELDS = (
     ("max_steps", "train.train_iters"),
-    ("scheduler_max_steps", "scheduler.max_steps"),
     ("global_batch_size", "train.global_batch_size"),
     ("micro_batch_size", "train.micro_batch_size"),
     ("seq_length", "dataset.seq_length"),
@@ -164,15 +157,6 @@ def _build_parser() -> argparse.ArgumentParser:
 
     training = parser.add_argument_group("Common training overrides")
     training.add_argument("-ms", "--max_steps", type=int, metavar="STEPS", help="Set train.train_iters.")
-    training.add_argument(
-        "--scheduler_max_steps",
-        type=int,
-        metavar="STEPS",
-        help=(
-            "Testing only: set scheduler.max_steps=y while --max_steps=x to run the first x steps of a y-step "
-            "training run. Must be greater than or equal to --max_steps."
-        ),
-    )
     training.add_argument("-gb", "--global_batch_size", type=int, metavar="SIZE", help="Set train.global_batch_size.")
     training.add_argument("-mb", "--micro_batch_size", type=int, metavar="SIZE", help="Set train.micro_batch_size.")
 

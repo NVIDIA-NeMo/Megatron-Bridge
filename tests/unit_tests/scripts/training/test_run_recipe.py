@@ -296,7 +296,6 @@ def test_help_and_module_docstring_document_common_performance_overrides():
     module_docstring = module.__doc__
     expected_mappings = (
         ("--max_steps", "train.train_iters=STEPS"),
-        ("--scheduler_max_steps", "scheduler.max_steps=STEPS"),
         ("--global_batch_size", "train.global_batch_size=SIZE"),
         ("--micro_batch_size", "train.micro_batch_size=SIZE"),
         ("--tensor_model_parallel_size", "model.tensor_model_parallel_size=N"),
@@ -337,8 +336,6 @@ def test_common_convenience_arguments_become_config_overrides():
             "pretrain",
             "--max_steps",
             "2",
-            "--scheduler_max_steps",
-            "48000",
             "--global_batch_size",
             "16",
             "--micro_batch_size",
@@ -376,7 +373,6 @@ def test_common_convenience_arguments_become_config_overrides():
 
     assert overrides == [
         "train.train_iters=2",
-        "scheduler.max_steps=48000",
         "train.global_batch_size=16",
         "train.micro_batch_size=2",
         "dataset.seq_length=4096",

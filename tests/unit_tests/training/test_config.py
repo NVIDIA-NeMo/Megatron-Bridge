@@ -680,8 +680,8 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_scheduler_max_steps_runs_prefix_of_longer_schedule(self, monkeypatch):
-        """A short test run can preserve the scheduler horizon of a full run."""
+    def test_scheduler_max_steps_preserves_full_run_schedules(self, monkeypatch):
+        """A short test run can use the schedules from the full training run."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=1000, global_batch_size=32)
         sched_cfg = create_test_scheduler_config(max_steps=48000)
@@ -699,7 +699,7 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_scheduler_max_steps_rejects_horizon_shorter_than_training(self, monkeypatch):
+    def test_scheduler_max_steps_rejects_value_shorter_than_training(self, monkeypatch):
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=1000)
         sched_cfg = create_test_scheduler_config(max_steps=999)
@@ -3655,6 +3655,23 @@ class TestSampleBasedTraining:
             with pytest.raises(
                 AssertionError, match="Use lr_decay_samples for sample-based training, not lr_decay_iters"
             ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_training_rejects_scheduler_max_steps(self):
+        """scheduler.max_steps applies only to iteration-based training."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(max_steps=1000)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="only supported for iteration-based training"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)

@@ -279,15 +279,6 @@ def parse_cli_args():
         help="Maximum number of steps to run the experiment for. Defaults to 50.",
     )
     training_args.add_argument(
-        "--scheduler_max_steps",
-        type=int,
-        help=(
-            "Testing only: use --max_steps=x and --scheduler_max_steps=y to run the first x steps of a full "
-            "y-step training run with the same scheduler prefix. Defaults to --max_steps and must be greater "
-            "than or equal to it."
-        ),
-    )
-    training_args.add_argument(
         "-gb",
         "--global_batch_size",
         type=int,

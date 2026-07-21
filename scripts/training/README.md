@@ -53,11 +53,6 @@ forward step. Common training, sequence-length, parallelism, optimization, and c
 flags such as `-ms`/`--max_steps`, `-sl`/`--seq_length`, `-tp`/`--tensor_model_parallel_size`, and `--save_dir`.
 Use trailing `KEY=VALUE` overrides for every other `ConfigContainer` field.
 
-For a convergence test that should run only the first `x` steps of a full `y`-step training run, pass both
-`--max_steps x` and `--scheduler_max_steps y`. For example, `--max_steps 1000 --scheduler_max_steps 48000` stops
-after step 1,000 while preserving the learning-rate and weight-decay schedule prefix of the 48,000-step run. This
-flag is intended for testing, and `scheduler_max_steps` must be greater than or equal to `max_steps`.
-
 ### Performance recipe
 
 Pass the complete exported performance recipe name through the same `--recipe` option; recipe type is inferred:

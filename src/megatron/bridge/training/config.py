@@ -393,13 +393,13 @@ class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
 
     max_steps: int | None = None
-    """Testing-only scheduler horizon.
+    """Number of steps used to configure schedules during shortened test runs.
 
     Set this to ``y`` together with ``TrainingConfig.train_iters=x`` when a
     test should run only the first ``x`` steps of a full ``y``-step training
-    run. ``max_steps`` must be greater than or equal to ``train_iters``. When
-    set, it controls the learning-rate decay and weight-decay schedule horizons.
-    When unset, the existing scheduler fields retain their normal behavior.
+    run. This keeps the learning-rate and weight-decay schedules the same as
+    the full ``y``-step run. ``max_steps`` must be greater than or equal to
+    ``train_iters``. When unset, existing scheduler behavior is unchanged.
     """
 
     def finalize(self) -> None:

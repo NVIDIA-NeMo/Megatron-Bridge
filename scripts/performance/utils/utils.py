@@ -326,53 +326,6 @@ def apply_argparse_overrides(config: Any, args: Any) -> Any:
     return config
 
 
-def apply_scheduler_max_steps(config: Any, args: Any) -> int | None:
-    """Apply and validate the CLI-selected learning-rate schedule horizon.
-
-    When ``--max_steps`` is supplied without ``--scheduler_max_steps``, the
-    scheduler horizon follows the training horizon for backward compatibility.
-    This flag is intended for testing: ``--max_steps=x`` and
-    ``--scheduler_max_steps=y`` run only the first ``x`` steps of a full
-    ``y``-step training run, where ``y`` must be greater than or equal to
-    ``x``.
-
-    Args:
-        config: Training configuration to update.
-        args: Parsed performance-script arguments.
-
-    Returns:
-        The effective scheduler horizon, or ``None`` when neither horizon was
-        selected through the CLI.
-
-    Raises:
-        ValueError: If either horizon is non-positive or the scheduler horizon
-            is shorter than the effective training horizon.
-    """
-    max_steps = getattr(args, "max_steps", None)
-    scheduler_max_steps = getattr(args, "scheduler_max_steps", None)
-    if max_steps is None and scheduler_max_steps is None:
-        return None
-
-    train_iters = config.train.train_iters
-    if train_iters is None or train_iters <= 0:
-        raise ValueError(f"--max_steps must be positive, got {train_iters}.")
-
-    if scheduler_max_steps is None:
-        scheduler_max_steps = train_iters
-    if scheduler_max_steps <= 0:
-        raise ValueError(f"--scheduler_max_steps must be positive, got {scheduler_max_steps}.")
-    if scheduler_max_steps < train_iters:
-        raise ValueError(
-            f"--scheduler_max_steps ({scheduler_max_steps}) must be greater than or equal to "
-            f"--max_steps ({train_iters})."
-        )
-
-    config.scheduler.max_steps = scheduler_max_steps
-    if scheduler_max_steps > 100:
-        config.scheduler.lr_warmup_iters = int(0.01 * scheduler_max_steps)
-    return scheduler_max_steps
-
-
 def finalize_config_overrides(config: Any) -> Any:
     """Reconcile config invariants after argparse and Hydra overrides.
 
