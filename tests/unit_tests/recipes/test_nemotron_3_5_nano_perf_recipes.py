@@ -64,6 +64,7 @@ def test_perf_recipes_preserve_mtp_and_benchmark_contract(
     assert cfg.comm_overlap.tp_comm_overlap is True
     assert cfg.train.train_iters == 50
     assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.async_save is False
 
 
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)

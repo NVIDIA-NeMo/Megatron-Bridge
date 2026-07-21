@@ -190,6 +190,7 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.checkpoint.async_save = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
@@ -244,6 +245,7 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
+    cfg.checkpoint.async_save = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
