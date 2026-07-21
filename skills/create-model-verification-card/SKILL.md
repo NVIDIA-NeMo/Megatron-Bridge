@@ -244,6 +244,14 @@ defaults alone do not freeze the resolved CLI workload. Use a fresh
 fields changes, and audit the final `ConfigContainer` after all overrides and
 runtime synchronization.
 
+Before launching training, create the parent directory named by
+`logger.save_config_filepath` and require the post-setup file to persist.
+Treat only that saved, post-synchronization `ConfigContainer` as runtime-config
+evidence. YAML printed by the recipe runner before setup is launch-time
+configuration and may differ after model finalization; never relabel it as
+resolved runtime evidence or combine it with another run's logs. If the file
+does not persist, fix the output path and rerun the workload from a fresh root.
+
 Treat the token counts above as token slots. For SFT and PEFT, also record the
 actual supervised-token count after label masking; do not present padded or
 masked token slots as supervised tokens.
@@ -380,6 +388,8 @@ those values when the recipe already inherits the required defaults.
 Submission is not success. Require the workload process to finish successfully,
 the exact optimizer-step set to be present, finite losses and performance
 values, zero skipped/NaN iterations, and complete reloadable artifacts.
+For training items, also require the saved post-setup `ConfigContainer`; a
+launch-time config dump or dry run cannot replace it.
 
 For ordered command lists, wait for the preceding workload to finish and verify
 its artifact before starting the next command. Reference and resumed checkpoint
