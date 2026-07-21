@@ -104,7 +104,7 @@ class TestNemotron35NanoPretrain:
         assert config.mixed_precision == "bf16_mixed"
 
     def test_pretrain_config_cuda_graph_and_recompute(self):
-        """CUDA-graph scope + selective recompute must match the H100 BF16 perf preset."""
+        """CUDA-graph scope and full recompute must retain H100 resume headroom."""
         config = nemotron_3_5_nano_pretrain_config()
 
         assert config.model.cuda_graph_impl == "transformer_engine"
@@ -112,8 +112,10 @@ class TestNemotron35NanoPretrain:
         assert config.model.cuda_graph_warmup_steps == 3
         assert config.model.use_te_rng_tracker is True
 
-        assert config.model.recompute_granularity == "selective"
-        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn", "mlp"]
+        assert config.model.recompute_granularity == "full"
+        assert config.model.recompute_modules is None
+        assert config.model.recompute_method == "uniform"
+        assert config.model.recompute_num_layers == 1
 
     def test_pretrain_config_moe_settings(self):
         config = nemotron_3_5_nano_pretrain_config()
@@ -176,6 +178,8 @@ class TestNemotron35NanoPretrain:
         assert config.model.cuda_graph_scope == ["attn", "mamba", "moe_router", "moe_preprocess"]
         assert config.model.recompute_granularity is None
         assert config.model.recompute_modules is None
+        assert config.model.recompute_method is None
+        assert config.model.recompute_num_layers is None
         assert config.checkpoint.async_save is False
         assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
         assert config.env_vars["USE_MNNVL"] == 1

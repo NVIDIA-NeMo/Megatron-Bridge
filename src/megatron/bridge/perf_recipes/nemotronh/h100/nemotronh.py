@@ -186,6 +186,8 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["mamba"]
 
     cfg.model.recompute_modules = ["moe", "layernorm", "core_attn"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     cfg.comm_overlap.tp_comm_overlap = True
 
@@ -241,6 +243,8 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["mamba"]
 
     cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     cfg.comm_overlap.tp_comm_overlap = True
 

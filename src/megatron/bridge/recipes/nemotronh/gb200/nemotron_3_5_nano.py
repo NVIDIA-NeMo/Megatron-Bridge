@@ -38,6 +38,8 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
     cfg.model.recompute_granularity = None
     cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     cfg.env_vars = {
         **cfg.env_vars,

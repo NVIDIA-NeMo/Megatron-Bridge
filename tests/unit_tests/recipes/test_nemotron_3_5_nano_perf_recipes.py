@@ -75,8 +75,11 @@ def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]
     assert cfg.train.global_batch_size == 1024
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.cuda_graph_scope == ["mamba"]
+    assert cfg.model.recompute_granularity == "selective"
     assert "core_attn" in cfg.model.recompute_modules
     assert "mlp" not in cfg.model.recompute_modules
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
 
@@ -90,5 +93,7 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.train.micro_batch_size == 2
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
