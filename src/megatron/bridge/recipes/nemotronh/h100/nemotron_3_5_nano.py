@@ -187,7 +187,7 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron 3.5 Nano (30B-A3B Hybrid MoE + MTP).
 
-    Default parallelism: TP=1, PP=1, EP=8, SP=True.
+    Default parallelism: TP=2, PP=1, ETP=1, EP=8, SP=True.
 
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3.5 Nano SFT.
@@ -201,7 +201,7 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     ).to_megatron_provider(load_weights=False)
 
     # Parallelism settings
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -211,6 +211,7 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 2048
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.tensor_model_parallel_size
 
     # Training-specific model overrides
     cfg.model.apply_rope_fusion = False
@@ -229,6 +230,18 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # are incompatible with CUDA graph capture/replay in Mamba layers.
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
+
+    # Activation and buffer release — full SFT reaches the 80 GB H100 limit at
+    # post-backward collectives without recompute and non-overlapped parameter
+    # gather. TP2 shards the 131K-token vocabulary-loss workspace, while EP8
+    # shards expert weights across each full eight-GPU node.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "mlp"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.empty_unused_memory_level = 2
 
     # MTP Settings
     cfg.model.mtp_num_layers = 2
@@ -268,8 +281,9 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_param_gather = False
     cfg.ddp.use_distributed_optimizer = True
+    cfg.optimizer.overlap_param_gather = False
 
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
@@ -290,7 +304,7 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron 3.5 Nano (30B-A3B Hybrid MoE + MTP).
 
-    Default parallelism: TP=1, PP=1, EP=1, SP=True.
+    Default parallelism: TP=2, PP=1, ETP=1, EP=8, SP=True.
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
@@ -307,16 +321,17 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(
     ).to_megatron_provider(load_weights=False)
 
     # Parallelism settings
-    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = torch.bfloat16
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.sequence_parallel = True
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
     cfg.model.seq_length = 2048
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.tensor_model_parallel_size
 
     # Training-specific model overrides
     cfg.model.apply_rope_fusion = False
@@ -335,6 +350,15 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(
     # are incompatible with CUDA graph capture/replay in Mamba layers.
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
+
+    # Activation recompute — TP2/EP8 shards the base experts and 131K-token
+    # vocabulary-loss workspace across the full eight-GPU node. Recompute the
+    # retained Transformer activations to leave workspace for the LoRA projections
+    # at sequence length 4096.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "mlp"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
 
     # MTP Settings
     cfg.model.mtp_num_layers = 2
@@ -396,7 +420,7 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(
 
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 1,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
@@ -423,7 +447,11 @@ def nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config() -> C
     cfg = nemotron_3_5_nano_sft_16gpu_h100_bf16_config()
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    cfg.dataset = default_openmathinstruct2_config(seq_length=seq_length, enable_offline_packing=True)
+    cfg.dataset = default_openmathinstruct2_config(
+        seq_length=seq_length,
+        enable_offline_packing=True,
+        pad_seq_to_mult=cfg.model.tensor_model_parallel_size,
+    )
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
@@ -445,10 +473,14 @@ def nemotron_3_5_nano_peft_8gpu_h100_bf16_openmathinstruct2_packed_config(
     cfg = nemotron_3_5_nano_peft_8gpu_h100_bf16_config(peft_scheme=peft_scheme)
     seq_length = 4096
     cfg.model.seq_length = seq_length
-    cfg.dataset = default_openmathinstruct2_config(seq_length=seq_length, enable_offline_packing=True)
+    cfg.dataset = default_openmathinstruct2_config(
+        seq_length=seq_length,
+        enable_offline_packing=True,
+        pad_seq_to_mult=cfg.model.tensor_model_parallel_size,
+    )
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
-        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 1,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }

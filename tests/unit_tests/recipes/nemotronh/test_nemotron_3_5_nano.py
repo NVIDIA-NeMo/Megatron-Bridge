@@ -38,8 +38,10 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_5_nano import (
     NEMOTRON_3_5_NANO_HF_MODEL_ID,
     NEMOTRON_3_5_NANO_HF_REVISION,
     nemotron_3_5_nano_peft_config,
+    nemotron_3_5_nano_peft_openmathinstruct2_config,
     nemotron_3_5_nano_pretrain_config,
     nemotron_3_5_nano_sft_config,
+    nemotron_3_5_nano_sft_openmathinstruct2_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
@@ -211,7 +213,7 @@ class TestNemotron35NanoPretrain:
 
 @pytest.mark.unit
 class TestNemotron35NanoSft:
-    """SFT recipe — TP=1 / EP=8 / SP=True, packed-sequence default."""
+    """SFT recipe — TP=2 / ETP=1 / EP=8 / SP=True, packed-sequence default."""
 
     def test_sft_config_defaults(self):
         config = nemotron_3_5_nano_sft_config()
@@ -219,7 +221,7 @@ class TestNemotron35NanoSft:
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, HybridModelProvider)
 
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 2
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1
@@ -229,6 +231,19 @@ class TestNemotron35NanoSft:
         # CUDA graphs disabled — packed-sequence + TE-scoped graphs is incompatible
         assert config.model.cuda_graph_impl == "none"
         assert config.model.cuda_graph_scope == []
+
+        # Full SFT must leave NCCL workspace on 80 GB H100 after backward.
+        assert config.model.recompute_granularity == "selective"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn", "mlp"]
+        assert config.model.recompute_method is None
+        assert config.model.recompute_num_layers is None
+        assert config.train.manual_gc is True
+        assert config.train.manual_gc_interval == 100
+        assert config.train.empty_unused_memory_level == 2
+        assert config.ddp.overlap_param_gather is False
+        assert config.optimizer.overlap_param_gather is False
+        assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+        assert config.dataset.offline_packing_specs.pad_seq_to_mult == 2
 
         # MTP carried through
         assert config.model.mtp_num_layers == 2
@@ -251,6 +266,13 @@ class TestNemotron35NanoSft:
         assert config.model.pipeline_model_parallel_size == 2
         assert config.model.expert_model_parallel_size == 4
 
+    def test_sft_openmath_packing_matches_tensor_parallelism(self):
+        config = nemotron_3_5_nano_sft_openmathinstruct2_config()
+
+        assert config.dataset.seq_length == 4096
+        assert config.dataset.offline_packing_specs.packed_sequence_size == 4096
+        assert config.dataset.offline_packing_specs.pad_seq_to_mult == config.model.tensor_model_parallel_size
+
     def test_sft_config_with_pretrained_checkpoint(self):
         config = nemotron_3_5_nano_sft_config()
         config.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
@@ -268,7 +290,7 @@ class TestNemotron35NanoSft:
 
 @pytest.mark.unit
 class TestNemotron35NanoPeft:
-    """PEFT recipe — TP=1 / EP=1 / SP=True, LoRA defaults on Mamba target modules."""
+    """PEFT recipe — TP=2 / ETP=1 / EP=8 / SP=True, LoRA defaults on Mamba target modules."""
 
     def test_peft_config_default_lora(self):
         config = nemotron_3_5_nano_peft_config()
@@ -276,14 +298,23 @@ class TestNemotron35NanoPeft:
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, HybridModelProvider)
 
-        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.tensor_model_parallel_size == 2
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1
-        assert config.model.expert_model_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 8
 
         # CUDA graphs disabled for packed-sequence PEFT
         assert config.model.cuda_graph_impl == "none"
+
+        # The topology shards experts and the vocabulary-loss workspace, while
+        # selective recompute preserves LoRA workspace at sequence length 4096.
+        assert config.model.recompute_granularity == "selective"
+        assert config.model.recompute_modules == ["moe", "layernorm", "core_attn", "mlp"]
+        assert config.model.recompute_method is None
+        assert config.model.recompute_num_layers is None
+        assert config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+        assert config.dataset.offline_packing_specs.pad_seq_to_mult == 2
 
         assert config.peft is not None
         assert config.optimizer.lr == 1e-4
@@ -294,6 +325,13 @@ class TestNemotron35NanoPeft:
         config = nemotron_3_5_nano_peft_config(peft_scheme="dora")
         assert config.peft is not None
         assert config.optimizer.lr == 1e-4
+
+    def test_peft_openmath_packing_matches_tensor_parallelism(self):
+        config = nemotron_3_5_nano_peft_openmathinstruct2_config()
+
+        assert config.dataset.seq_length == 4096
+        assert config.dataset.offline_packing_specs.packed_sequence_size == 4096
+        assert config.dataset.offline_packing_specs.pad_seq_to_mult == config.model.tensor_model_parallel_size
 
     def test_peft_config_mamba_target_modules(self):
         """PEFT must target Mamba-specific submodules (in_proj/out_proj) in addition to attention/MLP."""
@@ -336,7 +374,7 @@ class TestNemotron35NanoCommon:
         ("recipe_fn", "overlap_param_gather"),
         [
             (nemotron_3_5_nano_pretrain_config, True),
-            (nemotron_3_5_nano_sft_config, True),
+            (nemotron_3_5_nano_sft_config, False),
             (nemotron_3_5_nano_peft_config, True),
         ],
     )
