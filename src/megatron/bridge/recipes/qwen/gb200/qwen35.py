@@ -59,6 +59,10 @@ def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.model.init_method_std = 0.02
     cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 2
+    # Run-only validation of scheduler.max_steps: execute 1,000 iterations
+    # while retaining the exact LR schedule used by the 48,000-step baseline.
+    cfg.scheduler.max_steps = 48000
+    cfg.scheduler.lr_warmup_iters = 480
 
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.bias_activation_fusion = True

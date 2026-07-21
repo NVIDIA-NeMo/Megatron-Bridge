@@ -104,6 +104,10 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.min_lr = 1.6e-5
     cfg.scheduler.lr_warmup_iters = 333
+    # Run-only validation of scheduler.max_steps: execute 1,000 iterations
+    # while retaining the exact LR schedule used by the 48,000-step baseline.
+    cfg.scheduler.max_steps = 48000
+    cfg.scheduler.lr_warmup_iters = 480
 
     # Keep BF16 compute while reducing gradients in BF16 instead of FP32.
     cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)

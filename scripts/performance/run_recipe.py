@@ -76,7 +76,7 @@ def set_user_overrides(config, args):
         config.optimizer.min_lr = args.min_lr
 
     # Scheduler configuration
-    if args.warmup_iters:
+    if args.warmup_iters and config.scheduler.max_steps is None:
         config.scheduler.lr_warmup_iters = args.warmup_iters
 
     # Checkpoint configuration
@@ -208,7 +208,9 @@ def set_user_overrides(config, args):
     else:
         config.train.eval_interval = 800
 
-    if args.max_steps > 100:
+    # A recipe with scheduler.max_steps is intentionally preserving the full
+    # run schedule; do not replace its warmup with 1% of the shortened test.
+    if args.max_steps > 100 and config.scheduler.max_steps is None:
         config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
     return config
