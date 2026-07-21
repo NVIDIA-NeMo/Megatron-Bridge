@@ -85,6 +85,10 @@ def test_h100_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer]
     assert cfg.optimizer.optimizer_cpu_offload is False
     assert cfg.optimizer.optimizer_offload_fraction == 0.0
     assert cfg.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+    assert cfg.optimizer.overlap_param_gather is True
+    assert cfg.comm_overlap.overlap_param_gather is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.train.empty_unused_memory_level == 0
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
 
@@ -103,5 +107,9 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.optimizer.optimizer_cpu_offload is False
     assert cfg.optimizer.optimizer_offload_fraction == 0.0
     assert cfg.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+    assert cfg.optimizer.overlap_param_gather is True
+    assert cfg.comm_overlap.overlap_param_gather is True
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.train.empty_unused_memory_level == 0
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1

@@ -38,8 +38,8 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     This recipe follows the model-card convergence contract: 100 steps at
     sequence length 4096 and global batch size 1024 with natural MoE routing.
     The H100-specific execution policy uses micro batch size 1, a Mamba-only
-    CUDA graph scope, selective activation recompute, and 25% optimizer-state
-    CPU offload for safe checkpoint resume on 80GB GPUs.
+    CUDA graph scope, selective activation recompute, and explicit post-step
+    memory release for safe checkpoint resume on 80GB GPUs.
 
     Returns:
         ConfigContainer: Pre-training configuration for Nemotron 3.5 Nano.
@@ -85,8 +85,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
-    cfg.train.manual_gc = False
-    cfg.train.manual_gc_interval = 0
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
+    cfg.train.empty_unused_memory_level = 2
     cfg.rng.seed = 1234
 
     # Validation
@@ -130,9 +131,10 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
     cfg.optimizer.adam_eps = 1e-8
-    cfg.optimizer.optimizer_cpu_offload = True
-    cfg.optimizer.optimizer_offload_fraction = 0.25
-    cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = True
+    cfg.optimizer.optimizer_cpu_offload = False
+    cfg.optimizer.optimizer_offload_fraction = 0.0
+    cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
+    cfg.optimizer.overlap_param_gather = False
     cfg.scheduler.lr_warmup_iters = 40
     cfg.scheduler.lr_decay_iters = 100
     cfg.scheduler.lr_decay_style = "cosine"
@@ -141,6 +143,7 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_bootstrap_backend="nccl",
         tp_comm_overlap=True,
+        overlap_param_gather=False,
     )
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
@@ -154,7 +157,7 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # DDP Configuration
     cfg.ddp.overlap_grad_reduce = True
-    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.average_in_collective = False

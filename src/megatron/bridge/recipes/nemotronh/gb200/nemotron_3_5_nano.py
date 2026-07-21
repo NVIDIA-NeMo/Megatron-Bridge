@@ -34,6 +34,9 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg = nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config()
 
     cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = False
+    cfg.train.manual_gc_interval = 0
+    cfg.train.empty_unused_memory_level = 0
 
     cfg.model.cuda_graph_impl = "transformer_engine"
     cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
@@ -46,6 +49,10 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     cfg.optimizer.optimizer_cpu_offload = False
     cfg.optimizer.optimizer_offload_fraction = 0.0
     cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
+    cfg.optimizer.overlap_param_gather = True
+
+    cfg.comm_overlap.overlap_param_gather = True
+    cfg.ddp.overlap_param_gather = True
 
     cfg.env_vars = {
         **cfg.env_vars,

@@ -170,6 +170,10 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.optimizer_cpu_offload = False
     cfg.optimizer.optimizer_offload_fraction = 0.0
     cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
+    cfg.optimizer.overlap_param_gather = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.comm_overlap.overlap_param_gather = True
+    cfg.train.empty_unused_memory_level = 0
     cfg.model.recompute_granularity = "selective"
 
     cfg.model.tensor_model_parallel_size = 1
@@ -231,6 +235,10 @@ def nemotron_3_5_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.optimizer.optimizer_cpu_offload = False
     cfg.optimizer.optimizer_offload_fraction = 0.0
     cfg.optimizer.overlap_cpu_optimizer_d2h_h2d = False
+    cfg.optimizer.overlap_param_gather = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.comm_overlap.overlap_param_gather = True
+    cfg.train.empty_unused_memory_level = 0
     cfg.model.recompute_granularity = "selective"
 
     cfg.model.tensor_model_parallel_size = 1

@@ -144,9 +144,10 @@ class TestNemotron35NanoPretrain:
         assert config.optimizer.weight_decay == 0.1
         assert config.optimizer.adam_beta1 == 0.9
         assert config.optimizer.adam_beta2 == 0.95
-        assert config.optimizer.optimizer_cpu_offload is True
-        assert config.optimizer.optimizer_offload_fraction == 0.25
-        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is True
+        assert config.optimizer.optimizer_cpu_offload is False
+        assert config.optimizer.optimizer_offload_fraction == 0.0
+        assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+        assert config.optimizer.overlap_param_gather is False
         assert config.scheduler.lr_warmup_iters == 40
         assert config.scheduler.lr_decay_iters == 100
         assert config.scheduler.lr_decay_style == "cosine"
@@ -157,8 +158,17 @@ class TestNemotron35NanoPretrain:
         assert config.comm_overlap is not None
         assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
         assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.overlap_param_gather is False
         assert config.comm_overlap.delay_wgrad_compute is False
         assert config.comm_overlap.overlap_moe_expert_parallel_comm is False
+        assert config.ddp.overlap_param_gather is False
+
+    def test_pretrain_config_memory_release(self):
+        config = nemotron_3_5_nano_pretrain_config()
+
+        assert config.train.manual_gc is True
+        assert config.train.manual_gc_interval == 100
+        assert config.train.empty_unused_memory_level == 2
 
     def test_pretrain_config_checkpoint_settings(self):
         config = nemotron_3_5_nano_pretrain_config()
@@ -188,6 +198,12 @@ class TestNemotron35NanoPretrain:
         assert config.optimizer.optimizer_cpu_offload is False
         assert config.optimizer.optimizer_offload_fraction == 0.0
         assert config.optimizer.overlap_cpu_optimizer_d2h_h2d is False
+        assert config.optimizer.overlap_param_gather is True
+        assert config.comm_overlap.overlap_param_gather is True
+        assert config.ddp.overlap_param_gather is True
+        assert config.train.manual_gc is False
+        assert config.train.manual_gc_interval == 0
+        assert config.train.empty_unused_memory_level == 0
         assert config.checkpoint.async_save is False
         assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
         assert config.env_vars["USE_MNNVL"] == 1
@@ -317,18 +333,18 @@ class TestNemotron35NanoCommon:
         assert config.mixed_precision is not None
 
     @pytest.mark.parametrize(
-        "recipe_fn",
+        ("recipe_fn", "overlap_param_gather"),
         [
-            nemotron_3_5_nano_pretrain_config,
-            nemotron_3_5_nano_sft_config,
-            nemotron_3_5_nano_peft_config,
+            (nemotron_3_5_nano_pretrain_config, False),
+            (nemotron_3_5_nano_sft_config, True),
+            (nemotron_3_5_nano_peft_config, True),
         ],
     )
-    def test_ddp_configuration(self, recipe_fn):
+    def test_ddp_configuration(self, recipe_fn, overlap_param_gather):
         config = recipe_fn()
         assert config.ddp.check_for_nan_in_grad is True
         assert config.ddp.overlap_grad_reduce is True
-        assert config.ddp.overlap_param_gather is True
+        assert config.ddp.overlap_param_gather is overlap_param_gather
         assert config.ddp.use_distributed_optimizer is True
 
     @pytest.mark.parametrize(
