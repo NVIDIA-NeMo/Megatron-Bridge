@@ -1,3 +1,5 @@
+# Copyright (c) 2026, NVIDIA CORPORATION. All rights reserved.
+
 """Unit tests for the dense Nemotron 3 Nano 4B recipe configurations."""
 
 import pytest
