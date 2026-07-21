@@ -190,8 +190,41 @@ class NVFP4HealingCallback(Callback):
     def _apply_healing(self, context: CallbackContext) -> None:
         raise NotImplementedError  # implemented in a later task
 
+    def _build_healing_recipe(self, model_config: TransformerConfig) -> Any:
+        """Construct the FP8 recipe object used for the healing phase."""
+        _require_te()
+        from transformer_engine.common.recipe import DelayedScaling, MXFP8BlockScaling
+
+        if self.config.healing_recipe == "delayed":
+            return DelayedScaling(
+                amax_history_len=self.config.fp8_amax_history_len,
+                amax_compute_algo=self.config.fp8_amax_compute_algo,
+                reduce_amax=self.config.reduce_amax,
+                fp8_dpa=model_config.fp8_dot_product_attention,
+            )
+        return MXFP8BlockScaling()
+
+    def _patch_fp4_recipe(self, recipe: Any) -> None:
+        """Make ``megatron.core.fp4_utils.get_fp4_recipe`` return ``recipe``."""
+        import megatron.core.fp4_utils as fp4_utils
+
+        if not self._patched:
+            self._original_get_fp4_recipe = fp4_utils.get_fp4_recipe
+            self._patched = True
+
+        def healing_get_fp4_recipe(config: Any) -> Any:
+            return recipe
+
+        fp4_utils.get_fp4_recipe = healing_get_fp4_recipe
+
     def _restore_fp4_recipe(self) -> None:
-        raise NotImplementedError  # implemented in a later task
+        """Restore the original ``get_fp4_recipe`` if it was patched."""
+        if not self._patched:
+            return
+        import megatron.core.fp4_utils as fp4_utils
+
+        fp4_utils.get_fp4_recipe = self._original_get_fp4_recipe
+        self._patched = False
 
     def _pre_quantize(self, model: list[torch.nn.Module]) -> None:
         raise NotImplementedError  # implemented in a later task
