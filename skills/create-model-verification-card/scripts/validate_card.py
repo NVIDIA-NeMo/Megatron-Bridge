@@ -54,6 +54,22 @@ REQUIRED_ITEM_NAMES = (
 )
 OPTIONAL_ITEM_NAMES = ("pretrain_performance",)
 ITEM_NAMES = REQUIRED_ITEM_NAMES + OPTIONAL_ITEM_NAMES
+MODEL_LEVEL_INDEX_SCOPE = (
+    "hf_to_megatron_cpu",
+    "hf_to_megatron_gpu",
+    "megatron_to_hf_cpu",
+    "megatron_to_hf_gpu",
+    "manual_forward_pass",
+    "inference",
+)
+TRAINING_INDEX_SCOPE = (
+    "pretrain",
+    "sft",
+    "sft_export_inference",
+    "sft_long_context",
+    "peft",
+    "checkpoint_resume",
+)
 TRAINING_ITEMS = frozenset(
     {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
 )
@@ -96,7 +112,8 @@ UNTUNED_PERFORMANCE_DISCLAIMER = (
     "reported timing and throughput metrics are sanity checks, not optimized performance results."
 )
 
-TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "items"})
+TOP_LEVEL_KEYS = frozenset({"title", "model", "verification_environment", "summary", "verification_index", "items"})
+VERIFICATION_INDEX_KEYS = frozenset({"model_level", "training", "performance"})
 MODEL_KEYS = frozenset({"hf_id", "hf_revision", "architecture", "min_transformers_version"})
 ENVIRONMENT_KEYS = frozenset({"base_container", "bridge_commit"})
 ITEM_KEYS = frozenset(
@@ -300,6 +317,228 @@ def _iter_item_leaves(
                     yield item_name, hardware, leaf, ("items", item_name, hardware)
         else:
             yield item_name, None, value, ("items", item_name)
+
+
+def _item_status(item: Mapping[str, Any] | None) -> str | None:
+    """Return a valid item status without duplicating detailed item errors."""
+    if item is None:
+        return None
+    status = item.get("status")
+    if isinstance(status, str) and status in STATUSES:
+        return status
+    return None
+
+
+def _validate_index_status_buckets(
+    value: Any,
+    *,
+    scope: tuple[str, ...],
+    expected_statuses: Mapping[str, str],
+    path: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    """Validate one status-bucket directory and compare it with detailed items."""
+    buckets = _as_mapping(value, path=path, errors=errors)
+    if buckets is None:
+        return
+    _check_keys(buckets, allowed=STATUSES, required=frozenset(), path=path, errors=errors)
+
+    scope_names = frozenset(scope)
+    assignments: dict[str, str] = {}
+    assignment_paths: dict[str, tuple[str, ...]] = {}
+    all_statuses: list[str] = []
+    for status, members in buckets.items():
+        if status not in STATUSES:
+            continue
+        bucket_path = (*path, status)
+        if members == "all":
+            all_statuses.append(status)
+            continue
+        if not isinstance(members, list) or not members:
+            errors.append(f"{_pointer(*bucket_path)}: expected all or a non-empty item list")
+            continue
+        for index, item_name in enumerate(members):
+            item_path = (*bucket_path, str(index))
+            if not isinstance(item_name, str) or item_name not in scope_names:
+                errors.append(f"{_pointer(*item_path)}: expected one of {sorted(scope_names)}")
+                continue
+            if item_name in assignments:
+                errors.append(f"{_pointer(*item_path)}: {item_name} must appear exactly once in this scope")
+                continue
+            assignments[item_name] = status
+            assignment_paths[item_name] = bucket_path
+
+    if all_statuses:
+        if len(buckets) != 1 or len(all_statuses) != 1:
+            errors.append(f"{_pointer(*path)}: all must be the only status bucket in its scope")
+        else:
+            status = all_statuses[0]
+            assignments = dict.fromkeys(scope, status)
+            assignment_paths = dict.fromkeys(scope, (*path, status))
+            if len(expected_statuses) == len(scope) and any(
+                expected_statuses[item_name] != status for item_name in scope
+            ):
+                errors.append(
+                    f"{_pointer(*path, status)}: all is allowed only when every detailed item in the scope "
+                    f"has status {status}"
+                )
+    elif len(assignments) == len(scope) and len(set(assignments.values())) == 1:
+        errors.append(f"{_pointer(*path)}: use scalar all when every item in the scope has the same status")
+
+    missing_items = [item_name for item_name in scope if item_name not in assignments]
+    if missing_items:
+        errors.append(f"{_pointer(*path)}: every scope item must appear exactly once; missing {missing_items}")
+
+    for item_name, expected_status in expected_statuses.items():
+        indexed_status = assignments.get(item_name)
+        if indexed_status is not None and indexed_status != expected_status:
+            errors.append(
+                f"{_pointer(*assignment_paths[item_name])}: {item_name} is indexed as {indexed_status} "
+                f"but detailed items project to {expected_status}"
+            )
+
+
+def _project_training_status(
+    hardware_groups: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    *,
+    item_name: str,
+    hardware: str,
+) -> str | None:
+    """Project one functional training item onto an indexed hardware target."""
+    variants = hardware_groups.get(item_name, {})
+    concrete_status = _item_status(variants.get(hardware))
+    if concrete_status is not None:
+        return concrete_status
+    if hardware in variants:
+        return None
+    terminal_status = _item_status(variants.get("all"))
+    if terminal_status in {"unsupported", "not_applicable"}:
+        return terminal_status
+    return "unverified"
+
+
+def _validate_verification_index(
+    value: Any,
+    *,
+    items: Mapping[str, Any] | None,
+    hardware_groups: Mapping[str, Mapping[str, Mapping[str, Any]]],
+    errors: list[str],
+) -> None:
+    """Validate the compact index as an exact projection of detailed items."""
+    path = ("verification_index",)
+    verification_index = _as_mapping(value, path=path, errors=errors)
+    if verification_index is None:
+        return
+    _check_keys(
+        verification_index,
+        allowed=VERIFICATION_INDEX_KEYS,
+        required=frozenset({"model_level", "training"}),
+        path=path,
+        errors=errors,
+    )
+
+    model_statuses: dict[str, str] = {}
+    if items is not None:
+        for item_name in MODEL_LEVEL_INDEX_SCOPE:
+            item = items.get(item_name)
+            status = _item_status(item if isinstance(item, Mapping) else None)
+            if status is not None:
+                model_statuses[item_name] = status
+    _validate_index_status_buckets(
+        verification_index.get("model_level"),
+        scope=MODEL_LEVEL_INDEX_SCOPE,
+        expected_statuses=model_statuses,
+        path=(*path, "model_level"),
+        errors=errors,
+    )
+
+    training_path = (*path, "training")
+    training = _as_mapping(verification_index.get("training"), path=training_path, errors=errors)
+    concrete_training_hardware = {
+        hardware
+        for item_name in TRAINING_INDEX_SCOPE
+        for hardware in hardware_groups.get(item_name, {})
+        if hardware != "all"
+    }
+    if training is not None:
+        if not training:
+            errors.append(f"{_pointer(*training_path)}: expected at least one public hardware target")
+        valid_training_hardware: set[str] = set()
+        for hardware in training:
+            if hardware not in PUBLIC_HARDWARE_KEYS:
+                errors.append(
+                    f"{_pointer(*training_path, str(hardware))}: expected a supported public hardware key; "
+                    f"choose from {sorted(PUBLIC_HARDWARE_KEYS)}"
+                )
+                continue
+            valid_training_hardware.add(hardware)
+        for hardware in sorted(concrete_training_hardware - valid_training_hardware):
+            errors.append(
+                f"{_pointer(*training_path, hardware)}: required because detailed training items use this hardware"
+            )
+        for hardware in sorted(valid_training_hardware):
+            expected_statuses = {
+                item_name: status
+                for item_name in TRAINING_INDEX_SCOPE
+                if (
+                    status := _project_training_status(
+                        hardware_groups,
+                        item_name=item_name,
+                        hardware=hardware,
+                    )
+                )
+                is not None
+            }
+            _validate_index_status_buckets(
+                training[hardware],
+                scope=TRAINING_INDEX_SCOPE,
+                expected_statuses=expected_statuses,
+                path=(*training_path, hardware),
+                errors=errors,
+            )
+
+    performance_path = (*path, "performance")
+    performance_variants = {
+        hardware: item
+        for hardware, item in hardware_groups.get("pretrain_performance", {}).items()
+        if hardware != "all"
+    }
+    if not performance_variants:
+        if "performance" in verification_index:
+            errors.append(
+                f"{_pointer(*performance_path)}: omit performance when pretrain_performance has no concrete leaves"
+            )
+        return
+    if "performance" not in verification_index:
+        errors.append(f"{_pointer(*performance_path)}: required to mirror pretrain_performance concrete leaves")
+        return
+
+    performance = _as_mapping(verification_index.get("performance"), path=performance_path, errors=errors)
+    if performance is None:
+        return
+    expected_hardware = set(performance_variants)
+    actual_hardware = set(performance)
+    for hardware in sorted(actual_hardware):
+        if hardware not in PUBLIC_HARDWARE_KEYS:
+            errors.append(
+                f"{_pointer(*performance_path, str(hardware))}: expected a supported public hardware key; "
+                f"choose from {sorted(PUBLIC_HARDWARE_KEYS)}"
+            )
+    for hardware in sorted(expected_hardware - actual_hardware):
+        errors.append(f"{_pointer(*performance_path, hardware)}: required to mirror pretrain_performance.{hardware}")
+    for hardware in sorted(actual_hardware - expected_hardware):
+        errors.append(f"{_pointer(*performance_path, hardware)}: no matching pretrain_performance.{hardware} leaf")
+    for hardware in sorted(expected_hardware & actual_hardware):
+        indexed_status = performance.get(hardware)
+        if not isinstance(indexed_status, str) or indexed_status not in STATUSES:
+            errors.append(f"{_pointer(*performance_path, hardware)}: expected one of {sorted(STATUSES)}")
+            continue
+        expected_status = _item_status(performance_variants[hardware])
+        if expected_status is not None and indexed_status != expected_status:
+            errors.append(
+                f"{_pointer(*performance_path, hardware)}: indexed as {indexed_status} but "
+                f"pretrain_performance.{hardware} is {expected_status}"
+            )
 
 
 def _is_iso_date(value: Any) -> bool:
@@ -1401,6 +1640,7 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
     item_leaves: list[tuple[str, str | None, Mapping[str, Any], tuple[str, ...]]] = []
     has_canonical_performance_recipe = False
     concrete_performance_variants: dict[str, Mapping[str, Any]] = {}
+    hardware_groups: dict[str, dict[str, Mapping[str, Any]]] = {}
     if items is not None:
         item_names = set(items)
         for name in sorted(item_names - set(ITEM_NAMES)):
@@ -1410,7 +1650,6 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
         model_revision = model.get("hf_revision") if model is not None else None
         if not isinstance(model_revision, str):
             model_revision = None
-        hardware_groups: dict[str, dict[str, Mapping[str, Any]]] = {}
         for name in ITEM_NAMES:
             if name not in items:
                 continue
@@ -1498,6 +1737,13 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                         f"{_pointer(*path, 'bridge_commit')}: "
                         "omit a redundant override of verification_environment.bridge_commit"
                     )
+
+    _validate_verification_index(
+        card.get("verification_index"),
+        items=items,
+        hardware_groups=hardware_groups,
+        errors=errors,
+    )
 
     summary = card.get("summary")
     if isinstance(summary, str) and items is not None:

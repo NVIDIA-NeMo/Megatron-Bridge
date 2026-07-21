@@ -77,6 +77,69 @@ def test_repository_model_verification_card_inventory_is_discovered() -> None:
 
 
 @pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
+def test_repository_verification_indexes_include_h100_and_gb200(card_path: Path) -> None:
+    training_index = _card(card_path)["verification_index"]["training"]
+    assert {"H100", "GB200"} <= set(training_index)
+
+
+def test_verification_index_is_required() -> None:
+    card = _card()
+    del card["verification_index"]
+    _assert_error(card, "/verification_index: required key is missing")
+
+
+def test_verification_index_rejects_empty_status_bucket() -> None:
+    card = _card()
+    card["verification_index"]["training"]["GB200"] = {"unverified": []}
+    _assert_error(card, "expected all or a non-empty item list")
+
+
+def test_verification_index_rejects_model_level_drift() -> None:
+    card = _card()
+    card["verification_index"]["model_level"] = {"unverified": "all"}
+    _assert_error(card, "hf_to_megatron_cpu is indexed as unverified but detailed items project to verified")
+
+
+def test_verification_index_rejects_training_drift_and_invalid_all() -> None:
+    card = _card(CORRELATION_CARD_PATH)
+    card["verification_index"]["training"]["H100"] = {"verified": "all"}
+    _assert_error(card, "all is allowed only when every detailed item in the scope has status verified")
+    _assert_error(card, "pretrain is indexed as verified but detailed items project to unverified")
+
+
+def test_verification_index_requires_each_concrete_training_hardware() -> None:
+    card = _card()
+    card["items"]["pretrain"]["B200"] = copy.deepcopy(_hardware_item(card, "pretrain"))
+    _assert_error(card, "training/B200: required because detailed training items use this hardware")
+
+
+def test_verification_index_allows_an_unverified_future_hardware_target() -> None:
+    card = _card()
+    card["verification_index"]["training"]["B200"] = {"unverified": "all"}
+    assert _errors(card) == []
+
+
+def test_verification_index_performance_exactly_mirrors_concrete_leaves() -> None:
+    card = _card(PERFORMANCE_CARD_PATH)
+    del card["verification_index"]["performance"]
+    _assert_error(card, "performance: required to mirror pretrain_performance concrete leaves")
+
+    card = _card(PERFORMANCE_CARD_PATH)
+    card["verification_index"]["performance"]["H100"] = "unverified"
+    _assert_error(card, "pretrain_performance.H100 is verified")
+
+    card = _card()
+    card["verification_index"]["performance"] = {"H100": "unverified"}
+    _assert_error(card, "omit performance when pretrain_performance has no concrete leaves")
+
+
+def test_verification_index_rejects_duplicate_scope_item() -> None:
+    card = _card(CORRELATION_CARD_PATH)
+    card["verification_index"]["training"]["H100"]["verified"].append("pretrain")
+    _assert_error(card, "pretrain must appear exactly once in this scope")
+
+
+@pytest.mark.parametrize("card_path", CARD_PATHS, ids=lambda path: path.parent.name)
 def test_repository_training_items_are_hardware_scoped(card_path: Path) -> None:
     card = _card(card_path)
     for item_name in VALIDATOR.HARDWARE_SCOPED_ITEMS:
@@ -120,6 +183,7 @@ def test_unverified_canonical_performance_recipe_does_not_require_disclaimer() -
     performance = _hardware_item(card, "pretrain_performance")
     performance["status"] = "unverified"
     performance.pop("bridge_commit")
+    card["verification_index"]["performance"]["H100"] = "unverified"
     assert _errors(card) == []
 
 
@@ -164,6 +228,7 @@ def test_concrete_performance_recipe_rejects_terminal_status(status: str) -> Non
 def test_summary_scopes_each_canonical_performance_hardware() -> None:
     card = _card(PERFORMANCE_CARD_PATH)
     card["items"]["pretrain_performance"]["B200"] = copy.deepcopy(_hardware_item(card, "pretrain_performance"))
+    card["verification_index"]["performance"]["B200"] = "verified"
     _assert_error(card, "scope the tuned claim to pretrain_performance.B200")
 
     card["summary"] += " pretrain_performance.B200 is also a tuned canonical recipe."
@@ -210,6 +275,10 @@ def test_additional_hardware_variants_validate_independently() -> None:
     card = _card()
     for item_name in ("pretrain", "checkpoint_resume", "sft", "sft_export_inference"):
         card["items"][item_name]["B200"] = copy.deepcopy(_hardware_item(card, item_name))
+    card["verification_index"]["training"]["B200"] = {
+        "verified": ["pretrain", "sft", "sft_export_inference", "checkpoint_resume"],
+        "unverified": ["sft_long_context", "peft"],
+    }
     assert _errors(card) == []
 
 
@@ -244,6 +313,17 @@ def test_global_terminal_dependencies_do_not_require_global_sources() -> None:
     )
     export.pop("bridge_commit", None)
     card["items"]["sft_export_inference"] = {"all": export}
+
+    card["verification_index"]["training"]["H100"] = {
+        "verified": ["pretrain", "sft", "sft_long_context", "peft"],
+        "unsupported": ["checkpoint_resume"],
+        "not_applicable": ["sft_export_inference"],
+    }
+    card["verification_index"]["training"]["GB200"] = {
+        "unverified": ["pretrain", "sft", "sft_long_context", "peft"],
+        "unsupported": ["checkpoint_resume"],
+        "not_applicable": ["sft_export_inference"],
+    }
 
     assert _errors(card) == []
 
@@ -311,6 +391,16 @@ def test_unverified_manual_forward_command_requires_matching_revision() -> None:
 
     revision = card["model"]["hf_revision"]
     manual["command"] += f" --hf-revision {revision}"
+    card["verification_index"]["model_level"] = {
+        "verified": [
+            "hf_to_megatron_cpu",
+            "hf_to_megatron_gpu",
+            "megatron_to_hf_cpu",
+            "megatron_to_hf_gpu",
+            "inference",
+        ],
+        "unverified": ["manual_forward_pass"],
+    }
     assert _errors(card) == []
 
     manual["command"] = manual["command"].replace(revision, "1" * 40)

@@ -7,6 +7,15 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. Moonlight-16B-A3B support verification covers conversion, inference,
   and training.
+verification_index:
+  model_level:
+    verified: all
+  training:
+    H100:
+      verified: [sft, sft_export_inference, sft_long_context, peft]
+      unverified: [pretrain, checkpoint_resume]
+    GB200:
+      unverified: all
 model:
   hf_id: moonshotai/Moonlight-16B-A3B
   hf_revision: 476b36a473d4467f94469414bef6cee75c9c8172  # pragma: allowlist secret

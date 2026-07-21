@@ -123,6 +123,56 @@ or concrete-hardware dependency leaf.
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
 
+#### Add a compact verification index
+
+Every card must put a top-level `verification_index` immediately after
+`summary`. This is a concise directory of the detailed `items`, not a second
+source of evidence. The validator must reject an index that drifts from the
+item records.
+
+Use `model_level` for the six direct items: the four conversion directions,
+`manual_forward_pass`, and `inference`. Use `training` for the six functional
+hardware-scoped items: `pretrain`, `sft`, `sft_export_inference`,
+`sft_long_context`, `peft`, and `checkpoint_resume`. Keep the optional
+`pretrain_performance` item separate under `performance`; omit `performance`
+when the card has no canonical performance recipe.
+
+Group item names under the same four status names used by the detailed items.
+For an explicitly indexed hardware target with no corresponding item leaf,
+summarize the missing verification as `unverified`; do not add empty item
+leaves or placeholder commands merely to populate the index. Omit empty status
+buckets, so a hardware target with no verified training is written only as
+`unverified: all`, never as `verified: []`. Use the scalar `all` when every
+item in that scope has the same status; otherwise list the exact item names.
+
+For example, a card with partial H100 functional-training coverage and no
+GB200 functional-training verification uses:
+
+```yaml
+verification_index:
+  model_level:
+    verified: all
+  training:
+    H100:
+      verified: [sft, sft_export_inference, sft_long_context, peft]
+      unverified: [pretrain, checkpoint_resume]
+    GB200:
+      unverified: all
+```
+
+When a canonical performance recipe exists, mirror only its concrete leaves:
+
+```yaml
+  performance:
+    H100: verified
+```
+
+The index may declare an allowlisted public hardware target such as `GB200`
+before detailed evidence exists. It must also include every concrete hardware
+target present in the detailed items. Do not use a private cluster name or
+invent a separate `not_tested` status; `unverified` covers both pending and
+not-yet-run verification.
+
 For `unsupported` and `not_applicable`, leave `command` or `commands`, date,
 precision, and metrics null, then state the public product limitation in
 `expected_result`.
@@ -543,6 +593,9 @@ an item verified merely to make validation pass.
 - Put every training result under its canonical public hardware key and include
   all four metrics for each verified training leaf; never record a private
   cluster name or retain the old `gpu_type` field.
+- Keep `verification_index` synchronized with `items`, omit empty status
+  buckets, and use `unverified: all` for an indexed hardware target with no
+  verified functional-training evidence.
 - Audit the resolved convergence contract before each training run; align it
   with `qwen3_30b_a3b_convergence_v1` or record the exception and classify the
   result as support verification rather than cross-model convergence evidence.

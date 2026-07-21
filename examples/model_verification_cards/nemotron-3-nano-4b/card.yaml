@@ -7,6 +7,14 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. Nemotron 3 Nano 4B support verification covers conversion, inference,
   and training.
+verification_index:
+  model_level:
+    verified: all
+  training:
+    H100:
+      verified: all
+    GB200:
+      unverified: all
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
   hf_revision: dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f  # pragma: allowlist secret

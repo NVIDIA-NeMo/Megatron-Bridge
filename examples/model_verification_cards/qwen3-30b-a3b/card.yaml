@@ -7,6 +7,16 @@ summary: >
   performance recipe; timing and throughput metrics from functional training
   items remain sanity checks rather than optimized performance results.
   Qwen3-30B-A3B support verification covers conversion, inference, and training.
+verification_index:
+  model_level:
+    verified: all
+  training:
+    H100:
+      verified: all
+    GB200:
+      unverified: all
+  performance:
+    H100: verified
 model:
   hf_id: Qwen/Qwen3-30B-A3B
   hf_revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39  # pragma: allowlist secret
