@@ -85,5 +85,7 @@ def test_gb200_perf_recipe_topology(recipe_factory: Callable[[], ConfigContainer
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 2
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1

@@ -22,10 +22,12 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _nemotron_3_super_nvfp4_precision,
     _perf_precision,
     load_quantization_recipe,
-    nemotron_3_5_nano_pretrain_config,
     nemotron_3_nano_pretrain_config,
     nemotron_3_super_pretrain_config,
     nemotronh_56b_pretrain_config,
+)
+from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_5_nano import (
+    nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config as nemotron_3_5_nano_pretrain_config,
 )
 
 
