@@ -50,7 +50,7 @@ The performance data includes:
 | System | #-GPUs | Precision | GBS | MBS | Sequence Length | TP | PP | CP | VP | EP | Tokens / sec / GPU | Model TFLOP / sec / GPU |
 |--------|--------|-----------|-----|-----|-----------------|----|----|----|----|----|-----------------------|-------------------------|
 | DGX-GB300 | 64 | MXFP8 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 16 | 20288 | 661[^gpt-oss-note] |
-| DGX-GB200 | 64 | MXFP8 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 64 | 18304 | 597 |
+| DGX-GB200 | 64 | MXFP8 | 1280 | 4 | 4096 | 1 | 1 | 1 | n/a | 64 | 18304 | 597[^gpt-oss-note] |
 
 #### Model: Qwen3_30B_a3B
 
