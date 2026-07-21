@@ -43,6 +43,7 @@ from megatron.bridge.training.checkpointing import (
     _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
@@ -420,6 +421,24 @@ def setup(
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the dataloader stream position so a resumed run continues over the same data (currently
+    # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
+    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
+    # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
+    # pretrained-init runs (step reset to 0) start the data stream from the beginning.
+    if state.train_state.step > 0:
+        dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
+        if dataloader_load_path is None:
+            ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+            dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            dataloader_load_path,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()
