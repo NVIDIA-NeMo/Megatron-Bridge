@@ -160,3 +160,38 @@ class NVFP4HealingCallback(Callback):
     def healed(self) -> bool:
         """Whether the FP8 healing switch has been applied."""
         return self._healed
+
+    # ------------------------------------------------------------------ hooks
+
+    def on_data_init_start(self, context: CallbackContext) -> None:
+        """Pre-quantize frozen base weights if ``pre_quantize_base_weights`` is set."""
+        if not self.config.pre_quantize_base_weights:
+            return
+        gc.collect()
+        torch.cuda.empty_cache()
+        self._pre_quantize(context.model)
+
+    def on_train_step_end(self, context: CallbackContext) -> None:
+        """Apply the FP8 healing switch once, when ``healing_iter`` is reached."""
+        if self._healed:
+            return
+        if context.state.train_state.step + 1 != self.config.healing_iter:
+            return
+        print_rank_0(f"NVFP4 healing: switching to FP8 ('{self.config.healing_recipe}') recipe...")
+        self._apply_healing(context)
+        self._healed = True
+
+    def on_train_end(self, context: CallbackContext) -> None:
+        """Restore the original Megatron-Core FP4 recipe function."""
+        self._restore_fp4_recipe()
+
+    # ---------------------------------------------------------------- healing
+
+    def _apply_healing(self, context: CallbackContext) -> None:
+        raise NotImplementedError  # implemented in a later task
+
+    def _restore_fp4_recipe(self) -> None:
+        raise NotImplementedError  # implemented in a later task
+
+    def _pre_quantize(self, model: list[torch.nn.Module]) -> None:
+        raise NotImplementedError  # implemented in a later task
