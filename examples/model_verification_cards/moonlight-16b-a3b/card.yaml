@@ -204,8 +204,9 @@ items:
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 575c0e393215eb65c20ec61883258a160d411502  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -222,13 +223,19 @@ items:
           --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template
-      last_verified: null
+      last_verified: 2026-07-21
       expected_result: >
-        After the pending SFT run passes, its step-100 checkpoint must export with
-        a 163842-row embedding and output head, all index-referenced BF16 shards
-        must reload natively with no missing or unexpected keys, and the helper
-        must produce exactly 32 new tokens twice with identical token IDs. The
-        byte-identical literal completion must be recorded before verification.
+        The immutable-revision step-100 SFT checkpoint exports as 27 indexed
+        BF16 shards with 5,344 weights, vocabulary size 163842, and embedding
+        and output-head shapes [163842, 2048]. The index has the exact key set
+        and total_size 31,920,240,256, equal to the serialized tensor bytes.
+        Transformers strictly reloads with no errors, mismatches, missing, or
+        unexpected keys. Two independent runs using greedy decoding produce
+        byte-identical token IDs and exactly 32 new tokens with this literal
+        completion:
+        "Paris is the capital city of France and is considered the cultural,
+        political, and economic center of the country. It is home to many of
+        France's most famous".
 
   sft_long_context:
     H100:

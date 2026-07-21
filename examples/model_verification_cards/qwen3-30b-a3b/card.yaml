@@ -162,8 +162,9 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -188,25 +189,27 @@ items:
         --save_dir work/model-verification/qwen3-30b-a3b/sft-convergence-v1-checkpoints
         --save_interval 100
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-07-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.704380
+        final_loss: 0.9030643
+        last_10_steps_step_time_ms_avg: 1206.320
+        last_10_steps_model_tflops_per_gpu_avg: 64.020
       expected_result: >
-        The pending 16x H100 run must use the immutable Tulu3 and tokenizer
-        revisions, fresh pad-1 offline packing, dataset seed 1234, model RNG seed
-        5678, and recipe-owned TP1/PP1/CP1/EP16/SP-off topology. Exactly 100
-        full-SFT steps must complete at GBS/MBS 32/1 with natural routing, finite
-        losses, no skipped or NaN iterations, all four metrics, packing
-        efficiency, the actual supervised-token count, and a complete reloadable
-        iter_0000100 checkpoint before this item can be verified.
+        The immutable-revision 16-GPU run completes exactly 100 full-SFT steps
+        at TP1/PP1/CP1/EP16/ETP1, DP16, SP off, GBS/MBS 32/1, and two-way
+        gradient accumulation with natural routing. Pad-1 offline packing is
+        99.30% efficient, and the sampled 6,553,600 token slots contain
+        4,350,004 supervised tokens after label masking. LM loss is finite from
+        1.704380 to 0.9030643 with no skipped or NaN iterations, all four metrics
+        are recorded, and the complete sixteen-shard iter_0000100 full-model
+        checkpoint reloads successfully.
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
@@ -222,14 +225,19 @@ items:
           --hf-model work/model-verification/qwen3-30b-a3b/sft-convergence-v1-hf-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template --disable-thinking
-      last_verified: null
+      last_verified: 2026-07-21
       expected_result: >
-        After the pending immutable-revision SFT run passes, its step-100
-        checkpoint must export into indexed BF16 shards whose index covers every
-        weight, reload with Transformers without missing or unexpected keys, and
-        produce exactly 32 new tokens in two independent greedy runs with
-        byte-identical token IDs. The exact literal completion must be recorded
-        before verification.
+        The immutable-revision step-100 SFT checkpoint exports as 16 indexed
+        BF16 shards with 18,867 weights, vocabulary size 151936, and embedding
+        and output-head shapes [151936, 2048]. The index has the exact key set
+        and total_size 61,064,245,248, equal to the serialized tensor bytes.
+        Transformers strictly reloads with no errors, mismatches, missing, or
+        unexpected keys. Two independent runs using greedy decoding produce
+        byte-identical token IDs and exactly 32 new tokens with this literal
+        completion:
+        "Paris is the capital city of France and is a major cultural, economic,
+        and political center in Europe. It is home to many famous landmarks,
+        such as the".
 
   sft_long_context:
     H100:
@@ -278,8 +286,9 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         moe_dispatcher: deepep
@@ -305,19 +314,22 @@ items:
         --save_dir work/model-verification/qwen3-30b-a3b/peft-tp4-ep4-pad4-checkpoints
         --save_interval 100
         logger.log_interval=1 logger.log_throughput=true
-      last_verified: null
+      last_verified: 2026-07-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.575987
+        final_loss: 1.113119
+        last_10_steps_step_time_ms_avg: 22347.640
+        last_10_steps_model_tflops_per_gpu_avg: 13.840
       expected_result: >
-        The pending 4x H100 run must use the immutable Tulu3 and tokenizer
-        revisions, fresh pad-4 offline packing, dataset seed 1234, model RNG seed
-        5678, and recipe-owned TP4/PP1/EP4/SP-on topology. Exactly 100 LoRA steps
-        must complete with natural routing, finite losses, no skipped or NaN
-        iterations, and all four metrics recorded before a complete
-        iter_0000100 adapter checkpoint can be verified.
+        The immutable-revision 4-GPU run completes exactly 100 PEFT steps at
+        TP4/PP1/CP1/EP4/ETP1, DP1, SP on, GBS/MBS 32/1, and 32-way gradient
+        accumulation with natural routing and DeepEP. Pad-4 offline packing is
+        99.39% efficient, and the sampled 6,553,600 token slots contain
+        4,332,480 supervised tokens after label masking. Only rank-8, alpha-16,
+        zero-dropout LoRA on linear_qkv and linear_proj is trainable. LM loss is
+        finite from 1.575987 to 1.113119 with no skipped or NaN iterations, all
+        four metrics are recorded, and the complete four-shard iter_0000100
+        adapter checkpoint covers all 192 expected adapter entries.
 
   checkpoint_resume:
     H100:
