@@ -44,7 +44,7 @@ from utils.datasets import (
     create_rp2_dataset_config,
     create_squad_dataset_config,
 )
-from utils.utils import WorkloadBaseConfig, get_workload_base_config
+from utils.utils import WorkloadBaseConfig, apply_scheduler_max_steps, get_workload_base_config
 
 
 logger = logging.getLogger(__name__)
@@ -467,6 +467,7 @@ def set_user_overrides(recipe: ConfigContainer, args: argparse.Namespace) -> Con
 
     if args.max_steps is not None:
         recipe.train.train_iters = args.max_steps
+    apply_scheduler_max_steps(recipe, args)
     if args.tensor_model_parallel_size is not None:
         recipe.model.tensor_model_parallel_size = args.tensor_model_parallel_size
         recipe.model.sequence_parallel = bool(args.tensor_model_parallel_size > 1)

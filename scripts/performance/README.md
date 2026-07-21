@@ -106,6 +106,8 @@ uv run python scripts/performance/setup_experiment.py \
 
 - `--task`: Workflow to run (`pretrain`, `sft`, `peft`). Default `pretrain`.
 - `-ms/--max_steps`: Maximum number of training steps.
+- `--scheduler_max_steps`: Number of steps used for the learning-rate schedule. Defaults to `--max_steps` and must
+  be greater than or equal to it. Set this higher than `--max_steps` to run only the prefix of a longer schedule.
 - `-gb/--global_batch_size`: Override global batch size.
 - `-mb/--micro_batch_size`: Override micro-batch size.
 - `-sl/--seq_length`: Override model sequence length and the LLM dataset sequence length.

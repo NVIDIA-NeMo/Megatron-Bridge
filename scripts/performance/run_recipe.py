@@ -45,13 +45,13 @@ def _get_diffusion_step(model_family_name: str):
 def _apply_training_argparse_overrides(config, args):
     """Apply all training argparse values to ConfigContainer fields."""
     from utils.datasets import create_mock_dataset_config, create_rp2_dataset_config, create_squad_dataset_config
-    from utils.utils import apply_argparse_overrides
+    from utils.utils import apply_argparse_overrides, apply_scheduler_max_steps
 
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
     config = apply_argparse_overrides(config, args)
 
     # Training configuration
-    if args.max_steps:
+    if args.max_steps is not None:
         config.train.train_iters = args.max_steps
     if args.global_batch_size:
         config.train.global_batch_size = args.global_batch_size
@@ -71,6 +71,7 @@ def _apply_training_argparse_overrides(config, args):
     # Scheduler configuration
     if args.warmup_iters:
         config.scheduler.lr_warmup_iters = args.warmup_iters
+    apply_scheduler_max_steps(config, args)
 
     # Checkpoint configuration
     if args.pretrained_checkpoint:
@@ -177,22 +178,19 @@ def _apply_training_argparse_overrides(config, args):
     config.logger.log_interval = 1
 
     # Checkpoint configuration for convergence
-    if args.max_steps <= 100:
+    if config.train.train_iters <= 100:
         # Short convergence runs - save at the end
-        config.checkpoint.save_interval = args.save_interval or args.max_steps
+        config.checkpoint.save_interval = args.save_interval or config.train.train_iters
     else:
         # Long convergence runs - save every save_interval steps
         config.checkpoint.save_interval = args.save_interval or 1000
 
     # Validation configuration for convergence
-    if args.max_steps <= 100:
-        config.train.eval_interval = args.max_steps
+    if config.train.train_iters <= 100:
+        config.train.eval_interval = config.train.train_iters
         config.train.eval_iters = 0  # Disable evaluation for short convergence runs
     else:
         config.train.eval_interval = 800
-
-    if args.max_steps > 100:
-        config.scheduler.lr_warmup_iters = int(0.01 * args.max_steps)
 
     return config
 

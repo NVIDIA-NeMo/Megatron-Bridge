@@ -17,12 +17,15 @@
 import sys
 from pathlib import Path
 
+import pytest
+
 
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 from argument_parser import parse_cli_args
+from run_recipe import _apply_training_argparse_overrides
 from utils.overrides import set_user_overrides
 
 from megatron.bridge.recipes.gpt.h100.vanilla_gpt import vanilla_gpt_pretrain_1gpu_h100_bf16_config
@@ -56,3 +59,37 @@ def test_seq_length_updates_model_and_mock_dataset(tmp_path):
 
     assert updated.model.seq_length == 128
     assert updated.dataset.seq_length == 128
+
+
+@pytest.mark.parametrize("apply_overrides", [set_user_overrides, _apply_training_argparse_overrides])
+def test_scheduler_max_steps_preserves_longer_schedule(tmp_path, apply_overrides):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+
+    updated = apply_overrides(
+        recipe,
+        _parse_args(tmp_path, "--max_steps", "1000", "--scheduler_max_steps", "48000"),
+    )
+
+    assert updated.train.train_iters == 1000
+    assert updated.scheduler.lr_decay_iters == 48000
+    assert updated.scheduler.lr_warmup_iters == 480
+
+
+@pytest.mark.parametrize("apply_overrides", [set_user_overrides, _apply_training_argparse_overrides])
+def test_scheduler_max_steps_defaults_to_training_steps(tmp_path, apply_overrides):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+
+    updated = apply_overrides(recipe, _parse_args(tmp_path, "--max_steps", "1000"))
+
+    assert updated.train.train_iters == 1000
+    assert updated.scheduler.lr_decay_iters == 1000
+    assert updated.scheduler.lr_warmup_iters == 10
+
+
+@pytest.mark.parametrize("apply_overrides", [set_user_overrides, _apply_training_argparse_overrides])
+def test_scheduler_max_steps_rejects_shorter_schedule(tmp_path, apply_overrides):
+    recipe = vanilla_gpt_pretrain_1gpu_h100_bf16_config()
+    args = _parse_args(tmp_path, "--max_steps", "1000", "--scheduler_max_steps", "999")
+
+    with pytest.raises(ValueError, match="must be greater than or equal to --max_steps"):
+        apply_overrides(recipe, args)
