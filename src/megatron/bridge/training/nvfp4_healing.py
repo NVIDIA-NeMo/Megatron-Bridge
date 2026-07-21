@@ -188,7 +188,15 @@ class NVFP4HealingCallback(Callback):
     # ---------------------------------------------------------------- healing
 
     def _apply_healing(self, context: CallbackContext) -> None:
-        raise NotImplementedError  # implemented in a later task
+        """Switch training to the FP8 healing recipe (and pre-quantized FP8 weights)."""
+        model = context.model
+        model_config = self._get_model_config(model)
+        self._reset_cuda_graphs()
+        if self.config.pre_quantize_base_weights:
+            if not self._fp8_stash:
+                raise RuntimeError("FP8 healing weight stash is empty; pre-quantization did not run.")
+            self._swap_in_fp8_weights(model)
+        self._patch_fp4_recipe(self._build_healing_recipe(model_config))
 
     def _build_healing_recipe(self, model_config: TransformerConfig) -> Any:
         """Construct the FP8 recipe object used for the healing phase."""
@@ -309,6 +317,60 @@ class NVFP4HealingCallback(Callback):
                 setattr(module, "weight", torch.nn.Parameter(nvfp4_param, requires_grad=False))
                 count += 1
         print_rank_0(f"NVFP4 healing: pre-quantized {count} weights (NVFP4 on device, FP8 stashed).")
+
+    # ------------------------------------------------------------ weight swap
+
+    def _move_stash_entry_to_device(self, weight: Any, device: Any) -> None:
+        """Asynchronously move a stashed quantized tensor's storages to ``device``."""
+        if self.config.healing_recipe == "mxfp8":
+            weight._rowwise_data = weight._rowwise_data.to(device, non_blocking=True)
+            weight._columnwise_data = weight._columnwise_data.to(device, non_blocking=True)
+        else:
+            weight._data = weight._data.to(device, non_blocking=True)
+            if getattr(weight, "_transpose", None) is not None:
+                weight._transpose = weight._transpose.to(device, non_blocking=True)
+
+    def _swap_in_fp8_weights(self, model: list[torch.nn.Module]) -> None:
+        """Replace pre-quantized NVFP4 weights with the stashed FP8 weights."""
+        modules = list(self._iter_quantizable_modules(model))
+        if len(modules) != len(self._fp8_stash):
+            raise RuntimeError(
+                f"FP8 weight stash size ({len(self._fp8_stash)}) does not match the quantizable module "
+                f"count ({len(modules)}); the model structure changed after pre-quantization."
+            )
+        model_config = self._get_model_config(model)
+        device = torch.cuda.current_device()
+        transfer_stream = torch.cuda.Stream()
+        swaps: list[tuple[torch.nn.Module, Any, Any]] = []
+        fuser_layers: dict[int, torch.nn.Module] = {}
+
+        with torch.no_grad():
+            # Batch all H2D transfers on a dedicated stream, synchronize once, then swap
+            # pointers - avoids per-weight synchronization stalls.
+            with torch.cuda.stream(transfer_stream):
+                for (layer, module), new_weight in zip(modules, self._fp8_stash):
+                    if not self.config.store_quantized_params_on_gpu:
+                        self._move_stash_entry_to_device(new_weight, device)
+                    swaps.append((module, module.weight, new_weight))
+                    if model_config.use_transformer_engine_op_fuser:
+                        fuser_layers[id(layer)] = layer
+            transfer_stream.synchronize()
+
+            for module, old_weight, new_weight in swaps:
+                setattr(module, "weight", torch.nn.Parameter(new_weight, requires_grad=False))
+                if hasattr(old_weight, "clear"):
+                    old_weight.clear()
+
+            for layer in fuser_layers.values():
+                layer.mlp._fused_impl = (layer.mlp._make_fused_impl(),)
+                layer.self_attention.linear_proj._fused_branches = (
+                    layer.self_attention.linear_proj._make_fused_branches()
+                )
+                layer.self_attention.linear_qkv._fused_branches = (
+                    layer.self_attention.linear_qkv._make_fused_branches()
+                )
+
+        self._fp8_stash = []
 
     # ------------------------------------------------------------- traversal
 
