@@ -143,6 +143,7 @@ override-dependencies = [
     "nvidia-cudnn-frontend==1.26.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'",    # Rely on system site packages install
     "fastapi<0.139.2",                                      # 0.139.2 fails with ray 2.55.1 at least
+    "mcp<2.0.0",                                            # resiliency-ext (dev) requires mcp unbounded; prerelease=allow picked 2.0.0b2 which moved mcp.types to a separate pkg, breaking ft_launcher's `import mcp.types`. Cap to 1.x that still ships mcp.types.
     "fast-hadamard-transform @ git+https://github.com/Dao-AILab/fast-hadamard-transform.git@v1.1.0"  # pin 1.1.0; PyPI sdist is incomplete, install from git tag (see DSv4/GLM-5 READMEs)
 ]
 
