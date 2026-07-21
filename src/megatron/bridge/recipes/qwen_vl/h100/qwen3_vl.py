@@ -39,6 +39,8 @@ from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatch
 # =============================================================================
 # Qwen3-VL Pretrain Configurations (mock dataset)
 # =============================================================================
+# The mock VLM dataset gets language token IDs from the HF processor. Its
+# NullTokenizer is only a runtime placeholder and must not resize the model.
 
 
 def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
@@ -78,6 +80,7 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.use_tokenizer_vocab_size = False
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -124,6 +127,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.use_tokenizer_vocab_size = False
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -171,6 +175,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
     )
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.use_tokenizer_vocab_size = False
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
