@@ -112,6 +112,7 @@ def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
         tokenizer=TokenizerConfig(
             tokenizer_type="NullTokenizer",
             vocab_size=DEFAULT_NULL_TOKENIZER_VOCAB_SIZE,
+            use_tokenizer_vocab_size=True,
         ),
         checkpoint=CheckpointConfig(
             save_interval=500,

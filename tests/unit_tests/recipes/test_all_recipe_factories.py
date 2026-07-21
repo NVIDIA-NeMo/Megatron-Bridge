@@ -20,7 +20,7 @@ from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, MockVLMSFTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
     exported_recipe_factory_keys,
@@ -87,6 +87,11 @@ def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> 
         "dist",
     ):
         assert getattr(cfg, section) is not None
+
+    if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, GPTDatasetConfig):
+        assert cfg.tokenizer.use_tokenizer_vocab_size is True
+    if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, MockVLMSFTDatasetConfig):
+        assert cfg.tokenizer.use_tokenizer_vocab_size is False
 
 
 @pytest.mark.parametrize("recipe_factory", _UNSUPPORTED_RECIPE_FACTORIES, ids=recipe_factory_id)
