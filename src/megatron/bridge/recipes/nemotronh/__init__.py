@@ -15,6 +15,7 @@
 # Nemotron Nano v2 models
 # Nemotron 3 Nano models
 # Nemotron 3.5 Nano models
+from megatron.bridge.recipes.nemotronh.gb200 import nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_5_nano import (
     nemotron_3_5_nano_peft_config,
     nemotron_3_5_nano_peft_openmathinstruct2_config,
@@ -100,6 +101,7 @@ __all__ = [
     "nemotron_3_ultra_peft_openmathinstruct2_packed_config",
     # Nemotron 3.5 Nano models
     "nemotron_3_5_nano_pretrain_config",
+    "nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config",
     "nemotron_3_5_nano_sft_config",
     "nemotron_3_5_nano_peft_config",
     "nemotron_3_5_nano_sft_openmathinstruct2_config",

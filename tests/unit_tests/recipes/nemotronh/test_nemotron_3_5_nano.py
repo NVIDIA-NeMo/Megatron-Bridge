@@ -16,7 +16,7 @@
 Unit tests for Nemotron 3.5 Nano recipe configuration builders.
 
 Tests cover:
-- Pretrain configuration defaults (H100 BF16 perf preset)
+- Pretrain configuration defaults (bounded H100 convergence recipe)
 - SFT configuration (full supervised finetuning)
 - PEFT configuration (LoRA/DoRA)
 - MoE-specific settings (expert parallelism, MTP)
@@ -33,6 +33,7 @@ import tempfile
 import pytest
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.gb200 import nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config
 from megatron.bridge.recipes.nemotronh.nemotron_3_5_nano import (
     NEMOTRON_3_5_NANO_HF_MODEL_ID,
     nemotron_3_5_nano_peft_config,
@@ -66,7 +67,7 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.mark.unit
 class TestNemotron35NanoPretrain:
-    """Pretrain recipe — H100 BF16 perf preset defaults."""
+    """Pretrain recipe — bounded H100 convergence defaults."""
 
     def test_pretrain_config_default_parameters(self):
         config = nemotron_3_5_nano_pretrain_config()
@@ -74,21 +75,21 @@ class TestNemotron35NanoPretrain:
         assert isinstance(config, ConfigContainer)
         assert isinstance(config.model, HybridModelProvider)
 
-        # Parallelism — H100 BF16 preset (TP=1, EP=8, SP=True)
+        # Parallelism — H100 convergence recipe (TP=1, EP=8, SP=True)
         assert config.model.tensor_model_parallel_size == 1
         assert config.model.pipeline_model_parallel_size == 1
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1
         assert config.model.expert_model_parallel_size == 8
-        assert config.model.seq_length == 8192
+        assert config.model.seq_length == 4096
 
         # Training
-        assert config.train.train_iters == 39735
-        assert config.train.global_batch_size == 3072
-        assert config.train.micro_batch_size == 1  # H100 preset
+        assert config.train.train_iters == 100
+        assert config.train.global_batch_size == 1024
+        assert config.train.micro_batch_size == 1
 
         # Dataset
-        assert config.dataset.seq_length == 8192
+        assert config.dataset.seq_length == 4096
 
         # Tokenizer
         assert config.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
@@ -115,6 +116,7 @@ class TestNemotron35NanoPretrain:
         assert config.model.moe_token_dispatcher_type == "alltoall"
         assert config.model.moe_shared_expert_overlap is False
         assert config.model.moe_flex_dispatcher_backend == "hybridep"
+        assert config.model.moe_router_force_load_balancing is False
 
     def test_pretrain_config_mtp_settings(self):
         """HF config has num_nextn_predict_layers=1; recipe sets mtp_num_layers=2 with repeated layer."""
@@ -130,21 +132,47 @@ class TestNemotron35NanoPretrain:
     def test_pretrain_config_optimizer_settings(self):
         config = nemotron_3_5_nano_pretrain_config()
 
-        assert config.optimizer.lr == 1.6e-3
-        assert config.optimizer.min_lr == 1.6e-5
+        assert config.optimizer.lr == 3.0e-4
+        assert config.optimizer.min_lr == 3.0e-5
         assert config.optimizer.weight_decay == 0.1
         assert config.optimizer.adam_beta1 == 0.9
         assert config.optimizer.adam_beta2 == 0.95
-        assert config.scheduler.lr_warmup_iters == 333
-        assert config.scheduler.lr_decay_style == "WSD"
+        assert config.scheduler.lr_warmup_iters == 40
+        assert config.scheduler.lr_decay_iters == 100
+        assert config.scheduler.lr_decay_style == "cosine"
+
+    def test_pretrain_config_communication_overlap(self):
+        config = nemotron_3_5_nano_pretrain_config()
+
+        assert config.comm_overlap is not None
+        assert config.comm_overlap.tp_comm_bootstrap_backend == "nccl"
+        assert config.comm_overlap.tp_comm_overlap is True
+        assert config.comm_overlap.delay_wgrad_compute is False
+        assert config.comm_overlap.overlap_moe_expert_parallel_comm is False
 
     def test_pretrain_config_checkpoint_settings(self):
         config = nemotron_3_5_nano_pretrain_config()
 
-        assert config.checkpoint.save_interval == 200
+        assert config.checkpoint.save_interval == 50
+        assert config.checkpoint.load is None
         assert config.checkpoint.ckpt_assume_constant_structure is True
         assert config.checkpoint.dist_ckpt_strictness == "log_all"
         assert config.checkpoint.async_save is True
+
+    def test_gb200_pretrain_config_defaults(self):
+        config = nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config()
+
+        assert config.model.seq_length == 4096
+        assert config.dataset.seq_length == 4096
+        assert config.train.train_iters == 100
+        assert config.train.global_batch_size == 1024
+        assert config.train.micro_batch_size == 2
+        assert config.model.moe_router_force_load_balancing is False
+        assert config.model.cuda_graph_scope == ["attn", "mamba", "moe_router", "moe_preprocess"]
+        assert config.model.recompute_granularity is None
+        assert config.model.recompute_modules is None
+        assert config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+        assert config.env_vars["USE_MNNVL"] == 1
 
 
 @pytest.mark.unit

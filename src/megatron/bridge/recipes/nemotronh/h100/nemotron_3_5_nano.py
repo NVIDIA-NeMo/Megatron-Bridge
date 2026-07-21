@@ -24,6 +24,7 @@ from megatron.bridge.recipes.utils.dataset_utils import (
     default_peft_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -31,14 +32,12 @@ NEMOTRON_3_5_NANO_HF_MODEL_ID = "nvidia/nemotron-nano-3.5-ea2"
 
 
 def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a pre-training config for Nemotron 3.5 Nano (30B-A3B Hybrid MoE + MTP).
+    """Return the bounded pre-training config for 16 H100 GPUs.
 
-    Default parallelism: TP=1, PP=1, EP=8, SP=True. Hardware knobs mirror the H100 BF16
-    preset in ``scripts/performance/configs/nemotronh/nemotron_3_workload_base_configs.py``
-    (``NEMOTRON_3_NANO_PRETRAIN_CONFIG_H100_BF16_V1``): narrower CUDA-graph scope plus
-    selective recompute of MoE + layernorm to fit on 16 H100 80GB GPUs. To switch to the
-    Blackwell preset, broaden ``cuda_graph_scope`` to include ``moe_router`` and
-    ``moe_preprocess`` and clear ``recompute_modules``.
+    This recipe follows the model-card convergence contract: 100 steps at
+    sequence length 4096 and global batch size 1024 with natural MoE routing.
+    The H100-specific execution policy uses micro batch size 1, a narrow CUDA
+    graph scope, and selective recompute of MoE and layernorm modules.
 
     Returns:
         ConfigContainer: Pre-training configuration for Nemotron 3.5 Nano.
@@ -58,14 +57,15 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.pipeline_model_parallel_layout = None
-    cfg.model.seq_length = 8192
+    cfg.model.seq_length = 4096
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = NEMOTRON_3_5_NANO_HF_MODEL_ID
 
     # Dataset Configuration
-    cfg.dataset.seq_length = 8192
+    cfg.dataset.seq_length = 4096
     cfg.dataset.blend = None
+    cfg.dataset.random_seed = 1234
     cfg.dataset.num_workers = 1
     cfg.dataset.mmap_bin_files = False
 
@@ -73,16 +73,19 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_router_force_load_balancing = False
 
     # Training Configuration — micro_batch_size=1 matches the H100 perf preset
-    cfg.train.train_iters = 39735
-    cfg.train.global_batch_size = 3072
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = False
     cfg.train.manual_gc_interval = 0
+    cfg.rng.seed = 1234
 
     # Validation
-    cfg.validation.eval_interval = 1000
+    cfg.validation.eval_interval = 0
+    cfg.validation.eval_iters = 0
 
     # Transformer Engine (TE)
     cfg.model.transformer_impl = "transformer_engine"
@@ -113,19 +116,27 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.mixed_precision = "bf16_mixed"
 
     # Optimizer hyperparameters
-    cfg.optimizer.lr = 1.6e-3
-    cfg.optimizer.min_lr = 1.6e-5
+    cfg.optimizer.lr = 3.0e-4
+    cfg.optimizer.min_lr = 3.0e-5
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
     cfg.optimizer.adam_eps = 1e-8
-    cfg.scheduler.lr_warmup_iters = 333
-    cfg.scheduler.start_weight_decay = 0.1
-    cfg.scheduler.end_weight_decay = 0.1
-    cfg.scheduler.lr_decay_style = "WSD"
+    cfg.scheduler.lr_warmup_iters = 40
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.lr_decay_style = "cosine"
+
+    # Communication Overlap
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_bootstrap_backend="nccl",
+        tp_comm_overlap=True,
+    )
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
     # Checkpoint Configuration
-    cfg.checkpoint.save_interval = 200
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.load = None
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
     cfg.checkpoint.async_save = True
@@ -141,6 +152,9 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.apply_rope_fusion = False
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.use_fused_weighted_squared_relu = True
+
+    cfg.logger.log_interval = 1
+    cfg.logger.log_throughput = True
 
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
