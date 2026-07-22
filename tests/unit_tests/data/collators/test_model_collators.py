@@ -40,6 +40,7 @@ collate = SimpleNamespace(
     ministral3_collate_fn=ministral3_collate.ministral3_collate_fn,
     nemotron_nano_v2_vl_collate_fn=nemotron_vl_collate.nemotron_nano_v2_vl_collate_fn,
     nemotron_omni_collate_fn=nemotron_omni_collate.nemotron_omni_collate_fn,
+    nemotron_omni_expanded_collate_fn=nemotron_omni_collate.nemotron_omni_expanded_collate_fn,
     qwen2_5_collate_fn=qwen_vl_collate.qwen2_5_collate_fn,
     qwen2_audio_collate_fn=qwen_audio_collate.qwen2_audio_collate_fn,
 )
@@ -54,6 +55,12 @@ def test_only_nemotron_omni_requires_model_collate_for_all_examples():
     assert model_collate_required_for_all_examples("NemotronH_Nano_Omni_Reasoning_V3Processor")
     assert not model_collate_required_for_all_examples("Qwen3VLProcessor")
     assert not model_collate_required_for_all_examples("UnknownProcessor")
+
+
+def test_nemotron_omni_registry_selects_canonical_expanded_contract():
+    assert (
+        resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is collate.nemotron_omni_expanded_collate_fn
+    )
 
 
 def test_vlm_collate_keeps_qwen_vl_registration():
@@ -2408,6 +2415,34 @@ def test_nemotron_omni_collate_checks_temporal_model_expansion_before_truncation
             use_temporal_video_embedder=True,
             patch_dim=16,
         )
+
+
+def test_nemotron_omni_expanded_collate_emits_one_placeholder_per_temporal_feature(monkeypatch):
+    processor = _NemotronOmniProcessor()
+    input_ids = torch.tensor([[10, NEMO_IMG_START_TOKEN_ID, NEMO_IMAGE_TOKEN_ID, NEMO_IMG_END_TOKEN_ID, 11]])
+    prepared = {
+        "input_ids": input_ids,
+        "attention_mask": torch.ones_like(input_ids),
+        "visual_inputs": GenericVisualInputs(pixel_values=torch.ones(1, 1, 768)),
+    }
+    examples = [{"conversation": [{"role": "user", "content": "one tubelet"}]}]
+    monkeypatch.setattr(
+        nemotron_omni_collate,
+        "_prepare_temporal_rows",
+        lambda *args, **kwargs: (prepared, examples, torch.ones(1, dtype=torch.long)),
+    )
+    monkeypatch.setattr(nemotron_omni_collate, "build_assistant_loss_mask", _zero_assistant_loss_mask)
+
+    batch = collate.nemotron_omni_expanded_collate_fn(
+        examples,
+        processor,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        pad_to_multiple_of=1,
+    )
+
+    assert int((batch["input_ids"] == NEMO_IMAGE_TOKEN_ID).sum().item()) == 256
+    assert int(batch["attention_mask"].sum().item()) == 260
 
 
 class _NemotronVLProcessor:

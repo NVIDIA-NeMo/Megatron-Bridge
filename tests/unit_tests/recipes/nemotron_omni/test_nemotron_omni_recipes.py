@@ -25,7 +25,7 @@ from megatron.bridge.data.builders import (
     NemotronOmniEnergonTaskEncoderConfig,
 )
 from megatron.bridge.data.collators.registry import resolve_model_collate
-from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_collate_fn
+from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_expanded_collate_fn
 from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
@@ -146,7 +146,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
     assert cfg.dataset.source.dataset_name == "cord_v2"
-    assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_collate_fn
+    assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_expanded_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.model.temporal_patch_dim == 1
     assert cfg.model.freeze_sound_projection is False

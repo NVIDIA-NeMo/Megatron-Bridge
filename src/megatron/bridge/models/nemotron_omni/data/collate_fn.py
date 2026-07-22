@@ -902,6 +902,21 @@ def nemotron_omni_collate_fn(
         adjusted, loss_mask = _adjust_image_placeholders(batch, loss_mask, processor, num_tiles)
         batch["input_ids"] = adjusted["input_ids"]
         batch["attention_mask"] = adjusted["attention_mask"]
+    elif use_temporal_video_embedder and num_tiles is not None:
+        tokens_per_tubelet = _pixel_shuffled_token_count(
+            height=VISION_FRAME_SIZE,
+            width=VISION_FRAME_SIZE,
+            patch_dim=patch_dim,
+        )
+        replacement_counts = torch.full_like(num_tiles, tokens_per_tubelet)
+        adjusted, loss_mask = _adjust_image_placeholders(
+            batch,
+            loss_mask,
+            processor,
+            replacement_counts,
+        )
+        batch["input_ids"] = adjusted["input_ids"]
+        batch["attention_mask"] = adjusted["attention_mask"]
 
     if use_per_image_token_counts:
         _pack_dynamic_images(batch, patch_dim=patch_dim)

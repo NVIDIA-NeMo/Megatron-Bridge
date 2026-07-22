@@ -115,9 +115,8 @@ class NemotronOmniModel(MegatronModule):
     features are inserted before the generic Qwen-style THD packing helper is
     called, so packing and CP sharding happen exactly once.
 
-    Image and text inputs are supported. The sound modules are retained in the
-    model namespace, but sound insertion remains unsupported until its
-    one-feature-per-placeholder contract is implemented and tested.
+    Image, video, sound, and text inputs use the same one-feature-per-placeholder
+    contract before model-owned packing.
     """
 
     model_owns_packing = True
@@ -236,8 +235,8 @@ class NemotronOmniModel(MegatronModule):
             self.vision_model.register_load_state_dict_post_hook(_ignore_transformer_engine_extra_state)
             self.vision_projection.register_load_state_dict_post_hook(_ignore_transformer_engine_extra_state)
 
-        # Preserve the top-level sound-module namespace for checkpoint
-        # conversion while expanded-sequence sound insertion is unsupported.
+        # Preserve the top-level sound-module namespace used by checkpoint
+        # conversion while keeping media insertion local to this model.
         self.sound_model = sound_model
         self.sound_projection = sound_projection
 
@@ -339,10 +338,8 @@ class NemotronOmniModel(MegatronModule):
             if use_temporal and num_frames is None:
                 raise ValueError(
                     "num_frames is required by the configured RADIO encoder; "
-                    "use one entry with value 1 for each image."
+                    "provide one entry per image or video item."
                 )
-            if num_frames is not None and torch.any(num_frames != 1):
-                raise NotImplementedError("Video insertion is not implemented; num_frames must be 1 for image inputs.")
 
             vision_output = self.vision_model(
                 images,
@@ -382,6 +379,50 @@ class NemotronOmniModel(MegatronModule):
 
         projected = self.vision_projection(encoded.unsqueeze(1))
         return projected.squeeze(1).contiguous()
+
+    def _encode_sound(self, sound_clips: torch.Tensor, sound_length: Optional[torch.Tensor]) -> torch.Tensor:
+        """Encode mel features and return valid projected rows in sample order."""
+
+        if self.sound_model is None or self.sound_projection is None:
+            raise RuntimeError("Sound data was provided on a stage without the sound encoder")
+        if sound_length is None:
+            raise ValueError("sound_length is required when sound_clips are provided.")
+        if sound_clips.ndim < 2:
+            raise ValueError(f"sound_clips must include batch and frame dimensions, got {tuple(sound_clips.shape)}.")
+
+        parameter = next(self.sound_model.parameters())
+        sound_clips = sound_clips.to(dtype=parameter.dtype)
+        sound_embeddings, embedding_lengths = self.sound_model(sound_clips, sound_length)
+        if sound_embeddings.ndim != 3:
+            raise ValueError(
+                "The sound encoder must return [batch, sequence, hidden] embeddings, "
+                f"got {tuple(sound_embeddings.shape)}."
+            )
+        if embedding_lengths.numel() != sound_embeddings.shape[0]:
+            raise ValueError(
+                "The sound encoder must return one valid embedding length per sample; "
+                f"got {embedding_lengths.numel()} lengths for batch size {sound_embeddings.shape[0]}."
+            )
+
+        projection_parameter = next(self.sound_projection.parameters(), None)
+        if projection_parameter is not None:
+            sound_embeddings = sound_embeddings.to(dtype=projection_parameter.dtype)
+        projected = self.sound_projection(sound_embeddings.permute(1, 0, 2).contiguous()).contiguous()
+        projected_by_sample = projected.permute(1, 0, 2)
+        if getattr(getattr(self.sound_model, "config", None), "sound_pad_to_clip_duration", False):
+            return projected_by_sample.reshape(-1, projected.shape[-1]).contiguous()
+
+        valid_embeddings = []
+        for sample_embeddings, embedding_length in zip(projected_by_sample, embedding_lengths, strict=True):
+            valid_length = int(embedding_length.item())
+            if valid_length < 0 or valid_length > sample_embeddings.shape[0]:
+                raise ValueError(
+                    f"Sound embedding length {valid_length} is outside encoded width {sample_embeddings.shape[0]}."
+                )
+            valid_embeddings.append(sample_embeddings[:valid_length])
+        if not valid_embeddings:
+            return projected.new_empty((0, projected.shape[-1]))
+        return torch.cat(valid_embeddings, dim=0).contiguous()
 
     def _patchify_dynamic_images(self, images: torch.Tensor, imgs_sizes: torch.Tensor) -> torch.Tensor:
         """Convert padded processor pixels to RADIO's packed patch representation.
@@ -510,13 +551,13 @@ class NemotronOmniModel(MegatronModule):
     ) -> torch.Tensor:
         """Insert media into the expanded sequence, then call NemotronH."""
 
-        del kwargs, sound_length
+        del kwargs
         if images is None:
             images = pixel_values
 
         has_sound = sound_clips is not None and sound_clips.numel() > 0
-        if has_sound:
-            raise NotImplementedError("Sound insertion is not implemented; use an image or text input.")
+        if has_sound and sound_clips.shape == torch.Size([1, 1]):
+            has_sound = sound_clips[0, 0].item() != 0
 
         lm_input_ids = input_ids
         combined_embeddings = None
@@ -530,6 +571,11 @@ class NemotronOmniModel(MegatronModule):
                 )
             else:
                 image_embeddings = None
+
+            if has_sound:
+                sound_embeddings = self._encode_sound(sound_clips, sound_length)
+            else:
+                sound_embeddings = None
 
             # Match LLaVAModel's execution order. Besides keeping the two
             # implementations directly comparable, this ensures that RADIO's
@@ -547,6 +593,17 @@ class NemotronOmniModel(MegatronModule):
                 self.image_token_index,
                 attention_mask,
             )
+
+            if self.sound_token_index > 0:
+                if sound_embeddings is None:
+                    sound_embeddings = combined_embeddings.new_empty((0, combined_embeddings.shape[-1]))
+                combined_embeddings = self._merge_projected_media(
+                    combined_embeddings,
+                    input_ids,
+                    sound_embeddings,
+                    self.sound_token_index,
+                    attention_mask,
+                )
 
         if packed_seq_params is not None:
             if not self.pre_process:

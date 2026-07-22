@@ -292,6 +292,7 @@ def test_energon_temporal_video_is_processed_in_shared_collator(monkeypatch):
         use_temporal_video_embedder=True,
         patch_dim=16,
         pad_to_multiple_of=1,
+        collapse_image_tokens=True,
     )
     frames = [Image.new("RGB", (16, 16), color=value) for value in (0, 64, 128)]
     encoded = encoder.encode_sample(
@@ -342,6 +343,7 @@ def test_energon_single_frame_video_uses_temporal_embedder_contract(monkeypatch)
         use_temporal_video_embedder=True,
         patch_dim=16,
         pad_to_multiple_of=1,
+        collapse_image_tokens=True,
     )
     encoded = encoder.encode_sample(
         _sample(
@@ -372,6 +374,38 @@ def test_energon_raw_video_bytes_remain_one_owned_video_per_sample():
     video_part = encoded.example["conversation"][0]["content"][0]
     assert video_part == {"type": "video", "video": raw_video}
     assert encoded.example["videos"] == [raw_video]
+
+
+def test_energon_temporal_video_defaults_to_expanded_contract(monkeypatch):
+    from PIL import Image
+
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    monkeypatch.setattr(
+        omni_collate,
+        "_patchify_frame",
+        lambda frame, *, height, width, patch_dim: torch.ones(2, 3),
+    )
+    processor = _Processor([[1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID]])
+    encoder = NemotronOmniTaskEncoder(
+        processor=processor,
+        seq_length=512,
+        temporal_patch_size=2,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+        pad_to_multiple_of=1,
+    )
+    encoded = encoder.encode_sample(
+        _sample(
+            [{"role": "user", "content": [{"type": "video"}]}],
+            videos=[[Image.new("RGB", (16, 16)), Image.new("RGB", (16, 16))]],
+        )
+    )
+
+    batch = encoder.batch([encoded])
+
+    assert int((batch.input_ids == IMAGE_TOKEN_ID).sum().item()) == 256
+    assert batch.attention_mask.sum().item() == 261
+    assert batch.num_frames.tolist() == [2]
 
 
 def test_energon_multiple_raw_video_bytes_keep_placeholder_order():
@@ -431,6 +465,7 @@ def test_energon_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=8,
         pad_to_multiple_of=1,
+        collapse_image_tokens=True,
     )
     samples = [
         encoder.encode_sample(
@@ -546,6 +581,7 @@ def test_hf_and_energon_multimodal_packing_are_identical_for_image_video_audio(m
         temporal_patch_size=2,
         num_mel_bins=4,
         pad_to_multiple_of=1,
+        collapse_image_tokens=True,
     )
     energon_batch = energon_encoder.encode_batch(energon_encoder.batch(normalized_samples))
 
@@ -592,6 +628,7 @@ def test_energon_temporal_video_refuses_unsafe_sequence_truncation(monkeypatch):
         seq_length=6,
         use_temporal_video_embedder=True,
         pad_to_multiple_of=1,
+        collapse_image_tokens=True,
     )
     encoded = encoder.encode_sample(
         _sample(

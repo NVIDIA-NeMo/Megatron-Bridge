@@ -24,6 +24,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import (
     NemotronOmniBridge,
@@ -202,8 +203,8 @@ def test_nemotron_omni_vision_projection_uses_squared_relu():
     assert torch.equal(vision_projection_config.activation_func(values), torch.tensor([0.0, 0.0, 9.0]))
 
 
-def test_nemotron_omni_direct_provider_preserves_legacy_cpe_default():
-    assert NemotronOmniModelProvider().radio_interpolate_only_cpe is True
+def test_nemotron_omni_direct_provider_uses_canonical_cpe_default():
+    assert NemotronOmniModelProvider().radio_interpolate_only_cpe is False
 
 
 def test_nemotron_omni_mapping_registry_includes_sound_mappings():
@@ -341,13 +342,12 @@ def test_nemotron_omni_freeze_sound_modules_without_stdout(monkeypatch, capsys):
 
 def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
     model = NemotronOmniModel.__new__(NemotronOmniModel)
-    model.llava_model = SimpleNamespace(
-        language_model=nn.Linear(4, 4),
-        vision_model=None,
-        vision_projection=None,
-        sound_model=None,
-        sound_projection=None,
-    )
+    nn.Module.__init__(model)
+    model.language_model = nn.Linear(4, 4)
+    model.vision_model = None
+    model.vision_projection = None
+    model.sound_model = None
+    model.sound_projection = None
 
     model.freeze(
         freeze_language_model=True,
@@ -357,4 +357,4 @@ def test_nemotron_omni_freeze_skips_modules_absent_from_pipeline_stage():
         freeze_sound_projection=True,
     )
 
-    assert all(not param.requires_grad for param in model.llava_model.language_model.parameters())
+    assert all(not param.requires_grad for param in model.language_model.parameters())

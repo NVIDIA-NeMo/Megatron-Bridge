@@ -14,8 +14,8 @@ Megatron checkpoint. Outputs predictions and computes accuracy.
 
 Vision backbone uses the dynamic-resolution temporal video embedder path
 (``temporal_patch_dim=2``, ``separate_video_embedder=True``),
-matching the shared SFT pipeline in ``nemotron_omni_collate_fn`` with
-use_temporal_video_embedder=True. Frames are pre-patchified into a packed
+matching the shared SFT pipeline in ``nemotron_omni_expanded_collate_fn`` with
+``use_temporal_video_embedder=True``. Frames are pre-patchified into a packed
 [1, total_patches, 3*P*P] tensor with imgs_sizes / num_frames so RADIO ViT
 exercises the trained `video_embedder`.
 
@@ -44,13 +44,13 @@ from transformers import AutoTokenizer, ParakeetFeatureExtractor
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
     COMPACT_IMAGE_PLACEHOLDER,
-    inference_merged_sequence_length,
     inference_num_image_tiles,
     patchify_temporal_frame,
     select_inference_next_token,
     temporal_model_frames,
 )
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import (
+    adjust_image_tokens,
     maybe_path_or_url_to_data_urls,
     pil_image_from_base64,
 )
@@ -285,6 +285,13 @@ def process_sample(
             "Vision metadata produced "
             f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
         )
+    image_seq_len = (_VIDEO_FRAME_H // _VISION_PATCH_DIM) * (_VIDEO_FRAME_W // _VISION_PATCH_DIM) // 4
+    input_ids = adjust_image_tokens(
+        input_ids,
+        torch.full_like(num_image_tiles, image_seq_len),
+        tokenizer.convert_tokens_to_ids("<img>"),
+        tokenizer.convert_tokens_to_ids("</img>"),
+    )
 
     # Process audio
     sound_clips = None
@@ -381,9 +388,6 @@ def generate(model, tokenizer, sample, *, sequence_length, max_new_tokens=50):
     attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     generated_ids = input_ids.clone()
     stop_tokens = [tokenizer.eos_token_id]
-    image_token_id = tokenizer.convert_tokens_to_ids("<image>")
-    image_seq_len = (_VIDEO_FRAME_H // _VISION_PATCH_DIM) * (_VIDEO_FRAME_W // _VISION_PATCH_DIM) // 4
-
     for step in range(max_new_tokens):
         with torch.no_grad():
             # Rebuild each iteration: RADIO mutates cu_seqlens_q in-place when inserting class tokens,
@@ -424,12 +428,7 @@ def generate(model, tokenizer, sample, *, sequence_length, max_new_tokens=50):
                 gathered = [torch.zeros_like(output) for _ in range(world_size)]
                 dist.all_gather(gathered, output, group=parallel_state.get_tensor_model_parallel_group())
                 output = torch.cat(gathered, dim=2)
-                merged_sequence_length = inference_merged_sequence_length(
-                    input_ids,
-                    image_token_index=image_token_id,
-                    num_image_tiles=num_image_tiles,
-                    image_seq_len=image_seq_len,
-                )
+                merged_sequence_length = input_ids.shape[1]
                 next_token_ids = select_inference_next_token(output, merged_sequence_length)
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
