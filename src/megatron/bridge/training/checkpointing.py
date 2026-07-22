@@ -52,7 +52,7 @@ from megatron.core.optimizer.layer_wise_optimizer import LayerWiseDistributedOpt
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import get_rerun_state_machine
 from megatron.core.transformer import MegatronModule
-from megatron.core.utils import get_pg_size, unwrap_model
+from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
 from modelopt.torch.opt.plugins import (
     restore_modelopt_state,
     save_modelopt_state,
@@ -138,6 +138,10 @@ _DIRECT_ITERATION_DIR_SENTINEL = -2
 _CHECKPOINT_CLEANUP_LOCK = threading.Lock()
 
 HF_WEIGHTS_SUBDIR = "hf"
+# Subdirectory of the model checkpoint dir where dataloader stream-position state is colocated by
+# default (currently only Megatron Energon). Used to derive dataloader_save / dataloader_load when
+# those config fields are left unset.
+DATALOADER_STATE_SUBDIR = "energon"
 
 
 # ============================================================================
@@ -1153,11 +1157,20 @@ def save_checkpoint(
     checkpoint_name = get_checkpoint_name(save_dir, train_state.step, release=False)
 
     # Save dataloader state if the dataloader supports it (currently only Megatron Energon).
+    # Default the destination to an `energon` subdir of the checkpoint dir so a resumed run
+    # reproduces the data stream without extra config; an explicit dataset.dataloader_save overrides.
+    dataloader_save_path = getattr(cfg.dataset, "dataloader_save", None)
+    if (
+        dataloader_save_path is None
+        and ckpt_cfg.save
+        and hasattr(getattr(train_data_iterator, "iterable", None), "save_state")
+    ):
+        dataloader_save_path = os.path.join(ckpt_cfg.save, DATALOADER_STATE_SUBDIR)
     maybe_save_dataloader_state(
         model,
         train_data_iterator,
         train_state.step,
-        getattr(cfg.dataset, "dataloader_save", None),
+        dataloader_save_path,
         pg_collection=pg_collection,
     )
 
@@ -1663,6 +1676,14 @@ def cleanup_old_non_persistent_checkpoint(
         remove_iter_ckpts(rm_iter_ckpts)
 
 
+def _record_dataloader_state_dir(checkpointing_context: dict[str, Any] | None, base_dir: str | None) -> None:
+    """Record where setup() should restore Energon dataloader state from: ``{base_dir}/energon`` or None."""
+    if checkpointing_context is not None:
+        checkpointing_context["dataloader_state_dir"] = (
+            os.path.join(base_dir, DATALOADER_STATE_SUBDIR) if base_dir else None
+        )
+
+
 def maybe_save_dataloader_state(
     model: list[MegatronModule] | MegatronModule,
     train_iterator: Any,
@@ -1688,13 +1709,20 @@ def maybe_save_dataloader_state(
     if not hasattr(train_iterator.iterable, "save_state"):
         raise RuntimeError(f"Could not find a save_state for the train_iterator of type {type(train_iterator)}")
 
-    # Resolve process groups and save dataloader state for each DP rank only once.
+    # Resolve process groups and write the per-DP-rank state from a single writer. Tensor-,
+    # pipeline-, and context-parallel ranks of a DP replica all hold the identical per-DP-rank
+    # state, so only the tp/pp/cp leader writes avoiding racing to write the same
+    # train_dataloader_dprank{dp}.pt file.
     pg_collection = pg_collection or get_pg_collection(model)
-    is_first_rank = (pg_collection.pp.rank() == 0) and (pg_collection.tp.rank() == 0)
+    is_first_rank = (
+        (get_pg_rank(pg_collection.pp) == 0)
+        and (get_pg_rank(pg_collection.tp) == 0)
+        and (get_pg_rank(pg_collection.cp) == 0)
+    )
     if not is_first_rank:
         return
 
-    dp_rank = pg_collection.dp.rank()
+    dp_rank = get_pg_rank(pg_collection.dp)
     print_rank_0(f"saving dataloader checkpoint at iteration {iteration} to {dataloader_save_path}")
     train_dataloader_state_dict = train_iterator.iterable.save_state()
     # Get the base directory for the current iteration
@@ -1704,7 +1732,7 @@ def maybe_save_dataloader_state(
 
     torch.distributed.barrier(group=pg_collection.dp)
 
-    if pg_collection.dp.rank() == 0:
+    if get_pg_rank(pg_collection.dp) == 0:
         ensure_directory_exists(data_state_save_path)
 
     torch.distributed.barrier(group=pg_collection.dp)
@@ -1712,6 +1740,74 @@ def maybe_save_dataloader_state(
     dataloader_save_dict = {}
     dataloader_save_dict["dataloader_state_dict"] = train_dataloader_state_dict
     torch.save(dataloader_save_dict, data_state_save_path)
+
+
+def maybe_load_dataloader_state(
+    train_iterator: Any,
+    iteration: int,
+    dataloader_load_path: str | None = None,
+    *,
+    pg_collection: ProcessGroupCollection,
+) -> None:
+    """Restore the dataloader state written by :func:`maybe_save_dataloader_state`, if present.
+
+    Mirrors the save side: reads ``{dataloader_load_path}/iter_{iteration}/
+    train_dataloader_dprank{dp_rank:03d}.pt`` and calls ``restore_state`` on the iterator's iterable
+    (currently only Megatron Energon) so a resumed run continues over the same data stream. No-op
+    when the path or iterator is missing or the iterable does not support ``restore_state``
+    (non-Energon dataloaders).
+
+    Note on per-rank gating, which is **not** symmetric to the save side. Save writes one file per
+    data-parallel rank, gated to a single model-parallel writer because the per-DP-rank state is
+    identical across the tensor/pipeline/context ranks of a DP replica. Load, by contrast, restores
+    on *every* rank: each tensor/pipeline/context rank pulls from its own data iterator (e.g.
+    ``qwen3_vl`` ``get_batch``), so all of them must be rewound to the saved position.
+
+    Restore failure modes are deliberately loud. If the dataloader state directory is absent
+    entirely, the checkpoint predates dataloader-state saving and the dataloader starts fresh. But
+    if the directory exists while the current rank's state file does not, the data-parallel size
+    almost certainly changed since the checkpoint was saved; rather than silently resume with a
+    different data order, this raises.
+
+    Restoring is only correct when the task encoder is deterministic per sample (Energon replays the
+    samples since the last checkpoint by re-running the pipeline) — see
+    :meth:`megatron.bridge.data.energon.base_energon_datamodule.EnergonDataloader.restore_state`.
+
+    Args:
+        train_iterator: The training data iterator (built after the model checkpoint load).
+        iteration: The iteration the run resumed from (used to locate the state file).
+        dataloader_load_path: Base directory the dataloader state was saved under. ``None`` or empty
+            disables restore.
+        pg_collection: Process groups, used to resolve the per-DP-rank state file.
+    """
+    if train_iterator is None or not dataloader_load_path:
+        return
+    # VPP yields a list of iterators; dataloader-state save/restore handles the single-iterator case.
+    if isinstance(train_iterator, list):
+        return
+    iterable = getattr(train_iterator, "iterable", None)
+    if iterable is None or not hasattr(iterable, "restore_state"):
+        return
+
+    if not os.path.isdir(dataloader_load_path):
+        # No dataloader state dir at all: the checkpoint predates this feature. Start from scratch.
+        print_rank_0(f"no dataloader state under {dataloader_load_path}; dataloader starts from the beginning")
+        return
+
+    dp_rank = get_pg_rank(pg_collection.dp)
+    iter_dir = get_checkpoint_name(dataloader_load_path, iteration)
+    data_state_load_path = os.path.join(iter_dir, f"train_dataloader_dprank{dp_rank:03d}.pt")
+    if not os.path.isfile(data_state_load_path):
+        raise RuntimeError(
+            f"Dataloader state directory {dataloader_load_path} exists but {data_state_load_path} is "
+            f"missing. The data-parallel size likely changed since the checkpoint was saved (expected "
+            f"a per-DP-rank file for dp_rank={dp_rank}). Resuming would silently change the training "
+            f"data order; refusing to continue."
+        )
+
+    print_rank_0(f"restoring dataloader state at iteration {iteration} from {data_state_load_path}")
+    loaded = torch.load(data_state_load_path, map_location="cpu", weights_only=False)
+    iterable.restore_state(loaded["dataloader_state_dict"])
 
 
 def save_tokenizer_assets(
@@ -3380,6 +3476,10 @@ def _load_base_checkpoint(
     Returns:
         Tuple of (state_dict, checkpoint_name, release, ckpt_type).
     """
+    # save_checkpoint writes dataloader state to "{checkpoint.save}/energon/iter_N", a sibling of the
+    # iter_N model dirs. Each branch passes the root of the checkpoint it selects to _record_dataloader_state_dir.
+    _record_dataloader_state_dir(checkpointing_context, None)
+
     # Resolve which iteration to load
     iteration, release = _resolve_checkpoint_iteration(
         load_dir=load_dir,
@@ -3390,6 +3490,9 @@ def _load_base_checkpoint(
     # and skip non-persistent checkpoint and tracker file logic.
     if iteration == _DIRECT_ITERATION_DIR_SENTINEL:
         checkpoint_path = load_dir
+        # load_dir is the iter_N dir itself, so the checkpoint root (holding the energon/ sibling) is
+        # one level up.
+        _record_dataloader_state_dir(checkpointing_context, os.path.dirname(os.path.normpath(load_dir)))
         ckpt_format = _get_checkpoint_format(checkpoint_path)
         if not rank0:
             print_rank_0(f" loading {ckpt_format} checkpoint directly from {checkpoint_path}")
@@ -3438,6 +3541,8 @@ def _load_base_checkpoint(
 
     if non_persistent_iteration != -1:  # there is a non-persistent checkpoint
         if non_persistent_iteration >= iteration:
+            # Non-persistent (global and local) state is written under checkpoint.save, already the root.
+            _record_dataloader_state_dir(checkpointing_context, ckpt_cfg.save)
             return _load_non_persistent_base_checkpoint(
                 non_persistent_global_dir,
                 ckpt_cfg,
@@ -3464,6 +3569,9 @@ def _load_base_checkpoint(
             sys.exit()
 
         return None, "", False, None
+
+    # load_dir is already the root dir of a persistent checkpoint
+    _record_dataloader_state_dir(checkpointing_context, load_dir)
 
     # Determine the checkpoint format from config, assert it matches auto-detected.
     checkpoint_path = get_checkpoint_name(load_dir, iteration, release)

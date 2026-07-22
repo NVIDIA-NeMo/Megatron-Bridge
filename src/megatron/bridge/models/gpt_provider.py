@@ -172,6 +172,9 @@ class GPTModelProvider(TransformerConfig, ModelProviderMixin[MCoreGPTModel]):
     hf_model_id: str | None = None
     """Optional HuggingFace model identifier associated with this provider."""
 
+    hf_model_revision: str | None = None
+    """Optional immutable HuggingFace revision used to construct this provider."""
+
     # This represents the unpadded vocab size
     # The padded vocab size is automatically calculated in the provide() method.
     vocab_size: Optional[int] = None

@@ -22,7 +22,6 @@ from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.bridge.models.conversion import quantization_utils
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
-from megatron.bridge.models.conversion.transformers_compat import rope_theta_from_hf
 from megatron.bridge.models.deepseek.common import get_common_mapping_list
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mla_provider import MLAModelProvider
@@ -72,7 +71,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.moe_router_enable_expert_bias = True
         provider.moe_router_dtype = "fp32"
         provider.moe_permute_fusion = True
-        provider.moe_aux_loss_coeff = 0.0001
 
         provider.apply_rope_fusion = False
         provider.gradient_accumulation_fusion = True
@@ -87,7 +85,6 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         provider.attention_softmax_in_fp32 = False
 
         provider.make_vocab_size_divisible_by = 1280
-        provider.seq_length = 4096
 
         provider.moe_layer_freq = [0] * hf_config.first_k_dense_replace + [1] * (
             hf_config.num_hidden_layers - hf_config.first_k_dense_replace
@@ -172,7 +169,7 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         converted_weights_dict: Dict[str, torch.Tensor],
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
-        """Add rotary embedding inverse frequency parameter if needed."""
+        """Preserve a source rotary embedding inverse frequency tensor if present."""
         global_name = task.global_param_name
         if not global_name.startswith("decoder.layers.") or not global_name.endswith(".input_layernorm.weight"):
             return converted_weights_dict
@@ -181,36 +178,17 @@ class DeepSeekV3Bridge(MegatronModelBridge):
         if len(parts) < 4 or not parts[2].isdigit():
             return converted_weights_dict
 
-        inv_freq_prefix = "model.layers."
-        inv_freq_suffix = ".self_attn.rotary_emb.inv_freq"
         layer_idx = int(parts[2])
-        inv_freq_key = f"{inv_freq_prefix}{layer_idx}{inv_freq_suffix}"
+        inv_freq_key = f"model.layers.{layer_idx}.self_attn.rotary_emb.inv_freq"
         if inv_freq_key in converted_weights_dict:
             return converted_weights_dict
 
-        has_inv_freq = getattr(self, "_deepseek_has_inv_freq", None)
-        if has_inv_freq is None:
-            has_inv_freq = False
-            for key in hf_state_dict.keys():
-                if key.startswith(inv_freq_prefix) and key.endswith(inv_freq_suffix):
-                    has_inv_freq = True
-                    break
-            self._deepseek_has_inv_freq = has_inv_freq
-        if not has_inv_freq:
+        source_inv_freq = hf_state_dict.get(inv_freq_key)
+        if source_inv_freq is not None:
+            if converted_weights_dict:
+                reference_tensor = next(iter(converted_weights_dict.values()))
+                source_inv_freq = source_inv_freq.to(device=reference_tensor.device)
+            converted_weights_dict[inv_freq_key] = source_inv_freq
             return converted_weights_dict
 
-        inv_freq = getattr(self, "_deepseek_inv_freq", None)
-        if inv_freq is None:
-            rotary_dim = self.hf_config.qk_rope_head_dim
-            rotary_base = rope_theta_from_hf(self.hf_config)
-            inv_freq = 1.0 / (rotary_base ** (torch.arange(0, rotary_dim, 2, dtype=torch.float32) / rotary_dim))
-            self._deepseek_inv_freq = inv_freq
-
-        if converted_weights_dict:
-            reference_tensor = next(iter(converted_weights_dict.values()))
-            if inv_freq.device != reference_tensor.device:
-                inv_freq = inv_freq.to(device=reference_tensor.device)
-                self._deepseek_inv_freq = inv_freq
-
-        converted_weights_dict[inv_freq_key] = inv_freq
         return converted_weights_dict
