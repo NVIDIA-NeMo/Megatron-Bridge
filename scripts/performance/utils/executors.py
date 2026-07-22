@@ -161,6 +161,9 @@ def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
     training_command = shlex.join(task.to_command(with_entrypoint=True))
     return run.Script(
         path="bash",
+        # The hook wrapper renders nested tasks with ``with_entrypoint=True``.
+        # Using bash as both entrypoint and path would produce ``bash bash -lc``.
+        entrypoint="/usr/bin/env",
         args=[
             "-lc",
             f"""
