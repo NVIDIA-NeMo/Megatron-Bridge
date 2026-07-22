@@ -82,14 +82,24 @@ The Slurm scripts warm the shared `uv` cache once before all distributed ranks e
 
 ## Slurm Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) runs round-trip conversion across 16 GPUs on 2 nodes with default `TP=1, PP=1, EP=16`.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to submit a fixed `TP=1, PP=1, EP=16` config and verify HF ↔ Megatron round-trip conversion across 16 GPUs on 2 nodes. Run the wrapper from a Slurm login node; it submits one job and waits for it by default.
+
+Set the container and account, then launch:
 
 ```bash
-mkdir -p logs
-sbatch examples/models/exaone/exaone_moe/slurm_conversion.sh
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=<your-account>
+export SLURM_PARTITION=batch
+# Optional: export CONTAINER_MOUNTS, HF_TOKEN, HF_HOME, and UV_CACHE_DIR before launching.
+bash examples/models/exaone/exaone_moe/slurm_conversion.sh
 ```
 
-Before submitting, edit the `#SBATCH --account` and `#SBATCH --partition` lines for your cluster, or override them according to your scheduler policy.
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and must be on storage visible from the compute nodes. Forward any cluster-specific `srun` options your scheduler requires, for example:
+
+```bash
+bash examples/models/exaone/exaone_moe/slurm_conversion.sh \
+    --srun-arg=--mpi=pmix
+```
 
 ## Script Configuration
 
