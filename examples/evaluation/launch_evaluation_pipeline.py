@@ -21,12 +21,14 @@ Parse arguments early to catch unknown args before other libraries
 
 import logging
 import os
+import shlex
 import signal
 import sys
 import time
+import uuid
 from dataclasses import dataclass
+from pathlib import Path
 
-import yaml
 from nemo_run.core.execution.slurm import SlurmJobDetails
 from nemo_run.run.ray.job import RayJob
 
@@ -41,9 +43,11 @@ except (ImportError, ModuleNotFoundError):
 
 try:
     from argument_parser import parse_cli_args
+    from run_lm_eval import iter_evaluation_metrics, load_evaluation_results
     from utils.executors import kuberay_executor, slurm_executor
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import parse_cli_args
+    from .run_lm_eval import iter_evaluation_metrics, load_evaluation_results
     from .utils.executors import kuberay_executor, slurm_executor
 
 logging.basicConfig(level=logging.DEBUG)
@@ -110,17 +114,33 @@ def main(args):
         name="demo-slurm-ray-deploy",
         executor=executor,
     )
+    evaluation_run_id = uuid.uuid4().hex
+    deploy_command = shlex.join(
+        [
+            "bash",
+            "/opt/Megatron-Bridge/examples/evaluation/deploy.sh",
+            args.megatron_checkpoint,
+            str(args.num_replicas),
+            str(args.num_gpus),
+        ]
+    )
+    eval_command = shlex.join(
+        [
+            "bash",
+            "/opt/Megatron-Bridge/examples/evaluation/eval.sh",
+            args.output_dir,
+            str(args.parallelism),
+            "--run-id",
+            evaluation_run_id,
+        ]
+    )
+    shell_script = f"""set -euo pipefail
+{deploy_command} 2>&1 | tee -a deploy.log &
+sleep 120
+{eval_command} 2>&1 | tee -a eval.log
+"""
     job.start(
-        command=f"""
-        bash /opt/Megatron-Bridge/examples/evaluation/deploy.sh \
-            {args.megatron_checkpoint} \
-            {args.num_replicas} \
-            {args.num_gpus}| tee -a deploy.log & \
-        sleep 120; \
-        bash /opt/Megatron-Bridge/examples/evaluation/eval.sh \
-            {args.output_dir} \
-            {args.parallelism} | tee -a eval.log
-        """,
+        command=shlex.join(["bash", "-c", shell_script]),
         workdir=None,
     )
 
@@ -139,9 +159,9 @@ def main(args):
     job.logs(follow=True, timeout=10 * 60 * 60)
     job.stop()
 
-    with open(os.path.join(args.output_dir, "results", "results.yml"), "r") as f:
-        results = yaml.safe_load(f)
+    results_path, results = load_evaluation_results(Path(args.output_dir), evaluation_run_id)
 
+    logger.info("Results file: %s", results_path)
     logger.info("Results: %s", results)
 
     if HAVE_WANDB and args.wandb_key:
@@ -152,9 +172,10 @@ def main(args):
             filters={"display_name": args.wandb_experiment_name},
         )
 
+        run_id = None
         if runs:
             run_id = runs[0].id
-            print(f"Found run with ID: {run_id}")
+            logger.info("Found run with ID: %s", run_id)
 
         wandb_run = wandb.init(
             project=args.wandb_project_name,
@@ -164,21 +185,18 @@ def main(args):
         )
         artifact = wandb.Artifact(name="evaluation_results", type="evaluation_results")
         artifact.add_file(
-            local_path=os.path.join(args.output_dir, "results", "results.yml"),
-            name="results.yml",
+            local_path=str(results_path),
+            name=results_path.name,
         )
         wandb_run.log_artifact(artifact)
 
-        for category in ["tasks", "groups"]:
-            for task_or_group_name, result in results["results"][category].items():
-                for metric_name, metric_result in result["metrics"].items():
-                    field_key = f"{category.rstrip('s')}/{task_or_group_name}/{metric_name}"
-                    wandb_run.log(
-                        {
-                            f"{field_key}/value": metric_result["scores"][metric_name]["value"],
-                            f"{field_key}/stderr": metric_result["scores"][metric_name]["stats"]["stderr"],
-                        }
-                    )
+        category_names = {"results": "task", "groups": "group"}
+        for category, entry_name, metric_name, value, stderr in iter_evaluation_metrics(results):
+            field_key = f"{category_names[category]}/{entry_name}/{metric_name}"
+            metrics = {f"{field_key}/value": value}
+            if stderr is not None:
+                metrics[f"{field_key}/stderr"] = stderr
+            wandb_run.log(metrics)
 
         wandb_run.finish()
 
