@@ -24,6 +24,30 @@ from megatron.bridge.training.state import GlobalState
 class TestInProcessRestart:
     """Test cases for the inprocess_restart function."""
 
+    def test_inprocess_restart_resolves_default_active_world_size(self):
+        """Test the documented WORLD_SIZE fallback for active ranks."""
+        from nvidia_resiliency_ext.inprocess.state import State
+
+        config = InProcessRestartConfig(enabled=True, granularity="rank", empty_cuda_cache=False)
+        mock_global_state = MagicMock(spec=GlobalState)
+
+        with (
+            patch.dict(os.environ, {"MASTER_PORT": "29500", "WORLD_SIZE": "4"}),
+            patch("megatron.bridge.training.inprocess_restart.warnings.warn"),
+            patch("nvidia_resiliency_ext.inprocess.Wrapper") as mock_wrapper,
+        ):
+            mock_wrapper.return_value.return_value = MagicMock()
+            inprocess_restart(MagicMock(), config, mock_global_state)
+
+        wrapper_kwargs = mock_wrapper.call_args.kwargs
+        retry_controller = wrapper_kwargs["initialize"].instances[0]
+        state = State(rank=0, world_size=4, active_rank=0, active_world_size=4).freeze()
+
+        assert retry_controller(state) is state
+        root_layer = wrapper_kwargs["rank_assignment"].layers[0]
+        assert root_layer.min_ranks == 4
+        assert root_layer.max_ranks == 4
+
     def test_inprocess_restart_basic_configuration(self):
         """Test inprocess_restart with basic configuration."""
         mock_train_fn = MagicMock()

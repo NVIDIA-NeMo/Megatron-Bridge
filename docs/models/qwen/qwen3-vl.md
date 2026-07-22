@@ -10,7 +10,7 @@ We use the following environment variables throughout this page
 - `MEGATRON_MODEL_PATH=/models/Qwen3-VL-8B-Instruct` (feel free to set your own path)
 Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number 
 `iter_xxxxxx`. For more details on checkpointing, please see 
-[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents) 
+[here](../../training/checkpointing.md#checkpoint-contents)
 ```
 
 ## Examples

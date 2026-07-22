@@ -378,8 +378,8 @@ Megatron Bridge leverages functionalities from both Megatron Core and Transforme
 
 For more detailed technical information and implementation details, visit:
 - [Megatron Core Context Parallelism Documentation](https://docs.nvidia.com/megatron-core/developer-guide/latest/user-guide/features/context_parallel.html)
-- [Megatron Core wrappers for Transformer Engine](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/custom_layers/transformer_engine.py)
-- [Transformer Engine attention modules](https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention.py)
+- [Megatron Core wrappers for Transformer Engine](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/extensions/transformer_engine.py)
+- [Transformer Engine attention modules](https://github.com/NVIDIA/TransformerEngine/blob/main/transformer_engine/pytorch/attention/__init__.py)
 
 ## Combined Parallelism Example
 

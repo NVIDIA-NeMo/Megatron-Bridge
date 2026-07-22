@@ -41,6 +41,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     Qwen3VLVisionPatchMerger,
     Qwen3VLVisionRotaryEmbedding,
     collapse_thw,
+    ensure_requires_grad_for_cp_collective,
     expand_thw,
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
@@ -145,6 +146,58 @@ def test_get_rope_index_video_tokens_use_video_grid():
     assert position_ids.shape == (3, 1, input_ids.size(1))
     assert torch.equal(position_ids[:, 0, 2:6], expected_video_positions)
     assert deltas.shape == (1, 1)
+
+
+def test_ensure_requires_grad_for_cp_collective():
+    """Grad mode: no-grad tensors are forced; already-requiring tensors untouched.
+    Under torch.no_grad the helper is a no-op (no rank records a backward)."""
+    plain = torch.zeros(2, 3)
+    empty = torch.zeros(0, 3)
+    already = torch.zeros(2, 3, requires_grad=True)
+    ensure_requires_grad_for_cp_collective((plain, empty, already))
+    assert plain.requires_grad and empty.requires_grad and already.requires_grad
+
+    with torch.no_grad():
+        untouched = torch.zeros(2, 3)
+        ensure_requires_grad_for_cp_collective((untouched,))
+        assert not untouched.requires_grad
+
+
+@pytest.mark.parametrize("cp_rank", [0, 1])
+def test_allgather_vision_embeddings_backward_mocked_collectives(cp_rank, monkeypatch):
+    """Verify backward = reduce-scatter (sum across CP ranks, then slice this rank's
+    range) without a process group, by stubbing the collectives. The injected peer
+    gradient varies per row, so a wrong slice offset changes the result, and dropping
+    the all_reduce loses the peer contribution entirely.
+    """
+    hidden_size = 4
+    seqlens_on_cp_ranks = [torch.tensor([2]), torch.tensor([3])]
+    total = int(sum(s.sum() for s in seqlens_on_cp_ranks))
+    peer_grad = torch.arange(total, dtype=torch.float).unsqueeze(1).expand(total, hidden_size)
+    fake_group = object()
+
+    def fake_all_gather(outputs, inp, group=None):
+        assert group is fake_group
+        outputs[cp_rank].copy_(inp)
+        outputs[1 - cp_rank].fill_(7.0)
+
+    def fake_all_reduce(tensor, group=None):
+        assert group is fake_group
+        tensor.add_(peer_grad)
+
+    monkeypatch.setattr(torch.distributed, "all_gather", fake_all_gather)
+    monkeypatch.setattr(torch.distributed, "all_reduce", fake_all_reduce)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda group=None: cp_rank)
+
+    local_seqlen = int(seqlens_on_cp_ranks[cp_rank].sum())
+    input_ = torch.randn(local_seqlen, hidden_size, requires_grad=True)
+    output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, fake_group)
+    assert output.shape == (total, hidden_size)
+    output.sum().backward()
+
+    start = int(sum(s.sum() for s in seqlens_on_cp_ranks[:cp_rank]))
+    expected = (torch.ones(total, hidden_size) + peer_grad)[start : start + local_seqlen]
+    torch.testing.assert_close(input_.grad, expected)
 
 
 class TestQwen3VLUtils:
@@ -477,6 +530,133 @@ class TestQwen3VLUtils:
         assert output.shape == (local_seqlen * cp_size, hidden_size)
         output.sum().backward()
         assert input_.grad is not None
+
+        self.destroy_parallel_state()
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
+        reason="Requires at least 2 GPUs",
+    )
+    def test_allgather_vision_embeddings_backward_reduce_scatter(self):
+        """Backward must reduce-scatter: grad w.r.t. input is the CP-summed gradient sliced
+        to this rank's range, not just this rank's local slice.
+
+        Each rank drives a *rank-dependent* upstream gradient on the shared gathered output
+        (weight = cp_rank + 1). The correct gradient for every rank is therefore the same
+        row-weighted tensor scaled by S = sum_r (r + 1), sliced to the rank's own range. The
+        buggy local-slice-only backward would instead yield the per-rank weight, which differs
+        across ranks and misses the cross-rank contributions.
+        """
+        cp_size = 2
+        self._setup_parallel_state(tp_size=1, cp_size=cp_size)
+        cp_group = parallel_state.get_context_parallel_group()
+        cp_rank = parallel_state.get_context_parallel_rank()
+
+        local_seqlen = 3
+        hidden_size = 8
+        device = torch.cuda.current_device()
+        seqlens_on_cp_ranks = [torch.tensor([local_seqlen], dtype=torch.long, device=device) for _ in range(cp_size)]
+        total = local_seqlen * cp_size
+
+        input_ = torch.randn(local_seqlen, hidden_size, dtype=torch.float, device=device, requires_grad=True)
+        output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, cp_group)
+
+        # Row weight varies along the gathered sequence so the test also exercises the slice offset.
+        row = (torch.arange(total, device=device, dtype=torch.float) + 1.0).unsqueeze(1)  # (total, 1)
+        rank_weight = float(cp_rank + 1)
+        loss = (output * (row * rank_weight)).sum()
+        loss.backward()
+
+        s = sum(r + 1 for r in range(cp_size))  # 3 for cp_size=2
+        start = cp_rank * local_seqlen
+        expected = (row[start : start + local_seqlen] * s).expand(local_seqlen, hidden_size)
+        assert input_.grad is not None
+        torch.testing.assert_close(input_.grad, expected)
+
+        self.destroy_parallel_state()
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
+        reason="Requires at least 2 GPUs",
+    )
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+    def test_allgather_vision_embeddings_empty_rank(self, dtype):
+        """A CP rank with 0 tokens (num_images < cp_size) must still participate in the
+        backward all_reduce so the collective stays symmetric and does not hang.
+
+        The empty rank supplies a 0-length input with requires_grad=True (the model forces
+        this before the gather), so autograd invokes the backward -- and thus the cp_group
+        all_reduce -- on every rank. The rank that owns the tokens must receive the CP-summed
+        gradient.
+        """
+        cp_size = 2
+        self._setup_parallel_state(tp_size=1, cp_size=cp_size)
+        cp_group = parallel_state.get_context_parallel_group()
+        cp_rank = parallel_state.get_context_parallel_rank()
+
+        owner_seqlen = 4
+        hidden_size = 8
+        device = torch.cuda.current_device()
+        # Only rank 0 owns tokens; rank 1 is the empty (0-image) rank.
+        seqlens_on_cp_ranks = [
+            torch.tensor([owner_seqlen], dtype=torch.long, device=device),
+            torch.tensor([0], dtype=torch.long, device=device),
+        ]
+        local_seqlen = owner_seqlen if cp_rank == 0 else 0
+
+        input_ = torch.zeros(local_seqlen, hidden_size, dtype=dtype, device=device)
+        ensure_requires_grad_for_cp_collective((input_,))
+        assert input_.requires_grad
+        output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, cp_group)
+        assert output.shape == (owner_seqlen, hidden_size)
+        assert output.dtype == dtype
+
+        # Rank-dependent upstream gradient again, so the owner rank must see the CP-summed grad.
+        rank_weight = float(cp_rank + 1)
+        (output * rank_weight).sum().backward()
+
+        assert input_.grad is not None
+        assert input_.grad.shape == (local_seqlen, hidden_size)
+        if cp_rank == 0:
+            s = sum(r + 1 for r in range(cp_size))  # 3
+            torch.testing.assert_close(
+                input_.grad, torch.full((owner_seqlen, hidden_size), float(s), device=device, dtype=dtype)
+            )
+
+        self.destroy_parallel_state()
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or int(os.environ.get("WORLD_SIZE", "1")) < 2,
+        reason="Requires at least 2 GPUs",
+    )
+    @pytest.mark.parametrize("dtype", [torch.bfloat16, torch.float16, torch.float32])
+    def test_allgather_vision_embeddings_frozen_input(self, dtype):
+        """A fully frozen vision tower produces embeddings that do not require grad; the
+        model forces requires_grad=True before the gather so every CP rank still enters the
+        backward collective. A forced no-grad-fn leaf must receive the CP-summed gradient.
+        """
+        cp_size = 2
+        self._setup_parallel_state(tp_size=1, cp_size=cp_size)
+        cp_group = parallel_state.get_context_parallel_group()
+        cp_rank = parallel_state.get_context_parallel_rank()
+
+        local_seqlen = 3
+        hidden_size = 8
+        device = torch.cuda.current_device()
+        seqlens_on_cp_ranks = [torch.tensor([local_seqlen], dtype=torch.long, device=device) for _ in range(cp_size)]
+
+        # Frozen tower output: a plain tensor with no grad_fn and requires_grad=False.
+        input_ = torch.randn(local_seqlen, hidden_size, dtype=dtype, device=device)
+        assert not input_.requires_grad
+        ensure_requires_grad_for_cp_collective((input_,))  # what the model does right before the gather
+        assert input_.requires_grad
+
+        output = AllGatherVisionEmbeddings.apply(input_, seqlens_on_cp_ranks, cp_group)
+        rank_weight = float(cp_rank + 1)
+        (output * rank_weight).sum().backward()
+
+        s = float(sum(r + 1 for r in range(cp_size)))  # 3 for cp_size=2
+        torch.testing.assert_close(input_.grad, torch.full((local_seqlen, hidden_size), s, device=device, dtype=dtype))
 
         self.destroy_parallel_state()
 

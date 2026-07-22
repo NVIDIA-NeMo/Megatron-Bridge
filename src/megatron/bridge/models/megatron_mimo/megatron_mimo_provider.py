@@ -286,7 +286,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
             # dist.new_group() is a collective on the default PG — all ranks must
             # call it in the same global order regardless of module membership.
-            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
+            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(grid.get_rank_enum(["pp"]))
 
             # Only build a full PG collection for ranks that participate in this module.
             if grid.is_current_rank_in_grid():

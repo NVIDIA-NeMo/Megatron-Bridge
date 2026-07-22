@@ -89,6 +89,7 @@ class PreTrainedBase(ABC):
         source_path: Union[str, Path],
         target_path: Union[str, Path],
         file_patterns: Optional[List[str]] = None,
+        revision: str | None = None,
     ) -> List[str]:
         """Copy files matching patterns from source to target directory.
 
@@ -101,6 +102,7 @@ class PreTrainedBase(ABC):
             file_patterns: Optional list of file names or patterns to copy.
                 Supports both exact file names (e.g., "vocab.json") and glob patterns
                 (e.g., "*.json"). If not provided, defaults to self.custom_file_patterns.
+            revision: Optional Hugging Face Hub revision to use for remote sources.
 
         Returns:
             List of successfully copied file names
@@ -131,7 +133,8 @@ class PreTrainedBase(ABC):
                 from huggingface_hub import hf_hub_download, list_repo_files
 
                 # Get list of all files in the repository
-                repo_files = list_repo_files(str(source_path))
+                revision_kwargs = {"revision": revision} if revision is not None else {}
+                repo_files = list_repo_files(str(source_path), **revision_kwargs)
 
                 # Use fnmatch for both patterns and exact file names
                 import fnmatch
@@ -145,6 +148,7 @@ class PreTrainedBase(ABC):
                                 filename=repo_file,
                                 local_dir=target_path,
                                 local_dir_use_symlinks=False,
+                                **revision_kwargs,
                             )
                             copied_files.append(repo_file)
                         except Exception:
@@ -181,6 +185,8 @@ class PreTrainedBase(ABC):
         """
         save_path = Path(save_directory)
         save_path.mkdir(parents=True, exist_ok=True)
+        revision = self.init_kwargs.get("revision")
+        revision = revision if isinstance(revision, str) else None
 
         _ = getattr(self, "config")  # trigger lazy loading of config
         if hasattr(self, "_config") and self._config is not None:
@@ -211,7 +217,29 @@ class PreTrainedBase(ABC):
         for name in self.OPTIONAL_ARTIFACTS:
             artifact = getattr(self, name, None)
             if artifact is not None and hasattr(artifact, "save_pretrained"):
-                artifact.save_pretrained(save_path)
+                try:
+                    artifact.save_pretrained(save_path)
+                except ValueError:
+                    if name != "generation_config":
+                        raise
+
+                    source_path = original_source_path or getattr(self, "model_name_or_path", None)
+                    if source_path is None:
+                        raise
+
+                    copied_files = self._copy_custom_modeling_files(
+                        source_path=source_path,
+                        target_path=save_path,
+                        file_patterns=["generation_config.json"],
+                        revision=revision,
+                    )
+                    if "generation_config.json" not in copied_files:
+                        raise
+
+                    logger.warning(
+                        "GenerationConfig.save_pretrained() rejected the source artifact; "
+                        "preserved the original generation_config.json instead."
+                    )
 
         # Download/copy additional files if specified
         if additional_files:
@@ -219,6 +247,7 @@ class PreTrainedBase(ABC):
                 source_path=original_source_path or self.model_name_or_path,
                 target_path=save_path,
                 file_patterns=additional_files,
+                revision=revision,
             )
 
         # Preserve custom modeling files if trust_remote_code was used
@@ -251,7 +280,7 @@ class PreTrainedBase(ABC):
                 source_paths.append(self.model_name_or_path)
 
             for source_path in source_paths:
-                copied_files = self._copy_custom_modeling_files(source_path, save_path)
+                copied_files = self._copy_custom_modeling_files(source_path, save_path, revision=revision)
                 if copied_files:
                     # Successfully copied files, no need to try other paths
                     break

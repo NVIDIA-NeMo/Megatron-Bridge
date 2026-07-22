@@ -146,20 +146,16 @@ python examples/conversion/hf_to_megatron_generate_text.py \
 from megatron.bridge.recipes.glm import glm45_air_106b_pretrain_config
 
 # Create a pre-training configuration
-config = glm45_air_106b_pretrain_config(
-    name="glm45_air_pretrain",
-    data_paths=["path/to/data"],
-    train_iters=100000,
-    global_batch_size=2048,
-    micro_batch_size=1,
-    lr=1e-4,
-    min_lr=1e-5,
-    # MTP configuration
-    mtp_num_layers=1,
-    mtp_loss_scaling_factor=0.3,  # 0.3 for first 15T tokens, 0.1 after
-    # Recompute for memory efficiency
-    recompute_granularity="selective",
-)
+config = glm45_air_106b_pretrain_config()
+config.dataset.blend = [["/path/to/dataset_text_document"], None]
+config.train.train_iters = 100000
+config.train.global_batch_size = 2048
+config.train.micro_batch_size = 1
+config.optimizer.lr = 1e-4
+config.optimizer.min_lr = 1e-5
+config.model.mtp_num_layers = 1
+config.model.mtp_loss_scaling_factor = 0.3  # 0.3 for first 15T tokens, 0.1 after
+config.model.recompute_granularity = "selective"
 ```
 
 ### Finetuning Examples
@@ -168,46 +164,38 @@ config = glm45_air_106b_pretrain_config(
 ```python
 from megatron.bridge.recipes.glm import glm45_air_106b_sft_config
 
-config = glm45_air_106b_sft_config(
-    name="glm45_air_full_finetune",
-    pretrained_checkpoint="/models/glm45-air-106b",
-    train_iters=1000,
-    global_batch_size=128,
-    micro_batch_size=1,
-    finetune_lr=5e-6,
-)
+config = glm45_air_106b_sft_config()
+config.checkpoint.pretrained_checkpoint = "/models/glm45-air-106b"
+config.train.train_iters = 1000
+config.train.global_batch_size = 128
+config.train.micro_batch_size = 1
+config.scheduler.max_lr = 5e-6
 ```
 
 #### LoRA Finetuning (GLM 4.5 Air)
 ```python
 from megatron.bridge.recipes.glm import glm45_air_106b_peft_config
 
-config = glm45_air_106b_peft_config(
-    name="glm45_air_lora_finetune",
-    pretrained_checkpoint="/models/glm45-air-106b",
-    peft_scheme="lora",  # or "dora"
-    train_iters=1000,
-    global_batch_size=128,
-    micro_batch_size=1,
-    finetune_lr=1e-4,
-    # Uses TP=1, PP=2, EP=4 (8 GPUs) automatically
-)
+config = glm45_air_106b_peft_config(peft_scheme="lora")  # or "dora"
+config.checkpoint.pretrained_checkpoint = "/models/glm45-air-106b"
+config.train.train_iters = 1000
+config.train.global_batch_size = 128
+config.train.micro_batch_size = 1
+config.scheduler.max_lr = 1e-4
+# Uses TP=1, PP=2, EP=4 (8 GPUs) automatically
 ```
 
 #### DoRA Finetuning (GLM 4.5 355B)
 ```python
 from megatron.bridge.recipes.glm import glm45_355b_peft_config
 
-config = glm45_355b_peft_config(
-    name="glm45_355b_dora_finetune",
-    pretrained_checkpoint="/models/glm45-355b",
-    peft_scheme="dora",
-    train_iters=1000,
-    global_batch_size=128,
-    micro_batch_size=1,
-    finetune_lr=1e-4,
-    # Uses TP=2, PP=4, EP=4 (32 GPUs) automatically
-)
+config = glm45_355b_peft_config(peft_scheme="dora")
+config.checkpoint.pretrained_checkpoint = "/models/glm45-355b"
+config.train.train_iters = 1000
+config.train.global_batch_size = 128
+config.train.micro_batch_size = 1
+config.scheduler.max_lr = 1e-4
+# Uses TP=2, PP=4, EP=4 (32 GPUs) automatically
 ```
 
 ### Command-Line Training
@@ -237,41 +225,35 @@ checkpoint.save=$SAVE_DIR/glm45_355b_full
 MTP can be configured for improved training efficiency:
 
 ```python
-config = glm45_355b_pretrain_config(
-    name="glm45_with_mtp",
-    mtp_num_layers=1,  # Number of MTP prediction layers
-    mtp_loss_scaling_factor=0.3,  # 0.3 early training, 0.1 later
-    # Set to None or 0 to disable MTP
-)
+config = glm45_355b_pretrain_config()
+config.model.mtp_num_layers = 1  # Number of MTP prediction layers
+config.model.mtp_loss_scaling_factor = 0.3  # 0.3 early training, 0.1 later
+# Set mtp_num_layers to None or 0 to disable MTP
 ```
 
 ### Activation Recomputation
 For memory-constrained scenarios:
 
 ```python
-config = glm45_air_106b_pretrain_config(
-    name="glm45_with_recompute",
-    recompute_granularity="selective",  # or "full"
-    recompute_method="uniform",
-    recompute_num_layers=2,
-)
+config = glm45_air_106b_pretrain_config()
+config.model.recompute_granularity = "full"
+config.model.recompute_method = "uniform"
+config.model.recompute_num_layers = 2
 ```
 
 ### Expert Parallelism Tuning
 Adjust expert parallelism based on your cluster:
 
 ```python
-config = glm45_air_106b_pretrain_config(
-    name="glm45_custom_parallelism",
-    tensor_model_parallel_size=1,
-    pipeline_model_parallel_size=4,
-    expert_model_parallel_size=16,  # Adjust based on GPU count
-    sequence_parallel=True,
-)
+config = glm45_air_106b_pretrain_config()
+config.model.tensor_model_parallel_size = 1
+config.model.pipeline_model_parallel_size = 4
+config.model.expert_model_parallel_size = 16  # Adjust based on GPU count
+config.model.sequence_parallel = True
 ```
 
 ## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/README.md)
 - Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 
 ## Hugging Face Model Cards

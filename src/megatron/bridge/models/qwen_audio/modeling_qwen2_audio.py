@@ -41,17 +41,29 @@ if TYPE_CHECKING:
 # Import HuggingFace Qwen2Audio model classes with fallback
 try:
     from transformers import Qwen2AudioForConditionalGeneration
+    from transformers.models.qwen2_audio import modeling_qwen2_audio as hf_modeling_qwen2_audio
     from transformers.models.qwen2_audio.modeling_qwen2_audio import (
         Qwen2AudioEncoder,
         Qwen2AudioMultiModalProjector,
     )
 
+    HFQwen2AudioModel = getattr(hf_modeling_qwen2_audio, "Qwen2AudioModel", None)
     HAS_QWEN2_AUDIO = True
 except ImportError:
     Qwen2AudioForConditionalGeneration = None
     Qwen2AudioEncoder = None
     Qwen2AudioMultiModalProjector = None
+    HFQwen2AudioModel = None
     HAS_QWEN2_AUDIO = False
+
+
+_QWEN2_AUDIO_MERGE_METHOD = None
+if HAS_QWEN2_AUDIO:
+    _QWEN2_AUDIO_MERGE_METHOD = getattr(
+        Qwen2AudioForConditionalGeneration, "_merge_input_ids_with_audio_features", None
+    )
+    if _QWEN2_AUDIO_MERGE_METHOD is None and HFQwen2AudioModel is not None:
+        _QWEN2_AUDIO_MERGE_METHOD = getattr(HFQwen2AudioModel, "_merge_input_ids_with_audio_features", None)
 
 
 class Qwen2AudioModel(MegatronModule):
@@ -141,11 +153,9 @@ class Qwen2AudioModel(MegatronModule):
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
-        # Monkey-patch methods from HuggingFace Qwen2AudioForConditionalGeneration
-        if HAS_QWEN2_AUDIO and Qwen2AudioForConditionalGeneration is not None:
-            self._merge_input_ids_with_audio_features = types.MethodType(
-                Qwen2AudioForConditionalGeneration._merge_input_ids_with_audio_features, self
-            )
+        # Bind the merge method from the Hugging Face Qwen2-Audio implementation.
+        if _QWEN2_AUDIO_MERGE_METHOD is not None:
+            self._merge_input_ids_with_audio_features = types.MethodType(_QWEN2_AUDIO_MERGE_METHOD, self)
 
         # Store audio token id from config
         self.audio_token_id = getattr(config, "audio_token_id", 151646)
