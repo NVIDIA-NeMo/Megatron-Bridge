@@ -23,7 +23,8 @@ import torch
 from megatron.bridge.data.energon.hf_task_encoder import HFEnergonBatch, HFEnergonSample, HFTaskEncoder
 from megatron.bridge.models.nemotron_omni.data.collate_fn import (
     _validate_nemotron_omni_visual_keys,
-    nemotron_omni_collate_fn,
+    nemotron_omni_expanded_collate_fn,
+    nemotron_omni_llava_collate_fn,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -125,8 +126,9 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
 
     The task encoder owns only source adaptation and configuration. Tokenization,
     assistant masking, modality-token expansion, padding, and in-batch packing
-    are performed by :func:`nemotron_omni_collate_fn` for both Direct-HF and
-    Energon datasets.
+    are performed by the canonical expanded-sequence collator for both
+    Direct-HF and Energon datasets. ``collapse_image_tokens=True`` selects the
+    explicit legacy LLaVA compatibility contract.
     """
 
     def __init__(
@@ -145,13 +147,15 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
+        collapse_image_tokens: bool = False,
     ) -> None:
         _validate_nemotron_omni_visual_keys(visual_keys)
+        collate_fn = nemotron_omni_llava_collate_fn if collapse_image_tokens else nemotron_omni_expanded_collate_fn
         super().__init__(
             processor=processor,
             seq_length=seq_length,
             visual_keys=visual_keys,
-            collate_fn=nemotron_omni_collate_fn,
+            collate_fn=collate_fn,
             pad_to_max_length=pad_to_max_length,
             pad_to_multiple_of=pad_to_multiple_of,
             enable_in_batch_packing=enable_in_batch_packing,
@@ -164,6 +168,7 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         self.video_nframes = video_nframes
         self.use_temporal_video_embedder = use_temporal_video_embedder
         self.patch_dim = patch_dim
+        self.collapse_image_tokens = collapse_image_tokens
 
     def collate_fn(self, examples: list[dict[str, Any]]) -> dict[str, Any]:
         """Collate normalized Energon examples with the shared Omni path."""
