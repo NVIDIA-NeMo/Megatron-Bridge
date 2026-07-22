@@ -642,7 +642,7 @@ def qwen3_next_80b_a3b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_128gpu_b200_fp8mx_deepep_config() -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_128gpu_b200_fp8mx_deepep_dev_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 128× B200, MXFP8 and tuned DeepEP overlap."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")

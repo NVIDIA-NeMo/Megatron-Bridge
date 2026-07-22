@@ -277,7 +277,7 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContai
     return cfg
 
 
-def deepseek_v3_pretrain_256gpu_gb200_fp8mx_partial_cg_config() -> ConfigContainer:
+def deepseek_v3_pretrain_256gpu_gb200_fp8mx_partial_cg_dev_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8, scoped CUDA graphs and offloading."""
     cfg = deepseek_v3_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_mx")

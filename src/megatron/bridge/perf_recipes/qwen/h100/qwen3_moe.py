@@ -359,7 +359,7 @@ def qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_32gpu_h100_bf16_dev_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32 × H100, BF16, HybridEP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
@@ -411,7 +411,7 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_config() -> ConfigContainer:
+def qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_dev_config() -> ConfigContainer:
     """Qwen3 30B-A3B pretrain: 32 × H100, FP8 subchannel scaling and HybridEP."""
     cfg = qwen3_30b_a3b_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
@@ -472,7 +472,7 @@ def qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_config() -> ConfigContainer:
     return cfg
 
 
-def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_hybridep_config() -> ConfigContainer:
+def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_hybridep_dev_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× H100, BF16, HybridEP and scoped CUDA graphs."""
     cfg = qwen3_235b_a22b_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
