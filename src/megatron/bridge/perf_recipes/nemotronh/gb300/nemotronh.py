@@ -146,7 +146,7 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     (512 experts, latent MoE, MTP, squared-relu, hybrid Mamba/attention pattern,
     ...) is inherited from the base recipe via ``AutoBridge``.
     """
-    # Parallelism (TP1 / PP1 / CP1 / EP64 / ETP1).
+    # Parallelism
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -162,26 +162,24 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
 
     # MXFP8 requires router padding for quantization.
     cfg.model.moe_router_padding_for_quantization = True
-    
+
     # GPU-count specific overrides of the canonical (256-GPU / EP64) defaults.
     cfg.model.expert_model_parallel_size = expert_model_parallel_size
     cfg.train.global_batch_size = global_batch_size
 
-    # Fine-grained activation offloading (--fine-grained-activation-offloading
-    # --offload-modules fused_group_mlp). Requires NVTE_CPU_OFFLOAD_V1=1 in the
-    # launch environment (set by perf_plugins.py). 
+    # Fine-grained activation offloading. Requires NVTE_CPU_OFFLOAD_V1=1 in the
+    # launch environment (set by perf_plugins.py).
     # NOTE: also requires setting the min_offloaded_tensor_size to avoid CPU OOM issues
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["fused_group_mlp"]
 
-    # Selective recompute of the MoE activation (--recompute-granularity selective
-    # --recompute-modules moe_act).
+    # Selective recompute of the MoE activation
     # recomputes the activation output of the MoE expert MLP, while FC1 output (activation input) is saved and offloaded to cpu
     cfg.model.recompute_granularity = "selective"
     cfg.model.recompute_modules = ["moe_act"]
 
     _apply_nemotron_3_ultra_perf_defaults(cfg)
-    
+
     # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
     _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
 

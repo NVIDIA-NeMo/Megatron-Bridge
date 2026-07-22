@@ -17,7 +17,6 @@
 from pathlib import Path
 
 import torch
-
 from megatron.core.quantization.utils import load_quantization_recipe
 
 from megatron.bridge.perf_recipes._common import _benchmark_common, _perf_precision
@@ -65,8 +64,8 @@ def _apply_nemotron_3_super_perf_defaults(cfg: ConfigContainer) -> None:
 def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     """Apply shared Nemotron 3 Ultra perf defaults after recipe-specific overrides."""
 
-    # Native cross-entropy fusion (--cross-entropy-fusion-impl native). TE fusion
-    # has known stability issues and is rejected by Megatron-LM arg validation.
+    # Native cross-entropy fusion
+    # TE fusion has known stability issues and is rejected by Megatron-LM arg validation.
     _benchmark_common(cfg, cross_entropy_impl="native")
 
     cfg.mixed_precision.grad_reduce_in_fp32 = False
@@ -76,7 +75,6 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.checkpoint.async_save = False
 
     # MoE token dispatcher + grouped-GEMM / router fusions
-    # (--moe-token-dispatcher-type flex --moe-flex-dispatcher-backend hybridep).
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_shared_expert_overlap = False  # unsupported by MCore during training
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
@@ -84,8 +82,7 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.model.moe_permute_fusion = True
     cfg.model.moe_router_fusion = True
 
-    # CuteDSL fused grouped MLP + TE op fuser (--use-transformer-engine-op-fuser,
-    # NVTE_CUTEDSL_FUSED_GROUPED_MLP=1).
+    # CuteDSL fused grouped MLP + TE op fuser
     cfg.model.use_transformer_engine_op_fuser = True
 
     # Kernel / graph selections.
@@ -95,18 +92,16 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.model.cuda_graph_scope = []
     cfg.model.init_method_std = 0.0099
 
-    # Batch sizing (--micro-batch-size 1) with manual GC.
+    # Batch sizing with manual GC.
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
     # High priority NCCL stream for the EP communicator + longer init timeout
-    # (--high-priority-stream-groups ep --distributed-timeout-minutes 30).
     cfg.dist.high_priority_stream_groups = ["ep"]
     cfg.dist.distributed_timeout_minutes = 30
 
-    # Optimizer / scheduler (--lr 8e-4 --min-lr 8e-6 --weight-decay 0.1
-    # --adam-beta1 0.9 --adam-beta2 0.95 --lr-decay-style WSD).
+    # Optimizer / scheduler
     cfg.optimizer.lr = 8.0e-4
     cfg.optimizer.min_lr = 8.0e-6
     cfg.optimizer.weight_decay = 0.1
@@ -117,7 +112,7 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.lr_decay_style = "WSD"
 
-    # DDP bucketing (--ddp-num-buckets 48).
+    # DDP bucketing
     cfg.ddp.num_buckets = 48
 
 
@@ -133,28 +128,27 @@ def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> No
     cfg.ddp.use_megatron_fsdp = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.keep_fp8_transpose_cache = False
+
     # average_in_collective is not supported with Megatron-FSDP.
     cfg.ddp.average_in_collective = False
     cfg.model.init_model_with_meta_device = True
     cfg.checkpoint.load = None
 
     # HSDP: shard within an NVLink domain, replicate (optim-sharded) across domains.
-    # --num-distributed-optimizer-instances $((SLURM_JOB_NUM_NODES / 16))
     num_optim_instances = max(1, num_gpus // _GB300_NVLINK_DOMAIN_GPUS)
     cfg.ddp.num_distributed_optimizer_instances = num_optim_instances
-    # --outer-dp-sharding-strategy optim (HSDP across NVLink domains). Megatron-FSDP
+
+    # HSDP across NVLink domains. Megatron-FSDP
     # only enables HSDP when num_distributed_optimizer_instances > 1; with a single
     # NVLink domain HSDP is off, so the outer strategy must be "no_shard" (otherwise
     # the first param all-gather hits a None HSDP helper buffer).
     cfg.ddp.outer_dp_sharding_strategy = "optim" if num_optim_instances > 1 else "no_shard"
 
-    # --megatron-fsdp-grad-comm-dtype bf16 / --megatron-fsdp-main-params-dtype fp32 /
-    # --megatron-fsdp-main-grads-dtype bf16
     cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.bfloat16
     cfg.ddp.megatron_fsdp_main_params_dtype = torch.float32
     cfg.ddp.megatron_fsdp_main_grads_dtype = torch.bfloat16
 
-    # --no-gradient-accumulation-fusion (incompatible with BF16 FSDP main grads)
+    # incompatible with BF16 FSDP main grads
     cfg.model.gradient_accumulation_fusion = False
-    # --ckpt-format fsdp_dtensor
+
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
