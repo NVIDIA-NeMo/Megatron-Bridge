@@ -25,13 +25,19 @@ from megatron.bridge.training.eval import evaluate, evaluate_and_print_results
 pytestmark = pytest.mark.unit
 
 
-def _make_state():
+def _make_state(*, multiple_validation_sets=False, validation_set_names=None):
     return SimpleNamespace(
         wandb_logger=None,
         mlflow_logger=None,
         comet_logger=None,
         train_state=SimpleNamespace(step=0, consumed_train_samples=0),
-        cfg=SimpleNamespace(logger=SimpleNamespace(log_validation_ppl_to_tensorboard=False)),
+        cfg=SimpleNamespace(
+            logger=SimpleNamespace(log_validation_ppl_to_tensorboard=False),
+            validation=SimpleNamespace(
+                multiple_validation_sets=multiple_validation_sets,
+                validation_set_names=validation_set_names,
+            ),
+        ),
     )
 
 
@@ -161,6 +167,78 @@ def test_evaluate_and_print_results_returns_none_on_timelimit(
     assert result is None
     assert mock_evaluate.call_args.kwargs["callback_manager"] is callback_manager
     mock_print_rank_last.assert_not_called()
+
+
+@patch("megatron.bridge.training.eval.print_rank_last")
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_list_is_single_set_without_flag(mock_evaluate, mock_print_rank_last):
+    """Without multiple_validation_sets, a list data_iterator (VPP per-chunk) is one evaluation."""
+    mock_evaluate.return_value = ({"lm loss": torch.tensor(1.0)}, None, False)
+    data_iterator = [object(), object()]
+
+    evaluate_and_print_results(
+        state=_make_state(),
+        prefix="iteration 0",
+        forward_step_func=MagicMock(),
+        data_iterator=data_iterator,
+        model=[MagicMock()],
+        config=SimpleNamespace(),
+        write_to_tensorboard=False,
+    )
+
+    assert mock_evaluate.call_count == 1
+    assert mock_evaluate.call_args.args[2] is data_iterator
+
+
+@pytest.mark.parametrize(
+    ("validation_set_names", "expected_suffixes"),
+    [
+        (None, ["-0", "-1"]),
+        (["alpha", "beta"], ["-alpha", "-beta"]),
+    ],
+)
+@patch("megatron.bridge.training.eval.print_rank_last")
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_multiple_validation_sets(
+    mock_evaluate, mock_print_rank_last, validation_set_names, expected_suffixes
+):
+    """With multiple_validation_sets, each set is evaluated and logged with a per-set suffix."""
+    losses = [{"lm loss": torch.tensor(1.0)}, {"lm loss": torch.tensor(2.0)}]
+    mock_evaluate.side_effect = [(loss, None, False) for loss in losses]
+    iterators = [object(), object()]
+
+    result = evaluate_and_print_results(
+        state=_make_state(multiple_validation_sets=True, validation_set_names=validation_set_names),
+        prefix="iteration 0",
+        forward_step_func=MagicMock(),
+        data_iterator=iterators,
+        model=[MagicMock()],
+        config=SimpleNamespace(),
+        write_to_tensorboard=False,
+    )
+
+    assert result is losses[-1]
+    assert mock_evaluate.call_count == 2
+    assert [call.args[2] for call in mock_evaluate.call_args_list] == iterators
+    printed = " ".join(str(call.args[0]) for call in mock_print_rank_last.call_args_list)
+    for suffix in expected_suffixes:
+        assert f"validation{suffix} loss" in printed
+
+
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_validation_set_names_length_mismatch(mock_evaluate):
+    """validation_set_names must match the number of validation sets."""
+    with pytest.raises(AssertionError, match="validation_set_names"):
+        evaluate_and_print_results(
+            state=_make_state(multiple_validation_sets=True, validation_set_names=["only-one"]),
+            prefix="iteration 0",
+            forward_step_func=MagicMock(),
+            data_iterator=[object(), object()],
+            model=[MagicMock()],
+            config=SimpleNamespace(),
+            write_to_tensorboard=False,
+        )
+    mock_evaluate.assert_not_called()
 
 
 @pytest.mark.parametrize(

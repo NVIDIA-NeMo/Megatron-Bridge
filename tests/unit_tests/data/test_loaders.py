@@ -102,3 +102,86 @@ def test_batch_loader_does_not_supervise_custom_dataset_padding(_mock_rank, _moc
         assert batch["loss_mask"].sum().item() == dataset_size, (
             "The padded batch must not supervise a duplicated real sample"
         )
+
+
+@pytest.mark.unit
+@mock.patch("torch.distributed.broadcast")
+@mock.patch("torch.distributed.get_world_size", return_value=1)
+@mock.patch("torch.distributed.get_rank", return_value=0)
+def test_multiple_validation_sets_build_one_dataloader_per_set(_mock_rank, _mock_world_size, _mock_broadcast):
+    class RangeDataset:
+        def __init__(self, offset, size):
+            self.samples = [{"sample_id": torch.tensor(offset + index)} for index in range(size)]
+
+        def __len__(self):
+            return len(self.samples)
+
+        def __getitem__(self, index):
+            return self.samples[index]
+
+    @dataclass
+    class MultiValDatasetProvider(DatasetProvider):
+        def build_datasets(self, context: DatasetBuildContext):
+            return (
+                RangeDataset(0, context.train_samples),
+                [RangeDataset(100, 4), RangeDataset(200, 4)],
+                None,
+            )
+
+    def make_cfg(provider, multiple_validation_sets):
+        return SimpleNamespace(
+            model=object(),
+            dataset=provider,
+            train=SimpleNamespace(
+                train_samples=4,
+                train_iters=1,
+                global_batch_size=2,
+                micro_batch_size=1,
+                num_epochs=None,
+                exit_signal=None,
+                exit_signal_handler_for_dataloader=False,
+            ),
+            validation=SimpleNamespace(
+                eval_interval=1,
+                eval_iters=1,
+                eval_global_batch_size=None,
+                eval_micro_batch_size=None,
+                skip_train=False,
+                multiple_validation_sets=multiple_validation_sets,
+            ),
+        )
+
+    provider = MultiValDatasetProvider(
+        dataloader_type="single",
+        drop_last=True,
+        num_workers=0,
+        persistent_workers=False,
+    )
+    provider.finalize()
+
+    real_torch_tensor = torch.tensor
+
+    def tensor_on_cpu(*args, **kwargs):
+        kwargs.pop("device", None)
+        return real_torch_tensor(*args, **kwargs)
+
+    with mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu):
+        with pytest.raises(ValueError, match="multiple_validation_sets"):
+            build_train_valid_test_data_loaders(
+                cfg=make_cfg(provider, multiple_validation_sets=False),
+                train_state=TrainState(),
+                build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+                dp_group=object(),
+            )
+
+        _, valid_dataloader, test_dataloader = build_train_valid_test_data_loaders(
+            cfg=make_cfg(provider, multiple_validation_sets=True),
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+            dp_group=object(),
+        )
+
+    assert isinstance(valid_dataloader, list) and len(valid_dataloader) == 2
+    assert test_dataloader is None
+    assert next(iter(valid_dataloader[0]))["sample_id"].item() == 100
+    assert next(iter(valid_dataloader[1]))["sample_id"].item() == 200
