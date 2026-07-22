@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.deepseek.common import (
     ConfigContainer,
     _benchmark_common,
     _deepseek_v3_common,
+    _enable_deepseek_precision_aware_optimizer,
     _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
     deepseek_v3_pretrain_config,
@@ -265,4 +266,69 @@ def deepseek_v3_pretrain_1024gpu_h100_fp8sc_large_scale_config() -> ConfigContai
         # Keep DeepSeek kernel selection aligned with the measured baseline.
         "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
     }
+    return cfg
+
+
+def deepseek_v3_1024gpu_h100_bf16_deepep_pretrain_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 1024× H100, BF16, DeepEP, TP=1, PP=16."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    _benchmark_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 16
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.kv_channels = 128
+    cfg.model.make_vocab_size_divisible_by = 1280
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_enable_deepep = True
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_router_fusion = True
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 8192
+    cfg.train.exit_duration_in_mins = 220
+    cfg.train.manual_gc_interval = 10
+    return cfg
+
+
+def deepseek_v3_1024gpu_h100_fp8sc_deepep_pretrain_config() -> ConfigContainer:
+    """DeepSeek V3 pretrain: 1024× H100, FP8 subchannel scaling and DeepEP."""
+    cfg = deepseek_v3_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_cs")
+    cfg.mixed_precision.fp8_recipe = "blockwise"
+    _benchmark_common(cfg)
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.kv_channels = 128
+    cfg.model.make_vocab_size_divisible_by = 1280
+    cfg.model.moe_router_force_load_balancing = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_router_padding_for_fp8 = True
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["mla_up_proj", "mlp"]
+
+    cfg.comm_overlap.delay_wgrad_compute = True
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 8192
+    cfg.train.exit_duration_in_mins = 220
+    cfg.train.manual_gc_interval = 10
+
+    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model, "Et*3|(tt|)*29m|L")
+    _enable_deepseek_precision_aware_optimizer(cfg)
     return cfg

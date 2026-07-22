@@ -17,9 +17,11 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
+    _apply_qwen3_moe_tuned_defaults,
     _benchmark_common,
     _enable_hybridep_full_iteration_mxfp8,
     _enable_overlap_param_gather_with_optimizer_step,
+    _enable_qwen_precision_aware_optimizer,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -728,4 +730,47 @@ def qwen3_next_80b_a3b_pretrain_64gpu_gb300_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    return cfg
+
+
+def qwen3_235b_a22b_128gpu_gb300_fp8mx_paged_stash_pretrain_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 128× GB300, MXFP8 and paged-stash CUDA graphs."""
+    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 64
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_paged_stash = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.2
+    cfg.model.moe_paged_stash_buffer_size_factor_cuda = 1.0
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_mlp_glu_interleave_size = 32
+    cfg.model.use_transformer_engine_op_fuser = True
+    cfg.model.cuda_graph_impl = "local"
+    cfg.model.cuda_graph_scope = "full_iteration"
+    cfg.model.cuda_graph_warmup_steps = 2
+    cfg.model.use_te_rng_tracker = True
+    cfg.model.offload_modules = []
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 8192
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    cfg.rng.te_rng_tracker = True
+    cfg.dist.distributed_timeout_minutes = 220
+    _enable_qwen_precision_aware_optimizer(cfg)
     return cfg

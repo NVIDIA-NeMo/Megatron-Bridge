@@ -769,7 +769,7 @@ def build_recipe_config(model_family_name: str, model_recipe_name: str, train_ta
         - checkpoint_dir = "/nemo_run/{name}/checkpoints"
         - tensorboard_dir = "/nemo_run/{name}/tb_logs"
     """
-    family_pkg_path = f"megatron.bridge.recipes.{model_family_name}"
+    family_pkg_path = f"megatron.bridge.perf_recipes.{model_family_name}"
     family_pkg = importlib.import_module(family_pkg_path)
 
     if model_recipe_name == "deepseek_v3_32nodes" and train_task == "pretrain":

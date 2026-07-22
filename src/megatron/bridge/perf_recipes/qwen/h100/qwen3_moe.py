@@ -17,8 +17,10 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
+    _apply_qwen3_moe_tuned_defaults,
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
+    _enable_qwen_precision_aware_optimizer,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -354,4 +356,81 @@ def qwen3_next_80b_a3b_pretrain_128gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    return cfg
+
+
+def qwen3_30b_a3b_32gpu_h100_bf16_pretrain_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 32 × H100, BF16, HybridEP."""
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 256
+    return cfg
+
+
+def qwen3_30b_a3b_32gpu_h100_fp8sc_pretrain_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 32 × H100, FP8 subchannel scaling and HybridEP."""
+    cfg = qwen3_30b_a3b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_cs")
+    cfg.mixed_precision.fp8_recipe = "blockwise"
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=40960)
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 256
+
+    cfg.rng.te_rng_tracker = True
+    _enable_qwen_precision_aware_optimizer(cfg)
+    return cfg
+
+
+def qwen3_235b_a22b_256gpu_h100_bf16_hybridep_pretrain_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 256× H100, BF16, HybridEP and scoped CUDA graphs."""
+    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 8
+    cfg.model.virtual_pipeline_model_parallel_size = 3
+    cfg.model.expert_model_parallel_size = 32
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act", "layernorm"]
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+    cfg.train.micro_batch_size = 1
+    cfg.train.global_batch_size = 2048
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    cfg.rng.te_rng_tracker = True
     return cfg

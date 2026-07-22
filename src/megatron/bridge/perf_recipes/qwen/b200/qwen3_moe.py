@@ -20,8 +20,10 @@ from megatron.bridge.perf_recipes.qwen.b300.qwen3_moe import (
 from megatron.bridge.perf_recipes.qwen.common import (
     CommOverlapConfig,
     ConfigContainer,
+    _apply_qwen3_moe_tuned_defaults,
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
+    _enable_qwen_precision_aware_optimizer,
     _perf_precision,
     _with_global_batch_size,
     qwen3_30b_a3b_pretrain_config,
@@ -637,4 +639,36 @@ def qwen3_next_80b_a3b_pretrain_64gpu_b200_fp8mx_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    return cfg
+
+
+def qwen3_235b_a22b_128gpu_b200_fp8mx_deepep_pretrain_config() -> ConfigContainer:
+    """Qwen3 235B-A22B pretrain: 128× B200, MXFP8 and tuned DeepEP overlap."""
+    cfg = qwen3_235b_a22b_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+    _apply_qwen3_moe_tuned_defaults(cfg, original_max_position_embeddings=4096)
+
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.virtual_pipeline_model_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = True
+    cfg.model.moe_flex_dispatcher_backend = "deepep"
+    cfg.model.moe_router_padding_for_quantization = True
+    cfg.model.moe_deepep_num_sms = 20
+    cfg.model.overlap_p2p_comm = True
+    cfg.model.batch_p2p_comm = False
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
+    cfg.train.micro_batch_size = 3
+    cfg.train.global_batch_size = 3072
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = True
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+    _enable_qwen_precision_aware_optimizer(cfg)
     return cfg
