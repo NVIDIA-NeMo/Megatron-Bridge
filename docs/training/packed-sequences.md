@@ -67,10 +67,19 @@ The durable constraints for packed sequences in Bridge are:
   evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter
+- HybridEP users whose local dispatch token counts differ across ranks must
+  explicitly set `model.moe_hybridep_pad_uneven_dispatch_inputs=True`; this
+  pads only to the group-wide aligned maximum before dispatch and trims the
+  padding after combine
 - CUDA-graph-friendly packed metadata requires additional padding constraints
 
 Model-family support is not universal. Some families and recipe paths explicitly
 opt out of packed sequences or related packing modes.
+
+The HybridEP option is not enabled automatically by in-batch packing. Some
+packed datasets already produce equal dispatcher sizes, while variable-sized
+inputs can also occur without sequence packing. Keeping the option explicit
+avoids an unnecessary synchronization and padding cost for equal-sized inputs.
 
 ## Relationship to Long-Sequence Training
 
