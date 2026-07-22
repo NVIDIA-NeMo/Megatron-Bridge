@@ -15,10 +15,15 @@
 """Path detection and resolution for packed Parquet artifacts."""
 
 import glob
+import logging
 import os
+import time
 from pathlib import Path
 
 from megatron.core.msc_utils import MultiStorageClientFeature
+
+
+logger = logging.getLogger(__name__)
 
 
 def is_packed_parquet_file(path) -> bool:
@@ -212,3 +217,78 @@ def resolve_packed_parquet_paths(spec: str | Path) -> list[str]:
         ValueError: If no matching files are found.
     """
     return _resolve_parquet_paths(str(spec))
+
+
+def _refresh_directory_metadata(spec: str) -> None:
+    """Force a listdir on the nearest existing ancestor to bust stale NFS directory-cache entries.
+
+    On NFS filesystems (e.g. Isilon NFSv4.0) a node that did not write a
+    directory may cache a negative "not found" result for up to acdirmin
+    seconds (~30 s by default).  Calling os.listdir() on the nearest existing
+    ancestor forces the NFS client to issue GETATTR+READDIR to the server,
+    collapsing the negative-cache window within one RPC round-trip.
+    """
+    base = spec.split("*", 1)[0]
+    directory = Path(base if os.path.isdir(base) else os.path.dirname(base))
+    while True:
+        try:
+            os.listdir(directory)
+            return
+        except OSError:
+            parent = directory.parent
+            if parent == directory:
+                return
+            directory = parent
+
+
+def resolve_packed_parquet_paths_with_retry(
+    spec: str | Path,
+    *,
+    max_attempts: int = 10,
+    backoff_s: float = 1.0,
+) -> list[str]:
+    """Resolve packed parquet spec with NFS-aware retries and directory-metadata refresh.
+
+    On distributed NFS filesystems (e.g. Isilon NFSv4.0), a node that did not
+    write a directory may see stale cached metadata for ~30 s after rank 0 writes
+    it.  Issuing os.listdir() on the nearest existing ancestor forces a fresh
+    GETATTR/READDIR to the NFS server, collapsing the negative-cache window
+    within one retry cycle.  With max_attempts=10 and backoff_s=1.0 the total
+    budget is 1+2+...+9 = 45 s, comfortably above the measured 29 s window.
+    See NVIDIA-NeMo/Megatron-Bridge#4207.
+
+    Args:
+        spec: Path specification (file, glob pattern, or directory).
+        max_attempts: Maximum number of resolution attempts (default 10).
+        backoff_s: Base sleep duration in seconds; attempt N sleeps N*backoff_s (default 1.0).
+
+    Returns:
+        Sorted list of resolved file paths.
+
+    Raises:
+        ValueError: If no matching files are found after all attempts.
+    """
+    spec_str = str(spec)
+    last_error: ValueError | None = None
+    for attempt in range(1, max_attempts + 1):
+        try:
+            resolved = _resolve_parquet_paths(spec_str)
+        except ValueError as exc:
+            resolved = []
+            last_error = exc
+        if resolved:
+            if attempt > 1:
+                logger.warning("Packed Parquet spec %s resolved after %d attempt(s).", spec_str, attempt)
+            return resolved
+        if attempt < max_attempts:
+            logger.warning(
+                "Packed Parquet spec %s returned no files (attempt %d/%d); refreshing NFS directory metadata ...",
+                spec_str,
+                attempt,
+                max_attempts,
+            )
+            _refresh_directory_metadata(spec_str)
+            time.sleep(backoff_s * attempt)
+    if last_error is not None:
+        raise last_error
+    return []

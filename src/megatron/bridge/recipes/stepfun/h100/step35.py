@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
@@ -107,6 +108,10 @@ def step35_196b_a11b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

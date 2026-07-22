@@ -18,7 +18,7 @@
 #
 # Recipe: nemotron_omni_valor32k_sft_config (Energon shards)
 #         Enables temporal video embedder (temporal_patch_dim=2,
-#         dynamic_resolution=True, separate_video_embedder=True) + FastConformer
+#         separate_video_embedder=True) + FastConformer
 #         audio path.
 # Default parallelism: TP=2, EP=8, CP=1, MBS=2, GBS=16, packed sequences,
 #                      selective recompute

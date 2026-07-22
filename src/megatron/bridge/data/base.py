@@ -49,6 +49,22 @@ class DataloaderConfig:
     trust_remote_code: bool | None = None
     """Whether remote code is trusted for a configured Hugging Face path."""
 
+    dataloader_save: str | None = None
+    """Directory to save dataloader stream-position state into during checkpointing (currently only
+    Energon's ``SavableDataLoader``), so a resumed run continues over the same data instead of
+    restarting from an arbitrary position. When ``None`` (the default) and the dataloader supports
+    state saving, it is colocated under an ``energon`` subdirectory of ``checkpoint.save``. Has no
+    effect for dataloaders that do not support state saving."""
+
+    dataloader_load: str | None = None
+    """Directory to restore dataloader stream-position state from on resume. When ``None`` (the
+    default), it is resolved to the ``energon`` subdirectory of whichever checkpoint is actually
+    loaded -- ``checkpoint.save`` for a non-persistent or local checkpoint, ``checkpoint.load`` for a
+    persistent one, or the parent of a directly specified iteration directory. If that directory does
+    not exist (e.g. a checkpoint saved before this feature) the dataloader starts fresh; if it exists
+    but the current rank's state file is missing, resume fails loudly rather than silently changing
+    the data order."""
+
     def finalize(self) -> None:
         """Finalize dataloader field constraints."""
         if self.num_workers == 0 and self.persistent_workers:

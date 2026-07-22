@@ -41,7 +41,7 @@ class TestMegatronGemmaBridge:
             "bos_token_id": 2,
             "eos_token_id": 1,
             "head_dim": 256,
-            "hidden_act": "gelu",
+            "hidden_act": "gelu_pytorch_tanh",
             "hidden_size": 2048,
             "initializer_range": 0.02,
             "intermediate_size": 16384,
@@ -70,7 +70,7 @@ class TestMegatronGemmaBridge:
             "bos_token_id": 2,
             "eos_token_id": 1,
             "head_dim": 256,
-            "hidden_act": "gelu",
+            "hidden_act": "gelu_pytorch_tanh",
             "hidden_size": 3072,
             "initializer_range": 0.02,
             "intermediate_size": 24576,
@@ -157,7 +157,7 @@ class TestMegatronGemmaBridge:
         assert result.num_attention_heads == gemma_2b_config.num_attention_heads
         assert result.seq_length == gemma_2b_config.max_position_embeddings
         assert result.rotary_base == gemma_2b_config.rope_parameters["rope_theta"]
-        # Gemma runs tanh-approximate GELU (fast_gelu), despite the legacy hidden_act="gelu".
+        # Gemma runs tanh-approximate GELU (fast_gelu).
         assert result.activation_func is fast_gelu
 
     def test_provider_bridge_basic_7b(self, mock_pretrained_gemma_7b, gemma_7b_config):

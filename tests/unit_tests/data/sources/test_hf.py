@@ -201,6 +201,36 @@ def test_named_source_uses_preset_split_and_adapter(monkeypatch):
     assert adapted[0]["original_answers"] == ["2"]
 
 
+def test_tulu3_preset_uses_current_native_chat_dataset(monkeypatch):
+    rows = [
+        {
+            "id": "example-1",
+            "messages": [
+                {"role": "user", "content": "Hello"},
+                {"role": "assistant", "content": "Hi"},
+            ],
+            "source": "example-source",
+        }
+    ]
+    calls = []
+
+    def _load_dataset(path, *, split, **kwargs):
+        calls.append((path, split, kwargs))
+        return rows
+
+    monkeypatch.setattr(source_module, "load_dataset", _load_dataset)
+    source = HFDatasetSourceConfig(dataset_name="tulu3")
+
+    resolved = resolve_hf_dataset_source(source)
+    adapted = load_and_adapt_hf_dataset(source)
+
+    assert resolved.path_or_dataset == "allenai/tulu-3-sft-mixture"
+    assert resolved.split == "train"
+    assert resolved.schema_adapter is None
+    assert calls == [("allenai/tulu-3-sft-mixture", "train", {})]
+    assert adapted == rows
+
+
 def test_load_and_adapt_composes_source_loader_and_adapter(monkeypatch):
     rows = [{"context": "ctx", "question": "q", "answers": {"text": ["a"]}}]
     monkeypatch.setattr(source_module, "load_hf_dataset_source", lambda source: rows)

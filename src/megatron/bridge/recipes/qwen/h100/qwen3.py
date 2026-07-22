@@ -20,7 +20,13 @@ from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTData
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
+
+
+_QWEN3_8B_MODEL_ID = "Qwen/Qwen3-8B"
+_QWEN3_8B_MODEL_REVISION = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
 
 
 def qwen3_600m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
@@ -101,6 +107,10 @@ def qwen3_600m_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -182,6 +192,10 @@ def qwen3_1p7b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -263,6 +277,10 @@ def qwen3_4b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -274,10 +292,13 @@ def qwen3_8b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_8B_MODEL_ID, revision=_QWEN3_8B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_8B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_8B_MODEL_REVISION}
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -344,6 +365,65 @@ def qwen3_8b_pretrain_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def qwen3_8b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a convergence-cohort pre-training config for Qwen3 8B on 16 H100 GPUs.
+
+    Recommended parallelism: TP=1, PP=1, CP=1, DP=16.
+    """
+    cfg = qwen3_8b_pretrain_4gpu_h100_bf16_config()
+
+    # Preserve the cohort's per-rank micro batch while using DP for the full global batch.
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.sequence_parallel = False
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.random_seed = 1234
+    cfg.rng.seed = 1234
+
+    cfg.optimizer.lr = 3.0e-4
+    cfg.optimizer.min_lr = 3.0e-5
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1.0e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
+    cfg.scheduler.lr_warmup_iters = 40
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+
+    # qwen3_30b_a3b_convergence_v1 precision and optimizer-state contract.
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.optimizer.use_distributed_optimizer = True
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.load = None
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -425,6 +505,10 @@ def qwen3_14b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -498,6 +582,10 @@ def qwen3_32b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -586,6 +674,10 @@ def qwen3_600m_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -629,6 +721,10 @@ def qwen3_600m_sft_8gpu_h100_bf16_128k_config() -> ConfigContainer:
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_warmup_init = 1.0e-11
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -706,6 +802,10 @@ def qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config() -> ConfigContainer:
     # Timeout for distributed training to avoid timeout errors in dataset loading.
     cfg.dist.distributed_timeout_minutes = 30
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -794,6 +894,10 @@ def qwen3_1p7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -882,21 +986,28 @@ def qwen3_4b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
 def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3 8B.
 
-    Recommended parallelism: TP=4, PP=1 (1 node, 8 GPUs)
+    Recommended parallelism: TP=4, PP=1 (4 GPUs total).
     """
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_8B_MODEL_ID, revision=_QWEN3_8B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_8B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_8B_MODEL_REVISION}
 
     # Parallelism settings
     cfg.model.tensor_model_parallel_size = 4
@@ -910,11 +1021,13 @@ def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length (2048 for packed sequences)
     cfg.model.seq_length = 2048
 
-    # Global batch size is 8 for packed sequences, 128 otherwise
-    cfg.train.global_batch_size = 8
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    # qwen3_30b_a3b_convergence_v1 batch contract
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seed = 1234
+    cfg.rng.seed = 5678
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -948,15 +1061,32 @@ def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # cfg.mixed_precision.fp8_param_gather = False  # default
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
 
-    # Optimizer precision settings
+    # qwen3_30b_a3b_convergence_v1 optimizer and precision contract
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1.0e-8
+    cfg.optimizer.lr = 5.0e-6
+    cfg.optimizer.min_lr = 0.0
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
 
     # Checkpoint config
-    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.load = None
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
@@ -964,12 +1094,50 @@ def qwen3_8b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
-    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.optimizer.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def qwen3_8b_sft_8gpu_h100_bf16_32k_config() -> ConfigContainer:
+    """Return the separate 32K-context full-SFT config for Qwen3 8B.
+
+    Recommended parallelism: TP=4, PP=1, CP=2 (8 H100 GPUs total). The
+    long-context workload retains its verified GBS=8 execution cohort instead
+    of inheriting the bounded 2K SFT batch contract.
+    """
+    cfg = qwen3_8b_sft_4gpu_h100_bf16_config()
+
+    cfg.model.context_parallel_size = 2
+    cfg.model.sequence_parallel = True
+    cfg.model.cp_comm_type = "a2a"
+    cfg.model.seq_length = 32768
+    cfg.dataset.seq_length = 32768
+    cfg.dataset.offline_packing_specs.packed_sequence_size = 32768
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 8
+
+    cfg.train.global_batch_size = 8
+    cfg.train.micro_batch_size = 1
+
+    # CP SFT requires per-token loss accounting because some CP ranks may have
+    # no supervised tokens after label masking.
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.calculate_per_token_loss = True
+    cfg.ddp.average_in_collective = False
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1058,6 +1226,10 @@ def qwen3_14b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1149,6 +1321,10 @@ def qwen3_32b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1248,6 +1424,10 @@ def qwen3_600m_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1342,6 +1522,10 @@ def qwen3_1p7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> C
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1436,6 +1620,10 @@ def qwen3_4b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1445,15 +1633,18 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     Args:
         peft_scheme: PEFT scheme - 'lora', 'dora', or a PEFT instance. Default: 'lora'
 
-    Recommended parallelism: TP=1, PP=1 (1 node, 8 GPUs)
+    Recommended parallelism: TP=1, PP=1 (1 GPU total).
     """
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-8B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_8B_MODEL_ID, revision=_QWEN3_8B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-8B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_8B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_8B_MODEL_REVISION}
 
     # Parallelism settings - TP=1 for PEFT (only training adapters)
     cfg.model.tensor_model_parallel_size = 1
@@ -1467,14 +1658,22 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     # Sequence length (2048 for packed sequences)
     cfg.model.seq_length = 2048
 
-    # PEFT config - use user-provided scheme or default to LoRA
-    cfg.peft = default_peft_config(peft_scheme)
+    # PEFT config - use the cohort LoRA/DoRA shape while preserving custom PEFT instances.
+    peft_cfg = default_peft_config(peft_scheme)
+    if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
+        peft_cfg.dim = 8
+        peft_cfg.alpha = 16
+        peft_cfg.dropout = 0.0
+        peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
+    cfg.peft = peft_cfg
 
-    # Global batch size is 8 for packed sequences, 128 otherwise
-    cfg.train.global_batch_size = 8
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    # qwen3_30b_a3b_convergence_v1 batch contract
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seed = 1234
+    cfg.rng.seed = 5678
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # Training config
     cfg.validation.eval_interval = 30
@@ -1508,15 +1707,32 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     # cfg.mixed_precision.fp8_param_gather = False  # default
     # cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False  # default
 
-    # Optimizer precision settings
+    # qwen3_30b_a3b_convergence_v1 optimizer and precision contract
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1.0e-8
+    cfg.optimizer.lr = 1.0e-4
+    cfg.optimizer.min_lr = 0.0
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = True
 
     # Checkpoint config
-    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.load = None
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
@@ -1524,12 +1740,17 @@ def qwen3_8b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Con
     # cfg.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
     # DDP config
-    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
-    cfg.ddp.use_distributed_optimizer = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.optimizer.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1624,6 +1845,10 @@ def qwen3_14b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1721,6 +1946,10 @@ def qwen3_32b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> Co
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -1743,6 +1972,8 @@ __all__ = [
     "qwen3_600m_sft_8gpu_h100_bf16_128k_config",
     "qwen3_600m_sft_8gpu_h100_bf16_yarn_128k_config",
     "qwen3_8b_peft_1gpu_h100_bf16_config",
+    "qwen3_8b_pretrain_16gpu_h100_bf16_config",
     "qwen3_8b_pretrain_4gpu_h100_bf16_config",
     "qwen3_8b_sft_4gpu_h100_bf16_config",
+    "qwen3_8b_sft_8gpu_h100_bf16_32k_config",
 ]

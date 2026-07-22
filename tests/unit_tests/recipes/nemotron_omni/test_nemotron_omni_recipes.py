@@ -45,6 +45,8 @@ _RECIPE_FUNCS = [
 
 
 class _FakeModelCfg:
+    dynamic_resolution = True
+
     def finalize(self):
         return None
 
@@ -69,7 +71,7 @@ class _FakeAutoBridge:
 def fake_processor(monkeypatch: pytest.MonkeyPatch):
     processor = SimpleNamespace(
         tokenizer=SimpleNamespace(pad_token_id=0, eos_token_id=11),
-        image_processor=SimpleNamespace(max_num_tiles=12),
+        image_processor=SimpleNamespace(max_num_patches=13312),
     )
 
     import transformers

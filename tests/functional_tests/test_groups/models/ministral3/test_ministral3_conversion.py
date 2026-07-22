@@ -18,6 +18,10 @@ from pathlib import Path
 
 import pytest
 import torch
+from tokenizers import Tokenizer
+from tokenizers.models import WordLevel
+from tokenizers.pre_tokenizers import Whitespace
+from transformers import PreTrainedTokenizerFast
 
 
 # Ministral 3 toy model configuration based on typical Ministral 3 structure
@@ -105,19 +109,19 @@ class TestMinistral3Conversion:
             print(f"Before save - {name}: {param.dtype}")
             break  # Just check the first parameter
 
-        # Create minimal tokenizer files
-        tokenizer_config = {
-            "tokenizer_class": "LlamaTokenizer",
-            "vocab_size": 32768,
-            "bos_token": "<s>",
-            "eos_token": "</s>",
-            "pad_token": "<pad>",
-            "unk_token": "<unk>",
-        }
-
         model_dir.mkdir(parents=True, exist_ok=True)
-        with open(model_dir / "tokenizer_config.json", "w") as f:
-            json.dump(tokenizer_config, f, indent=2)
+
+        # Save a valid tokenizer artifact so both Transformers 5.8 and 5.12 can reload it.
+        backend_tokenizer = Tokenizer(WordLevel({"<unk>": 0, "<s>": 1, "</s>": 2, "<pad>": 3}, unk_token="<unk>"))
+        backend_tokenizer.pre_tokenizer = Whitespace()
+        tokenizer = PreTrainedTokenizerFast(
+            tokenizer_object=backend_tokenizer,
+            unk_token="<unk>",
+            bos_token="<s>",
+            eos_token="</s>",
+            pad_token="<pad>",
+        )
+        tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory
         model.save_pretrained(model_dir, safe_serialization=True)

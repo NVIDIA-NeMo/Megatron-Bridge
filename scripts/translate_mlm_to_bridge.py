@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib
+import json
 import pkgutil
 import shlex
 import sys
@@ -369,7 +370,7 @@ def _try_parse_value(val: str) -> Any:
     return _try_numeric(val)
 
 
-def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str | int | float | bool]]:
     """Parse a Megatron-LM style YAML into a flat arg dict.
 
     Expected YAML structure:
@@ -387,7 +388,7 @@ def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
         data = yaml.safe_load(f)
 
     model_args = data.get("MODEL_ARGS", data)
-    env_vars = data.get("ENV_VARS", {})
+    env_vars = data.get("ENV_VARS") or {}
 
     parsed: dict[str, Any] = {}
     for key, val in model_args.items():
@@ -403,7 +404,7 @@ def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
     return parsed, env_vars
 
 
-def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str | int | float | bool]]:
     """Parse a raw MLM CLI string into a flat arg dict."""
     tokens = shlex.split(args_str)
     parsed: dict[str, Any] = {}
@@ -447,7 +448,7 @@ class TranslationResult:
         self.skipped: list[tuple[str, Any]] = []
         self.unknown: list[tuple[str, Any]] = []
         self.notes: list[str] = []
-        self.env_vars: dict[str, str] = {}
+        self.env_vars: dict[str, str | int | float | bool] = {}
         self.uses_mla = False
         self.uses_moe = False
         self.raw_args: dict[str, Any] = {}
@@ -459,7 +460,7 @@ class TranslationResult:
         self.notes.append(note)
 
 
-def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> TranslationResult:
+def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool] | None = None) -> TranslationResult:
     """Translate parsed MLM args into Bridge overrides."""
     result = TranslationResult()
     result.raw_args = args
@@ -594,6 +595,11 @@ def emit_overrides(result: TranslationResult) -> str:
         for note in result.notes:
             lines.append(f"# NOTE: {note}")
         lines.append("#")
+
+    if result.env_vars:
+        env_vars_override = ",".join(f"{name}:{json.dumps(value)}" for name, value in result.env_vars.items())
+        lines.append("\n# ── Environment Variables ─────────────────────────────")
+        lines.append(f"  '++env_vars={{{env_vars_override}}}' \\")
 
     # Group overrides by section
     sections: dict[str, list[tuple[str, Any]]] = OrderedDict()
@@ -878,6 +884,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     # Dataset blend
     seq_len = dataset_fields.get("seq_length", 4096)
     lines.append("    cfg = ConfigContainer(")
+    lines.append(f"        env_vars={result.env_vars!r},")
     lines.append("        model=model_config(),")
     lines.append("        train=TrainingConfig(")
     for k in [

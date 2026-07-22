@@ -12,30 +12,18 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Bootstrap the recipe environment and run performance training."""
+"""Run flat performance training after process environment bootstrap."""
 
-import functools
-import importlib
 import logging
 import os
-import pkgutil
 import re
 import sys
-from collections.abc import Callable
-from typing import TYPE_CHECKING, cast
 
 from argument_parser import parse_cli_args
-from perf_plugins import PerfEnvPlugin
-from utils.utils import _workload_base_config_from_recipe
-from utils.utils import get_perf_recipe_by_name as get_perf_recipe_for_environment
-
-
-if TYPE_CHECKING:
-    from megatron.bridge.training.config import ConfigContainer
+from utils.utils import get_perf_recipe_by_name
 
 
 logger = logging.getLogger(__name__)
-ENV_BOOTSTRAP_MARKER = "_MB_PERF_ENV_BOOTSTRAPPED"
 SENSITIVE_ENV_VAR_PATTERN = re.compile(
     r"(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTHORIZATION)(_|$)",
     re.IGNORECASE,
@@ -68,123 +56,40 @@ def _dump_env_rank0() -> None:
         logger.warning(f"Failed to write environment dump to {env_path}: {e}")
 
 
-@functools.lru_cache(maxsize=1)
-def _perf_recipe_family_modules() -> tuple[str, ...]:
-    """Return import paths for perf recipe family packages."""
-    import megatron.bridge.perf_recipes as perf_recipes
+def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
+    """Apply Hydra and argparse overrides to a flat performance recipe."""
+    from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
+    from utils.utils import explicit_environment_override_names
 
-    module_names = [
-        f"{perf_recipes.__name__}.{module_info.name}"
-        for module_info in pkgutil.iter_modules(perf_recipes.__path__)
-        if module_info.ispkg and not module_info.name.startswith("_")
-    ]
-    return tuple(sorted(module_names))
-
-
-def _find_perf_recipe(name: str) -> Callable[[], object] | None:
-    """Find a flat perf recipe function exported by any perf recipe family package."""
-    for module_name in _perf_recipe_family_modules():
-        recipe_fn = getattr(importlib.import_module(module_name), name, None)
-        if callable(recipe_fn):
-            return cast(Callable[[], object], recipe_fn)
-    return None
-
-
-def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
-    """Return the suffix used in flat perf recipe function names."""
-    if config_variant is None:
-        return ""
-    return f"_{config_variant.lower()}"
-
-
-def get_perf_recipe_by_name(
-    model_recipe_name: str,
-    task: str,
-    num_gpus: int,
-    gpu: str,
-    precision: str,
-    config_variant: str | None = None,
-) -> "ConfigContainer":
-    """Load a flat perf recipe from megatron.bridge.perf_recipes by convention name.
-
-    Non-canonical ``config_variant`` values are appended to the function name.
-    E.g. ``config_variant="large_scale"`` resolves to
-    ``{model}_{task}_{N}gpu_{gpu}_{prec}_large_scale_config``.
-    """
-    precision_map = {
-        "bf16": "bf16",
-        "fp8_cs": "fp8cs",
-        "fp8_mx": "fp8mx",
-        "fp8_sc": "fp8sc",
-        "nvfp4": "nvfp4",
-    }
-    prec = precision_map.get(precision.lower(), precision.lower().replace("_", ""))
-    variant_suffix = _flat_recipe_variant_suffix(config_variant)
-    name = f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}_{prec}{variant_suffix}_config"
-
-    recipe_fn = _find_perf_recipe(name)
-    if recipe_fn is None:
-        searched_modules = ", ".join(_perf_recipe_family_modules()) or "none"
-        raise ValueError(f"No perf recipe {name!r} found in perf recipe packages: {searched_modules}.")
-    return recipe_fn()
-
-
-class _EnvironmentExecutor:
-    """Minimal executor adapter for ``PerfEnvPlugin`` environment setup."""
-
-    def __init__(self) -> None:
-        self.env_vars = os.environ
-
-
-def _bootstrap_recipe_environment(args) -> None:
-    """Install recipe env and re-exec this script in a clean interpreter."""
-    recipe = get_perf_recipe_for_environment(
-        model_recipe_name=args.model_recipe_name,
-        task=args.task,
-        num_gpus=args.num_gpus,
-        gpu=args.gpu,
-        precision=args.compute_dtype,
-        config_variant=args.config_variant,
+    base_env_vars = dict(recipe.env_vars)
+    base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
+    comm_overlap = getattr(recipe, "comm_overlap", None)
+    base_moe_a2a_overlap = bool(
+        comm_overlap is not None and getattr(comm_overlap, "overlap_moe_expert_parallel_comm", False)
     )
-    workload_base_config = _workload_base_config_from_recipe(recipe, num_gpus=args.num_gpus)
-    plugin = PerfEnvPlugin(
-        moe_a2a_overlap=args.moe_a2a_overlap,
-        tp_size=args.tensor_model_parallel_size,
-        pp_size=args.pipeline_model_parallel_size,
-        cp_size=args.context_parallel_size,
-        ep_size=args.expert_model_parallel_size,
-        model_family_name=args.model_family_name,
-        model_recipe_name=args.model_recipe_name,
-        gpu=args.gpu,
-        compute_dtype=args.compute_dtype,
-        train_task=args.task,
-        config_variant=args.config_variant,
-        deterministic=args.deterministic,
+    recipe = set_cli_overrides(recipe, cli_overrides)
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    hydra_env_vars = {name: recipe.env_vars[name] for name in protected_env_names if name in recipe.env_vars}
+    recipe = set_user_overrides(recipe, args)
+    # Argparse normally has higher precedence than Hydra in the flat runner,
+    # but explicit Hydra env selections remain final. Restore changed, added,
+    # and removed env keys after argparse features such as --deterministic.
+    for name in protected_env_names:
+        if name in hydra_env_vars:
+            recipe.env_vars[name] = hydra_env_vars[name]
+        else:
+            recipe.env_vars.pop(name, None)
+    return _apply_flat_cli_environment_compatibility(
+        recipe,
+        args,
+        base_dispatcher_backend=base_dispatcher_backend,
+        base_moe_a2a_overlap=base_moe_a2a_overlap,
+        protected_env_names=protected_env_names,
     )
-    plugin.setup_recipe_environment(None, _EnvironmentExecutor(), workload_base_config)
-
-    environment = dict(os.environ)
-    # exec preserves the PID. Binding the marker to it prevents an inherited
-    # or stale variable from skipping environment setup in a new process.
-    environment[ENV_BOOTSTRAP_MARKER] = str(os.getpid())
-    os.execvpe(sys.executable, [sys.executable, __file__, *sys.argv[1:]], environment)
 
 
-def _run_training(args, cli_overrides: list[str]) -> None:
-    """Import the training stack after env bootstrap and run the workload."""
-    import torch
-    from utils.overrides import set_cli_overrides, set_user_overrides
-
-    from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
-    from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-    from megatron.bridge.training.config import runtime_config_update
-    from megatron.bridge.training.gpt_step import forward_step
-    from megatron.bridge.training.pretrain import pretrain
-    from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
-
-    if args.dump_env:
-        _dump_env_rank0()
-
+def _prepare_perf_recipe(args, cli_overrides: list[str]):
+    """Build a flat performance recipe with all user overrides applied."""
     recipe = get_perf_recipe_by_name(
         model_recipe_name=args.model_recipe_name,
         task=args.task,
@@ -193,19 +98,27 @@ def _run_training(args, cli_overrides: list[str]) -> None:
         precision=args.compute_dtype,
         config_variant=getattr(args, "config_variant", None),
     )
+    return _apply_perf_recipe_overrides(recipe, cli_overrides, args)
 
-    recipe = set_cli_overrides(recipe, cli_overrides)
-    recipe = set_user_overrides(recipe, args)
+
+def _run_training(args, cli_overrides: list[str]) -> None:
+    """Import the training stack after env bootstrap and run the workload."""
+    from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
+    from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
+    from megatron.bridge.training.config import runtime_config_update
+    from megatron.bridge.training.gpt_step import forward_step
+    from megatron.bridge.training.pretrain import pretrain
+    from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+
+    recipe = _prepare_perf_recipe(args, cli_overrides)
+
+    if args.dump_env:
+        _dump_env_rank0()
 
     # Preserve BF16 Adam precision-aware behavior from the previous script path. Parallelism-dependent
     # optimizer-step overlap is encoded directly in the flat perf recipes.
     if args.compute_dtype == "bf16" and recipe.optimizer.optimizer == "adam":
         recipe.optimizer.use_precision_aware_optimizer = True
-
-    # Set NCCL env vars for nccl_ub enabled via recipe config (not just CLI).
-    if getattr(recipe.ddp, "nccl_ub", False):
-        os.environ["NCCL_NVLS_ENABLE"] = "1"
-        os.environ["NCCL_CTA_POLICY"] = "1"
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
@@ -232,20 +145,12 @@ def _run_training(args, cli_overrides: list[str]) -> None:
 
     pretrain(config=recipe, forward_step_func=forward_step_func)
 
-    if torch.distributed.is_initialized():
-        torch.distributed.barrier()
-        torch.distributed.destroy_process_group()
-
 
 def main() -> None:
-    """Resolve recipe env on the first pass and train in the self-exec process."""
+    """Parse the final training arguments and run the workload once."""
     parser = parse_cli_args()
     args, cli_overrides = parser.parse_known_args()
-
-    if os.environ.get(ENV_BOOTSTRAP_MARKER) != str(os.getpid()):
-        _bootstrap_recipe_environment(args)
-    else:
-        _run_training(args, cli_overrides)
+    _run_training(args, cli_overrides)
 
 
 if __name__ == "__main__":

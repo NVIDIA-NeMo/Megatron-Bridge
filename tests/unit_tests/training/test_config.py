@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from dataclasses import fields
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
@@ -51,6 +52,7 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
+    apply_environment_variables,
     megatron_mimo_runtime_config_update,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -3134,6 +3136,102 @@ class TestMixedPrecisionConsistencyValidation:
 class TestRuntimeConfigUpdate:
     """Tests for the runtime_config_update function."""
 
+    def test_recipe_environment_variables_are_applied_before_runtime_update(self, monkeypatch):
+        """Recipe env defaults should be stringified without replacing launcher values."""
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        full_cfg.env_vars = {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+            "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "QUANTIZATION_TYPE_DEBUG": 1,
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+            "USE_MNNVL": 1,
+        }
+        for name in full_cfg.env_vars:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("USE_MNNVL", "launcher-value")
+
+        try:
+            from megatron.bridge.training.config import runtime_config_update
+
+            runtime_config_update(full_cfg)
+
+            assert os.environ["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "16"
+            assert os.environ["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "16"
+            assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
+            assert os.environ["QUANTIZATION_TYPE_DEBUG"] == "1"
+            assert os.environ["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "64"
+            assert os.environ["USE_MNNVL"] == "launcher-value"
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
+    def test_recipe_environment_variables_reject_invalid_values(self, env_vars):
+        """Invalid recipe environment mappings should fail before training starts."""
+        config = MagicMock(spec=ConfigContainer)
+        config.env_vars = env_vars
+
+        with pytest.raises((TypeError, ValueError)):
+            apply_environment_variables(config)
+
+    def test_recipe_environment_variables_support_hydra_overrides(self):
+        """The top-level mapping should be replaceable through the shared recipe override path."""
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+
+        try:
+            updated_cfg = process_config_with_overrides(
+                full_cfg,
+                cli_overrides=[
+                    "++env_vars={NVTE_FWD_LAYERNORM_SM_MARGIN:16,TORCHINDUCTOR_WORKER_START:fork,USE_MNNVL:1}"
+                ],
+            )
+
+            assert updated_cfg.env_vars == {
+                "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+                "TORCHINDUCTOR_WORKER_START": "fork",
+                "USE_MNNVL": 1,
+            }
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_recipe_environment_variables_round_trip_through_yaml(self, tmp_path):
+        """Environment mappings should be preserved in saved recipe configs."""
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        full_cfg.env_vars = {
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        }
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+
+            assert restored_cfg.env_vars == full_cfg.env_vars
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_hf_model_revision_round_trip_through_yaml(self, tmp_path):
+        """Immutable Hugging Face model provenance should survive runtime config persistence."""
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        gpt_cfg = create_test_gpt_config(hf_model_id="Qwen/Qwen3-8B", hf_model_revision=revision)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+
+            assert restored_cfg.model.hf_model_id == "Qwen/Qwen3-8B"
+            assert restored_cfg.model.hf_model_revision == revision
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_runtime_config_update_with_mixed_precision_string(self):
         """Test runtime_config_update with mixed precision as string."""
         from megatron.bridge.training.config import runtime_config_update
@@ -3831,12 +3929,15 @@ class TestEpochBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_megatron_mimo_runtime_config_update_rejects_num_epochs(self):
+    def test_megatron_mimo_runtime_config_update_rejects_num_epochs(self, monkeypatch):
         cfg = MagicMock()
+        cfg.env_vars = {"TORCHINDUCTOR_WORKER_START": "fork"}
         cfg.train.num_epochs = 1.0
+        monkeypatch.delenv("TORCHINDUCTOR_WORKER_START", raising=False)
 
         with pytest.raises(ValueError, match="num_epochs is not supported for MegatronMIMO datasets"):
             megatron_mimo_runtime_config_update(cfg)
+        assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
 
 
 class TestDatasetSequenceLengthValidation:

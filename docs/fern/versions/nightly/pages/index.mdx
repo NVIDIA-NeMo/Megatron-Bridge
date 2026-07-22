@@ -6,7 +6,7 @@
   <a href="https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge/graph/badge.svg?token=4NMKZVOW2Z" alt="codecov" style={{ display: "block", margin: 0 }} /></a>
   <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/actions/workflows/cicd-main.yml" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://github.com/NVIDIA-NeMo/Megatron-Bridge/actions/workflows/cicd-main.yml/badge.svg" alt="CICD NeMo" style={{ display: "block", margin: 0 }} /></a>
   <a href="https://www.python.org/downloads/release/python-3100/" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+" style={{ display: "block", margin: 0 }} /></a>
-  <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/stargazers/" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://img.shields.io/github/stars/NVIDIA-NeMo/Megatron-Bridge.svg?style=social&label=Star&cacheSeconds=14400" alt="GitHub Stars" style={{ display: "block", margin: 0 }} /></a>
+  <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/stargazers" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://img.shields.io/github/stars/NVIDIA-NeMo/Megatron-Bridge.svg?style=social&label=Star&cacheSeconds=14400" alt="GitHub Stars" style={{ display: "block", margin: 0 }} /></a>
 </div>
 
 [Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) | [Supported Models](#supported-models) | [Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples) | [Contributing](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
@@ -181,7 +181,7 @@ More examples:
 - [Import/Export checkpoints](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - [Generation with bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 - [Multi-GPU loading from HF](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_megatron_roundtrip_multi_gpu.py)
-- [Compare HF vs Megatron outputs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/compare_models.py)
+- [Compare HF vs Megatron outputs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/compare_hf_and_megatron/compare.py)
 - [Toy RLHF with Bridge (HF inference + Megatron training)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/rl/rlhf_with_bridge.py)
 
 For a deeper dive into conversion design and advanced usage, see the [models README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/README.md).
@@ -225,7 +225,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 
 ### Launching Recipes
 
-For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
+For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](recipe-usage.md).
 
 Runnable tutorials live in `tutorials/recipes/llama` that covers:
 
@@ -235,7 +235,7 @@ Runnable tutorials live in `tutorials/recipes/llama` that covers:
 
 ## Performance Benchmarks
 
-For detailed performance benchmarks including throughput metrics across different GPU systems (DGX-GB200, DGX-B200, DGX-H100) and model configurations, see the [Performance Summary](https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-summary.html) in our documentation.
+For detailed performance benchmarks including throughput metrics across different GPU systems (DGX-GB200, DGX-B200, DGX-H100) and model configurations, see the [Performance Summary](performance-summary.md) in our documentation.
 
 ## Project Structure
 

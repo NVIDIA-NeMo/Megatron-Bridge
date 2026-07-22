@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Llama 3.1."""
 
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.llama.common import (
     ConfigContainer,
     _enable_overlap_param_gather_with_optimizer_step,
@@ -47,6 +48,23 @@ def llama31_405b_pretrain_1024gpu_h100_bf16_config() -> ConfigContainer:
 
     _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Pipeline communication tuning for this layout.
+        "NCCL_P2P_NET_CHUNKSIZE": 2097152,
+    }
     return cfg
 
 
@@ -72,14 +90,67 @@ def llama31_405b_pretrain_1024gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _llama_benchmark_common(cfg)
     _enable_overlap_param_gather_with_optimizer_step(cfg)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Pipeline communication tuning for this layout.
+        "NCCL_P2P_NET_CHUNKSIZE": 2097152,
+    }
     return cfg
 
 
 def llama31_405b_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 512× H100, BF16, legacy-scaled GBS."""
-    return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_bf16_config(), 768)
+    cfg = _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_bf16_config(), 768)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Pipeline communication tuning for this layout.
+        "NCCL_P2P_NET_CHUNKSIZE": 2097152,
+    }
+    return cfg
 
 
 def llama31_405b_pretrain_512gpu_h100_fp8cs_config() -> ConfigContainer:
     """Llama3.1 405B pretrain: 512× H100, FP8 current-scaling, legacy-scaled GBS."""
-    return _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_fp8cs_config(), 768)
+    cfg = _with_global_batch_size(llama31_405b_pretrain_1024gpu_h100_fp8cs_config(), 768)
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Pipeline communication tuning for this layout.
+        "NCCL_P2P_NET_CHUNKSIZE": 2097152,
+    }
+    return cfg

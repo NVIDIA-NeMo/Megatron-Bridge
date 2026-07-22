@@ -21,18 +21,7 @@ import logging
 import os
 import sys
 
-import torch
 from argument_parser import parse_cli_args
-from utils.datasets import (
-    create_mock_dataset_config,
-    create_rp2_dataset_config,
-    create_squad_dataset_config,
-)
-from utils.utils import get_library_recipe
-
-from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
-from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
-from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 # Diffusion model families manage their own dataset configs and require
@@ -53,9 +42,13 @@ def _get_diffusion_step(model_family_name: str):
     raise ValueError(f"Unknown diffusion model family: {model_family_name!r}")
 
 
-def set_user_overrides(config, args):
-    """Apply CLI arguments to ConfigContainer fields."""
+def _apply_training_argparse_overrides(config, args):
+    """Apply all training argparse values to ConfigContainer fields."""
+    from utils.datasets import create_mock_dataset_config, create_rp2_dataset_config, create_squad_dataset_config
+    from utils.utils import apply_argparse_overrides
+
     is_diffusion = args.model_family_name in DIFFUSION_FAMILIES
+    config = apply_argparse_overrides(config, args)
 
     # Training configuration
     if args.max_steps:
@@ -155,22 +148,10 @@ def set_user_overrides(config, args):
         if args.diffusion_dataset_path:
             config.dataset.path = args.diffusion_dataset_path
 
-    # Model configuration
+    # Sequence configuration
     # Diffusion models use fixed image/latent dimensions; seq_length is not applicable.
     if args.seq_length and not is_diffusion:
         config.model.seq_length = args.seq_length
-    if args.tensor_model_parallel_size:
-        config.model.tensor_model_parallel_size = args.tensor_model_parallel_size
-    if args.pipeline_model_parallel_size:
-        config.model.pipeline_model_parallel_size = args.pipeline_model_parallel_size
-    if args.context_parallel_size:
-        config.model.context_parallel_size = args.context_parallel_size
-    if args.virtual_pipeline_model_parallel_size != -1:
-        config.model.virtual_pipeline_model_parallel_size = args.virtual_pipeline_model_parallel_size
-    if args.expert_model_parallel_size:
-        config.model.expert_model_parallel_size = args.expert_model_parallel_size
-    if args.expert_tensor_parallel_size:
-        config.model.expert_tensor_model_parallel_size = args.expert_tensor_parallel_size
 
     # Logging configuration
     config.logger.log_timers_to_tensorboard = True
@@ -188,6 +169,8 @@ def set_user_overrides(config, args):
         config.logger.wandb_save_dir = args.wandb_save_dir
 
     if args.deterministic:
+        from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
         apply_determinism_overrides(config)
 
     # Handle convergence mode configuration
@@ -214,26 +197,90 @@ def set_user_overrides(config, args):
     return config
 
 
-def main():
-    """Main entry point for the training script."""
+def _apply_hydra_overrides(recipe, cli_overrides: list[str]):
+    """Apply Hydra overrides without exposing that implementation in the preparation flow."""
+    from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
-    # Parse known args and capture unknown ones for Hydra-style config overrides
-    # (e.g. model.hidden_size=15360 model.num_moe_experts=8)
-    parser = parse_cli_args()
-    args, cli_overrides = parser.parse_known_args()
+    return process_config_with_overrides(recipe, cli_overrides=cli_overrides)
 
-    recipe = get_library_recipe(
+
+def _apply_recipe_overrides(recipe, args, cli_overrides: list[str], *, environment_only: bool):
+    """Apply argparse and Hydra overrides, with Hydra taking final precedence.
+
+    The bootstrap pass applies only settings that can change the process
+    environment. The training pass applies the complete CLI surface. This
+    keeps the clean-interpreter bootstrap lightweight while preserving the
+    same ordering for every environment-relevant override.
+    """
+    if environment_only:
+        from utils.utils import apply_argparse_overrides
+
+        recipe = apply_argparse_overrides(recipe, args)
+        # Determinism owns process values that must be installed before the
+        # clean interpreter imports Torch, Transformer Engine, cuBLAS, or NCCL.
+        if getattr(args, "deterministic", False):
+            from megatron.bridge.recipes.utils.determinism_utils import apply_determinism_overrides
+
+            apply_determinism_overrides(recipe)
+    else:
+        recipe = _apply_training_argparse_overrides(recipe, args)
+
+    if cli_overrides:
+        if not environment_only:
+            logging.info("Applying %d CLI config override(s)", len(cli_overrides))
+        recipe = _apply_hydra_overrides(recipe, cli_overrides)
+    return recipe
+
+
+def _finalize_recipe(recipe, args, cli_overrides: list[str], base_env_vars: dict):
+    """Reconcile config invariants and target-dependent environment values."""
+    from utils.utils import (
+        apply_feature_environment,
+        apply_target_topology_environment,
+        explicit_environment_override_names,
+        finalize_config_overrides,
+    )
+
+    recipe = finalize_config_overrides(recipe)
+    protected_env_names = explicit_environment_override_names(cli_overrides, base_env_vars, recipe.env_vars)
+    apply_target_topology_environment(
+        recipe,
+        gpu=args.gpu,
+        protected_env_names=protected_env_names,
+    )
+    apply_feature_environment(
+        recipe,
+        nccl_ub_override=args.nccl_ub,
+        protected_env_names=protected_env_names,
+    )
+    return recipe
+
+
+def _prepare_recipe(args, cli_overrides: list[str], *, environment_only: bool):
+    """Build the base recipe, apply user overrides, then finalize it."""
+    from utils.utils import build_recipe_config
+
+    # 1. Base config supplied by the recipe.
+    recipe = build_recipe_config(
         model_family_name=args.model_family_name,
         model_recipe_name=args.model_recipe_name,
         train_task=args.task,
         wandb_experiment_name=args.wandb_experiment_name,
     )
+    base_env_vars = dict(recipe.env_vars)
 
-    recipe = set_user_overrides(recipe, args)
+    # 2. User overrides from argparse followed by Hydra.
+    recipe = _apply_recipe_overrides(recipe, args, cli_overrides, environment_only=environment_only)
 
-    if cli_overrides:
-        logging.info("Applying %d CLI config override(s)", len(cli_overrides))
-        recipe = process_config_with_overrides(recipe, cli_overrides=cli_overrides)
+    # 3. Derived config invariants and target-specific environment values.
+    return _finalize_recipe(recipe, args, cli_overrides, base_env_vars)
+
+
+def _run_training(args, cli_overrides: list[str]) -> None:
+    """Build the final recipe and run training after environment bootstrap."""
+    from megatron.bridge.utils.common_utils import get_rank_safe
+
+    recipe = _prepare_recipe(args, cli_overrides, environment_only=False)
 
     if args.dryrun:
         save_path = args.save_config_filepath or "ConfigContainer.yaml"
@@ -271,8 +318,12 @@ def main():
     else:
         raise ValueError("Must specify either --pretrain or --finetune")
 
-    if torch.distributed.is_initialized():
-        torch.distributed.destroy_process_group()
+
+def main() -> None:
+    """Parse the final training arguments and run the workload once."""
+    parser = parse_cli_args()
+    args, cli_overrides = parser.parse_known_args()
+    _run_training(args, cli_overrides)
 
 
 if __name__ == "__main__":

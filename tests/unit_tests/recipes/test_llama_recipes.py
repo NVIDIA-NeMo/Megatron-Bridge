@@ -550,3 +550,6 @@ def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeyp
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert cfg.env_vars["NCCL_ALGO"] == "Ring"
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0

@@ -200,6 +200,23 @@ def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatc
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
 
 
+def test_nemotron_config_rejects_unsupported_visual_keys():
+    config = NemotronOmniEnergonTaskEncoderConfig(
+        hf_processor_path="nvidia/model",
+        max_audio_duration=10.0,
+        num_mel_bins=128,
+        visual_keys=("pixel_values", "image_sizes"),
+        temporal_patch_size=2,
+        video_fps=1.0,
+        video_nframes=8,
+        use_temporal_video_embedder=True,
+        patch_dim=16,
+    )
+
+    with pytest.raises(ValueError, match=r"visual_keys must be exactly \('pixel_values',\)"):
+        config.validate()
+
+
 def test_builder_honors_requested_splits_and_reuses_runtime_encoder(monkeypatch: pytest.MonkeyPatch):
     config = _qwen_config(num_val_workers=0, packing_buffer_size=32)
     task_encoder = object()

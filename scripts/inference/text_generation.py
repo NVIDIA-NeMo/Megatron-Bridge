@@ -89,6 +89,11 @@ def add_args(parser: argparse.ArgumentParser) -> argparse.ArgumentParser:
 def _validate_args(args: argparse.Namespace) -> None:
     if args.use_legacy_generation and args.use_coordinator:
         raise ValueError("--use-coordinator is only supported by dynamic generation.")
+    if args.use_legacy_generation and (args.termination_id is not None or args.stop_words is not None):
+        raise ValueError(
+            "MCore legacy static generation does not support --termination-id or --stop-words; "
+            "use dynamic generation for custom stopping controls."
+        )
     if args.ep > 1 and not args.use_coordinator and not args.use_legacy_generation:
         raise ValueError("--use-coordinator is required when --ep is greater than 1.")
     if (args.coordinator_host is not None or args.coordinator_port is not None) and not args.use_coordinator:

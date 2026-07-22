@@ -96,7 +96,11 @@ def _build_text_sft_batch(
     enable_in_batch_packing: bool,
     in_batch_packing_pad_to_multiple_of: int,
 ) -> dict[str, Any]:
-    """Build one padded or in-batch-packed direct-HF text batch."""
+    """Build one padded or in-batch-packed direct-HF text batch.
+
+    Packed batches use their emergent aggregate width; ``pad_to_max_length``
+    applies only to the non-packed path.
+    """
     if not examples:
         raise ValueError("Text SFT collators require at least one example.")
     if enable_in_batch_packing:
@@ -188,8 +192,8 @@ def text_chat_collate_fn(
         max_length: Optional tokenizer truncation length.
         sequence_length: Optional tokenizer truncation length used by
             Direct Hugging Face SFT builders.
-        pad_to_max_length: If set with ``max_length``, pad every row to
-            ``max_length`` instead of the longest row in the batch.
+        pad_to_max_length: On non-packed batches, pad every row to ``max_length``
+            instead of the longest row. Packed batches use emergent width.
         pad_to_multiple_of: Optional non-packed padding multiple. The HF
             SFT builder uses this to keep CP/SP slices shape-compatible.
         warn_on_all_masked: Forwarded to assistant-mask construction.

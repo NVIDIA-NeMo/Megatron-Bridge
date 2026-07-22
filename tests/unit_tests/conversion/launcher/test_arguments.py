@@ -54,7 +54,7 @@ def test_srun_args_are_repeatable():
             "--executor",
             "slurm",
             "--srun-arg=--mpi=pmix",
-            "--srun-arg=--container-writable",
+            "--srun-arg=--cpus-per-task=8",
             "--hf-model",
             "hf/model",
             "--megatron-path",
@@ -62,7 +62,7 @@ def test_srun_args_are_repeatable():
         ]
     )
 
-    assert args.srun_args == ["--mpi=pmix", "--container-writable"]
+    assert args.srun_args == ["--mpi=pmix", "--cpus-per-task=8"]
 
 
 def test_parallelism_aliases_and_export_defaults():
@@ -135,3 +135,104 @@ def test_worker_args_disable_distributed_save_for_cpu_export():
     worker_args = module.conversion_worker_args(args)
 
     assert "--no-distributed-save" in worker_args
+
+
+def test_roundtrip_alias_and_worker_args():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "roundtrip",
+            "--gpus-per-node",
+            "8",
+            "--hf-model-id",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--tp",
+            "2",
+            "--pp",
+            "1",
+            "--ep",
+            "4",
+            "--etp",
+            "2",
+            "--trust-remote-code",
+            "--distributed-timeout-minutes",
+            "30",
+        ]
+    )
+
+    assert args.device == "gpu"
+    assert args.hf_model == "hf/model"
+    assert module.conversion_worker_args(args) == [
+        "roundtrip",
+        "--device",
+        "gpu",
+        "--hf-model",
+        "hf/model",
+        "--tp",
+        "2",
+        "--pp",
+        "1",
+        "--ep",
+        "4",
+        "--etp",
+        "2",
+        "--hf-revision",
+        "0123456789abcdef",
+        "--trust-remote-code",
+        "--distributed-timeout-minutes",
+        "30",
+    ]
+
+
+def test_import_worker_args_forward_hf_revision():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "import",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--megatron-path",
+            "/checkpoint",
+        ]
+    )
+
+    worker_args = module.conversion_worker_args(args)
+
+    assert worker_args[worker_args.index("--hf-revision") + 1] == "0123456789abcdef"
+
+
+def test_roundtrip_worker_parser_accepts_serialized_args():
+    module = _load_arguments_module()
+
+    args = module.build_parser(include_execution=False).parse_args(
+        [
+            "roundtrip",
+            "--device",
+            "gpu",
+            "--hf-model",
+            "hf/model",
+            "--tp",
+            "2",
+            "--ep",
+            "4",
+        ]
+    )
+
+    assert args.command == "roundtrip"
+    assert args.hf_model == "hf/model"
+    assert (args.tp, args.pp, args.ep, args.etp) == (2, 1, 4, 1)
+    assert (
+        not {
+            "megatron_load_path",
+            "megatron_save_path",
+            "output_dir",
+            "not_strict",
+            "skip_save",
+            "overwrite",
+        }
+        & vars(args).keys()
+    )

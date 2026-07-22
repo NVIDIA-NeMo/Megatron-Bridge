@@ -86,6 +86,12 @@ def _parse_export(module, *options):
     )
 
 
+def _parse_roundtrip(module, *options):
+    return module.build_parser(include_execution=True).parse_args(
+        ["roundtrip", "--hf-model-id", "hf/model", "--gpus-per-node", "2", *options]
+    )
+
+
 def test_setup_import_is_lightweight(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -156,8 +162,41 @@ def test_gpu_backend_validates_parallelism_against_world_size():
     module = _load_setup_conversion_module()
     args = _parse(module, "--device", "gpu", "--gpus-per-node", "4", "--tp", "3")
 
-    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node"):
+    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must equal TP\*PP\*EP"):
         module._validate_args(args)
+
+
+def test_gpu_backend_rejects_replicated_data_parallel_conversion():
+    module = _load_setup_conversion_module()
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "2", "--ep", "2")
+
+    with pytest.raises(ValueError, match=r"nodes\*gpus-per-node must equal TP\*PP\*EP"):
+        module._validate_args(args)
+
+
+def test_roundtrip_accepts_exact_multinode_product_topology():
+    module = _load_setup_conversion_module()
+    args = _parse_roundtrip(
+        module,
+        "--executor",
+        "slurm",
+        "--nodes",
+        "12",
+        "--gpus-per-node",
+        "8",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--tp",
+        "2",
+        "--ep",
+        "48",
+    )
+
+    module._validate_args(args)
 
 
 def test_gpu_backend_validates_expert_parallelism_against_world_size():
@@ -170,9 +209,40 @@ def test_gpu_backend_validates_expert_parallelism_against_world_size():
 
 def test_gpu_backend_allows_etp_topology_independent_from_tp():
     module = _load_setup_conversion_module()
-    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "4", "--ep", "4")
+    args = _parse(module, "--device", "gpu", "--gpus-per-node", "8", "--tp", "2", "--ep", "4")
 
     module._validate_args(args)
+
+
+def test_roundtrip_rejects_cpu_backend():
+    module = _load_setup_conversion_module()
+    args = _parse_roundtrip(module, "--device", "cpu")
+
+    with pytest.raises(ValueError, match="requires the GPU backend"):
+        module._validate_args(args)
+
+
+@pytest.mark.parametrize(
+    ("command", "options"),
+    [
+        ("roundtrip", ("--hf-model-id", "/model path", "--tp", "2")),
+        (
+            "import",
+            ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--megatron-path", "/checkpoint path"),
+        ),
+        (
+            "export",
+            ("--device", "gpu", "--gpus-per-node", "2", "--tp", "2", "--hf-path", "/export path"),
+        ),
+    ],
+)
+def test_local_gpu_rejects_worker_value_requiring_shell_quoting(command, options):
+    module = _load_setup_conversion_module()
+    parse = {"roundtrip": _parse_roundtrip, "import": _parse, "export": _parse_export}[command]
+    args = parse(module, *options)
+
+    with pytest.raises(ValueError, match="cannot pass model IDs or paths containing whitespace"):
+        module._validate_args(args)
 
 
 def test_local_cpu_executor_uses_one_process_without_launcher():
@@ -204,6 +274,69 @@ def test_local_gpu_executor_uses_nemo_run_torchrun():
     assert executor.launcher is launcher
 
 
+def test_roundtrip_task_uses_conversion_worker():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse_roundtrip(
+        module,
+        "--tp",
+        "2",
+    )
+    module._validate_args(args)
+
+    task, display_args = module._build_task(args)
+
+    assert task.path == str(REPO_ROOT / "scripts/conversion/run_conversion.py")
+    assert task.entrypoint == "python"
+    assert task.env["PYTHON_EXEC"] == sys.executable
+    assert task.args == display_args
+    assert task.args == [
+        "roundtrip",
+        "--device",
+        "gpu",
+        "--hf-model",
+        "hf/model",
+        "--tp",
+        "2",
+        "--pp",
+        "1",
+        "--ep",
+        "1",
+        "--etp",
+        "1",
+    ]
+
+
+def test_slurm_roundtrip_task_uses_container_conversion_worker():
+    module = _load_setup_conversion_module()
+    module.run.Script = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    args = _parse_roundtrip(
+        module,
+        "--executor",
+        "slurm",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+        "--hf-model-id",
+        "/model path",
+        "--tp",
+        "2",
+    )
+    module._validate_args(args)
+
+    task, display_args = module._build_task(args)
+
+    assert task.path == "/opt/Megatron-Bridge/scripts/conversion/run_conversion.py"
+    assert task.entrypoint == "python"
+    assert "PYTHON_EXEC" not in task.env
+    assert task.args != display_args
+    assert display_args[4] == "/model path"
+    assert task.args == [*display_args[:4], "'/model path'", *display_args[5:]]
+
+
 def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
     module = _load_setup_conversion_module()
 
@@ -225,12 +358,16 @@ def test_slurm_cpu_executor_does_not_request_gpus(tmp_path, monkeypatch):
         "partition",
         "--container-image",
         "image.sqsh",
+        "--experiment-name",
+        "mb4909-nano4b-conversion",
     )
     module._validate_args(args)
 
     executor = module._build_executor(args, ["HF_TOKEN"], ["/host:/container"])
 
     assert executor.kwargs["ntasks_per_node"] == 1
+    assert executor.kwargs["job_name_prefix"] == "mb4909-nano4b-conversion"
+    assert "cpus_per_task" not in executor.kwargs
     assert "gpus_per_node" not in executor.kwargs
     assert executor.kwargs["container_env"] == ["HF_TOKEN", "PYTHONPATH"]
     assert executor.kwargs["additional_parameters"] == {"export": "HF_TOKEN,PYTHONPATH"}
@@ -264,7 +401,7 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
         "--container-image",
         "image.sqsh",
         "--srun-arg=--mpi=pmix",
-        "--srun-arg=--container-writable",
+        "--srun-arg=--cpus-per-task=8",
         "--ep",
         "4",
     )
@@ -273,8 +410,9 @@ def test_slurm_gpu_executor_uses_srun_native_tasks(tmp_path, monkeypatch):
     executor = module._build_executor(args, [], [])
 
     assert executor.kwargs["ntasks_per_node"] == 4
+    assert "cpus_per_task" not in executor.kwargs
     assert executor.kwargs["launcher"] is None
-    assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--container-writable"]
+    assert executor.kwargs["srun_args"] == ["--mpi=pmix", "--cpus-per-task=8"]
 
 
 def test_main_waits_and_builds_local_worker_task(monkeypatch):

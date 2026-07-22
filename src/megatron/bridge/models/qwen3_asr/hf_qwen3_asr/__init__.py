@@ -29,12 +29,22 @@
 # register the Auto classes ourselves below.
 
 from transformers import AutoConfig, AutoModel, AutoProcessor
+from transformers.models.auto.configuration_auto import CONFIG_MAPPING
 
 from .configuration_qwen3_asr import Qwen3ASRAudioEncoderConfig, Qwen3ASRConfig, Qwen3ASRThinkerConfig
 from .modeling_qwen3_asr import Qwen3ASRAudioEncoder, Qwen3ASRForConditionalGeneration
 from .processing_qwen3_asr import Qwen3ASRProcessor
 
 
-AutoConfig.register("qwen3_asr", Qwen3ASRConfig)
-AutoModel.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
-AutoProcessor.register(Qwen3ASRConfig, Qwen3ASRProcessor)
+def _register_auto_classes(config_mapping=CONFIG_MAPPING) -> bool:
+    """Register vendored classes only when Transformers has no native Qwen3-ASR."""
+    if Qwen3ASRConfig.model_type in config_mapping:
+        return False
+
+    AutoConfig.register(Qwen3ASRConfig.model_type, Qwen3ASRConfig)
+    AutoModel.register(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
+    AutoProcessor.register(Qwen3ASRConfig, Qwen3ASRProcessor)
+    return True
+
+
+_register_auto_classes()

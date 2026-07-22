@@ -40,6 +40,11 @@ from transformers import AutoProcessor, AutoTokenizer
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.data.sources.hf import HFDatasetSourceConfig, load_and_adapt_hf_dataset
+from megatron.bridge.models.nemotron_omni.nemotron_omni_utils import (
+    inference_merged_sequence_length,
+    inference_num_image_tiles,
+    select_inference_next_token,
+)
 from megatron.bridge.models.nemotron_vl.nemotron_vl_utils import adjust_image_tokens
 from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0
 
@@ -73,7 +78,7 @@ class SingleBatchIterator:
 
     def __init__(self, input_ids, position_ids, attention_mask, **kwargs):
         self.batch = dict(tokens=input_ids, position_ids=position_ids, attention_mask=attention_mask)
-        for key in ("images", "imgs_sizes", "num_frames", "vision_packed_seq_params"):
+        for key in ("images", "imgs_sizes", "num_image_tiles", "vision_packed_seq_params"):
             if kwargs.get(key) is not None:
                 self.batch[key] = kwargs[key]
         self._yielded = False
@@ -101,7 +106,7 @@ def vlm_forward_step(data_iterator, model, **_):
         forward_args["images"] = batch["images"]
     else:
         forward_args["images"] = torch.tensor([], dtype=torch.bfloat16, device=batch["tokens"].device).reshape(0, 0, 0)
-    for key in ("imgs_sizes", "num_frames", "vision_packed_seq_params"):
+    for key in ("imgs_sizes", "num_image_tiles", "vision_packed_seq_params"):
         if key in batch:
             forward_args[key] = batch[key]
 
@@ -129,39 +134,61 @@ def prepare_image_sample(tokenizer, processor, image, prompt, system_prompt=None
     # Adjust image tokens: collapse <img>...<image>...</img> to single <image> per tile.
     img_start_id = tokenizer.convert_tokens_to_ids("<img>")
     img_end_id = tokenizer.convert_tokens_to_ids("</img>")
-    num_patches = torch.ones(1, dtype=torch.long)  # 1 tile per image
+    pixel_values = inputs.pixel_values
+    num_patches = getattr(inputs, "num_patches", None)
+    if num_patches is None:
+        num_patches = torch.ones(len(pixel_values), dtype=torch.long)
+    else:
+        num_patches = torch.as_tensor(num_patches, dtype=torch.long).reshape(-1)
     if img_start_id != tokenizer.unk_token_id and (input_ids == img_start_id).any():
         input_ids = adjust_image_tokens(input_ids, num_patches, img_start_id, img_end_id)
 
-    # Patchify [1, 3, H, W] → [1, num_patches, 3*P*P] (mirrors collate.py dynamic-res path).
-    pv = inputs.pixel_values  # [1, 3, H, W], float32, already normalized
+    # Patchify every processor tile into RADIO's packed dynamic-resolution path.
     P = _VISION_PATCH_DIM
-    _, C, H, W = pv.shape
-    py, px = H // P, W // P
-    pv_patched = (
-        pv[0]
-        .reshape(3, py, P, px, P)
-        .permute(1, 3, 0, 2, 4)
-        .reshape(py * px, 3 * P * P)
-        .unsqueeze(0)
-        .contiguous()
-        .bfloat16()
-    )
-    imgs_sizes = torch.tensor([[H, W]], dtype=torch.long)
-    num_frames = torch.tensor([1], dtype=torch.long)
+    patches = []
+    sizes = []
+    for tile in pixel_values:
+        channels, height, width = tile.shape
+        patch_rows, patch_cols = height // P, width // P
+        patches.append(
+            tile.reshape(channels, patch_rows, P, patch_cols, P)
+            .permute(1, 3, 0, 2, 4)
+            .reshape(patch_rows * patch_cols, channels * P * P)
+        )
+        sizes.append([height, width])
+    pv_patched = torch.cat(patches).unsqueeze(0).contiguous().bfloat16()
+    imgs_sizes = torch.tensor(sizes, dtype=torch.long)
+    num_image_tiles = inference_num_image_tiles(imgs_sizes, patch_dim=P)
+    image_token_id = tokenizer.convert_tokens_to_ids("<image>")
+    num_placeholders = int((input_ids == image_token_id).sum().item())
+    if num_image_tiles.numel() != num_placeholders:
+        raise ValueError(
+            "Vision metadata produced "
+            f"{num_image_tiles.numel()} replacement counts for {num_placeholders} image placeholders."
+        )
 
-    return input_ids, pv_patched, imgs_sizes, num_frames
+    return input_ids, pv_patched, imgs_sizes, num_image_tiles
 
 
 @torch.no_grad()
-def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_new_tokens=200):
+def generate(
+    model,
+    tokenizer,
+    input_ids,
+    images,
+    imgs_sizes,
+    num_image_tiles,
+    *,
+    sequence_length,
+    max_new_tokens=200,
+):
     """Generate tokens for one CORD-V2 sample."""
 
     prompt_len = input_ids.size(1)
     input_ids = input_ids.cuda()
     images = images.cuda()
     imgs_sizes = imgs_sizes.cuda()
-    num_frames = num_frames.cuda()
+    num_image_tiles = num_image_tiles.cuda()
 
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
@@ -169,6 +196,7 @@ def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_ne
     attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
     generated_ids = input_ids.clone()
     stop_tokens = {tokenizer.eos_token_id}
+    image_token_id = tokenizer.convert_tokens_to_ids("<image>")
 
     fwd_bwd = get_forward_backward_func()
     for _ in range(max_new_tokens):
@@ -181,7 +209,7 @@ def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_ne
             attention_mask,
             images=images,
             imgs_sizes=imgs_sizes,
-            num_frames=num_frames,
+            num_image_tiles=num_image_tiles,
             vision_packed_seq_params=vision_packed_seq_params,
         )
         output = fwd_bwd(
@@ -190,7 +218,7 @@ def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_ne
             model=model,
             num_microbatches=1,
             forward_only=True,
-            seq_length=input_ids.size(1),
+            seq_length=sequence_length,
             micro_batch_size=1,
             collect_non_loss_data=True,
         )
@@ -204,7 +232,13 @@ def generate(model, tokenizer, input_ids, images, imgs_sizes, num_frames, max_ne
             gathered = [torch.zeros_like(output) for _ in range(world_size)]
             dist.all_gather(gathered, output, group=parallel_state.get_tensor_model_parallel_group())
             full = torch.cat(gathered, dim=2)
-            next_token_ids = torch.argmax(full[:, -1], dim=-1, keepdim=True)
+            merged_sequence_length = inference_merged_sequence_length(
+                input_ids,
+                image_token_index=image_token_id,
+                num_image_tiles=num_image_tiles,
+                image_seq_len=1,
+            )
+            next_token_ids = select_inference_next_token(full, merged_sequence_length)
         else:
             next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
 
@@ -265,7 +299,6 @@ def main():
     model_provider.expert_model_parallel_size = args.ep
     model_provider.expert_tensor_parallel_size = args.etp
     model_provider.pipeline_dtype = torch.bfloat16
-    model_provider.dynamic_resolution = True
     model_provider.temporal_patch_dim = 1
     model_provider.separate_video_embedder = True
     model_provider.temporal_ckpt_compat = True
@@ -282,7 +315,6 @@ def main():
                 "expert_model_parallel_size": args.ep,
                 "expert_tensor_parallel_size": args.etp,
                 "pipeline_dtype": torch.bfloat16,
-                "dynamic_resolution": True,
                 "temporal_patch_dim": 1,
                 "separate_video_embedder": True,
                 "temporal_ckpt_compat": True,
@@ -337,7 +369,9 @@ def main():
             except Exception as e:
                 print_rank_0(f"WARN: could not save sample image {i}: {e}")
 
-        input_ids, pv_patched, imgs_sizes, num_frames = prepare_image_sample(tokenizer, processor, image, args.prompt)
+        input_ids, pv_patched, imgs_sizes, num_image_tiles = prepare_image_sample(
+            tokenizer, processor, image, args.prompt
+        )
 
         cleaned, prediction_full = generate(
             model,
@@ -345,7 +379,8 @@ def main():
             input_ids,
             pv_patched,
             imgs_sizes,
-            num_frames,
+            num_image_tiles,
+            sequence_length=model_provider.seq_length,
             max_new_tokens=args.max_new_tokens,
         )
 
