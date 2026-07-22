@@ -32,6 +32,36 @@ uv run python examples/conversion/hf_megatron_roundtrip.py \
 This utility currently targets decoder-only checkpoints with a top-level
 `num_hidden_layers` config field and tensor names containing `layers.<index>`.
 
+### `repair_hf_embedding_rows.py` - Repair Near-Zero Input Embedding Rows
+
+Creates a repaired copy of a local Hugging Face safetensors checkpoint by
+rewriting diagnosed near-zero input embedding rows. It is intended for one-off
+continued-pretraining cleanup when rare token IDs in the base checkpoint can
+produce extreme embedding gradients.
+
+The script scans the input embedding row norms, replaces rows whose L2 norm is
+non-finite or at/below `--min-norm` with the matching `lm_head.weight` direction
+scaled to the RMS norm of healthy input rows, and writes a manifest with the
+affected token IDs. It preserves the HF checkpoint layout and safetensors index.
+
+```bash
+uv run python examples/conversion/repair_hf_embedding_rows.py \
+  --input-hf-path /models/NVIDIA-Nemotron-3-Nano-4B-BF16 \
+  --output-hf-path /models/NVIDIA-Nemotron-3-Nano-4B-BF16-repaired \
+  --min-norm 1.0e-4 \
+  --max-rows 256
+
+# Diagnose only, without writing an output checkpoint
+uv run python examples/conversion/repair_hf_embedding_rows.py \
+  --input-hf-path /models/NVIDIA-Nemotron-3-Nano-4B-BF16 \
+  --dry-run
+```
+
+By default the tool infers common tensor names such as
+`backbone.embeddings.weight` and `lm_head.weight`. Use
+`--input-embedding-name` and `--output-embedding-name` if a checkpoint uses
+different names.
+
 ### 1. `hf_megatron_roundtrip.py` - Two-Way Model Conversion
 
 Demonstrates round-trip conversion between HuggingFace and Megatron-LM model formats.
