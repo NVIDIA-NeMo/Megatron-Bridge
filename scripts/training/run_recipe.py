@@ -100,6 +100,7 @@ from recipe_runner import (  # noqa: E402
     run_config,
     sync_finetuning_cp_invariants,
     sync_model_dataset_sequence_length,
+    sync_model_pipeline_layout,
     sync_offline_packing_alignment,
 )
 
@@ -418,6 +419,7 @@ def main(argv: list[str] | None = None) -> None:
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
+    recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
     if benchmark_metadata is not None:
         recipe = _apply_benchmark_runtime_defaults(recipe, benchmark_metadata, cli_overrides)
     configuration_mode = _train_mode(args.mode)
