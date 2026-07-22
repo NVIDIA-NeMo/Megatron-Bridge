@@ -88,7 +88,7 @@ class TestGemma3Conversion:
         # Download and save tokenizer from a reference Gemma model
         # We use the smallest available Gemma model for tokenizer artifacts.
         # Download tokenizer directly from Hugging Face; caching is handled by transformers/HF.
-        tokenizer = GemmaTokenizer.from_pretrained("google/gemma-2b")
+        tokenizer = GemmaTokenizer.from_pretrained("google/gemma-3-1b-pt")
         tokenizer.save_pretrained(model_dir)
 
         # Save model and config to directory

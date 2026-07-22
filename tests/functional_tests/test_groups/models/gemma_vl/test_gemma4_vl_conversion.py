@@ -191,7 +191,7 @@ class TestGemma4VLConversion:
 
         # Best-effort tokenizer download; fall back to a minimal stub.
         try:
-            tokenizer = AutoTokenizer.from_pretrained("google/gemma-2b")
+            tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-4b-it")
             tokenizer.save_pretrained(model_dir)
         except Exception:
             tokenizer_config = {
@@ -333,7 +333,7 @@ class TestGemma4DenseVLConversion:
 
         # Best-effort tokenizer download; fall back to a minimal stub.
         try:
-            tokenizer = AutoTokenizer.from_pretrained("google/gemma-2b")
+            tokenizer = AutoTokenizer.from_pretrained("google/gemma-3-4b-it")
             tokenizer.save_pretrained(model_dir)
         except Exception:
             tokenizer_config = {

@@ -98,7 +98,7 @@ class TestGemma3VLConversion:
         # Download and save tokenizer from a reference Gemma model
         # We use a Gemma model for tokenizer artifacts since they should be compatible
         try:
-            tokenizer = GemmaTokenizer.from_pretrained("google/gemma-2b")
+            tokenizer = GemmaTokenizer.from_pretrained("google/gemma-3-1b-pt")
             tokenizer.save_pretrained(model_dir)
         except Exception as e:
             print(f"Warning: Could not download tokenizer, creating minimal tokenizer files: {e}")

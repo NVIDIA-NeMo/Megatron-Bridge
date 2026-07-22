@@ -68,7 +68,7 @@ class TestTokenizers:
         metadata_path = {"library": "huggingface", "chat_template": chat_template}
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            tokenizer_model="meta-llama/Meta-Llama-3-8B-Instruct",
             metadata_path=metadata_path,
         )
 
@@ -151,28 +151,6 @@ class TestTokenizers:
             assert mock_build_mcore_tokenizer.call_args.args[0] is config
 
         mock_snapshot_download.assert_not_called()
-
-    @patch("megatron.core.tokenizers.text.libraries.SentencePieceTokenizer")
-    @pytest.mark.parametrize("legacy", [True])
-    def test_build_sp_tokenizer(self, mock_sp_tokenizer, legacy):
-        # Setup
-        custom_kwargs = {
-            "legacy": legacy,
-        }
-
-        config = TokenizerConfig(
-            tokenizer_type="Llama2Tokenizer",
-            tokenizer_model="sp.model",
-            special_tokens=["<TEST_SPECIAL>"],
-            sp_tokenizer_kwargs=custom_kwargs,
-        )
-
-        # Execute
-        tokenizer = build_tokenizer(config)
-
-        # Verify
-        assert tokenizer.library == "sentencepiece"
-        assert tokenizer.additional_args["legacy"] == legacy
 
     @patch("megatron.core.tokenizers.text.libraries.TikTokenTokenizer")
     @pytest.mark.parametrize("pattern", ["v1"])

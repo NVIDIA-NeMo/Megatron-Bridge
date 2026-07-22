@@ -36,7 +36,7 @@ class TestSafeLoadConfigWithRetry:
         self.mock_config = MagicMock(spec=PretrainedConfig)
         self.mock_config.model_type = "llama"
         self.mock_config.architectures = ["LlamaForCausalLM"]
-        self.test_path = "meta-llama/Llama-2-7b-hf"
+        self.test_path = "meta-llama/Meta-Llama-3-8B"
 
     def test_basic_successful_load(self):
         """Test basic successful configuration loading."""
