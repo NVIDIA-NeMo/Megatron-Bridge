@@ -64,6 +64,7 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
         context_parallel_size=None,
         expert_model_parallel_size=None,
         deterministic=False,
+        env=[("NCCL_NVLS_ENABLE", "explicit"), ("USER_FLAG", "enabled")],
     )
     parser = SimpleNamespace(parse_known_args=lambda: (args, []))
     recipe = SimpleNamespace()
@@ -86,6 +87,8 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
 
         def setup_recipe_environment(self, task, executor, config):
             calls.append(("environment", task, executor, config))
+            executor.env_vars["NCCL_NVLS_ENABLE"] = "plugin"
+            executor.env_vars["PLUGIN_FLAG"] = "enabled"
 
     def exec_runner(executable, argv, env):
         calls.append(("exec", executable, argv, env))
@@ -102,6 +105,9 @@ def test_run_script_exports_recipe_environment_before_self_exec(monkeypatch):
     assert calls[3][3] is workload
     assert calls[4][2][1].endswith("run_script.py")
     assert calls[4][3][run_script.ENV_BOOTSTRAP_MARKER] == str(run_script.os.getpid())
+    assert calls[4][3]["NCCL_NVLS_ENABLE"] == "explicit"
+    assert calls[4][3]["USER_FLAG"] == "enabled"
+    assert calls[4][3]["PLUGIN_FLAG"] == "enabled"
 
 
 def test_run_script_trains_only_after_environment_bootstrap(monkeypatch):
