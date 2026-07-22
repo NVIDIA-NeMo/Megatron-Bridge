@@ -23,10 +23,22 @@ silent wipes after upstream PR #3470 (2026-04-23).
 
 import sys
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
+
+import pytest
 
 
 SCRIPTS_PERF_PATH = Path(__file__).parents[3] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
+
+
+@pytest.fixture(autouse=True)
+def _mock_cuda_device_properties():
+    """Keep recipe construction independent of the test host's GPUs."""
+    properties = MagicMock(major=9, name="NVIDIA H100")
+    with patch("torch.cuda.get_device_properties", return_value=properties):
+        yield
 
 
 def _build_base_args(**overrides):
@@ -68,7 +80,7 @@ def _fresh_recipe():
         gpu="gb200",
         compute_dtype="nvfp4",
         mock=True,
-        config_variant="v1",
+        config_variant=None,
     )
 
 
@@ -89,9 +101,45 @@ def _apply(recipe, cli_overrides=None, args_overrides=None, run_post=True, num_g
             compute_dtype="nvfp4",
             task="pretrain",
             user_gbs=args.global_batch_size,
-            config_variant="v1",
+            config_variant=None,
         )
     return recipe
+
+
+def _minimal_cuda_graph_recipe():
+    """Return the config surface used by the CUDA graph override helper."""
+    return SimpleNamespace(
+        model=SimpleNamespace(
+            cuda_graph_impl="none",
+            cuda_graph_modules=[],
+            cuda_graph_scope=None,
+            use_te_rng_tracker=False,
+        ),
+        rng=SimpleNamespace(te_rng_tracker=False),
+        rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
+    )
+
+
+def test_default_dispatcher_sentinel_preserves_recipe_backend():
+    recipe = _fresh_recipe()
+    expected_backend = recipe.model.moe_flex_dispatcher_backend
+    expected_dispatcher = recipe.model.moe_token_dispatcher_type
+
+    recipe = _apply(recipe, run_post=False)
+
+    assert recipe.model.moe_flex_dispatcher_backend == expected_backend
+    assert recipe.model.moe_token_dispatcher_type == expected_dispatcher
+
+
+def test_explicit_none_disables_flat_recipe_flex_dispatcher():
+    recipe = _apply(
+        _fresh_recipe(),
+        args_overrides={"moe_flex_dispatcher_backend": None},
+        run_post=False,
+    )
+
+    assert recipe.model.moe_flex_dispatcher_backend is None
+    assert recipe.model.moe_token_dispatcher_type == "alltoall"
 
 
 # ---------------------------------------------------------------------------
@@ -118,9 +166,11 @@ class TestRecipeDefault:
 
 class TestRecomputePrecedence:
     def test_A_workload_default_survives_when_nothing_else_set(self):
-        """Workload base for GB200 NVFP4 V1 has recompute_modules=['mlp']. With
-        no Hydra and no argparse override, that value must reach the final
-        recipe."""
+        """Canonical GB200 NVFP4 flat workload has recompute_modules=['mlp'].
+
+        With no Hydra and no argparse override, that value must reach the final
+        recipe.
+        """
         recipe = _fresh_recipe()
         recipe = _apply(recipe, run_post=False)
         assert recipe.model.recompute_modules == ["mlp"]
@@ -190,10 +240,10 @@ class TestGbsPrecedence:
         the workload default, set_post_overrides should rescale. This is the
         existing intentional feature; verify it still works after the fix."""
         recipe = _fresh_recipe()
-        # Workload default for GB200 V1 is GBS=2048 at 256 GPUs. At 64 GPUs,
+        # Canonical flat workload default for GB200 is GBS=4096 at 256 GPUs. At 64 GPUs,
         # gbs_scaling_factor * 64 should be applied.
         recipe = _apply(recipe, num_gpus=64)
-        assert recipe.train.global_batch_size != 2048, "GBS auto-scale did not fire for num_gpus=64 (default=256)"
+        assert recipe.train.global_batch_size != 4096, "GBS auto-scale did not fire for num_gpus=64 (default=256)"
 
     def test_G_hydra_overrides_autoscale(self):
         """Hydra `train.global_batch_size=128` must survive set_post_overrides
@@ -215,6 +265,91 @@ class TestGbsPrecedence:
             num_gpus=64,
         )
         assert recipe.train.global_batch_size == 256
+
+
+# ---------------------------------------------------------------------------
+# CUDA graph override normalization
+# ---------------------------------------------------------------------------
+
+
+class TestCudaGraphOverrides:
+    def test_none_with_explicit_empty_scope_clears_stale_modules(self):
+        """Disabled graphs use the current MCore representation."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+        recipe = _minimal_cuda_graph_recipe()
+        recipe.model.cuda_graph_impl = "transformer_engine"
+        recipe.model.cuda_graph_modules = ["attn"]
+        recipe.model.use_te_rng_tracker = True
+        recipe.rng.te_rng_tracker = True
+
+        recipe = _set_cuda_graph_overrides(
+            recipe,
+            cuda_graph_impl="none",
+            cuda_graph_scope=[],
+        )
+
+        assert recipe.model.cuda_graph_impl == "none"
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
+        assert cuda_graph_module_names(recipe.model) == []
+        assert recipe.model.use_te_rng_tracker is False
+        assert recipe.rng.te_rng_tracker is False
+
+    def test_local_full_iteration_is_normalized(self):
+        """The legacy local/full_iteration pair maps to the current implementation."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names, is_full_iteration_cuda_graph
+
+        recipe = _set_cuda_graph_overrides(
+            _minimal_cuda_graph_recipe(),
+            cuda_graph_impl="local",
+            cuda_graph_scope="full_iteration",
+        )
+
+        assert recipe.model.cuda_graph_impl == "full_iteration"
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
+        assert cuda_graph_module_names(recipe.model) == []
+        assert is_full_iteration_cuda_graph(recipe.model)
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
+        assert recipe.rerun_state_machine.check_for_nan_in_loss is False
+
+    def test_local_scoped_graph_is_rejected(self):
+        """Local graphs cannot capture individual layer modules in Bridge."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        with pytest.raises(
+            ValueError,
+            match='cuda_graph_impl="local".*cuda_graph_impl="transformer_engine"',
+        ):
+            _set_cuda_graph_overrides(
+                _minimal_cuda_graph_recipe(),
+                cuda_graph_impl="local",
+                cuda_graph_scope="mlp",
+            )
+
+    def test_transformer_engine_scoped_graph_is_normalized(self):
+        """TE scoped graphs populate current MCore module values."""
+        from utils.overrides import _set_cuda_graph_overrides
+
+        from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+        recipe = _set_cuda_graph_overrides(
+            _minimal_cuda_graph_recipe(),
+            cuda_graph_impl="transformer_engine",
+            cuda_graph_scope=["attn", "mlp"],
+        )
+
+        assert recipe.model.cuda_graph_impl == "transformer_engine"
+        assert recipe.model.cuda_graph_scope is None
+        assert cuda_graph_module_names(recipe.model) == ["attn", "mlp"]
+        assert recipe.model.use_te_rng_tracker is True
+        assert recipe.rng.te_rng_tracker is True
 
 
 # ---------------------------------------------------------------------------
@@ -249,6 +384,7 @@ class TestFullChainSanity:
         assert recipe.model.recompute_modules == ["mlp", "mla_up_proj"]
         assert recipe.model.recompute_granularity == "selective"
         assert recipe.model.cuda_graph_impl == "none"
-        assert recipe.model.cuda_graph_scope == []
+        assert recipe.model.cuda_graph_modules == []
+        assert recipe.model.cuda_graph_scope is None
         assert recipe.train.micro_batch_size == 2
         assert recipe.train.global_batch_size == 128

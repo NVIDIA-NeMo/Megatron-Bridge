@@ -62,7 +62,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
             logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_sft_seq_pack_${pack_config}_tp${TP}_cp${CP} \
-            dataset.maker_name=make_${DATASET_NAME}_dataset \
+            dataset.source.dataset_name=${DATASET_NAME} \
             dataset.seq_length=$SEQ_LENGTH \
             dataset.enable_in_batch_packing=$pack_config \
             model.expert_model_parallel_size=$EP \
@@ -74,4 +74,3 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             ddp.grad_reduce_in_fp32=True
     done
 done
-

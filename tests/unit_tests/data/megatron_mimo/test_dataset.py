@@ -233,6 +233,52 @@ class TestMegatronMIMODataset:
             f"Position {encoder_seq_length} should not be placeholder token"
         )
 
+    def test_loss_mask_does_not_drop_genuine_eos(self):
+        """Padding must be masked by position, not by pad_token_id value.
+
+        Tokenizers without a dedicated pad token set pad_token = eos_token, so
+        pad_token_id == eos_token_id. Masking loss on `labels == pad_token_id` would then
+        also drop every real EOS in the text; masking by position must not.
+        """
+
+        class EosIsPadTokenizer:
+            """Returns a fixed sequence whose real region contains the EOS/pad id."""
+
+            def __init__(self):
+                self.vocab_size = 100
+                # No dedicated pad token: pad_token_id aliases eos_token_id (== 0).
+                self.pad_token = "</s>"
+                self.pad_token_id = 0
+                self.eos_token = "</s>"
+                self.eos_token_id = 0
+
+            def __call__(self, text, truncation=True, max_length=512, return_tensors="pt"):
+                # 4 real tokens, with a genuine EOS (id 0) at position 2.
+                return {"input_ids": torch.tensor([[5, 7, 0, 7]])}
+
+        examples = MockExamples(size=1)
+        dataset = MegatronMIMODataset(
+            examples=examples,
+            processors={},
+            tokenizer=EosIsPadTokenizer(),
+            seq_length=8,
+            special_token_ids={},
+            encoder_seq_lengths={},
+            modality_columns={},
+        )
+
+        item = dataset[0]
+
+        # input_ids: [5, 7, 0, 7] + pad(0)*4 ; num_real_tokens = 4.
+        # labels (shifted): [7, 0, 7, 0, 0, 0, 0, -100].
+        # Correct loss_mask keeps positions 0..2 (targets are real tokens, incl. the EOS at
+        # position 1 whose target is input_ids[2] == 0) and masks positions 3.. (padding).
+        expected = torch.tensor([1.0, 1.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        assert torch.equal(item["loss_mask"], expected)
+        # The genuine EOS target (position 1) must not be masked out.
+        assert item["loss_mask"][1].item() == 1.0
+        assert item["labels"][1].item() == 0
+
     def test_index_out_of_range(self):
         """Test that accessing out-of-range index raises error."""
         examples = MockExamples(size=10)

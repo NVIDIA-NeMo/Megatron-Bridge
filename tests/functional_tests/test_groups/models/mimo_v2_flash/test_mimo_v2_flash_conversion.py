@@ -222,15 +222,18 @@ class TestMiMoV2FlashConversion:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "tp,pp,ep,test_name",
+        "tp,pp,ep,etp,test_name",
         [
-            (2, 1, 1, "TP"),
-            (1, 2, 1, "PP"),
-            (1, 1, 2, "EP"),
+            (2, 1, 1, 1, "TP"),
+            (1, 2, 1, 1, "PP"),
+            (1, 1, 2, 1, "EP"),
+            (1, 1, 1, 2, "ETP"),
         ],
     )
-    def test_mimo_v2_flash_conversion_parallelism(self, mimo_v2_flash_toy_model_path, tmp_path, tp, pp, ep, test_name):
-        """Round-trip conversion (HF → Megatron → HF) under TP / PP / EP."""
+    def test_mimo_v2_flash_conversion_parallelism(
+        self, mimo_v2_flash_toy_model_path, tmp_path, tp, pp, ep, etp, test_name
+    ):
+        """Round-trip conversion (HF → Megatron → HF) under TP / PP / EP / ETP."""
         test_output_dir = tmp_path / f"mimo_v2_flash_{test_name}"
         test_output_dir.mkdir(exist_ok=True)
 
@@ -258,6 +261,8 @@ class TestMiMoV2FlashConversion:
             str(pp),
             "--ep",
             str(ep),
+            "--etp",
+            str(etp),
             "--trust-remote-code",
         ]
 
@@ -267,6 +272,8 @@ class TestMiMoV2FlashConversion:
             print(f"STDOUT: {result.stdout}")
             print(f"STDERR: {result.stderr}")
             pytest.fail(f"MiMo-V2-Flash {test_name} conversion failed with return code {result.returncode}")
+
+        assert f"Expert tensor parallel size: {etp}" in result.stdout
 
         model_name = Path(mimo_v2_flash_toy_model_path).name
         converted_dir = test_output_dir / model_name

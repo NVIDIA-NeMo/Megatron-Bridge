@@ -29,6 +29,7 @@ from pathlib import Path
 
 import pytest
 import torch
+import yaml
 
 
 # Skip the entire module if the transformers Gemma 4 implementation is not
@@ -131,7 +132,11 @@ HF_GEMMA4_VL_TOY_DENSE_MODEL_CONFIG = {
         "rope_theta": 1000000.0,
         "rope_local_base_freq": 10000.0,
         "rope_parameters": {
-            "full_attention": {"rope_theta": 1000000.0, "partial_rotary_factor": 0.25},
+            "full_attention": {
+                "rope_theta": 1000000.0,
+                "partial_rotary_factor": 0.25,
+                "rope_type": "proportional",
+            },
             "sliding_attention": {"rope_theta": 10000.0},
         },
         "enable_moe_block": False,
@@ -430,3 +435,16 @@ class TestGemma4DenseVLConversion:
         assert "text_config" in saved_config, "VL model should have text_config"
         assert "vision_config" in saved_config, "VL model should have vision_config"
         assert saved_config["text_config"]["enable_moe_block"] is False, "MoE block should be disabled"
+
+    @pytest.mark.run_only_on("GPU")
+    def test_gemma4_dense_vl_autoconfig_roundtrip(self, gemma4_vl_toy_dense_model_path, tmp_path):
+        """Exercise checkpoint save, run-config reload, and HF export."""
+        from tests.functional_tests.utils import autoconfig_roundtrip
+
+        autoconfig_roundtrip(
+            local_model_path=gemma4_vl_toy_dense_model_path,
+            tmp_path=tmp_path,
+        )
+
+        run_config = yaml.safe_load((tmp_path / "megatron" / "iter_0000000" / "run_config.yaml").read_text())
+        assert run_config["model"]["window_size"] == [1023, 0]

@@ -16,6 +16,6 @@ from megatron.bridge.recipes.qwen_omni.h100.qwen3_omni import *  # noqa: F403
 
 
 __all__ = [
-    "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_config",
-    "qwen3_omni_30b_a3b_sft_1gpu_h100_bf16_preloaded_config",
+    "qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_config",
+    "qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config",
 ]

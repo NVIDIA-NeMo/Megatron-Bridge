@@ -19,7 +19,9 @@ from __future__ import annotations
 import importlib.util
 import pathlib
 import sys
+from types import SimpleNamespace
 
+import pytest
 import torch
 from PIL import Image
 
@@ -48,12 +50,105 @@ def test_qwen35_vl_mimo_finetune_example_imports():
 
     Executing the module top-to-bottom exercises every top-level import, the dataclass
     definitions, and module-level constants. This catches regressions such as data-API
-    renames (e.g. ``vlm_datasets`` -> ``hf_datasets``) and the ``collate_fn`` <-> ``vlm_datasets``
-    circular import that only triggers when the example imports ``collate_fn`` first.
+    renames across ``datasets``, ``sources``, and ``collators``, plus model-collator import cycles.
     """
     name = "qwen35_vl_mimo_finetune_import_under_test"
     try:
         _load_example_module(name)
+    finally:
+        sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize(
+    "dataset_name",
+    ["cord_v2", "rdr", "medpix"],
+)
+def test_dataset_names_select_matching_source_presets(dataset_name):
+    name = f"qwen35_vl_mimo_dataset_defaults_{dataset_name}"
+    try:
+        module = _load_example_module(name)
+        source = module._build_dataset_source(
+            SimpleNamespace(
+                dataset_name=dataset_name,
+                dataset_path=None,
+                dataset_subset=None,
+                schema_adapter=None,
+            )
+        )
+        assert source.dataset_name == dataset_name
+        assert source.path_or_dataset is None
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_custom_dataset_keeps_explicit_source_and_adapter():
+    name = "qwen35_vl_mimo_custom_dataset_source"
+    try:
+        module = _load_example_module(name)
+        source = module._build_dataset_source(
+            SimpleNamespace(
+                dataset_name=None,
+                dataset_path="org/custom",
+                dataset_subset="subset",
+                schema_adapter="rdr",
+            )
+        )
+        assert source.path_or_dataset == "org/custom"
+        assert source.subset == "subset"
+        assert source.schema_adapter == "rdr"
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_named_dataset_rejects_custom_source_flags():
+    name = "qwen35_vl_mimo_named_dataset_conflict"
+    try:
+        module = _load_example_module(name)
+        with pytest.raises(ValueError, match="owns its path, subset, and schema adapter"):
+            module._build_dataset_source(
+                SimpleNamespace(
+                    dataset_name="cord_v2",
+                    dataset_path=None,
+                    dataset_subset="other",
+                    schema_adapter=None,
+                )
+            )
+    finally:
+        sys.modules.pop(name, None)
+
+
+@pytest.mark.parametrize(
+    ("dataset_name", "dataset_path", "do_validation", "expected_validation"),
+    [
+        ("cord_v2", None, None, True),
+        ("rdr", None, None, False),
+        (None, "org/custom", None, False),
+        (None, "org/custom", True, True),
+    ],
+)
+def test_dataset_config_enables_only_requested_or_known_validation_splits(
+    dataset_name, dataset_path, do_validation, expected_validation
+):
+    name = f"qwen35_vl_mimo_validation_{dataset_name or 'custom'}"
+    try:
+        module = _load_example_module(name)
+        config = module._build_dataset_config(
+            SimpleNamespace(
+                dataset_name=dataset_name,
+                dataset_path=dataset_path,
+                dataset_subset=None,
+                schema_adapter=None,
+                seq_length=128,
+                processor_path=None,
+                hf_model="org/model",
+                num_workers=0,
+                dataloader_type="single",
+                trust_remote_code=False,
+                do_validation=do_validation,
+            )
+        )
+        config.validate()
+        assert config.do_validation is expected_validation
     finally:
         sys.modules.pop(name, None)
 
@@ -150,5 +245,23 @@ def test_qwen35_vl_mimo_metadata_collate_builds_batch():
         assert batch["labels"].shape == input_ids.shape
         assert batch["loss_mask"].shape == input_ids.shape
         assert torch.equal(batch["visual_inputs"].image_grid_thw, image_grid_thw)
+    finally:
+        sys.modules.pop(name, None)
+
+
+def test_qwen35_vl_mimo_rejects_truncated_visual_tokens():
+    name = "qwen35_vl_mimo_visual_truncation_under_test"
+    try:
+        module = _load_example_module(name)
+        spec = module.Qwen35MIMOHFSpec()
+        batch = {
+            "input_ids": torch.tensor([[1, 2, 3, spec.image_token_id, spec.image_token_id]]),
+            "attention_mask": torch.ones(1, 5, dtype=torch.long),
+            "labels": torch.ones(1, 5, dtype=torch.long),
+            "loss_mask": torch.ones(1, 5),
+        }
+
+        with pytest.raises(ValueError, match="truncates Qwen visual tokens"):
+            module._adapt_qwen35_hf_batch(batch, spec, seq_length=4, pad_to_seq_length=True)
     finally:
         sys.modules.pop(name, None)

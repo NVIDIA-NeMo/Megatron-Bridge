@@ -436,7 +436,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             compress_rope_params = rope_params
         provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
         provider.csa_compress_rotary_base = float(
-            compress_rope_params.get("rope_theta", getattr(hf_config, "compress_rope_theta", provider.rotary_base))
+            getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", provider.rotary_base))
         )  # 160000
         provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
         provider.original_max_position_embeddings = int(

@@ -45,7 +45,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model deepseek-ai/DeepSeek-V3-Base \
   --megatron-path /checkpoints/deepseek_v3_megatron \
   --trust-remote-code
@@ -115,18 +115,23 @@ See: [bridge.recipes.deepseek.deepseek_v3](../../apidocs/bridge/bridge.recipes.d
 ```python
 from megatron.bridge.recipes.deepseek import deepseek_v3_pretrain_config
 
-config = deepseek_v3_pretrain_config(
-    name="deepseek_v3_pretrain",
-    data_paths=["/path/to/dataset.nvjsonl"],
-    dir="/results/deepseek_v3",
-    train_iters=500_000,
-    global_batch_size=4096,
-    seq_length=4096,
-    # MTP configuration
-    mtp_num_layers=1,
-    mtp_loss_scaling_factor=0.1,
-    # Uses TP=2, PP=16, EP=64 (1024 GPUs, 128 nodes) automatically
-)
+config = deepseek_v3_pretrain_config()
+
+# Point to a preprocessed GPT dataset and choose output directories.
+config.dataset.blend = [["/path/to/dataset_text_document"], None]
+config.checkpoint.save = "/results/deepseek_v3/checkpoints"
+config.checkpoint.load = "/results/deepseek_v3/checkpoints"
+config.logger.tensorboard_dir = "/results/deepseek_v3/tb_logs"
+
+# Customize training values after constructing the parameterless recipe.
+config.train.train_iters = 500_000
+config.train.global_batch_size = 4096
+config.model.seq_length = 4096
+config.dataset.seq_length = 4096
+config.model.mtp_num_layers = 1
+config.model.mtp_loss_scaling_factor = 0.1
+
+# The recipe uses TP=2, PP=16, EP=64 (1024 GPUs, 128 nodes) automatically.
 ```
 
 To place the MTP layer in a standalone PP/VPP stage instead of colocating it with loss, rebuild the recipe layout:

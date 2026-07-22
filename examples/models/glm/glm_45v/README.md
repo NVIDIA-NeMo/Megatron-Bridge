@@ -21,7 +21,7 @@ Directory structure:
 ### Import HF → Megatron
 To import the HF VL model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model zai-org/GLM-4.5V \
 --megatron-path /models/GLM-4.5V
 ```
@@ -30,7 +30,7 @@ The import writes the Megatron checkpoint under `/models/GLM-4.5V/iter_0000000`.
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model zai-org/GLM-4.5V \
 --megatron-path /results/glm_45v/checkpoints/iter_00001000 \
 --hf-path ./glm-45v-hf-export

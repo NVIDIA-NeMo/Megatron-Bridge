@@ -165,7 +165,7 @@ class TestKimiK2PretrainConfig:
         """Test dataset configuration."""
         cfg = kimi_k2_pretrain_config()
 
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.dataset.num_workers == 8
         assert cfg.dataset.data_sharding is True
         assert cfg.dataset.split == "9999,8,2"
@@ -271,3 +271,4 @@ class TestKimiK2PretrainConfig:
         # Default PP=16, VP=None (1), should have a layout
         expected_layout = _get_kimi_k2_pipeline_layout(16, 1)
         assert cfg.model.pipeline_model_parallel_layout == expected_layout
+        assert cfg.model._pipeline_model_parallel_layout_builder is _get_kimi_k2_pipeline_layout

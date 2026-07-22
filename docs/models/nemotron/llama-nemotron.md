@@ -56,7 +56,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model nvidia/Llama-3_3-Nemotron-Super-49B-v1_5 \
   --megatron-path /checkpoints/llama_nemotron_super_49b_megatron \
   --trust-remote-code

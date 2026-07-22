@@ -130,6 +130,7 @@ class WanTaskEncoder(DiffusionTaskEncoderWithSequencePacking):
         if seq_len_q < seq_len_q_padded:
             video_latent = F.pad(video_latent, (0, 0, 0, seq_len_q_padded - seq_len_q))
             loss_mask = F.pad(loss_mask, (0, seq_len_q_padded - seq_len_q))
+        if seq_len_kv < seq_len_kv_padded:
             context_embeddings = F.pad(context_embeddings, (0, 0, 0, seq_len_kv_padded - seq_len_kv))
 
         ### Note: shape of sample's values

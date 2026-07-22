@@ -29,6 +29,7 @@ from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.utils import get_model_config
 
 from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
+    EXPERT_VIEW_NAME,
     build_hypercomm_grids,
     is_pp_first_stage,
     is_pp_last_stage,
@@ -41,9 +42,6 @@ from megatron.bridge.models.model_provider import ModelProviderMixin
 
 if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
-
-
-_EXPERT_VIEW = "expert"
 
 
 @dataclass
@@ -200,6 +198,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ("tensor_model_parallel_size", language_parallelism.tensor_model_parallel_size),
             ("pipeline_model_parallel_size", language_parallelism.pipeline_model_parallel_size),
             ("context_parallel_size", language_parallelism.context_parallel_size),
+            ("expert_model_parallel_size", language_parallelism.expert_model_parallel_size),
             ("expert_tensor_parallel_size", language_parallelism.expert_tensor_parallel_size),
         ):
             if hasattr(standard_provider, attr):
@@ -287,29 +286,31 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
             # dist.new_group() is a collective on the default PG — all ranks must
             # call it in the same global order regardless of module membership.
-            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(pp_group)
+            pos_embd_pg, embd_pg = populate_embedding_and_position_groups(grid.get_rank_enum(["pp"]))
 
             # Only build a full PG collection for ranks that participate in this module.
             if grid.is_current_rank_in_grid():
                 first_stage = is_pp_first_stage(pp_group)
                 last_stage = is_pp_last_stage(pp_group)
                 dp_cp_group = grid.get_pg(["dp", "cp"])
-                expt_dp_group = grid.get_pg(["expt_dp"], view=_EXPERT_VIEW)
+                expt_dp_group = grid.get_pg(["expt_dp"], view=EXPERT_VIEW_NAME)
 
                 pg_collections[module_name] = ProcessGroupCollection(
                     tp=grid.get_pg(["tp"]),
                     dp=grid.get_pg(["dp"]),
                     pp=pp_group,
                     cp=grid.get_pg(["cp"]),
-                    ep=grid.get_pg(["ep"], view=_EXPERT_VIEW),
-                    expt_tp=grid.get_pg(["expt_tp"], view=_EXPERT_VIEW),
+                    ep=grid.get_pg(["ep"], view=EXPERT_VIEW_NAME),
+                    expt_tp=grid.get_pg(["expt_tp"], view=EXPERT_VIEW_NAME),
                     expt_dp=expt_dp_group,
                     dp_cp=dp_cp_group,
                     intra_dp_cp=dp_cp_group,
-                    intra_expt_dp=expt_dp_group,
+                    tp_cp=grid.get_pg(["tp", "cp"]),
+                    tp_dp_cp=grid.get_pg(["tp", "dp", "cp"]),
                     mp=grid.get_pg(["tp", "pp"]),
-                    tp_ep=grid.get_pg(["expt_tp", "ep"], view=_EXPERT_VIEW),
-                    tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=_EXPERT_VIEW),
+                    tp_ep=grid.get_pg(["expt_tp", "ep"], view=EXPERT_VIEW_NAME),
+                    tp_ep_pp=grid.get_pg(["expt_tp", "ep", "pp"], view=EXPERT_VIEW_NAME),
+                    intra_expt_dp=expt_dp_group,
                     intra_dist_opt=grid.get_pg(["tp", "cp", "dp", "pp"]),
                     pos_embd=pos_embd_pg if first_stage else None,
                     embd=embd_pg if (first_stage or last_stage) else None,
@@ -405,6 +406,7 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
 
         # Inject pg_collection into language model spec
         language_spec = self.language_model_spec
+        llm_pg = None
         if self.megatron_mimo_parallelism_config:
             llm_pg = infra.pg_collections.get(MIMO_LANGUAGE_MODULE_KEY)
             if llm_pg is not None:
@@ -439,7 +441,11 @@ class MegatronMIMOProvider(ModelProviderMixin[MimoModel]):
             ),
         )
 
-        megatron_mimo_model = MimoModel(mimo_model_config)
+        mimo_model_kwargs = {}
+        if llm_pg is not None:
+            mimo_model_kwargs["cp_group"] = llm_pg.cp
+            mimo_model_kwargs["tp_group"] = llm_pg.tp
+        megatron_mimo_model = MimoModel(mimo_model_config, **mimo_model_kwargs)
 
         # Apply freezing
         self._apply_freezing(megatron_mimo_model)

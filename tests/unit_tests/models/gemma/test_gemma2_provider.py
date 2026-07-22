@@ -19,6 +19,7 @@ import pytest
 import torch
 from megatron.core.activations import fast_gelu
 from megatron.core.transformer.enums import AttnMaskType
+from transformers import Gemma2Config
 
 from megatron.bridge.models.gemma.gemma2_provider import (
     Gemma2DotProductAttention,
@@ -200,7 +201,11 @@ class TestGemma2ModelProviderIntegration:
             assert provider.gated_linear_unit is True
 
 
-def _make_attention(context_parallel_size: int = 1, window_size: tuple = (4095, 0)) -> Gemma2DotProductAttention:
+def _make_attention(
+    context_parallel_size: int = 1,
+    window_size: tuple = (4095, 0),
+    layer_number: int = 1,
+) -> Gemma2DotProductAttention:
     """Build a Gemma2DotProductAttention with minimal mock config."""
     config = Mock()
     config.context_parallel_size = context_parallel_size
@@ -220,7 +225,7 @@ def _make_attention(context_parallel_size: int = 1, window_size: tuple = (4095, 
     config.attn_logit_softcapping = 0.0  # disable softcapping in unit tests
     return Gemma2DotProductAttention(
         config=config,
-        layer_number=2,  # even layer → SWA active
+        layer_number=layer_number,
         attn_mask_type=AttnMaskType.causal,
         attention_type="self",
     )
@@ -228,6 +233,17 @@ def _make_attention(context_parallel_size: int = 1, window_size: tuple = (4095, 
 
 class TestGemma2DotProductAttention:
     """Tests for Gemma2DotProductAttention fixes."""
+
+    @pytest.mark.parametrize("layer_number", [1, 2])
+    def test_layer_attention_pattern_matches_hf_config(self, layer_number):
+        """MCore's one-based layers must preserve HF's zero-based attention pattern."""
+        hf_config = Gemma2Config(num_hidden_layers=2)
+
+        attention = _make_attention(layer_number=layer_number)
+
+        hf_layer_type = hf_config.layer_types[layer_number - 1]
+        expected_window = (4095, 0) if hf_layer_type == "sliding_attention" else None
+        assert attention.window_size == expected_window
 
     def test_cp_greater_than_1_raises_value_error(self):
         """CP > 1 must raise ValueError, not bare AssertionError."""
@@ -262,7 +278,7 @@ class TestGemma2DotProductAttention:
         """
         seq, batch, heads, head_dim = 4, 1, 8, 32
         attn = _make_attention(window_size=(2, 0))
-        assert attn.window_size == (2, 0), "even layer must have window_size set"
+        assert attn.window_size == (2, 0), "SWA layer must have window_size set"
 
         # Use a real bool tensor so the unsqueeze chain produces a verifiable result.
         swa_tensor = torch.zeros(seq, seq, dtype=torch.bool)
@@ -293,8 +309,8 @@ class TestGemma2DotProductAttention:
             "scale_mask_softmax must receive the SWA mask unsqueezed to [1, 1, sq, sk]"
         )
 
-    def test_odd_layer_has_no_swa(self):
-        """Odd-numbered layers must not have a window_size (full attention)."""
+    def test_even_layer_has_no_swa(self):
+        """Even-numbered layers must not have a window_size (full attention)."""
         config = Mock()
         config.context_parallel_size = 1
         config.window_size = (4095, 0)
@@ -310,31 +326,31 @@ class TestGemma2DotProductAttention:
         config.attention_softmax_in_fp32 = True
         config.attention_dropout = 0.0
         config.sequence_parallel = False
-        odd_attn = Gemma2DotProductAttention(
+        even_attn = Gemma2DotProductAttention(
             config=config,
-            layer_number=1,  # odd → full attention
+            layer_number=2,
             attn_mask_type=AttnMaskType.causal,
             attention_type="self",
         )
-        assert odd_attn.window_size is None
-        assert odd_attn.attn_mask_type == AttnMaskType.causal
-        assert odd_attn.scale_mask_softmax.attn_mask_type == AttnMaskType.causal
+        assert even_attn.window_size is None
+        assert even_attn.attn_mask_type == AttnMaskType.causal
+        assert even_attn.scale_mask_softmax.attn_mask_type == AttnMaskType.causal
 
     def test_swa_layer_uses_arbitrary_mask_type(self):
-        """Even-numbered (SWA) layers must override attn_mask_type to arbitrary.
+        """Odd-numbered (SWA) layers must override attn_mask_type to arbitrary.
 
         FusedScaleMaskSoftmax with AttnMaskType.causal takes the ScaledUpperTriangMaskedSoftmax
         path which silently ignores the mask argument. Switching to arbitrary routes through
         ScaledMaskedSoftmax, which correctly applies the externally generated SWA mask.
-        Odd-numbered layers must keep AttnMaskType.causal to retain the fast fused path.
+        Even-numbered layers must keep AttnMaskType.causal to retain the fast fused path.
         """
-        even_attn = _make_attention(window_size=(4095, 0))  # layer_number=2 (even)
-        assert even_attn.attn_mask_type == AttnMaskType.arbitrary, (
+        swa_attn = _make_attention(window_size=(4095, 0))
+        assert swa_attn.attn_mask_type == AttnMaskType.arbitrary, (
             "SWA layers must use AttnMaskType.arbitrary so FusedScaleMaskSoftmax "
             "routes through ScaledMaskedSoftmax and applies the mask"
         )
         # Also verify the FusedScaleMaskSoftmax instance stored the right type
-        assert even_attn.scale_mask_softmax.attn_mask_type == AttnMaskType.arbitrary
+        assert swa_attn.scale_mask_softmax.attn_mask_type == AttnMaskType.arbitrary
 
     def test_swa_combined_with_padding_mask(self):
         """When a padding mask is present, forward() must OR it with the SWA mask.
@@ -667,7 +683,7 @@ class TestGemma2FlexDotProductAttention:
         )
 
     def test_swa_layer_passes_block_mask(self):
-        """For even-numbered (SWA) layers, FlexAttention must receive a block_mask.
+        """For odd-numbered (SWA) layers, FlexAttention must receive a block_mask.
 
         SWA is encoded in the block_mask built from _flex_window_size=(4095, 0). A regression
         that omits block_mask would silently compute full causal attention instead of SWA.
@@ -685,7 +701,7 @@ class TestGemma2FlexDotProductAttention:
                 return_value=mock_block_mask,
             ),
         ):
-            attn = _make_flex_attention(layer_number=2)  # even → SWA layer
+            attn = _make_flex_attention(layer_number=1)
             assert attn._flex_window_size == (4095, 0), "SWA layer must have _flex_window_size=(4095, 0)"
             q = torch.zeros(seq, batch, heads, head_dim)
             k = torch.zeros(seq, batch, heads, head_dim)
@@ -698,13 +714,13 @@ class TestGemma2FlexDotProductAttention:
         )
 
     def test_swa_layer_fallback_with_padding_mask(self):
-        """An even-numbered (SWA) layer receiving a non-None mask must fall back to the
+        """An odd-numbered (SWA) layer receiving a non-None mask must fall back to the
         unfused parent, even when FlexAttention is available.
 
         The unfused parent OR-combines the SWA mask with the padding mask via get_swa().
         The FlexAttention path only runs when attention_mask is None.
         """
-        attn = _make_flex_attention(layer_number=2)  # even → SWA layer
+        attn = _make_flex_attention(layer_number=1)
         mock_flex = Mock()
         padding_mask = torch.zeros(2, 1, 4, 4, dtype=torch.bool)
 

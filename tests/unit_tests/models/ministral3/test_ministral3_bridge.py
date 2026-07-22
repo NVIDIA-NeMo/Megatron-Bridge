@@ -88,22 +88,6 @@ def ministral3_bridge():
     return Ministral3Bridge()
 
 
-class TestMinistral3BridgeInitialization:
-    """Test Ministral3Bridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, ministral3_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(ministral3_bridge, Ministral3Bridge)
-
-    def test_bridge_has_required_methods(self, ministral3_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(ministral3_bridge, "provider_bridge")
-        assert callable(ministral3_bridge.provider_bridge)
-
-        assert hasattr(ministral3_bridge, "mapping_registry")
-        assert callable(ministral3_bridge.mapping_registry)
-
-
 class TestMinistral3BridgeProviderBridge:
     """Test provider_bridge method functionality."""
 

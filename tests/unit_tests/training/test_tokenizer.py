@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from unittest.mock import patch
+from unittest.mock import patch, sentinel
 
 import pytest
 from transformers import AutoTokenizer
@@ -78,6 +78,79 @@ class TestTokenizers:
         # Verify
         assert tokenizer.library == "huggingface"
         assert tokenizer.chat_template == chat_template
+
+    @pytest.mark.parametrize(
+        ("model_id", "revision", "trust_remote_code"),
+        [
+            ("Qwen/Qwen3-8B", "b968826d9c46dd6066d109eabc6255188de91218", False),  # pragma: allowlist secret
+            (
+                "moonshotai/Moonlight-16B-A3B",
+                "476b36a473d4467f94469414bef6cee75c9c8172",  # pragma: allowlist secret
+                True,
+            ),
+        ],
+    )
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_build_hf_tokenizer_resolves_immutable_revision(
+        self,
+        mock_snapshot_download,
+        mock_build_mcore_tokenizer,
+        model_id,
+        revision,
+        trust_remote_code,
+    ):
+        mock_snapshot_download.return_value = f"/cache/models--resolved/snapshots/{revision}"
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        hf_tokenizer_kwargs = {"revision": revision, "trust_remote_code": trust_remote_code}
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model=model_id,
+            hf_tokenizer_kwargs=hf_tokenizer_kwargs,
+        )
+
+        tokenizer = build_tokenizer(config)
+
+        assert tokenizer is sentinel.tokenizer
+        mock_snapshot_download.assert_called_once()
+        snapshot_kwargs = mock_snapshot_download.call_args.kwargs
+        assert snapshot_kwargs["repo_id"] == model_id
+        assert snapshot_kwargs["revision"] == revision
+        assert {"config.json", "tokenizer*", "*.py", "*.jinja"}.issubset(snapshot_kwargs["allow_patterns"])
+        assert {"*.safetensors", "*.bin", "*.pt", "*.gguf"}.issubset(snapshot_kwargs["ignore_patterns"])
+
+        resolved_config = mock_build_mcore_tokenizer.call_args.args[0]
+        assert resolved_config is not config
+        assert resolved_config.tokenizer_model == mock_snapshot_download.return_value
+        assert resolved_config.trust_remote_code is trust_remote_code
+        assert config.tokenizer_model == model_id
+        assert config.hf_tokenizer_kwargs == hf_tokenizer_kwargs
+
+    @patch("megatron.bridge.training.tokenizers.tokenizer.build_mcore_tokenizer")
+    @patch("huggingface_hub.snapshot_download")
+    def test_build_tokenizer_skips_snapshot_resolution_without_remote_hf_revision(
+        self, mock_snapshot_download, mock_build_mcore_tokenizer, tmp_path
+    ):
+        mock_build_mcore_tokenizer.return_value = sentinel.tokenizer
+        configs = [
+            TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model="Qwen/Qwen3-8B"),
+            TokenizerConfig(
+                tokenizer_type="NullTokenizer",
+                vocab_size=32,
+                hf_tokenizer_kwargs={"revision": "not-used"},
+            ),
+            TokenizerConfig(
+                tokenizer_type="HuggingFaceTokenizer",
+                tokenizer_model=tmp_path,
+                hf_tokenizer_kwargs={"revision": "local-path-is-already-resolved"},
+            ),
+        ]
+
+        for config in configs:
+            assert build_tokenizer(config) is sentinel.tokenizer
+            assert mock_build_mcore_tokenizer.call_args.args[0] is config
+
+        mock_snapshot_download.assert_not_called()
 
     @patch("megatron.core.tokenizers.text.libraries.SentencePieceTokenizer")
     @pytest.mark.parametrize("legacy", [True])

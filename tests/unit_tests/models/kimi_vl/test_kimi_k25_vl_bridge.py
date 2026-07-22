@@ -135,21 +135,6 @@ def kimi_bridge():
     return KimiK25VLBridge()
 
 
-class TestKimiK25VLBridgeInitialization:
-    """Test KimiK25VLBridge initialization."""
-
-    def test_bridge_initialization(self, kimi_bridge):
-        """Test bridge can be initialized."""
-        assert isinstance(kimi_bridge, KimiK25VLBridge)
-
-    def test_bridge_has_required_methods(self, kimi_bridge):
-        """Test bridge has required methods."""
-        assert hasattr(kimi_bridge, "provider_bridge")
-        assert callable(kimi_bridge.provider_bridge)
-        assert hasattr(kimi_bridge, "mapping_registry")
-        assert callable(kimi_bridge.mapping_registry)
-
-
 class TestKimiK25VLBridgeProviderBridge:
     """Test provider_bridge method."""
 

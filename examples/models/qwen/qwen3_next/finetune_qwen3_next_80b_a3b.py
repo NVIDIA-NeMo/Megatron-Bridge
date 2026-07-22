@@ -21,7 +21,7 @@ This mirrors the Llama example flow and uses the Qwen3-Next recipe helper.
 Examples:
     Loading pretrained weights (recommended for finetune):
         1) Import HF checkpoint to Megatron format:
-           $ python examples/conversion/convert_checkpoints.py import \
+           $ ./scripts/conversion/convert.sh import \
                --hf-model Qwen/Qwen3-Next-80B-A3B-Instruct \
                --megatron-path /path/to/megatron_ckpt
 
@@ -43,11 +43,13 @@ import argparse
 import logging
 import os
 import sys
+from dataclasses import replace
 from pathlib import Path
 from typing import Tuple
 
 from omegaconf import OmegaConf
 
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -61,6 +63,23 @@ from megatron.bridge.utils.common_utils import get_rank_safe
 
 
 logger: logging.Logger = logging.getLogger(__name__)
+
+
+def _replace_with_custom_data_path(config: ConfigContainer, data_path: str) -> None:
+    """Replace the recipe's named HF source with a custom JSON/JSONL source."""
+    if not isinstance(config.dataset, GPTSFTDatasetConfig):
+        raise TypeError("--data-path requires a GPTSFTDatasetConfig recipe.")
+    config.dataset = replace(
+        config.dataset,
+        dataset_root=None,
+        hf_dataset=HFDatasetSourceConfig(
+            path_or_dataset="json",
+            load_kwargs={"data_files": data_path},
+        ),
+        hf_validation_dataset=None,
+        hf_test_dataset=None,
+        preprocessing=ChatSFTPreprocessingConfig(),
+    )
 
 
 SCRIPT_DIR: Path = Path(__file__).parent.resolve()
@@ -113,9 +132,7 @@ def main() -> None:
     if args.pretrained_checkpoint is not None:
         cfg.checkpoint.pretrained_checkpoint = args.pretrained_checkpoint
     if args.data_path is not None:
-        cfg.dataset.dataset_name = "json"
-        cfg.dataset.dataset_kwargs = cfg.dataset.dataset_kwargs or {}
-        cfg.dataset.dataset_kwargs["data_files"] = args.data_path
+        _replace_with_custom_data_path(cfg, args.data_path)
     logger.info("Loaded base configuration")
 
     if get_rank_safe() == 0:

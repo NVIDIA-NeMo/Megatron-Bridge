@@ -33,6 +33,7 @@ import os
 from megatron.core.distributed import DistributedDataParallelConfig
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
@@ -95,7 +96,7 @@ def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
         ),
         dataset=GPTDatasetConfig(
             random_seed=1234,
-            sequence_length=1024,
+            seq_length=1024,
             blend=None,
             blend_per_split=None,
             split="9999,8,2",
@@ -122,6 +123,10 @@ def vanilla_gpt_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
         mixed_precision="bf16_mixed",
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

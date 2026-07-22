@@ -25,7 +25,7 @@ TP=2
 PP=1
 
 # Import HF -> Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model baidu/${MODEL_NAME} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME} \
     --torch-dtype bfloat16 \
@@ -42,7 +42,7 @@ uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/co
     --trust-remote-code
 
 # Export Megatron -> HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model baidu/${MODEL_NAME} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME}/iter_0000000 \
     --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export \

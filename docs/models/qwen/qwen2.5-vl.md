@@ -12,7 +12,7 @@ We use the following environment variables throughout this page
 
 Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number
 `iter_xxxxxx`. For more details on checkpointing, please see
-[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents)
+[here](../../training/checkpointing.md#checkpoint-contents)
 ```
 
 ## Conversion with 🤗 Hugging Face
@@ -20,7 +20,7 @@ Unless explicitly stated, any megatron model path in the commands below should N
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model $HF_MODEL_PATH \
 --megatron-path $MEGATRON_MODEL_PATH
 ```
@@ -28,7 +28,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 You can export a trained model with the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model $HF_MODEL_PATH \
 --megatron-path <trained megatron model path> \
 --hf-path <output hf model path>
@@ -61,49 +61,43 @@ Before training, ensure the following environment variables are set.
 
 ### Full Finetuning
 
-Example usage for full parameter finetuning:
+Example usage for 3B full-parameter finetuning on one H100:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---recipe qwen25_vl_3b_finetune_config \
---dataset-type hf \
-dataset.maker_name=make_cord_v2_dataset \
-train.global_batch_size=<batch size> \
-train.train_iters=<number of iterations> \
-logger.wandb_project=<optional wandb project name> \
-logger.wandb_save_dir=$SAVE_DIR \
-checkpoint.save=$SAVE_DIR/<experiment name>
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_sft_config \
+  --mode sft \
+  --dataset cord-v2 \
+  --step-func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-sft \
+  train.global_batch_size=2 \
+  train.train_iters=1000
 ```
 
 Note:
-- The `--recipe` parameter selects the model size configuration. Available options:
-  - `qwen25_vl_3b_finetune_config` - for 3B model
-  - `qwen25_vl_7b_finetune_config` - for 7B model
-  - `qwen25_vl_32b_finetune_config` - for 32B model
-  - `qwen25_vl_72b_finetune_config` - for 72B model
-- The config file `examples/models/qwen/qwen_vl/conf/qwen25_vl_pretrain_override_example.yaml` contains a list of arguments
-  that can be overridden in the command. For example, you can set `train.global_batch_size=<batch size>` in the command.
+- Full-SFT recipes are `qwen25_vl_{3b,7b,32b,72b}_sft_config`; their defaults require 1, 2, 16, and 32 GPUs respectively.
+- Config fields can also be overridden directly with trailing `KEY=VALUE` arguments.
 - The dataset format should be JSONL with conversation format (see dataset section below).
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint.
   You can also export the trained checkpoint to Hugging Face format.
 
 ### Parameter-Efficient Finetuning (PEFT)
-Parameter-efficient finetuning (PEFT) using LoRA or DoRA is supported. You can use the `--peft_scheme` argument to enable PEFT training:
+Parameter-efficient finetuning (PEFT) using LoRA or DoRA is selected with `--mode lora` or `--mode dora`:
 
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---recipe qwen25_vl_3b_finetune_config \
---peft_scheme lora \
---dataset-type hf \
-dataset.maker_name=make_cord_v2_dataset \
-train.global_batch_size=<batch size> \
-checkpoint.save=$SAVE_DIR/<experiment name>
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_peft_config \
+  --mode lora \
+  --dataset cord-v2 \
+  --step-func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora
 ```
 
-PEFT options:
-- `--peft_scheme`: Set to `lora` for LoRA (Low-Rank Adaptation) or `dora` for DoRA (Weight-Decomposed Low-Rank Adaptation). Set to `None` or omit for full finetuning.
+Use an SFT recipe with `--mode sft` for full finetuning.
 
 You can also combine PEFT with freeze options to control which components are trainable:
 - `model.freeze_language_model`: Set to `True` to freeze the language model
@@ -112,27 +106,31 @@ You can also combine PEFT with freeze options to control which components are tr
 
 Example with LoRA and freeze options:
 ```bash
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/qwen/qwen_vl/finetune_qwen25_vl.py \
---pretrained-checkpoint $MEGATRON_MODEL_PATH \
---recipe qwen25_vl_3b_finetune_config \
---peft_scheme lora \
-model.freeze_language_model=True \
-model.freeze_vision_model=False \
-model.freeze_vision_projection=False \
-checkpoint.save=$SAVE_DIR/<experiment name>
+uv run python -m torch.distributed.run --standalone --nproc_per_node=1 \
+  scripts/training/run_recipe.py \
+  --recipe qwen25_vl_3b_peft_config \
+  --mode lora \
+  --dataset cord-v2 \
+  --step-func vlm_step \
+  checkpoint.pretrained_checkpoint=$MEGATRON_MODEL_PATH \
+  checkpoint.save=$SAVE_DIR/qwen25-vl-3b-lora \
+  model.freeze_language_model=True \
+  model.freeze_vision_model=False \
+  model.freeze_vision_projection=False
 ```
 
+For local processor-native image JSONL and sharded Energon preparation patterns, see the [multimodal data tutorials](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/README.md).
 
 ## Example Datasets
 
 Megatron Bridge supports various vision-language dataset examples which can be used to finetune Qwen 2.5 VL:
-| Dataset | Maker Name | Description |
+| Dataset | Dataset preset | Description |
 |---------|------------|-------------|
-| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `make_cord_v2_dataset` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
-| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
-| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
+| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `cord_v2` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
+| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `medpix` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
+| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `raven` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
 
-To change the dataset, specify `dataset.maker_name=make_raven_dataset`
+Select built-in datasets with `--dataset cord-v2`, `--dataset medpix`, or `--dataset raven`; the launcher configures their available validation and test splits. For local processor-native conversations, use `--dataset local-vlm dataset.source.load_kwargs.data_files.train=PATH`; optional validation and test files use the corresponding `dataset.validation_source` and `dataset.test_source` fields. Custom non-native schemas require a registered `dataset.source.schema_adapter` in Python configuration.
 
 
 ## Hugging Face Model Cards
@@ -140,4 +138,3 @@ To change the dataset, specify `dataset.maker_name=make_raven_dataset`
 - Qwen2.5-VL-7B: `https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct`
 - Qwen2.5-VL-32B: `https://huggingface.co/Qwen/Qwen2.5-VL-32B-Instruct`
 - Qwen2.5-VL-72B: `https://huggingface.co/Qwen/Qwen2.5-VL-72B-Instruct`
-

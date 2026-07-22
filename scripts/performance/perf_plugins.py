@@ -28,18 +28,12 @@ use hydra-style overrides.
 """
 
 import logging
-import os
 from dataclasses import dataclass
 from typing import Callable, List, Optional, Union
 
 import nemo_run as run
 from nemo_run import Plugin, Script, SlurmExecutor
 
-
-try:
-    from utils.utils import WorkloadBaseConfig, get_workload_base_config
-except (ImportError, ModuleNotFoundError):
-    from .utils.utils import WorkloadBaseConfig, get_workload_base_config
 
 logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
@@ -184,406 +178,6 @@ class NsysPlugin(Plugin):
 
 
 @dataclass
-class PerfEnvPluginScriptArgs:
-    """Arguments for PerfEnvPlugin to pass to run.Script."""
-
-    enable_manual_gc: bool
-    manual_gc_interval: int
-
-
-def _default_perf_env_converter(args: PerfEnvPluginScriptArgs) -> List[str]:
-    """Default converter for PerfEnvPlugin that generates hydra-style overrides."""
-    return [
-        f"train.manual_gc={str(args.enable_manual_gc).lower()}",
-        f"train.manual_gc_interval={args.manual_gc_interval}",
-    ]
-
-
-@dataclass(kw_only=True)
-class PerfEnvPlugin(Plugin):
-    """
-    A plugin for setting up performance optimized environments.
-
-    Attributes:
-        enable_layernorm_sm_margin (bool): Set SM margin for TransformerEngine's Layernorm, so
-            in order to not block DP level communication overlap.
-        enable_vboost (bool): Whether to steer more power towards tensor cores via
-            `sudo nvidia-smi boost-slider --vboost 1`. May not work on all systems.
-        lock_gpu_freq (int | None): Lock GPU graphics clock to the specified frequency in MHz via
-            `sudo nvidia-smi -lgc <freq>`. Runs once per node before training. None to disable.
-        enable_manual_gc (bool): Enable manual garbage collection for better performance.
-        manual_gc_interval (int): Interval for manual garbage collection. Default is 100.
-        tp_size (int): Tensor parallelism size. Default is 1.
-        cp_size (int): Context parallelism size. Default is 1.
-        pp_size (int): Pipeline parallelism size. Default is 1.
-        script_args_converter_fn (Optional[Callable]): A function that takes PerfEnvPluginScriptArgs
-                                                        and returns a list of CLI arguments. If not provided,
-                                                        uses the default hydra-style converter.
-    """
-
-    enable_layernorm_sm_margin: bool = True
-    enable_vboost: bool = False
-    lock_gpu_freq: int | None = None
-    enable_manual_gc: bool = True
-    manual_gc_interval: int = 100
-    tp_size: int | None = None
-    cp_size: int | None = None
-    pp_size: int | None = None
-    ep_size: int | None = None
-    script_args_converter_fn: Optional[Callable[[PerfEnvPluginScriptArgs], List[str]]] = None
-    moe_a2a_overlap: bool = False
-    model_family_name: str
-    model_recipe_name: str
-    gpu: str
-    compute_dtype: str
-    train_task: str
-    config_variant: str = "v1"
-    deterministic: bool = False
-
-    def _set_determinism_env_vars(self, executor: "run.Executor") -> None:
-        """Set env vars required for bit-exact reproducibility."""
-        executor.env_vars["NCCL_ALGO"] = "Ring"
-        executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-        executor.env_vars["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
-        logger.info("Deterministic mode enabled")
-
-    def _set_num_cuda_device_max_connections(
-        self,
-        task: Union["run.Partial", "run.Script"],
-        executor: "run.Executor",
-        tp_size: int,
-        cp_size: int,
-        moe_a2a_overlap: bool,
-        moe_flex_dispatcher_backend: str,
-        gpu_sm100_or_newer: bool,
-    ):
-        cuda_device_max_connections = 8
-        if moe_flex_dispatcher_backend in ["deepep", "hybridep"]:
-            cuda_device_max_connections = 32
-        if gpu_sm100_or_newer:
-            """
-            We need extra connections to avoid serialization of streams, so we use max connections of 32 instead
-            of the default device connection of 8.
-            """
-            cuda_device_max_connections = 32
-        else:
-            # Hopper or earlier generation GPUs
-            if (tp_size > 1 or cp_size > 1) and not moe_a2a_overlap:
-                """
-                Set the device connection to 1 to enforce kernel queuing order from host to execution order on GPU.
-                This is needed to schedule a communication kernel before the overlapping persistent GEMM kernel.
-                Otherwise, communication kernel will be pushed to the end of the GEMM kernel, failing to overlap the
-                kernels.
-                """
-                cuda_device_max_connections = 1
-
-        executor.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = str(cuda_device_max_connections)
-        logger.info(f"Set CUDA_DEVICE_MAX_CONNECTIONS to {cuda_device_max_connections}")
-
-    def _set_model_specific_environment_variables(
-        self,
-        task: Union["run.Partial", "run.Script"],
-        executor: "run.Executor",
-        workload_base_config: WorkloadBaseConfig,
-        model_family_name: str,
-        model_recipe_name: str,
-        gpu: str,
-        compute_dtype: str,
-        train_task: str,
-    ):
-        """Set model-specific environment variables"""
-        if model_family_name in ["deepseek"]:
-            executor.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] = "0"
-
-        if workload_base_config.cuda_graph_impl == "full_iteration" or (
-            workload_base_config.cuda_graph_impl == "local"
-            and "full_iteration" in (workload_base_config.cuda_graph_scope or [])
-        ):
-            cur = executor.env_vars.get("PYTORCH_CUDA_ALLOC_CONF", "")
-            if "graph_capture_record_stream_reuse" not in cur:
-                sep = "," if cur else ""
-                executor.env_vars["PYTORCH_CUDA_ALLOC_CONF"] = f"{cur}{sep}graph_capture_record_stream_reuse:True"
-            executor.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] = "0"
-
-        if workload_base_config.cutedsl_fused_grouped_mlp:
-            executor.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] = "1"
-
-        if workload_base_config.cutedsl_fused_grouped_mlp and workload_base_config.moe_a2a_overlap:
-            executor.env_vars["CUDNNFE_CLUSTER_OVERLAP_MARGIN"] = "8"
-
-        remove_allocator_env_vars = workload_base_config.nccl_ub is True or (
-            model_family_name == "llama" and workload_base_config.use_megatron_fsdp is True
-        )
-        if remove_allocator_env_vars:
-            for env_var in ("PYTORCH_CUDA_ALLOC_CONF", "NCCL_GRAPH_REGISTER"):
-                executor.env_vars.pop(env_var, None)
-
-        del_cudnn_ln = True
-        if gpu in ["h100"]:
-            if model_family_name == "llama" and model_recipe_name == "llama3_8b" and train_task == "pretrain":
-                if compute_dtype == "fp8_cs":
-                    # executor.env_vars["NCCL_NVLS_ENABLE"] = "1" # This causes OOM; worked fine with NeMo2 and 25.09
-                    executor.env_vars["NCCL_CTA_POLICY"] = "1"
-                    del_cudnn_ln = False
-        if gpu in ["gb200", "gb300"]:
-            if model_family_name == "llama" and model_recipe_name == "llama3_70b" and train_task == "pretrain":
-                if compute_dtype == "bf16" or (compute_dtype == "fp8_cs"):
-                    del_cudnn_ln = False
-            if model_family_name == "llama" and model_recipe_name == "llama31_405b" and train_task == "pretrain":
-                if compute_dtype == "fp8_cs":
-                    del_cudnn_ln = False
-            if model_family_name == "deepseek":
-                if compute_dtype == "fp8_mx":
-                    del_cudnn_ln = False
-            if model_family_name == "kimi":
-                if compute_dtype == "fp8_mx":
-                    del_cudnn_ln = False
-            if model_family_name == "gpt_oss" and model_recipe_name == "gpt_oss_20b" and train_task == "pretrain":
-                del_cudnn_ln = False
-        if model_family_name in ["llama"] and train_task in ["sft"]:
-            del_cudnn_ln = False
-        if model_recipe_name in ["nemotron_3_nano"]:
-            del_cudnn_ln = False
-        if del_cudnn_ln:
-            if "NVTE_NORM_FWD_USE_CUDNN" in executor.env_vars:
-                executor.env_vars.pop("NVTE_NORM_FWD_USE_CUDNN")
-            if "NVTE_NORM_BWD_USE_CUDNN" in executor.env_vars:
-                executor.env_vars.pop("NVTE_NORM_BWD_USE_CUDNN")
-
-        if gpu == "b300":
-            executor.env_vars["NCCL_IGNORE_CPU_AFFINITY"] = "1"
-
-    def _set_layernorm_sm_margin(
-        self,
-        task: Union["run.Partial", "run.Script"],
-        executor: "run.Executor",
-        enable_layernorm_sm_margin: bool,
-        layernorm_sm_margin: int,
-    ):
-        if enable_layernorm_sm_margin:
-            executor.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
-            executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(layernorm_sm_margin)
-
-    def _set_nvl_domain_size(
-        self,
-        task: Union["run.Partial", "run.Script"],
-        executor: "run.Executor",
-        moe_flex_dispatcher_backend: str,
-        gpu: str,
-        ep_size: int,
-    ):
-        if moe_flex_dispatcher_backend == "hybridep":
-            if gpu in ["h100", "b200", "b300"]:
-                # Hopper/B200/B300 use NVL8 topology
-                executor.env_vars["NVLINK_DOMAIN_SIZE"] = "8"
-                executor.env_vars["USE_MNNVL"] = "0"
-                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = "8" if ep_size > 8 else str(ep_size)
-            else:
-                # GB200/GB300 use NVL72 topology
-                assert ep_size <= 72, "ep_size must be less than or equal to 72"
-                executor.env_vars["NVLINK_DOMAIN_SIZE"] = "72"
-                executor.env_vars["USE_MNNVL"] = "1"
-                executor.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = str(ep_size)
-            # Workaround for unfused combine performance regression in DeepEP hybrid-ep.
-            # Remove after https://github.com/NVIDIA/Megatron-LM/pull/4089 lands.
-            executor.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] = "128"
-
-    def _set_nccl_pp_comm_chunksize(
-        self,
-        task: Union["run.Partial", "run.Script"],
-        executor: "run.Executor",
-        nccl_pp_comm_chunksize: int,
-        pp_size: int,
-    ):
-        if pp_size > 1 and nccl_pp_comm_chunksize is not None:
-            assert isinstance(nccl_pp_comm_chunksize, int) and nccl_pp_comm_chunksize > 1
-            executor.env_vars["NCCL_P2P_NET_CHUNKSIZE"] = str(nccl_pp_comm_chunksize)
-
-    def _set_manual_gc(
-        self,
-        task: Union["run.Partial", "run.Script"],
-        executor: "run.Executor",
-        enable_manual_gc: bool,
-        manual_gc_interval: int,
-    ):
-        if enable_manual_gc:
-            if isinstance(task, Script):
-                # For run.Script, append CLI overrides
-                # Create args dataclass
-                script_args = PerfEnvPluginScriptArgs(
-                    enable_manual_gc=enable_manual_gc,
-                    manual_gc_interval=manual_gc_interval,
-                )
-
-                # Use custom converter or default
-                converter = self.script_args_converter_fn or _default_perf_env_converter
-                cli_overrides = converter(script_args)
-
-                task.args.extend(cli_overrides)
-                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
-            else:
-                raise NotImplementedError("PerfEnvPlugin is only supported for run.Script tasks")
-
-    def _set_vboost(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", enable_vboost: bool):
-        def get_vboost_srun_cmd(nodes, job_dir):
-            """Create the vboost `sudo nvidia-smi boost-slider --vboost 1` command"""
-            import shlex
-
-            vboost_cmd = " ".join(
-                [
-                    "\n# Command 0: enable vboost\n\n",
-                    "srun",
-                    f"--ntasks={nodes}",
-                    "--output",
-                    os.path.join(job_dir, "vboost.out"),
-                    "--error",
-                    os.path.join(job_dir, "vboost.err"),
-                    "bash -c ",
-                    shlex.quote("sudo nvidia-smi boost-slider --vboost 1"),
-                ],
-            )
-
-            return vboost_cmd
-
-        if enable_vboost and isinstance(executor, SlurmExecutor):
-            vboost_cmd = get_vboost_srun_cmd(executor.nodes, executor.tunnel.job_dir)
-            executor.setup_lines = (
-                executor.setup_lines + vboost_cmd
-                if (executor.setup_lines and len(executor.setup_lines) > 0)
-                else vboost_cmd
-            )
-
-    def _set_lock_gpu_freq(
-        self, task: Union["run.Partial", "run.Script"], executor: "run.Executor", lock_gpu_freq: int | None
-    ):
-        """Lock GPU graphics clocks to a fixed frequency before training.
-
-        Used for silicon simulation correlation studies where a fixed GPU
-        clock frequency is required to match simulation assumptions.
-        """
-
-        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
-            import shlex
-
-            lock_freq_cmd = "\n".join(
-                [
-                    "",
-                    "# Command 0: lock GPU graphics clock",
-                    " ".join(
-                        [
-                            "srun",
-                            "--ntasks-per-node=1",
-                            "--output",
-                            os.path.join(job_dir, "lock_gpu_freq.out"),
-                            "--error",
-                            os.path.join(job_dir, "lock_gpu_freq.err"),
-                            "bash -c",
-                            shlex.quote(f"sudo nvidia-smi -lgc {freq_mhz}"),
-                        ]
-                    ),
-                    "",
-                ]
-            )
-
-            return lock_freq_cmd
-
-        if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
-            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
-            executor.setup_lines = (
-                executor.setup_lines + lock_freq_cmd
-                if (executor.setup_lines and len(executor.setup_lines) > 0)
-                else lock_freq_cmd
-            )
-
-    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
-        """Enable the performance environment settings"""
-        workload_base_config = get_workload_base_config(
-            self.model_family_name,
-            self.model_recipe_name,
-            self.gpu,
-            self.compute_dtype,
-            self.train_task,
-            self.config_variant,
-        )
-        tp_size = self.tp_size if self.tp_size is not None else workload_base_config.tensor_model_parallel_size
-        pp_size = self.pp_size if self.pp_size is not None else workload_base_config.pipeline_model_parallel_size
-        cp_size = self.cp_size if self.cp_size is not None else workload_base_config.context_parallel_size
-        ep_size = self.ep_size if self.ep_size is not None else workload_base_config.expert_model_parallel_size
-
-        if getattr(workload_base_config, "fine_grained_activation_offloading", False):
-            executor.env_vars["NVTE_CPU_OFFLOAD_V1"] = "1"
-
-        # Force program order kernel launch for TP, CP overlap
-        moe_flex_dispatcher_backend = getattr(workload_base_config, "moe_flex_dispatcher_backend", None)
-        moe_a2a_overlap = (
-            self.moe_a2a_overlap
-            if self.moe_a2a_overlap is not None
-            else getattr(workload_base_config, "moe_a2a_overlap", False)
-        )
-        self._set_num_cuda_device_max_connections(
-            task,
-            executor,
-            tp_size,
-            cp_size,
-            moe_a2a_overlap=moe_a2a_overlap,
-            moe_flex_dispatcher_backend=moe_flex_dispatcher_backend,
-            gpu_sm100_or_newer=self.gpu in ["b300", "b200", "gb200", "gb300"],
-        )
-
-        # Set LayerNorm SM margin to support the overlap with LayerNorm kernel
-        layernorm_sm_margin = 20 if moe_flex_dispatcher_backend in ["deepep", "hybridep"] else 16
-        self._set_layernorm_sm_margin(
-            task, executor, self.enable_layernorm_sm_margin, layernorm_sm_margin=layernorm_sm_margin
-        )
-
-        # Set NVL domain size when using HybridEP
-        self._set_nvl_domain_size(
-            task,
-            executor,
-            moe_flex_dispatcher_backend,
-            self.gpu,
-            ep_size,
-        )
-
-        # Set the chunk size of P2P communications
-        if self.model_recipe_name in ["llama3_70b", "llama31_405b"] and self.train_task == "pretrain":
-            nccl_pp_comm_chunksize = 2097152
-        elif self.model_family_name in ["llama"] and self.train_task in ["sft"]:
-            nccl_pp_comm_chunksize = 2097152
-        else:
-            nccl_pp_comm_chunksize = None
-        self._set_nccl_pp_comm_chunksize(task, executor, nccl_pp_comm_chunksize, pp_size)
-
-        # Configure manual garbage collection
-        self._set_manual_gc(task, executor, self.enable_manual_gc, self.manual_gc_interval)
-
-        # Improve perf by steering power to tensor cores, may not work on all systems
-        self._set_vboost(task, executor, self.enable_vboost)
-
-        # Lock GPU graphics clock frequency for stable performance measurements
-        self._set_lock_gpu_freq(task, executor, self.lock_gpu_freq)
-
-        # Set model-specific environment variables
-        self._set_model_specific_environment_variables(
-            task,
-            executor,
-            workload_base_config,
-            self.model_family_name,
-            self.model_recipe_name,
-            self.gpu,
-            self.compute_dtype,
-            self.train_task,
-        )
-
-        # Set NVFP4-specific environment variables
-        if self.compute_dtype == "nvfp4":
-            executor.env_vars["NVTE_USE_FAST_MATH"] = "1"
-
-        if self.deterministic:
-            self._set_determinism_env_vars(executor)
-
-
-@dataclass
 class PyTorchProfilerPluginScriptArgs:
     """Arguments for PyTorchProfilerPlugin to pass to run.Script."""
 
@@ -659,3 +253,71 @@ class PyTorchProfilerPlugin(Plugin):
             logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
         else:
             raise NotImplementedError("PyTorchProfilerPlugin is only supported for run.Script tasks")
+
+
+@dataclass
+class PreemptionPluginScriptArgs:
+    """Arguments for PreemptionPlugin to pass to run.Script."""
+
+    enable_exit_handler: bool
+    enable_exit_handler_for_data_loader: bool
+
+
+def _default_preemption_converter(args: PreemptionPluginScriptArgs) -> List[str]:
+    """Default converter for PreemptionPlugin that generates hydra-style overrides."""
+    return [
+        f"train.exit_signal_handler={str(args.enable_exit_handler)}",
+        f"train.exit_signal_handler_for_dataloader={str(args.enable_exit_handler_for_data_loader)}",
+    ]
+
+
+@dataclass(kw_only=True)
+class PreemptionPlugin(Plugin):
+    """A plugin for setting up preemption handling and signals.
+
+    Args:
+        preempt_time (int): The time, in seconds, before the task's time limit at which the executor
+                             will send a SIGTERM preemption signal. This allows tasks to be gracefully
+                             stopped before reaching their time limit, reducing waste and
+                             promoting fair resource usage. The default value is 60 seconds (1 minute).
+                             This is only supported for ``run.SlurmExecutor``.
+        enable_exit_handler (bool): Whether to enable the exit signal handler in training config.
+        enable_exit_handler_for_data_loader (bool): Whether to enable the exit signal handler for data loader.
+        script_args_converter_fn (Optional[Callable]): A function that takes PreemptionPluginScriptArgs
+                                                        and returns a list of CLI arguments. If not provided,
+                                                        uses the default hydra-style converter.
+    """
+
+    preempt_time: int = 60
+    enable_exit_handler: bool = True
+    enable_exit_handler_for_data_loader: bool = False
+    script_args_converter_fn: Optional[Callable[[PreemptionPluginScriptArgs], List[str]]] = None
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor"):
+        """Set up the preemption plugin."""
+        if isinstance(task, Script):
+            # For run.Script, append CLI overrides to the script arguments
+            if self.enable_exit_handler:
+                # Create args dataclass
+                script_args = PreemptionPluginScriptArgs(
+                    enable_exit_handler=self.enable_exit_handler,
+                    enable_exit_handler_for_data_loader=self.enable_exit_handler_for_data_loader,
+                )
+
+                # Use custom converter or default
+                converter = self.script_args_converter_fn or _default_preemption_converter
+                cli_overrides = converter(script_args)
+
+                task.args.extend(cli_overrides)
+                logger.info(f"{self.__class__.__name__} added CLI overrides: {', '.join(cli_overrides)}")
+        else:
+            raise NotImplementedError("PreemptionPlugin is only supported for run.Script tasks")
+
+        # Apply signal configuration for both task types when using SlurmExecutor
+        if isinstance(executor, SlurmExecutor):
+            # Sends a SIGTERM self.preempt_time seconds before hitting time limit
+            logger.info(
+                f"{self.__class__.__name__} will send a SIGTERM {self.preempt_time} seconds before the "
+                "job's time limit for your Slurm executor."
+            )
+            executor.signal = f"TERM@{self.preempt_time}"

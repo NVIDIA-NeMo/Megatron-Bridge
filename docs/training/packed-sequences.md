@@ -22,19 +22,27 @@ enablement through context parallelism:
 | Path | Use case | Key config |
 |---|---|---|
 | Offline packed SFT | Text-only finetuning | `enable_offline_packing=True` plus `offline_packing_specs` |
-| VLM in-batch packing | VLM finetuning | `enable_in_batch_packing=True` |
+| Direct-HF/VLM in-batch packing | Direct Hugging Face and supported VLM finetuning | `enable_in_batch_packing=True` |
 | Long-context (CP) | Pretrain / finetune at 16K-128K+ | `context_parallel_size > 1` |
 
-These are related but they are not the same knob. Offline packed SFT and VLM
-in-batch packing solve padding waste; long-context training primarily addresses
-activation memory and communication tradeoffs at larger sequence lengths.
+These are related but they are not the same knob. Offline packed SFT and
+Direct-HF/VLM in-batch packing solve padding waste; long-context training
+primarily addresses activation memory and communication tradeoffs at larger
+sequence lengths.
+
+The shared implementation lives under `megatron.bridge.data.packing`: offline
+GPT SFT materialization, packed Parquet runtime datasets, bin-packing
+algorithms, and collate-time THD packing each have separate modules. Ordinary
+non-packed padding remains in `megatron.bridge.data.collators`. Use
+`scripts/training/prepare_gpt_sft_packed_data.py` when packed GPT SFT artifacts
+should be prepared before launching training.
 
 ## When to Use It
 
 Packed sequences are a good fit when all of the following are true:
 
-- you are doing SFT, PEFT, or VLM finetuning (all three packing paths are
-  supported; see the path table above)
+- you are doing SFT, PEFT, or supported VLM finetuning using one of the two
+  packing paths above
 - your examples have variable lengths and padding waste is significant
 - you can tolerate the micro-batch constraints of packed training
 
@@ -50,9 +58,13 @@ Packed sequences are usually not the right answer when:
 
 The durable constraints for packed sequences in Bridge are:
 
-- packed SFT requires `micro_batch_size == 1`
+- offline packed SFT requires configured `micro_batch_size == 1`
+- Direct-HF/VLM in-batch packing requires configured `micro_batch_size > 1`;
+  collation flattens those input rows into one physical THD batch row
 - when context parallelism is used, sequence length must satisfy the standard
   CP divisibility constraints
+- Direct-HF sequence length must also satisfy the LCM of the training and
+  evaluation CP constraints and `CP * TP` when sequence parallelism is enabled
 - for fine-tuning with CP enabled, per-token loss behavior and reduction
   settings matter
 - CUDA-graph-friendly packed metadata requires additional padding constraints
@@ -82,7 +94,11 @@ The most stable caveats to remember are:
 1. Packed-sequence support is recipe- and model-family-specific.
 2. Fine-tuning sequence packing should not be assumed to work with every other
    training feature.
-3. Packed sequences improve efficiency primarily by reducing padding waste, not
+3. Setting a distinct evaluation CP only reserves compatible data shapes;
+   activating it requires decentralized process groups and caller-managed eval
+   groups. The eval-CP example demonstrates topology plumbing, not a complete
+   real-data recipe; validation sharding and batch math must use the eval DP.
+4. Packed sequences improve efficiency primarily by reducing padding waste, not
    by replacing long-context parallelism or memory-planning techniques.
 
 ## Related Docs

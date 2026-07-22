@@ -46,6 +46,18 @@ class TestAddGumbelNoise:
         logits = torch.randn(3, 5, 7)
         assert add_gumbel_noise(logits, temperature=0.5).shape == logits.shape
 
+    def test_nonzero_temperature_output_is_positive(self):
+        logits = torch.randn(2, 8, 32)
+        result = add_gumbel_noise(logits, temperature=1.0)
+        assert (result > 0).all()
+
+    def test_nonzero_temperature_can_change_argmax(self):
+        torch.manual_seed(1)
+        logits = torch.zeros(1, 1, 10)
+        logits[0, 0, 0] = 10.0
+        results = [torch.argmax(add_gumbel_noise(logits.clone(), temperature=2.0)).item() for _ in range(20)]
+        assert len(set(results)) > 1
+
 
 class TestGetNumTransferTokens:
     def test_evenly_divisible(self):

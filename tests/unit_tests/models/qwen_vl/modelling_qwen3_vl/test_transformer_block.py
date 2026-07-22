@@ -111,6 +111,8 @@ class TestQwen3VLTransformerBlock:
 
         # Update config for specific recompute method
         transformer_config.recompute_method = recompute_method
+        transformer_config.num_layers = 3 if recompute_method == "uniform" else 2
+        transformer_config.recompute_num_layers = 2 if recompute_method == "uniform" else 1
         layer_spec = get_gpt_layer_with_transformer_engine_spec(
             num_experts=None,
             moe_grouped_gemm=False,

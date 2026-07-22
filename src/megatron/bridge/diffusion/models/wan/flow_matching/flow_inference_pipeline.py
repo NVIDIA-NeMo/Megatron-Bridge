@@ -384,8 +384,8 @@ class FlowInferencePipeline:  # noqa: D101
                 if offload_model:
                     self.text_encoder.cpu()
             else:
-                context = self.text_encoder([prompt], torch.device("cpu"))[0].to(self.device)
-                context_null = self.text_encoder([n_prompt], torch.device("cpu"))[0].to(self.device)
+                context = _encode_text(self.tokenizer, self.text_encoder, "cpu", prompt).to(self.device)
+                context_null = _encode_text(self.tokenizer, self.text_encoder, "cpu", n_prompt).to(self.device)
             context_lens.append(context_max_len)  # all samples have the same context_max_len
             contexts.append(context)
             contexts_null.append(context_null)

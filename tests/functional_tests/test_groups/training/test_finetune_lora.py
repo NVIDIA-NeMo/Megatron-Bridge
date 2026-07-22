@@ -21,14 +21,14 @@ import pytest
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    FinetuningDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -393,7 +393,7 @@ class TestLoRAFinetune:
             dataset_kwargs = {}
             offline_packing_specs = None
 
-        config = FinetuningDatasetConfig(
+        config = GPTSFTDatasetConfig(
             dataset_root=dataset_root,
             seq_length=seq_length,
             seed=seed,

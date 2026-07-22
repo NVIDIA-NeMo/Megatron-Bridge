@@ -18,9 +18,10 @@ from typing import Optional, Union
 import torch
 
 from megatron.bridge import AutoBridge
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.base import PEFT
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
@@ -42,7 +43,7 @@ def qwen2_audio_7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     Default configuration: 1 node, TP=1, PP=1
     - Full SFT: LR=5e-6
     """
-    return _qwen2_audio_common(
+    cfg = _qwen2_audio_common(
         hf_path="Qwen/Qwen2-Audio-7B-Instruct",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
@@ -50,16 +51,28 @@ def qwen2_audio_7b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
         finetune_lr=5e-6,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
 
 def qwen2_audio_7b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Qwen2-Audio 7B Instruct."""
-    return _qwen2_audio_common(
+    cfg = _qwen2_audio_common(
         hf_path="Qwen/Qwen2-Audio-7B-Instruct",
         tensor_model_parallel_size=1,
         pipeline_model_parallel_size=1,
         peft=peft_scheme,
         finetune_lr=1e-4,
     )
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
 
 
 def _qwen2_audio_common(
@@ -95,10 +108,9 @@ def _qwen2_audio_common(
     peft: Optional[Union[str, PEFT]] = None,
     finetune_lr: Optional[float] = None,
     # Dataset
-    maker_name: str = "make_cv17_dataset",
-    maker_kwargs: Optional[dict] = None,  # defaults applied below
-    val_maker_kwargs: Optional[dict] = None,  # per-split overrides for validation
-    test_maker_kwargs: Optional[dict] = None,  # per-split overrides for test
+    source: HFDatasetSourceConfig | None = None,
+    validation_source: HFDatasetSourceConfig | None = None,
+    test_source: HFDatasetSourceConfig | None = None,
     # W&B logging
     wandb_project: Optional[str] = None,
     wandb_entity: Optional[str] = None,
@@ -136,23 +148,18 @@ def _qwen2_audio_common(
     # PEFT config
     peft_config = default_peft_config(peft)
 
-    # Dataset: HF conversation provider with audio maker
-    if maker_kwargs is None:
-        maker_kwargs = {
-            "path_or_dataset": "ysdede/commonvoice_17_tr_fixed",
-            "split": "train",
-        }
-    if val_maker_kwargs is None:
-        val_maker_kwargs = {
-            "split": "validation",
-        }
-    dataset_cfg = HFConversationDatasetProvider(
+    # Dataset: named CommonVoice source preset owns its Hub path and schema adapter.
+    if source is None:
+        source = HFDatasetSourceConfig(dataset_name="cv17")
+    if validation_source is None:
+        validation_source = source.with_split("validation")
+    dataset_cfg = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=hf_path,
-        maker_name=maker_name,
-        maker_kwargs=maker_kwargs,
-        val_maker_kwargs=val_maker_kwargs,
-        test_maker_kwargs=test_maker_kwargs,
+        source=source,
+        validation_source=validation_source,
+        test_source=test_source,
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,

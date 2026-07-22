@@ -19,7 +19,8 @@ from typing import Iterable
 import torch
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 
-from megatron.bridge.training.config import ConfigContainer, FinetuningDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.training.config import ConfigContainer
 
 
 def get_batch_on_this_tp_rank(
@@ -95,7 +96,7 @@ def get_batch_on_this_tp_rank(
             dtype=torch.float32,
             device=torch.cuda.current_device(),
         )
-        if isinstance(cfg.dataset, FinetuningDatasetConfig) or cfg.dataset.create_attention_mask:
+        if isinstance(cfg.dataset, GPTSFTDatasetConfig) or getattr(cfg.dataset, "create_attention_mask", False):
             attention_mask = torch.empty(
                 (
                     mbs,

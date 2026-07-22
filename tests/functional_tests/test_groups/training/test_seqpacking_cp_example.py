@@ -19,9 +19,12 @@ import os
 import pytest
 import torch
 
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
-from megatron.bridge.recipes.llama.llama3 import llama32_1b_pretrain_config, llama32_1b_sft_config
-from megatron.bridge.training.config import FinetuningDatasetConfig
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
+from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_600m_pretrain_1gpu_h100_bf16_config,
+    qwen3_600m_sft_1gpu_h100_bf16_config,
+)
 from megatron.bridge.training.finetune import finetune
 from megatron.bridge.training.gpt_step import forward_step
 from megatron.bridge.training.pretrain import pretrain
@@ -85,7 +88,7 @@ class TestPeftSftExample:
                     f.write(json.dumps(row) + "\n")
         torch.distributed.barrier()
 
-        pretrain_cfg = llama32_1b_pretrain_config()
+        pretrain_cfg = qwen3_600m_pretrain_1gpu_h100_bf16_config()
         _make_functional_test_model_small(pretrain_cfg.model)
         pretrain_cfg.model.tensor_model_parallel_size = 1
         pretrain_cfg.model.pipeline_model_parallel_size = 1
@@ -103,10 +106,10 @@ class TestPeftSftExample:
         pretrain_cfg.checkpoint.save = pretrain_checkpoint_dir
         pretrain_cfg.checkpoint.load = None
 
-        cfg = llama32_1b_sft_config()
+        cfg = qwen3_600m_sft_1gpu_h100_bf16_config()
         _make_functional_test_model_small(cfg.model)
         cfg.tokenizer.tokenizer_type = "HuggingFaceTokenizer"
-        cfg.tokenizer.tokenizer_model = "meta-llama/Llama-3.2-1B"
+        cfg.tokenizer.tokenizer_model = "gpt2"
         cfg.model.calculate_per_token_loss = True
         cfg.ddp.average_in_collective = False
         cfg.ddp.grad_reduce_in_fp32 = False
@@ -129,7 +132,7 @@ class TestPeftSftExample:
         cfg.logger.tensorboard_dir = sft_tensorboard_dir
 
         # Use a small packed local SFT dataset to exercise THD/context-parallel slicing
-        cfg.dataset = FinetuningDatasetConfig(
+        cfg.dataset = GPTSFTDatasetConfig(
             dataset_root=dataset_root,
             seq_length=256,
             dataloader_type="batch",
@@ -141,7 +144,7 @@ class TestPeftSftExample:
             enable_offline_packing=True,
             offline_packing_specs=PackedSequenceSpecs(
                 packed_sequence_size=512,
-                tokenizer_model_name="meta-llama/Llama-3.2-1B",
+                tokenizer_model_name="gpt2",
                 num_tokenizer_workers=1,
                 pad_seq_to_mult=cfg.model.context_parallel_size * 2,
             ),

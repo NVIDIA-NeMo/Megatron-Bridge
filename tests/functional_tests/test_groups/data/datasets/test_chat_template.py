@@ -24,7 +24,8 @@ import pytest
 import torch
 import torch.distributed as dist
 
-from megatron.bridge.data.datasets.sft import GPTSFTChatDataset, create_sft_dataset
+from megatron.bridge.data.builders.gpt_sft import build_gpt_sft_split
+from megatron.bridge.data.datasets.gpt_sft import GPTSFTChatDataset
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
@@ -75,6 +76,18 @@ LLAMA_31_CHAT_TEMPLATE_WITH_TOOLS = """{{- bos_token }}
     {{- '<|start_header_id|>assistant<|end_header_id|>\\n\\n' }}
 {%- endif %}
 """
+
+
+def _build_chat_dataset(path, tokenizer, *, seq_length=512, **dataset_kwargs):
+    return build_gpt_sft_split(
+        path,
+        tokenizer=tokenizer,
+        seq_length=seq_length,
+        memmap_workers=2,
+        seed=1234,
+        packed_sequence_size=-1,
+        dataset_kwargs={"chat": True, "use_hf_tokenizer_chat_template": True, **dataset_kwargs},
+    )
 
 
 @pytest.fixture(scope="class")
@@ -214,13 +227,10 @@ class TestChatTemplateWithRealTokenizer:
         ]
 
         # Create dataset
-        dataset = create_sft_dataset(
-            path=dataset_path,
-            tokenizer=chat_tokenizer,
-            seq_length=512,
+        dataset = _build_chat_dataset(
+            dataset_path,
+            chat_tokenizer,
             prompt_template="{input} {output}",
-            chat=True,
-            use_hf_tokenizer_chat_template=True,
             tool_schemas=tool_schemas,
         )
 
@@ -287,12 +297,9 @@ class TestChatTemplateWithRealTokenizer:
             }
         ]
 
-        dataset = create_sft_dataset(
-            path=dataset_path,
-            tokenizer=chat_tokenizer,
-            seq_length=512,
-            chat=True,
-            use_hf_tokenizer_chat_template=True,
+        dataset = _build_chat_dataset(
+            dataset_path,
+            chat_tokenizer,
             tool_schemas=tool_schemas,
         )
 
@@ -447,12 +454,9 @@ class TestChatTemplateWithRealTokenizer:
                 f,
             )
 
-        dataset = create_sft_dataset(
-            path=dataset_path,
-            tokenizer=chat_tokenizer,
-            seq_length=512,
-            chat=True,
-            use_hf_tokenizer_chat_template=True,
+        dataset = _build_chat_dataset(
+            dataset_path,
+            chat_tokenizer,
             tool_schemas=global_tool_schemas,  # These should be overridden
         )
 

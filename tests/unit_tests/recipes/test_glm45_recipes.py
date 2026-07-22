@@ -127,11 +127,9 @@ def _assert_basic_config(cfg):
     assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
 
-    # Check sequence length (different attribute names for different dataset types)
-    if hasattr(cfg.dataset, "sequence_length"):
-        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig
-    elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / DatasetProvider
+    # Check sequence length for canonical dataset configs.
+    if hasattr(cfg.dataset, "seq_length"):
+        assert cfg.dataset.seq_length >= 1
     else:
         # Some other dataset type
         assert cfg.dataset is not None
@@ -441,9 +439,8 @@ def test_glm45_air_106b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert hasattr(cfg.model, "mtp_loss_scaling_factor")
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_glm45_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_glm45_sft_offline_packing_is_disabled(monkeypatch: pytest.MonkeyPatch):
+    """Test that unsupported offline packing remains disabled for GLM-4.5."""
     from megatron.bridge.recipes.glm import glm45_355b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.glm.glm45")
@@ -460,10 +457,9 @@ def test_glm45_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch
 
     cfg = glm45_355b_sft_config()
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is False
+    assert cfg.dataset.offline_packing_specs is None
 
 
 def test_glm45_mtp_configuration(monkeypatch: pytest.MonkeyPatch):

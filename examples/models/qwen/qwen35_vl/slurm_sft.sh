@@ -164,7 +164,7 @@ CLI_OVERRIDES="\
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${RECIPE}_${DATASET_NAME}_sft \
-    dataset.maker_name=make_${DATASET_NAME}_dataset \
+    dataset.source.dataset_name=${DATASET_NAME} \
     dataset.seq_length=$SEQ_LENGTH"
 
 # To use local processor assets, set dataset.hf_processor_path in CLI_OVERRIDES.

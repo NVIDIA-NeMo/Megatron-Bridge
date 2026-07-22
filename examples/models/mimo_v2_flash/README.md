@@ -6,50 +6,61 @@ The HF checkpoint depends on custom modeling code, so all commands below pass `-
 
 ## Hardware Requirements
 
-MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversion. The full FP8 checkpoint cannot fit on a single 8-GPU node because:
+MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversion. Although the source checkpoint is FP8, conversion dequantizes its weights to BF16 before loading them into Megatron. The 47 MoE layers contain about 302.8B expert parameters, or about 605.6 GB in BF16, so the parallel layout must shard the target expert weights with enough headroom for the rest of the model and communication workspaces.
 
-- TEGroupedMLP workspace is proportional to `num_experts / EP`; with EP=8 on 1 node, workspace alone OOMs.
-- TP does **not** reduce expert memory — increase EP instead.
+- With `EP=8, ETP=1`, each rank holds about 75.7 GB of BF16 expert parameters before dense parameters and communication workspaces, leaving insufficient memory headroom.
+- Dense TP does **not** reduce expert memory when `ETP=1`. Set expert tensor parallelism (`--etp`) to shard each expert's matrices when using TP, or combine PP and EP so each rank holds fewer MoE layers/experts.
 - Context parallelism is **not** supported (TE backends refuse CP + learnable softmax on SWA layers).
 - TP size must be ≤ `min(num_key_value_heads, swa_num_key_value_heads)`.
 
+The conversion example uses a layout that keeps dequantized expert parameters near 37.85 GB per GPU:
+
+| TP | PP | EP | ETP |
+|----|----|----|-----|
+| 2  | 1  | 8  | 2   |
+
 ## Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP configs to verify HF ↔ Megatron round-trip conversion.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
+submit the recommended `TP=2`, `PP=1`, `EP=8`, `ETP=2` config and verify HF ↔
+Megatron round-trip conversion. Run the wrapper from a Slurm login node; it
+waits for the job by default. Validation happens in memory rather than producing
+another checkpoint.
 
 ### Setup
 
-Edit the variables at the top of `slurm_conversion.sh`:
-
 ```bash
-CONTAINER_IMAGE="/path/to/container.sqsh"
-# Optional:
-export HF_TOKEN="hf_your_token_here"
-export HF_HOME="/path/to/shared/HF_HOME"
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export SLURM_PARTITION=batch
+export CONTAINER_MOUNTS=/shared:/shared
+# Optional: export HF_TOKEN and HF_HOME before launching.
 ```
+
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be on storage visible from the compute nodes. Add other comma-separated
+host-to-container mounts through `CONTAINER_MOUNTS`.
 
 ### Submit
 
 ```bash
-sbatch examples/models/mimo_v2_flash/slurm_conversion.sh
+bash examples/models/mimo_v2_flash/slurm_conversion.sh
+```
+
+Cluster-specific `srun` options are not enabled by default. Forward any that
+your cluster requires, for example:
+
+```bash
+bash examples/models/mimo_v2_flash/slurm_conversion.sh \
+    --srun-arg=--mpi=pmix
 ```
 
 ### Expected output
 
-The slurm wrapper prints a header per config and an `[OK]` line on success.
-The underlying conversion script (`hf_megatron_roundtrip_multi_gpu.py`)
-prints a parameter-by-parameter comparison table with ✅ / ❌ in the
-"Matches Original" column, and raises a `ValueError("Weight mismatch
-detected")` on any mismatch (which the wrapper turns into an `ERROR`
-line and a non-zero exit). A successful run ends with:
-
-```
-[OK] Config 3: TP=2, PP=2, EP=4 passed
-
-======================================
-All 3 configs passed
-======================================
-```
+The public round-trip launcher prints a parameter-by-parameter comparison table
+with ✅ / ❌ in the "Matches Original" column, and raises a
+`ValueError("Weight mismatch detected")` on any mismatch. The wrapper exits
+immediately when the synchronous job fails.
 
 ## Inference
 

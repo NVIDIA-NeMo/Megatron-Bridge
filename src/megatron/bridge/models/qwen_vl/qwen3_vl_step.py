@@ -27,7 +27,7 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -168,7 +168,7 @@ def _pad_and_pack_qwen3_vl_step(
     Qwen3-VL keeps tokens in ``[B, S]`` form for model-specific CP/SP handling,
     while still building ``PackedSeqParams`` for attention boundaries.
     This is an internal compatibility path for Qwen3-VL; new models should
-    prefer collate-time packing via ``prepare_padded_or_packed_sequence_batch``.
+    prefer collate-time packing via ``prepare_sequence_batch``.
     """
 
     batch_size, cur_len = tokens.shape
@@ -282,6 +282,7 @@ def forward_step(
     accumulate_flops_metadata(
         state,
         tokens,
+        vp_stage=get_model_chunk_vp_stage(model),
         cu_seqlens=getattr(packed_seq_params, "cu_seqlens_q", None) if packed_seq_params is not None else None,
         num_vision_patches=num_vision_patches,
     )

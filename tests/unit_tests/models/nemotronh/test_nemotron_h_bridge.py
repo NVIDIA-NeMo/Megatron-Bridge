@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import tempfile
 from pathlib import Path
 from types import SimpleNamespace
@@ -24,6 +25,7 @@ from transformers.configuration_utils import PretrainedConfig
 from megatron.bridge.models import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping, QKVMapping
+from megatron.bridge.models.conversion.quant_mapping import AmaxFanoutMapping, AmaxMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.nemotronh.nemotron_h_bridge import (
@@ -167,6 +169,7 @@ class TestNemotronHBridge:
         assert result.mamba_head_dim == mock_nemotronh_config.mamba_head_dim
         assert result.mamba_num_heads == mock_nemotronh_config.mamba_num_heads
         assert result.mamba_num_groups == mock_nemotronh_config.n_groups
+        assert result.mamba_chunk_size == mock_nemotronh_config.chunk_size
         assert result.hybrid_layer_pattern == mock_nemotronh_config.hybrid_override_pattern
 
     def test_provider_bridge_mlp_config(self, mock_pretrained_nemotronh, mock_nemotronh_config):
@@ -1042,6 +1045,47 @@ class TestNemotronHBridgeMTPIntegration:
         assert mlp_mapping.hf_param == "mtp.layers.2.mixer.experts.5.up_proj.weight"
         assert isinstance(qkv_mapping, QKVMapping)
         assert qkv_mapping.hf_param["q"] == "mtp.layers.3.mixer.q_proj.weight"
+
+    def test_quantized_mtp_amax_mappings_preserve_flattened_layer_indices(self):
+        bridge = NemotronHBridge()
+        bridge._mtp_layers_per_block = 5
+
+        with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}):
+            registry = bridge.mapping_registry()
+
+        mlp_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.weight_quantizer._amax"
+        )
+        input_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.input_quantizer._amax"
+        )
+        outer_mapping = registry.megatron_to_hf_lookup("mtp.layers.3.eh_proj.weight_quantizer._amax")
+        reverse_mapping = registry.hf_to_megatron_lookup("mtp.layers.17.mixer.up_proj.weight_quantizer._amax")
+        qkv_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.self_attention.linear_qkv.weight_quantizer._amax"
+        )
+        grouped_mapping = registry.megatron_to_hf_lookup(
+            "mtp.layers.3.mtp_model_layer.layers.2.mlp.experts.linear_fc1.weight_quantizer._amax"
+        )
+
+        assert isinstance(mlp_mapping, AmaxMapping)
+        assert mlp_mapping.hf_param == "mtp.layers.17.mixer.up_proj.weight_quantizer._amax"
+        assert isinstance(input_mapping, AmaxMapping)
+        assert input_mapping.hf_param == "mtp.layers.17.mixer.up_proj.input_quantizer._amax"
+        assert isinstance(outer_mapping, AmaxMapping)
+        assert outer_mapping.hf_param == "mtp.layers.15.eh_proj.weight_quantizer._amax"
+        assert isinstance(reverse_mapping, AmaxMapping)
+        assert (
+            reverse_mapping.megatron_param
+            == "mtp.layers.3.mtp_model_layer.layers.2.mlp.linear_fc1.weight_quantizer._amax"
+        )
+        assert isinstance(qkv_mapping, AmaxFanoutMapping)
+        assert set(qkv_mapping.hf_targets) == {
+            "mtp.layers.17.mixer.q_proj.weight_quantizer._amax",
+            "mtp.layers.17.mixer.k_proj.weight_quantizer._amax",
+            "mtp.layers.17.mixer.v_proj.weight_quantizer._amax",
+        }
+        assert grouped_mapping is None
 
     def test_mapping_registry_resolves_final_norm_aliases(self):
         """Export trunk final norm for both HybridModel and TransformerBlock key names."""

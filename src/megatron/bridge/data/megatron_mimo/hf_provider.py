@@ -11,11 +11,11 @@ from datasets import load_dataset
 from torch.utils.data import Dataset
 from transformers import AutoFeatureExtractor, AutoImageProcessor, AutoTokenizer
 
+from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
 from megatron.bridge.data.megatron_mimo.collate import megatron_mimo_collate_fn
 from megatron.bridge.data.megatron_mimo.dataset import MegatronMIMODataset
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.training.config import DatasetBuildContext
 
 
 @dataclass(kw_only=True)

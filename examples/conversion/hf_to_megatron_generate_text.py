@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -26,6 +26,8 @@ import argparse
 import torch
 import torch.distributed as dist
 from megatron.core import parallel_state
+from megatron.core.inference.contexts import StaticInferenceContext
+from megatron.core.inference.utils import InferenceMode
 from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from transformers import AutoTokenizer
 
@@ -43,10 +45,11 @@ class SingleBatchIterator:
     Used for single-step inference in the forward pass.
     """
 
-    def __init__(self, input_ids, position_ids):
+    def __init__(self, input_ids, position_ids, inference_context=None):
         self.batch = dict(
             tokens=input_ids,
             position_ids=position_ids,
+            inference_context=inference_context,
         )
         self._yielded = False
 
@@ -58,6 +61,11 @@ class SingleBatchIterator:
             raise StopIteration
         self._yielded = True
         return self.batch
+
+
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Return an optional immutable Hugging Face revision argument."""
+    return {"revision": revision} if revision is not None else {}
 
 
 def text_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
@@ -80,12 +88,63 @@ def text_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
         "input_ids": batch["tokens"],
         "position_ids": batch["position_ids"],
         "attention_mask": batch.get("attention_mask", None),
+        "inference_context": batch["inference_context"],
+        "runtime_gather_output": True,
     }
 
     def loss_func(x, **kwargs):
         return x
 
-    return model(**forward_args), loss_func
+    model_output = model(**forward_args)
+    if isinstance(model_output, tuple):
+        model_output = model_output[0]
+    return model_output, loss_func
+
+
+def _run_megatron_forward(fwd_bwd_function, **kwargs):
+    """Run a Megatron forward pass with inference execution paths active."""
+    with InferenceMode.active():
+        return fwd_bwd_function(**kwargs)
+
+
+def _maybe_gather_tensor_parallel_logits(output, full_vocab_size: int, world_size: int, group):
+    """Gather sharded TP logits without gathering an already complete vocabulary."""
+    if output.size(-1) >= full_vocab_size:
+        return output
+
+    gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
+    dist.all_gather(gathered_tensors, output, group=group)
+    gathered_output = torch.cat(gathered_tensors, dim=2)
+    if gathered_output.size(-1) < full_vocab_size:
+        raise ValueError(
+            f"Gathered Megatron vocabulary ({gathered_output.size(-1)}) is smaller than "
+            f"the configured vocabulary ({full_vocab_size})."
+        )
+    return gathered_output
+
+
+def _tokenize_prompt(tokenizer, prompt: str, *, apply_chat_template: bool, thinking_mode: str) -> torch.Tensor:
+    """Tokenize a raw prompt, optionally formatting it as a user chat turn."""
+    if not apply_chat_template:
+        return tokenizer.encode(prompt, return_tensors="pt")
+
+    encoded = tokenizer.apply_chat_template(
+        [{"role": "user", "content": prompt}],
+        add_generation_prompt=True,
+        tokenize=True,
+        return_dict=True,
+        return_tensors="pt",
+        thinking_mode=thinking_mode,
+    )
+    return encoded["input_ids"]
+
+
+def _decode_completion(tokenizer, generated_ids: torch.Tensor, prompt_length: int) -> str:
+    """Decode generated tokens without echoing the prompt or special tokens."""
+    return tokenizer.decode(
+        generated_ids[0, prompt_length:].tolist(),
+        skip_special_tokens=True,
+    )
 
 
 def main(args) -> None:
@@ -118,6 +177,7 @@ def main(args) -> None:
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
+            **_hf_revision_kwargs(args.hf_revision),
         )
 
         # Initialize model parallel before loading
@@ -171,6 +231,7 @@ def main(args) -> None:
                 trust_remote_code=args.trust_remote_code,
                 hf_path=args.hf_model_path,
             ),
+            **_hf_revision_kwargs(args.hf_revision),
         )
         model_provider = bridge.to_megatron_provider(load_weights=True)
         model_provider.tensor_model_parallel_size = tp
@@ -196,13 +257,20 @@ def main(args) -> None:
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
         ),
+        **_hf_revision_kwargs(args.hf_revision),
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     # Tokenize the input prompt
     prompt = args.prompt
-    input_ids = tokenizer.encode(prompt, return_tensors="pt").cuda()
+    input_ids = _tokenize_prompt(
+        tokenizer,
+        prompt,
+        apply_chat_template=args.apply_chat_template,
+        thinking_mode=args.thinking_mode,
+    ).cuda()
+    prompt_length = input_ids.size(1)
     position_ids = (
         torch.arange(input_ids.size(1), dtype=torch.long, device=input_ids.device).unsqueeze(0).expand_as(input_ids)
     )
@@ -216,9 +284,14 @@ def main(args) -> None:
             print_rank_0(f"Generation step {step}")
 
             fwd_bwd_function = get_forward_backward_func()
-            iterator = SingleBatchIterator(input_ids, position_ids)
+            inference_context = StaticInferenceContext(
+                max_batch_size=input_ids.size(0),
+                max_sequence_length=input_ids.size(1),
+            )
+            iterator = SingleBatchIterator(input_ids, position_ids, inference_context)
 
-            output = fwd_bwd_function(
+            output = _run_megatron_forward(
+                fwd_bwd_function,
                 forward_step_func=text_forward_step,
                 data_iterator=iterator,
                 model=model,
@@ -233,11 +306,12 @@ def main(args) -> None:
 
             if parallel_state.is_pipeline_last_stage():
                 world_size = parallel_state.get_tensor_model_parallel_world_size()
-                gathered_tensors = [torch.zeros_like(output) for _ in range(world_size)]
-                # All-gather operation
-                dist.all_gather(gathered_tensors, output, group=parallel_state.get_tensor_model_parallel_group())
-                # Concatenate along last dimension (dim=2)
-                output = torch.cat(gathered_tensors, dim=2)
+                output = _maybe_gather_tensor_parallel_logits(
+                    output,
+                    model_provider.vocab_size,
+                    world_size,
+                    parallel_state.get_tensor_model_parallel_group(),
+                )
                 next_token_ids = torch.argmax(output[:, -1], dim=-1, keepdim=True)
 
                 # Debug: print token information
@@ -267,21 +341,27 @@ def main(args) -> None:
             if next_token_ids.item() in stop_tokens:
                 break
 
-    # Decode the generated sequence
-    generated_text = tokenizer.decode(list(generated_ids[0]))
+    # Decode only the completion. Passing CUDA tensor objects directly to the
+    # tokenizer can produce corrupt text with some remote-code tokenizers.
+    generated_text = _decode_completion(tokenizer, generated_ids, prompt_length)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     print_rank_0(f"Prompt: {prompt}")
     print_rank_0(f"Generated: {generated_text}")
     print_rank_0("=======================================")
 
 
-if __name__ == "__main__":
+def build_parser() -> argparse.ArgumentParser:
+    """Build the text-generation CLI parser."""
     parser = argparse.ArgumentParser(description="Text Generation from HuggingFace Models")
     parser.add_argument(
         "--hf_model_path",
         type=str,
         required=True,
         help="Path to the HuggingFace model.",
+    )
+    parser.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision used for config and tokenizer loading.",
     )
     parser.add_argument(
         "--prompt",
@@ -295,13 +375,28 @@ if __name__ == "__main__":
         default=20,
         help="Maximum number of new tokens to generate.",
     )
+    parser.add_argument(
+        "--apply-chat-template",
+        action="store_true",
+        help="Format the prompt as a user turn using the tokenizer's chat template.",
+    )
+    parser.add_argument(
+        "--thinking-mode",
+        choices=("enabled", "adaptive", "disabled"),
+        default="adaptive",
+        help="Thinking mode passed to the chat template when --apply-chat-template is set.",
+    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
     parser.add_argument("--etp", type=int, default=1, help="Expert tensor parallelism size")
     parser.add_argument("--megatron_model_path", type=str, default=None, help="Path to the Megatron model checkpoint")
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
-    args = parser.parse_args()
+    return parser
+
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
 
     main(args)
 

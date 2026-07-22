@@ -32,14 +32,22 @@ from nemo_run.config import get_nemorun_home
 
 try:
     from argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from utils.evaluate import calc_convergence_and_performance
-    from utils.executors import kubeflow_executor, slurm_executor
-    from utils.utils import get_exp_name_config, select_config_variant_interactive
+    from utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
+    from utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
-    from .utils.evaluate import calc_convergence_and_performance
-    from .utils.executors import kubeflow_executor, slurm_executor
-    from .utils.utils import get_exp_name_config, select_config_variant_interactive
+    from .utils.executors import (
+        _kubeflow_numa_binding_enabled,
+        _kubeflow_numa_binding_script,
+        kubeflow_executor,
+        slurm_executor,
+    )
+    from .utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -49,19 +57,12 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PyTorchProfilerPlugin
-
-try:
-    from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
-except (ImportError, ModuleNotFoundError):
-    from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
-
+    from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PEFORMANCE = "run_script.py"
-ENTRYPOINT_RECIPE = "run_recipe.py"
+ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -71,24 +72,35 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 def _filter_run_script_args(argv: List[str]) -> List[str]:
     """Drop launcher-only args before forwarding argv to the rank-local script.
 
-    The launcher (this script) and the rank-local entrypoint (run_recipe.py /
-    run_script.py) share one parser, but some args are meaningful only to the
-    launcher and must not reach the rank-local script:
+    The launcher (this script) and the rank-local training scripts share one
+    parser, but some args are meaningful only to the launcher and must not
+    reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
+      Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
-      into run_recipe.py's Hydra override parser.
+      into the training entrypoint's Hydra override parser.
+    * ``--runai_*`` — consumed here to build the RunAIPlugin; same JSON brace
+      risk as ``--kubeflow_*``.
 
     All of these take a value, passed either as ``--flag value`` (two tokens) or
     ``--flag=value`` (one token).
     """
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag in ("--additional_slurm_params", "--csp") or flag.startswith(("--kubeflow_", "--runai_"))
+        return flag in (
+            "-lgc",
+            "-vb",
+            "--additional_slurm_params",
+            "--csp",
+            "--enable_vboost",
+            "--lock_gpu_freq",
+        ) or flag.startswith(("--kubeflow_", "--runai_"))
 
     filtered_args = []
     skip_next = False
@@ -103,6 +115,37 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _build_nemorun_script(
+    *,
+    script_path: str,
+    script_dir: str,
+    args: List[str],
+    kubeflow_namespace: Optional[str],
+    custom_env_vars: Dict[str, str],
+) -> run.Script:
+    """Build the rank-local task and apply optional Kubeflow NUMA binding."""
+    task = run.Script(
+        path=script_path,
+        entrypoint="python",
+        env={"PYTHONPATH": f"{script_dir}:$PYTHONPATH"},
+        args=args,
+    )
+    if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
+        logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
+        return _kubeflow_numa_binding_script(task)
+    return task
+
+
+def _calc_convergence_and_performance(**kwargs: Any) -> Any:
+    """Load the evaluator only after training finishes and validation is requested."""
+    try:
+        from utils.evaluate import calc_convergence_and_performance
+    except (ImportError, ModuleNotFoundError):
+        from .utils.evaluate import calc_convergence_and_performance
+
+    return calc_convergence_and_performance(**kwargs)
 
 
 def wait_for_logs_to_settle(glob_pattern: str, timeout_s: int = 180, stable_s: int = 10, poll_s: int = 3) -> List[str]:
@@ -395,14 +438,23 @@ def build_csp_plugin(
     runai_env_json: Optional[str] = None,
     runai_scheduler_name: Optional[str] = None,
     runai_labels_json: Optional[str] = None,
-):
+) -> Any:
     """Map ``--csp`` (+ its ``--runai_*`` args) to a single CSP fabric plugin.
 
-    Returns the plugin instance for the selected CSP, or ``None`` when no CSP is
-    selected. Kept as a small pure function (no executor/cluster state) so the
-    args -> plugin wiring is unit-testable without a live cluster — see
-    ``tests/.../test_setup_experiment_csp.py``.
+    Imports CSP helpers lazily so Slurm/login-node launch does not pull in
+    Kubeflow dependencies. Returns the plugin instance for the selected CSP, or
+    ``None`` when no CSP is selected. Kept as a small pure function (no
+    executor/cluster state) so the args -> plugin wiring is unit-testable
+    without a live cluster — see ``tests/.../test_setup_experiment_csp.py``.
     """
+    if csp is None:
+        return None
+
+    try:
+        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
+
     if csp == "aws":
         return EKSEnvPlugin()
     if csp == "gcp":
@@ -418,7 +470,7 @@ def build_csp_plugin(
             scheduler_name=runai_scheduler_name,
             labels=json.loads(runai_labels_json) if runai_labels_json else {},
         )
-    return None
+    raise ValueError(f"Unsupported CSP plugin: {csp}")
 
 
 def main(
@@ -468,11 +520,11 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
-    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
     num_gpus: int,
     is_long_convergence_run: bool,
+    preempt_time: int,
     additional_slurm_params: Optional[Dict[str, Any]],
     enable_pct_binding: bool,
     golden_values_path: str,
@@ -507,8 +559,7 @@ def main(
     runai_env_json: Optional[str] = None,
     runai_scheduler_name: Optional[str] = None,
     runai_labels_json: Optional[str] = None,
-    deterministic: bool = False,
-    config_variant: str = "v1",
+    config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
 ):
@@ -555,8 +606,8 @@ def main(
     if export_nsys_sqlite and not enable_nsys:
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
+    script_name = ENTRYPOINT_BOOTSTRAP
     if use_recipes:
-        script_name = ENTRYPOINT_RECIPE
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
@@ -564,27 +615,27 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PEFORMANCE
-        # Create a simple namespace with the args needed by get_exp_name_config
-        args_for_config = SimpleNamespace(
-            num_gpus=num_gpus,
-            tensor_model_parallel_size=tp_size,
-            pipeline_model_parallel_size=pp_size,
-            context_parallel_size=cp_size,
-            virtual_pipeline_model_parallel_size=vp_size,
-            expert_model_parallel_size=ep_size,
-            expert_tensor_parallel_size=etp_size,
-            micro_batch_size=micro_batch_size,
-            global_batch_size=global_batch_size,
-        )
-        exp_config = get_exp_name_config(
-            args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-        )
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
-        )
+        if wandb_experiment_name is not None:
+            # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
+            # login node in this path: recipe imports belong in the training container.
+            exp_name = wandb_experiment_name
+        else:
+            # Create a simple namespace with the args needed by get_exp_name_config
+            args_for_config = SimpleNamespace(
+                num_gpus=num_gpus,
+                tensor_model_parallel_size=tp_size,
+                pipeline_model_parallel_size=pp_size,
+                context_parallel_size=cp_size,
+                virtual_pipeline_model_parallel_size=vp_size,
+                expert_model_parallel_size=ep_size,
+                expert_tensor_parallel_size=etp_size,
+                micro_batch_size=micro_batch_size,
+                global_batch_size=global_batch_size,
+            )
+            exp_config = get_exp_name_config(
+                args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
+            )
+            exp_name = f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -629,10 +680,9 @@ def main(
         ]
     )
 
-    if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
-
     if kubeflow_namespace:
+        if enable_vboost or lock_gpu_freq is not None:
+            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -688,13 +738,27 @@ def main(
             packager=packager,
             enable_pct_binding=enable_pct_binding,
         )
+        configure_slurm_gpu_tuning(
+            executor,
+            enable_vboost=enable_vboost,
+            lock_gpu_freq=lock_gpu_freq,
+        )
 
     plugins = []
+
+    # Long-convergence runs are split across walltime slices and resume from the last
+    # checkpoint each slice. Without a preemption signal, Slurm hard-kills the slice at
+    # the time limit before a checkpoint is written, so no progress persists and the
+    # resume loop stalls. The PreemptionPlugin sends SIGTERM `preempt_time` seconds
+    # before the limit and enables the training exit handler, so each slice saves and
+    # exits gracefully and the next slice resumes from it (inert off Slurm).
+    if is_long_convergence_run:
+        plugins.append(PreemptionPlugin(preempt_time=preempt_time, enable_exit_handler=True))
 
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB),
     # runai -> RunAIPlugin (RoCE/SR-IOV). Networking/fabric only;
-    # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
+    # architecture and performance settings stay in the recipe.
     csp_plugin = build_csp_plugin(
         csp,
         runai_extended_resources_json=runai_extended_resources_json,
@@ -708,26 +772,6 @@ def main(
     )
     if csp_plugin is not None:
         plugins.append(csp_plugin)
-
-    if not use_recipes:
-        plugins.append(
-            PerfEnvPlugin(
-                enable_vboost=enable_vboost,
-                lock_gpu_freq=lock_gpu_freq,
-                moe_a2a_overlap=moe_a2a_overlap,
-                tp_size=tp_size,
-                pp_size=pp_size,
-                cp_size=cp_size,
-                ep_size=ep_size,
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                gpu=gpu,
-                compute_dtype=compute_dtype,
-                train_task=task,
-                config_variant=config_variant,
-                deterministic=deterministic,
-            )
-        )
 
     if enable_nsys:
         if nsys_trace is None:
@@ -756,11 +800,12 @@ def main(
             )
         )
 
-    nemorun_script = run.Script(
-        path=in_container_script_path,
-        entrypoint="python",
-        env={"PYTHONPATH": f"{in_container_script_dir}:$PYTHONPATH"},
+    nemorun_script = _build_nemorun_script(
+        script_path=in_container_script_path,
+        script_dir=in_container_script_dir,
         args=_filter_run_script_args(sys.argv[1:]),
+        kubeflow_namespace=kubeflow_namespace,
+        custom_env_vars=custom_env_vars,
     )
 
     logger.info("Will launch the following command with Nemo-Run: %s", " ".join(nemorun_script.to_command()))
@@ -893,7 +938,7 @@ def main(
                     else None
                 )
 
-                is_testing_passed, error_msg, merged_values = calc_convergence_and_performance(
+                is_testing_passed, error_msg, merged_values = _calc_convergence_and_performance(
                     model_family_name=model_family_name,
                     model_recipe_name=model_recipe_name,
                     assets_dir=os.path.join(job_dir, exp_name),
@@ -1043,11 +1088,11 @@ if __name__ == "__main__":
         custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
-        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,
         is_long_convergence_run=args.is_long_convergence_run,
+        preempt_time=args.preempt_time,
         additional_slurm_params=args.additional_slurm_params,
         enable_pct_binding=args.enable_pct_binding,
         golden_values_path=args.golden_values_path,
@@ -1098,7 +1143,6 @@ if __name__ == "__main__":
         runai_env_json=args.runai_env_json,
         runai_scheduler_name=args.runai_scheduler_name,
         runai_labels_json=args.runai_labels_json,
-        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,

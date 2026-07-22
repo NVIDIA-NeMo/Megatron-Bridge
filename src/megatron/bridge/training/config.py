@@ -17,7 +17,6 @@ import logging
 import math
 import os
 import warnings
-from abc import ABC, abstractmethod
 from dataclasses import MISSING, dataclass, field, fields
 from pathlib import Path
 from typing import Any, Dict, Literal, Optional, Tuple, Union
@@ -31,7 +30,6 @@ from megatron.core.optimizer import (
     ParamKey,
     get_standard_config_overrides,
 )
-from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig as MCoreMLATransformerConfig
 from megatron.core.transformer.transformer_config import TransformerConfig as MCoreTransformerConfig
@@ -45,7 +43,26 @@ from megatron.training.config import SchedulerConfig as MTrainSchedulerConfig
 from megatron.training.config import StragglerDetectionConfig as MTrainStragglerDetectionConfig
 from megatron.training.config import TrainingConfig as MTrainTrainingConfig
 
-from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
+from megatron.bridge.data.base import (
+    DataloaderConfig,
+    DatasetProvider,
+)
+from megatron.bridge.data.base import (
+    DatasetBuildContext as DatasetBuildContext,
+)
+from megatron.bridge.data.builders.direct_hf_sft import DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders.energon import EnergonDatasetConfig
+
+# Deprecated training.config import compatibility. New code imports dataset
+# Config + Builder APIs from megatron.bridge.data.builders.
+from megatron.bridge.data.builders.gpt_sft import (
+    FinetuningDatasetConfig as FinetuningDatasetConfig,
+)
+from megatron.bridge.data.builders.gpt_sft import (
+    GPTSFTDatasetConfig,
+)
+from megatron.bridge.data.builders.mock_vlm_sft import MockVLMSFTDatasetConfig
+from megatron.bridge.data.sources.hf import HFDatasetSourceConfig as HFDatasetSourceConfig
 from megatron.bridge.models import GPTModelProvider, T5ModelProvider
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
@@ -56,14 +73,16 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, get_mixed_precision_config
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
-from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.training.utils.config_utils import _ConfigContainerBase as Container
 from megatron.bridge.utils.common_utils import (
     get_world_size_safe,
     print_rank_0,
     warn_rank_0,
 )
-from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules, is_full_iteration_cuda_graph
+from megatron.bridge.utils.cuda_graph import (
+    is_full_iteration_cuda_graph,
+    validate_cuda_graph_configuration,
+)
 
 
 @dataclass
@@ -170,61 +189,6 @@ class RerunStateMachineConfig(MTrainRerunStateMachineConfig):
     this multiple of the max observed loss over the sample window."""
 
 
-@dataclass(kw_only=True)
-class DataloaderConfig:
-    """Base configuration for data loading."""
-
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = None
-    """Dataloader type: 'single' for single pass, 'cyclic' for multiple passes with shuffling,
-    'batch' for global batch sampling (used in fine-tuning), or 'external' for custom dataloaders."""
-
-    num_workers: int = 2
-    """Dataloader number of workers."""
-
-    data_sharding: bool = True
-    """Disable data sharding."""
-
-    pin_memory: bool = True
-    """Whether to pin memory during data loading for faster GPU training."""
-
-    drop_last: bool = True
-    """Whether to drop the last incomplete batch."""
-
-    persistent_workers: bool = True
-    """Whether to keep data loading workers persistent across epochs.
-    Automatically set to False when num_workers is 0."""
-
-    trust_remote_code: Optional[bool] = None
-    """Whether remote code execution should be trusted for a given HF path."""
-
-    def finalize(self):
-        """Finalize dataloader config field constraints."""
-        if self.num_workers == 0 and self.persistent_workers:
-            self.persistent_workers = False
-
-
-@dataclass(frozen=True)
-class DatasetBuildContext:
-    """Interface that encapsulates framework internals.
-
-    This context provides metadata needed to build datasets
-    while hiding implementation details of the framework.
-
-    Attributes:
-        train_samples: Number of samples for training dataset
-        valid_samples: Number of samples for validation dataset
-        test_samples: Number of samples for test dataset
-        tokenizer: Optional tokenizer instance for text processing
-        pg_collection: Optional process group collection for distributed training
-    """
-
-    train_samples: int
-    valid_samples: int
-    test_samples: int
-    tokenizer: Optional[MegatronTokenizer] = None
-    pg_collection: Optional[ProcessGroupCollection] = None
-
-
 @dataclass(frozen=True)
 class OptimizerConfigOverrideProviderContext:
     """Context for providing config overrides."""
@@ -255,53 +219,6 @@ class OptimizerConfigOverrideProvider:
 
 
 @dataclass
-class DatasetProvider(DataloaderConfig, ABC):
-    """Abstract base class for custom dataset configurations.
-
-    Provides an interface for users to implement their own dataset builders
-    while automatically inheriting all DataloaderConfig functionality.
-
-    Users must:
-    1. Inherit from this class
-    2. Implement the build_datasets() method
-
-    Example:
-        @dataclass
-        class S3DatasetConfig(DatasetProvider):
-            bucket_name: str
-            data_prefix: str
-            seq_length: int
-
-            def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-                # Custom implementation to load data from S3
-                train_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/train", context.tokenizer)
-                valid_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/valid", context.tokenizer)
-                test_ds = load_s3_dataset(self.bucket_name, f"{self.data_prefix}/test", context.tokenizer)
-                return train_ds, valid_ds, test_ds
-    """
-
-    @abstractmethod
-    def build_datasets(self, context: DatasetBuildContext) -> Tuple[Optional[Any], Optional[Any], Optional[Any]]:
-        """Build train, validation, and test datasets.
-
-        This method is called by the framework during dataset initialization.
-        Implementations should use the provided context to create appropriate
-        datasets for each split.
-
-        Args:
-            context: Build context with sample counts and tokenizer
-
-        Returns:
-            Tuple of (train_dataset, valid_dataset, test_dataset)
-            Any element can be None if that split shouldn't be created.
-
-        Raises:
-            NotImplementedError: Must be implemented by subclasses
-        """
-        pass
-
-
-@dataclass
 class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     """Megatron Core GPTDatasetConfig with deferred post-init.
 
@@ -309,6 +226,9 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     execution of post_init() until finalize() is explicitly called. This allows
     for field modifications after construction but before computed fields are calculated.
     """
+
+    seq_length: int = field(kw_only=True)
+    """Bridge-facing sequence length copied to Megatron Core during ``finalize()``."""
 
     data_path: str | list[str] | None = None
     """CLI-friendly alternative to ``blend``.  Accepts a single path string,
@@ -335,7 +255,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
     ):
         """
         Args:
-            seq_length (int | None): the sequence length. If not provided, `sequence_length` must be in kwargs.
+            seq_length (int | None): The sequence length.
             skip_getting_attention_mask_from_dataset (bool): if set, the dataset will pass a None attention mask
                 and the attention mask is autogenerated from the attn backend.
             data_path: CLI-friendly data path(s). Converted to ``blend`` in ``finalize()``.
@@ -354,6 +274,7 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         dataloader_kwargs = {k: kwargs.pop(k) for k in list(kwargs) if k in DataloaderConfig.__dataclass_fields__}
         MCoreGPTDatasetConfig.__init__(self, *args, **kwargs)
         DataloaderConfig.__init__(self, **dataloader_kwargs)
+        self.seq_length = self.sequence_length
 
     def __post_init__(self) -> None:
         """Skip MCore post_init during initial construction.
@@ -362,14 +283,16 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         """
         pass
 
-    @property
-    def seq_length(self):
-        """Alias for MCore's `sequence_length` field."""
-        return getattr(self, "sequence_length", None)
-
-    @seq_length.setter
-    def seq_length(self, value):
-        setattr(self, "sequence_length", value)
+    def to_cfg_dict(self) -> dict[str, Any]:
+        """Serialize the Bridge-facing fields without MCore's internal sequence-length copy."""
+        config_dict = {
+            "_target_": f"{self.__class__.__module__}.{self.__class__.__qualname__}",
+        }
+        for config_field in fields(self):
+            if config_field.name.startswith("_") or config_field.name == "sequence_length":
+                continue
+            config_dict[config_field.name] = Container._convert_value_to_dict(getattr(self, config_field.name))
+        return config_dict
 
     def finalize(self) -> None:
         """Execute the deferred MCore post-init logic and Bridge-specific checks.
@@ -377,6 +300,8 @@ class GPTDatasetConfig(MCoreGPTDatasetConfig, DataloaderConfig):
         This method calls the original Megatron Core GPTDatasetConfig.__post_init__()
         and then performs Bridge-specific validation.
         """
+        self.sequence_length = self.seq_length
+
         if self.blend is None and self.data_path is not None:
             from megatron.core.datasets.utils import get_blend_from_list
 
@@ -461,29 +386,6 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
         self.__dict__.pop("blend_per_split", None)
 
         return super().finalize()
-
-
-@dataclass(kw_only=True)
-class FinetuningDatasetConfig(DataloaderConfig):
-    """Configuration specific to finetuning datasets, inheriting from DataloaderConfig.
-
-    Note: For fine-tuning, dataloader_type defaults to 'batch' which ensures sequences
-    within each global batch are padded to the same length.
-    """
-
-    dataloader_type: Optional[Literal["single", "cyclic", "batch", "external"]] = "batch"
-    """Dataloader type for fine-tuning. Defaults to 'batch' for optimal padding behavior."""
-
-    dataset_root: Optional[Union[str, Path]] = None
-    seq_length: int
-    seed: int = 1234
-    memmap_workers: int = 1
-    max_train_samples: Optional[int] = None
-    enable_offline_packing: bool = False
-    offline_packing_specs: Optional[PackedSequenceSpecs] = None
-    dataset_kwargs: Optional[dict[str, Any]] = None
-    do_validation: bool = True
-    do_test: bool = True
 
 
 @dataclass(kw_only=True)
@@ -1046,6 +948,13 @@ class InProcessRestartConfig:
 class ConfigContainer(Container):
     """Top-level container holding all configuration objects."""
 
+    env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
+    """Environment variable defaults applied before runtime config finalization.
+
+    Values already present in the process environment take precedence, allowing
+    launchers and users to override recipe defaults.
+    """
+
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
@@ -1064,7 +973,14 @@ class ConfigContainer(Container):
     ddp: DistributedDataParallelConfig = field(default_factory=DistributedDataParallelConfig)
     validation: ValidationConfig = field(default_factory=ValidationConfig)
     scheduler: SchedulerConfig
-    dataset: GPTDatasetConfig | FinetuningDatasetConfig | DatasetProvider
+    dataset: (
+        GPTDatasetConfig
+        | GPTSFTDatasetConfig
+        | DirectHFSFTDatasetConfig
+        | EnergonDatasetConfig
+        | MockVLMSFTDatasetConfig
+        | DatasetProvider
+    )
     logger: LoggerConfig
     tokenizer: TokenizerConfig
     checkpoint: CheckpointConfig
@@ -1209,9 +1125,9 @@ class ConfigContainer(Container):
         Calculates dependent values like data_parallel_size and scheduler steps.
         Ensures compatibility between different configuration settings.
         """
-        if self.train.num_epochs is not None and not isinstance(self.dataset, FinetuningDatasetConfig):
+        if self.train.num_epochs is not None and not isinstance(self.dataset, GPTSFTDatasetConfig):
             raise ValueError(
-                "num_epochs is only supported for finite FinetuningDatasetConfig datasets because other dataset "
+                "num_epochs is only supported for finite GPTSFTDatasetConfig datasets because other dataset "
                 "providers may build a requested number of samples instead of exposing their true dataset size."
             )
         if self.train.num_epochs is not None and self.dataset.dataloader_type != "batch":
@@ -1228,24 +1144,63 @@ class ConfigContainer(Container):
         if offline_packing_specs is not None and not enable_offline_packing:
             raise ValueError("enable_offline_packing must be True when offline_packing_specs is set.")
 
+        # Validate declarative SFT values before deriving runtime padding
+        # multiples so normalization cannot hide an invalid user value.
+        if isinstance(
+            self.dataset,
+            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+        ):
+            self.dataset.validate()
+
+        if isinstance(self.dataset, EnergonDatasetConfig) and (
+            self.dataset.micro_batch_size != self.train.micro_batch_size
+        ):
+            raise ValueError(
+                "EnergonDatasetConfig.micro_batch_size must match train.micro_batch_size "
+                f"({self.dataset.micro_batch_size} != {self.train.micro_batch_size})."
+            )
+
         if hasattr(self.dataset, "pad_to_max_length"):
             requires_fixed_seq_len = (
                 getattr(self.model, "pipeline_model_parallel_size", 1) > 1
                 or getattr(self.model, "expert_model_parallel_size", 1) > 1
             )
-            self.dataset.pad_to_max_length = requires_fixed_seq_len
+            self.dataset.pad_to_max_length = self.dataset.pad_to_max_length or requires_fixed_seq_len
+
+        cp_size = getattr(self.model, "context_parallel_size", 1)
+        eval_cp_size = self.dist.eval_context_parallel_size
+        cp_sizes = {cp_size, eval_cp_size} if eval_cp_size is not None else {cp_size}
+        tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
+        has_sp = getattr(self.model, "sequence_parallel", False)
+        cp_multiples = [2 * size if size > 1 else 1 for size in cp_sizes]
+        sp_multiples = [size * tp_size if has_sp and tp_size > 1 else 1 for size in cp_sizes]
+        collate_padding_multiple = math.lcm(*cp_multiples, *sp_multiples)
+        if (
+            isinstance(
+                self.dataset,
+                (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+            )
+            and self.dataset.seq_length % collate_padding_multiple != 0
+        ):
+            raise ValueError(
+                f"{type(self.dataset).__name__}.seq_length must be divisible by the CP/SP collate padding multiple "
+                f"({collate_padding_multiple})."
+            )
 
         # Propagate in-batch packing flag to model config so TransformerConfig.finalize()
         # can enable variable_seq_lengths for pipeline parallelism.
         if enable_in_batch_packing:
             self.model._enable_in_batch_packing = True
             if hasattr(self.dataset, "in_batch_packing_pad_to_multiple_of"):
-                cp_size = getattr(self.model, "context_parallel_size", 1)
-                tp_size = getattr(self.model, "tensor_model_parallel_size", 1)
-                has_sp = getattr(self.model, "sequence_parallel", False)
-                cp_multiple = 2 * cp_size if cp_size > 1 else 1
-                sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
-                self.dataset.in_batch_packing_pad_to_multiple_of = math.lcm(cp_multiple, sp_multiple)
+                self.dataset.in_batch_packing_pad_to_multiple_of = collate_padding_multiple
+        elif isinstance(
+            self.dataset,
+            (DirectHFSFTDatasetConfig, EnergonDatasetConfig, MockVLMSFTDatasetConfig),
+        ):
+            self.dataset.pad_to_multiple_of = math.lcm(
+                self.dataset.pad_to_multiple_of,
+                collate_padding_multiple,
+            )
 
         if hasattr(self.dataset, "finalize"):
             self.dataset.finalize()
@@ -1253,6 +1208,10 @@ class ConfigContainer(Container):
             self.ddp.finalize()
         if hasattr(self.optimizer, "finalize"):
             self.optimizer.finalize()
+
+        # Guard post-construction CUDA graph overrides before MCore post-init can
+        # migrate deprecated scope fields into a different implementation.
+        validate_cuda_graph_configuration(self.model)
         if hasattr(self.model, "finalize"):
             self.model.finalize()
 
@@ -1296,13 +1255,41 @@ class ConfigContainer(Container):
                 "train.micro_batch_size must be set when eval_micro_batch_size is not explicitly configured"
             )
             self.validation.eval_micro_batch_size = self.train.micro_batch_size
+        if (
+            isinstance(self.dataset, EnergonDatasetConfig)
+            and self.dataset.do_validation
+            and self.dataset.micro_batch_size != self.validation.eval_micro_batch_size
+        ):
+            raise ValueError(
+                "EnergonDatasetConfig.micro_batch_size must match validation.eval_micro_batch_size "
+                f"({self.dataset.micro_batch_size} != {self.validation.eval_micro_batch_size})."
+            )
 
-        # Eval batch size divisibility check
-        eval_dp_product = self.validation.eval_micro_batch_size * self.data_parallel_size
+        # Eval batch size divisibility check. Eval-time CP changes the DP degree,
+        # so validation batch semantics must use the eval layout rather than the
+        # training layout stored in ``self.data_parallel_size``.
+        eval_data_parallel_size = self.data_parallel_size
+        if self.dist.eval_context_parallel_size is not None:
+            model_cfg = self.model
+            eval_world_size = get_world_size_safe()
+            if hasattr(model_cfg, "dist_train") and getattr(model_cfg.dist_train, "use_dist_train", False) is True:
+                eval_world_size = model_cfg.dist_train.language_world_size
+            eval_model_parallel_size = (
+                model_cfg.tensor_model_parallel_size
+                * model_cfg.pipeline_model_parallel_size
+                * self.dist.eval_context_parallel_size
+            )
+            assert eval_world_size % eval_model_parallel_size == 0, (
+                f"world size ({eval_world_size}) is not divisible by eval model parallel size "
+                f"({eval_model_parallel_size})"
+            )
+            eval_data_parallel_size = eval_world_size // eval_model_parallel_size
+
+        eval_dp_product = self.validation.eval_micro_batch_size * eval_data_parallel_size
         assert self.validation.eval_global_batch_size % eval_dp_product == 0, (
             f"eval_global_batch_size ({self.validation.eval_global_batch_size}) must be divisible by "
-            f"eval_micro_batch_size * data_parallel_size ({self.validation.eval_micro_batch_size} * "
-            f"{self.data_parallel_size} = {eval_dp_product})"
+            f"eval_micro_batch_size * eval_data_parallel_size ({self.validation.eval_micro_batch_size} * "
+            f"{eval_data_parallel_size} = {eval_dp_product})"
         )
 
         # Megatron-FSDP and Torch FSDP2 are mutually-exclusive.
@@ -1339,8 +1326,7 @@ class ConfigContainer(Container):
                 "check_for_nan_in_loss must be disabled when using full_iteration CUDA graph. "
                 "Set rerun_state_machine.check_for_nan_in_loss=False."
             )
-        if self.model.cuda_graph_impl == "none":
-            clear_cuda_graph_modules(self.model)
+        validate_cuda_graph_configuration(self.model)
 
         # ModelOpt/Quantization checks
         if getattr(self.model, "restore_modelopt_state", False):
@@ -1348,6 +1334,9 @@ class ConfigContainer(Container):
                 "Gradient accumulation fusion is not supported with ModelOpt/Quantized models. "
                 "Please set model.gradient_accumulation_fusion=False"
             )
+            from megatron.bridge.training.post_training.checkpointing import _validate_modelopt_checkpointing
+
+            _validate_modelopt_checkpointing(self.checkpoint.non_persistent_ckpt_type)
 
         # Checkpoint
         self._validate_hf_checkpoint_export_source()
@@ -1401,7 +1390,15 @@ class ConfigContainer(Container):
             assert self.model.seq_length % (self.model.context_parallel_size * 2) == 0, (
                 "Sequence length must be divisible by 2 * context parallel size if context parallel is used."
             )
-            if isinstance(self.dataset, FinetuningDatasetConfig):
+            if isinstance(
+                self.dataset,
+                (
+                    GPTSFTDatasetConfig,
+                    DirectHFSFTDatasetConfig,
+                    EnergonDatasetConfig,
+                    MockVLMSFTDatasetConfig,
+                ),
+            ):
                 # check calculate_per_token_loss to be True
                 # check average_in_collective to be False
                 # for context parallel to solve the issue of nan loss on ranks with all tokens masked
@@ -1445,14 +1442,19 @@ class ConfigContainer(Container):
             assert self.checkpoint.pretrained_checkpoint is not None, "PEFT requires a pretrained checkpoint path"
 
         if self.dataset is not None:
-            # Only validate sequence length for GPTDatasetConfig or FinetuningDatasetConfig
+            # Only validate sequence length for canonical dataset configs.
             # DatasetProvider instances may not have sequence_length attributes
-            if isinstance(self.dataset, (GPTDatasetConfig, FinetuningDatasetConfig)):
-                data_seq_length = (
-                    self.dataset.seq_length
-                    if isinstance(self.dataset, FinetuningDatasetConfig)
-                    else self.dataset.seq_length
-                )
+            if isinstance(
+                self.dataset,
+                (
+                    GPTDatasetConfig,
+                    GPTSFTDatasetConfig,
+                    DirectHFSFTDatasetConfig,
+                    EnergonDatasetConfig,
+                    MockVLMSFTDatasetConfig,
+                ),
+            ):
+                data_seq_length = self.dataset.seq_length
 
                 assert self.model.seq_length == data_seq_length, (
                     f"Please ensure sequence length configuration in model config and "
@@ -1768,6 +1770,27 @@ def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
     return values
 
 
+def apply_environment_variables(cfg: ConfigContainer) -> None:
+    """Apply recipe environment variable defaults to the current process.
+
+    Existing process values are preserved so explicit launcher or shell
+    settings take precedence over recipe defaults.
+
+    Args:
+        cfg: Configuration container with environment variable defaults.
+
+    Raises:
+        ValueError: If an environment variable name is empty.
+        TypeError: If an environment variable value is not a scalar.
+    """
+    for name, value in cfg.env_vars.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Environment variable names must be non-empty strings.")
+        if not isinstance(value, (str, int, float, bool)):
+            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        os.environ.setdefault(name, str(value))
+
+
 def runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
@@ -1784,6 +1807,9 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     Args:
         cfg: Configuration container to update
     """
+    # Environment settings may affect runtime finalization and must be applied first.
+    apply_environment_variables(cfg)
+
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):
@@ -1813,6 +1839,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     This function cherry-picks the safe, model-agnostic parts:
 
     Keeps (safe for MegatronMIMO):
+    - Recipe environment variable defaults
     - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
     - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
@@ -1825,6 +1852,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
+    apply_environment_variables(cfg)
+
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
 

@@ -42,6 +42,8 @@ from megatron.bridge.recipes.kimi_vl import *
 from megatron.bridge.recipes.kimi_vl.h100 import *
 from megatron.bridge.recipes.llama import *
 from megatron.bridge.recipes.llama.h100 import *
+from megatron.bridge.recipes.minimax import *
+from megatron.bridge.recipes.minimax.h100 import *
 from megatron.bridge.recipes.ministral3 import *
 from megatron.bridge.recipes.ministral3.h100 import *
 from megatron.bridge.recipes.moonlight import *

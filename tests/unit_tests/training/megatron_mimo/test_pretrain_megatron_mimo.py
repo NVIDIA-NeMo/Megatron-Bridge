@@ -14,6 +14,7 @@ def _make_cfg():
     cfg.train.micro_batch_size = 1
     cfg.train.decrease_batch_size_if_needed = False
     cfg.data_parallel_size = 1
+    cfg.rng.seed = 1234
     cfg.checkpoint.load = None
     cfg.checkpoint.pretrained_checkpoint = None
     cfg.checkpoint.non_persistent_ckpt_type = None
@@ -46,23 +47,32 @@ def _make_setup_output(module_to_grid_map):
 
 @patch("megatron.bridge.models.megatron_mimo.build_model.dist")
 def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mock_dist):
-    """_set_per_module_random_seeds should derive TP/PP ranks from grids and call model_parallel_cuda_manual_seed."""
+    """_set_per_module_random_seeds should derive TP/PP/EP/ETP ranks from the active module PGC."""
     from megatron.bridge.models.megatron_mimo.build_model import _set_per_module_random_seeds
 
     mock_dist.get_rank.return_value = 4  # e.g. first rank of vision encoder
 
-    # Build a mock grid: vision ranks [4,8), TP=2, PP=1
     tp_pg = MagicMock()
     pp_pg = MagicMock()
-    mock_dist.get_group_rank.side_effect = lambda pg, rank: {tp_pg: 0, pp_pg: 0}[pg]
+    ep_pg = MagicMock()
+    expt_tp_pg = MagicMock()
+    mock_dist.get_group_rank.side_effect = lambda pg, rank: {
+        tp_pg: 0,
+        pp_pg: 0,
+        ep_pg: 0,
+        expt_tp_pg: 0,
+    }[pg]
 
     grid = MagicMock()
     grid.rank_offset = 4
     grid.size = 4
     grid.is_current_rank_in_grid.return_value = True
-    grid.get_pg.side_effect = lambda dims, view=None: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+    pg_collection = SimpleNamespace(tp=tp_pg, pp=pp_pg, ep=ep_pg, expt_tp=expt_tp_pg)
 
-    megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"vision": grid})
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"vision": grid},
+        pg_collections={"vision": pg_collection},
+    )
 
     with patch(
         "megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed"
@@ -72,29 +82,38 @@ def test_set_megatron_mimo_random_seeds_calls_model_parallel_cuda_manual_seed(mo
         with patch.object(torch.cuda, "device_count", return_value=1):
             _set_per_module_random_seeds(megatron_mimo_infra, seed=42)
 
-        # pp_rank=0, so seed stays 42. tp_rank=0 passed explicitly.
+        # EP=ETP=1 resolves to rank 0/0, preserving dense behavior.
         mock_seed.assert_called_once_with(42, tp_rank=0, ep_rank=0, etp_rank=0)
 
 
 @patch("megatron.bridge.models.megatron_mimo.build_model.dist")
 def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist):
-    """PP rank > 0 should offset the seed by 100 * pp_rank."""
+    """PP rank offsets the seed while EP/ETP ranks come from the active module PGC."""
     from megatron.bridge.models.megatron_mimo.build_model import _set_per_module_random_seeds
 
     mock_dist.get_rank.return_value = 2
 
     tp_pg = MagicMock()
     pp_pg = MagicMock()
-    # tp_rank=1, pp_rank=1
-    mock_dist.get_group_rank.side_effect = lambda pg, rank: {tp_pg: 1, pp_pg: 1}[pg]
+    ep_pg = MagicMock()
+    expt_tp_pg = MagicMock()
+    mock_dist.get_group_rank.side_effect = lambda pg, rank: {
+        tp_pg: 1,
+        pp_pg: 1,
+        ep_pg: 2,
+        expt_tp_pg: 3,
+    }[pg]
 
     grid = MagicMock()
     grid.rank_offset = 0
     grid.size = 4
     grid.is_current_rank_in_grid.return_value = True
-    grid.get_pg.side_effect = lambda dims, view=None: {"tp": tp_pg, "pp": pp_pg}[dims[0]]
+    pg_collection = SimpleNamespace(tp=tp_pg, pp=pp_pg, ep=ep_pg, expt_tp=expt_tp_pg)
 
-    megatron_mimo_infra = SimpleNamespace(module_to_grid_map={"llm": grid})
+    megatron_mimo_infra = SimpleNamespace(
+        module_to_grid_map={"llm": grid},
+        pg_collections={"llm": pg_collection},
+    )
 
     with patch(
         "megatron.bridge.models.megatron_mimo.build_model.tensor_parallel.model_parallel_cuda_manual_seed"
@@ -104,8 +123,70 @@ def test_set_megatron_mimo_random_seeds_offsets_by_pp_rank(mock_dist):
         with patch.object(torch.cuda, "device_count", return_value=1):
             _set_per_module_random_seeds(megatron_mimo_infra, seed=42)
 
-        # seed = 42 + 100 * 1 = 142, tp_rank=1
-        mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=0, etp_rank=0)
+        # seed = 42 + 100 * 1 = 142
+        mock_seed.assert_called_once_with(142, tp_rank=1, ep_rank=2, etp_rank=3)
+
+
+def test_bridge_parallel_state_globals_sets_expert_groups_from_pg_collection():
+    """Compatibility globals should mirror the expert groups on the active module PGC."""
+    from megatron.core import parallel_state as mpu
+
+    from megatron.bridge.models.megatron_mimo.build_model import _bridge_parallel_state_globals
+
+    global_names = (
+        "_TENSOR_MODEL_PARALLEL_GROUP",
+        "_DATA_PARALLEL_GROUP",
+        "_DATA_PARALLEL_GROUP_WITH_CP",
+        "_PIPELINE_MODEL_PARALLEL_GROUP",
+        "_EXPERT_MODEL_PARALLEL_GROUP",
+        "_EXPERT_TENSOR_PARALLEL_GROUP",
+        "_EXPERT_DATA_PARALLEL_GROUP",
+        "_INTRA_PARTIAL_EXPERT_DATA_PARALLEL_GROUP",
+        "_EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP",
+        "_EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP",
+        "_CONTEXT_PARALLEL_GROUP",
+        "_MODEL_PARALLEL_GROUP",
+    )
+    saved_globals = {name: getattr(mpu, name) for name in global_names}
+
+    groups = {
+        name: object()
+        for name in (
+            "tp",
+            "dp",
+            "dp_cp",
+            "pp",
+            "ep",
+            "expt_tp",
+            "expt_dp",
+            "intra_expt_dp",
+            "tp_ep",
+            "tp_ep_pp",
+            "cp",
+            "mp",
+        )
+    }
+    pg_collection = SimpleNamespace(**groups)
+
+    try:
+        _bridge_parallel_state_globals(pg_collection)
+
+        assert mpu._TENSOR_MODEL_PARALLEL_GROUP is groups["tp"]
+        assert mpu._DATA_PARALLEL_GROUP is groups["dp"]
+        assert mpu._DATA_PARALLEL_GROUP_WITH_CP is groups["dp_cp"]
+        assert mpu._PIPELINE_MODEL_PARALLEL_GROUP is groups["pp"]
+        assert mpu._EXPERT_MODEL_PARALLEL_GROUP is groups["ep"]
+        assert mpu._EXPERT_TENSOR_PARALLEL_GROUP is groups["expt_tp"]
+        assert mpu._EXPERT_TENSOR_PARALLEL_GROUP is not groups["tp"]
+        assert mpu._EXPERT_DATA_PARALLEL_GROUP is groups["expt_dp"]
+        assert mpu._INTRA_PARTIAL_EXPERT_DATA_PARALLEL_GROUP is groups["intra_expt_dp"]
+        assert mpu._EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP is groups["tp_ep"]
+        assert mpu._EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP is groups["tp_ep_pp"]
+        assert mpu._CONTEXT_PARALLEL_GROUP is groups["cp"]
+        assert mpu._MODEL_PARALLEL_GROUP is groups["mp"]
+    finally:
+        for name, value in saved_globals.items():
+            setattr(mpu, name, value)
 
 
 def test_get_rng_state_namespaces_key_with_module_name():
@@ -245,7 +326,9 @@ def test_setup_megatron_mimo_asserts_when_constructor_fields_missing(
     model = MagicMock()
 
     with (
-        patch("megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, mock_infra)),
+        patch(
+            "megatron.bridge.models.megatron_mimo.build_megatron_mimo_model", return_value=(model, mock_infra)
+        ) as mock_build_model,
         patch("megatron.bridge.training.setup_megatron_mimo.build_pg_collection_for_schedule"),
         patch("megatron.bridge.training.setup_megatron_mimo.get_module_to_grid_tuple"),
         patch("megatron.bridge.training.setup_megatron_mimo.MultiModulePipelineCommunicator"),
@@ -256,3 +339,6 @@ def test_setup_megatron_mimo_asserts_when_constructor_fields_missing(
         mock_state.cfg = cfg
         with pytest.raises(AssertionError, match="module_to_grid_map must be set"):
             setup_megatron_mimo(state=mock_state)
+
+    mock_build_model.assert_called_once()
+    assert mock_build_model.call_args.kwargs["seed"] == cfg.rng.seed

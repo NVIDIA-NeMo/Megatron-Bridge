@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     from megatron.core.hyper_comm_grid import HyperCommGrid
 
 
-_EXPERT_VIEW = "expert"
+EXPERT_VIEW_NAME = "expert"
 
 
 def build_hypercomm_grids(
@@ -38,44 +38,44 @@ def build_hypercomm_grids(
 
     grids: Dict[str, HyperCommGrid] = {}
     for module_name, parallelism in megatron_mimo_parallelism_config.module_parallelisms.items():
-        tp = parallelism.tensor_model_parallel_size
-        cp = parallelism.context_parallel_size
-        etp = parallelism.expert_tensor_parallel_size
-        pp = parallelism.pipeline_model_parallel_size
-        dp = parallelism.data_parallel_size
-        if dp is None:
-            raise ValueError(f"data_parallel_size must be finalized before building grids for module '{module_name}'.")
-
-        num_ranks = tp * cp * etp * pp * dp
-        # Dense (base) view factors the module's ranks without expert parallelism; the expert-tensor
-        # ranks fold into data parallelism here (dp_base == etp * dp).
-        dp_base = num_ranks // (tp * cp * pp)
-        # Expert view re-factors the same ranks. MegatronMIMO models only expert-tensor parallelism
-        # (expt_tp == etp); expert-model parallelism is not exposed (ep == 1), so expt_dp == tp * cp * dp.
-        expt_dp = num_ranks // (etp * pp)
-
+        shape = [
+            parallelism.tensor_model_parallel_size,
+            parallelism.context_parallel_size,
+            parallelism.data_parallel_size,
+            parallelism.pipeline_model_parallel_size,
+        ]
         grid = HyperCommGrid(
-            shape=[tp, cp, dp_base, pp],
+            shape=shape,
             dim_names=["tp", "cp", "dp", "pp"],
             rank_offset=parallelism.rank_offset,
             backend="nccl",
         )
-        # Register the expert factorization over the same rank span; pp is shared with the base view.
-        # Required by mcore's get_mimo_optimizer, which reads expert groups from a dedicated view.
         grid.register_view(
-            _EXPERT_VIEW,
-            shape=[etp, 1, expt_dp, pp],
+            EXPERT_VIEW_NAME,
+            shape=[
+                parallelism.expert_tensor_parallel_size,
+                parallelism.expert_model_parallel_size,
+                parallelism.expert_data_parallel_size,
+                parallelism.pipeline_model_parallel_size,
+            ],
             dim_names=["expt_tp", "ep", "expt_dp", "pp"],
             shared_dims=["pp"],
         )
 
-        # Dense process groups (base view).
-        for dim in ("tp", "cp", "pp", "dp"):
-            _ = grid.create_pg([dim])
-        _ = grid.create_pg(["dp", "cp"])
-        _ = grid.create_pg(["tp", "pp"])
-        _ = grid.create_pg(["tp", "cp", "dp", "pp"])
-        # Expert process groups (expert view).
+        # Create all required process groups in a stable order on every rank.
+        for dims in (
+            ["tp"],
+            ["cp"],
+            ["pp"],
+            ["dp"],
+            ["dp", "cp"],
+            ["tp", "cp"],
+            ["tp", "pp"],
+            ["tp", "dp", "cp"],
+            ["tp", "cp", "dp", "pp"],
+        ):
+            _ = grid.create_pg(dims)
+
         for dims in (
             ["ep"],
             ["expt_tp"],
@@ -83,7 +83,7 @@ def build_hypercomm_grids(
             ["expt_tp", "ep"],
             ["expt_tp", "ep", "pp"],
         ):
-            _ = grid.create_pg(dims, view=_EXPERT_VIEW)
+            _ = grid.create_pg(dims, view=EXPERT_VIEW_NAME)
 
         grids[module_name] = grid
 
@@ -91,9 +91,9 @@ def build_hypercomm_grids(
 
 
 def populate_embedding_and_position_groups(
-    pp_group: dist.ProcessGroup,
+    pp_rank_groups: list[list[int]] | None,
 ) -> Tuple[Optional[dist.ProcessGroup], Optional[dist.ProcessGroup]]:
-    """Create embedding-related process groups from PP group ranks.
+    """Create embedding-related process groups from globally enumerated PP ranks.
 
     Following MCore semantics:
     - pos_embd_pg: Only rank 0 of PP (first stage) - for position embeddings
@@ -103,27 +103,36 @@ def populate_embedding_and_position_groups(
     Must be called on all ranks that could participate.
 
     Args:
-        pp_group: The pipeline parallel process group.
+        pp_rank_groups: Every pipeline-parallel rank group in global creation order.
 
     Returns:
-        Tuple of (pos_embd_pg, embd_pg). Returns (None, None) if pp_group is None.
+        Tuple of process groups for the current rank. Returns (None, None) when
+        no pipeline-parallel rank groups are provided.
     """
-    if pp_group is None:
+    if not pp_rank_groups:
         return None, None
 
-    pp_ranks = sorted(dist.get_process_group_ranks(pp_group))
+    current_rank = dist.get_rank()
+    local_pos_embd_pg = None
+    local_embd_pg = None
+    for pp_rank_group in pp_rank_groups:
+        pp_ranks = sorted(pp_rank_group)
 
-    # Position embeddings only on first PP stage
-    pos_embd_ranks = [pp_ranks[0]]
-    pos_embd_pg = dist.new_group(ranks=pos_embd_ranks)
+        # Every global rank must create every derived group in the same order.
+        pos_embd_ranks = [pp_ranks[0]]
+        pos_embd_pg = dist.new_group(ranks=pos_embd_ranks)
 
-    # Word embeddings on first and last PP stages (for tied embeddings)
-    embd_ranks = [pp_ranks[0]]
-    if len(pp_ranks) > 1 and pp_ranks[-1] != pp_ranks[0]:
-        embd_ranks.append(pp_ranks[-1])
-    embd_pg = dist.new_group(ranks=embd_ranks)
+        embd_ranks = [pp_ranks[0]]
+        if len(pp_ranks) > 1 and pp_ranks[-1] != pp_ranks[0]:
+            embd_ranks.append(pp_ranks[-1])
+        embd_pg = dist.new_group(ranks=embd_ranks)
 
-    return pos_embd_pg, embd_pg
+        if current_rank in pos_embd_ranks:
+            local_pos_embd_pg = pos_embd_pg
+        if current_rank in embd_ranks:
+            local_embd_pg = embd_pg
+
+    return local_pos_embd_pg, local_embd_pg
 
 
 def is_pp_first_stage(pp_group: Optional[dist.ProcessGroup]) -> bool:

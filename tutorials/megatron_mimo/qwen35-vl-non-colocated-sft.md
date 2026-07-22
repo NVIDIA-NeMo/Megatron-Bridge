@@ -64,7 +64,7 @@ different TP/PP/DP layouts.
 
 **Scope.** This tutorial is hands-on for the MegatronMIMO path. It covers
 **dense** Qwen3.5-VL, two components (`language` + `images`), and
-**non-colocated** full-parameter SFT on Hugging Face conversation data, using
+**non-colocated** full-parameter SFT on direct Hugging Face SFT data, using
 the reference 27B layout. In this tutorial, the **reference 27B layout** means
 the tested, known-good recipe for this workflow: it fits in memory and converges.
 Performance is a first-class part of the tutorial: the results section reports
@@ -285,7 +285,7 @@ step time over iterations 3–20.
 of ranks actually doing work (16 for the baseline, 17 for MIMO) — and the
 wall-clock step-time reduction.
 
-The results use the Hugging Face VLM dataset makers currently supported by
+The results use Hugging Face VLM sources and schema adapters currently supported by
 Megatron Bridge for this path. All three are real datasets with one image per
 sample: CORD-v2 is receipt parsing with variable image resolutions, RDR is
 image captioning with a fixed 768×768 image shape, and MedPix-VQA is medical VQA
@@ -347,7 +347,7 @@ supported or tested, so you can avoid paths that are not expected to work:
 - **MoE variants** — only dense Qwen3.5-VL is wired up.
 - **MTP** — the example disables Multi-Token Prediction layers.
 - **Packed sequences** — MIMO packed-sequence behavior is untested.
-- **Energon datasets** — use the HF conversation provider.
+- **Energon datasets** — use the direct HF SFT Config + Builder path.
 - **Colocated layouts** — only non-colocated (disjoint ranks) is covered here.
 
 ## 7. References

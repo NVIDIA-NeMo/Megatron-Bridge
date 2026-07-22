@@ -14,6 +14,7 @@
 
 import logging
 import os
+import shlex
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -26,6 +27,53 @@ DEFAULT_NEMO_CACHE_HOME = Path.home() / ".cache" / "nemo"
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
 
+KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
+
+
+def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
+    """Wrap a task with per-rank GPU-local NUMA binding without dropping task metadata."""
+    training_command = shlex.join(task.to_command(with_entrypoint=True))
+    return run.Script(
+        env=task.env.copy(),
+        metadata=task.metadata.copy(),
+        inline=f"""
+set -euo pipefail
+
+: "${{LOCAL_RANK:?LOCAL_RANK must be set by torchrun}}"
+command -v nvidia-smi >/dev/null || {{ echo "[numactl_local] nvidia-smi not found" >&2; exit 1; }}
+command -v numactl >/dev/null || {{ echo "[numactl_local] numactl not found" >&2; exit 1; }}
+
+PCI_BUS=$(nvidia-smi -i "$LOCAL_RANK" --query-gpu=pci.bus_id --format=csv,noheader 2>/dev/null \
+    | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]' | sed -E 's/^00000000:/0000:/') || PCI_BUS=""
+NUMA_FILE="/sys/bus/pci/devices/$PCI_BUS/numa_node"
+
+if [[ -z "$PCI_BUS" || ! -r "$NUMA_FILE" ]]; then
+    echo "[numactl_local] cannot resolve NUMA file for local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS" >&2
+    exit 1
+fi
+
+NUMA_NODE=$(<"$NUMA_FILE")
+if [[ ! "$NUMA_NODE" =~ ^[0-9]+$ ]]; then
+    echo "[numactl_local] invalid NUMA node for local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE" >&2
+    exit 1
+fi
+
+echo "[numactl_local] host=$(hostname) rank=${{RANK:-unknown}} local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE"
+exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command}
+""",
+    )
+
+
+def _kubeflow_numa_binding_enabled(env_vars: Dict[str, str]) -> bool:
+    """Return whether the opt-in Kubeflow NUMA wrapper is enabled."""
+    return str(env_vars.get(KUBEFLOW_NUMA_BINDING_ENV, "")).lower() in {
+        "1",
+        "on",
+        "true",
+        "yes",
+    }
+
+
 # NOTE: If you update this template,
 # PLEASE test it by submitting a job to GPU/node/cluster and verifying the sbatch and bash scripts.
 INLINE_TEMPLATE = r"""
@@ -36,17 +84,10 @@ set -euo pipefail
 bash -c '{{ pre_cmds }} {{ command }}'
 """
 
-PERF_ENV_VARS = {
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
+OFFLINE_BENCHMARK_ENV_VARS = {
     "TRANSFORMERS_OFFLINE": "1",  # Default for benchmark runs that mostly use NullTokenizer.
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
-    "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
-    "NVTE_NORM_FWD_USE_CUDNN": "1",
-    "NVTE_NORM_BWD_USE_CUDNN": "1",
-    "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-    "NCCL_GRAPH_REGISTER": "0",
 }
 
 
@@ -102,7 +143,7 @@ def slurm_executor(
                 f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
             )
 
-    perf_env = PERF_ENV_VARS.copy()
+    perf_env = OFFLINE_BENCHMARK_ENV_VARS.copy()
 
     if wandb_key is not None:
         perf_env["WANDB_API_KEY"] = wandb_key
@@ -251,12 +292,10 @@ def kubeflow_executor(
     Returns:
         Configured ``run.KubeflowExecutor`` (or ``run.PyTorchJobExecutor`` for v1).
     """
-    # K8s/Kubeflow jobs deliberately do NOT inherit PERF_ENV_VARS. That dict was
-    # tuned for the Slurm perf-benchmark path; the verified standalone K8s launch
-    # (real_trainjob.py) carried its own minimal env. On Kubeflow the cluster
-    # supplies all NCCL/fabric/perf tuning explicitly via KUBEFLOW_ENV_LIST_JSON
-    # (-> custom_env_vars / env_list) in ci_cluster_config.yml, so start empty and
-    # only layer on secrets + whatever the cluster passed in.
+    # K8s/Kubeflow jobs deliberately do NOT inherit the Slurm orchestration
+    # defaults in OFFLINE_BENCHMARK_ENV_VARS. Recipe-owned process settings are applied by
+    # the rank-local bootstrap; the cluster supplies fabric
+    # tuning explicitly via KUBEFLOW_ENV_LIST_JSON (-> custom_env_vars / env_list).
     env_vars: Dict[str, str] = {}
     if wandb_key is not None:
         env_vars["WANDB_API_KEY"] = wandb_key

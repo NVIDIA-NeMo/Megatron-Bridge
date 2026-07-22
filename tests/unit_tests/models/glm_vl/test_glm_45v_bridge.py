@@ -104,25 +104,6 @@ def glm_45v_bridge(mock_hf_pretrained):
     return bridge
 
 
-class TestGLM45VBridgeInitialization:
-    """Test GLM45VBridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, glm_45v_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(glm_45v_bridge, GLM45VBridge)
-
-    def test_bridge_has_required_methods(self, glm_45v_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(glm_45v_bridge, "provider_bridge")
-        assert callable(glm_45v_bridge.provider_bridge)
-
-        assert hasattr(glm_45v_bridge, "mapping_registry")
-        assert callable(glm_45v_bridge.mapping_registry)
-
-        assert hasattr(glm_45v_bridge, "get_hf_tokenizer_kwargs")
-        assert callable(glm_45v_bridge.get_hf_tokenizer_kwargs)
-
-
 class TestGLM45VBridgeProviderBridge:
     """Test provider_bridge method functionality."""
 

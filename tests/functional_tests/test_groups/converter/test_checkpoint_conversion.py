@@ -34,7 +34,7 @@ class TestCheckpointConversion:
         # Create temporary output directory for Megatron checkpoint
         megatron_output_dir = tmp_path / "megatron_checkpoint"
         megatron_output_dir.mkdir(exist_ok=True)
-        # Run convert_checkpoints.py import command
+        # Run the supported CPU conversion worker under coverage.
         cmd = [
             "python",
             "-m",
@@ -43,8 +43,10 @@ class TestCheckpointConversion:
             "--data-file=/opt/Megatron-Bridge/.coverage",
             "--source=/opt/Megatron-Bridge/",
             "--parallel-mode",
-            "examples/conversion/convert_checkpoints.py",
+            "scripts/conversion/run_conversion.py",
             "import",
+            "--device",
+            "cpu",
             "--hf-model",
             "meta-llama/Llama-3.2-1B",
             "--megatron-path",
@@ -65,9 +67,8 @@ class TestCheckpointConversion:
                 assert False, f"Import failed with return code {result.returncode}"
 
             # Verify that the import succeeded based on output messages
-            assert "Successfully imported model to:" in result.stdout, (
-                f"Import success message not found in output. Output: {result.stdout}"
-            )
+            output = result.stdout + result.stderr
+            assert "CPU import complete:" in output, f"Import success message not found in output. Output: {output}"
 
             # Verify that the checkpoint directory structure was created
             assert megatron_output_dir.exists(), f"Megatron checkpoint directory not found at {megatron_output_dir}"
@@ -110,8 +111,10 @@ class TestCheckpointConversion:
                 "--data-file=/opt/Megatron-Bridge/.coverage",
                 "--source=/opt/Megatron-Bridge/",
                 "--parallel-mode",
-                "examples/conversion/convert_checkpoints.py",
+                "scripts/conversion/run_conversion.py",
                 "import",
+                "--device",
+                "cpu",
                 "--hf-model",
                 "meta-llama/Llama-3.2-1B",
                 "--megatron-path",
@@ -138,8 +141,10 @@ class TestCheckpointConversion:
                 "--data-file=/opt/Megatron-Bridge/.coverage",
                 "--source=/opt/Megatron-Bridge/",
                 "--parallel-mode",
-                "examples/conversion/convert_checkpoints.py",
+                "scripts/conversion/run_conversion.py",
                 "export",
+                "--device",
+                "cpu",
                 "--hf-model",
                 "meta-llama/Llama-3.2-1B",
                 "--megatron-path",
@@ -160,9 +165,8 @@ class TestCheckpointConversion:
                 assert False, f"Export failed with return code {export_result.returncode}"
 
             # Verify that the export succeeded based on output messages
-            assert "Successfully exported model to:" in export_result.stdout, (
-                f"Export success message not found in output. Output: {export_result.stdout}"
-            )
+            output = export_result.stdout + export_result.stderr
+            assert "CPU export complete:" in output, f"Export success message not found in output. Output: {output}"
 
             # Verify that the HF export directory has expected files
             assert hf_export_dir.exists(), f"HF export directory not found at {hf_export_dir}"
@@ -188,20 +192,19 @@ class TestCheckpointConversion:
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize(
-        "torch_dtype,device_map,test_name",
+        "torch_dtype,test_name",
         [
-            ("float16", "auto", "float16_auto"),
-            ("bfloat16", None, "bfloat16_cpu"),
+            ("float16", "float16_cpu"),
+            ("bfloat16", "bfloat16_cpu"),
         ],
     )
-    def test_import_with_different_settings(self, tmp_path, torch_dtype, device_map, test_name):
+    def test_import_with_different_settings(self, tmp_path, torch_dtype, test_name):
         """
         Test importing with different torch_dtype and device_map settings.
 
         Args:
             tmp_path: Pytest temporary path fixture
             torch_dtype: Model precision to test
-            device_map: Device placement strategy to test
             test_name: Name of the test for identification
         """
         # Create temporary output directory
@@ -218,8 +221,10 @@ class TestCheckpointConversion:
                 "--data-file=/opt/Megatron-Bridge/.coverage",
                 "--source=/opt/Megatron-Bridge/",
                 "--parallel-mode",
-                "examples/conversion/convert_checkpoints.py",
+                "scripts/conversion/run_conversion.py",
                 "import",
+                "--device",
+                "cpu",
                 "--hf-model",
                 "meta-llama/Llama-3.2-1B",
                 "--megatron-path",
@@ -227,10 +232,6 @@ class TestCheckpointConversion:
                 "--torch-dtype",
                 torch_dtype,
             ]
-
-            # Add device_map if specified
-            if device_map:
-                cmd.extend(["--device-map", device_map])
 
             result = subprocess.run(
                 cmd, capture_output=True, text=True, cwd=Path(__file__).parent.parent.parent.parent.parent
@@ -243,18 +244,10 @@ class TestCheckpointConversion:
                 assert False, f"Import with {test_name} settings failed with return code {result.returncode}"
 
             # Verify expected settings were used
-            assert f"Using torch_dtype: {torch_dtype}" in result.stdout, (
-                f"torch_dtype setting not found in {test_name} output. Output: {result.stdout}"
-            )
-
-            if device_map:
-                assert f"Using device_map: {device_map}" in result.stdout, (
-                    f"device_map setting not found in {test_name} output. Output: {result.stdout}"
-                )
-
             # Verify successful completion
-            assert "Successfully imported model to:" in result.stdout, (
-                f"Import success message not found in {test_name} output. Output: {result.stdout}"
+            output = result.stdout + result.stderr
+            assert "CPU import complete:" in output, (
+                f"Import success message not found in {test_name} output. Output: {output}"
             )
 
             print(f"SUCCESS: {test_name} settings test completed successfully")

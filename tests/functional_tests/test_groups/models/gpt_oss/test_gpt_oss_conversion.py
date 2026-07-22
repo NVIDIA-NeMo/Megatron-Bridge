@@ -228,8 +228,10 @@ class TestGptOssConversion:
             mcore_dir = tmp_path / f"mcore_mxfp4_{parallel_name}"
             mcore_dir.mkdir(exist_ok=True)
             import_cmd = common_dist_args + [
-                "examples/conversion/convert_checkpoints_multi_gpu.py",
+                "scripts/conversion/run_conversion.py",
                 "import",
+                "--device",
+                "gpu",
                 "--hf-model",
                 toy_path,
                 "--megatron-path",

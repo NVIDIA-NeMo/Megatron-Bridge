@@ -49,14 +49,14 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import HF → Megatron
 To import the HF model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /models/gemma-3-1b-it
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model google/gemma-3-1b-it \
 --megatron-path /results/gemma3_1b/checkpoints/iter_00001000 \
 --hf-path ./gemma3-hf-export
@@ -156,8 +156,9 @@ config = gemma3_1b_peft_config(
 **Full Finetuning:**
 ```bash
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
-  --pretrained-checkpoint /models/gemma-3-1b-it \
   --recipe gemma3_1b_sft_config \
+  --mode sft \
+  checkpoint.pretrained_checkpoint=/models/gemma-3-1b-it \
   train.global_batch_size=64 \
   train.train_iters=1000 \
   checkpoint.save=$SAVE_DIR/gemma3_1b_finetune
@@ -166,15 +167,15 @@ uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_r
 **LoRA Finetuning:**
 ```bash
 uv run python -m torch.distributed.run --nproc-per-node=8 scripts/training/run_recipe.py \
-  --pretrained-checkpoint /models/gemma-3-1b-it \
   --recipe gemma3_1b_peft_config \
-  --peft_scheme lora \
+  --mode lora \
+  checkpoint.pretrained_checkpoint=/models/gemma-3-1b-it \
   train.global_batch_size=128 \
   checkpoint.save=$SAVE_DIR/gemma3_1b_lora
 ```
 
 ## Examples
-- Checkpoint import/export: [examples/conversion/convert_checkpoints.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- Checkpoint import/export: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - Generate text (HF→Megatron): [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 
 ## Hugging Face Model Cards

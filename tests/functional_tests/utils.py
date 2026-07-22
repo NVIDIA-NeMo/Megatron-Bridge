@@ -374,6 +374,9 @@ def autoconfig_roundtrip(
         original = original.to("cuda:0")
         exported = exported.to("cuda:0")
 
+    original.eval()
+    exported.eval()
+
     assert_weights_equal(original, exported)
     assert_forward_pass_equal(original, exported, atol=atol)
 

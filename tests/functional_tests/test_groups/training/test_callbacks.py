@@ -59,6 +59,7 @@ class TrackingCallback(Callback):
                 "has_grad_norm": context.grad_norm is not None,
                 "has_skipped_iter": context.skipped_iter is not None,
                 "has_total_loss_dict": context.total_loss_dict is not None,
+                "model_in_training_mode": any(model.training for model in context.model),
             }
         )
 
@@ -351,6 +352,14 @@ class TestCallbacksEndToEnd:
 
         for snapshot in tracking_callback.get_snapshots_for_event("on_test_end"):
             assert snapshot["has_total_loss_dict"], "on_test_end missing total_loss_dict"
+
+        for event_name in ["on_eval_start", "on_eval_end", "on_test_start", "on_test_end"]:
+            for snapshot in tracking_callback.get_snapshots_for_event(event_name):
+                assert not snapshot["model_in_training_mode"], f"{event_name} must run in evaluation mode"
+
+        for event_name in training_events:
+            for snapshot in tracking_callback.get_snapshots_for_event(event_name):
+                assert snapshot["model_in_training_mode"], f"{event_name} must run in training mode"
 
         # Verify user_state persistence (UserStateCallback)
         assert user_state_callback.final_count == train_iters, (

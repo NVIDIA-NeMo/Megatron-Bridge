@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig, userbuffers_bf16_h100_h12288_tp4_mbs1_seqlen2048
 from megatron.bridge.training.config import ConfigContainer
@@ -133,6 +134,10 @@ def gpt3_175b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

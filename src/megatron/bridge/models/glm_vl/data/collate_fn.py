@@ -16,20 +16,18 @@
 
 import torch
 
-from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import (
-    build_mcore_thd_sequence_batch_from_rows,
-    prepare_padded_or_packed_sequence_batch,
-    use_processor_right_padding,
-)
-from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
-from megatron.bridge.data.vlm_processing import (
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
+from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
+from megatron.bridge.data.collators.visual import THW_GRID_VISUAL_KEYS
+from megatron.bridge.data.conversation_processing import (
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
     infer_assistant_mask_boundary_config,
     shared_chat_template_kwargs_from_examples,
 )
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
+from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -164,7 +162,7 @@ def glm4v_collate_fn(
     batch["labels"] = labels.masked_fill(loss_mask == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask
 
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

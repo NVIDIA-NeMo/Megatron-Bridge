@@ -100,7 +100,8 @@ Run the generic recipe launcher and override config keys directly:
 ```bash
 uv run python scripts/training/run_recipe.py \
   --recipe llama3_8b_pretrain_2gpu_h100_bf16_config \
-  --dataset llm-pretrain \
+  --mode pretrain \
+  --dataset mock \
   train.micro_batch_size=2 \
   train.global_batch_size=128 \
   model.num_layers=32 model.hidden_size=4096 model.num_attention_heads=32 \

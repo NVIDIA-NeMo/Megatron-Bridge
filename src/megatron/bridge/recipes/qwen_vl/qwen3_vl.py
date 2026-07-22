@@ -17,10 +17,6 @@
 from __future__ import annotations
 
 from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
-    QwenVLEnergonProvider,
-    _make_energon_dataset,
-)
-from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
     qwen3_vl_8b_peft_1gpu_h100_bf16_config as qwen3_vl_8b_peft_config,
 )
 from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import (
@@ -63,5 +59,4 @@ __all__ = [
     "qwen3_vl_8b_peft_energon_config",
     "qwen3_vl_8b_pretrain_mock_config",
     "qwen3_vl_8b_sft_config",
-    "QwenVLEnergonProvider",
 ]

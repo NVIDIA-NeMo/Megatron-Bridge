@@ -17,6 +17,8 @@ from dataclasses import fields as dataclass_fields
 from dataclasses import is_dataclass
 from typing import Any, Mapping
 
+from megatron.core.quantization.quant_config import GlobMatcher, Matcher, RecipeConfig
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.training.config.container import ConfigContainerBase as _MCoreConfigContainerBase
 from megatron.training.config.utils import (
     _get_init_false_fields,  # noqa: F401
@@ -41,9 +43,51 @@ class _ConfigContainerBase(_MCoreConfigContainerBase):
 
     @classmethod
     def _convert_value_to_dict(cls, value: Any) -> Any:
+        if isinstance(value, PipelineParallelLayerLayout):
+            return cls._convert_value_to_dict(value.input_data)
+        if isinstance(value, RecipeConfig) and not hasattr(value, "to_cfg_dict"):
+            if type(value) is not RecipeConfig:
+                recipe_type = f"{type(value).__module__}.{type(value).__qualname__}"
+                raise TypeError(
+                    f"Unsupported quantization recipe type: {recipe_type}. "
+                    "RecipeConfig subclasses must implement to_cfg_dict()."
+                )
+            return cls._convert_recipe_config_to_dict(value)
         if isinstance(value, PreTrainedConfig) and not hasattr(value, "to_cfg_dict"):
             return cls._convert_pretrained_config_to_dict(value, include_target=True)
         return super()._convert_value_to_dict(value)
+
+    @classmethod
+    def _convert_recipe_config_to_dict(cls, value: RecipeConfig) -> dict[str, Any]:
+        """Convert an MCore quantization recipe to an instantiable mapping."""
+        serialized_matchers: list[dict[str, Any]] = []
+        for matcher in value.matchers:
+            serialized_matchers.append(cls._convert_recipe_matcher_to_dict(matcher))
+
+        return {
+            "_target_": f"{RecipeConfig.__module__}.{RecipeConfig.__qualname__}",
+            "matchers": serialized_matchers,
+            "config_dict": cls._convert_value_to_dict(value.configs),
+        }
+
+    @classmethod
+    def _convert_recipe_matcher_to_dict(cls, matcher: Matcher) -> dict[str, Any]:
+        """Convert a quantization recipe matcher to an instantiable mapping."""
+        if type(matcher) is GlobMatcher:
+            return {
+                "_target_": f"{GlobMatcher.__module__}.{GlobMatcher.__qualname__}",
+                "pattern": matcher.pattern,
+                "config_key": matcher.config_key,
+            }
+
+        serialized_matcher = super()._convert_value_to_dict(matcher)
+        if not isinstance(serialized_matcher, dict) or "_target_" not in serialized_matcher:
+            matcher_type = f"{type(matcher).__module__}.{type(matcher).__qualname__}"
+            raise TypeError(
+                f"Unsupported quantization recipe matcher type: {matcher_type}. "
+                "Custom matchers must be dataclasses or implement to_cfg_dict()."
+            )
+        return serialized_matcher
 
     @classmethod
     def _convert_pretrained_config_to_dict(

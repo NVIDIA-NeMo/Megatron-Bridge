@@ -138,7 +138,7 @@ class _MTPDenseLayerSpecsList(list):
         return super().__getitem__(idx)
 
 
-def _build_step35_layer_spec(cfg, **kw):
+def build_step35_layer_spec(cfg, **kw):
     """Per-layer spec for Step3.5: dense for layers 0-2 and 45-47, MoE for 3-44.
 
     Also rewrites every main-decoder layer's ModuleSpec to use
@@ -239,14 +239,10 @@ class Step35Bridge(MegatronModelBridge):
         """
         provider = super().provider_bridge(hf_pretrained)
 
-        if (
-            getattr(provider, "head_wise_attn_gate", False)
-            and getattr(provider, "attention_output_gate", False)
-            and _mcore_supports_head_wise_attn_gate()
-        ):
+        if getattr(provider, "head_wise_attn_gate", False):
             # Native head-wise gates and the full-head output gate are mutually
-            # exclusive. Older MCore versions need the output-gate fallback.
-            provider.attention_output_gate = False
+            # exclusive; MCore without native support needs the output-gate fallback.
+            provider.attention_output_gate = not _mcore_supports_head_wise_attn_gate()
 
         hf_config = hf_pretrained.config
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
@@ -347,11 +343,11 @@ class Step35Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            # _build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
+            # build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
             # specs for the main decoder, and wraps layer_specs with _MTPDenseLayerSpecsList
             # so that get_gpt_mtp_block_spec_for_backend picks up a dense spec for MTP layers
             # (45-47 are not in moe_layers_enum).
-            provider.transformer_layer_spec = _build_step35_layer_spec
+            provider.transformer_layer_spec = build_step35_layer_spec
 
         return provider
 

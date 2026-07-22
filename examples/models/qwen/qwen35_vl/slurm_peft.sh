@@ -161,14 +161,14 @@ CLI_OVERRIDES="\
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${RECIPE}_${DATASET_NAME}_lora \
-    dataset.maker_name=make_${DATASET_NAME}_dataset \
+    dataset.source.dataset_name=${DATASET_NAME} \
     dataset.seq_length=$SEQ_LENGTH"
 
 # To use local processor assets, set dataset.hf_processor_path in CLI_OVERRIDES.
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
     --step_func qwen3_vl_step \
-    --peft_scheme lora \
+    --mode lora \
     $CLI_OVERRIDES"
 
 echo "Executing command..."

@@ -27,11 +27,12 @@ Usage (run from project root, with uv run):
   diff -ru /tmp/configs_main/kimi_k2_pretrain_256gpu_gb300_fp8cs.yaml \
             /tmp/configs_pr/kimi_k2_pretrain_256gpu_gb300_fp8cs.yaml
 
-Old mode uses config variant ``v2`` by default, matching the performance CLI
-default. Both modes serialize the ConfigContainer via its to_dict() /
+Both modes use the suffix-less flat recipe by default. They serialize the ConfigContainer via its to_dict() /
 dataclasses.asdict path (same as save_config_filepath in production), so the
 YAML is directly comparable.
 """
+
+from __future__ import annotations
 
 import argparse
 import importlib
@@ -122,20 +123,20 @@ COMBOS = [
     ("llama", "llama3_70b", "sft", 32, "gb200", "fp8_mx"),
     ("llama", "llama3_70b", "sft", 32, "h100", "bf16"),
     ("llama", "llama3_70b", "sft", 32, "h100", "fp8_cs"),
-    ("llama", "llama3_70b", "lora", 8, "gb300", "bf16"),
-    ("llama", "llama3_70b", "lora", 8, "gb300", "fp8_cs"),
-    ("llama", "llama3_70b", "lora", 8, "gb300", "fp8_mx"),
-    ("llama", "llama3_70b", "lora", 8, "gb200", "bf16"),
-    ("llama", "llama3_70b", "lora", 8, "gb200", "fp8_cs"),
-    ("llama", "llama3_70b", "lora", 8, "gb200", "fp8_mx"),
-    ("llama", "llama3_70b", "lora", 8, "b300", "bf16"),
-    ("llama", "llama3_70b", "lora", 8, "b300", "fp8_cs"),
-    ("llama", "llama3_70b", "lora", 8, "b300", "fp8_mx"),
-    ("llama", "llama3_70b", "lora", 8, "b200", "bf16"),
-    ("llama", "llama3_70b", "lora", 8, "b200", "fp8_cs"),
-    ("llama", "llama3_70b", "lora", 8, "b200", "fp8_mx"),
-    ("llama", "llama3_70b", "lora", 8, "h100", "bf16"),
-    ("llama", "llama3_70b", "lora", 8, "h100", "fp8_cs"),
+    ("llama", "llama3_70b", "peft", 8, "gb300", "bf16"),
+    ("llama", "llama3_70b", "peft", 8, "gb300", "fp8_cs"),
+    ("llama", "llama3_70b", "peft", 8, "gb300", "fp8_mx"),
+    ("llama", "llama3_70b", "peft", 8, "gb200", "bf16"),
+    ("llama", "llama3_70b", "peft", 8, "gb200", "fp8_cs"),
+    ("llama", "llama3_70b", "peft", 8, "gb200", "fp8_mx"),
+    ("llama", "llama3_70b", "peft", 8, "b300", "bf16"),
+    ("llama", "llama3_70b", "peft", 8, "b300", "fp8_cs"),
+    ("llama", "llama3_70b", "peft", 8, "b300", "fp8_mx"),
+    ("llama", "llama3_70b", "peft", 8, "b200", "bf16"),
+    ("llama", "llama3_70b", "peft", 8, "b200", "fp8_cs"),
+    ("llama", "llama3_70b", "peft", 8, "b200", "fp8_mx"),
+    ("llama", "llama3_70b", "peft", 8, "h100", "bf16"),
+    ("llama", "llama3_70b", "peft", 8, "h100", "fp8_cs"),
     # Llama 3.1 405B
     ("llama", "llama31_405b", "pretrain", 256, "gb300", "bf16"),
     ("llama", "llama31_405b", "pretrain", 256, "gb300", "fp8_cs"),
@@ -296,21 +297,19 @@ COMBOS = [
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "b200", "fp8_cs"),
     ("nemotronh", "nemotronh_56b", "pretrain", 64, "h100", "fp8_cs"),
     # GPT-OSS 20B
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "nvfp4", "v2"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "fp8_mx", "v2"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "nvfp4", "v2"),
-    # GPT-OSS 20B GB200/GB300 FP8-MX v3 supersedes the older v1/v2 presets.
-    # Keep "v3" here for legacy lookup; flat recipe names omit the suffix.
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb200", "fp8_mx", "v3"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "nvfp4", "v2"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb300", "fp8_mx", "v3"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "nvfp4", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "fp8_mx", "v1"),
-    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "vr200", "nvfp4", "v2"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "b300", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "b300", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb200", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb200", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb200", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "gb300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 72, "gb300", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 512, "gb300", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "nvfp4"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 8, "vr200", "fp8_mx"),
+    ("gpt_oss", "gpt_oss_20b", "pretrain", 64, "vr200", "nvfp4"),
     # GPT-OSS 120B
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "bf16"),
     ("gpt_oss", "gpt_oss_120b", "pretrain", 64, "gb300", "fp8_mx"),
@@ -394,7 +393,7 @@ COMBOS = [
     ("qwen_vl", "qwen35_vl_397b_a17b", "pretrain", 64, "b200", "fp8_mx"),
     ("qwen_vl", "qwen35_vl_397b_a17b", "pretrain", 256, "h100", "bf16"),
     ("qwen_vl", "qwen35_vl_397b_a17b", "pretrain", 256, "h100", "fp8_cs"),
-    # Additional flattened legacy coverage
+    # Additional flattened coverage
     ("deepseek", "deepseek_v3", "pretrain", 128, "vr200", "bf16"),
     ("deepseek", "deepseek_v3", "pretrain", 128, "vr200", "fp8_cs"),
     ("deepseek", "deepseek_v3", "pretrain", 128, "vr200", "fp8_mx"),
@@ -507,20 +506,21 @@ def load_old_recipe(
     num_gpus: int,
     gpu: str,
     precision: str,
-    config_variant: str,
+    config_variant: str | None,
 ):
     """Load recipe using the OLD scripts/performance/configs/ path (main branch)."""
     sys.path.insert(0, str(Path(__file__).parent))
     from utils.overrides import set_post_overrides
     from utils.utils import get_perf_optimized_recipe
 
+    variant_kwargs = {} if config_variant is None else {"config_variant": config_variant}
     cfg = get_perf_optimized_recipe(
         model_family_name=family,
         model_recipe_name=recipe,
         train_task=task,
         gpu=gpu,
         compute_dtype=precision,
-        config_variant=config_variant,
+        **variant_kwargs,
     )
     return set_post_overrides(
         cfg,
@@ -530,13 +530,13 @@ def load_old_recipe(
         num_gpus,
         precision,
         task,
-        config_variant=config_variant,
+        **variant_kwargs,
     )
 
 
 def _flat_recipe_variant_suffix(config_variant: str | None) -> str:
     """Return the suffix used in flat perf recipe function names."""
-    return f"_{config_variant}" if config_variant and config_variant not in {"v1", "v2", "v3"} else ""
+    return "" if config_variant is None else f"_{config_variant}"
 
 
 def load_new_recipe(
@@ -546,7 +546,7 @@ def load_new_recipe(
     num_gpus: int,
     gpu: str,
     precision: str,
-    config_variant: str,
+    config_variant: str | None,
 ):
     """Load recipe using the NEW flat perf recipe path (PR branch)."""
     precision_map = {
@@ -567,18 +567,18 @@ def load_new_recipe(
     return _apply_flat_recipe_runtime_overrides(fn(), precision)
 
 
-def _resolve_combo(combo: tuple, default_config_variant: str):
+def _resolve_combo(combo: tuple, fallback_config_variant: str | None):
     """Return normalized combo fields plus the effective config variant."""
     if len(combo) == 6:
         family, recipe, task, num_gpus, gpu, precision = combo
-        return family, recipe, task, num_gpus, gpu, precision, default_config_variant
+        return family, recipe, task, num_gpus, gpu, precision, fallback_config_variant
     if len(combo) == 7:
         family, recipe, task, num_gpus, gpu, precision, combo_config_variant = combo
         return family, recipe, task, num_gpus, gpu, precision, combo_config_variant
     raise ValueError(f"Invalid combo length {len(combo)} for {combo!r}")
 
 
-def dump_configs(mode: str, out_dir: Path, combos: list[tuple], config_variant: str):
+def dump_configs(mode: str, out_dir: Path, combos: list[tuple], config_variant: str | None):
     """Generate and dump all configs as YAML files."""
     out_dir.mkdir(parents=True, exist_ok=True)
     load_fn = load_old_recipe if mode == "old" else load_new_recipe
@@ -619,8 +619,7 @@ def main():
     parser.add_argument("--family", help="Only dump recipes for this model family")
     parser.add_argument(
         "--config-variant",
-        default="v2",
-        help="Old-path config variant to compare against. Defaults to v2, matching the performance CLI.",
+        help="Config variant to compare against. Omit to use the suffix-less flat recipe.",
     )
     args = parser.parse_args()
 

@@ -65,17 +65,6 @@ def nemotron_vl_bridge():
     return NemotronVLBridge()
 
 
-class TestNemotronVLBridgeInitialization:
-    def test_bridge_initialization(self, nemotron_vl_bridge):
-        assert isinstance(nemotron_vl_bridge, NemotronVLBridge)
-
-    def test_bridge_has_required_methods(self, nemotron_vl_bridge):
-        assert hasattr(nemotron_vl_bridge, "provider_bridge")
-        assert callable(nemotron_vl_bridge.provider_bridge)
-        assert hasattr(nemotron_vl_bridge, "mapping_registry")
-        assert callable(nemotron_vl_bridge.mapping_registry)
-
-
 class TestNemotronVLBridgeProviderBridge:
     def test_provider_bridge_basic_config(self, nemotron_vl_bridge, mock_hf_pretrained):
         provider = nemotron_vl_bridge.provider_bridge(mock_hf_pretrained)

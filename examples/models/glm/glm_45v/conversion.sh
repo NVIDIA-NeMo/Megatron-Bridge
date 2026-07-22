@@ -17,12 +17,12 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Import HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model zai-org/GLM-4.5V \
     --megatron-path ${WORKSPACE}/models/GLM-4.5V
 
 # Export Megatron → HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model zai-org/GLM-4.5V \
     --megatron-path ${WORKSPACE}/models/GLM-4.5V/iter_0000000 \
     --hf-path ${WORKSPACE}/models/GLM-4.5V-hf-export

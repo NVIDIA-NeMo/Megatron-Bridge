@@ -14,32 +14,263 @@
 
 """Dataset configuration utilities for recipes and training scripts."""
 
-import logging
-from typing import Callable, List, Optional, Tuple
+from dataclasses import replace
+from functools import partial
+from typing import Any, Callable, List, Literal, Optional, Tuple, TypeAlias
 
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-from megatron.bridge.data.loaders import get_blend_and_blend_per_split
-from megatron.bridge.data.vlm_datasets.preloaded_provider import PreloadedVLMConversationProvider
-from megatron.bridge.recipes.utils.finetune_utils import (
-    default_gsm8k_config,
-    default_openmathinstruct2_config,
-    default_squad_config,
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    GPTSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+    SFTPreprocessingConfig,
 )
+from megatron.bridge.data.loaders import get_blend_and_blend_per_split
+from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.peft.base import PEFT
+from megatron.bridge.peft.dora import DoRA
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.config import (
     ConfigContainer,
-    FinetuningDatasetConfig,
     GPTDatasetConfig,
     MockGPTDatasetConfig,
 )
 
 
-logger = logging.getLogger(__name__)
-
-
 _BLEND_TYPE = Optional[Tuple[List[str], Optional[List[float]]]]
 _BLEND_PER_SPLIT_TYPE = Optional[List[Optional[Tuple[List[str], Optional[List[float]]]]]]
 _SPLIT_TYPE = Optional[str]
+
+
+def default_peft_config(peft_scheme: str | PEFT | None, **kwargs: Any) -> PEFT | None:
+    """Create the default PEFT configuration for a finetuning recipe.
+
+    Args:
+        peft_scheme: PEFT scheme (``"lora"``, ``"dora"``), an existing PEFT
+            instance, or ``None`` for full finetuning.
+        **kwargs: Keyword arguments passed to the selected PEFT configuration.
+
+    Returns:
+        A PEFT configuration, or ``None`` for full finetuning.
+
+    Raises:
+        ValueError: If ``peft_scheme`` is not supported.
+    """
+    if peft_scheme is None:
+        return None
+
+    if isinstance(peft_scheme, PEFT):
+        return peft_scheme
+
+    if isinstance(peft_scheme, str):
+        if peft_scheme.lower() == "none":
+            return None
+        if peft_scheme.lower() == "lora":
+            return LoRA(**kwargs)
+        if peft_scheme.lower() == "dora":
+            return DoRA(**kwargs)
+        raise ValueError(f"Unknown PEFT scheme: {peft_scheme}. Supported: 'lora', 'dora', or None")
+
+    raise ValueError(f"Invalid peft type: {type(peft_scheme)}. Expected str, PEFT instance, or None")
+
+
+def _text_hf_dataset_config(
+    *,
+    seq_length: int,
+    source: HFDatasetSourceConfig,
+    preprocessing: SFTPreprocessingConfig,
+    validation_source: HFDatasetSourceConfig | None = None,
+    test_source: HFDatasetSourceConfig | None = None,
+    do_validation: bool = True,
+    do_test: bool = False,
+    enable_offline_packing: bool = False,
+    offline_packing_specs: PackedSequenceSpecs | None = None,
+    dataset_kwargs: dict[str, Any] | None = None,
+    val_proportion: float | None = None,
+    num_workers: int = 2,
+) -> GPTSFTDatasetConfig:
+    """Create an HF-backed text SFT config with optional offline packing."""
+    return GPTSFTDatasetConfig(
+        seq_length=seq_length,
+        hf_dataset=source,
+        hf_validation_dataset=validation_source,
+        hf_test_dataset=test_source,
+        hf_validation_proportion=val_proportion,
+        do_validation=do_validation,
+        do_test=do_test,
+        preprocessing=preprocessing,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        dataset_kwargs=dataset_kwargs,
+        seed=5678,
+        dataloader_type="batch",
+        num_workers=num_workers,
+        data_sharding=True,
+        pin_memory=True,
+        persistent_workers=False,
+    )
+
+
+def default_squad_config(
+    seq_length: int, enable_offline_packing: bool = True, pad_seq_to_mult: int = 1
+) -> GPTSFTDatasetConfig:
+    """Create the default SQuAD dataset configuration for finetuning recipes.
+
+    Args:
+        seq_length: Sequence length for the dataset.
+        enable_offline_packing: Whether to enable offline packed-sequence preparation.
+        pad_seq_to_mult: Multiple to pad each sequence to when packing.
+
+    Returns:
+        A dataset configuration for SQuAD finetuning.
+    """
+    dataset_kwargs = {}
+    offline_packing_specs = None
+    if enable_offline_packing:
+        dataset_kwargs["pad_to_max_length"] = True
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="squad"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        dataset_kwargs=dataset_kwargs,
+        val_proportion=0.1,
+        num_workers=1,
+    )
+
+
+def default_tulu3_config(
+    seq_length: int = 4096,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the default Tulu 3 SFT mixture dataset configuration.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        A chat SFT configuration for ``allenai/tulu-3-sft-mixture``.
+    """
+    offline_packing_specs = None
+    if enable_offline_packing:
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="tulu3"),
+        preprocessing=ChatSFTPreprocessingConfig(),
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        val_proportion=0.05,
+        num_workers=2,
+    )
+
+
+def default_openmathinstruct2_config(
+    seq_length: int = 4096,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the default OpenMathInstruct-2 finetuning dataset.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        An OpenMathInstruct-2 dataset configuration.
+    """
+    offline_packing_specs = None
+    if enable_offline_packing:
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="openmathinstruct2"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        val_proportion=0.05,
+        num_workers=2,
+    )
+
+
+def default_gsm8k_config(
+    seq_length: int = 2048,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the default GSM8K dataset configuration for finetuning recipes.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        A GSM8K dataset configuration.
+    """
+    offline_packing_specs = None
+    if enable_offline_packing:
+        offline_packing_specs = PackedSequenceSpecs(packed_sequence_size=seq_length, pad_seq_to_mult=pad_seq_to_mult)
+
+    return _text_hf_dataset_config(
+        source=HFDatasetSourceConfig(dataset_name="gsm8k"),
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
+        test_source=HFDatasetSourceConfig(dataset_name="gsm8k", split="test"),
+        do_validation=False,
+        do_test=True,
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        offline_packing_specs=offline_packing_specs,
+        num_workers=2,
+    )
+
+
+def default_openmathinstruct2_thinking_config(
+    seq_length: int = 4096,
+    enable_offline_packing: bool = False,
+    pad_seq_to_mult: int = 1,
+) -> GPTSFTDatasetConfig:
+    """Create the thinking/chat variant of the OpenMathInstruct-2 dataset.
+
+    Args:
+        seq_length: Maximum sequence length.
+        enable_offline_packing: Whether to enable offline text SFT packing.
+        pad_seq_to_mult: Sequence-length multiple used by offline packing.
+
+    Returns:
+        An OpenMathInstruct-2 thinking dataset configuration.
+    """
+    config = default_openmathinstruct2_config(
+        seq_length=seq_length,
+        enable_offline_packing=enable_offline_packing,
+        pad_seq_to_mult=pad_seq_to_mult,
+    )
+    assert config.hf_dataset is not None
+    config.hf_dataset = HFDatasetSourceConfig(dataset_name="openmathinstruct2_thinking")
+    config.preprocessing = ChatSFTPreprocessingConfig()
+    return config
 
 
 def get_blend_fields_from_data_paths(
@@ -105,175 +336,208 @@ def get_blend_fields_from_data_paths(
     return blend, blend_per_split, split
 
 
-# ---------------------------------------------------------------------------
-# Unified dataset type registry
-# ---------------------------------------------------------------------------
-
-DATASET_TYPES = [
-    "llm-pretrain",
-    "llm-pretrain-mock",
-    "llm-finetune",
-    "llm-finetune-preloaded",
-    "vlm-energon",
-    "vlm-hf",
-    "vlm-preloaded",
-]
-
-LLM_FINETUNE_PRESETS: dict[str, Callable] = {
-    "squad": default_squad_config,
-    "openmathinstruct2": default_openmathinstruct2_config,
-    "gsm8k": default_gsm8k_config,
-}
+PublicDatasetConfig: TypeAlias = GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig
+DatasetPreset: TypeAlias = Callable[[ConfigContainer], PublicDatasetConfig]
 
 
-def extract_and_remove_override(cli_overrides: list[str], key: str, default: str | None = None) -> str | None:
-    """Extract a Hydra-style override (key=value) from *cli_overrides* and remove it.
-
-    Returns the value if found, otherwise *default*.
-    """
-    prefix = f"{key}="
-    for i, override in enumerate(cli_overrides):
-        if override.startswith(prefix):
-            value = override[len(prefix) :]
-            cli_overrides.pop(i)
-            return value
-    return default
-
-
-def _resolve_seq_length(config: ConfigContainer, seq_length: int | None) -> int:
-    """Resolve sequence length: explicit arg > model config > 4096 fallback."""
-    if seq_length is not None:
-        return seq_length
+def _resolve_seq_length(config: ConfigContainer) -> int:
+    """Use the selected recipe's model sequence length for a dataset preset."""
     if hasattr(config, "model") and config.model is not None and hasattr(config.model, "seq_length"):
-        return config.model.seq_length
+        return int(config.model.seq_length)
     return 4096
 
 
-def apply_dataset_override(
+def _mock_dataset_config(config: ConfigContainer) -> MockGPTDatasetConfig:
+    """Build the mock pretraining dataset preset."""
+    return MockGPTDatasetConfig(
+        seq_length=_resolve_seq_length(config),
+        random_seed=1234,
+        reset_attention_mask=False,
+        reset_position_ids=False,
+        eod_mask_loss=False,
+        num_dataset_builder_threads=1,
+        split="9999,8,2",
+        data_sharding=True,
+        dataloader_type="single",
+        skip_getting_attention_mask_from_dataset=True,
+    )
+
+
+def _megatron_indexed_dataset_config(config: ConfigContainer) -> GPTDatasetConfig:
+    """Build the Megatron indexed pretraining dataset preset."""
+    return GPTDatasetConfig(
+        seq_length=_resolve_seq_length(config),
+        random_seed=1234,
+        reset_attention_mask=False,
+        reset_position_ids=False,
+        eod_mask_loss=False,
+        num_dataset_builder_threads=1,
+        blend=None,
+        blend_per_split=None,
+        split="9999,8,2",
+        data_sharding=True,
+        dataloader_type="single",
+        skip_getting_attention_mask_from_dataset=True,
+    )
+
+
+def _squad_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the SQuAD text SFT dataset preset."""
+    return default_squad_config(seq_length=_resolve_seq_length(config), enable_offline_packing=False)
+
+
+def _tulu3_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the Tulu 3 chat SFT dataset preset."""
+    return default_tulu3_config(seq_length=_resolve_seq_length(config))
+
+
+def _openmathinstruct2_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the OpenMathInstruct-2 prompt-completion preset."""
+    return default_openmathinstruct2_config(seq_length=_resolve_seq_length(config))
+
+
+def _openmathinstruct2_thinking_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the OpenMathInstruct-2 thinking/chat preset."""
+    return default_openmathinstruct2_thinking_config(seq_length=_resolve_seq_length(config))
+
+
+def _gsm8k_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the GSM8K text SFT dataset preset."""
+    return default_gsm8k_config(seq_length=_resolve_seq_length(config))
+
+
+def _local_jsonl_dataset_config(config: ConfigContainer) -> GPTSFTDatasetConfig:
+    """Build the local prompt-completion JSONL config before path overrides."""
+    return GPTSFTDatasetConfig(
+        seq_length=_resolve_seq_length(config),
+        dataset_root=None,
+        preprocessing=PromptCompletionSFTPreprocessingConfig(
+            prompt_column="input",
+            completion_column="output",
+            separator=" ",
+        ),
+        dataloader_type="batch",
+        seed=5678,
+    )
+
+
+def _local_vlm_json_source(split: str) -> HFDatasetSourceConfig:
+    """Build an override-ready local JSON source for one VLM split."""
+    return HFDatasetSourceConfig(
+        path_or_dataset="json",
+        split=split,
+        load_kwargs={"data_files": {split: None}},
+    )
+
+
+def _require_direct_hf_config(config: ConfigContainer, dataset_name: str) -> DirectHFSFTDatasetConfig:
+    """Return the recipe's direct-HF config or reject an incompatible preset."""
+    if not isinstance(config.dataset, DirectHFSFTDatasetConfig):
+        raise ValueError(f"{dataset_name} requires a recipe using DirectHFSFTDatasetConfig.")
+    return config.dataset
+
+
+def _local_vlm_dataset_config(config: ConfigContainer) -> DirectHFSFTDatasetConfig:
+    """Build an override-ready local JSON/JSONL VLM preset."""
+    existing = _require_direct_hf_config(config, "local-vlm")
+    return replace(
+        existing,
+        seq_length=_resolve_seq_length(config),
+        source=_local_vlm_json_source("train"),
+        validation_source=_local_vlm_json_source("validation"),
+        test_source=_local_vlm_json_source("test"),
+        do_validation=False,
+        do_test=False,
+    )
+
+
+def _hf_vlm_dataset_config(
     config: ConfigContainer,
-    dataset_type: str,
-    packed_sequence: bool = False,
-    seq_length: int | None = None,
-    cli_overrides: list[str] | None = None,
-) -> ConfigContainer:
-    """Replace the recipe's dataset config based on the requested dataset type.
+    *,
+    public_name: str,
+    hf_dataset_name: str,
+    train_only: bool = False,
+    supports_test: bool = False,
+    adapter_kwargs: dict[str, object] | None = None,
+) -> DirectHFSFTDatasetConfig:
+    """Build a named direct-HF VLM dataset preset."""
+    existing = _require_direct_hf_config(config, public_name)
+    source = HFDatasetSourceConfig(dataset_name=hf_dataset_name, adapter_kwargs=adapter_kwargs)
+    validation_source = None
+    if train_only and existing.do_validation:
+        validation_source = source.with_split("train[95%:]")
+        source = source.with_split("train[:95%]")
+    return replace(
+        existing,
+        seq_length=_resolve_seq_length(config),
+        source=source,
+        validation_source=validation_source,
+        test_source=None,
+        do_test=existing.do_test and supports_test,
+    )
+
+
+DATASET_PRESETS: dict[str, DatasetPreset] = {
+    "mock": _mock_dataset_config,
+    "megatron-indexed": _megatron_indexed_dataset_config,
+    "squad": _squad_dataset_config,
+    "tulu3": _tulu3_dataset_config,
+    "openmathinstruct2": _openmathinstruct2_dataset_config,
+    "openmathinstruct2-thinking": _openmathinstruct2_thinking_dataset_config,
+    "gsm8k": _gsm8k_dataset_config,
+    "local-jsonl": _local_jsonl_dataset_config,
+    "local-vlm": _local_vlm_dataset_config,
+    "cord-v2": partial(
+        _hf_vlm_dataset_config,
+        public_name="cord-v2",
+        hf_dataset_name="cord_v2",
+        supports_test=True,
+    ),
+    "llava-video-178k": partial(
+        _hf_vlm_dataset_config,
+        public_name="llava-video-178k",
+        hf_dataset_name="llava_video_178k",
+        train_only=True,
+        adapter_kwargs={"video_root_path": None},
+    ),
+    "medpix": partial(_hf_vlm_dataset_config, public_name="medpix", hf_dataset_name="medpix"),
+    "raven": partial(
+        _hf_vlm_dataset_config,
+        public_name="raven",
+        hf_dataset_name="raven",
+        train_only=True,
+    ),
+    "rdr": partial(
+        _hf_vlm_dataset_config,
+        public_name="rdr",
+        hf_dataset_name="rdr",
+        train_only=True,
+    ),
+}
+
+
+def build_dataset_config(config: ConfigContainer, dataset_name: str) -> PublicDatasetConfig:
+    """Build a dataset config from a public preset name.
 
     Args:
-        config: The recipe config to modify.
-        dataset_type: One of :data:`DATASET_TYPES`.
-        packed_sequence: Whether to enable packed sequences.
-        seq_length: Explicit sequence length (None = use model's or default 4096).
-        cli_overrides: Mutable list of Hydra-style CLI overrides. For ``llm-finetune``,
-            ``dataset.dataset_name`` is extracted and consumed here to select the preset.
+        config: Recipe config supplying model and model-specific dataset defaults.
+        dataset_name: Public dataset preset or local source selector.
 
     Returns:
-        The modified ConfigContainer.
+        A new dataset config. Callers may then apply ordinary ``dataset.*``
+        ConfigContainer overrides before validation and runtime builder selection.
+
+    Raises:
+        ValueError: If the name is unknown or the recipe's dataset config is incompatible.
     """
-    resolved_seq_length = _resolve_seq_length(config, seq_length)
-    if cli_overrides is None:
-        cli_overrides = []
-
-    if dataset_type == "llm-pretrain":
-        config.dataset = GPTDatasetConfig(
-            seq_length=resolved_seq_length,
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            num_dataset_builder_threads=1,
-            blend=None,
-            blend_per_split=None,
-            split="9999,8,2",
-            data_sharding=True,
-            dataloader_type="single",
-            skip_getting_attention_mask_from_dataset=True,
-        )
-
-    elif dataset_type == "llm-pretrain-mock":
-        config.dataset = MockGPTDatasetConfig(
-            seq_length=resolved_seq_length,
-            random_seed=1234,
-            reset_attention_mask=False,
-            reset_position_ids=False,
-            eod_mask_loss=False,
-            num_dataset_builder_threads=1,
-            split="9999,8,2",
-            data_sharding=True,
-            dataloader_type="single",
-            skip_getting_attention_mask_from_dataset=True,
-        )
-
-    elif dataset_type == "llm-finetune":
-        preset_name = extract_and_remove_override(cli_overrides, "dataset.dataset_name", default="squad")
-        if preset_name not in LLM_FINETUNE_PRESETS:
-            raise ValueError(
-                f"Unknown finetune dataset preset: '{preset_name}'. "
-                f"Choose from: {', '.join(sorted(LLM_FINETUNE_PRESETS.keys()))}"
-            )
-        factory = LLM_FINETUNE_PRESETS[preset_name]
-        kwargs: dict = {"packed_sequence": packed_sequence, "pad_seq_to_mult": 1}
-        kwargs["seq_length"] = resolved_seq_length
-        config.dataset = factory(**kwargs)
-
-    elif dataset_type == "llm-finetune-preloaded":
-        config.dataset = FinetuningDatasetConfig(
-            seq_length=resolved_seq_length,
-            dataset_root=None,
-            dataloader_type="batch",
-            seed=5678,
-        )
-
-    elif dataset_type == "vlm-energon":
-        if isinstance(config.dataset, EnergonProvider):
-            logger.info("Recipe already provides EnergonProvider; keeping it (preserves task_encoder).")
-        else:
-            logger.warning(
-                "Creating bare EnergonProvider. task_encoder and image_processor are unset; "
-                "use a recipe that provides them or set via code."
-            )
-            config.dataset = EnergonProvider(
-                path="",
-                seq_length=resolved_seq_length,
-                micro_batch_size=config.train.micro_batch_size,
-                global_batch_size=config.train.global_batch_size,
-                num_workers=2,
-            )
-
-    elif dataset_type == "vlm-hf":
-        config.dataset = HFConversationDatasetProvider(
-            seq_length=resolved_seq_length,
-            hf_processor_path=None,
-            maker_name="make_cord_v2_dataset",
-            num_workers=2,
-            dataloader_type="single",
-            data_sharding=True,
-            pin_memory=True,
-            persistent_workers=False,
-            enable_in_batch_packing=False,
-        )
-
-    elif dataset_type == "vlm-preloaded":
-        config.dataset = PreloadedVLMConversationProvider(
-            seq_length=resolved_seq_length,
-            hf_processor_path=None,
-            train_data_path=None,
-            valid_data_path=None,
-            test_data_path=None,
-            dataloader_type="single",
-            num_workers=2,
-        )
-
-    else:
-        raise ValueError(f"Unknown dataset type: '{dataset_type}'. Choose from: {', '.join(DATASET_TYPES)}")
-
-    if seq_length is not None and hasattr(config, "model") and config.model is not None:
-        config.model.seq_length = seq_length
-
-    return config
+    try:
+        preset = DATASET_PRESETS[dataset_name]
+    except KeyError:
+        choices = ", ".join(DATASET_PRESETS)
+        raise ValueError(f"Unknown dataset name: '{dataset_name}'. Choose from: {choices}") from None
+    return preset(config)
 
 
-def infer_mode_from_dataset(dataset_type: str) -> str:
-    """Infer training mode from the dataset type prefix."""
-    if dataset_type.startswith("llm-pretrain"):
-        return "pretrain"
-    return "finetune"
+def dataset_train_mode(dataset_config: PublicDatasetConfig) -> Literal["pretrain", "finetune"]:
+    """Return the training loop required by a built dataset config."""
+    return "pretrain" if isinstance(dataset_config, GPTDatasetConfig) else "finetune"

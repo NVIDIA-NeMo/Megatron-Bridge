@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import json
 import os
 from dataclasses import dataclass
 from typing import Callable
@@ -20,6 +21,11 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from megatron.bridge.data.builders import (
+    DirectHFSFTDatasetConfig,
+    HFDatasetSourceConfig,
+    PromptCompletionSFTPreprocessingConfig,
+)
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.training.config import (
     CheckpointConfig,
@@ -123,6 +129,108 @@ class TestSupervisedFinetuning:
                 storage_writers_per_rank=finetune_cfg.checkpoint.storage_writers_per_rank,
             )
 
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_direct_hf_prompt_completion_training_step(self, tmp_path):
+        """Run one GPT training step through direct-HF prompt-completion collation."""
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+        checkpoint_dir, tensorboard_dir, _, _ = self._setup_directories(shared_base_dir)
+        dataset_path = os.path.join(shared_base_dir, "paired.jsonl")
+
+        if torch.distributed.get_rank() == 0:
+            with open(dataset_path, "w", encoding="utf-8") as output_file:
+                for index in range(8):
+                    output_file.write(json.dumps({"input": f"{index} {index}", "output": str(index + 1)}) + "\n")
+        torch.distributed.barrier()
+
+        try:
+            config = self._create_config(1, checkpoint_dir, tensorboard_dir, seq_length=16)
+            config.model.vocab_size = 1024
+            config.train.global_batch_size = 4
+            config.train.micro_batch_size = 2
+            config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=1024)
+            config.dataset = DirectHFSFTDatasetConfig(
+                seq_length=16,
+                source=HFDatasetSourceConfig(
+                    path_or_dataset="json",
+                    load_kwargs={"data_files": {"train": dataset_path}},
+                ),
+                preprocessing=PromptCompletionSFTPreprocessingConfig(
+                    prompt_column="input",
+                    completion_column="output",
+                ),
+                do_validation=False,
+                do_test=False,
+                enable_in_batch_packing=True,
+                pad_to_multiple_of=1,
+                num_workers=0,
+                persistent_workers=False,
+            )
+
+            pretrain(config, forward_step)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                1,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
+        finally:
+            clear_directories(shared_base_dir)
+
+    @pytest.mark.run_only_on("GPU")
+    def test_direct_hf_non_packed_context_parallel_training_step(self, tmp_path):
+        """Run direct-HF dynamic padding through a two-rank context-parallel step."""
+        initialize_distributed()
+        shared_base_dir = broadcast_path(tmp_path)
+        checkpoint_dir, tensorboard_dir, _, _ = self._setup_directories(shared_base_dir)
+        dataset_path = os.path.join(shared_base_dir, "paired-cp.jsonl")
+
+        if torch.distributed.get_rank() == 0:
+            with open(dataset_path, "w", encoding="utf-8") as output_file:
+                for index in range(8):
+                    prompt = " ".join([str(index)] * 508)
+                    output_file.write(json.dumps({"input": prompt, "output": str(index + 1)}) + "\n")
+        torch.distributed.barrier()
+
+        try:
+            config = self._create_config(1, checkpoint_dir, tensorboard_dir, seq_length=512)
+            config.model.hidden_size = 1024
+            config.model.ffn_hidden_size = 2048
+            config.model.vocab_size = 1024
+            config.model.bf16 = True
+            config.model.context_parallel_size = 2
+            config.model.calculate_per_token_loss = True
+            config.ddp.average_in_collective = False
+            config.train.global_batch_size = 2
+            config.train.micro_batch_size = 1
+            config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=1024)
+            config.dataset = DirectHFSFTDatasetConfig(
+                seq_length=512,
+                source=HFDatasetSourceConfig(
+                    path_or_dataset="json",
+                    load_kwargs={"data_files": {"train": dataset_path}},
+                ),
+                preprocessing=PromptCompletionSFTPreprocessingConfig(
+                    prompt_column="input",
+                    completion_column="output",
+                ),
+                do_validation=False,
+                do_test=False,
+                pad_to_multiple_of=1,
+                num_workers=0,
+                persistent_workers=False,
+            )
+
+            pretrain(config, forward_step)
+            verify_checkpoint_files(
+                checkpoint_dir,
+                1,
+                ckpt_format=config.checkpoint.ckpt_format,
+                storage_writers_per_rank=config.checkpoint.storage_writers_per_rank,
+            )
         finally:
             clear_directories(shared_base_dir)
 

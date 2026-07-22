@@ -44,7 +44,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model deepseek-ai/DeepSeek-V2-Lite \
   --megatron-path /checkpoints/deepseek_v2_lite_megatron \
   --trust-remote-code

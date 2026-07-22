@@ -161,7 +161,7 @@ class MegatronMIMODataset(Dataset):
 
         # Process text with placeholder tokens
         text = example.get(self.text_column, "")
-        input_ids = self._tokenize_with_placeholders(text, modality_inputs)
+        input_ids, num_real_tokens = self._tokenize_with_placeholders(text, modality_inputs)
 
         # Create attention mask and position ids
         attention_mask = torch.ones_like(input_ids)
@@ -173,7 +173,6 @@ class MegatronMIMODataset(Dataset):
         labels[-1] = -100  # ignore index for the last position
 
         # Build loss_mask: no loss on padding or encoder placeholder token positions
-        pad_token_id = self.tokenizer.pad_token_id or 0
         placeholder_ids = set(self.special_token_ids.values())
 
         # loss_mask[i] = 0 when the target (labels[i]) is padding or a placeholder
@@ -181,7 +180,12 @@ class MegatronMIMODataset(Dataset):
         loss_mask[-1] = 0.0  # last position has no valid target
         for pid in placeholder_ids:
             loss_mask[labels == pid] = 0.0
-        loss_mask[labels == pad_token_id] = 0.0
+        # Mask padding targets by position, not by pad_token_id value: tokenizers without a
+        # dedicated pad token set pad_token = eos_token, so masking `labels == pad_token_id`
+        # would also drop every genuine EOS in the sequence, preventing the model from ever
+        # learning to stop. The target of position i is labels[i] = input_ids[i + 1], so every
+        # position from the last real token onward has a padding (or nonexistent) target.
+        loss_mask[max(num_real_tokens - 1, 0) :] = 0.0
 
         # Also mask labels with -100 so CrossEntropyLoss ignores them
         labels[loss_mask == 0.0] = -100
@@ -199,7 +203,7 @@ class MegatronMIMODataset(Dataset):
         self,
         text: str,
         modality_inputs: Dict[str, Dict[str, Any]],
-    ) -> torch.Tensor:
+    ) -> tuple[torch.Tensor, int]:
         """Tokenize text and insert placeholder tokens for each modality.
 
         For each modality present, inserts N placeholder tokens at the beginning
@@ -212,7 +216,9 @@ class MegatronMIMODataset(Dataset):
             modality_inputs: Dict of preprocessed modality inputs.
 
         Returns:
-            Token IDs tensor with placeholder tokens inserted.
+            A tuple of (token IDs tensor with placeholder tokens inserted and padded to
+            seq_length, number of real non-padding tokens). The real token count lets the
+            caller mask padding by position instead of by pad_token_id value.
         """
         # Tokenize the text
         encoded = self.tokenizer(
@@ -239,6 +245,9 @@ class MegatronMIMODataset(Dataset):
             input_ids = input_ids[:max_text_len]
             input_ids = torch.cat([prefix, input_ids])
 
+        # Number of real tokens before padding (capped at seq_length for the truncation case).
+        num_real_tokens = min(len(input_ids), self.seq_length)
+
         # Pad or truncate to seq_length
         if len(input_ids) < self.seq_length:
             pad_len = self.seq_length - len(input_ids)
@@ -248,4 +257,4 @@ class MegatronMIMODataset(Dataset):
         else:
             input_ids = input_ids[: self.seq_length]
 
-        return input_ids
+        return input_ids, num_real_tokens

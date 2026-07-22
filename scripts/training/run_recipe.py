@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,321 +12,446 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""Run a Megatron Bridge recipe in an existing distributed environment.
 
+Select either a model name with --model or a complete recipe function with
+--recipe. The launcher discovers complete library and benchmark recipes
+by their exported function name. It accepts one training mode, a direct dataset
+name, runner controls, common convenience arguments, and trailing KEY=VALUE
+ConfigContainer overrides. Slurm resources, containers, mounts, and environment
+forwarding are owned by setup_experiment.py.
+
+Common ConfigContainer overrides
+--------------------------------
+The convenience options on the left are converted to the ConfigContainer
+overrides on the right. This command accepts both forms. When both forms set
+the same field, the trailing KEY=VALUE override takes precedence.
+
+Training:
+  -ms, --max_steps STEPS                 train.train_iters=STEPS
+  -gb, --global_batch_size SIZE          train.global_batch_size=SIZE
+  -mb, --micro_batch_size SIZE           train.micro_batch_size=SIZE
+
+Sequence length:
+  -sl, --seq_length LENGTH               dataset.seq_length=LENGTH
+
+The selected dataset owns the sequence length. After overrides are applied,
+the runner synchronizes model.seq_length from the dataset field.
+
+Parallelism:
+  -tp, --tensor_model_parallel_size N    model.tensor_model_parallel_size=N
+  -pp, --pipeline_model_parallel_size N  model.pipeline_model_parallel_size=N
+  -cp, --context_parallel_size N         model.context_parallel_size=N
+  -vp, --virtual_pipeline_model_parallel_size N
+                                           model.virtual_pipeline_model_parallel_size=N
+  -ep, --expert_model_parallel_size N    model.expert_model_parallel_size=N
+  -etp, --expert_tensor_parallel_size N  model.expert_tensor_parallel_size=N
+
+Optimization:
+  --lr VALUE                             optimizer.lr=VALUE
+  --min_lr VALUE                         optimizer.min_lr=VALUE
+  --warmup_iters STEPS                   scheduler.lr_warmup_iters=STEPS
+
+Checkpointing:
+  --pretrained_checkpoint PATH           checkpoint.pretrained_checkpoint=PATH
+  --save_dir PATH                        checkpoint.save=PATH
+  --load_dir PATH                        checkpoint.load=PATH
+  --save_interval STEPS                  checkpoint.save_interval=STEPS
+
+For example:
+  run_recipe.py --model gpt_oss_20b --mode pretrain --dataset mock \\
+    -sl 8192 -mb 1 -tp 2 model.sequence_parallel=true
+
+  run_recipe.py \\
+    --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
 """
-Generic Training Script for LLM and diffusion models
 
-This script works with any model family that uses GPT-style training
-(Llama, Gemma, Qwen, GPT, etc.) and with diffusion models (e.g. FLUX, WAN). It dynamically loads recipes and supports
-CLI overrides. The --dataset flag selects the dataset type and automatically
-infers pretrain vs finetune mode.
-
-Usage:
-    Pretrain (mock data):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_pretrain_config \\
-            --dataset llm-pretrain-mock
-
-    Pretrain (real data):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_pretrain_config \\
-            --dataset llm-pretrain \\
-            'dataset.blend=[[/data/my_dataset_text_document],null]'
-
-    Finetune (SQuAD, default):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_sft_config \\
-            --dataset llm-finetune
-
-    Finetune (GSM8K):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_sft_config \\
-            --dataset llm-finetune \\
-            dataset.dataset_name=gsm8k
-
-    Finetune (user-supplied JSONL):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_sft_config \\
-            --dataset llm-finetune-preloaded \\
-            dataset.dataset_root=/data/my_finetune_data
-
-    Diffusion pretrain:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3b_pretrain_config \
-            --step_func wan_step \
-            dataset.path=/data/energon
-
-    Diffusion SFT (full finetuning):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \
-            --recipe wan_1_3b_sft_config \
-            --step_func wan_step
-            dataset.path=/data/energon
-
-    VLM with HF dataset:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe qwen3_vl_8b_peft_config \\
-            --dataset vlm-hf \\
-            --step_func qwen3_vl_step \\
-            dataset.maker_name=cord_v2 \\
-            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
-            checkpoint.pretrained_checkpoint=/path/to/checkpoint
-
-    VLM with Energon dataset:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe qwen3_vl_8b_peft_energon_config \\
-            --dataset vlm-energon \\
-            --step_func qwen3_vl_step \\
-            dataset.path=/data/energon \\
-            checkpoint.pretrained_checkpoint=/path/to/checkpoint
-
-    VLM with preloaded JSON:
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe qwen3_vl_8b_peft_config \\
-            --dataset vlm-preloaded \\
-            --step_func qwen3_vl_step \\
-            dataset.train_data_path=/data/vlm_train.json \\
-            dataset.image_folder=/data/vlm_images \\
-            dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \\
-            checkpoint.pretrained_checkpoint=/path/to/checkpoint
-
-    With CLI overrides (Hydra-style, works for any config field):
-        uv run torchrun --nproc_per_node=8 run_recipe.py \\
-            --recipe llama32_1b_pretrain_config \\
-            --dataset llm-pretrain-mock \\
-            train.train_iters=5000 \\
-            optimizer.lr=0.0003
-
-Recipe Arguments:
-    Generic scripts call recipes with no arguments: recipe().
-
-    If you need to pass arguments to the recipe constructor
-    (e.g., custom parallelism at build time), create a custom script.
-"""
+from __future__ import annotations
 
 import argparse
-import inspect
-from typing import Callable
+import json
+import logging
+import os
+import sys
+from pathlib import Path
+from typing import TYPE_CHECKING, Literal
 
-import megatron.bridge.recipes as recipes
 
-# Diffusion forward steps: use class instances so they can be passed as forward_step_func
-from megatron.bridge.diffusion.models.flux.flux_step import FluxForwardStep
-from megatron.bridge.diffusion.models.wan.wan_step import WanForwardStep
-from megatron.bridge.models.qwen_omni.qwen3_omni_step import forward_step as qwen3_omni_forward_step
-from megatron.bridge.models.qwen_vl.qwen3_vl_step import forward_step as qwen3_vl_forward_step
-from megatron.bridge.models.stepfun.step37_flickr8k_step import forward_step as step37_flickr8k_forward_step
-from megatron.bridge.recipes.utils.dataset_utils import (
-    DATASET_TYPES,
-    apply_dataset_override,
-    infer_mode_from_dataset,
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from recipe_metadata import (  # noqa: E402
+    BenchmarkRecipeMetadata,
+    infer_recipe_mode,
+    recipe_step,
+    recipe_steps_match,
+    recipe_task,
+    resolved_benchmark_recipe_metadata,
+    validate_benchmark_recipe_scope,
 )
-from megatron.bridge.training.audio_lm_step import forward_step as audio_lm_forward_step
-from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.finetune import finetune
-from megatron.bridge.training.gpt_step import forward_step as gpt_forward_step
-from megatron.bridge.training.llava_step import forward_step as llava_forward_step
-from megatron.bridge.training.nemotron_omni_step import forward_step as nemotron_omni_forward_step
-from megatron.bridge.training.pretrain import pretrain
-from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
-from megatron.bridge.training.vlm_step import forward_step as vlm_forward_step
+from recipe_runner import (  # noqa: E402
+    apply_cli_overrides,
+    apply_determinism,
+    apply_runtime_environment,
+    bootstrap_recipe_environment,
+    load_forward_step,
+    load_recipe,
+    run_config,
+    sync_finetuning_cp_invariants,
+    sync_model_dataset_sequence_length,
+    sync_model_pipeline_layout,
+    sync_offline_packing_alignment,
+)
 
-
-STEP_FUNCTIONS: dict[str, Callable] = {
-    "audio_lm_step": audio_lm_forward_step,
-    "gpt_step": gpt_forward_step,
-    "vlm_step": vlm_forward_step,
-    "qwen3_omni_step": qwen3_omni_forward_step,
-    "qwen3_vl_step": qwen3_vl_forward_step,
-    "step37_flickr8k_step": step37_flickr8k_forward_step,
-    "llava_step": llava_forward_step,
-    "nemotron_omni_step": nemotron_omni_forward_step,
-    "flux_step": FluxForwardStep,
-    "wan_step": WanForwardStep,
-}
-
-TRAIN_FUNCTIONS = {
-    "pretrain": pretrain,
-    "finetune": finetune,
-}
-
-ERR_UNKNOWN_STEP = "Unknown step type: {step_type}. Choose from: {choices}"
-ERR_INFER_MODE_FAILED = (
-    "Unable to infer training mode. "
-    "Pass --dataset to specify the dataset type, or include 'pretrain' or 'finetune' "
-    "(or 'sft'/'peft') in the recipe name."
+from megatron.bridge.recipes.utils.dataset_utils import (  # noqa: E402
+    DATASET_PRESETS,
+    build_dataset_config,
+    dataset_train_mode,
 )
 
 
-def parse_args() -> tuple[argparse.Namespace, list[str]]:
-    """Parse command-line arguments."""
+if TYPE_CHECKING:
+    from megatron.bridge.training.config import ConfigContainer
+
+
+PublicMode = Literal["pretrain", "sft", "lora", "dora"]
+TrainMode = Literal["pretrain", "finetune"]
+
+
+COMMON_OVERRIDE_FIELDS = (
+    ("max_steps", "train.train_iters"),
+    ("global_batch_size", "train.global_batch_size"),
+    ("micro_batch_size", "train.micro_batch_size"),
+    ("seq_length", "dataset.seq_length"),
+    ("tensor_model_parallel_size", "model.tensor_model_parallel_size"),
+    ("pipeline_model_parallel_size", "model.pipeline_model_parallel_size"),
+    ("context_parallel_size", "model.context_parallel_size"),
+    ("virtual_pipeline_model_parallel_size", "model.virtual_pipeline_model_parallel_size"),
+    ("expert_model_parallel_size", "model.expert_model_parallel_size"),
+    ("expert_tensor_parallel_size", "model.expert_tensor_parallel_size"),
+    ("lr", "optimizer.lr"),
+    ("min_lr", "optimizer.min_lr"),
+    ("warmup_iters", "scheduler.lr_warmup_iters"),
+    ("pretrained_checkpoint", "checkpoint.pretrained_checkpoint"),
+    ("save_dir", "checkpoint.save"),
+    ("load_dir", "checkpoint.load"),
+    ("save_interval", "checkpoint.save_interval"),
+)
+
+
+class _HelpFormatter(argparse.ArgumentDefaultsHelpFormatter, argparse.RawDescriptionHelpFormatter):
+    """Preserve the override table while retaining argparse default annotations."""
+
+
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the public training parser."""
     parser = argparse.ArgumentParser(
-        description="Generic training script for LLM and diffusion models",
-        formatter_class=argparse.RawTextHelpFormatter,
+        description=__doc__,
+        formatter_class=_HelpFormatter,
+        allow_abbrev=False,
     )
-    parser.add_argument(
-        "--recipe",
-        type=str,
-        required=True,
-        help="Recipe function name (e.g., llama32_1b_pretrain_config, gemma3_1b_sft_config, gemma3_1b_peft_config)",
+
+    selection = parser.add_argument_group("Selection")
+    recipe_selection = selection.add_mutually_exclusive_group(required=True)
+    recipe_selection.add_argument("--model", help="Model recipe stem, for example gpt_oss_20b.")
+    recipe_selection.add_argument("--recipe", help="Complete recipe function name.")
+    selection.add_argument(
+        "--mode",
+        choices=["pretrain", "sft", "lora", "dora"],
+        help="Training mode; inferred from a conventional --recipe name when omitted.",
     )
-    parser.add_argument(
-        "--dataset",
-        type=str,
-        default=None,
-        choices=DATASET_TYPES,
-        help=(
-            "Dataset type. Training mode (pretrain/finetune) is inferred from this.\n"
-            "LLM datasets:\n"
-            "  llm-pretrain           GPT pretrain data (set dataset.blend=<path>)\n"
-            "  llm-pretrain-mock      Mock pretrain data for testing\n"
-            "  llm-finetune           HF finetune dataset (set dataset.dataset_name=squad|gsm8k|openmathinstruct2)\n"
-            "  llm-finetune-preloaded User-supplied JSONL (set dataset.dataset_root=<path>)\n"
-            "VLM datasets:\n"
-            "  vlm-energon            Energon multimodal (set dataset.path=<path>)\n"
-            "  vlm-hf                 HF VLM dataset (set dataset.maker_name=<name>)\n"
-            "  vlm-preloaded          User-supplied VLM JSON (set dataset.train_data_path=<path>)"
-        ),
-    )
-    parser.add_argument(
+    selection.add_argument(
+        "--step-func",
         "--step_func",
-        type=str,
-        default="gpt_step",
-        choices=sorted(STEP_FUNCTIONS.keys()),
-        help="Step function: gpt_step (text-only), vlm_step (vision-language), llava_step (LLaVA), "
-        "flux_step (FLUX diffusion), wan_step (WAN diffusion, hyperparameters selected by recipe name)",
+        dest="step_func",
+        help="Forward-step registry name; defaults to the selected recipe's registered modality step.",
     )
-    parser.add_argument(
-        "--peft_scheme",
-        type=str,
-        default=None,
-        help="PEFT scheme to use: 'lora', 'dora', or None.",
+
+    data = parser.add_argument_group("Data")
+    data.add_argument(
+        "--dataset",
+        choices=sorted(DATASET_PRESETS),
+        help="Dataset config preset or local source selector.",
     )
-    parser.add_argument(
-        "--packed_sequence",
-        action="store_true",
-        default=False,
-        help="Enable packed sequence training (default: False)",
+
+    training = parser.add_argument_group("Common training overrides")
+    training.add_argument("-ms", "--max_steps", type=int, metavar="STEPS", help="Set train.train_iters.")
+    training.add_argument("-gb", "--global_batch_size", type=int, metavar="SIZE", help="Set train.global_batch_size.")
+    training.add_argument("-mb", "--micro_batch_size", type=int, metavar="SIZE", help="Set train.micro_batch_size.")
+
+    sequence_length = parser.add_argument_group("Sequence length override")
+    sequence_length.add_argument(
+        "-sl", "--seq_length", type=int, metavar="LENGTH", help="Set dataset.seq_length and synchronize the model."
     )
-    parser.add_argument(
-        "--seq_length",
+
+    parallelism = parser.add_argument_group("Common parallelism overrides")
+    parallelism.add_argument(
+        "-tp",
+        "--tensor_model_parallel_size",
         type=int,
-        default=None,
-        help="Sequence length for training",
+        metavar="N",
+        help="Set model.tensor_model_parallel_size.",
     )
-    args, cli_overrides = parser.parse_known_args()
+    parallelism.add_argument(
+        "-pp",
+        "--pipeline_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.pipeline_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-cp",
+        "--context_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.context_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-vp",
+        "--virtual_pipeline_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.virtual_pipeline_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-ep",
+        "--expert_model_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.expert_model_parallel_size.",
+    )
+    parallelism.add_argument(
+        "-etp",
+        "--expert_tensor_parallel_size",
+        type=int,
+        metavar="N",
+        help="Set model.expert_tensor_parallel_size.",
+    )
+
+    optimization = parser.add_argument_group("Common optimization overrides")
+    optimization.add_argument("--lr", type=float, metavar="VALUE", help="Set optimizer.lr.")
+    optimization.add_argument("--min_lr", type=float, metavar="VALUE", help="Set optimizer.min_lr.")
+    optimization.add_argument("--warmup_iters", type=int, metavar="STEPS", help="Set scheduler.lr_warmup_iters.")
+
+    checkpointing = parser.add_argument_group("Common checkpoint overrides")
+    checkpointing.add_argument("--pretrained_checkpoint", metavar="PATH", help="Set checkpoint.pretrained_checkpoint.")
+    checkpointing.add_argument("--save_dir", metavar="PATH", help="Set checkpoint.save.")
+    checkpointing.add_argument("--load_dir", metavar="PATH", help="Set checkpoint.load.")
+    checkpointing.add_argument("--save_interval", type=int, metavar="STEPS", help="Set checkpoint.save_interval.")
+
+    runtime = parser.add_argument_group("Runtime")
+    runtime.add_argument("--dry-run", "--dry_run", action="store_true", dest="dryrun")
+    runtime.add_argument("--deterministic", action="store_true")
+    runtime.add_argument("--dump-env", "--dump_env", action="store_true", dest="dump_env")
+    return parser
+
+
+def _collect_overrides(parser: argparse.ArgumentParser, values: list[str]) -> list[str]:
+    """Validate trailing ConfigContainer overrides."""
+    overrides: list[str] = []
+    for value in values:
+        if value.startswith("-"):
+            parser.error(f"Unknown option: {value}")
+        if "=" not in value:
+            parser.error(f"Expected override in KEY=VALUE form, got {value!r}")
+        overrides.append(value)
+    return overrides
+
+
+def _common_config_overrides(args: argparse.Namespace) -> list[str]:
+    """Convert common convenience arguments to ConfigContainer overrides."""
+    overrides = []
+    for argument_name, config_field in COMMON_OVERRIDE_FIELDS:
+        value = getattr(args, argument_name)
+        if value is None:
+            continue
+        serialized_value = json.dumps(value) if isinstance(value, str) else str(value)
+        overrides.append(f"{config_field}={serialized_value}")
+    return overrides
+
+
+def _train_mode(mode: PublicMode) -> TrainMode:
+    """Map the public mode to a training loop."""
+    return "pretrain" if mode == "pretrain" else "finetune"
+
+
+def _infer_mode(args: argparse.Namespace) -> None:
+    """Infer an omitted training mode from a conventional recipe name."""
+    if args.mode is None and args.recipe:
+        args.mode = infer_recipe_mode(args.recipe)
+    if args.mode is None:
+        raise ValueError("Unable to infer training mode; pass --mode or use a conventional --recipe name.")
+
+
+def _validate_recipe_mode(recipe_name: str, mode: PublicMode) -> None:
+    """Reject a conventional full recipe name that contradicts ``--mode``."""
+    recipe_mode = infer_recipe_mode(recipe_name)
+    if recipe_mode is not None and recipe_task(recipe_mode) != recipe_task(mode):
+        raise ValueError(f"Mode '{mode}' is incompatible with recipe '{recipe_name}'.")
+
+
+def _current_world_size() -> int | None:
+    """Return the distributed world size supplied by torchrun or Slurm, when available."""
+    for variable_name in ("WORLD_SIZE", "SLURM_NTASKS"):
+        value = os.environ.get(variable_name)
+        if value is None:
+            continue
+        world_size = int(value)
+        if world_size < 1:
+            raise ValueError(f"{variable_name} must be positive, got {value!r}.")
+        return world_size
+    return None
+
+
+def _validate_benchmark_world_size(metadata: BenchmarkRecipeMetadata, *, dryrun: bool) -> None:
+    """Require the recipe's total GPU count for an executable run."""
+    if dryrun:
+        return
+    world_size = _current_world_size()
+    if world_size is None:
+        raise ValueError(
+            "Benchmark recipes require an existing distributed environment with the world size set by torchrun "
+            "or Slurm."
+        )
+    if world_size != metadata.num_gpus:
+        raise ValueError(
+            f"Benchmark recipe requires exactly {metadata.num_gpus} GPUs, but the distributed world size is "
+            f"{world_size}. Select a recipe matching the allocation."
+        )
+
+
+def _apply_benchmark_runtime_defaults(
+    recipe: ConfigContainer,
+    metadata: BenchmarkRecipeMetadata,
+    cli_overrides: list[str],
+) -> ConfigContainer:
+    """Preserve flat-runner defaults that are not yet encoded in the recipe factory."""
+    optimizer = getattr(recipe, "optimizer", None)
+    precision_aware_field = "optimizer.use_precision_aware_optimizer"
+    precision_aware_is_explicit = any(
+        override.lstrip("+~").split("=", 1)[0] in {"optimizer", precision_aware_field} for override in cli_overrides
+    )
+    if (
+        not precision_aware_is_explicit
+        and metadata.precision == "bf16"
+        and getattr(optimizer, "optimizer", None) == "adam"
+    ):
+        optimizer.use_precision_aware_optimizer = True
+    return recipe
+
+
+def _apply_benchmark_dataset_defaults(
+    recipe: ConfigContainer,
+    metadata: BenchmarkRecipeMetadata,
+) -> ConfigContainer:
+    """Preserve the flat runner's mock-data default for text finetuning benchmarks."""
+    if metadata.task in {"sft", "peft"} and recipe_steps_match(recipe_step(metadata.recipe_name), "llm_step"):
+        source_dataset = getattr(recipe, "dataset", None)
+        mock_dataset = build_dataset_config(recipe, "mock")
+        for field_name in ("num_workers", "pin_memory", "persistent_workers"):
+            if (
+                source_dataset is not None
+                and hasattr(source_dataset, field_name)
+                and hasattr(mock_dataset, field_name)
+            ):
+                setattr(mock_dataset, field_name, getattr(source_dataset, field_name))
+        if hasattr(mock_dataset, "split"):
+            mock_dataset.split = "99990,8,2"
+        recipe.dataset = mock_dataset
+    return recipe
+
+
+def _selected_recipe_name(args: argparse.Namespace) -> str:
+    """Return the complete recipe function name selected by public arguments."""
+    return args.recipe or f"{args.model}_{recipe_task(args.mode)}_config"
+
+
+def _load_selected_recipe(args: argparse.Namespace) -> ConfigContainer:
+    """Load the requested recipe by its complete name or model-derived library name."""
+    peft_scheme = args.mode if args.mode in {"lora", "dora"} else None
+    recipe_name = _selected_recipe_name(args)
+    if args.recipe:
+        _validate_recipe_mode(recipe_name, args.mode)
+    return load_recipe(recipe_name, peft_scheme=peft_scheme)
+
+
+def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigContainer:
+    """Apply a public dataset selection to a recipe config."""
+    if args.dataset is None:
+        return recipe
+
+    recipe.dataset = build_dataset_config(recipe, args.dataset)
+    requested_train_mode = _train_mode(args.mode)
+    if dataset_train_mode(recipe.dataset) != requested_train_mode:
+        raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
+    return recipe
+
+
+def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[str]]:
+    """Parse public arguments and ordered ConfigContainer overrides."""
+    parser = _build_parser()
+    args, unknown = parser.parse_known_args(argv)
+    trailing_overrides = _collect_overrides(parser, unknown)
+    cli_overrides = [*_common_config_overrides(args), *trailing_overrides]
+    _infer_mode(args)
     return args, cli_overrides
 
 
-def load_recipe(
-    recipe_name: str,
-    peft_scheme: str | None,
-) -> ConfigContainer:
-    """
-    Load recipe by name from megatron.bridge.recipes.
+def main(argv: list[str] | None = None) -> None:
+    """Load, configure, and execute one library or benchmark recipe."""
+    logging.basicConfig(level=logging.INFO)
+    args, cli_overrides = parse_args(argv)
 
-    Args:
-        recipe_name: Full recipe function name (e.g., 'llama32_1b_pretrain_config')
-        peft_scheme: PEFT scheme to use ('lora', 'dora', or None). When None,
-            the recipe default is used.
-
-    Returns:
-        ConfigContainer from calling the recipe
-
-    Raises:
-        AttributeError: If recipe not found
-    """
-    if not hasattr(recipes, recipe_name):
-        raise AttributeError(
-            f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.\n"
-            f"Make sure the recipe name is correct and the recipe is exported in its family __init__.py.\n"
-            f"Example recipe names: llama32_1b_pretrain_config, gemma3_1b_pretrain_config, qwen3_8b_pretrain_config"
+    recipe_name = _selected_recipe_name(args)
+    benchmark_metadata = resolved_benchmark_recipe_metadata(recipe_name)
+    if benchmark_metadata is not None:
+        validate_benchmark_recipe_scope(
+            benchmark_metadata,
+            mode=args.mode,
+            step_func=args.step_func,
+            dataset=args.dataset,
         )
 
-    config_builder = getattr(recipes, recipe_name)
+    recipe = _load_selected_recipe(args)
+    if benchmark_metadata is not None:
+        recipe = _apply_benchmark_dataset_defaults(recipe, benchmark_metadata)
+    recipe = _apply_dataset(recipe, args)
+    recipe = apply_determinism(recipe, deterministic=args.deterministic)
+    recipe = apply_cli_overrides(recipe, cli_overrides)
+    recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
+    if benchmark_metadata is not None:
+        recipe = _apply_benchmark_runtime_defaults(recipe, benchmark_metadata, cli_overrides)
+    configuration_mode = _train_mode(args.mode)
 
-    # Inspect the recipe's signature to determine which arguments it accepts
-    try:
-        sig = inspect.signature(config_builder)
-        params = sig.parameters
-        accepts_peft_scheme = "peft_scheme" in params
-    except (ValueError, TypeError):
-        # If signature inspection fails, fallback conservatively
-        accepts_peft_scheme = True  # peft_scheme is the current recipe PEFT argument
-
-    # Build kwargs dynamically based on what the recipe accepts
-    kwargs = {}
-    if accepts_peft_scheme and peft_scheme is not None:
-        kwargs["peft_scheme"] = peft_scheme
-
-    try:
-        return config_builder(**kwargs)
-    except TypeError:
-        # Fallback if the kwargs are not accepted despite signature inspection
-        return config_builder()
-
-
-def load_forward_step(step_type: str, mode: str | None = None) -> Callable:
-    """Load forward_step function based on the requested step type."""
-    step_key = step_type.lower()
-    if step_key not in STEP_FUNCTIONS:
-        raise ValueError(ERR_UNKNOWN_STEP.format(step_type=step_type, choices=", ".join(STEP_FUNCTIONS)))
-    step = STEP_FUNCTIONS[step_key]
-    if inspect.isclass(step):
-        if "mode" in inspect.signature(step.__init__).parameters:
-            return step(mode=mode)
-        return step()
-    return step
-
-
-def infer_train_mode(recipe_name: str) -> str:
-    """Infer training mode from the recipe name (fallback when --dataset is not passed)."""
-    lowered = recipe_name.lower()
-    has_pretrain = "pretrain" in lowered
-    has_finetune = "finetune" in lowered or "sft" in lowered or "peft" in lowered
-    if has_pretrain ^ has_finetune:
-        return "pretrain" if has_pretrain else "finetune"
-    raise ValueError(ERR_INFER_MODE_FAILED)
-
-
-def main() -> None:
-    """Run GPT training (pretrain or finetune)."""
-    args, cli_overrides = parse_args()
-
-    config: ConfigContainer = load_recipe(
-        args.recipe,
-        args.peft_scheme,
-    )
-
-    if args.dataset is not None:
-        mode = infer_mode_from_dataset(args.dataset)
-        config = apply_dataset_override(
-            config,
-            dataset_type=args.dataset,
-            packed_sequence=args.packed_sequence,
-            seq_length=args.seq_length,
-            cli_overrides=cli_overrides,
+    if benchmark_metadata is not None:
+        _validate_benchmark_world_size(benchmark_metadata, dryrun=args.dryrun)
+        recipe = bootstrap_recipe_environment(
+            recipe,
+            script_path=str(Path(__file__).resolve()),
+            argv=list(argv) if argv is not None else sys.argv[1:],
         )
+        execution_mode = "pretrain"
+        step_mode = benchmark_metadata.task
     else:
-        mode = infer_train_mode(args.recipe)
+        recipe = apply_runtime_environment(recipe)
+        execution_mode = configuration_mode
+        step_mode = configuration_mode
 
-    config = process_config_with_overrides(
-        config,
-        cli_overrides=cli_overrides or None,
+    recipe = sync_finetuning_cp_invariants(recipe, mode=configuration_mode)
+    recipe = sync_offline_packing_alignment(recipe)
+    recipe = sync_model_dataset_sequence_length(recipe)
+
+    step_func_name = args.step_func or recipe_step(recipe_name)
+    forward_step = load_forward_step(step_func_name, mode=step_mode)
+    run_config(
+        config=recipe,
+        mode=execution_mode,
+        step_func=forward_step,
+        dryrun=args.dryrun,
+        dryrun_world_size=benchmark_metadata.num_gpus if benchmark_metadata is not None else None,
+        dump_environment=args.dump_env,
     )
-
-    # Ensure dataset.seq_length and model.seq_length stay in sync after CLI overrides
-    if (
-        hasattr(config, "model")
-        and config.model is not None
-        and hasattr(config, "dataset")
-        and config.dataset is not None
-    ):
-        if hasattr(config.dataset, "seq_length") and config.model.seq_length != config.dataset.seq_length:
-            config.model.seq_length = config.dataset.seq_length
-
-    forward_step = load_forward_step(args.step_func, mode=mode)
-    train_func = TRAIN_FUNCTIONS[mode]
-    train_func(config=config, forward_step_func=forward_step)
 
 
 if __name__ == "__main__":

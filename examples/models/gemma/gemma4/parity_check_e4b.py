@@ -69,7 +69,6 @@ from megatron.training import print_rank_0
 SEQ = 16
 BATCH = 1
 FULL_VOCAB = 262144
-LOGIT_SOFTCAP = 30.0
 
 # Audio-mode constants (based on audio_tower checkpoint analysis)
 AUDIO_MEL_BINS = 128  # mel-spectrogram frequency bins
@@ -367,19 +366,18 @@ def _forward_audio(model, input_ids_audio, audio_features):
 
 
 # ---------------------------------------------------------------------------
-# Logit gathering + softcapping
+# Logit gathering
 # ---------------------------------------------------------------------------
 
 
-def _gather_and_cap(logits, mpu):
-    """All-gather TP vocab shards, trim to FULL_VOCAB, apply softcapping."""
+def _gather_logits(logits, mpu):
+    """All-gather TP vocab shards and trim to FULL_VOCAB."""
     tp = mpu.get_tensor_model_parallel_world_size()
     if tp > 1:
         parts = [torch.zeros_like(logits) for _ in range(tp)]
         dist.all_gather(parts, logits.contiguous(), group=mpu.get_tensor_model_parallel_group())
         logits = torch.cat(parts, dim=-1)
-    raw = logits[..., :FULL_VOCAB].cpu().float()
-    return torch.tanh(raw / LOGIT_SOFTCAP) * LOGIT_SOFTCAP
+    return logits[..., :FULL_VOCAB].cpu().float()
 
 
 # ---------------------------------------------------------------------------
@@ -556,7 +554,6 @@ def _report(mode, megatron_logits, hf_logits, atol, seq_len=None):
 
     print_rank_0(f"\n{'=' * 70}")
     print_rank_0(f"  Parity [{mode.upper()}]: {mode_labels[mode]}")
-    print_rank_0(f"  (Megatron logits softcapped at {LOGIT_SOFTCAP} before comparison)")
     print_rank_0(f"  seq={seq_len}  batch={BATCH}  vocab={FULL_VOCAB}")
     print_rank_0(f"  max |diff|  : {max_diff:.6f}  (atol={atol})")
     print_rank_0(f"  mean |diff| : {mean_diff:.6f}")
@@ -630,7 +627,7 @@ def main():
     else:
         logits = _forward_audio(model, input_ids_audio, audio_features)
 
-    megatron_logits = _gather_and_cap(logits, mpu)
+    megatron_logits = _gather_logits(logits, mpu)
 
     del model, models, logits
     torch.cuda.empty_cache()

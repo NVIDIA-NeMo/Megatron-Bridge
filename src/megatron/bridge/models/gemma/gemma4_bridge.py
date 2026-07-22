@@ -50,6 +50,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
     rope_local_base_freq_from_hf,
     rope_theta_from_hf,
 )
+from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider, Gemma4ModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -92,6 +93,62 @@ def _infer_attn_pattern(layer_types: list[str]) -> tuple[int, int]:
                     break
             return (sliding_count, full_count)
     return (len(layer_types), 0)
+
+
+def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> list[str]:
+    """Reconstruct the Hugging Face per-layer attention pattern."""
+    if isinstance(provider, Gemma4DenseProvider):
+        pattern = provider.window_attn_skip_freq
+    else:
+        pattern = provider.interleaved_attn_pattern
+
+    if isinstance(pattern, list):
+        layer_types = [
+            value if isinstance(value, str) else "sliding_attention" if bool(value) else "full_attention"
+            for value in pattern
+        ]
+    elif isinstance(pattern, tuple) and len(pattern) == 2:
+        sliding_count, full_count = pattern
+        cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
+        layer_types = [cycle[index % len(cycle)] for index in range(provider.num_layers)] if cycle else []
+    elif isinstance(pattern, int) and pattern > 0:
+        layer_types = [
+            "sliding_attention" if layer_number % pattern else "full_attention"
+            for layer_number in range(1, provider.num_layers + 1)
+        ]
+    else:
+        layer_types = ["full_attention"] * provider.num_layers
+
+    if layer_types:
+        layer_types[-1] = "full_attention"
+    return layer_types
+
+
+def _rope_parameters_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict[str, dict]:
+    """Reconstruct Gemma 4's dual local/global RoPE configuration."""
+    if isinstance(provider, Gemma4DenseProvider):
+        local_base = provider.sliding_window_rope_base
+        global_base = provider.full_attention_rope_base
+        global_partial_factor = provider.full_attention_rope_partial_factor
+    else:
+        rotary_base = provider.rotary_base
+        if isinstance(rotary_base, tuple):
+            local_base, global_base = rotary_base
+        else:
+            local_base = global_base = rotary_base
+        global_partial_factor = provider.global_rotary_percent
+
+    return {
+        "full_attention": {
+            "partial_rotary_factor": global_partial_factor,
+            "rope_theta": global_base,
+            "rope_type": "proportional",
+        },
+        "sliding_attention": {
+            "rope_theta": local_base,
+            "rope_type": "default",
+        },
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -159,6 +216,8 @@ class Gemma4Bridge(MegatronModelBridge):
         if layer_types is not None:
             layer_types = [layer_type == "sliding_attention" for layer_type in layer_types]
 
+        sliding_window = getattr(hf_config, "sliding_window", 512)
+
         return Gemma4DenseProvider(
             num_layers=hf_config.num_hidden_layers,
             hidden_size=hf_config.hidden_size,
@@ -172,11 +231,14 @@ class Gemma4Bridge(MegatronModelBridge):
             vocab_size=hf_config.vocab_size,
             normalization="RMSNorm",
             layernorm_epsilon=hf_config.rms_norm_eps,
+            window_size=(sliding_window - 1, 0),
             window_attn_skip_freq=layer_types if layer_types is not None else 6,
             sliding_window_rope_base=sliding_rope.get("rope_theta", 10000.0),
             full_attention_rope_base=full_rope.get("rope_theta", 1000000.0),
             full_attention_rope_partial_factor=full_rope.get("partial_rotary_factor", 0.25),
             num_kv_shared_layers=getattr(hf_config, "num_kv_shared_layers", 0),
+            use_double_wide_mlp=getattr(hf_config, "use_double_wide_mlp", False),
+            attention_k_eq_v=getattr(hf_config, "attention_k_eq_v", False),
             per_layer_embed_vocab_size=getattr(hf_config, "vocab_size_per_layer_input", hf_config.vocab_size),
             per_layer_embed_dim=getattr(hf_config, "hidden_size_per_layer_input", 256),
             final_logit_softcapping=getattr(hf_config, "final_logit_softcapping", None),
@@ -201,6 +263,7 @@ class Gemma4Bridge(MegatronModelBridge):
 
         provider.global_head_dim = getattr(hf_config, "global_head_dim", 512)
         provider.num_global_key_value_heads = getattr(hf_config, "num_global_key_value_heads", 2)
+        provider.attention_k_eq_v = getattr(hf_config, "attention_k_eq_v", False)
 
         rope_params = getattr(hf_config, "rope_parameters", {})
         if isinstance(rope_params, dict):
@@ -230,9 +293,43 @@ class Gemma4Bridge(MegatronModelBridge):
 
     @classmethod
     def megatron_to_hf_config(cls, provider: Gemma4ModelProvider | Gemma4DenseProvider) -> dict:
-        """Convert a Gemma 4 provider config back to Hugging Face config."""
+        """Preserve Gemma 4 architecture fields affected by provider conversion."""
         hf_config = super().megatron_to_hf_config(provider)
-        hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
+        dtype = hf_config.pop("torch_dtype", None)
+        if dtype is not None:
+            hf_config["dtype"] = dtype
+        hf_config.pop("partial_rotary_factor", None)
+        hf_config.pop("rope_theta", None)
+        is_moe = provider.num_moe_experts is not None
+        window_size = provider.window_size
+        hf_config.update(
+            {
+                "attention_k_eq_v": provider.attention_k_eq_v,
+                "enable_moe_block": is_moe,
+                "final_logit_softcapping": provider.final_logit_softcapping,
+                "global_head_dim": (provider.global_head_dim if is_moe else provider.global_kv_channels),
+                "hidden_size_per_layer_input": getattr(provider, "per_layer_embed_dim", 0),
+                "layer_types": _layer_types_from_provider(provider),
+                "num_kv_shared_layers": getattr(provider, "num_kv_shared_layers", 0),
+                "num_global_key_value_heads": (
+                    provider.num_global_key_value_heads if is_moe else provider.num_global_query_groups
+                ),
+                "rope_parameters": _rope_parameters_from_provider(provider),
+                "sliding_window": mcore_to_hf_window_size(window_size),
+                "use_double_wide_mlp": getattr(provider, "use_double_wide_mlp", False),
+                "vocab_size_per_layer_input": getattr(provider, "per_layer_embed_vocab_size", provider.vocab_size),
+            }
+        )
+        if is_moe:
+            hf_config.update(
+                {
+                    "intermediate_size": provider.moe_shared_expert_intermediate_size,
+                    "moe_intermediate_size": provider.moe_ffn_hidden_size,
+                    "num_experts": provider.num_moe_experts,
+                    "top_k_experts": provider.moe_router_topk,
+                }
+            )
+            hf_config.pop("num_experts_per_tok", None)
         return hf_config
 
     def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
@@ -244,34 +341,6 @@ class Gemma4Bridge(MegatronModelBridge):
         for hf_name, tensor in converted_weights_dict.items():
             if hf_name not in hf_state_dict:
                 continue
-
-            if hf_name.endswith("router.proj.weight"):
-                layer_match = re.search(r"layers\.(\d+)\.", hf_name)
-                if layer_match:
-                    layer_idx = layer_match.group(1)
-                    prefix = hf_name.rsplit("layers.", 1)[0]
-                    scale_key = f"{prefix}layers.{layer_idx}.router.scale"
-                    ln2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-                    if scale_key in hf_state_dict and ln2_key in hf_state_dict:
-                        router_scale = hf_state_dict[scale_key].float().to(tensor.device)
-                        ln2_weight = hf_state_dict[ln2_key].float().to(tensor.device)
-                        hidden_size = tensor.shape[-1]
-                        scalar_root_size = hidden_size**-0.5
-                        fusion_factor = router_scale * scalar_root_size / ln2_weight
-                        tensor = (tensor.float() / fusion_factor.unsqueeze(0)).to(tensor.dtype)
-
-            elif hf_name.endswith(("mlp.gate_proj.weight", "mlp.up_proj.weight")) and "experts" not in hf_name:
-                layer_match = re.search(r"layers\.(\d+)\.", hf_name)
-                if layer_match:
-                    layer_idx = layer_match.group(1)
-                    prefix = hf_name.rsplit("layers.", 1)[0]
-                    pffl_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm.weight"
-                    pffl2_key = f"{prefix}layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-                    if pffl_key in hf_state_dict and pffl2_key in hf_state_dict:
-                        w_pffl = hf_state_dict[pffl_key].float().to(tensor.device)
-                        w_pffl2 = hf_state_dict[pffl2_key].float().to(tensor.device)
-                        correction = w_pffl / w_pffl2
-                        tensor = (tensor.float() / correction.unsqueeze(0)).to(tensor.dtype)
 
             result[hf_name] = tensor
 
@@ -319,55 +388,7 @@ class Gemma4Bridge(MegatronModelBridge):
                         hf_weights[role] = hf_state_dict[name]
                 return hf_weights
 
-        if isinstance(hf_param, dict) and "gate" in hf_param:
-            gate_name = hf_param["gate"]
-            if "mlp.gate_proj" in gate_name:
-                return self._fuse_shared_expert_prenorm(hf_param, hf_state_dict)
-
-        if isinstance(hf_param, str) and hf_param.endswith("router.proj.weight"):
-            return self._fuse_router_weight(hf_param, hf_state_dict)
-
         return super().maybe_modify_loaded_hf_weight(hf_param, hf_state_dict)
-
-    def _fuse_router_weight(self, hf_param: str, hf_state_dict: Mapping[str, torch.Tensor]) -> torch.Tensor:
-        proj_weight = hf_state_dict[hf_param]
-        layer_match = re.search(r"layers\.(\d+)\.", hf_param)
-        if layer_match is None:
-            return proj_weight
-        layer_idx = layer_match.group(1)
-        scale_key = f"model.layers.{layer_idx}.router.scale"
-        ln2_key = f"model.layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-        if scale_key not in hf_state_dict or ln2_key not in hf_state_dict:
-            return proj_weight
-        router_scale = hf_state_dict[scale_key].float()
-        ln2_weight = hf_state_dict[ln2_key].float()
-        hidden_size = proj_weight.shape[-1]
-        scalar_root_size = hidden_size**-0.5
-        fusion_factor = router_scale * scalar_root_size / ln2_weight
-        fused_weight = proj_weight.float() * fusion_factor.unsqueeze(0)
-        return fused_weight.to(proj_weight.dtype)
-
-    def _fuse_shared_expert_prenorm(
-        self, hf_param: dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]
-    ) -> dict[str, torch.Tensor]:
-        gate_name = hf_param["gate"]
-        layer_match = re.search(r"layers\.(\d+)\.", gate_name)
-        if layer_match is None:
-            return {role: hf_state_dict[name] for role, name in hf_param.items()}
-        layer_idx = layer_match.group(1)
-        pffl_key = f"model.layers.{layer_idx}.pre_feedforward_layernorm.weight"
-        pffl2_key = f"model.layers.{layer_idx}.pre_feedforward_layernorm_2.weight"
-        if pffl_key not in hf_state_dict or pffl2_key not in hf_state_dict:
-            return {role: hf_state_dict[name] for role, name in hf_param.items()}
-        w_pffl = hf_state_dict[pffl_key].float()
-        w_pffl2 = hf_state_dict[pffl2_key].float()
-        correction = w_pffl / w_pffl2
-        hf_weights = {}
-        for role, name in hf_param.items():
-            weight = hf_state_dict[name]
-            fused = weight.float() * correction.unsqueeze(0)
-            hf_weights[role] = fused.to(weight.dtype)
-        return hf_weights
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         if self._is_dense_config():
@@ -451,7 +472,7 @@ class Gemma4Bridge(MegatronModelBridge):
             ),
             "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.pre_feedforward_layernorm_2.weight",
             "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.post_layernorm.weight": (
+            "decoder.layers.*.mlp.post_shared_expert_layernorm.weight": (
                 "model.layers.*.post_feedforward_layernorm_1.weight"
             ),
             "decoder.layers.*.mlp.router.weight": "model.layers.*.router.proj.weight",
@@ -492,7 +513,7 @@ class Gemma4Bridge(MegatronModelBridge):
                     hf_param="model.layers.*.router.scale",
                 ),
                 ReplicatedMapping(
-                    megatron_param="decoder.layers.*.pffl_weight",
+                    megatron_param="decoder.layers.*.pre_shared_expert_layernorm.weight",
                     hf_param="model.layers.*.pre_feedforward_layernorm.weight",
                 ),
                 ReplicatedMapping(

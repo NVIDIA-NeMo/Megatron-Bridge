@@ -9,7 +9,7 @@ from typing import Callable, Literal, Optional, Tuple
 
 from torch.utils.data import Dataset
 
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 
 
 @dataclass(kw_only=True)

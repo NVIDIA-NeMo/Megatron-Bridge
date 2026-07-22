@@ -191,7 +191,7 @@ def parse_cli_args():
     parser.add_argument(
         "--use_recipes",
         action="store_true",
-        help="Use library recipes. Disabled by default.",
+        help="Use model recipes instead of flat performance recipes. Disabled by default.",
         default=False,
     )
     parser.add_argument(
@@ -241,6 +241,13 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--num_moe_experts",
+        type=int,
+        help="Number of experts to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--pipeline_model_parallel_layout",
         type=str,
         help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
@@ -258,7 +265,7 @@ def parse_cli_args():
         "-d",
         "--dryrun",
         help="Dry-run mode. In setup_experiment.py: prints the sbatch script without launching. "
-        "In run_script.py / run_recipe.py: builds the full ConfigContainer with all overrides, "
+        "In bootstrap.py: selects a training entrypoint, builds the full ConfigContainer with all overrides, "
         "saves it to --save_config_filepath (default: ConfigContainer.yaml), and exits without training.",
         required=False,
         action="store_true",
@@ -268,7 +275,7 @@ def parse_cli_args():
     training_args = parser.add_argument_group("Training arguments")
     training_args.add_argument(
         "--task",
-        choices=["pretrain", "sft", "lora"],
+        choices=["pretrain", "sft", "peft"],
         help="Task to run. Defaults to 'pretrain'",
         default="pretrain",
     )
@@ -439,6 +446,19 @@ def parse_cli_args():
         type=str,
         help="Maximum time limit to run experiment for. Defaults to 30 minutes (format- 'HH:MM:SS')",
         default="00:30:00",
+    )
+    slurm_args.add_argument(
+        "--preempt_time",
+        type=int,
+        help=" ".join(
+            [
+                "For long-convergence runs only: seconds before the Slurm time limit at which to send",
+                "SIGTERM so the training loop can save a checkpoint and exit gracefully before the hard",
+                "walltime kill, letting the next slice resume from it. Must exceed the checkpoint flush",
+                "time. Defaults to 60.",
+            ]
+        ),
+        default=60,
     )
     slurm_args.add_argument(
         "-gn",
@@ -874,7 +894,11 @@ def parse_cli_args():
     )
     performance_args.add_argument(
         "--cuda_graph_scope",
-        help=f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of scopes is allowed.",
+        help=(
+            f"Cuda graph scope. Options- {VALID_CUDA_GRAPH_SCOPES}. Comma separated list of "
+            "scopes is allowed. Scoped captures such as attn or mlp require "
+            "cuda_graph_impl=transformer_engine; local is reserved for full_iteration."
+        ),
         type=is_cuda_graph_scope_valid,
         required=False,
     )
@@ -910,6 +934,8 @@ def parse_cli_args():
         help="MoE flex dispatcher backend. Options- deepep, hybridep, None. If None, will use alltoall dispatcher.",
         choices=["deepep", "hybridep", None],
         required=False,
+        # -1 means the option was omitted and the recipe backend must be kept;
+        # None means the user explicitly requested the alltoall dispatcher.
         default=-1,
     )
     performance_args.add_argument(
@@ -978,8 +1004,10 @@ def parse_cli_args():
         "-cv",
         "--config_variant",
         type=str,
-        help="Config variant for workload base configs (used by setup_experiment.py only). Use --list_config_variants to see available options.",
-        default="v2",
+        help=(
+            "Flat perf recipe variant for setup_experiment.py. Omit to use the suffix-less canonical recipe. "
+            "Named variants such as large_scale are supported when a matching recipe exists."
+        ),
     )
     config_variant_args.add_argument(
         "--list_config_variants",

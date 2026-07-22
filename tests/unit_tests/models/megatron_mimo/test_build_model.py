@@ -21,12 +21,15 @@ def test_bridge_parallel_state_uses_mcore_expert_group_fields(monkeypatch):
         mp=object(),
     )
     for global_name in (
+        "_GLOBAL_MEMORY_BUFFER",
         "_TENSOR_MODEL_PARALLEL_GROUP",
         "_DATA_PARALLEL_GROUP",
         "_DATA_PARALLEL_GROUP_WITH_CP",
         "_PIPELINE_MODEL_PARALLEL_GROUP",
         "_EXPERT_MODEL_PARALLEL_GROUP",
         "_EXPERT_TENSOR_PARALLEL_GROUP",
+        "_EXPERT_DATA_PARALLEL_GROUP",
+        "_INTRA_PARTIAL_EXPERT_DATA_PARALLEL_GROUP",
         "_EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP",
         "_EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP",
         "_CONTEXT_PARALLEL_GROUP",

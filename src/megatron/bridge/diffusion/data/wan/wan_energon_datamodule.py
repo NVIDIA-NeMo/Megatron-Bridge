@@ -18,7 +18,7 @@ import logging
 from dataclasses import dataclass
 from typing import Optional, Union
 
-from megatron.bridge.data.utils import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.diffusion.data.common.diffusion_energon_datamodule import (
     DiffusionDataModule,
     DiffusionDataModuleConfig,

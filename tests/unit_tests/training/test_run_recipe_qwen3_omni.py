@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Unit tests for Qwen3-Omni training entry wiring in run_recipe.py."""
+"""Unit tests for Qwen3-Omni training entry wiring in recipe_runner.py."""
 
 from __future__ import annotations
 
@@ -20,35 +20,40 @@ import importlib.util
 import sys
 import types
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 
-def _load_run_recipe_module():
-    """Load run_recipe.py with lightweight stub modules for local unit testing."""
+def _package(name: str) -> types.ModuleType:
+    module = types.ModuleType(name)
+    module.__path__ = []  # type: ignore[attr-defined]
+    return module
 
-    script_path = Path(__file__).resolve().parents[3] / "scripts" / "training" / "run_recipe.py"
-    module_name = "test_run_recipe_qwen3_omni_module"
 
-    recipe_config = object()
-    megatron_module = types.ModuleType("megatron")
-    bridge_module = types.ModuleType("megatron.bridge")
-    models_module = types.ModuleType("megatron.bridge.models")
-    qwen_omni_models_module = types.ModuleType("megatron.bridge.models.qwen_omni")
-    qwen_vl_models_module = types.ModuleType("megatron.bridge.models.qwen_vl")
-    stepfun_models_module = types.ModuleType("megatron.bridge.models.stepfun")
-    diffusion_module = types.ModuleType("megatron.bridge.diffusion")
-    diffusion_models_module = types.ModuleType("megatron.bridge.diffusion.models")
-    flux_models_module = types.ModuleType("megatron.bridge.diffusion.models.flux")
-    wan_models_module = types.ModuleType("megatron.bridge.diffusion.models.wan")
-    training_module = types.ModuleType("megatron.bridge.training")
-    training_utils_module = types.ModuleType("megatron.bridge.training.utils")
-    recipes_utils_module = types.ModuleType("megatron.bridge.recipes.utils")
+def _load_recipe_runner_module():
+    """Load recipe_runner.py with lightweight stub modules for local unit testing."""
 
-    recipes_module = types.ModuleType("megatron.bridge.recipes")
-    recipes_module.qwen3_omni_30b_a3b_sft_config = lambda **_: recipe_config
+    script_path = Path(__file__).resolve().parents[3] / "scripts" / "training" / "recipe_runner.py"
+    module_name = "test_recipe_runner_qwen3_omni_module"
+
+    megatron_module = _package("megatron")
+    bridge_module = _package("megatron.bridge")
+    models_module = _package("megatron.bridge.models")
+    qwen_omni_models_module = _package("megatron.bridge.models.qwen_omni")
+    qwen_vl_models_module = _package("megatron.bridge.models.qwen_vl")
+    stepfun_models_module = _package("megatron.bridge.models.stepfun")
+    diffusion_module = _package("megatron.bridge.diffusion")
+    diffusion_models_module = _package("megatron.bridge.diffusion.models")
+    flux_models_module = _package("megatron.bridge.diffusion.models.flux")
+    wan_models_module = _package("megatron.bridge.diffusion.models.wan")
+    recipes_module = _package("megatron.bridge.recipes")
+    recipes_utils_module = _package("megatron.bridge.recipes.utils")
+    training_module = _package("megatron.bridge.training")
+    training_utils_module = _package("megatron.bridge.training.utils")
+    utils_module = _package("megatron.bridge.utils")
 
     qwen3_omni_step = types.ModuleType("megatron.bridge.models.qwen_omni.qwen3_omni_step")
-    qwen3_omni_step.forward_step = object()
+    qwen3_omni_step.forward_step = Mock(name="qwen3_omni_forward_step")
 
     qwen3_vl_step = types.ModuleType("megatron.bridge.models.qwen_vl.qwen3_vl_step")
     qwen3_vl_step.forward_step = object()
@@ -86,24 +91,29 @@ def _load_run_recipe_module():
 
     wan_step.WanForwardStep = WanForwardStep
 
+    determinism_utils_module = types.ModuleType("megatron.bridge.recipes.utils.determinism_utils")
+    determinism_utils_module.apply_determinism_overrides = Mock(name="apply_determinism_overrides")
+
     finetune_module = types.ModuleType("megatron.bridge.training.finetune")
     finetune_module.finetune = Mock(name="finetune")
 
     pretrain_module = types.ModuleType("megatron.bridge.training.pretrain")
     pretrain_module.pretrain = Mock(name="pretrain")
 
+    class TokenizerConfig:
+        def __init__(self, **kwargs):
+            self.__dict__.update(kwargs)
+
     config_module = types.ModuleType("megatron.bridge.training.config")
     config_module.ConfigContainer = object
+    config_module.TokenizerConfig = TokenizerConfig
+    config_module.apply_environment_variables = Mock(name="apply_environment_variables")
 
     omegaconf_module = types.ModuleType("megatron.bridge.training.utils.omegaconf_utils")
     omegaconf_module.process_config_with_overrides = lambda config, cli_overrides=None: config
 
-    dataset_utils_module = types.ModuleType("megatron.bridge.recipes.utils.dataset_utils")
-    dataset_utils_module.DATASET_TYPES = ["llm-finetune", "llm-pretrain-mock"]
-    dataset_utils_module.infer_mode_from_dataset = lambda dataset: "finetune"
-    dataset_utils_module.apply_dataset_override = (
-        lambda config, dataset_type, packed_sequence, seq_length, cli_overrides: config
-    )
+    common_utils_module = types.ModuleType("megatron.bridge.utils.common_utils")
+    common_utils_module.get_rank_safe = lambda: 1
 
     stub_modules = {
         "megatron": megatron_module,
@@ -116,11 +126,13 @@ def _load_run_recipe_module():
         "megatron.bridge.diffusion.models": diffusion_models_module,
         "megatron.bridge.diffusion.models.flux": flux_models_module,
         "megatron.bridge.diffusion.models.wan": wan_models_module,
-        "megatron.bridge.training": training_module,
-        "megatron.bridge.training.utils": training_utils_module,
         "megatron.bridge.recipes": recipes_module,
         "megatron.bridge.recipes.utils": recipes_utils_module,
-        "megatron.bridge.recipes.utils.dataset_utils": dataset_utils_module,
+        "megatron.bridge.recipes.utils.determinism_utils": determinism_utils_module,
+        "megatron.bridge.training": training_module,
+        "megatron.bridge.training.utils": training_utils_module,
+        "megatron.bridge.utils": utils_module,
+        "megatron.bridge.utils.common_utils": common_utils_module,
         "megatron.bridge.diffusion.models.flux.flux_step": flux_step,
         "megatron.bridge.diffusion.models.wan.wan_step": wan_step,
         "megatron.bridge.models.qwen_omni.qwen3_omni_step": qwen3_omni_step,
@@ -139,13 +151,21 @@ def _load_run_recipe_module():
 
     previous_modules = {name: sys.modules.get(name) for name in stub_modules}
     sys.modules.update(stub_modules)
+    script_dir = str(script_path.parent)
+    inserted_script_dir = script_dir not in sys.path
+    if inserted_script_dir:
+        sys.path.insert(0, script_dir)
 
     try:
         spec = importlib.util.spec_from_file_location(module_name, script_path)
         assert spec is not None and spec.loader is not None
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
+        module._destroy_process_group = Mock(name="destroy_process_group")
+        module._get_rank_safe = lambda: 1
     finally:
+        if inserted_script_dir:
+            sys.path.remove(script_dir)
         for name, previous in previous_modules.items():
             if previous is None:
                 sys.modules.pop(name, None)
@@ -153,95 +173,88 @@ def _load_run_recipe_module():
                 sys.modules[name] = previous
 
     test_handles = {
-        "omni_forward_step": qwen3_omni_step.forward_step,
+        "apply_environment_variables": config_module.apply_environment_variables,
         "finetune": finetune_module.finetune,
+        "omni_forward_step": qwen3_omni_step.forward_step,
         "pretrain": pretrain_module.pretrain,
-        "recipe_config": recipe_config,
+        "wan_forward_step": WanForwardStep,
     }
     return module, test_handles
 
 
-class TestRunRecipeQwen3Omni:
-    """Tests for wiring Qwen3-Omni into the generic training entrypoint."""
+class TestRecipeRunnerQwen3Omni:
+    """Tests for wiring Qwen3-Omni into the shared recipe runner."""
+
+    def test_apply_runtime_environment_applies_recipe_defaults(self):
+        """The shared runner should export recipe-owned environment defaults."""
+        module, handles = _load_recipe_runner_module()
+        config = SimpleNamespace(ddp=SimpleNamespace(nccl_ub=False))
+
+        assert module.apply_runtime_environment(config) is config
+
+        handles["apply_environment_variables"].assert_called_once_with(config)
+
+    def test_llm_step_alias_loads_gpt_forward_step(self):
+        """The public LLM step should resolve lazily to the GPT forward step."""
+        module, _ = _load_recipe_runner_module()
+        assert module.STEP_FUNCTIONS["llm_step"] == module.STEP_FUNCTIONS["gpt_step"]
+
+        forward_step = Mock()
+        module.STEP_FUNCTIONS["llm_step"] = forward_step
+        module.STEP_FUNCTIONS["gpt_step"] = forward_step
+
+        assert module.load_forward_step("llm_step") is module.load_forward_step("gpt_step")
 
     def test_load_forward_step_returns_qwen3_omni_handler(self):
-        """The run_recipe registry should expose qwen3_omni_step."""
+        """The shared registry should expose qwen3_omni_step."""
 
-        module, _ = _load_run_recipe_module()
+        module, handles = _load_recipe_runner_module()
 
-        assert module.load_forward_step("qwen3_omni_step") is not None
+        module.STEP_FUNCTIONS["qwen3_omni_step"] = handles["omni_forward_step"]
+        assert module.load_forward_step("qwen3_omni_step") is handles["omni_forward_step"]
 
-    def test_qwen3_omni_step_is_exposed_in_cli_choices(self):
-        """The CLI parser should advertise qwen3_omni_step as a valid step function."""
+    def test_class_based_forward_step_receives_mode(self):
+        """Class-based diffusion steps should still receive the selected train mode."""
 
-        module, _ = _load_run_recipe_module()
+        module, handles = _load_recipe_runner_module()
+        module.STEP_FUNCTIONS["wan_step"] = handles["wan_forward_step"]
 
-        original_argv = sys.argv
-        sys.argv = ["run_recipe.py", "--recipe", "qwen3_omni_30b_a3b_sft_config"]
-        try:
-            args, _ = module.parse_args()
-        finally:
-            sys.argv = original_argv
+        forward_step = module.load_forward_step("wan_step", mode="finetune")
 
-        assert "qwen3_omni_step" in module.STEP_FUNCTIONS
-        assert args.step_func == "gpt_step"
+        assert forward_step.mode == "finetune"
 
-    def test_load_recipe_passes_explicit_peft_scheme(self):
-        """The generic runner should pass the current PEFT recipe argument name."""
+    def test_run_config_routes_qwen3_omni_step_to_finetune(self):
+        """The shared runner should pass the Omni step function into finetune."""
 
-        module, handles = _load_run_recipe_module()
-        recipe_calls = []
+        module, handles = _load_recipe_runner_module()
+        config = object()
+        module.TRAIN_FUNCTIONS["finetune"] = handles["finetune"]
 
-        def unit_peft_config(*, peft_scheme="lora"):
-            recipe_calls.append({"peft_scheme": peft_scheme})
-            return handles["recipe_config"]
+        module.run_config(config=config, mode="finetune", step_func=handles["omni_forward_step"])
 
-        module.recipes.unit_peft_config = unit_peft_config
-
-        cfg = module.load_recipe("unit_peft_config", peft_scheme="dora")
-
-        assert cfg is handles["recipe_config"]
-        assert recipe_calls == [{"peft_scheme": "dora"}]
-
-    def test_load_recipe_omits_default_peft_scheme(self):
-        """Omitting --peft_scheme should leave the recipe's default in control."""
-
-        module, handles = _load_run_recipe_module()
-        recipe_calls = []
-
-        def unit_peft_config(*, peft_scheme="lora"):
-            recipe_calls.append({"peft_scheme": peft_scheme})
-            return handles["recipe_config"]
-
-        module.recipes.unit_peft_config = unit_peft_config
-
-        cfg = module.load_recipe("unit_peft_config", peft_scheme=None)
-
-        assert cfg is handles["recipe_config"]
-        assert recipe_calls == [{"peft_scheme": "lora"}]
-
-    def test_main_routes_qwen3_omni_step_to_finetune(self):
-        """The generic training entry should pass the Omni step function into finetune."""
-
-        module, handles = _load_run_recipe_module()
-
-        original_argv = sys.argv
-        sys.argv = [
-            "run_recipe.py",
-            "--recipe",
-            "qwen3_omni_30b_a3b_sft_config",
-            "--dataset",
-            "llm-finetune",
-            "--step_func",
-            "qwen3_omni_step",
-        ]
-        try:
-            module.main()
-        finally:
-            sys.argv = original_argv
-
-        handles["finetune"].assert_called_once_with(
-            config=handles["recipe_config"],
-            forward_step_func=handles["omni_forward_step"],
-        )
+        handles["finetune"].assert_called_once_with(config=config, forward_step_func=handles["omni_forward_step"])
         handles["pretrain"].assert_not_called()
+
+    def test_run_config_dumps_environment_before_training(self):
+        """Environment diagnostics should run before training."""
+        module, handles = _load_recipe_runner_module()
+        events = []
+        module.dump_env_rank0 = Mock(side_effect=lambda: events.append("dump"))
+        handles["finetune"].side_effect = lambda **kwargs: events.append("training")
+        module.TRAIN_FUNCTIONS["finetune"] = handles["finetune"]
+
+        module.run_config(config=object(), mode="finetune", step_func=object(), dump_environment=True)
+
+        assert events == ["dump", "training"]
+
+    def test_sync_model_dataset_sequence_length_accepts_sequence_length_alias(self):
+        """Hydra overrides using dataset.seq_length should still align the model."""
+        module, _ = _load_recipe_runner_module()
+        config = SimpleNamespace(
+            dataset=SimpleNamespace(sequence_length=256),
+            model=SimpleNamespace(seq_length=1024),
+        )
+
+        module.sync_model_dataset_sequence_length(config)
+
+        assert config.model.seq_length == 256

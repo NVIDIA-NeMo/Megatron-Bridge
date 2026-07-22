@@ -243,27 +243,27 @@ def test_nemotron_vl_12b_peft_uses_all_component_lora(monkeypatch: pytest.Monkey
 
 
 def test_nemotron_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_nemotron_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _nemotron_vl_module.nemotron_nano_v2_vl_12b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_nemotron_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):

@@ -117,9 +117,11 @@ export TORCH_NCCL_HEARTBEAT_TIMEOUT_SEC=7200
 # Pre-sync once before submitting jobs: UV_CACHE_DIR=/path/to/cache uv sync
 # export UV_CACHE_DIR="/path/to/shared/uv_cache"
 
-# HuggingFace / NeMo cache directories (recommended for shared filesystem)
+# HuggingFace / NeMo cache directories. Multi-node SFT requires a shared dataset
+# cache so every node can read data prepared by global rank 0.
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export NEMO_HOME="/path/to/shared/NEMO_HOME"
+# export NEMO_DATASETS_CACHE="/path/to/shared/NEMO_DATASETS_CACHE"
 
 # Authentication tokens (set these for your environment)
 # export HF_TOKEN="hf_your_token_here"
@@ -151,6 +153,12 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     exit 1
 fi
 
+EFFECTIVE_NEMO_DATASETS_CACHE="${NEMO_DATASETS_CACHE:-${NEMO_HOME:+${NEMO_HOME}/datasets}}"
+if [ "${SLURM_JOB_NUM_NODES:-1}" -gt 1 ] && [ -z "$EFFECTIVE_NEMO_DATASETS_CACHE" ]; then
+    echo "WARNING: Multi-node SFT requires shared dataset paths. Set NEMO_DATASETS_CACHE or NEMO_HOME unless the recipe uses an explicit shared dataset_root or packed path."
+fi
+echo "NeMo datasets cache: ${EFFECTIVE_NEMO_DATASETS_CACHE:-/root/.cache/nemo/datasets}"
+
 # Build srun command (shared across configs)
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
 if [ -n "$CONTAINER_MOUNTS" ]; then
@@ -180,7 +188,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         CKPT_OVERRIDES="checkpoint.pretrained_checkpoint=${PRETRAINED_CHECKPOINT}"
     fi
 
-    # Build CLI overrides for this config (full SFT: no --peft_scheme)
+    # Build CLI overrides for this full-SFT config.
     LR_OVERRIDES=""
     [ -n "$LR" ] && LR_OVERRIDES="$LR_OVERRIDES optimizer.lr=$LR"
     [ -n "$MIN_LR" ] && LR_OVERRIDES="$LR_OVERRIDES optimizer.min_lr=$MIN_LR"
@@ -213,7 +221,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     "
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${RECIPE_NAME}"
-    CMD="$CMD --peft_scheme none"
+    CMD="$CMD --mode sft"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
 

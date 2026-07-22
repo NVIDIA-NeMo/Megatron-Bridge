@@ -17,12 +17,12 @@
 WORKSPACE=${WORKSPACE:-/workspace}
 
 # Import HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model google/gemma-3-4b-it \
     --megatron-path ${WORKSPACE}/models/gemma-3-4b-it
 
 # Export Megatron → HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model google/gemma-3-4b-it \
     --megatron-path ${WORKSPACE}/models/gemma-3-4b-it/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gemma-3-4b-it-hf-export

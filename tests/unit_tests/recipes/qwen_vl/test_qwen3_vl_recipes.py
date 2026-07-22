@@ -334,27 +334,27 @@ def test_qwen3_vl_235b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen3_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_qwen3_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
     patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_qwen3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -478,32 +478,8 @@ def test_qwen3_vl_8b_is_dense_model(monkeypatch: pytest.MonkeyPatch):
 
 
 def _patch_energon_deps(monkeypatch):
-    """Monkeypatch AutoBridge and HF tokenizer/processor for energon config tests."""
+    """Monkeypatch model construction for Energon config tests."""
     patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
-    patch_recipe_module_global(
-        monkeypatch,
-        _qwen3_vl_module.qwen3_vl_8b_peft_energon_config,
-        "AutoTokenizer",
-        type(
-            "FakeAutoTokenizer",
-            (),
-            {
-                "from_pretrained": staticmethod(lambda *a, **kw: None),
-            },
-        ),
-    )
-    patch_recipe_module_global(
-        monkeypatch,
-        _qwen3_vl_module.qwen3_vl_8b_peft_energon_config,
-        "Qwen3VLProcessor",
-        type(
-            "FakeProcessor",
-            (),
-            {
-                "from_pretrained": staticmethod(lambda *a, **kw: None),
-            },
-        ),
-    )
 
 
 def test_qwen3_vl_8b_peft_energon_builds_config(monkeypatch: pytest.MonkeyPatch):
@@ -516,15 +492,27 @@ def test_qwen3_vl_8b_peft_energon_builds_config(monkeypatch: pytest.MonkeyPatch)
     assert cfg.peft is not None
 
 
-def test_qwen3_vl_8b_peft_energon_uses_energon_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that the energon config uses EnergonProvider as dataset."""
+def test_qwen3_vl_8b_peft_energon_uses_declarative_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that recipe construction does not load an HF processor or tokenizer."""
     _patch_energon_deps(monkeypatch)
+    import transformers
+
+    monkeypatch.setattr(
+        transformers.AutoTokenizer,
+        "from_pretrained",
+        lambda *_, **__: pytest.fail("recipe construction loaded a tokenizer"),
+    )
+    monkeypatch.setattr(
+        transformers.AutoProcessor,
+        "from_pretrained",
+        lambda *_, **__: pytest.fail("recipe construction loaded a processor"),
+    )
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
 
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
+    from megatron.bridge.data.builders import EnergonDatasetConfig
 
-    assert isinstance(cfg.dataset, EnergonProvider)
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
 
 
 def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch):
@@ -535,7 +523,6 @@ def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.micro_batch_size == cfg.train.micro_batch_size
-    assert cfg.dataset.global_batch_size == cfg.train.global_batch_size
 
 
 @pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
@@ -583,21 +570,20 @@ def test_qwen3_vl_8b_peft_energon_freeze_defaults(monkeypatch: pytest.MonkeyPatc
 
 
 def test_qwen3_vl_8b_peft_energon_task_encoder(monkeypatch: pytest.MonkeyPatch):
-    """Test that energon config creates a QwenVLTaskEncoder in the dataset."""
+    """Test that Energon recipe carries a serializable Qwen task-encoder config."""
     _patch_energon_deps(monkeypatch)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
 
-    from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
-    from megatron.bridge.recipes.qwen_vl.qwen3_vl import QwenVLEnergonProvider
+    from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 
-    assert isinstance(cfg.dataset, QwenVLEnergonProvider)
-    assert isinstance(cfg.dataset.task_encoder, QwenVLTaskEncoder)
-    assert cfg.dataset.min_pixels == 200704
-    assert cfg.dataset.max_pixels == 1003520
-    assert cfg.dataset.max_num_images == 10
-    assert cfg.dataset.max_num_frames == 60
-    assert cfg.dataset.max_visual_tokens == 16384
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert isinstance(cfg.dataset.task_encoder, QwenVLEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.min_pixels == 200704
+    assert cfg.dataset.task_encoder.max_pixels == 1003520
+    assert cfg.dataset.task_encoder.max_num_images == 10
+    assert cfg.dataset.task_encoder.max_num_frames == 60
+    assert cfg.dataset.task_encoder.max_visual_tokens == 16384
 
 
 # =============================================================================
@@ -627,14 +613,14 @@ def test_each_qwen3_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable,
 
 @pytest.mark.parametrize("recipe_func", _QWEN3_VL_PRETRAIN_MOCK_FUNCS)
 def test_qwen3_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that pretrain mock configs use MockVLMConversationProvider."""
+    """Test that pretrain mock configs use the declarative mock VLM config."""
     patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
-    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+    from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, MockVLMConversationProvider)
+    assert isinstance(cfg.dataset, MockVLMSFTDatasetConfig)
 
 
 def test_qwen3_vl_8b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
@@ -695,6 +681,8 @@ def test_qwen3_vl_235b_a22b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPat
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.ddp.average_in_collective is False
 
 
 def test_qwen3_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):

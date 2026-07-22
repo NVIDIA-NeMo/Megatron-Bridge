@@ -138,10 +138,8 @@ class TestEnergonMultiModalDataModuleFunctional:
         datamodule = EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
             tokenizer=MagicMock(),
-            image_processor=MagicMock(),
             seq_length=1024,
             micro_batch_size=2,
-            global_batch_size=4,
             num_workers=2,
             pg_collection=pg_collection,
         )
@@ -226,10 +224,8 @@ class TestEnergonDataModuleCPHandling:
         return EnergonMultiModalDataModule(
             path="/tmp/mock_dataset",
             tokenizer=MagicMock(),
-            image_processor=MagicMock(),
             seq_length=1024,
             micro_batch_size=2,
-            global_batch_size=8,
             num_workers=num_workers,
             num_val_workers=num_val_workers,
             pg_collection=pg_collection,
@@ -477,6 +473,20 @@ class TestEnergonDataModuleCPHandling:
         assert state == {"step": 0}
         mock_energon["loader"].save_state_rank.assert_called_once()
 
+    def test_energon_dataloader_restore_state(self, mock_energon):
+        """EnergonDataloader.restore_state() should delegate to the underlying loader and rebuild the iterator."""
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
+
+        dm = self._make_datamodule(pg_collection=pg)
+        loader = dm.train_dataloader()
+        prev_iter = loader._iter
+
+        loader.restore_state({"rank_state": 123})
+
+        mock_energon["loader"].restore_state_rank.assert_called_once_with({"rank_state": 123})
+        # Iterator must be rebuilt so the active stream picks up the restored position.
+        assert loader._iter is not prev_iter
+
 
 class TestEnergonDataShardingVerification:
     """
@@ -567,10 +577,8 @@ class TestEnergonDataShardingVerification:
             dm = EnergonMultiModalDataModule(
                 path="/tmp/mock_dataset",
                 tokenizer=MagicMock(),
-                image_processor=MagicMock(),
                 seq_length=self.SEQ_LENGTH,
                 micro_batch_size=self.MICRO_BATCH_SIZE,
-                global_batch_size=self.MICRO_BATCH_SIZE * dp_world_size,
                 num_workers=1,
                 pg_collection=pg,
             )

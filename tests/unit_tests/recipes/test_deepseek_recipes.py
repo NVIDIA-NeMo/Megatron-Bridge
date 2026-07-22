@@ -155,6 +155,37 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
 
+def test_model_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Model H100 and flat GB200 recipes should own topology-correct env defaults."""
+    deepseek_v3_mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, deepseek_v3_mod, "AutoBridge", _FakeBridge)
+
+    recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", _FakeBridge)
+    recipe_config = recipe_module.deepseek_v3_pretrain_1024gpu_h100_bf16_config()
+
+    perf_module = importlib.import_module("megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3")
+    perf_config = perf_module.deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+
+    expected_recipe = {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    assert recipe_config.env_vars.items() >= expected_recipe.items()
+    assert recipe_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert recipe_config.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert recipe_config.env_vars["USE_MNNVL"] == 0
+    assert perf_config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert perf_config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+    assert "TORCHINDUCTOR_WORKER_START" not in recipe_config.env_vars
+    assert "QUANTIZATION_TYPE_DEBUG" not in recipe_config.env_vars
+    assert "TORCHINDUCTOR_WORKER_START" not in perf_config.env_vars
+    assert "QUANTIZATION_TYPE_DEBUG" not in perf_config.env_vars
+    assert perf_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert perf_config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert perf_config.env_vars["USE_MNNVL"] == 1
+
+
 def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():
     model_cfg = _FakeModelCfg()
     model_cfg.num_layers = 61

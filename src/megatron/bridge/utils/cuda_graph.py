@@ -65,10 +65,13 @@ def _module_value(name: str):
 def cuda_graph_module_names(config: Any) -> list[str]:
     """Return configured per-layer CUDA graph module names."""
 
+    names = []
     if getattr(config, "cuda_graph_modules", None) is not None:
-        return _member_name_list(getattr(config, "cuda_graph_modules"))
-    names = _member_name_list(getattr(config, "cuda_graph_scope", None))
-    return [name for name in names if name not in ("full_iteration", "full_iteration_inference")]
+        names.extend(_member_name_list(getattr(config, "cuda_graph_modules")))
+    names.extend(_member_name_list(getattr(config, "cuda_graph_scope", None)))
+    return [
+        name for name in dict.fromkeys(names) if name not in ("full_iteration", "full_iteration_inference", "full")
+    ]
 
 
 def set_cuda_graph_modules(config: Any, modules: Any) -> None:
@@ -123,7 +126,31 @@ def is_full_iteration_cuda_graph(config: Any) -> bool:
         return True
     if cuda_graph_impl != "local":
         return False
-    return "full_iteration" in _member_names(getattr(config, "cuda_graph_scope", None))
+    return "full_iteration" in _member_names(
+        getattr(config, "cuda_graph_modules", None)
+    ) or "full_iteration" in _member_names(getattr(config, "cuda_graph_scope", None))
+
+
+def validate_cuda_graph_configuration(config: Any, *, config_name: str = "model") -> None:
+    """Validate Bridge-supported CUDA graph implementation/scope combinations."""
+    cuda_graph_impl = getattr(config, "cuda_graph_impl", "none")
+    if cuda_graph_impl == "none":
+        clear_cuda_graph_modules(config)
+        return
+
+    graph_modules = cuda_graph_module_names(config)
+    inference_scopes = _member_names(getattr(config, "inference_cuda_graph_scope", None))
+    is_local_inference_graph = (
+        cuda_graph_impl == "local" and not graph_modules and bool(inference_scopes & {"layer", "block"})
+    )
+    if cuda_graph_impl == "local" and not is_full_iteration_cuda_graph(config) and not is_local_inference_graph:
+        modules_msg = f" with scopes {graph_modules}" if graph_modules else ""
+        raise ValueError(
+            f'Megatron Bridge supports {config_name}.cuda_graph_impl="local" only for '
+            f"full-iteration CUDA graphs{modules_msg}. Use "
+            f'{config_name}.cuda_graph_impl="transformer_engine" for scoped CUDA graph '
+            'capture such as "attn" or "mlp".'
+        )
 
 
 def uses_local_cuda_graph_manager(config: Any) -> bool:

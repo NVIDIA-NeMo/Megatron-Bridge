@@ -95,21 +95,29 @@ bash examples/models/glm47/conversion.sh
 [slurm_conversion.sh](slurm_conversion.sh) runs HF -> Megatron -> HF round-trip with `TP=1, PP=1, EP=32` on 4 nodes (32 GPUs).
 
 ```bash
-sbatch examples/models/glm47/slurm_conversion.sh
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+bash examples/models/glm47/slurm_conversion.sh
 ```
 
-To try a different parallelism layout, edit the command in the script directly.
+The wrapper uses `convert.sh roundtrip --executor slurm`, submits from the login
+node, and waits for completion by default. The job validates weights in memory
+without producing a new checkpoint. The model, resources, and parallelism
+layout are written directly in the script so the example is self-contained.
 
 ## Slurm Script Configuration
 
-Set the following before `sbatch`:
+Set the following before running a Slurm wrapper:
 
 | Variable | Description |
 |---|---|
 | `CONTAINER_IMAGE` | Path to Singularity / SquashFS container image |
-| `CONTAINER_MOUNTS` | Optional bind mounts for data, caches, or a local checkout when debugging |
-| `WORKDIR` | Repository path inside the container; defaults to `/opt/Megatron-Bridge` |
+| `SLURM_ACCOUNT` | Slurm account used for the submitted job |
+| `SLURM_PARTITION` | Slurm partition; defaults to `batch` |
+| `CONTAINER_MOUNTS` | Optional comma-separated bind mounts for data or caches; the current checkout is mounted automatically at `/opt/Megatron-Bridge` |
 | `HF_HOME` | HuggingFace cache directory containing the downloaded checkpoint |
 | `HF_TOKEN` | HuggingFace access token (for gated model access) |
-| `MODEL_NAME` | Model name for Slurm scripts; defaults to `GLM-4.7` |
 | `PROMPT`, `MAX_NEW_TOKENS` | Optional inference prompt and generation length overrides |
+
+Cluster-specific `srun` flags are not hardcoded. Pass them after the conversion
+wrapper, for example `--srun-arg=--mpi=pmix`.

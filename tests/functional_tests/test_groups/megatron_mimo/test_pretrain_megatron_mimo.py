@@ -103,18 +103,25 @@ def _make_vision_config(deterministic: bool = False) -> TransformerConfig:
     return cfg
 
 
-def _make_language_config(deterministic: bool = False) -> TransformerConfig:
+def _make_language_config(
+    deterministic: bool = False,
+    num_moe_experts: int | None = None,
+) -> TransformerConfig:
     cfg = TransformerConfig(
         num_layers=2,
         hidden_size=64,
         ffn_hidden_size=256,
         num_attention_heads=4,
+        num_moe_experts=num_moe_experts,
         pipeline_dtype=torch.float32 if deterministic else torch.bfloat16,
         bf16=not deterministic,
         variable_seq_lengths=True,
         moe_token_dispatcher_type="alltoall",
         cross_entropy_loss_fusion=not deterministic,
     )
+    if num_moe_experts is not None:
+        cfg.moe_ffn_hidden_size = cfg.ffn_hidden_size
+        cfg.moe_router_topk = 1
     if deterministic:
         cfg.attention_backend = AttnBackend.unfused
         cfg.deterministic_mode = True
@@ -124,7 +131,10 @@ def _make_language_config(deterministic: bool = False) -> TransformerConfig:
     return cfg
 
 
-def _build_model_specs(deterministic: bool = False):
+def _build_model_specs(
+    deterministic: bool = False,
+    language_num_moe_experts: int | None = None,
+):
     """Return (language_model_spec, modality_submodules_spec, special_token_ids)."""
     vision_encoder = ModuleSpec(
         module=CLIPViTModel,
@@ -144,8 +154,11 @@ def _build_model_specs(deterministic: bool = False):
     language_model_spec = ModuleSpec(
         module=GPTModel,
         params={
-            "config": _make_language_config(deterministic=deterministic),
-            "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(),
+            "config": _make_language_config(
+                deterministic=deterministic,
+                num_moe_experts=language_num_moe_experts,
+            ),
+            "transformer_layer_spec": get_gpt_layer_with_transformer_engine_spec(num_experts=language_num_moe_experts),
             "vocab_size": _VOCAB_SIZE,
             "max_sequence_length": _SEQ_LENGTH,
         },
@@ -263,8 +276,12 @@ def _build_config(
     parallelism_config: MegatronMIMOParallelismConfig,
     train_iters: int = _TRAIN_ITERS,
     deterministic: bool = False,
+    language_num_moe_experts: int | None = None,
 ) -> ConfigContainer:
-    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(deterministic=deterministic)
+    language_model_spec, modality_submodules_spec, special_token_ids = _build_model_specs(
+        deterministic=deterministic,
+        language_num_moe_experts=language_num_moe_experts,
+    )
 
     megatron_mimo_provider = MegatronMIMOProvider(
         language_model_spec=language_model_spec,
@@ -278,7 +295,9 @@ def _build_config(
         bf16=not deterministic,
     )
     if not hasattr(megatron_mimo_provider, "num_moe_experts"):
-        megatron_mimo_provider.num_moe_experts = None
+        megatron_mimo_provider.num_moe_experts = language_num_moe_experts
+    if language_num_moe_experts is not None:
+        megatron_mimo_provider.num_layers = 2
 
     train_cfg = TrainingConfig(
         micro_batch_size=1,
@@ -565,6 +584,55 @@ class TestMegatronMIMOTraining:
                         os.environ.pop(k, None)
                     else:
                         os.environ[k] = v
+
+    @pytest.mark.run_only_on("GPU")
+    def test_megatron_mimo_moe_language_smoke_ep1(self):
+        """CI-only MoE smoke for the non-colocated language path.
+
+        With only 2 CI GPUs and non-colocated language+vision modules, the
+        language module has one rank, so this intentionally uses EP=ETP=1.
+        Nontrivial expert parallelism is covered by the manual 8-GPU sweep.
+        """
+        initialize_distributed()
+
+        world_size = dist.get_world_size()
+        if world_size != 2:
+            pytest.skip(f"MegatronMIMO test requires exactly 2 GPUs, got {world_size}")
+
+        import megatron.bridge.training.utils.train_utils as _tu
+
+        _tu.report_theoretical_memory = lambda *a, **kw: None
+
+        par_cfg = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    expert_model_parallel_size=1,
+                    expert_tensor_parallel_size=1,
+                    rank_offset=0,
+                ),
+                "vision": ModuleParallelismConfig(
+                    tensor_model_parallel_size=1,
+                    pipeline_model_parallel_size=1,
+                    data_parallel_size=1,
+                    rank_offset=1,
+                ),
+            },
+        )
+
+        cfg = _build_config(
+            par_cfg,
+            train_iters=2,
+            language_num_moe_experts=2,
+        )
+
+        pretrain_megatron_mimo(
+            cfg=cfg,
+            forward_step_func=megatron_mimo_forward_step,
+            build_data_iterators_fn=_build_data_iterators,
+        )
 
     @pytest.mark.run_only_on("GPU")
     @pytest.mark.parametrize("save_rng", [True, False], ids=["save_rng", "no_save_rng"])

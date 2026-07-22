@@ -18,16 +18,21 @@ from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.transformer_config import TransformerConfig
+from megatron.bridge.training.checkpointing import load_checkpoint
 from megatron.bridge.training.setup import (
+    _bind_dataset_provider_context,
     _build_distributed_model,
     _register_pre_wrap_hook,
     _should_load_checkpoint,
+    _update_model_config_funcs,
     _validate_and_set_vocab_size,
     maybe_log_and_save_config,
 )
+from megatron.bridge.training.state import GlobalState
 
 
 def _make_transformer(**kwargs):
@@ -43,12 +48,45 @@ def _make_gpt_model_config(**kwargs):
     return GPTModelConfig(**defaults)
 
 
-def _make_checkpoint_source_config(*, load, pretrained_checkpoint=None, required=True):
+def _make_checkpoint_source_config(
+    *,
+    load,
+    pretrained_checkpoint=None,
+    required=True,
+    non_persistent_ckpt_type=None,
+    non_persistent_global_ckpt_dir=None,
+    peft=None,
+):
     return SimpleNamespace(
-        checkpoint=SimpleNamespace(load=load, pretrained_checkpoint=pretrained_checkpoint),
-        peft=None,
+        checkpoint=SimpleNamespace(
+            load=load,
+            pretrained_checkpoint=pretrained_checkpoint,
+            non_persistent_ckpt_type=non_persistent_ckpt_type,
+            non_persistent_global_ckpt_dir=non_persistent_global_ckpt_dir,
+            finetune=False,
+        ),
+        peft=peft,
         _checkpoint_load_required=required,
     )
+
+
+def test_gpt_sft_config_receives_tokenizer_through_builder_binding_without_mutation():
+    config = GPTSFTDatasetConfig(seq_length=128, dataset_root="/tmp/data")
+    tokenizer = object()
+    received = []
+
+    def provider(samples, dataset_config, tokenizer=None):
+        received.append((samples, dataset_config, tokenizer))
+
+    bound_provider = _bind_dataset_provider_context(
+        provider,
+        tokenizer=tokenizer,
+        pg_collection=object(),
+    )
+    bound_provider([1, 0, 0], config)
+
+    assert received == [([1, 0, 0], config, tokenizer)]
+    assert not hasattr(config, "tokenizer")
 
 
 class TestShouldLoadCheckpoint:
@@ -72,6 +110,41 @@ class TestShouldLoadCheckpoint:
         checkpoint_manager = SimpleNamespace(checkpointing_context={"local_checkpoint_manager": local_manager})
 
         assert _should_load_checkpoint(cfg, checkpoint_manager) is True
+
+    def test_global_non_persistent_checkpoint_reaches_checkpoint_loader(self, tmp_path):
+        load_dir = tmp_path / "checkpoints"
+        non_persistent_dir = load_dir / "non_persistent"
+        non_persistent_dir.mkdir(parents=True)
+        (non_persistent_dir / "latest_train_state.pt").touch()
+        cfg = _make_checkpoint_source_config(
+            load=str(load_dir),
+            required=False,
+            non_persistent_ckpt_type="global",
+        )
+        checkpoint_manager = SimpleNamespace(checkpointing_context={})
+
+        assert _should_load_checkpoint(cfg, checkpoint_manager) is True
+
+    @patch("megatron.bridge.training.checkpointing._load_checkpoint_from_path", return_value=(12, 0))
+    def test_peft_resume_prefers_global_non_persistent_checkpoint(self, mock_load, tmp_path):
+        load_dir = tmp_path / "checkpoints"
+        non_persistent_dir = load_dir / "non_persistent"
+        non_persistent_dir.mkdir(parents=True)
+        (non_persistent_dir / "latest_train_state.pt").touch()
+        pretrained_dir = tmp_path / "pretrained"
+        pretrained_dir.mkdir()
+        (pretrained_dir / "latest_train_state.pt").touch()
+        cfg = _make_checkpoint_source_config(
+            load=str(load_dir),
+            pretrained_checkpoint=str(pretrained_dir),
+            non_persistent_ckpt_type="global",
+            peft=object(),
+        )
+
+        load_checkpoint(SimpleNamespace(cfg=cfg), [], None, None)
+
+        assert mock_load.call_args.args[0] == str(load_dir)
+        assert cfg.checkpoint.finetune is False
 
     @patch("megatron.bridge.training.setup.checkpoint_exists", return_value=False)
     def test_hf_load_reaches_checkpoint_loader_for_targeted_error(self, _mock_exists):
@@ -252,3 +325,35 @@ class TestBuildDistributedModel:
 
         mock_provider.provide_distributed_model.assert_called_once()
         assert result == mock_dist_model
+
+
+def test_restart_rebinds_overlap_callbacks_to_rebuilt_model():
+    """A restart must replace callbacks bound to the discarded model."""
+
+    class FakeDDP:
+        def no_sync(self):
+            pass
+
+        def start_grad_sync(self):
+            pass
+
+    model_config = _make_gpt_model_config()
+    transformer_config = model_config.transformer
+    ddp_config = SimpleNamespace(
+        overlap_grad_reduce=True,
+        overlap_param_gather=False,
+        align_param_gather=False,
+    )
+    first_model = FakeDDP()
+    rebuilt_model = FakeDDP()
+    state = GlobalState()
+    state._cfg = SimpleNamespace(model=model_config)
+
+    with patch("megatron.bridge.training.setup.DistributedDataParallel", FakeDDP):
+        _update_model_config_funcs([first_model], transformer_config, ddp_config, optimizer=None)
+        assert transformer_config.no_sync_func.__self__ is first_model
+
+        state.reset_for_restart()
+        _update_model_config_funcs([rebuilt_model], transformer_config, ddp_config, optimizer=None)
+
+    assert transformer_config.no_sync_func.__self__ is rebuilt_model

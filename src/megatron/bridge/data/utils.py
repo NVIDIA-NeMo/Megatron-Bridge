@@ -12,8 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import fields
-from typing import Any, Callable, Dict, Optional, Type, Union
+from typing import Any, Callable
 
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.blended_megatron_dataset_config import BlendedMegatronDatasetConfig
@@ -21,17 +20,22 @@ from megatron.core.datasets.gpt_dataset import GPTDataset, MockGPTDataset
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.process_groups_config import ProcessGroupCollection
 
-from megatron.bridge.data.builders.finetuning_dataset import FinetuningDatasetBuilder
-from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
-from megatron.bridge.training.config import (
-    DataloaderConfig,
-    DatasetBuildContext,
-    DatasetProvider,
-    FinetuningDatasetConfig,
-    GPTDatasetConfig,
-    GPTFIMDatasetConfig,
-    MockGPTDatasetConfig,
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.builders.direct_hf_sft import (
+    DirectHFSFTDatasetConfig,
+    direct_hf_sft_train_valid_test_datasets_provider,
 )
+from megatron.bridge.data.builders.energon import EnergonDatasetConfig, energon_train_valid_test_datasets_provider
+from megatron.bridge.data.builders.gpt_sft import (
+    GPTSFTDatasetConfig,
+    gpt_sft_train_valid_test_datasets_provider,
+)
+from megatron.bridge.data.builders.mock_vlm_sft import (
+    MockVLMSFTDatasetConfig,
+    mock_vlm_sft_train_valid_test_datasets_provider,
+)
+from megatron.bridge.data.datasets.fim_dataset import GPTFIMDataset
+from megatron.bridge.training.config import GPTDatasetConfig, GPTFIMDatasetConfig, MockGPTDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 from megatron.bridge.utils.common_utils import print_rank_0
 
@@ -85,54 +89,27 @@ def pretrain_train_valid_test_datasets_provider(
     return train_ds, valid_ds, test_ds
 
 
-def finetuning_train_valid_test_datasets_provider(
-    train_val_test_num_samples: list[int], dataset_config: FinetuningDatasetConfig, tokenizer: MegatronTokenizer
-) -> tuple[Any, Any, Any]:
-    """Build finetuning train, validation, and test datasets.
-
-    Uses FinetuningDatasetBuilder to create dataset instances.
-
-    Args:
-        train_val_test_num_samples: A list containing the number of samples for
-                                    train, validation, and test datasets.
-        dataset_config: Configuration object for the finetuning dataset.
-        tokenizer: The MegatronTokenizer instance.
-
-    Returns:
-        A tuple containing the train, validation, and test datasets.
-    """
-    print_rank_0(
-        f">building train, validation, and test datasets for Finetuning dataset from {dataset_config.dataset_root} ..."
-    )
-
-    # Get field names from DataloaderConfig to exclude
-    dataloader_field_names = {field.name for field in fields(DataloaderConfig)}
-
-    train_ds, valid_ds, test_ds = FinetuningDatasetBuilder(
-        tokenizer=tokenizer,
-        **{
-            field.name: getattr(dataset_config, field.name)
-            for field in fields(dataset_config)
-            if field.name not in dataloader_field_names
-        },
-    ).build()
-
-    print_rank_0(f"> finished creating Finetuning dataset from {dataset_config.dataset_root} ...")
-
-    return train_ds, valid_ds, test_ds
-
-
-_REGISTRY: Dict[Type[Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig]], Callable] = {
+_REGISTRY: dict[type[Any], Callable[..., Any]] = {
     GPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
     GPTFIMDatasetConfig: pretrain_train_valid_test_datasets_provider,
     MockGPTDatasetConfig: pretrain_train_valid_test_datasets_provider,
-    FinetuningDatasetConfig: finetuning_train_valid_test_datasets_provider,
+    GPTSFTDatasetConfig: gpt_sft_train_valid_test_datasets_provider,
+    DirectHFSFTDatasetConfig: direct_hf_sft_train_valid_test_datasets_provider,
+    EnergonDatasetConfig: energon_train_valid_test_datasets_provider,
+    MockVLMSFTDatasetConfig: mock_vlm_sft_train_valid_test_datasets_provider,
 }
 
 
 def get_dataset_provider(
-    dataset_config: Union[FinetuningDatasetConfig, BlendedMegatronDatasetConfig, DatasetProvider],
-) -> Callable:
+    dataset_config: (
+        BlendedMegatronDatasetConfig
+        | GPTSFTDatasetConfig
+        | DirectHFSFTDatasetConfig
+        | EnergonDatasetConfig
+        | MockVLMSFTDatasetConfig
+        | DatasetProvider
+    ),
+) -> Callable[..., Any]:
     """Get the appropriate dataset provider function based on the config type.
 
     Supports both registry-based providers and protocol-based providers.
@@ -143,15 +120,19 @@ def get_dataset_provider(
     Returns:
         The callable dataset provider function corresponding to the config type.
     """
+    for config_type, provider in _REGISTRY.items():
+        if isinstance(dataset_config, config_type):
+            return provider
+
     # Check if config implements the DatasetProvider protocol
     if isinstance(dataset_config, DatasetProvider):
 
         def protocol_adapter(
             train_val_test_num_samples: list[int],
             config: DatasetProvider,
-            tokenizer: Optional[MegatronTokenizer] = None,
-            pg_collection: Optional[ProcessGroupCollection] = None,
-        ) -> tuple[Optional[Any], Optional[Any], Optional[Any]]:
+            tokenizer: MegatronTokenizer | None = None,
+            pg_collection: ProcessGroupCollection | None = None,
+        ) -> tuple[Any | None, Any | None, Any | None]:
             """Adapter function that bridges the protocol interface with the legacy interface."""
             context = DatasetBuildContext(
                 train_samples=train_val_test_num_samples[0],
@@ -164,5 +145,4 @@ def get_dataset_provider(
 
         return protocol_adapter
 
-    # Fall back to existing registry
-    return _REGISTRY[type(dataset_config)]
+    raise KeyError(type(dataset_config))

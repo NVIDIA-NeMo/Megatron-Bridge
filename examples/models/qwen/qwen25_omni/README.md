@@ -40,7 +40,7 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ### Import HF → Megatron
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model Qwen/Qwen2.5-Omni-7B \
     --megatron-path ${WORKSPACE}/models/Qwen2.5-Omni-7B
 ```
@@ -48,7 +48,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model Qwen/Qwen2.5-Omni-7B \
     --megatron-path ${WORKSPACE}/models/Qwen2.5-Omni-7B/iter_0000000 \
     --hf-path ${WORKSPACE}/models/Qwen2.5-Omni-7B-hf-export

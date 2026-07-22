@@ -112,6 +112,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         # Cache for metadata and tensor_spec_output
         self._broadcast_obj_cache = {}
         self._tensor_spec_output_cache = {}
+        self._pg_collection = None
 
         if mpu.is_initialized():
             self.pp_group = mpu.get_pipeline_model_parallel_group()
@@ -140,6 +141,7 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
         """
         if pg_collection is None:
             return
+        self._pg_collection = pg_collection
         for attr, field in (
             ("pp_group", "pp"),
             ("ep_group", "ep"),
@@ -149,6 +151,9 @@ class MegatronParamMapping(ABC, Generic[WeightType]):
             group = getattr(pg_collection, field, None)
             if group is not None:
                 setattr(self, attr, group)
+        for child in vars(self).values():
+            if isinstance(child, MegatronParamMapping):
+                child.set_process_groups_from_pg_collection(pg_collection)
 
     @property
     def tp_group(self):
@@ -1461,13 +1466,18 @@ class AutoMapping(MegatronParamMapping[torch.Tensor]):
     def _get_or_create_mapping(self, parallelism_type: str) -> MegatronParamMapping[torch.Tensor]:
         """Get or create the appropriate mapping for the given type."""
         if parallelism_type == "column":
-            return ColumnParallelMapping(self.megatron_param, self.hf_param)
+            mapping = ColumnParallelMapping(self.megatron_param, self.hf_param)
         elif parallelism_type == "row":
-            return RowParallelMapping(self.megatron_param, self.hf_param)
+            mapping = RowParallelMapping(self.megatron_param, self.hf_param)
         elif parallelism_type == "replicated":
-            return ReplicatedMapping(self.megatron_param, self.hf_param)
+            mapping = ReplicatedMapping(self.megatron_param, self.hf_param)
         else:
             raise ValueError(f"Unknown parallelism type: {parallelism_type}")
+
+        # AutoMapping materializes this delegate lazily, after task construction.
+        if self._pg_collection is not None:
+            mapping.set_process_groups_from_pg_collection(self._pg_collection)
+        return mapping
 
     def _detect_parallelism_type(self, module: nn.Module) -> str:
         """Detect parallelism type from module."""
@@ -3280,7 +3290,7 @@ def split_qkv_weights(
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
         # NOTE: For standard (BF16/FP16) weights, `head_size` is the usual kv_channels/head_dim.
-        # For blockwise FP8 scale tensors (e.g. Float8BlockwiseQTensor._rowwise_scale_inv),
+        # For blockwise FP8 scale tensors (e.g. the rowwise_scale_inv metadata tensor),
         # the last dim is typically compressed by a block-size factor (e.g. 4096 -> 32).
         # In that case we infer a divisor and scale down `head_size` accordingly so that the
         # same QKV slicing logic works for both weight tensors and their scale tensors.
