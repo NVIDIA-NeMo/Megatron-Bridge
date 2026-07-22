@@ -7,16 +7,19 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. MiniMax-M3 verification covers the supported language-model backbone;
   its vision, lightning-indexer, and MTP modules are outside the Bridge support
-  surface. Historical 32-H100 in-memory roundtrip and single-run generation
-  results are smoke evidence only and do not satisfy the current persisted-import
-  or deterministic-inference gates. At the recorded Bridge commit, all 32
-  focused bridge, generation-helper, and AutoBridge registration tests pass on
-  the recorded container environment; this sanity result does not promote a
-  real-checkpoint verification item. A pinned real-config and tokenizer smoke
-  also resolves the recorded HF commit under Transformers 5.8.1.
+  surface. A persisted 32-H100 BF16 HF-to-Megatron import and reload exactly
+  matched all 22,665 supported tensors and all 597 replicated state tensors
+  across the 32 EP ranks; 228 lightning-indexer tensors were intentionally
+  omitted. Deterministic inference remains unverified: the first forward reached
+  an unsupported BF16-input/FP32-router-weight Transformer Engine general-GEMM
+  tuple, so no completion was produced and the second run did not start. At the
+  recorded Bridge commit, all 32 focused bridge, generation-helper, and
+  AutoBridge registration tests pass, and a pinned real-config and tokenizer
+  smoke resolves the recorded HF commit under Transformers 5.8.1.
 verification_index:
   model_level:
-    unverified: [hf_to_megatron_cpu, hf_to_megatron_gpu, manual_forward_pass, inference]
+    verified: [hf_to_megatron_gpu]
+    unverified: [hf_to_megatron_cpu, manual_forward_pass, inference]
     unsupported: [megatron_to_hf_cpu, megatron_to_hf_gpu]
   training:
     H100:
@@ -46,7 +49,7 @@ items:
       unexpected, shape-mismatched, or value-mismatched tensors.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
@@ -55,11 +58,15 @@ items:
       --megatron-path work/model-verification/minimax-m3/imported-megatron
       --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
       --trust-remote-code
-    last_verified: null
+    last_verified: 2026-07-21
     expected_result: >
-      The pinned 32-H100 import must exit successfully, persist iter_0000000,
-      and reload at TP1/PP1/EP32/ETP1 with every supported language-model tensor
-      accounted for. An in-memory roundtrip alone does not satisfy this gate.
+      The pinned 32-H100 BF16 import exited successfully, persisted
+      iter_0000000, and reloaded at TP1/PP1/EP32/ETP1. A strict audit matched
+      exactly 22,665 of 22,665 supported language-model tensors with zero
+      duplicate, missing, unexpected, shape, dtype, or value mismatches. All
+      597 replicated state tensors matched exactly across the 32 EP ranks. The
+      228 lightning-indexer tensors were intentionally omitted from the
+      supported Bridge surface.
 
   megatron_to_hf_cpu:
     status: unsupported
@@ -99,9 +106,12 @@ items:
     command: null
     last_verified: null
     expected_result: >
-      Two independent greedy Megatron executions against the pinned revision
-      must complete without missing-weight or forward errors and produce the
-      same exact token IDs and literal fixed-length completion.
+      The 2026-07-21 deterministic attempt stopped at the first forward when
+      BF16 router input and FP32 gate weights reached an unsupported Transformer
+      Engine general-GEMM tuple; no completion was produced and the second run
+      did not start. Verification still requires two independent greedy
+      Megatron executions to complete without missing-weight or forward errors
+      and produce byte-identical decoded fixed-length completions.
 
   pretrain:
     H100:
