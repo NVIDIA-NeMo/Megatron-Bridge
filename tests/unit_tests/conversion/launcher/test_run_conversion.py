@@ -31,9 +31,10 @@ SCRIPT_DIR = REPO_ROOT / "scripts" / "conversion"
 def _load_run_conversion_module():
     cpu_backend = types.ModuleType("cpu_backend")
     gpu_backend = types.ModuleType("gpu_backend")
-    previous_modules = {name: sys.modules.get(name) for name in ("cpu_backend", "gpu_backend", "arguments")}
+    previous_modules = {name: sys.modules.get(name) for name in ("cpu_backend", "gpu_backend", "arguments", "utils")}
     sys.modules["cpu_backend"] = cpu_backend
     sys.modules["gpu_backend"] = gpu_backend
+    sys.modules.pop("utils", None)
     sys.path.insert(0, str(SCRIPT_DIR))
     try:
         spec = importlib.util.spec_from_file_location(
@@ -50,6 +51,15 @@ def _load_run_conversion_module():
             else:
                 sys.modules[name] = previous
     return module, cpu_backend, gpu_backend
+
+
+def test_loader_restores_preexisting_utils_module(monkeypatch):
+    preexisting_utils = types.ModuleType("utils")
+    monkeypatch.setitem(sys.modules, "utils", preexisting_utils)
+
+    _load_run_conversion_module()
+
+    assert sys.modules["utils"] is preexisting_utils
 
 
 def test_cpu_import_dispatches_to_cpu_backend():
