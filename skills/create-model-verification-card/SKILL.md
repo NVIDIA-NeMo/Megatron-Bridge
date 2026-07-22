@@ -141,9 +141,10 @@ Group item names under the same four status names used by the detailed items.
 For an explicitly indexed hardware target with no corresponding item leaf,
 summarize the missing verification as `unverified`; do not add empty item
 leaves or placeholder commands merely to populate the index. Omit empty status
-buckets, so a hardware target with no verified training is written only as
-`unverified: all`, never as `verified: []`. Use the scalar `all` when every
-item in that scope has the same status; otherwise list the exact item names.
+buckets and always list every item name explicitly, even when every item in the
+scope has the same status. Never use the scalar `all` in `verification_index`:
+an explicit inventory makes it clear which existing items were assessed when
+new items are added later.
 
 For example, a card with partial H100 functional-training coverage and no
 GB200 functional-training verification uses:
@@ -151,13 +152,19 @@ GB200 functional-training verification uses:
 ```yaml
 verification_index:
   model_level:
-    verified: all
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
   training:
     H100:
       verified: [sft, sft_export_inference, sft_long_context, peft]
       unverified: [pretrain, checkpoint_resume]
     GB200:
-      unverified: all
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 ```
 
 When a canonical performance recipe exists, mirror only its concrete leaves:
@@ -594,8 +601,8 @@ an item verified merely to make validation pass.
   all four metrics for each verified training leaf; never record a private
   cluster name or retain the old `gpu_type` field.
 - Keep `verification_index` synchronized with `items`, omit empty status
-  buckets, and use `unverified: all` for an indexed hardware target with no
-  verified functional-training evidence.
+  buckets, list every item name explicitly, and never use the scalar `all` in
+  the index.
 - Audit the resolved convergence contract before each training run; align it
   with `qwen3_30b_a3b_convergence_v1` or record the exception and classify the
   result as support verification rather than cross-model convergence evidence.
