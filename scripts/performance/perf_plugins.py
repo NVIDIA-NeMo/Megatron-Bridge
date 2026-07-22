@@ -35,6 +35,12 @@ import nemo_run as run
 from nemo_run import Plugin, Script, SlurmExecutor
 
 
+try:
+    from utils.utils import configure_slurm_gpu_tuning
+except (ImportError, ModuleNotFoundError):
+    from .utils.utils import configure_slurm_gpu_tuning
+
+
 logger: logging.Logger = logging.getLogger(__name__)
 NSYS_SQLITE_EXPORT_ARG = "--export=sqlite"
 
@@ -62,6 +68,26 @@ def _ensure_sqlite_nsys_export(nsys_extra_args: list[str]) -> list[str]:
             return nsys_extra_args
 
     return nsys_extra_args + [NSYS_SQLITE_EXPORT_ARG]
+
+
+@dataclass(kw_only=True)
+class SlurmGpuTuningPlugin(Plugin):
+    """Apply GPU tuning after NeMo Run assigns the executor's job directory."""
+
+    enable_vboost: bool = False
+    lock_gpu_freq: int | None = None
+    peak_mem_clk: int | None = None
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor") -> None:
+        """Add Slurm setup commands using the assigned per-task job directory."""
+        del task
+        if isinstance(executor, SlurmExecutor):
+            configure_slurm_gpu_tuning(
+                executor,
+                enable_vboost=self.enable_vboost,
+                lock_gpu_freq=self.lock_gpu_freq,
+                peak_mem_clk=self.peak_mem_clk,
+            )
 
 
 @dataclass

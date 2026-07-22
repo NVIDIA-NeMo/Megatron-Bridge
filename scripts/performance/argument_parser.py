@@ -729,7 +729,9 @@ def parse_cli_args():
         "-lmc",
         "--peak_mem_clk",
         help="Lock GPU memory clock to the specified peak frequency in MHz via "
-        "`sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training.",
+        "`sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training. "
+        "Defaults to 4750 MHz for VR200 and is disabled by default for other GPUs. "
+        "Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.",
         type=int,
         required=False,
         default=None,

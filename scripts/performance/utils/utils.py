@@ -79,9 +79,14 @@ def configure_slurm_gpu_tuning(
     lock_gpu_freq: int | None,
     peak_mem_clk: int | None,
 ) -> None:
-    """Add optional GPU tuning commands to a Slurm executor before submission."""
+    """Add optional GPU tuning commands to an assigned Slurm executor."""
+    if not (enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None):
+        return
+
     commands = []
-    job_dir = executor.tunnel.job_dir
+    job_dir = executor.job_dir
+    if not job_dir:
+        raise ValueError("Slurm executor must be assigned to a job before configuring GPU tuning.")
 
     if enable_vboost:
         commands.append(

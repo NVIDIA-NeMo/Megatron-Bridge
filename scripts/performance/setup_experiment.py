@@ -38,7 +38,7 @@ try:
         kubeflow_executor,
         slurm_executor,
     )
-    from utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
+    from utils.utils import get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.executors import (
@@ -47,7 +47,7 @@ except (ImportError, ModuleNotFoundError):
         kubeflow_executor,
         slurm_executor,
     )
-    from .utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
+    from .utils.utils import get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -57,9 +57,9 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin, SlurmGpuTuningPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
+    from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin, SlurmGpuTuningPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
@@ -704,14 +704,16 @@ def main(
             packager=packager,
             enable_pct_binding=enable_pct_binding,
         )
-        configure_slurm_gpu_tuning(
-            executor,
-            enable_vboost=enable_vboost,
-            lock_gpu_freq=lock_gpu_freq,
-            peak_mem_clk=peak_mem_clk,
-        )
-
     plugins = []
+
+    if not kubeflow_namespace and (enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None):
+        plugins.append(
+            SlurmGpuTuningPlugin(
+                enable_vboost=enable_vboost,
+                lock_gpu_freq=lock_gpu_freq,
+                peak_mem_clk=peak_mem_clk,
+            )
+        )
 
     # Long-convergence runs are split across walltime slices and resume from the last
     # checkpoint each slice. Without a preemption signal, Slurm hard-kills the slice at
