@@ -175,6 +175,8 @@ def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict
         tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs() or {}
     if trust_remote_code:
         tokenizer_kwargs["trust_remote_code"] = True
+    if bridge.hf_model_revision is not None:
+        tokenizer_kwargs["revision"] = bridge.hf_model_revision
     return tokenizer_kwargs
 
 
@@ -257,6 +259,7 @@ def _verify_roundtrip_weights(bridge: AutoBridge, megatron_model: list[torch.nn.
 def import_checkpoint(
     *,
     hf_model: str,
+    hf_revision: str | None,
     megatron_path: str,
     tp: int,
     pp: int,
@@ -271,6 +274,7 @@ def import_checkpoint(
 
     Args:
         hf_model: Hugging Face model ID or local path.
+        hf_revision: Hugging Face Hub revision to load.
         megatron_path: Destination Megatron checkpoint path.
         tp: Tensor parallelism size.
         pp: Pipeline parallelism size.
@@ -287,10 +291,12 @@ def import_checkpoint(
 
     print_rank_0(f"GPU import: {hf_model} -> {megatron_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
+    revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
         torch_dtype=dtype,
+        **revision_kwargs,
     )
     model_provider = bridge.to_megatron_provider(load_weights=True)
     _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
@@ -356,11 +362,20 @@ def export_checkpoint(
 
     print_rank_0(f"GPU export: {megatron_path} -> {hf_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
+    trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     bridge = AutoBridge.from_hf_pretrained(
         hf_model,
-        trust_remote_code=is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model),
+        trust_remote_code=trusted,
         torch_dtype=dtype,
     )
+    checkpoint_config_bridge = AutoBridge.from_auto_config(
+        megatron_path,
+        hf_model,
+        trust_remote_code=trusted,
+    )
+    # Preserve the reference wrapper's streaming state source and shard map while
+    # exporting the checkpoint-derived architecture and vocabulary configuration.
+    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     model_provider = bridge.to_megatron_provider(load_weights=False)
     _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
     _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)

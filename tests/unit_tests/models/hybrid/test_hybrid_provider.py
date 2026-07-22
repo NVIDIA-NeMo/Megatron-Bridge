@@ -40,6 +40,7 @@ class TestHybridModelProvider:
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.mamba_num_groups == 8
+        assert provider.mamba_chunk_size == 128
         assert provider.hybrid_layer_pattern is None
         assert provider.hybrid_stack_spec is None
         assert provider.seq_length == 8192
@@ -110,6 +111,26 @@ class TestHybridModelProvider:
 
                 mock_calc_vocab.assert_called_once_with(50000, 128, 8)
                 assert mock_model.call_args.kwargs["vocab_size"] == 50176
+
+    def test_nondefault_mamba_chunk_size_is_applied_without_mutating_default_spec(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            mamba_chunk_size=256,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        configured_spec = mock_model.call_args.kwargs["hybrid_stack_spec"]
+        configured_mixer = configured_spec.submodules.mamba_layer.submodules.mixer
+        default_mixer = hybrid_provider.default_hybrid_stack_spec.submodules.mamba_layer.submodules.mixer
+        assert configured_mixer.params["chunk_size"] == 256
+        assert "chunk_size" not in default_mixer.params
 
     @patch("megatron.bridge.models.hybrid.hybrid_provider.is_pp_first_stage", return_value=True)
     @patch("megatron.bridge.models.hybrid.hybrid_provider.is_pp_last_stage", return_value=True)

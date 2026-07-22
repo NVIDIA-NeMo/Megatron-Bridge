@@ -163,6 +163,7 @@ def _build_executor(
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
+        job_name_prefix=args.experiment_name,
         nodes=args.nodes,
         ntasks_per_node=task_count,
         mem=args.mem,

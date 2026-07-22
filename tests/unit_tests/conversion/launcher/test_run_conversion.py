@@ -72,12 +72,68 @@ def test_cpu_import_dispatches_to_cpu_backend():
     assert calls == [
         {
             "hf_model": "hf/model",
+            "hf_revision": None,
             "megatron_path": "/checkpoint",
             "torch_dtype": "bfloat16",
             "trust_remote_code": False,
             "overwrite": False,
         }
     ]
+
+
+def test_cpu_import_forwards_hf_revision_without_replacing_model_id(monkeypatch):
+    module, cpu_backend, _ = _load_run_conversion_module()
+    calls = []
+    cpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setattr(
+        module,
+        "resolve_hf_commit_revision",
+        lambda model, revision: "0123456789abcdef0123456789abcdef01234567",  # pragma: allowlist secret
+    )
+
+    module.main(
+        [
+            "import",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--megatron-path",
+            "/checkpoint",
+        ]
+    )
+
+    assert calls[0]["hf_model"] == "hf/model"
+    assert calls[0]["hf_revision"] == "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+
+
+def test_cpu_import_rejects_hf_revision_for_local_path(tmp_path, monkeypatch):
+    module, cpu_backend, _ = _load_run_conversion_module()
+    calls = []
+    cpu_backend.import_checkpoint = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setattr(
+        "huggingface_hub.HfApi.model_info",
+        lambda *_args, **_kwargs: pytest.fail("a local path must be rejected before Hub resolution"),
+    )
+
+    with pytest.raises(ValueError, match="only to Hugging Face Hub model IDs"):
+        module.main(
+            [
+                "import",
+                "--device",
+                "cpu",
+                "--hf-model",
+                str(tmp_path),
+                "--hf-revision",
+                "release-tag",
+                "--megatron-path",
+                "/checkpoint",
+            ]
+        )
+
+    assert calls == []
 
 
 def test_gpu_export_enables_distributed_save_by_default():

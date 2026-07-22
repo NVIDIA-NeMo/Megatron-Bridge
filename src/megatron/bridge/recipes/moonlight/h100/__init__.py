@@ -17,6 +17,10 @@ from megatron.bridge.recipes.moonlight.h100.moonlight_16b import *  # noqa: F403
 
 __all__ = [
     "moonlight_16b_peft_2gpu_h100_bf16_config",
+    "moonlight_16b_peft_4gpu_h100_bf16_config",
+    "moonlight_16b_pretrain_16gpu_h100_bf16_config",
     "moonlight_16b_pretrain_8gpu_h100_bf16_config",
+    "moonlight_16b_sft_8gpu_h100_bf16_8k_config",
     "moonlight_16b_sft_8gpu_h100_bf16_config",
+    "moonlight_16b_sft_8gpu_h100_bf16_tp1_config",
 ]

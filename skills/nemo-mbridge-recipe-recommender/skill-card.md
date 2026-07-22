@@ -1,5 +1,5 @@
 ## Description: <br>
-Recommend and customize Megatron Bridge recipes for a user's model, GPU count, and training goal. Indexes library recipes (pretrain/SFT/PEFT) and performance recipes. <br>
+Recommend and customize Megatron Bridge library and benchmark recipes for a user's model, GPU count, hardware, sequence length, and pretrain/SFT/PEFT goal. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
