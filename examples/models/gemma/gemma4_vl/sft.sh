@@ -15,7 +15,7 @@
 
 set -euo pipefail
 
-# Full Gemma 4 26B-A4B VLM SFT requires the 16-GPU TP2/PP1/EP8 recipe.
+# Full Gemma 4 26B-A4B-it VLM SFT uses the 8-GPU TP2/PP1/EP8/ETP1 recipe.
 # The former single-node TP4/PP2 and TP8/PP1 examples kept all 128 experts on
 # every data-parallel rank and ran out of H100 memory during the first update.
 WORKSPACE=${WORKSPACE:-/workspace}
@@ -23,7 +23,7 @@ PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gemma-4-26B-A
 SAVE_DIR=${SAVE_DIR:-${WORKSPACE}/results/gemma4_vl_26b_sft}
 
 exec ./scripts/training/train.sh \
-    --nodes 2 \
+    --nodes 1 \
     --gpus-per-node 8 \
     --recipe gemma4_vl_26b_sft_config \
     --mode sft \

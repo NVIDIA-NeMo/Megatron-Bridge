@@ -52,23 +52,19 @@ def test_gemma4_vl_sft_uses_long_distributed_timeout(monkeypatch: pytest.MonkeyP
     assert cfg.dist.distributed_timeout_minutes == 90
 
 
-def test_gemma4_vl_sft_canonical_recipe_requires_16_gpu_topology(monkeypatch: pytest.MonkeyPatch):
-    """The canonical full-SFT recipe should expose its actual 16-GPU topology."""
-    patch_recipe_module_global(monkeypatch, _gemma4_vl_h100_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _gemma4_vl_h100_module.gemma4_vl_26b_sft_16gpu_h100_bf16_config()
-
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 8
-
-
-def test_gemma4_vl_sft_legacy_8gpu_name_is_compatibility_alias(monkeypatch: pytest.MonkeyPatch):
-    """The old public symbol should preserve compatibility without claiming an 8-GPU topology."""
+def test_gemma4_vl_sft_canonical_recipe_requires_8_gpu_topology(monkeypatch: pytest.MonkeyPatch):
+    """The canonical full-SFT recipe should resolve to an eight-rank MoE mesh."""
     patch_recipe_module_global(monkeypatch, _gemma4_vl_h100_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma4_vl_h100_module.gemma4_vl_26b_sft_8gpu_h100_bf16_config()
+    cfg.model.finalize()
 
     assert cfg.model.tensor_model_parallel_size == 2
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.expert_tensor_parallel_size == 1
+    required_world_size = cfg.model.pipeline_model_parallel_size * max(
+        cfg.model.tensor_model_parallel_size * cfg.model.context_parallel_size,
+        cfg.model.expert_model_parallel_size * cfg.model.expert_tensor_parallel_size,
+    )
+    assert required_world_size == 8

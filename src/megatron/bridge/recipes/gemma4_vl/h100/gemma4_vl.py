@@ -106,11 +106,11 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
 # =============================================================================
 # Gemma 4 VL 26B-A4B SFT Configuration
 # =============================================================================
-def gemma4_vl_26b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
+def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma 4 VL 26B-A4B (MoE VLM).
 
-    Default configuration: 16 GPUs
-    - TP=2, PP=1, EP=8 (DP=8, so EP divides DP)
+    Default configuration: 8 GPUs
+    - TP=2, PP=1, EP=8, ETP=1 (dense DP=4, expert DP=1)
     - No activation recompute — EP=8 shards 87.5% of expert params per GPU
     - LR=5e-5 (full SFT)
     - Sequence length: 4096
@@ -119,14 +119,15 @@ def gemma4_vl_26b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     _apply_gemma4_vl_common(cfg, _HF_PATH)
 
-    # Parallel settings — TP=2, PP=1, EP=8 on 2×8 GPUs
-    # DP = 16/(TP*PP) = 8; EP=8 shards experts across all DP ranks (1 expert replica)
+    # The dense TP mesh and MoE EP mesh share each PP stage. Bridge resolves ETP
+    # to one for EP>1, so the minimum world size is PP*max(TP*CP, EP*ETP)=8.
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8  # override common EP=1
+    cfg.model.expert_tensor_parallel_size = 1
 
     # Reduce overhead to fit within 30-min wall time.
     # 40 iters × ~15s + 5 min init + 4 evals × 35s = ~20 min → 10 min for checkpoint save.
@@ -159,11 +160,6 @@ def gemma4_vl_26b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
         **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
-
-
-def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Compatibility alias for the corrected 16-GPU full-SFT recipe."""
-    return gemma4_vl_26b_sft_16gpu_h100_bf16_config()
 
 
 # =============================================================================
@@ -227,6 +223,5 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
 
 __all__ = [
     "gemma4_vl_26b_peft_4gpu_h100_bf16_config",
-    "gemma4_vl_26b_sft_16gpu_h100_bf16_config",
     "gemma4_vl_26b_sft_8gpu_h100_bf16_config",
 ]

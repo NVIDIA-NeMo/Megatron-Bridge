@@ -119,15 +119,18 @@ Before training, ensure the following environment variables are set:
 
 ### Supervised Fine-Tuning (SFT)
 
-Full SFT uses TP=2, PP=1, and EP=8 on 2 nodes (16 GPUs). The portable
+The full-SFT recipe uses TP=2, PP=1, EP=8, and ETP=1 on 1 node (8 GPUs). The
+attention and expert meshes share the same ranks, so this topology has dense
+DP=4 and expert DP=1. Runtime verification of this OOM-avoidance path is still
+pending. The portable
 [sft.sh](sft.sh) wrapper submits this topology through the public training
 launcher; [slurm_sft.sh](slurm_sft.sh) shows the equivalent direct Slurm job.
 
 ```bash
 # Override defaults via environment variables
-PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-4-26B-A4B \
-TP=2 PP=1 EP=8 \
-sbatch --nodes=2 slurm_sft.sh
+PRETRAINED_CHECKPOINT=${WORKSPACE}/models/gemma-4-26B-A4B-it \
+TP=2 PP=1 EP=8 ETP=1 \
+sbatch --nodes=1 slurm_sft.sh
 ```
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
@@ -144,7 +147,7 @@ sbatch slurm_peft.sh
 
 | Mode | TP | PP | EP | Nodes | Global Batch Size | Learning Rate | Notes |
 |------|----|----|----|----|-------------------|---------------|-------|
-| Full SFT | 2 | 1 | 8 | 2 | 32 | 5e-5 | Max EP=DP=8; vision unfrozen; no activation recompute |
+| Full SFT | 2 | 1 | 8 | 1 | 32 | 5e-5 | ETP=1; dense DP=4; expert DP=1; runtime verification pending |
 | LoRA | 2 | 1 | 4 | 1 | 32 | 2e-4 | EP=4 required (see note above) |
 
 > **Note:** Do not use `recompute_granularity="full"`. Megatron's `CheckpointFunction` does not support non-tensor (tuple) arguments, causing a `TypeError` at runtime. Use `"selective"` instead.
