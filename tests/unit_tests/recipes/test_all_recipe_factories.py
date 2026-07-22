@@ -20,7 +20,8 @@ from collections.abc import Callable
 
 import pytest
 
-from megatron.bridge.training.config import ConfigContainer, GPTDatasetConfig, MockVLMSFTDatasetConfig
+from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.training.config import ConfigContainer, MockVLMSFTDatasetConfig
 from tests.unit_tests.recipes.recipe_test_utils import (
     discover_recipe_factories,
     exported_recipe_factory_keys,
@@ -65,6 +66,11 @@ def test_all_recipe_factories_are_exported() -> None:
         assert getattr(_RECIPES_PACKAGE, factory.__name__) is factory
 
 
+def test_common_pretrain_uses_runtime_tokenizer_vocabulary() -> None:
+    """From-scratch pretraining derives the model vocabulary from its tokenizer."""
+    assert _pretrain_common().tokenizer.use_tokenizer_vocab_size is True
+
+
 @pytest.mark.parametrize("recipe_factory", _RUNNABLE_RECIPE_FACTORIES, ids=recipe_factory_id)
 def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> None:
     """Every supported recipe can be called with defaults without GPU or network access."""
@@ -88,10 +94,10 @@ def test_recipe_factory_builds_config(recipe_factory: Callable[..., object]) -> 
     ):
         assert getattr(cfg, section) is not None
 
-    if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, GPTDatasetConfig):
-        assert cfg.tokenizer.use_tokenizer_vocab_size is True
     if "pretrain" in recipe_factory.__name__ and isinstance(cfg.dataset, MockVLMSFTDatasetConfig):
-        assert cfg.tokenizer.use_tokenizer_vocab_size is False
+        assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+        assert cfg.tokenizer.tokenizer_model == cfg.dataset.hf_processor_path
+        assert cfg.tokenizer.use_tokenizer_vocab_size is True
 
 
 @pytest.mark.parametrize("recipe_factory", _UNSUPPORTED_RECIPE_FACTORIES, ids=recipe_factory_id)
