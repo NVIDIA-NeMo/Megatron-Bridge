@@ -30,12 +30,12 @@ verification_index:
     GB200:
       verified:
         - pretrain
-        - checkpoint_resume
-      unverified:
         - sft
         - sft_export_inference
-        - sft_long_context
         - peft
+        - checkpoint_resume
+      unverified:
+        - sft_long_context
   performance:
     H100: verified
     GB200: verified
@@ -220,7 +220,7 @@ items:
       expected_result: Packed full SFT completes 100 finite-loss steps and saves a reloadable full-model checkpoint.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -238,13 +238,15 @@ items:
         checkpoint.save_optim=false checkpoint.save_rng=false checkpoint.async_save=false
         --save_dir work/model-verification/nemotron-3-5-nano-mtp-gb200/sft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-      last_verified: null
+      last_verified: 2026-07-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-      expected_result: Packed full SFT completes 100 finite-loss steps and saves a reloadable full-model checkpoint.
+        initial_loss: 0.4167536
+        final_loss: 0.2661883
+        last_10_steps_step_time_ms_avg: 19466.4
+        last_10_steps_model_tflops_per_gpu_avg: 89.71
+      expected_result: >
+        Packed full SFT completes 100 finite-loss steps with active MTP gradients and finite mtp_1 and mtp_2
+        losses, then saves a reloadable full-model checkpoint.
 
   sft_export_inference:
     H100:
@@ -271,7 +273,7 @@ items:
         \u0024\\boxed{5}\u0024. The answer is \u0024\\boxed{5\"."
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
       commands:
@@ -288,8 +290,10 @@ items:
           --hf-model work/model-verification/nemotron-3-5-nano-mtp-gb200/sft-hf-export
           --prompt "Solve briefly: If 3x + 5 = 20, what is x?"
           --max-new-tokens 45 --chat-template --disable-thinking
-      last_verified: null
-      expected_result: The SFT export reloads natively and produces deterministic greedy text in two independent runs.
+      last_verified: 2026-07-21
+      expected_result: "The SFT export reloaded natively, and two independent runs produced byte-identical output. The exact
+        45-token completion was \"Subtract 5 from both sides: \u00243x = 15\u0024. Then divide by 3: \u0024x = 5\u0024. The answer is
+        \u0024\\boxed{5}\u0024. The answer is \u0024\\boxed{5\"."
 
   sft_long_context:
     H100:
@@ -376,7 +380,7 @@ items:
       expected_result: Packed LoRA completes 100 finite-loss steps and saves a reloadable adapter checkpoint.
 
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
@@ -393,13 +397,16 @@ items:
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         --save_dir work/model-verification/nemotron-3-5-nano-mtp-gb200/peft-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-      last_verified: null
+      last_verified: 2026-07-21
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
-      expected_result: Packed LoRA completes 100 finite-loss steps and saves a reloadable adapter checkpoint.
+        initial_loss: 0.4167507
+        final_loss: 0.2747393
+        last_10_steps_step_time_ms_avg: 26579.5
+        last_10_steps_model_tflops_per_gpu_avg: 65.72
+      expected_result: >
+        Packed LoRA completes 100 finite-loss steps with adapters on the MTP layers and finite mtp_1 and mtp_2
+        losses, saves a reloadable adapter checkpoint, and merges into a native Hugging Face checkpoint that
+        reloads and produces deterministic greedy text in two independent runs.
 
   checkpoint_resume:
     H100:
