@@ -16,7 +16,7 @@
 Unit tests for Nemotron 3 Nano recipe configuration builders.
 
 Tests cover:
-- Pretrain configuration defaults (parameterless API)
+- Pretrain configuration defaults and optional MTP
 - SFT configuration (parameterless API for full supervised fine-tuning)
 - PEFT configuration with LoRA and DoRA (peft_scheme parameter)
 - MoE-specific settings (DeepEP, expert parallelism)
@@ -25,29 +25,32 @@ Tests cover:
 
 import os
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 
 import pytest
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_nano as recipe_module
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 @pytest.mark.unit
 class TestNemotron3NanoPretrain:
     """Test cases for Nemotron 3 Nano pretrain recipe.
 
-    Note: Pretrain config uses the parameterless API and returns fixed defaults.
-    Customization is done by modifying the returned ConfigContainer after creation.
+    Most customization is done by modifying the returned ConfigContainer after
+    creation; MTP is selected through the recipe's explicit flag.
     """
 
     def test_pretrain_config_default_parameters(self):
         """Test pretrain_config returns correct default configuration."""
-        # Pretrain config uses parameterless API
         config = nemotron_3_nano_pretrain_config()
 
         assert isinstance(config, ConfigContainer)
@@ -82,9 +85,24 @@ class TestNemotron3NanoPretrain:
         # Check precision
         assert config.mixed_precision == "bf16_mixed"
 
+        # MTP is opt-in for pretraining.
+        assert config.model.mtp_num_layers == 0
+        assert config.model.mtp_hybrid_override_pattern is None
+
+    def test_pretrain_config_enables_mtp_explicitly(self):
+        """The pretraining flag enables the repeated Nano MTP head."""
+        config = nemotron_3_nano_pretrain_config(enable_mtp=True)
+
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.calculate_per_token_loss is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.use_te_rng_tracker is True
+
     def test_pretrain_config_deepep_enabled(self):
         """Test that DeepEP is enabled by default for MoE pretrain."""
-        # Pretrain config uses parameterless API
         config = nemotron_3_nano_pretrain_config()
 
         # DeepEP should be enabled by default - check MoE dispatcher settings
@@ -217,6 +235,56 @@ class TestNemotron3NanoSft:
         config.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
+
+    @pytest.mark.parametrize("recipe_factory", [nemotron_3_nano_sft_config, nemotron_3_nano_peft_config])
+    def test_finetuning_inherits_mtp_from_checkpoint(self, recipe_factory):
+        """SFT and PEFT derive their MTP architecture from checkpoint metadata."""
+        config = recipe_factory()
+        config = process_config_with_overrides(
+            config,
+            cli_overrides=['checkpoint.pretrained_checkpoint="/path/to/checkpoint"'],
+        )
+        checkpoint_model = SimpleNamespace(
+            mtp_num_layers=2,
+            mtp_hybrid_override_pattern="*E",
+            mtp_use_repeated_layer=True,
+            keep_mtp_spec_in_bf16=True,
+            mtp_loss_scaling_factor=0.3,
+            use_te_rng_tracker=True,
+        )
+
+        with (
+            patch.object(recipe_module, "load_model_config", return_value=(checkpoint_model, None)),
+            patch.object(ConfigContainer, "validate"),
+        ):
+            config.validate()
+
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.use_te_rng_tracker is True
+
+    def test_sft_disables_mtp_for_non_mtp_checkpoint(self):
+        """A non-MTP checkpoint keeps SFT on the non-MTP architecture."""
+        config = nemotron_3_nano_sft_config()
+        config.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
+        config.model.mtp_num_layers = 2
+        config.model.mtp_hybrid_override_pattern = "*E"
+        config.model.mtp_use_repeated_layer = True
+        checkpoint_model = SimpleNamespace(mtp_num_layers=0)
+
+        with (
+            patch.object(recipe_module, "load_model_config", return_value=(checkpoint_model, None)),
+            patch.object(ConfigContainer, "validate"),
+        ):
+            config.validate()
+
+        assert config.model.mtp_num_layers == 0
+        assert config.model.mtp_hybrid_override_pattern is None
+        assert config.model.mtp_use_repeated_layer is False
+        assert config.model.keep_mtp_spec_in_bf16 is False
 
     def test_sft_config_with_custom_directory(self):
         """Test custom directory configuration for SFT."""

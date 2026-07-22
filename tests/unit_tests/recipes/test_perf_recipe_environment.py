@@ -30,7 +30,7 @@ _CANONICAL_RECIPE_NAME = re.compile(
 )
 _RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
 # Deliberately lock the discovered public inventory; update this for intentional recipe additions or removals.
-_EXPECTED_FLAT_RECIPE_COUNT = 397
+_EXPECTED_FLAT_RECIPE_COUNT = 402
 _EXPECTED_DEEPSEEK_RECIPE_COUNT = 37
 _EXPECTED_DEEPSEEK_HYBRID_EP_RECIPE_COUNT = 35
 _INLINE_CORE_ENV_NAMES = {

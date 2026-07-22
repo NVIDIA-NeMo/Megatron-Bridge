@@ -206,9 +206,9 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config(*, enable_mtp: bool = False) -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, BF16."""
-    cfg = nemotron_3_nano_pretrain_config()
+    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -256,9 +256,9 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config(*, enable_mtp: bool = False) -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, MXFP8."""
-    cfg = nemotron_3_nano_pretrain_config()
+    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -306,9 +306,9 @@ def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
+def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config(*, enable_mtp: bool = False) -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, NVFP4."""
-    cfg = nemotron_3_nano_pretrain_config()
+    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
     cfg.mixed_precision = _perf_precision("nvfp4")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -353,6 +353,73 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
         # NVFP4 fast-math path.
+        "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 8× GB200, BF16."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config(enable_mtp=True)
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 8× GB200, MXFP8."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config(enable_mtp=True)
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 8× GB200, NVFP4."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config(enable_mtp=True)
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg

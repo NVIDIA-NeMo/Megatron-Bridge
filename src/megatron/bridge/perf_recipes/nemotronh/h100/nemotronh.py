@@ -58,9 +58,9 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_nano_pretrain_16gpu_h100_bf16_config(*, enable_mtp: bool = False) -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
-    cfg = nemotron_3_nano_pretrain_config()
+    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.recompute_granularity = "selective"
 
@@ -110,9 +110,9 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
+def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config(*, enable_mtp: bool = False) -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, FP8 current-scaling, recompute."""
-    cfg = nemotron_3_nano_pretrain_config()
+    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.recompute_granularity = "selective"
 
@@ -156,6 +156,50 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 16× H100, BF16."""
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config(enable_mtp=True)
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 16× H100, FP8 current-scaling."""
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config(enable_mtp=True)
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
