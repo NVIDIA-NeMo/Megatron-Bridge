@@ -15,11 +15,8 @@
 #
 # Gemma 4 VL 26B-A4B SFT fine-tuning.
 #
-# Usage (single node, 8 GPUs):
+# Usage (2 nodes, 16 GPUs, TP=2/PP=1/EP=8):
 #   sbatch slurm_sft.sh
-#
-# Usage (multi-node, e.g. 2 nodes with EP=8):
-#   NUM_NODES=2 TP=2 PP=1 EP=8 sbatch --nodes=2 slurm_sft.sh
 
 #SBATCH --job-name=gemma4vl-sft
 #SBATCH --nodes=2

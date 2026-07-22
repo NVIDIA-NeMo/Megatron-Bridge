@@ -106,11 +106,11 @@ def _apply_gemma4_vl_common(cfg: ConfigContainer, hf_path: str) -> None:
 # =============================================================================
 # Gemma 4 VL 26B-A4B SFT Configuration
 # =============================================================================
-def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+def gemma4_vl_26b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma 4 VL 26B-A4B (MoE VLM).
 
-    Default configuration: 8 GPUs
-    - TP=2, PP=1, EP=8 (max EP with 16 GPUs at TP=2,PP=1; DP=8, EP divides DP)
+    Default configuration: 16 GPUs
+    - TP=2, PP=1, EP=8 (DP=8, so EP divides DP)
     - No activation recompute — EP=8 shards 87.5% of expert params per GPU
     - LR=5e-5 (full SFT)
     - Sequence length: 4096
@@ -159,6 +159,11 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
+
+
+def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Compatibility alias for the corrected 16-GPU full-SFT recipe."""
+    return gemma4_vl_26b_sft_16gpu_h100_bf16_config()
 
 
 # =============================================================================
@@ -222,5 +227,6 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
 
 __all__ = [
     "gemma4_vl_26b_peft_4gpu_h100_bf16_config",
+    "gemma4_vl_26b_sft_16gpu_h100_bf16_config",
     "gemma4_vl_26b_sft_8gpu_h100_bf16_config",
 ]

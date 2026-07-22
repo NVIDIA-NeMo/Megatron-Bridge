@@ -119,9 +119,9 @@ Before training, ensure the following environment variables are set:
 
 ### Supervised Fine-Tuning (SFT)
 
-For single-node interactive runs, see [sft.sh](sft.sh).
-
-For multi-node Slurm jobs, see [slurm_sft.sh](slurm_sft.sh). Default configuration: TP=2, PP=1, EP=8 on 2 nodes (16 GPUs).
+Full SFT uses TP=2, PP=1, and EP=8 on 2 nodes (16 GPUs). The portable
+[sft.sh](sft.sh) wrapper submits this topology through the public training
+launcher; [slurm_sft.sh](slurm_sft.sh) shows the equivalent direct Slurm job.
 
 ```bash
 # Override defaults via environment variables
@@ -145,7 +145,6 @@ sbatch slurm_peft.sh
 | Mode | TP | PP | EP | Nodes | Global Batch Size | Learning Rate | Notes |
 |------|----|----|----|----|-------------------|---------------|-------|
 | Full SFT | 2 | 1 | 8 | 2 | 32 | 5e-5 | Max EP=DP=8; vision unfrozen; no activation recompute |
-| Full SFT | 4 | 2 | 1 | 1 | 32 | 5e-5 | `recompute_granularity="selective"`; freeze vision |
 | LoRA | 2 | 1 | 4 | 1 | 32 | 2e-4 | EP=4 required (see note above) |
 
 > **Note:** Do not use `recompute_granularity="full"`. Megatron's `CheckpointFunction` does not support non-tensor (tuple) arguments, causing a `TypeError` at runtime. Use `"selective"` instead.
