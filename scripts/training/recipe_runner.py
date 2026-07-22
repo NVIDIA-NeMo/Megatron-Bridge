@@ -368,6 +368,34 @@ def sync_finetuning_cp_invariants(config: ConfigContainer, *, mode: str) -> Conf
     return config
 
 
+def sync_model_pipeline_layout(
+    config: ConfigContainer,
+    *,
+    cli_overrides: list[str],
+) -> ConfigContainer:
+    """Rebuild a recipe-owned pipeline layout after PP or VP overrides."""
+    override_fields = {override.lstrip("+~").split("=", 1)[0] for override in cli_overrides}
+    topology_fields = {
+        "model.pipeline_model_parallel_size",
+        "model.virtual_pipeline_model_parallel_size",
+    }
+    if not override_fields.intersection(topology_fields):
+        return config
+    if "model.pipeline_model_parallel_layout" in override_fields:
+        return config
+
+    model = getattr(config, "model", None)
+    layout_builder = getattr(model, "_pipeline_model_parallel_layout_builder", None)
+    if layout_builder is None:
+        return config
+
+    model.pipeline_model_parallel_layout = layout_builder(
+        model.pipeline_model_parallel_size,
+        model.virtual_pipeline_model_parallel_size,
+    )
+    return config
+
+
 def sync_offline_packing_alignment(config: ConfigContainer) -> ConfigContainer:
     """Align offline-packed samples to the resolved length and parallel topology."""
     dataset = getattr(config, "dataset", None)
