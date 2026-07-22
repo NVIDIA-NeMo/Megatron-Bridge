@@ -112,6 +112,11 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         dest="submission_dry_run",
         help="Render the Slurm submission without submitting it.",
     )
+    execution.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for the Slurm experiment to finish and stream its logs.",
+    )
     return parser
 
 
@@ -257,7 +262,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=True)
+        experiment.run(detach=not args.wait, tail_logs=args.wait)
 
 
 if __name__ == "__main__":
