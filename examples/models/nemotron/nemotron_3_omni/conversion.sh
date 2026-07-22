@@ -27,7 +27,7 @@ MEGATRON_PATH=${WORKSPACE}/models/${MODEL_NAME}
 HF_EXPORT_PATH=${WORKSPACE}/models/${MODEL_NAME}-hf-export
 
 # Import HF -> Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "$MEGATRON_PATH" \
     --trust-remote-code
@@ -35,7 +35,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 # Export Megatron -> HF (--not-strict allows 4 expected-missing tensors that
 # are regenerated from config on the HF side: sound_encoder featurizer fb/window
 # and vision_model input_conditioner norm_mean/norm_std)
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "$HF_MODEL_ID" \
     --megatron-path "$MEGATRON_PATH" \
     --hf-path "$HF_EXPORT_PATH" \

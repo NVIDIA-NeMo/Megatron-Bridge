@@ -16,6 +16,7 @@ from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 import torch
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -409,17 +410,45 @@ def test_stream_weights_megatron_to_hf_finalizes_exported_tensors_before_cpu(mon
         assert events.index(("finalize", label)) < events.index(("cpu", label))
 
 
-def test_stream_weights_megatron_to_hf_transforms_tied_aliases_independently(monkeypatch):
+@pytest.mark.parametrize(
+    ("megatron_prefix", "embedding_name", "output_name"),
+    [
+        ("", "model.embed_tokens.weight", "lm_head.weight"),
+        ("thinker.language_model.", "thinker.model.embed_tokens.weight", "thinker.lm_head.weight"),
+        ("language_model.", "model.language_model.embed_tokens.weight", "lm_head.weight"),
+        ("language_model.", "language_model.model.embed_tokens.weight", "language_model.lm_head.weight"),
+        (
+            "llava_model.language_model.",
+            "language_model.backbone.embeddings.weight",
+            "language_model.lm_head.weight",
+        ),
+    ],
+    ids=[
+        "plain-llm",
+        "component-prefix",
+        "nested-embedding-root-head",
+        "nested-language-model",
+        "nonstandard-embedding-name",
+    ],
+)
+def test_stream_weights_megatron_to_hf_transforms_tied_aliases_independently(
+    monkeypatch,
+    megatron_prefix,
+    embedding_name,
+    output_name,
+):
     bridge = DummyBridge()
     source_tensor = torch.ones(2, 2, requires_grad=True)
 
     class EmbeddingMapping:
+        hf_param = embedding_name
+
         def megatron_to_hf(self, weight, module):
-            return {"model.embed_tokens.weight": weight}
+            return {embedding_name: weight}
 
     task = WeightConversionTask(
-        param_name="embedding.word_embeddings.weight",
-        global_param_name="embedding.word_embeddings.weight",
+        param_name=f"{megatron_prefix}embedding.word_embeddings.weight",
+        global_param_name=f"{megatron_prefix}embedding.word_embeddings.weight",
         mapping=EmbeddingMapping(),
         pp_rank=0,
         vp_stage=0,
@@ -442,12 +471,19 @@ def test_stream_weights_megatron_to_hf_transforms_tied_aliases_independently(mon
         "_share_embeddings_and_output_weights",
         lambda self, *_args, **_kwargs: True,
     )
+    monkeypatch.setattr(
+        DummyBridge,
+        "mapping_registry",
+        lambda self: MegatronMappingRegistry(
+            AutoMapping(f"{megatron_prefix}output_layer.weight", output_name),
+        ),
+    )
     hf_pretrained = SimpleNamespace(
         state=SimpleNamespace(
             source=SimpleNamespace(
                 get_all_keys=lambda: [
-                    "model.embed_tokens.weight",
-                    "lm_head.weight",
+                    embedding_name,
+                    output_name,
                 ]
             )
         )
@@ -464,11 +500,64 @@ def test_stream_weights_megatron_to_hf_transforms_tied_aliases_independently(mon
         )
     )
 
-    assert transform_calls == ["model.embed_tokens.weight", "lm_head.weight"]
+    assert transform_calls == [embedding_name, output_name]
     assert [weight.param_name for weight in weights] == [
-        "model.embed_tokens.weight.packed",
-        "model.embed_tokens.weight.scale",
-        "lm_head.weight.packed",
-        "lm_head.weight.scale",
+        f"{embedding_name}.packed",
+        f"{embedding_name}.scale",
+        f"{output_name}.packed",
+        f"{output_name}.scale",
     ]
     assert weights[0].weight.data_ptr() != weights[2].weight.data_ptr()
+
+
+@pytest.mark.parametrize("has_output_mapping", [False, True], ids=["no-output-mapping", "output-not-in-source"])
+def test_stream_weights_megatron_to_hf_does_not_invent_tied_output_alias(monkeypatch, has_output_mapping):
+    bridge = DummyBridge()
+    embedding_name = "model.embed_tokens.weight"
+
+    class EmbeddingMapping:
+        hf_param = embedding_name
+
+        def megatron_to_hf(self, weight, module):
+            return {embedding_name: weight}
+
+    task = WeightConversionTask(
+        param_name="embedding.word_embeddings.weight",
+        global_param_name="embedding.word_embeddings.weight",
+        mapping=EmbeddingMapping(),
+        pp_rank=0,
+        vp_stage=0,
+        megatron_module=None,
+        param_weight=torch.ones(2, 2),
+    )
+
+    _patch_stream_weights_megatron_to_hf_basics(monkeypatch)
+    monkeypatch.setattr(
+        DummyBridge,
+        "_share_embeddings_and_output_weights",
+        lambda self, *_args, **_kwargs: True,
+    )
+    output_mappings = [AutoMapping("output_layer.weight", "lm_head.weight")] if has_output_mapping else []
+    monkeypatch.setattr(
+        DummyBridge,
+        "mapping_registry",
+        lambda self: MegatronMappingRegistry(*output_mappings),
+    )
+    hf_pretrained = SimpleNamespace(
+        state=SimpleNamespace(
+            source=SimpleNamespace(get_all_keys=lambda: [embedding_name]),
+        )
+    )
+
+    weights = list(
+        bridge.stream_weights_megatron_to_hf(
+            [Mock()],
+            hf_pretrained,
+            cpu=True,
+            show_progress=False,
+            conversion_tasks=[task],
+            merge_adapter_weights=False,
+        )
+    )
+
+    assert [weight.param_name for weight in weights] == [embedding_name]

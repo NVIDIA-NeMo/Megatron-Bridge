@@ -42,20 +42,6 @@ class TestModelsImports:
             attr = getattr(models, name)
             assert attr is not None, f"{name} is None"
 
-    def test_backwards_compatibility_imports(self):
-        """Test that old import paths still work for backwards compatibility."""
-        # These should now import the provider classes
-        try:
-            from megatron.bridge.models import GPTModelProvider as GPTConfig
-            from megatron.bridge.models import T5ModelProvider as T5Config
-
-            # They should be the provider classes now
-            assert hasattr(GPTConfig, "provide")
-            assert hasattr(T5Config, "provide")
-        except ImportError:
-            # If the old names aren't aliased, that's okay
-            pass
-
     def test_model_provider(self):
         """Test that model providers inherit from ModelProviderMixin."""
         from megatron.bridge.models import GPTModelProvider, T5ModelProvider

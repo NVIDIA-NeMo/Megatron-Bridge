@@ -359,9 +359,8 @@ def test_gemma3_1b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft is None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_gemma3_1b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_gemma3_1b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.gemma import gemma3_1b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.gemma.gemma3")
@@ -380,11 +379,6 @@ def test_gemma3_1b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyP
 
     cfg = gemma3_1b_sft_config()
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
-
-    # Packed sequence affects default seq_length (4096 vs 2048)
-    # But we modify packed_sequence after creation, so just verify config is valid
-    assert cfg.dataset is not None
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None

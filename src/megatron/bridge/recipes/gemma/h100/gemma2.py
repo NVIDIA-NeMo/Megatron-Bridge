@@ -19,7 +19,8 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
@@ -106,6 +107,10 @@ def gemma2_2b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -188,6 +193,10 @@ def gemma2_9b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -270,6 +279,10 @@ def gemma2_27b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "no_shard"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -398,6 +411,10 @@ def gemma2_2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -502,6 +519,10 @@ def gemma2_9b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -606,6 +627,10 @@ def gemma2_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -723,6 +748,10 @@ def gemma2_2b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -835,6 +864,10 @@ def gemma2_9b_peft_1gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -947,6 +980,10 @@ def gemma2_27b_peft_4gpu_h100_bf16_config(
     # RNG seed
     cfg.rng.seed = 5678
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

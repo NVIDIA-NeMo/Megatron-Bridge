@@ -34,6 +34,9 @@ _MODULES_TO_MOCK = [
     "megatron",
     "megatron.core",
     "megatron.core.parallel_state",
+    "megatron.core.inference",
+    "megatron.core.inference.contexts",
+    "megatron.core.inference.utils",
     "megatron.core.pipeline_parallel",
     "megatron.core.pipeline_parallel.schedules",
     "megatron.core.dist_checkpointing",
@@ -51,6 +54,7 @@ _MODULES_TO_MOCK = [
     "megatron.bridge.training.utils.checkpoint_utils",
     "megatron.bridge.utils",
     "megatron.bridge.utils.common_utils",
+    "megatron.bridge.utils.safe_url",
     "PIL",
     "PIL.Image",
     "requests",
@@ -71,7 +75,11 @@ sys.path.insert(
 import compare  # noqa: E402
 from compare import (  # noqa: E402
     SingleBatchIterator,
+    _broadcast_hf_results,
+    _maybe_gather_tensor_parallel_logits,
     _run_hf_inference,  # noqa: E402
+    _run_megatron_forward,
+    inference_forward_step,
     vlm_forward_step,
 )
 
@@ -108,6 +116,66 @@ class TestCompareMaskHandling:
 
         call_kwargs = mock_model.call_args.kwargs
         assert call_kwargs["attention_mask"] is None
+        assert "inference_context" not in call_kwargs
+        assert "runtime_gather_output" not in call_kwargs
+
+    def test_text_inference_forward_step_passes_static_context(self):
+        """Test that the text path receives the cache context and gathered-logit request."""
+        inference_context = object()
+        batch = {
+            "tokens": torch.tensor([[1, 2, 3]]),
+            "position_ids": torch.arange(3).unsqueeze(0),
+            "attention_mask": None,
+            "inference_context": inference_context,
+        }
+        mock_model = MagicMock(return_value=torch.randn(1, 1, 100))
+
+        inference_forward_step(iter([batch]), mock_model)
+
+        assert mock_model.call_args.kwargs["inference_context"] is inference_context
+        assert mock_model.call_args.kwargs["runtime_gather_output"] is True
+
+    def test_megatron_forward_activates_inference_mode(self):
+        """Test that the scheduled forward runs inside MCore inference mode."""
+        mock_forward = MagicMock(return_value="output")
+        mock_context = MagicMock()
+
+        with patch.object(compare.InferenceMode, "active", return_value=mock_context) as mock_active:
+            result = _run_megatron_forward(mock_forward, forward_only=True)
+
+        assert result == "output"
+        mock_active.assert_called_once_with()
+        mock_context.__enter__.assert_called_once_with()
+        mock_context.__exit__.assert_called_once()
+        mock_forward.assert_called_once_with(forward_only=True)
+
+    def test_tp_logits_skip_gather_when_runtime_output_is_already_full(self):
+        """Test that runtime-gathered text logits are not gathered a second time."""
+        full_logits = torch.randn(1, 1, 128)
+
+        with patch.object(compare.dist, "all_gather") as mock_all_gather:
+            result = _maybe_gather_tensor_parallel_logits(full_logits, 128, 2, object())
+
+        assert result is full_logits
+        mock_all_gather.assert_not_called()
+
+    def test_tp_logits_gather_vlm_shards(self):
+        """Test that the existing sharded VLM path still gathers across TP ranks."""
+        local_logits = torch.arange(64, dtype=torch.float32).reshape(1, 1, 64)
+
+        def mock_all_gather(outputs, tensor, group):
+            assert group is tp_group
+            outputs[0].copy_(tensor)
+            outputs[1].copy_(tensor + 64)
+
+        tp_group = object()
+        with patch.object(compare.dist, "all_gather", side_effect=mock_all_gather) as gather:
+            result = _maybe_gather_tensor_parallel_logits(local_logits, 128, 2, tp_group)
+
+        assert result.shape == (1, 1, 128)
+        assert torch.equal(result[..., :64], local_logits)
+        assert torch.equal(result[..., 64:], local_logits + 64)
+        gather.assert_called_once()
 
     def test_hf_path_receives_ones_like_attention_mask(self):
         """Test that HF model receives torch.ones_like(input_ids, dtype=torch.bool) attention_mask."""
@@ -140,6 +208,26 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
+    def test_hf_broadcast_uses_model_output_vocab_size(self):
+        """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
+        broadcast_shapes = []
+
+        def mock_broadcast(tensor, _source_rank):
+            broadcast_shapes.append(tuple(tensor.shape))
+            if len(broadcast_shapes) == 1:
+                tensor.fill_(163840)
+
+        with (
+            patch.object(torch.distributed, "broadcast", side_effect=mock_broadcast),
+            patch.object(torch.distributed, "barrier"),
+        ):
+            hf_logits, hf_next_token = _broadcast_hf_results(None, None, torch.device("cpu"))
+
+        assert hf_logits.shape == (163840,)
+        assert hf_logits.dtype == torch.float32
+        assert hf_next_token.shape == (1,)
+        assert broadcast_shapes == [(1,), (1,), (163840,)]
+
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):
         """Test that compare.py accepts both trust_remote_code flag spellings."""
@@ -154,3 +242,21 @@ class TestCompareMaskHandling:
         )
 
         assert args.trust_remote_code is True
+
+    def test_hf_revision_is_parsed_and_forwarded(self):
+        """Test that an immutable revision reaches every HF loader via shared kwargs."""
+        revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+                "--hf-revision",
+                revision,
+            ]
+        )
+
+        assert args.hf_revision == revision
+        assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
+        assert compare._hf_revision_kwargs(None) == {}

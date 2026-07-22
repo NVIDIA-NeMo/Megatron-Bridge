@@ -23,7 +23,7 @@ We use the following environment variables throughout this page
 
 Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number
 `iter_xxxxxx`. For more details on checkpointing, please see
-[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents)
+[here](../../training/checkpointing.md#checkpoint-contents)
 ```
 
 ## Conversion with 🤗 Hugging Face
@@ -31,7 +31,7 @@ Unless explicitly stated, any megatron model path in the commands below should N
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model $HF_MODEL_PATH \
 --megatron-path $MEGATRON_MODEL_PATH \
 --trust-remote-code
@@ -40,7 +40,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 You can export a trained model with the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model $HF_MODEL_PATH \
 --megatron-path <trained megatron model path> \
 --hf-path <output hf model path> \

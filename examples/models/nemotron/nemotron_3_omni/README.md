@@ -2,9 +2,8 @@
 
 This directory contains example scripts for **Nemotron-3 Nano Omni**, a 30B-A3B
 MoE multimodal model that jointly processes image, video, audio, and text
-inputs. It pairs a MoE Mamba/attention hybrid language backbone with a RADIO
-vision tower (static-resolution image path or dynamic-resolution temporal video
-embedder) and a Parakeet sound encoder.
+inputs. It pairs a MoE Mamba/attention hybrid language backbone with a
+dynamic-resolution RADIO vision tower and a Parakeet sound encoder.
 
 | Model | HF ID | Architecture |
 |---|---|---|
@@ -219,8 +218,8 @@ combo matches your target task and either full-parameter (SFT) or LoRA
 [CORD-V2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) is a
 document-image parsing dataset (restaurant receipts → structured JSON). The
 vision path uses one embedding per frame (`temporal_patch_dim=1`, no
-temporal video embedder); `dynamic_resolution=True` is inherited from the
-base config. Recipe base: `nemotron_omni_cord_v2_*_config` in
+temporal video embedder). Nemotron Omni always uses its dynamic-resolution
+RADIO input contract. Recipe base: `nemotron_omni_cord_v2_*_config` in
 `src/megatron/bridge/recipes/nemotron_omni/nemotron_omni.py`.
 
 | Mode | Script | Recipe |
@@ -246,12 +245,21 @@ embedder: frames are fused in pairs (`temporal_patch_dim=2`,
 `separate_video_embedder=True`) and audio is fed through the Parakeet
 encoder. Recipe base: `nemotron_omni_valor32k_*_config`.
 
+The public processor uses aspect-preserving dynamic sizes for video inference.
+Pinned MCore does not yet support ragged non-square temporal tubelets, so the
+Bridge training path uses an antialiased bicubic 512×512 compatibility canvas.
+Temporal mode uses that canvas for every visual item in the batch, including
+standalone images. Non-temporal image recipes use the public dynamic-resolution
+sizes. Supporting the public non-square video layout requires MCore to
+pixel-shuffle each temporal chunk with its own spatial grid.
+
 Prepare the Energon shards once. For the full walkthrough, see
 [`tutorials/data/valor32k-avqa/data-preparation.md`](../../../../tutorials/data/valor32k-avqa/data-preparation.md).
 
 ```bash
 uv run python tutorials/data/valor32k-avqa/build_valor32k_avqa_shards.py \
-  --output_dir ${WORKSPACE}/datasets/valor32k_avqa
+  --data_root ${WORKSPACE}/datasets/valor32k_avqa \
+  --output_dir ${WORKSPACE}/datasets/valor32k_avqa/energon
 ```
 
 | Mode | Script | Recipe |

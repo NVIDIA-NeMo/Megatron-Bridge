@@ -1,0 +1,414 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_30b_a3b
+summary: >
+  Performance scope: only pretrain_performance.H100 uses the tuned canonical
+  performance recipe; timing and throughput metrics from functional training
+  items remain sanity checks rather than optimized performance results.
+  Qwen3-30B-A3B support verification covers conversion, inference, and training.
+verification_index:
+  model_level:
+    verified: all
+  training:
+    H100:
+      verified: all
+    GB200:
+      unverified: all
+  performance:
+    H100: verified
+model:
+  hf_id: Qwen/Qwen3-30B-A3B
+  hf_revision: ad44e777bcd18fa416d9da3bd8f70d33ebb85d39  # pragma: allowlist secret
+  architecture: Qwen3MoeForCausalLM
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: aabb29d0ed15fc7ed881f0538352c6bd2d2fd52d  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: 2026-07-17
+    expected_result: >
+      The command exits successfully, creates iter_0000000, and the checkpoint
+      round-trips through CPU export with all 18,867 BF16 tensors matching the
+      recorded HF revision bitwise.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/imported-megatron
+      --torch-dtype bfloat16 --tp 4 --pp 2 --ep 4
+    last_verified: 2026-07-17
+    expected_result: >
+      The command exits successfully, creates iter_0000000, and all 18,867 BF16
+      tensors reload with keys, shapes, dtypes, and values exactly matching the
+      recorded HF revision.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3-30b-a3b/cpu-hf-export
+      --torch-dtype bfloat16
+    last_verified: 2026-07-17
+    expected_result: >
+      The command exits successfully; all 18,867 exported BF16 tensors match
+      the recorded HF revision bitwise, norm_topk_prob remains true, and the
+      export reloads as Qwen3MoeForCausalLM without missing or unexpected keys.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8
+      --hf-model Qwen/Qwen3-30B-A3B
+      --megatron-path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3-30b-a3b/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 4 --pp 2 --ep 4
+    last_verified: 2026-07-17
+    expected_result: >
+      Strict export exits successfully, all 18,867 written BF16 tensors match
+      the recorded HF revision bitwise, norm_topk_prob remains true, and
+      Transformers reloads the output as Qwen3MoeForCausalLM without missing or
+      unexpected keys.
+
+  manual_forward_pass:
+    status: verified
+    precision: bf16
+    bridge_commit: 24f3dcde1fe27a1c3f1097b94d69b38e37a57415  # pragma: allowlist secret
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path Qwen/Qwen3-30B-A3B
+      --hf-revision ad44e777bcd18fa416d9da3bd8f70d33ebb85d39
+      --megatron_model_path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --tp 1 --pp 8 --prompt "The capital of France is the city of"
+    last_verified: 2026-07-20
+    expected_result: >
+      The pinned-revision one-step comparison exits successfully; the Hugging
+      Face and Megatron next-token predictions match at token ID 12095
+      (" Paris"), and cosine similarity is 0.999317, above the 0.99 correlation
+      gate. The maximum and mean absolute logit differences are 0.593750 and
+      0.130064, respectively; both are report-only diagnostic observations.
+
+  inference:
+    status: verified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path Qwen/Qwen3-30B-A3B
+      --megatron_model_path work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+      --tp 4 --pp 2 --ep 4
+      --prompt "The capital of France is" --max_new_tokens 32
+    last_verified: 2026-07-17
+    expected_result: >
+      Two independent executions exit successfully after exactly 32 new tokens
+      and print this byte-identical completion, including its leading
+      space, " Paris. The capital of the United Kingdom is London. The capital
+      of the United States is Washington, D.C. The capital of Brazil is
+      Brasília. The".
+
+  pretrain:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
+      enabled_features:
+        cuda_graph:
+          implementation: transformer_engine
+          scopes: [moe_router, moe_preprocess]
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen3_30b_a3b_pretrain_config --mode pretrain
+        --dataset megatron-indexed --seq_length 4096 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/rp2/head_01"],null]'
+        dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        scheduler.lr_decay_iters=100
+        model.moe_router_force_load_balancing=false
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        dist.distributed_timeout_minutes=30
+        --save_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-reference-checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-19
+      metrics:
+        initial_loss: 12.41145
+        final_loss: 6.139116
+        last_10_steps_step_time_ms_avg: 30289.550
+        last_10_steps_model_tflops_per_gpu_avg: 199.120
+      expected_result: >
+        On 16x H100, the public alias resolves to the 16-GPU recipe and completes
+        exactly 100 bounded RP2 optimizer steps with TP1/PP1/CP1/EP16/ETP1,
+        DP16, SP off, GBS/MBS 1024/1, and 64-way gradient accumulation. Natural
+        routing, HybridEP, and Transformer Engine CUDA graphs for moe_router and
+        moe_preprocess remain active. Loss is finite from 12.41145 to 6.139116
+        with no skipped or NaN iterations, all four metrics are recorded, and
+        complete iter_0000050 and iter_0000100 checkpoints are saved.
+
+  sft:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
+      enabled_features:
+        sequence_packing: offline
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen3_30b_a3b_sft_config --mode sft
+        --dataset tulu3
+        --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048
+        --lr 5e-6 --min_lr 0 --warmup_iters 10
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'
+        dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-sft-b14afda60f1b
+        dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true
+        +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
+        validation.eval_iters=0 validation.eval_interval=0
+        model.moe_router_force_load_balancing=false checkpoint.load=null
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        --save_dir work/model-verification/qwen3-30b-a3b/sft-convergence-v1-checkpoints
+        --save_interval 100
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+      last_verified: 2026-07-21
+      metrics:
+        initial_loss: 1.704380
+        final_loss: 0.9030643
+        last_10_steps_step_time_ms_avg: 1206.320
+        last_10_steps_model_tflops_per_gpu_avg: 64.020
+      expected_result: >
+        The immutable-revision 16-GPU run completes exactly 100 full-SFT steps
+        at TP1/PP1/CP1/EP16/ETP1, DP16, SP off, GBS/MBS 32/1, and two-way
+        gradient accumulation with natural routing. Pad-1 offline packing is
+        99.30% efficient, and the sampled 6,553,600 token slots contain
+        4,350,004 supervised tokens after label masking. LM loss is finite from
+        1.704380 to 0.9030643 with no skipped or NaN iterations, all four metrics
+        are recorded, and the complete sixteen-shard iter_0000100 full-model
+        checkpoint reloads successfully.
+
+  sft_export_inference:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B
+          --megatron-path work/model-verification/qwen3-30b-a3b/sft-convergence-v1-checkpoints/iter_0000100
+          --hf-path work/model-verification/qwen3-30b-a3b/sft-convergence-v1-hf-export
+          --torch-dtype bfloat16 --export-weight-dtype bfloat16
+          --distributed-save --tp 1 --pp 1 --ep 16 --etp 1
+        - >
+          uv run python
+          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          --hf-model work/model-verification/qwen3-30b-a3b/sft-convergence-v1-hf-export
+          --prompt "In one short sentence, explain why Paris is important to France."
+          --max-new-tokens 32 --chat-template --disable-thinking
+      last_verified: 2026-07-21
+      expected_result: >
+        The immutable-revision step-100 SFT checkpoint exports as 16 indexed
+        BF16 shards with 18,867 weights, vocabulary size 151936, and embedding
+        and output-head shapes [151936, 2048]. The index has the exact key set
+        and total_size 61,064,245,248, equal to the serialized tensor bytes.
+        Transformers strictly reloads with no errors, mismatches, missing, or
+        unexpected keys. Two independent runs using greedy decoding produce
+        byte-identical token IDs and exactly 32 new tokens with this literal
+        completion:
+        "Paris is the capital city of France and is a major cultural, economic,
+        and political center in Europe. It is home to many famous landmarks,
+        such as the".
+
+  sft_long_context:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: f3ae2767b5e18aeb67b726cd8d5f1db58216dcc9  # pragma: allowlist secret
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 2
+        moe_dispatcher: deepep
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen3_30b_a3b_sft_8gpu_h100_bf16_config --mode sft
+        --dataset tulu3
+        --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+        --max_steps 20 --seq_length 32768 --context_parallel_size 2
+        -tp 8 -pp 1 -ep 8
+        --lr 1e-6 --min_lr 0 --warmup_iters 2
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'
+        dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-long-context-b14afda60f1b
+        dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true
+        +dataset.offline_packing_specs.pad_seq_to_mult=16 model.cp_comm_type=p2p
+        model.cross_entropy_loss_fusion=false model.recompute_granularity=full
+        model.recompute_method=uniform model.recompute_num_layers=1
+        scheduler.lr_decay_iters=20 validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null checkpoint.save=null
+        logger.log_interval=1 logger.log_throughput=true
+      last_verified: 2026-07-20
+      metrics:
+        initial_loss: 1.645009
+        final_loss: 1.468103
+        last_10_steps_step_time_ms_avg: 142663.710
+        last_10_steps_model_tflops_per_gpu_avg: 26.120
+      expected_result: >
+        The immutable-revision 16-GPU run completes exactly 20 Tulu3 SFT steps at
+        sequence length 32768 with TP8/PP1/CP2/EP8/SP-on, DeepEP, and explicit
+        pad-16 offline packing. LM loss is 1.645009 to 1.468103; skipped/NaN
+        totals are 0/0. The persisted post-setup runtime config matches the
+        command, packing is 99.28%, and the sampled training window contains
+        13,573,663 actual supervised tokens. PP=1 keeps tokens, labels, loss
+        masks, and packed-sequence boundaries on one pipeline stage.
+
+  peft:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: deepep
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+        --recipe qwen3_30b_a3b_peft_4gpu_h100_bf16_config --mode lora
+        --dataset tulu3
+        --pretrained_checkpoint work/model-verification/qwen3-30b-a3b/imported-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048
+        --lr 1e-4 --min_lr 0 --warmup_iters 10
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"'
+        dataset.hf_output_root=work/data/tulu3/qwen3-30b-a3b-peft-b14afda60f1b
+        dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true
+        +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100
+        validation.eval_iters=0 validation.eval_interval=0
+        model.moe_router_force_load_balancing=false checkpoint.load=null
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        --save_dir work/model-verification/qwen3-30b-a3b/peft-tp4-ep4-pad4-checkpoints
+        --save_interval 100
+        logger.log_interval=1 logger.log_throughput=true
+      last_verified: 2026-07-21
+      metrics:
+        initial_loss: 1.575987
+        final_loss: 1.113119
+        last_10_steps_step_time_ms_avg: 22347.640
+        last_10_steps_model_tflops_per_gpu_avg: 13.840
+      expected_result: >
+        The immutable-revision 4-GPU run completes exactly 100 PEFT steps at
+        TP4/PP1/CP1/EP4/ETP1, DP1, SP on, GBS/MBS 32/1, and 32-way gradient
+        accumulation with natural routing and DeepEP. Pad-4 offline packing is
+        99.39% efficient, and the sampled 6,553,600 token slots contain
+        4,332,480 supervised tokens after label masking. Only rank-8, alpha-16,
+        zero-dropout LoRA on linear_qkv and linear_proj is trainable. LM loss is
+        finite from 1.575987 to 1.113119 with no skipped or NaN iterations, all
+        four metrics are recorded, and the complete four-shard iter_0000100
+        adapter checkpoint covers all 192 expected adapter entries.
+
+  checkpoint_resume:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 5b9d9cf501193277e1ca47a99b97c640b8f39f90  # pragma: allowlist secret
+      depends_on: pretrain
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen3_30b_a3b_pretrain_config --mode pretrain
+        --dataset megatron-indexed --seq_length 4096 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/rp2/head_01"],null]'
+        dataset.path_to_cache=work/cache/qwen3-30b-a3b/rp2
+        tokenizer.tokenizer_type=SentencePieceTokenizer
+        tokenizer.tokenizer_model=work/data/rp2/tokenizer.model
+        scheduler.lr_decay_iters=100
+        model.moe_router_force_load_balancing=false
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        validation.eval_iters=0 validation.eval_interval=0
+        dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
+        dist.distributed_timeout_minutes=30
+        --load_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-reference-checkpoints
+        --save_dir work/model-verification/qwen3-30b-a3b/pretrain-convergence-v1-resumed-checkpoints
+        --save_interval 50 checkpoint.ckpt_step=50
+        train.empty_unused_memory_level=2
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-19
+      metrics:
+        initial_loss: 6.989006
+        final_loss: 6.145390
+        last_10_steps_step_time_ms_avg: 31142.650
+        last_10_steps_model_tflops_per_gpu_avg: 193.640
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: true
+      expected_result: >
+        The command restores optimizer, scheduler, data-order, and RNG state from
+        iter_0000050, begins at step 51, and finishes at step 100 in the distinct
+        resumed root with finite losses and no skipped or NaN iterations. Releasing
+        unused cached memory after optimizer steps is execution-only. Step-51 loss
+        6.989006 matches the uninterrupted reference exactly; step-100 loss
+        6.145390 differs from reference 6.139116 by 0.102197%, within the declared
+        one-percent gate, so both sentinels match and all four metrics are recorded.
+
+  pretrain_performance:
+    H100:
+      status: verified
+      precision: bf16
+      bridge_commit: 7160fd35c8f01f09d795e10f2057259d122c1e7e  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --max_steps 50
+      last_verified: 2026-07-18
+      metrics:
+        initial_loss: 12.34643
+        final_loss: 8.143753
+        last_10_steps_step_time_ms_avg: 25118.160
+        last_10_steps_model_tflops_per_gpu_avg: 240.110
+      expected_result: >
+        On two nodes with 16x H100, the exact mock-data performance recipe
+        completes exactly 50 steps with finite losses, no skipped or NaN
+        iterations, and all four metrics recorded. HybridEP is active and
+        Transformer Engine CUDA graph capture completes for all 48 graphable
+        layers with moe_router and moe_preprocess scopes. Over steps 41-50, the
+        run averages at most 27 seconds per step and at least 225 model
+        TFLOP/s/GPU, while peak allocated memory remains below 65 GiB/GPU.

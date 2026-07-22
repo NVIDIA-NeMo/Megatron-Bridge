@@ -57,6 +57,7 @@ class TestQwen3MoEBridge:
             "num_experts": 128,
             "num_experts_per_tok": 8,
             "moe_intermediate_size": 768,
+            "norm_topk_prob": True,
         }
 
     @pytest.fixture
@@ -86,6 +87,7 @@ class TestQwen3MoEBridge:
             "num_experts": 128,
             "num_experts_per_tok": 8,
             "moe_intermediate_size": 1536,
+            "norm_topk_prob": True,
         }
 
     @pytest.fixture
@@ -174,6 +176,25 @@ class TestQwen3MoEBridge:
         assert result.num_moe_experts == mock_qwen3_moe_config.num_experts
         assert result.moe_router_topk == mock_qwen3_moe_config.num_experts_per_tok
         assert result.moe_grouped_gemm is True
+
+    @pytest.mark.parametrize(
+        ("norm_topk_prob", "moe_router_pre_softmax"),
+        ((True, False), (False, True)),
+    )
+    def test_norm_topk_prob_roundtrip(
+        self,
+        mock_pretrained_qwen3_moe,
+        norm_topk_prob,
+        moe_router_pre_softmax,
+    ):
+        """Test that HF top-k normalization maps symmetrically to Megatron routing."""
+        mock_pretrained_qwen3_moe.config.norm_topk_prob = norm_topk_prob
+
+        provider = Qwen3MoEBridge().provider_bridge(mock_pretrained_qwen3_moe)
+        hf_config = Qwen3MoEBridge.megatron_to_hf_config(provider)
+
+        assert provider.moe_router_pre_softmax is moe_router_pre_softmax
+        assert hf_config["norm_topk_prob"] is norm_topk_prob
 
     def test_provider_bridge_normalization(self, mock_pretrained_qwen3_moe, mock_qwen3_moe_config):
         """Test normalization configuration."""

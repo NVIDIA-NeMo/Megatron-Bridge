@@ -271,9 +271,8 @@ def test_llama3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     assert cfg.peft is not None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_llama3_8b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_llama3_8b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.llama import llama3_8b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
@@ -282,10 +281,9 @@ def test_llama3_8b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyP
     cfg = llama3_8b_sft_config()
     _apply_test_overrides(cfg, "llama3_8b_sft_config")
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
 
 
 def test_llama31_405b_has_account_for_settings(monkeypatch: pytest.MonkeyPatch):
@@ -552,3 +550,6 @@ def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeyp
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert cfg.env_vars["NCCL_ALGO"] == "Ring"
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0

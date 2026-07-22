@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_fused_adam_with_cosine_annealing,
     distributed_muon_with_cosine_annealing,
@@ -129,7 +130,7 @@ def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
 
     # MoE Token Dispatcher settings
@@ -209,6 +210,10 @@ def kimi_k2_pretrain_512gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

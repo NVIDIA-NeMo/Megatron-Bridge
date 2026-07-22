@@ -14,11 +14,59 @@
 
 from __future__ import annotations
 
+import inspect
+
+import megatron.core
 import torch
+from megatron.core import parallel_state
 from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.utils import get_batch_on_this_cp_rank
+from packaging.version import Version as PkgVersion
 
 
 PackedMetadataValue = torch.Tensor | int | None
+_MIN_MCORE_THD_CP_VERSION = PkgVersion("0.18.0")
+
+
+def get_thd_cp_partition_indices(
+    cu_seqlens: torch.Tensor,
+    *,
+    total_tokens: int,
+    cp_group: torch.distributed.ProcessGroup,
+    device: torch.device,
+) -> torch.Tensor:
+    """Return MCore's context-parallel partition indices for a THD stream.
+
+    Args:
+        cu_seqlens: Physical cumulative sequence offsets for the packed stream.
+        total_tokens: Total padded token count before CP partitioning.
+        cp_group: Context-parallel process group.
+        device: Device on which the returned indices will be consumed.
+
+    Returns:
+        Long tensor containing this CP rank's indices into the full stream.
+
+    Raises:
+        RuntimeError: If the installed Megatron-Core version does not expose
+            THD partitioning through ``get_batch_on_this_cp_rank``.
+    """
+    mcore_version = PkgVersion(megatron.core.__version__)
+    supports_thd_partitioning = "is_hybrid_cp" in inspect.signature(get_batch_on_this_cp_rank).parameters
+    if mcore_version < _MIN_MCORE_THD_CP_VERSION or not supports_thd_partitioning:
+        raise RuntimeError(
+            "THD context-parallel partitioning requires Megatron-Core >= 0.18.0 with "
+            "get_batch_on_this_cp_rank(..., is_hybrid_cp=...); "
+            f"found {megatron.core.__version__}. Please upgrade Megatron-Core."
+        )
+
+    cu_seqlens = cu_seqlens.to(device=device)
+    index_batch = {
+        "tokens": torch.arange(total_tokens, device=device, dtype=torch.long).unsqueeze(0),
+        "cu_seqlens": cu_seqlens.unsqueeze(0) if cu_seqlens.dim() == 1 else cu_seqlens,
+        "cu_seqlens_padded": None,
+    }
+    partitioned_batch = get_batch_on_this_cp_rank(index_batch, is_hybrid_cp=False, cp_group=cp_group)
+    return partitioned_batch["tokens"].squeeze(0).to(device=device, dtype=torch.long)
 
 
 def get_packed_seq_q_cu_seqlens(
@@ -47,8 +95,9 @@ def get_packed_seq_cp_partition_indices(
     cp_size: int,
     cp_rank: int,
     device: torch.device,
+    cp_group: torch.distributed.ProcessGroup | None = None,
 ) -> torch.Tensor:
-    """Return the Transformer Engine partition indices for packed CP.
+    """Return MCore's partition indices for packed CP.
 
     Args:
         packed_seq_params: MCore THD metadata for the full packed stream.
@@ -56,21 +105,41 @@ def get_packed_seq_cp_partition_indices(
         cp_size: Context-parallel world size.
         cp_rank: Context-parallel rank.
         device: Device on which the returned indices will be consumed.
+        cp_group: Context-parallel process group. Uses MCore parallel state when omitted.
 
     Returns:
         Long tensor containing this CP rank's indices into the full stream.
 
     Raises:
-        ValueError: If packed query sequence boundaries are unavailable.
+        ValueError: If packed query boundaries are unavailable or the requested
+            rank and size do not match the context-parallel group.
     """
     _, cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
     if cu_seqlens is None:
         raise ValueError("Packed CP partitioning requires cu_seqlens_q metadata.")
 
-    import transformer_engine_torch as tex
-
-    index = tex.thd_get_partitioned_indices(cu_seqlens, total_tokens, cp_size, cp_rank)
-    return index.to(device=device, dtype=torch.long)
+    if cp_size < 1 or not 0 <= cp_rank < cp_size:
+        raise ValueError(f"Invalid context-parallel rank {cp_rank} for size {cp_size}.")
+    if cp_group is not None and (cp_group.size() != cp_size or cp_group.rank() != cp_rank):
+        raise ValueError(
+            f"Context-parallel group has rank {cp_group.rank()} and size {cp_group.size()}, "
+            f"but rank {cp_rank} and size {cp_size} were requested."
+        )
+    if cp_size == 1:
+        return torch.arange(total_tokens, device=device, dtype=torch.long)
+    if cp_group is None:
+        cp_group = parallel_state.get_context_parallel_group()
+        if cp_group.size() != cp_size or cp_group.rank() != cp_rank:
+            raise ValueError(
+                f"Context-parallel group has rank {cp_group.rank()} and size {cp_group.size()}, "
+                f"but rank {cp_rank} and size {cp_size} were requested."
+            )
+    return get_thd_cp_partition_indices(
+        cu_seqlens,
+        total_tokens=total_tokens,
+        cp_group=cp_group,
+        device=device,
+    )
 
 
 def unpack_mcore_thd_tensor_for_position_ids(

@@ -15,6 +15,7 @@
 from pathlib import Path
 from types import SimpleNamespace
 
+import numpy as np
 import pytest
 import torch
 
@@ -22,11 +23,56 @@ from megatron.bridge.data.packing.offline import (
     _init_shared_dataset_worker,
     _materialize_dataset_items,
     _pre_pad_data_point,
+    prepare_gpt_sft_packed_data,
     tokenize_dataset,
 )
 
 
 PAD_ID = 0
+
+
+def test_configured_seed_controls_offline_packing(monkeypatch):
+    """Identical input and configured seed must produce identical packed rows."""
+
+    class TinyDataset:
+        tokenizer = SimpleNamespace(eod=PAD_ID)
+        pad_seq_length_to_mult = 1
+
+        def __init__(self):
+            runtime_lengths = (6, 6, 4, 4)
+            self.items = [
+                {
+                    "input_ids": [sample_id * 10 + token_id for token_id in range(runtime_length + 1)],
+                    "loss_mask": [True] * (runtime_length + 1),
+                }
+                for sample_id, runtime_length in enumerate(runtime_lengths)
+            ]
+
+        def __len__(self):
+            return len(self.items)
+
+        def __getitem__(self, index):
+            return self.items[index]
+
+    def prepare_with_ambient_seed(ambient_seed):
+        packed_outputs = []
+        np.random.seed(ambient_seed)
+        monkeypatch.setattr(np, "save", lambda _, rows: packed_outputs.append(rows))
+        prepare_gpt_sft_packed_data(
+            input_path=Path("unused.jsonl"),
+            output_path=Path("unused.npy"),
+            output_metadata_path=None,
+            packed_sequence_size=10,
+            tokenizer=SimpleNamespace(eos_id=PAD_ID),
+            max_seq_length=10,
+            seed=777,
+            packing_algorithm="first_fit_shuffle",
+            num_tokenizer_workers=1,
+            dataset_builder=lambda *args, **kwargs: TinyDataset(),
+        )
+        return packed_outputs[0]
+
+    assert prepare_with_ambient_seed(0) == prepare_with_ambient_seed(4)
 
 
 def test_pre_pad_data_point_chat_tensors_do_not_raise():

@@ -390,6 +390,67 @@ class TestNonColocatedGuard:
 
 
 # ---------------------------------------------------------------------------
+# Tests: evaluation timer ownership in train_megatron_mimo
+# ---------------------------------------------------------------------------
+
+
+def test_interval_evaluation_uses_evaluator_timer_ownership():
+    """Interval evaluation should let the shared evaluator own its timer."""
+    from megatron.core.timers import Timers
+
+    from megatron.bridge.training.train_megatron_mimo import train_megatron_mimo
+
+    state = _make_global_state(train_iters=1)
+    state.cfg.train.eval_interval = 1
+    state.timers = Timers(log_level=0, log_option="minmax")
+
+    infra = _make_megatron_mimo_infra()
+    checkpoint_manager = MagicMock()
+
+    def run_shared_evaluator(*_args, **_kwargs):
+        timer = state.timers("evaluate", log_level=0)
+        timer.start(barrier=True)
+        timer.stop()
+
+    with (
+        patch("torch.cuda.synchronize"),
+        patch("torch.distributed.barrier"),
+        patch("torch.distributed.get_rank", return_value=0),
+        patch("torch.distributed.get_world_size", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.get_num_microbatches", return_value=1),
+        patch("megatron.bridge.training.train_megatron_mimo.prepare_forward_step_func", return_value=Mock()),
+        patch("megatron.bridge.training.train_megatron_mimo.get_module_to_grid_tuple", return_value=[]),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.build_pg_collection_for_schedule",
+            return_value=Mock(spec=[]),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.train_step_megatron_mimo",
+            return_value=({}, 0, 0.0, 0),
+        ),
+        patch(
+            "megatron.bridge.training.train_megatron_mimo.evaluate_and_print_results",
+            side_effect=run_shared_evaluator,
+        ) as mock_evaluate,
+        patch("megatron.bridge.training.train_megatron_mimo.checkpoint_and_decide_exit", return_value=False),
+    ):
+        train_megatron_mimo(
+            forward_step_func=Mock(),
+            model=Mock(),
+            optimizer=Mock(),
+            schedulers={},
+            train_data_iterator=iter([object()]),
+            valid_data_iterator=iter([object()]),
+            global_state=state,
+            megatron_mimo_infra=infra,
+            multimodule_communicator=Mock(),
+            checkpoint_manager=checkpoint_manager,
+        )
+
+    mock_evaluate.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # Tests: checkpoint_and_decide_exit integration in train_megatron_mimo
 # ---------------------------------------------------------------------------
 
@@ -1038,7 +1099,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
         "megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP",
     ]
 
-    def _run_setup(self, *, load_path=None, checkpoint_exists_return=False):
+    def _run_setup(self, *, load_path=None, checkpoint_exists_return=False, checkpoint_manager=None):
         """Run setup_megatron_mimo with mocks, return dict of mock handles."""
         from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 
@@ -1111,11 +1172,11 @@ class TestSetupMegatronMIMOCheckpointLoading:
                     return_value=checkpoint_exists_return,
                 )
             )
-            m_load = stack.enter_context(patch("megatron.bridge.training.setup_megatron_mimo.load_checkpoint"))
             m_create_mgr = stack.enter_context(
                 patch("megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager")
             )
-            m_create_mgr.return_value = MagicMock(checkpointing_context={"ctx": True})
+            checkpoint_manager = checkpoint_manager or MagicMock()
+            m_create_mgr.return_value = checkpoint_manager
 
             stack.enter_context(
                 patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer)
@@ -1135,7 +1196,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
 
             result = setup_megatron_mimo(state=state)
 
-            mocks["load_checkpoint"] = m_load
+            mocks["checkpoint_manager"] = checkpoint_manager
             mocks["checkpoint_exists"] = m_ckpt_exists
             mocks["result"] = result
 
@@ -1143,27 +1204,54 @@ class TestSetupMegatronMIMOCheckpointLoading:
 
     def test_load_invoked_when_persistent_checkpoint_exists(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        mocks["load_checkpoint"].assert_called_once()
+        mocks["checkpoint_manager"].load.assert_called_once()
+
+    def test_load_dispatches_through_custom_checkpoint_manager(self):
+        class CustomCheckpointManager:
+            def __init__(self):
+                self.load_context = None
+
+            def save(self, ctx, callback_manager):
+                pass
+
+            def load(self, ctx):
+                self.load_context = ctx
+                return (0, 0)
+
+            def finalize_async_saves(self, state, blocking=False, terminate=False):
+                pass
+
+        checkpoint_manager = CustomCheckpointManager()
+
+        self._run_setup(
+            load_path="/tmp/ckpt",
+            checkpoint_exists_return=True,
+            checkpoint_manager=checkpoint_manager,
+        )
+
+        assert checkpoint_manager.load_context is not None
+        assert checkpoint_manager.load_context.pg_collection is not None
+        assert checkpoint_manager.load_context.module_name == "language"
 
     def test_load_not_invoked_when_no_checkpoint(self):
         mocks = self._run_setup(load_path=None, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_not_called()
+        mocks["checkpoint_manager"].load.assert_not_called()
 
     def test_load_passes_model_as_list(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert isinstance(kwargs["model"], list)
-        assert len(kwargs["model"]) == 1
+        context = mocks["checkpoint_manager"].load.call_args.args[0]
+        assert isinstance(context.model, list)
+        assert len(context.model) == 1
 
     def test_load_passes_pg_collection(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["pg_collection"] is not None
+        context = mocks["checkpoint_manager"].load.call_args.args[0]
+        assert context.pg_collection is not None
 
     def test_load_passes_module_name(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["module_name"] == "language"
+        context = mocks["checkpoint_manager"].load.call_args.args[0]
+        assert context.module_name == "language"
 
 
 # ---------------------------------------------------------------------------

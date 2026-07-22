@@ -56,6 +56,7 @@ from __future__ import annotations
 import argparse
 import ast
 import importlib
+import json
 import pkgutil
 import shlex
 import sys
@@ -186,7 +187,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "skip-train":                        ("train.skip_train",                    "flag"),
     "manual-gc":                         ("train.manual_gc",                     "flag"),
     "manual-gc-interval":                ("train.manual_gc_interval",            None),
-    "seq-length":                        ("dataset.sequence_length",             "seq_length"),
+    "seq-length":                        ("dataset.seq_length",                  "seq_length"),
     "dataloader-type":                   ("dataset.dataloader_type",             None),
     "num-dataset-builder-threads":       ("dataset.num_dataset_builder_threads", None),
 
@@ -369,7 +370,7 @@ def _try_parse_value(val: str) -> Any:
     return _try_numeric(val)
 
 
-def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str | int | float | bool]]:
     """Parse a Megatron-LM style YAML into a flat arg dict.
 
     Expected YAML structure:
@@ -387,7 +388,7 @@ def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
         data = yaml.safe_load(f)
 
     model_args = data.get("MODEL_ARGS", data)
-    env_vars = data.get("ENV_VARS", {})
+    env_vars = data.get("ENV_VARS") or {}
 
     parsed: dict[str, Any] = {}
     for key, val in model_args.items():
@@ -403,7 +404,7 @@ def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
     return parsed, env_vars
 
 
-def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str | int | float | bool]]:
     """Parse a raw MLM CLI string into a flat arg dict."""
     tokens = shlex.split(args_str)
     parsed: dict[str, Any] = {}
@@ -447,7 +448,7 @@ class TranslationResult:
         self.skipped: list[tuple[str, Any]] = []
         self.unknown: list[tuple[str, Any]] = []
         self.notes: list[str] = []
-        self.env_vars: dict[str, str] = {}
+        self.env_vars: dict[str, str | int | float | bool] = {}
         self.uses_mla = False
         self.uses_moe = False
         self.raw_args: dict[str, Any] = {}
@@ -459,7 +460,7 @@ class TranslationResult:
         self.notes.append(note)
 
 
-def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> TranslationResult:
+def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool] | None = None) -> TranslationResult:
     """Translate parsed MLM args into Bridge overrides."""
     result = TranslationResult()
     result.raw_args = args
@@ -506,7 +507,7 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
                 split_str = str(arg_val)
             result.add_override(bridge_path, split_str)
         elif transform == "seq_length":
-            result.add_override("dataset.sequence_length", arg_val)
+            result.add_override("dataset.seq_length", arg_val)
             result.add_override("model.seq_length", arg_val)
         elif transform == "vpp_from_layers":
             layers_per_vpp_stage = int(arg_val)
@@ -594,6 +595,11 @@ def emit_overrides(result: TranslationResult) -> str:
         for note in result.notes:
             lines.append(f"# NOTE: {note}")
         lines.append("#")
+
+    if result.env_vars:
+        env_vars_override = ",".join(f"{name}:{json.dumps(value)}" for name, value in result.env_vars.items())
+        lines.append("\n# ── Environment Variables ─────────────────────────────")
+        lines.append(f"  '++env_vars={{{env_vars_override}}}' \\")
 
     # Group overrides by section
     sections: dict[str, list[tuple[str, Any]]] = OrderedDict()
@@ -878,6 +884,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     # Dataset blend
     seq_len = dataset_fields.get("seq_length", 4096)
     lines.append("    cfg = ConfigContainer(")
+    lines.append(f"        env_vars={result.env_vars!r},")
     lines.append("        model=model_config(),")
     lines.append("        train=TrainingConfig(")
     for k in [
@@ -931,11 +938,11 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     ds_merged = {**ds_defaults}
     for k, v in dataset_fields.items():
         if k == "seq_length":
-            ds_merged["sequence_length"] = v
+            ds_merged["seq_length"] = v
         else:
             ds_merged[k] = v
-    if "sequence_length" not in ds_merged:
-        ds_merged["sequence_length"] = seq_len
+    if "seq_length" not in ds_merged:
+        ds_merged["seq_length"] = seq_len
     for k, v in ds_merged.items():
         lines.append(f"            {k}={_fmt_val(v)},")
     lines.append("            skip_getting_attention_mask_from_dataset=True,")
@@ -1508,11 +1515,11 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         consumed.add("model.cuda_graph_impl")
         result.add_arg("cuda-graph-impl", cuda_impl)
 
-    # --- Special: model.seq_length / dataset.sequence_length → --seq-length
-    seq_len = overrides.get("model.seq_length", overrides.get("dataset.sequence_length"))
+    # --- Special: model.seq_length / dataset.seq_length → --seq-length
+    seq_len = overrides.get("model.seq_length", overrides.get("dataset.seq_length"))
     if seq_len is not None:
         consumed.add("model.seq_length")
-        consumed.add("dataset.sequence_length")
+        consumed.add("dataset.seq_length")
         result.add_arg("seq-length", seq_len)
 
     # --- Special: model.max_position_embeddings → --max-position-embeddings

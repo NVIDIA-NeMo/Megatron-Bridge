@@ -45,7 +45,7 @@ class Qwen3MoEBridge(MegatronModelBridge):
         """Convert Megatron provider config to HuggingFace Qwen3MoeConfig dict."""
         hf_config = super().megatron_to_hf_config(provider)
         hf_config["decoder_sparse_step"] = 1  # All layers are MoE in Qwen3 MoE
-        hf_config["norm_topk_prob"] = False  # Qwen3 MoE does not normalize top-k probs
+        hf_config["norm_topk_prob"] = not provider.moe_router_pre_softmax
         return hf_config
 
     def provider_bridge(self, hf_pretrained):
@@ -63,7 +63,7 @@ class Qwen3MoEBridge(MegatronModelBridge):
         provider.moe_grouped_gemm = True
         provider.moe_router_load_balancing_type = "aux_loss"
         provider.moe_aux_loss_coeff = 1e-3
-        provider.moe_router_pre_softmax = False
+        provider.moe_router_pre_softmax = not hf_pretrained.config.norm_topk_prob
         provider.moe_token_dispatcher_type = "alltoall"
         provider.moe_permute_fusion = True
 

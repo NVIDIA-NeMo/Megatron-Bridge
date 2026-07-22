@@ -45,22 +45,21 @@ differently from full-attention layers (64 heads).
 To import the HF checkpoint to a Megatron path:
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model "${HF_MODEL}" \
     --megatron-path "${MEGATRON_CKPT_PATH}"
 ```
 
-See [conversion.sh](conversion.sh) for a complete single-GPU import example with
+See [conversion.sh](conversion.sh) for a complete single-process CPU import example with
 logging redirected to `${WORKSPACE}/logs/`.
 
 ### Export Megatron → HF
 
 ```bash
-uv run python -m torch.distributed.run --nproc_per_node=1 \
-    examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model "${HF_MODEL}" \
-    --megatron-path "${MEGATRON_CKPT_PATH}"
+    --megatron-path "${MEGATRON_CKPT_PATH}" \
+    --hf-path "${MEGATRON_CKPT_PATH}-hf-export"
 ```
 
 ## Inference

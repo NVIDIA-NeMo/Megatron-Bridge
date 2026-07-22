@@ -13,51 +13,54 @@ MiMo-V2-Flash requires **at least 2 nodes (16 GPUs)** for inference and conversi
 - Context parallelism is **not** supported (TE backends refuse CP + learnable softmax on SWA layers).
 - TP size must be ≤ `min(num_key_value_heads, swa_num_key_value_heads)`.
 
-The conversion sweep uses layouts that keep dequantized expert parameters near 37.85 GB per GPU:
+The conversion example uses a layout that keeps dequantized expert parameters near 37.85 GB per GPU:
 
 | TP | PP | EP | ETP |
 |----|----|----|-----|
 | 2  | 1  | 8  | 2   |
-| 1  | 2  | 8  | 1   |
-| 2  | 2  | 4  | 2   |
 
 ## Checkpoint Conversion
 
-[slurm_conversion.sh](slurm_conversion.sh) sweeps multiple TP/PP/EP/ETP configs to verify HF ↔ Megatron round-trip conversion.
+[slurm_conversion.sh](slurm_conversion.sh) uses `convert.sh roundtrip` to
+submit the recommended `TP=2`, `PP=1`, `EP=8`, `ETP=2` config and verify HF ↔
+Megatron round-trip conversion. Run the wrapper from a Slurm login node; it
+waits for the job by default. Validation happens in memory rather than producing
+another checkpoint.
 
 ### Setup
 
-Edit the variables at the top of `slurm_conversion.sh`:
-
 ```bash
-CONTAINER_IMAGE="/path/to/container.sqsh"
-# Optional:
-export HF_TOKEN="hf_your_token_here"
-export HF_HOME="/path/to/shared/HF_HOME"
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export SLURM_PARTITION=batch
+export CONTAINER_MOUNTS=/shared:/shared
+# Optional: export HF_TOKEN and HF_HOME before launching.
 ```
+
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be on storage visible from the compute nodes. Add other comma-separated
+host-to-container mounts through `CONTAINER_MOUNTS`.
 
 ### Submit
 
 ```bash
-sbatch examples/models/mimo_v2_flash/slurm_conversion.sh
+bash examples/models/mimo_v2_flash/slurm_conversion.sh
+```
+
+Cluster-specific `srun` options are not enabled by default. Forward any that
+your cluster requires, for example:
+
+```bash
+bash examples/models/mimo_v2_flash/slurm_conversion.sh \
+    --srun-arg=--mpi=pmix
 ```
 
 ### Expected output
 
-The slurm wrapper prints a header per config and an `[OK]` line on success.
-The underlying conversion script (`hf_megatron_roundtrip_multi_gpu.py`)
-prints a parameter-by-parameter comparison table with ✅ / ❌ in the
-"Matches Original" column, and raises a `ValueError("Weight mismatch
-detected")` on any mismatch (which the wrapper turns into an `ERROR`
-line and a non-zero exit). A successful run ends with:
-
-```
-[OK] Config 3: TP=2, PP=2, EP=4, ETP=2 passed
-
-======================================
-All 3 configs passed
-======================================
-```
+The public round-trip launcher prints a parameter-by-parameter comparison table
+with ✅ / ❌ in the "Matches Original" column, and raises a
+`ValueError("Weight mismatch detected")` on any mismatch. The wrapper exits
+immediately when the synchronous job fails.
 
 ## Inference
 

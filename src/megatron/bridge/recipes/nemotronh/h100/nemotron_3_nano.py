@@ -20,7 +20,8 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
@@ -189,6 +190,10 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.apply_rope_fusion = False
     cfg.model.use_fused_weighted_squared_relu = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -326,8 +331,8 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Training config overrides
     cfg.validation.eval_interval = 500
 
-    # Dataset config - packed_sequence=True by default (from _sft_common), seq_length=2048
-    # _sft_common already sets seq_length=2048 and packed_sequence=True
+    # Dataset config - enable_offline_packing=True by default (from _sft_common), seq_length=2048
+    # _sft_common already sets seq_length=2048 and enable_offline_packing=True
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -373,6 +378,10 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -532,8 +541,8 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     # Training config overrides
     cfg.validation.eval_interval = 500
 
-    # Dataset config - packed_sequence=True by default (from _peft_common), seq_length=2048
-    # _peft_common already sets seq_length=2048 and packed_sequence=True
+    # Dataset config - enable_offline_packing=True by default (from _peft_common), seq_length=2048
+    # _peft_common already sets seq_length=2048 and enable_offline_packing=True
     # Adjust pad_seq_to_mult for context parallelism
     if cfg.model.context_parallel_size > 1:
         cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
@@ -579,6 +588,10 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     # cfg.comm_overlap.delay_wgrad_compute = False
     # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

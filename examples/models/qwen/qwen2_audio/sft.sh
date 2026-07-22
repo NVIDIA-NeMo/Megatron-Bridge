@@ -48,7 +48,7 @@ MEGATRON_CKPT_DIR=${WORKSPACE}/megatron_ckpts/${MODEL_NAME}
 # Convert HF checkpoint to Megatron format if not already done
 if [ ! -d "${MEGATRON_CKPT_DIR}/iter_0000000" ]; then
     echo "Converting HF model to Megatron format..."
-    uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+    ./scripts/conversion/convert.sh import \
         --hf-model ${HF_MODEL} \
         --megatron-path ${MEGATRON_CKPT_DIR}
 fi
@@ -77,7 +77,7 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "  run_recipe.py | TP=${TP}, PP=${PP}"
     echo "============================================================"
     uv run --no-sync python -m torch.distributed.run --nproc_per_node=${NPROC} scripts/training/run_recipe.py \
-        --recipe qwen2_audio_7b_finetune_config \
+        --recipe qwen2_audio_7b_sft_config \
         --step_func audio_lm_step \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         checkpoint.save=${WORKSPACE}/exp/${MODEL_NAME}_sft_tp${TP}_pp${PP} \

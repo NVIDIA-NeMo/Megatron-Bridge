@@ -188,7 +188,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         CKPT_OVERRIDES="checkpoint.pretrained_checkpoint=${PRETRAINED_CHECKPOINT}"
     fi
 
-    # Build CLI overrides for this config (full SFT: no --peft_scheme)
+    # Build CLI overrides for this full-SFT config.
     LR_OVERRIDES=""
     [ -n "$LR" ] && LR_OVERRIDES="$LR_OVERRIDES optimizer.lr=$LR"
     [ -n "$MIN_LR" ] && LR_OVERRIDES="$LR_OVERRIDES optimizer.min_lr=$MIN_LR"
@@ -221,7 +221,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     "
     CMD="uv run --no-sync python /opt/Megatron-Bridge/scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${RECIPE_NAME}"
-    CMD="$CMD --peft_scheme none"
+    CMD="$CMD --mode sft"
     # Collapse newlines so bash -c receives a single command
     CMD="$CMD $(echo "$CLI_OVERRIDES" | tr '\n' ' ' | sed 's/  \+/ /g')"
 
