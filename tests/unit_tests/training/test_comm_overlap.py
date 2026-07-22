@@ -579,6 +579,40 @@ class TestMegatronCommOverlapConfig:
         ):
             comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
 
+    def test_moe_ep_overlap_rejects_moe_in_recompute_modules(self):
+        comm_cfg = CommOverlapConfig(
+            tp_comm_overlap=False,
+            data_parallel_size=1,
+            overlap_moe_expert_parallel_comm=True,
+        )
+        comm_cfg.finalize()
+
+        model_cfg = create_gpt_config(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            virtual_pipeline_model_parallel_size=None,
+            sequence_parallel=False,
+            expert_model_parallel_size=2,
+            num_moe_experts=2,
+            moe_token_dispatcher_type="alltoall",
+            bf16=True,
+            fp16=False,
+            recompute_granularity="selective",
+            recompute_method=None,
+            recompute_num_layers=None,
+            recompute_modules=["moe"],
+            moe_shared_expert_overlap=False,
+            mtp_num_layers=None,
+            add_bias_linear=False,
+        )
+        ddp_cfg = DistributedDataParallelConfig(use_distributed_optimizer=False)
+
+        with (
+            patch("megatron.bridge.training.comm_overlap.is_torch_min_version", return_value=True),
+            pytest.raises(AssertionError, match="moe in recompute_modules"),
+        ):
+            comm_cfg._get_model_comm_overlap_cfgs(model_cfg, ddp_cfg)
+
     def test_delay_wgrad_config_validation(self):
         """delay_wgrad_compute passes when TE and EP overlap conditions are met."""
         comm_cfg = CommOverlapConfig(
