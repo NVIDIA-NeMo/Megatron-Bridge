@@ -12,13 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import partial
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.moe.router import TopKRouter
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
+from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -45,6 +48,50 @@ except ImportError:
     quick_gelu = torch.nn.functional.gelu
 
 
+class MiniMaxM3TopKRouter(TopKRouter):
+    """MiniMax-M3 router that computes its projection in the weight dtype."""
+
+    def gating(self, input: torch.Tensor) -> torch.Tensor:
+        """Match HF by widening router inputs to the FP32 router weight dtype."""
+        return super().gating(input.to(dtype=self.weight.dtype))
+
+
+def minimax_m3_block_spec(
+    config: TransformerConfig,
+    use_transformer_engine: bool = True,
+    normalization: str | None = None,
+    qk_l2_norm: bool | None = False,
+    vp_stage: int | None = None,
+    pp_rank: int | None = None,
+    **kwargs: object,
+) -> TransformerBlockSubmodules:
+    """Build a GPT block spec that uses MiniMax-M3's FP32 router projection."""
+    block_spec = get_gpt_decoder_block_spec(
+        config,
+        use_transformer_engine=use_transformer_engine,
+        normalization=normalization,
+        qk_l2_norm=qk_l2_norm,
+        vp_stage=vp_stage,
+        pp_rank=pp_rank,
+        **kwargs,
+    )
+
+    for layer_spec in block_spec.layer_specs:
+        mlp_spec = layer_spec.submodules.mlp
+        if isinstance(mlp_spec, partial) and isinstance(mlp_spec.func, type) and issubclass(mlp_spec.func, MoELayer):
+            mlp_kwargs = dict(mlp_spec.keywords or {})
+            mlp_submodules = mlp_kwargs["submodules"]
+            if mlp_submodules.router is not TopKRouter:
+                continue
+            mlp_kwargs["submodules"] = replace(mlp_submodules, router=MiniMaxM3TopKRouter)
+            layer_spec.submodules.mlp = partial(mlp_spec.func, *mlp_spec.args, **mlp_kwargs)
+
+    return block_spec
+
+
+AutoMapping.register_module_type("MiniMaxM3TopKRouter", "replicated")
+
+
 def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[torch.nn.Module]:
     """Keep MiniMax-M3 router parameters in FP32 for every load path.
 
@@ -67,9 +114,20 @@ class MiniMaxM3ModelProvider(GPTModelProvider):
     """GPT provider that preserves MiniMax-M3's FP32 router parameters."""
 
     def __post_init__(self) -> None:
-        """Install the router hook on fresh and deserialized providers."""
+        """Install MiniMax-M3 router behavior on fresh and deserialized providers."""
         super().__post_init__()
-        self.register_pre_wrap_hook(_promote_router_weights_to_float32, prepend=True)
+        layer_spec = self.transformer_layer_spec
+        if layer_spec is get_gpt_decoder_block_spec:
+            self.transformer_layer_spec = minimax_m3_block_spec
+        elif isinstance(layer_spec, partial) and layer_spec.func is get_gpt_decoder_block_spec:
+            self.transformer_layer_spec = partial(
+                minimax_m3_block_spec,
+                *layer_spec.args,
+                **(layer_spec.keywords or {}),
+            )
+
+        if not hasattr(self, "_pre_wrap_hooks") or _promote_router_weights_to_float32 not in self._pre_wrap_hooks:
+            self.register_pre_wrap_hook(_promote_router_weights_to_float32, prepend=True)
 
 
 @MegatronModelBridge.register_bridge(
@@ -154,7 +212,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         provider = MiniMaxM3ModelProvider(**{k: v for k, v in provider_kwargs.items() if k in valid_fields})
 
         # Use decoder block spec to properly handle moe_layer_freq (mixed dense/MoE layers)
-        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=HAVE_TE)
+        provider.transformer_layer_spec = partial(minimax_m3_block_spec, use_transformer_engine=HAVE_TE)
 
         # Gemma-style RMSNorm: weights stored zero-centered, applied as x * (1 + w)
         provider.normalization = "RMSNorm"
