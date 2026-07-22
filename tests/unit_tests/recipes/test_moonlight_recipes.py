@@ -324,7 +324,7 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.seq_length == 4096
@@ -367,6 +367,22 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_deepep_num_sms is None
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["USE_MNNVL"] == 0
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
 
 

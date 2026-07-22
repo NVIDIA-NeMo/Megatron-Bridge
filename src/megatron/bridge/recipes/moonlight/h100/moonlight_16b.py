@@ -289,10 +289,10 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the bounded-convergence pre-training config for Moonlight-16B.
 
-    Recommended parallelism: TP=1, PP=1, CP=1, EP=16 on 16 H100 GPUs.
+    Recommended parallelism: TP=1, PP=1, CP=1, EP=8 on 16 H100 GPUs.
     The 100-step schedule uses GBS/MBS 1024/2 with 32-way gradient
-    accumulation, precision-aware bf16 optimizer state, and Moonlight's
-    model-native routing configuration.
+    accumulation, two expert-data replicas, precision-aware bf16 optimizer
+    state, and Moonlight's model-native routing configuration.
 
     Returns:
         ConfigContainer with the Moonlight-16B pre-training contract.
@@ -304,7 +304,9 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 16
+    # Keep each expert-parallel group inside one 8-GPU NVLink domain. The
+    # resulting two expert-data replicas avoid cross-node token dispatch.
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
 
@@ -316,6 +318,16 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.moe_router_fusion = True
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_deepep_num_sms = None
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
 
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
@@ -359,6 +371,13 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "USE_MNNVL": 0,
     }
     return cfg
 
