@@ -1,0 +1,211 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: minimax_m3
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. MiniMax-M3 verification covers the supported language-model backbone;
+  its vision, lightning-indexer, and MTP modules are outside the Bridge support
+  surface. Historical 32-H100 in-memory roundtrip and single-run generation
+  results are smoke evidence only and do not satisfy the current persisted-import
+  or deterministic-inference gates. At the recorded Bridge commit, all 32
+  focused bridge, generation-helper, and AutoBridge registration tests pass on
+  the recorded container environment; this sanity result does not promote a
+  real-checkpoint verification item. A pinned real-config and tokenizer smoke
+  also resolves the recorded HF commit under Transformers 5.8.1.
+verification_index:
+  model_level:
+    unverified: [hf_to_megatron_cpu, hf_to_megatron_gpu, manual_forward_pass, inference]
+    unsupported: [megatron_to_hf_cpu, megatron_to_hf_gpu]
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unsupported: [sft_export_inference]
+    GB200:
+      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unsupported: [sft_export_inference]
+model:
+  hf_id: MiniMaxAI/MiniMax-M3
+  hf_revision: 50942730318c7943fe83db7ec8e9f9177ecb1cf8  # pragma: allowlist secret
+  architecture: MiniMaxM3SparseForConditionalGeneration
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: 52c521427a53d1d0a7a8c0b2d07c9860a4ed7f88  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned CPU import must exit successfully, persist iter_0000000, and
+      reload the complete supported language-model tensor set without missing,
+      unexpected, shape-mismatched, or value-mismatched tensors.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8 --hf-model MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron-path work/model-verification/minimax-m3/imported-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
+      --trust-remote-code
+    last_verified: null
+    expected_result: >
+      The pinned 32-H100 import must exit successfully, persist iter_0000000,
+      and reload at TP1/PP1/EP32/ETP1 with every supported language-model tensor
+      accounted for. An in-memory roundtrip alone does not satisfy this gate.
+
+  megatron_to_hf_cpu:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Standalone Hugging Face export is intentionally unsupported because the
+      Bridge converts only the language backbone and omits the checkpoint's
+      vision tower, projector, lightning indexer, and multimodal configuration.
+
+  megatron_to_hf_gpu:
+    status: unsupported
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Distributed standalone Hugging Face export is intentionally unsupported
+      because the Bridge cannot reconstruct the omitted multimodal modules and
+      configuration into a complete MiniMax-M3 checkpoint.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Verification requires matching next-token predictions and cosine
+      similarity of at least 0.99 against the pinned Hugging Face revision, with
+      maximum and mean absolute logit differences reported as diagnostics. The
+      current helper cannot shard the approximately 809-GiB Hugging Face model
+      across the required H100 ranks.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Two independent greedy Megatron executions against the pinned revision
+      must complete without missing-weight or forward errors and produce the
+      same exact token IDs and literal fixed-length completion.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The public 256-H100 BF16 recipe must complete a bounded 100-step run
+        with finite loss, no skipped or NaN iterations, all four metrics, a
+        persisted post-setup configuration, and a reloadable final checkpoint.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The public 128-H100 packed BF16 recipe must complete a pinned-data
+        100-step full-SFT run with finite loss, no skipped or NaN iterations,
+        all four metrics, and a reloadable final checkpoint.
+
+  sft_export_inference:
+    all:
+      status: unsupported
+      precision: null
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Post-SFT Hugging Face export and native Hugging Face inference are
+        unsupported on every hardware target because standalone Hugging Face
+        export cannot reconstruct the complete multimodal checkpoint.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A dedicated packed long-context recipe must complete 100 steps with
+        context parallelism, finite loss, no skipped or NaN iterations, and all
+        four metrics. Beyond 2,048 tokens, Bridge uses full causal attention
+        instead of MiniMax-M3's lightning-indexer sparse attention.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A MiniMax-M3 PEFT recipe with an audited adapter target set must complete
+        100 steps with finite loss, no skipped or NaN iterations, all four
+        metrics, and a reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation from the bounded pretrain run must restore model,
+        optimizer, scheduler, data-order, and RNG state, execute through the
+        reference final step, match declared sentinel losses within tolerance,
+        and save a reloadable checkpoint to a distinct output root.
