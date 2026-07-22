@@ -81,7 +81,7 @@ def configure_slurm_gpu_tuning(
 ) -> None:
     """Add optional GPU tuning commands to a Slurm executor before submission."""
     commands = []
-    job_dir = executor.tunnel.job_dir
+    job_dir = executor.job_dir
 
     if enable_vboost:
         commands.append(
