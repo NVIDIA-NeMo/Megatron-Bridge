@@ -138,6 +138,7 @@ class _EnvironmentExecutor:
 
 def _bootstrap_recipe_environment(args) -> None:
     """Install recipe env and re-exec this script in a clean interpreter."""
+    explicit_env_overrides = dict(args.env or [])
     recipe = get_perf_recipe_for_environment(
         model_recipe_name=args.model_recipe_name,
         task=args.task,
@@ -162,6 +163,7 @@ def _bootstrap_recipe_environment(args) -> None:
         deterministic=args.deterministic,
     )
     plugin.setup_recipe_environment(None, _EnvironmentExecutor(), workload_base_config)
+    os.environ.update(explicit_env_overrides)
 
     environment = dict(os.environ)
     # exec preserves the PID. Binding the marker to it prevents an inherited

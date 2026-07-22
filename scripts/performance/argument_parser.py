@@ -518,6 +518,18 @@ def parse_cli_args():
         default=None,
     )
     slurm_args.add_argument(
+        "--host_pre_hook",
+        type=str,
+        help="Shared absolute path to a script run once per allocated node outside the container before training",
+        default=None,
+    )
+    slurm_args.add_argument(
+        "--host_post_hook",
+        type=str,
+        help="Shared absolute path to a script run once per allocated node outside the container after training",
+        default=None,
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
@@ -581,6 +593,14 @@ def parse_cli_args():
         required=False,
     )
     kubeflow_args.add_argument(
+        "--kubeflow_workspace_root",
+        type=str,
+        help="Writable directory reserved for this launcher on the workdir PVC. "
+        "Defaults to --kubeflow_workdir_pvc_path for backward compatibility.",
+        default=None,
+        required=False,
+    )
+    kubeflow_args.add_argument(
         "--kubeflow_workdir_local_path",
         type=str,
         help="Local directory whose contents nemo-run's KubeflowExecutor.package() "
@@ -596,6 +616,13 @@ def parse_cli_args():
         help="Comma-separated list of Kubernetes image pull secret names.",
         required=False,
         default=[],
+    )
+    kubeflow_args.add_argument(
+        "--kubeflow_runtime_ref",
+        type=str,
+        help="Kubeflow TrainingRuntime or ClusterTrainingRuntime name used by the TrainJob.",
+        required=False,
+        default="torch-distributed",
     )
     kubeflow_args.add_argument(
         "--kubeflow_volumes_json",

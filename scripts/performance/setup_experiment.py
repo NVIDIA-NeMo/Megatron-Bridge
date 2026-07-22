@@ -81,29 +81,39 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     * ``--additional_slurm_params`` — Slurm orchestration only.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
+    * ``--custom_bash_cmds`` / ``--custom_post_bash_cmds`` — consumed here to
+      wrap the rank-local command with pre/post hooks.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
       into run_recipe.py's Hydra override parser.
 
-    All of these take a value, passed either as ``--flag value`` (two tokens) or
-    ``--flag=value`` (one token).
+    Most of these take one value, passed either as ``--flag value`` (two tokens)
+    or ``--flag=value`` (one token). Custom hook flags take zero or more values,
+    so all following non-option tokens are skipped.
     """
 
+    multi_value_flags = {"-cb", "--custom_bash_cmds", "--custom_post_bash_cmds"}
+
     def _is_launcher_only(flag: str) -> bool:
-        return flag in ("--additional_slurm_params", "--csp") or flag.startswith("--kubeflow_")
+        return flag in ("--additional_slurm_params", "--csp", *multi_value_flags) or flag.startswith("--kubeflow_")
 
     filtered_args = []
-    skip_next = False
+    index = 0
 
-    for arg in argv:
-        if skip_next:
-            skip_next = False
+    while index < len(argv):
+        arg = argv[index]
+        flag = arg.split("=", 1)[0]
+        if flag in multi_value_flags:
+            index += 1
+            while index < len(argv) and not argv[index].startswith("-"):
+                index += 1
             continue
-        if _is_launcher_only(arg.split("=", 1)[0]):
-            skip_next = "=" not in arg
+        if _is_launcher_only(flag):
+            index += 1 if "=" in arg else 2
             continue
         filtered_args.append(arg)
+        index += 1
 
     return filtered_args
 
@@ -151,10 +161,14 @@ def _script_with_hooks(
     training_cmd = shlex.join(script.to_command(with_entrypoint=True))
     wrapped_cmd = f"""
 set -euo pipefail
+ARTIFACT_DIR="${{NEMO_CLUSTERDIAG_ARTIFACT_DIR:-${{NEMO_CLUSTERDIAG_RUN_DIR:-.}}}}"
+RANK_ID="${{RANK:-${{LOCAL_RANK:-unknown}}}}"
+mkdir -p "${{ARTIFACT_DIR}}/ranks"
+TRAIN_LOG="${{ARTIFACT_DIR}}/ranks/train-rank-${{RANK_ID}}.log"
 
 set +e
-bash -c {shlex.quote(f"{pre_cmds} ; {training_cmd}")}
-TRAIN_RC="$?"
+bash -c {shlex.quote(f'{pre_cmds} ; {training_cmd} "$@"')} -- "$@" 2>&1 | tee "${{TRAIN_LOG}}"
+TRAIN_RC="${{PIPESTATUS[0]}}"
 set -e
 
 export NEMO_RUN_TRAINING_EXIT_CODE="${{TRAIN_RC}}"
@@ -167,9 +181,8 @@ fi
 exit "${{POST_RC}}"
 """
     return run.Script(
-        path="-lc",
-        entrypoint="bash",
-        args=[wrapped_cmd],
+        path="bash",
+        args=["-lc", wrapped_cmd, "nemo-kubeflow-hook-wrapper"],
         env=script.env.copy(),
         metadata=script.metadata.copy(),
     )
@@ -526,6 +539,8 @@ def main(
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
     custom_post_bash_cmds: List[List[str]],
+    host_pre_hook: Optional[str],
+    host_post_hook: Optional[str],
     nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
@@ -544,8 +559,10 @@ def main(
     csp: Optional[str],
     kubeflow_workdir_pvc: str,
     kubeflow_workdir_pvc_path: str,
+    kubeflow_workspace_root: Optional[str],
     kubeflow_workdir_local_path: Optional[str],
     kubeflow_image_pull_secrets: List[str],
+    kubeflow_runtime_ref: str,
     kubeflow_volumes_json: Optional[str],
     kubeflow_volume_mounts_json: Optional[str],
     kubeflow_tolerations_json: Optional[str],
@@ -689,8 +706,10 @@ def main(
             nodes=-(num_gpus // -gpus_per_node),
             num_gpus_per_node=gpus_per_node,
             container_image=container_image,
+            runtime_ref=kubeflow_runtime_ref,
             workdir_pvc=kubeflow_workdir_pvc,
             workdir_pvc_path=kubeflow_workdir_pvc_path,
+            workspace_root=kubeflow_workspace_root,
             workdir_local_path=kubeflow_workdir_local_path,
             train_job_basename=f"mb-{model_recipe_name}",
             image_pull_secrets=kubeflow_image_pull_secrets,
@@ -730,6 +749,8 @@ def main(
             custom_srun_args=custom_srun_args,
             custom_bash_cmds=custom_bash_cmds,
             custom_post_bash_cmds=custom_post_bash_cmds,
+            host_pre_hook=host_pre_hook,
+            host_post_hook=host_post_hook,
             gres=gres,
             hf_token=hf_token,
             offline=offline,
@@ -1095,6 +1116,8 @@ if __name__ == "__main__":
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
         custom_post_bash_cmds=args.custom_post_bash_cmds,
+        host_pre_hook=args.host_pre_hook,
+        host_post_hook=args.host_post_hook,
         nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
@@ -1129,8 +1152,10 @@ if __name__ == "__main__":
         csp=args.csp,
         kubeflow_workdir_pvc=args.kubeflow_workdir_pvc,
         kubeflow_workdir_pvc_path=args.kubeflow_workdir_pvc_path,
+        kubeflow_workspace_root=args.kubeflow_workspace_root,
         kubeflow_workdir_local_path=args.kubeflow_workdir_local_path,
         kubeflow_image_pull_secrets=args.kubeflow_image_pull_secrets,
+        kubeflow_runtime_ref=args.kubeflow_runtime_ref,
         kubeflow_volumes_json=args.kubeflow_volumes_json,
         kubeflow_volume_mounts_json=args.kubeflow_volume_mounts_json,
         kubeflow_tolerations_json=args.kubeflow_tolerations_json,

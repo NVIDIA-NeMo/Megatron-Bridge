@@ -14,7 +14,9 @@
 
 import logging
 import os
+import posixpath
 import shlex
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,15 +30,133 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
 
 KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
+KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV = "NEMO_CLUSTERDIAG_TORCHRUN_RDZV_READ_TIMEOUT_SECONDS"
+
+
+def _install_kubeflow_torchrun_launch_patch() -> None:
+    """Patch the NeMo-Run Kubeflow dry-run scheduler before PVC packaging."""
+    from nemo_run.run.torchx_backend.schedulers.kubeflow import KubeflowScheduler
+
+    if getattr(KubeflowScheduler, "_clusterdiag_torchrun_launch_patch_installed", False):
+        return
+
+    original_submit_dryrun = KubeflowScheduler._submit_dryrun
+
+    def _submit_dryrun(self, app: Any, cfg: Any) -> Any:
+        dryrun_info = original_submit_dryrun(self, app, cfg)
+        request = getattr(dryrun_info, "request", None)
+        request_executor = getattr(request, "executor", cfg)
+        job_dir = getattr(request_executor, "job_dir", None)
+        if job_dir:
+            _patch_kubeflow_torchrun_launch_file(Path(job_dir) / "launch.sh")
+        return dryrun_info
+
+    KubeflowScheduler._submit_dryrun = _submit_dryrun
+    KubeflowScheduler._clusterdiag_torchrun_launch_patch_installed = True
+
+
+def _patch_kubeflow_torchrun_launch_file(launch_script_path: Path) -> None:
+    """Patch one generated Kubeflow launch script in place."""
+    if not launch_script_path.is_file():
+        return
+    script = launch_script_path.read_text(encoding="utf-8")
+    patched = _patch_kubeflow_torchrun_launch_script(script)
+    if patched == script:
+        return
+    launch_script_path.write_text(patched, encoding="utf-8")
+    logger.info("Patched Kubeflow torchrun launcher in %s", launch_script_path)
+
+
+def _patch_kubeflow_torchrun_launch_script(script: str) -> str:
+    """Inject the rendezvous read timeout into launch.sh."""
+    lines = script.splitlines(keepends=True)
+    patched: list[str] = []
+    changed = False
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped.startswith("torchrun ") and "--rdzv-backend" in line:
+            if "--rdzv-conf " not in line:
+                line = line.replace(
+                    " --nnodes ",
+                    f" --rdzv-conf read_timeout=${{{KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV}:-300}} --nnodes ",
+                    1,
+                )
+            changed = True
+        patched.append(line)
+    return "".join(patched) if changed else script
+
+
+@dataclass(kw_only=True)
+class WorkspaceRootKubeflowExecutor(run.KubeflowExecutor):
+    """Keep NeMo-Run's code staging beneath a configurable PVC workspace root."""
+
+    workspace_root: Optional[str] = None
+
+    def __post_init__(self):
+        if self.workspace_root:
+            mount_path = posixpath.normpath(self.workdir_pvc_path)
+            workspace_root = posixpath.normpath(self.workspace_root)
+            if not workspace_root.startswith("/"):
+                raise ValueError("workspace_root must be an absolute path")
+            if workspace_root != mount_path and not workspace_root.startswith(f"{mount_path}/"):
+                raise ValueError(
+                    f"workspace_root must be under workdir_pvc_path: {workspace_root} not under {mount_path}"
+                )
+            self.workspace_root = workspace_root
+        super().__post_init__()
+
+    @property
+    def code_dir(self) -> str:
+        upstream_code_dir = posixpath.normpath(super().code_dir)
+        if not self.workspace_root:
+            return upstream_code_dir
+        mount_path = posixpath.normpath(self.workdir_pvc_path)
+        relative_code_dir = posixpath.relpath(upstream_code_dir, mount_path)
+        if relative_code_dir == ".." or relative_code_dir.startswith("../"):
+            raise ValueError(
+                f"NeMo-Run code_dir must be under workdir_pvc_path: {upstream_code_dir} not under {mount_path}"
+            )
+        return posixpath.join(self.workspace_root, relative_code_dir)
+
+    def get_job_body(self, name: str, command: List[str]) -> Dict[str, Any]:
+        """Preserve runtime-owned resources."""
+        manifest = super().get_job_body(name, command)
+        trainer = manifest.get("spec", {}).get("trainer", {})
+        resources = trainer.get("resourcesPerNode", {})
+        if resources.get("claims"):
+            # The installed Trainer accepts claims in the TrainJob but does
+            # not propagate them to the realized pod. The run-scoped
+            # runtime already contains the complete requests, limits, and
+            # claims, so avoid replacing that ResourceRequirements object.
+            trainer.pop("resourcesPerNode", None)
+        return manifest
+
+
+# NeMo-Run selects its TorchX scheduler and parallel-execution support with
+# exact-class lookups rather than isinstance(). Register the workspace-scoped
+# subclass anywhere upstream grants KubeflowExecutor support.
+from nemo_run.run.experiment import Experiment
+from nemo_run.run.torchx_backend.schedulers.api import EXECUTOR_MAPPING
+
+
+EXECUTOR_MAPPING[WorkspaceRootKubeflowExecutor] = EXECUTOR_MAPPING[run.KubeflowExecutor]
+Experiment._PARALLEL_SUPPORTED_EXECUTORS = (
+    *Experiment._PARALLEL_SUPPORTED_EXECUTORS,
+    WorkspaceRootKubeflowExecutor,
+)
 
 
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
     """Wrap a task with per-rank GPU-local NUMA binding without dropping task metadata."""
     training_command = shlex.join(task.to_command(with_entrypoint=True))
     return run.Script(
-        env=task.env.copy(),
-        metadata=task.metadata.copy(),
-        inline=f"""
+        path="bash",
+        # The hook wrapper renders nested tasks with ``with_entrypoint=True``.
+        # Using bash as both entrypoint and path would produce ``bash bash -lc``.
+        entrypoint="/usr/bin/env",
+        args=[
+            "-lc",
+            f"""
 set -euo pipefail
 
 : "${{LOCAL_RANK:?LOCAL_RANK must be set by torchrun}}"
@@ -59,8 +179,12 @@ if [[ ! "$NUMA_NODE" =~ ^[0-9]+$ ]]; then
 fi
 
 echo "[numactl_local] host=$(hostname) rank=${{RANK:-unknown}} local_rank=$LOCAL_RANK gpu_pci=$PCI_BUS numa=$NUMA_NODE"
-exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command}
+exec numactl --cpunodebind="$NUMA_NODE" --membind="$NUMA_NODE" {training_command} "$@"
 """,
+            "nemo-kubeflow-numa-wrapper",
+        ],
+        env=task.env.copy(),
+        metadata=task.metadata.copy(),
     )
 
 
@@ -129,6 +253,8 @@ def slurm_executor(
     network: str = None,
     custom_bash_cmds: List[List[str]] = None,
     custom_post_bash_cmds: List[List[str]] = None,
+    host_pre_hook: Optional[str] = None,
+    host_post_hook: Optional[str] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -184,6 +310,10 @@ def slurm_executor(
         perf_env["HF_HUB_OFFLINE"] = "1"
 
     perf_env.update(custom_env_vars)
+    if host_pre_hook is not None:
+        perf_env["NEMO_CLUSTERDIAG_HOST_PRE_HOOK"] = host_pre_hook
+    if host_post_hook is not None:
+        perf_env["NEMO_CLUSTERDIAG_HOST_POST_HOOK"] = host_post_hook
     mounts.extend(custom_mounts)
 
     # add --segment flag to sbatch if job uses GB200.
@@ -214,6 +344,11 @@ def slurm_executor(
         },
     )
 
+    setup_lines = _host_hook_setup_lines(
+        host_pre_hook=host_pre_hook,
+        host_post_hook=host_post_hook,
+    )
+
     executor = run.SlurmExecutor(
         account=account,
         partition=partition,
@@ -233,10 +368,74 @@ def slurm_executor(
         segment=segment,
         network=network,
         launcher=launcher,
+        setup_lines=setup_lines or None,
         additional_parameters=additional_slurm_params,
     )
 
     return executor
+
+
+def _host_hook_srun(phase: str, hook_env: str) -> str:
+    """Render one non-containerized, one-task-per-node host hook step."""
+    separator = " \\" + "\n  "
+    return separator.join(
+        [
+            "srun",
+            '--nodes="${SLURM_NNODES}"',
+            '--ntasks="${SLURM_NNODES}"',
+            "--ntasks-per-node=1",
+            "--wait=60",
+            "--kill-on-bad-exit=1",
+            f'--output="${{NEMO_CLUSTERDIAG_ARTIFACT_DIR}}/host-hooks/{phase}-%N.out"',
+            f'--error="${{NEMO_CLUSTERDIAG_ARTIFACT_DIR}}/host-hooks/{phase}-%N.err"',
+            f'bash "${{{hook_env}}}"',
+        ]
+    )
+
+
+def _host_hook_setup_lines(
+    *,
+    host_pre_hook: Optional[str],
+    host_post_hook: Optional[str],
+) -> str:
+    """Render batch-shell orchestration for optional host pre/post hooks."""
+    if host_pre_hook is None and host_post_hook is None:
+        return ""
+
+    lines = [
+        ': "${NEMO_CLUSTERDIAG_ARTIFACT_DIR:?required for host hooks}"',
+        'mkdir -p "${NEMO_CLUSTERDIAG_ARTIFACT_DIR}/host-hooks"',
+    ]
+    if host_post_hook is not None:
+        post_srun = _host_hook_srun("post", "NEMO_CLUSTERDIAG_HOST_POST_HOOK")
+        lines.extend(
+            [
+                "_nemo_run_host_post_hook() {",
+                '  local prior_rc="$?"',
+                "  local post_rc=0",
+                "  trap - EXIT",
+                "  set +e",
+                *(f"  {line}" for line in post_srun.splitlines()),
+                '  post_rc="$?"',
+                '  if [ "${prior_rc}" -ne 0 ]; then',
+                '    exit "${prior_rc}"',
+                "  fi",
+                '  exit "${post_rc}"',
+                "}",
+                "trap _nemo_run_host_post_hook EXIT",
+            ]
+        )
+    if host_pre_hook is not None:
+        lines.extend(
+            [
+                _host_hook_srun("pre", "NEMO_CLUSTERDIAG_HOST_PRE_HOOK"),
+                'HOST_PRE_RC="$?"',
+                'if [ "${HOST_PRE_RC}" -ne 0 ]; then',
+                '  exit "${HOST_PRE_RC}"',
+                "fi",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def kubeflow_executor(
@@ -244,11 +443,13 @@ def kubeflow_executor(
     nodes: int,
     num_gpus_per_node: int,
     container_image: str = "nvcr.io/nvidia/nemo:dev",
+    runtime_ref: str = "torch-distributed",
     train_job_basename: Optional[str] = None,
     volumes: List[Dict[str, Any]] = None,
     volume_mounts: List[Dict[str, Any]] = None,
     workdir_pvc: Optional[str] = None,
     workdir_pvc_path: str = "/nemo_run",
+    workspace_root: Optional[str] = None,
     workdir_local_path: Optional[str] = None,
     image_pull_secrets: List[str] = None,
     wandb_key: str = None,
@@ -283,6 +484,8 @@ def kubeflow_executor(
         volume_mounts: Container volume mounts.
         workdir_pvc: PVC to sync the run workdir into.
         workdir_pvc_path: Mount path for the workdir PVC inside the container.
+        workspace_root: Writable directory beneath ``workdir_pvc_path`` used for
+            staged launcher code. Defaults to ``workdir_pvc_path``.
         workdir_local_path: Local directory whose contents nemo-run's
             ``KubeflowExecutor.package()`` rsyncs into the workdir PVC via
             a temporary alpine pod before launch. Used to overlay a
@@ -308,13 +511,10 @@ def kubeflow_executor(
     Returns:
         Configured ``run.KubeflowExecutor`` instance.
     """
-    # K8s/Kubeflow jobs deliberately do NOT inherit PERF_ENV_VARS. That dict was
-    # tuned for the Slurm perf-benchmark path; the verified standalone K8s launch
-    # (real_trainjob.py) carried its own minimal env. On Kubeflow the cluster
-    # supplies all NCCL/fabric/perf tuning explicitly via KUBEFLOW_ENV_LIST_JSON
-    # (-> custom_env_vars / env_list) in ci_cluster_config.yml, so start empty and
-    # only layer on secrets + whatever the cluster passed in.
-    env_vars: Dict[str, str] = {}
+    # Keep backend-independent benchmark defaults consistent with Slurm. Cluster
+    # and fabric-specific settings remain explicit custom overrides, while
+    # PerfEnvPlugin can still adjust these defaults for the selected recipe.
+    env_vars = PERF_ENV_VARS.copy()
     if wandb_key is not None:
         env_vars["WANDB_API_KEY"] = wandb_key
     if hf_token is not None:
@@ -337,7 +537,8 @@ def kubeflow_executor(
     }
     labels = {**ci_labels, **(labels or {})}
 
-    executor = run.KubeflowExecutor(
+    executor_class = WorkspaceRootKubeflowExecutor if workspace_root else run.KubeflowExecutor
+    executor = executor_class(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
         # consumed and a single WORLD_SIZE = num_nodes * gpus_per_node process
@@ -346,7 +547,7 @@ def kubeflow_executor(
         launcher=run.Torchrun(),
         # Pin the Kubeflow Trainer runtime + per-replica CPU/memory requests to
         # the same values the verified standalone launch (real_trainjob.py) uses.
-        runtime_ref="torch-distributed",
+        runtime_ref=runtime_ref,
         cpu_requests="8",
         memory_requests="32Gi",
         namespace=namespace,
@@ -357,6 +558,7 @@ def kubeflow_executor(
         volume_mounts=volume_mounts or [],
         workdir_pvc=workdir_pvc,
         workdir_pvc_path=workdir_pvc_path,
+        **({"workspace_root": workspace_root} if workspace_root else {}),
         workdir_local_path=workdir_local_path,
         train_job_basename=train_job_basename,
         image_pull_secrets=image_pull_secrets or [],
@@ -386,4 +588,5 @@ def kubeflow_executor(
         # are harmless cost there.)
         packager=run.GitArchivePackager(include_submodules=True),
     )
+    _install_kubeflow_torchrun_launch_patch()
     return executor
