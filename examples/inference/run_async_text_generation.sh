@@ -17,18 +17,16 @@ set -euo pipefail
 
 usage() {
     cat <<'USAGE'
-Run direct MCore-style concurrent async text generation.
+Run Bridge/AutoBridge-backed concurrent async text generation.
 
 Example:
-  examples/inference/run_async_text_generation.sh --nproc 8 \
-    --load /path/to/megatron/checkpoint \
-    --tokenizer-type HuggingFaceTokenizer \
-    --tokenizer-model Qwen/Qwen2.5-1.5B \
-    --model-provider gpt \
-    --bf16 \
-    --prompts "Megatron async inference is" "Concurrent generation is"
+  examples/inference/run_async_text_generation.sh --nproc 1 \
+    --hf_model_path Qwen/Qwen2.5-1.5B \
+    --dtype bf16 \
+    --prompt "Megatron async inference is" \
+    --prompt "Concurrent generation is"
 
-Pass Megatron training/inference arguments after --nproc.
+Pass scripts/inference/async_text_generation.py arguments after --nproc.
 USAGE
 }
 

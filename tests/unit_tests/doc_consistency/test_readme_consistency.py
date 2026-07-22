@@ -29,6 +29,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes"
+PERF_RECIPES_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 TRAINING_README = REPO_ROOT / "scripts" / "training" / "README.md"
 DATASET_UTILS = REPO_ROOT / "src" / "megatron" / "bridge" / "recipes" / "utils" / "dataset_utils.py"
 LLAMA_README = REPO_ROOT / "tutorials" / "recipes" / "llama" / "README.md"
@@ -81,9 +82,12 @@ def _read(p: Path) -> str:
 
 
 def _defined_recipe_names() -> set[str]:
-    """All recipe-config functions and public aliases under src/.../recipes/**."""
+    """All recipe-config functions and public aliases under src/.../recipes/** and perf_recipes/**."""
     names: set[str] = set()
-    for py in RECIPES_DIR.rglob("*.py"):
+    recipe_files = list(RECIPES_DIR.rglob("*.py"))
+    if PERF_RECIPES_DIR.is_dir():
+        recipe_files += list(PERF_RECIPES_DIR.rglob("*.py"))
+    for py in recipe_files:
         tree = ast.parse(_read(py), filename=str(py))
         for node in tree.body:
             if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name.endswith("_config"):
@@ -205,6 +209,37 @@ def test_model_examples_use_current_run_recipe_arguments():
             offenders[str(path.relative_to(REPO_ROOT))] = stale_arguments
 
     assert not offenders, f"Model examples use removed run_recipe.py arguments: {offenders}"
+
+
+def test_nemotron_and_qwen2_audio_finetune_launchers_use_exported_recipes():
+    """SFT and PEFT example recipes must match their launcher-visible aliases."""
+    launcher_expectations = {
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_sft.sh": (
+            "${MODEL_NAME}_sft_config",
+            "nemotron_3_nano_finetune_config",
+        ),
+        MODEL_EXAMPLES / "nemotron" / "nemotron_3" / "nano" / "slurm_peft.sh": (
+            "${MODEL_NAME}_peft_config",
+            "nemotron_3_nano_finetune_config",
+        ),
+        MODEL_EXAMPLES / "qwen" / "qwen2_audio" / "sft.sh": (
+            "qwen2_audio_7b_sft_config",
+            "qwen2_audio_7b_finetune_config",
+        ),
+    }
+    for path, (expected_recipe, stale_recipe) in launcher_expectations.items():
+        text = _read(path)
+        assert expected_recipe in text
+        assert stale_recipe not in text
+
+    defined_recipes = _defined_recipe_names()
+    expected_recipes = {
+        "nemotron_3_nano_sft_config",
+        "nemotron_3_nano_peft_config",
+        "qwen2_audio_7b_sft_config",
+        "qwen2_audio_7b_peft_config",
+    }
+    assert expected_recipes <= defined_recipes
 
 
 def test_dclm_readme_megatron_lm_tool_path():

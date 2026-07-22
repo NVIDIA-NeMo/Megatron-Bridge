@@ -20,7 +20,7 @@ import os
 DTYPE_CHOICES = ("bfloat16", "float16", "float32")
 
 
-def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
+def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device: str = "cpu") -> None:
     """Add NeMo Run execution arguments to a conversion subcommand."""
     execution = parser.add_argument_group("Execution")
     execution.add_argument(
@@ -32,8 +32,8 @@ def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
     execution.add_argument(
         "--device",
         choices=("cpu", "gpu"),
-        default="cpu",
-        help="Conversion backend (default: cpu).",
+        default=default_device,
+        help=f"Conversion backend (default: {default_device}).",
     )
     execution.add_argument("--nodes", type=int, default=1, help="Number of nodes (default: 1).")
     execution.add_argument(
@@ -43,7 +43,6 @@ def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
         dest="gpus_per_node",
         help="GPUs per node; required for the GPU backend.",
     )
-    execution.add_argument("--cpus-per-task", type=int, help="CPUs allocated to each conversion task.")
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
@@ -94,33 +93,12 @@ def _add_execution_arguments(parser: argparse.ArgumentParser) -> None:
     )
 
 
-def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include_execution: bool) -> None:
-    """Add arguments shared by import and export."""
-    if include_execution:
-        _add_execution_arguments(parser)
-    else:
-        parser.add_argument("--device", choices=("cpu", "gpu"), required=True)
-
-    conversion = parser.add_argument_group("Conversion")
-    conversion.add_argument("--hf-model", required=True, help="Hugging Face model ID or local path.")
-    conversion.add_argument("--megatron-path", required=True, help="Megatron checkpoint path.")
-    conversion.add_argument(
-        "--torch-dtype",
-        choices=DTYPE_CHOICES,
-        default="bfloat16",
-        help="Model precision (default: bfloat16).",
-    )
-    conversion.add_argument(
-        "--trust-remote-code",
-        action="store_true",
-        help="Allow custom code from the Hugging Face model repository.",
-    )
-    conversion.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Delete a non-empty destination before conversion.",
-    )
-
+def _add_parallelism_arguments(
+    parser: argparse.ArgumentParser,
+    *,
+    include_distributed_timeout: bool,
+) -> None:
+    """Add distributed model-parallel arguments."""
     parallelism = parser.add_argument_group("Distributed GPU parallelism")
     parallelism.add_argument(
         "-tp",
@@ -158,11 +136,73 @@ def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include
         dest="etp",
         help="Expert tensor parallelism size (default: 1).",
     )
-    parallelism.add_argument(
-        "--distributed-timeout-minutes",
-        type=int,
-        help="Distributed process-group timeout in minutes.",
+    if include_distributed_timeout:
+        parallelism.add_argument(
+            "--distributed-timeout-minutes",
+            type=int,
+            help="Distributed process-group timeout in minutes.",
+        )
+
+
+def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include_execution: bool) -> None:
+    """Add arguments shared by import and export."""
+    if include_execution:
+        _add_execution_arguments(parser)
+    else:
+        parser.add_argument("--device", choices=("cpu", "gpu"), required=True)
+
+    conversion = parser.add_argument_group("Conversion")
+    conversion.add_argument("--hf-model", required=True, help="Hugging Face model ID or local path.")
+    conversion.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
     )
+    conversion.add_argument("--megatron-path", required=True, help="Megatron checkpoint path.")
+    conversion.add_argument(
+        "--torch-dtype",
+        choices=DTYPE_CHOICES,
+        default="bfloat16",
+        help="Model precision (default: bfloat16).",
+    )
+    conversion.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Allow custom code from the Hugging Face model repository.",
+    )
+    conversion.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Delete a non-empty destination before conversion.",
+    )
+
+    _add_parallelism_arguments(parser, include_distributed_timeout=True)
+
+
+def _add_roundtrip_arguments(parser: argparse.ArgumentParser, *, include_execution: bool) -> None:
+    """Add round-trip arguments to the launcher or in-job worker parser."""
+    if include_execution:
+        _add_execution_arguments(parser, default_device="gpu")
+    else:
+        parser.add_argument("--device", choices=("gpu",), required=True)
+
+    roundtrip = parser.add_argument_group("Round-trip validation")
+    roundtrip.add_argument(
+        "--hf-model",
+        "--hf-model-id",
+        required=True,
+        dest="hf_model",
+        help="Hugging Face model ID or local path.",
+    )
+    roundtrip.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
+    )
+    roundtrip.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        help="Allow custom code from the Hugging Face model repository.",
+    )
+    _add_parallelism_arguments(parser, include_distributed_timeout=True)
 
 
 def build_parser(*, include_execution: bool) -> argparse.ArgumentParser:
@@ -191,6 +231,11 @@ Examples:
       --container-image IMAGE --mount /workspace --env HF_TOKEN \\
       --hf-model Qwen/Qwen3-30B-A3B --megatron-path /workspace/qwen/iter_0000000 \\
       --hf-path /workspace/qwen-hf --ep 8
+
+  # Local multi-GPU round-trip validation
+  ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
+      --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
+      --ep 8
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -232,6 +277,13 @@ Examples:
         choices=DTYPE_CHOICES,
         help="Cast exported Hugging Face weights to this dtype (GPU backend only).",
     )
+
+    roundtrip_parser = subparsers.add_parser(
+        "roundtrip",
+        help="Validate a Hugging Face to Megatron to Hugging Face conversion on GPUs.",
+        allow_abbrev=False,
+    )
+    _add_roundtrip_arguments(roundtrip_parser, include_execution=include_execution)
     return parser
 
 
@@ -244,6 +296,30 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     Returns:
         Command-line arguments accepted by ``run_conversion.py``.
     """
+    if args.command == "roundtrip":
+        worker_args = [
+            "roundtrip",
+            "--device",
+            args.device,
+            "--hf-model",
+            args.hf_model,
+            "--tp",
+            str(args.tp),
+            "--pp",
+            str(args.pp),
+            "--ep",
+            str(args.ep),
+            "--etp",
+            str(args.etp),
+        ]
+        if args.hf_revision is not None:
+            worker_args.extend(["--hf-revision", args.hf_revision])
+        if args.trust_remote_code:
+            worker_args.append("--trust-remote-code")
+        if args.distributed_timeout_minutes is not None:
+            worker_args.extend(["--distributed-timeout-minutes", str(args.distributed_timeout_minutes)])
+        return worker_args
+
     worker_args = [
         args.command,
         "--device",
@@ -263,6 +339,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         "--etp",
         str(args.etp),
     ]
+    if args.hf_revision is not None:
+        worker_args.extend(["--hf-revision", args.hf_revision])
     if args.trust_remote_code:
         worker_args.append("--trust-remote-code")
     if args.overwrite:

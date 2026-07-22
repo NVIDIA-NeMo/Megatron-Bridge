@@ -20,6 +20,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -130,6 +131,14 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.use_fused_weighted_squared_relu = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology for this recipe.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -222,6 +231,14 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology for this recipe.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 
@@ -336,6 +353,14 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        # HybridEP topology for this recipe.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 1,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+    }
     return cfg
 
 

@@ -273,6 +273,38 @@ class TestLoadMegatronModel:
 
         assert loaded_provider.pipeline_model_parallel_layout == expected_layout
 
+    @pytest.mark.parametrize(
+        "pipeline_layout",
+        [None, [["embedding", "decoder"], ["decoder", "loss"]]],
+        ids=["plain", "flexible"],
+    )
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_default_load_builds_all_layers_on_one_rank(
+        self, mock_load_model_config, mock_build_and_load_model, pipeline_layout
+    ):
+        """Verify default loading removes saved pipeline-stage ownership."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=pipeline_layout,
+        )
+        mock_load_model_config.return_value = (provider, None)
+
+        def _built_layer_count(checkpoint_path, model_cfg, *args):
+            model_cfg.finalize()
+            if model_cfg.pipeline_model_parallel_layout is None:
+                return model_cfg.num_layers
+            return model_cfg.pipeline_model_parallel_layout.get_num_layers_to_build(vp_stage=None, pp_rank=0)
+
+        mock_build_and_load_model.side_effect = _built_layer_count
+
+        built_layer_count = load_megatron_model("/ckpt")
+
+        assert built_layer_count == provider.num_layers
+
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")
     @patch("megatron.bridge.utils.instantiate_utils.instantiate")
