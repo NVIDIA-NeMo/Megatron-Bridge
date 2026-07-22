@@ -409,6 +409,9 @@ def evaluate_and_print_results(
         prefix (str): Prefix for logging evaluation results.
         forward_step_func (Callable): The function that performs a forward step.
         data_iterator (Optional[Union[RerunDataIterator, list[RerunDataIterator]]]): Iterator over evaluation data.
+            With ``ValidationConfig.multiple_validation_sets``, a list with one iterator per validation set;
+            each set is evaluated independently and logged with a ``-<name>`` (from
+            ``ValidationConfig.validation_set_names``) or ``-<index>`` suffix.
         model (list[MegatronModule]): list of model chunks.
         config (ConfigContainer): Configuration container (potentially redundant).
         verbose (bool, optional): Whether to print evaluation progress. Defaults to False.
@@ -424,8 +427,9 @@ def evaluate_and_print_results(
             Controls which callback events are fired (on_test_* vs on_eval_*).
 
     Returns:
-        Optional[dict[str, torch.Tensor]]: The averaged evaluation loss dictionary, or
-        None if evaluation exited early due to a configured time limit.
+        Optional[dict[str, torch.Tensor]]: The averaged evaluation loss dictionary (of the
+        last evaluated set when ``multiple_validation_sets`` is set), or None if evaluation
+        exited early due to a configured time limit.
     """
     if write_to_tensorboard:
         writer = state.tensorboard_logger
@@ -436,71 +440,102 @@ def evaluate_and_print_results(
     mlflow_writer = state.mlflow_logger
     comet_logger = state.comet_logger
 
-    total_loss_dict, collected_non_loss_data, timelimit = evaluate(
-        state,
-        forward_step_func,
-        data_iterator,
-        model,
-        process_non_loss_data_func,
-        config,
-        verbose,
-        non_loss_data_func,
-        p2p_communicator=p2p_communicator,
-        pg_collection=pg_collection,
-        callback_manager=callback_manager,
-        is_test=is_test,
-    )
-
-    # Timelimit hit during evaluation
-    if timelimit:
-        return None
-    if total_loss_dict is None:
-        return None
-
-    string = f" validation loss at {prefix} | "
-    for key in total_loss_dict:
-        string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
-        ppl = math.exp(min(20, total_loss_dict[key].item()))
-        string += "{} PPL: {:.6E} | ".format(key, ppl)
-        if writer:
-            writer.add_scalar("{} validation".format(key), total_loss_dict[key].item(), state.train_state.step)
-            writer.add_scalar(
-                "{} validation vs samples".format(key),
-                total_loss_dict[key].item(),
-                state.train_state.consumed_train_samples,
+    # Only the flag makes a list mean per-set iterators; without it, a list is a
+    # per-virtual-pipeline-chunk iterator for a single set.
+    val_config = state.cfg.validation
+    if val_config.multiple_validation_sets and not is_test:
+        data_iterators = data_iterator
+        if val_config.validation_set_names is not None:
+            assert len(val_config.validation_set_names) == len(data_iterators), (
+                f"Number of validation_set_names ({len(val_config.validation_set_names)}) must match "
+                f"the number of validation datasets ({len(data_iterators)})"
             )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                writer.add_scalar("{} validation ppl".format(key), ppl, state.train_state.step)
+    else:
+        data_iterators = [data_iterator]
+
+    total_loss_dict = None
+    for index, set_data_iterator in enumerate(data_iterators):
+        suffix = ""
+        if val_config.multiple_validation_sets and not is_test:
+            if val_config.validation_set_names:
+                suffix = f"-{val_config.validation_set_names[index]}"
+            else:
+                suffix = f"-{index}"
+
+        total_loss_dict, collected_non_loss_data, timelimit = evaluate(
+            state,
+            forward_step_func,
+            set_data_iterator,
+            model,
+            process_non_loss_data_func,
+            config,
+            verbose,
+            non_loss_data_func,
+            p2p_communicator=p2p_communicator,
+            pg_collection=pg_collection,
+            callback_manager=callback_manager,
+            is_test=is_test,
+        )
+
+        # Timelimit hit during evaluation
+        if timelimit:
+            return None
+        if total_loss_dict is None:
+            return None
+
+        string = f" validation{suffix} loss at {prefix} | "
+        for key in total_loss_dict:
+            string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
+            ppl = math.exp(min(20, total_loss_dict[key].item()))
+            string += "{} PPL: {:.6E} | ".format(key, ppl)
+            if writer:
                 writer.add_scalar(
-                    "{} validation ppl vs samples".format(key), ppl, state.train_state.consumed_train_samples
+                    "{} validation{}".format(key, suffix), total_loss_dict[key].item(), state.train_state.step
                 )
+                writer.add_scalar(
+                    "{} validation{} vs samples".format(key, suffix),
+                    total_loss_dict[key].item(),
+                    state.train_state.consumed_train_samples,
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    writer.add_scalar("{} validation{} ppl".format(key, suffix), ppl, state.train_state.step)
+                    writer.add_scalar(
+                        "{} validation{} ppl vs samples".format(key, suffix),
+                        ppl,
+                        state.train_state.consumed_train_samples,
+                    )
 
-        if wandb_writer and is_last_rank():
-            wandb_writer.log({"{} validation".format(key): total_loss_dict[key].item()}, state.train_state.step)
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                wandb_writer.log({"{} validation ppl".format(key): ppl}, state.train_state.step)
+            if wandb_writer and is_last_rank():
+                wandb_writer.log(
+                    {"{} validation{}".format(key, suffix): total_loss_dict[key].item()}, state.train_state.step
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    wandb_writer.log({"{} validation{} ppl".format(key, suffix): ppl}, state.train_state.step)
 
-        if mlflow_writer and is_last_rank():
-            mlflow_writer.log_metrics(
-                _sanitize_mlflow_metrics({f"val/{key}": total_loss_dict[key].item()}), step=state.train_state.step
-            )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
+            if mlflow_writer and is_last_rank():
                 mlflow_writer.log_metrics(
-                    _sanitize_mlflow_metrics({f"val/{key} ppl": ppl}), step=state.train_state.step
+                    _sanitize_mlflow_metrics({f"val/{key}{suffix}": total_loss_dict[key].item()}),
+                    step=state.train_state.step,
                 )
-        if comet_logger and is_last_rank():
-            comet_logger.log_metrics(
-                {"{} validation".format(key): total_loss_dict[key].item()}, step=state.train_state.step
-            )
-            if state.cfg.logger.log_validation_ppl_to_tensorboard:
-                comet_logger.log_metrics({"{} validation ppl".format(key): ppl}, step=state.train_state.step)
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    mlflow_writer.log_metrics(
+                        _sanitize_mlflow_metrics({f"val/{key}{suffix} ppl": ppl}), step=state.train_state.step
+                    )
+            if comet_logger and is_last_rank():
+                comet_logger.log_metrics(
+                    {"{} validation{}".format(key, suffix): total_loss_dict[key].item()}, step=state.train_state.step
+                )
+                if state.cfg.logger.log_validation_ppl_to_tensorboard:
+                    comet_logger.log_metrics(
+                        {"{} validation{} ppl".format(key, suffix): ppl}, step=state.train_state.step
+                    )
 
-    if process_non_loss_data_func is not None and writer and is_last_rank():
-        process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
+        if process_non_loss_data_func is not None and writer and is_last_rank():
+            process_non_loss_data_func(collected_non_loss_data, state.train_state.step, writer)
 
-    length = len(string) + 1
-    print_rank_last("-" * length)
-    print_rank_last(string)
-    print_rank_last("-" * length)
+        length = len(string) + 1
+        print_rank_last("-" * length)
+        print_rank_last(string)
+        print_rank_last("-" * length)
 
     return total_loss_dict
