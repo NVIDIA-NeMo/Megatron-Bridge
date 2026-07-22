@@ -14,6 +14,7 @@
 
 from dataclasses import dataclass, replace
 from functools import partial
+from typing import Iterable
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -24,7 +25,7 @@ from megatron.core.transformer.transformer_block import TransformerBlockSubmodul
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
@@ -173,10 +174,11 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         - MTP (Multi-Token Prediction) modules are not mapped. The released
           checkpoint advertises ``num_nextn_predict_layers`` in its config but
           ships no ``mtp.*`` weights, so ``mtp_num_layers`` is forced to None.
-        - Standalone Hugging Face checkpoint export is not supported. The HF
-          checkpoint is multimodal, while this bridge maps only its
-          ``language_model.*`` tensors. In-memory HF-to-Megatron-to-HF weight
-          verification remains supported.
+        - Persisted Hugging Face export replaces the supported
+          ``language_model.*`` tensors and preserves the source checkpoint's
+          vision, projector, patch-merge, and lightning-indexer tensors
+          byte-for-byte. Those passthrough tensors remain outside the Bridge
+          verification surface.
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -184,7 +186,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    SUPPORTS_HF_PRETRAINED_EXPORT = False
+    REQUIRES_HF_SOURCE_FOR_EXPORT = True
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
@@ -313,12 +315,74 @@ class MiniMaxM3Bridge(MegatronModelBridge):
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
-        """Reject standalone HF export until the full multimodal contract is mapped."""
-        raise NotImplementedError(
-            "MiniMax-M3 standalone Hugging Face export is not supported: the source checkpoint is multimodal, "
-            "but this bridge maps only language_model.* tensors. Use HF import, native Megatron checkpoints, "
-            "or in-memory round-trip verification."
+        """Convert the Megatron provider to MiniMax-M3's nested HF config."""
+        text_config = super().megatron_to_hf_config(provider)
+        torch_dtype = text_config.pop("torch_dtype")
+        text_config.pop("architectures", None)
+        text_config.pop("model_type", None)
+
+        # seq_length is a workload setting for the Megatron provider, whereas
+        # max_position_embeddings is an architecture limit. Omitting it here
+        # lets conform_config_to_reference preserve the pinned HF value.
+        text_config.pop("max_position_embeddings", None)
+        # The text-only provider intentionally disables MTP because the source
+        # checkpoint contains no mtp.* weights. Preserve the outer checkpoint's
+        # declaration rather than overwriting it with the provider's None.
+        text_config.pop("num_nextn_predict_layers", None)
+        text_config.pop("mtp_num_hidden_layers", None)
+        text_config.update(
+            {
+                "architectures": ["MiniMaxM3SparseForCausalLM"],
+                "intermediate_size": provider.moe_ffn_hidden_size,
+                "dense_intermediate_size": provider.ffn_hidden_size,
+                "shared_intermediate_size": provider.moe_shared_expert_intermediate_size,
+                "n_shared_experts": 1,
+                "head_dim": provider.kv_channels,
+                "hidden_act": "swigluoai",
+                "rotary_dim": round(provider.rotary_percent * provider.kv_channels),
+                "partial_rotary_factor": provider.rotary_percent,
+                "use_gemma_norm": provider.layernorm_zero_centered_gamma,
+                "use_qk_norm": provider.qk_layernorm,
+                "qk_norm_type": "per_head",
+                "num_local_experts": provider.num_moe_experts,
+                "num_experts_per_tok": provider.moe_router_topk,
+                "scoring_func": provider.moe_router_score_function,
+                "use_routing_bias": provider.moe_router_enable_expert_bias,
+                "routed_scaling_factor": provider.moe_router_topk_scaling_factor,
+                "router_aux_loss_coef": provider.moe_aux_loss_coeff,
+                "moe_layer_freq": provider.moe_layer_freq,
+                "swiglu_alpha": 1.702,
+                "swiglu_limit": provider.activation_func_clamp_value,
+            }
         )
+
+        return {
+            "architectures": ["MiniMaxM3SparseForConditionalGeneration"],
+            "model_type": "minimax_m3_vl",
+            "text_config": text_config,
+            "torch_dtype": torch_dtype,
+        }
+
+    def stream_hf_export_passthrough(
+        self,
+        hf_pretrained: PreTrainedCausalLM,
+        *,
+        cpu: bool = True,
+    ) -> Iterable[HFWeightTuple]:
+        """Preserve source tensors outside the converted text-backbone surface."""
+        if not hasattr(hf_pretrained, "state"):
+            raise NotImplementedError(
+                "MiniMax-M3 HF export requires the pinned source checkpoint so unbridged tensors can be preserved."
+            )
+
+        for name in hf_pretrained.state:
+            is_passthrough = name.startswith(("vision_tower.", "multi_modal_projector.", "patch_merge_mlp.")) or (
+                name.startswith("language_model.") and ".self_attn.index_" in name
+            )
+            if not is_passthrough:
+                continue
+            tensor = hf_pretrained.state[name].detach()
+            yield HFWeightTuple(name, tensor.cpu() if cpu else tensor)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return the parameter mappings for the MiniMax-M3 language model.

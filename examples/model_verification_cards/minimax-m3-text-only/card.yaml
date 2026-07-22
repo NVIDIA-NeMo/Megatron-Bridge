@@ -1,37 +1,35 @@
 # Agent-readable model verification card.
 # status: unverified | verified | unsupported | not_applicable
 
-title: minimax_m3
+title: minimax_m3_text_only
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. MiniMax-M3 verification covers the supported language-model backbone;
-  its vision, lightning-indexer, and MTP modules are outside the Bridge support
-  surface. A persisted 32-H100 BF16 HF-to-Megatron import and reload exactly
-  matched all 22,665 supported tensors and all 597 replicated state tensors
-  across the 32 EP ranks; 228 lightning-indexer tensors were intentionally
-  omitted. A MiniMax-M3-specific router cast now preserves the checkpoint's FP32
+  results. This is the MiniMax-M3 text-only verification card: every claim is
+  limited to the supported language-model backbone. Vision, projector,
+  lightning-indexer, and MTP behavior is outside the verification surface. A
+  persisted 32-H100 BF16 HF-to-Megatron import and reload exactly matched all
+  22,665 supported text tensors and all 597 replicated state tensors across the
+  32 EP ranks. A MiniMax-M3-specific router cast preserves the checkpoint's FP32
   gate computation when BF16 hidden states reach Transformer Engine. Two clean,
   independent 32-H100 Megatron executions reloaded the persisted checkpoint,
   completed exactly 64 greedy generation steps apiece, and produced
-  byte-identical decoded completions. At the inference commit, all 29 focused
-  MiniMax-M3 bridge tests and the repository pre-commit checks pass.
+  byte-identical decoded completions. Persisted Megatron-to-HF conversion remains
+  unverified until a strict source-overlay export and reload completes.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, inference]
-    unverified: [hf_to_megatron_cpu, manual_forward_pass]
-    unsupported: [megatron_to_hf_cpu, megatron_to_hf_gpu]
+    unverified: [hf_to_megatron_cpu, megatron_to_hf_gpu, manual_forward_pass]
+    unsupported: [megatron_to_hf_cpu]
   training:
     H100:
-      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
-      unsupported: [sft_export_inference]
+      unverified: all
     GB200:
-      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
-      unsupported: [sft_export_inference]
+      unverified: all
 model:
   hf_id: MiniMaxAI/MiniMax-M3
   hf_revision: 50942730318c7943fe83db7ec8e9f9177ecb1cf8  # pragma: allowlist secret
-  architecture: MiniMaxM3SparseForConditionalGeneration
+  architecture: MiniMaxM3SparseForCausalLM
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
@@ -56,7 +54,7 @@ items:
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 4 --gpus-per-node 8 --hf-model MiniMaxAI/MiniMax-M3
       --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
-      --megatron-path work/model-verification/minimax-m3/imported-megatron
+      --megatron-path work/model-verification/minimax-m3-text-only/imported-megatron
       --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
       --trust-remote-code
     last_verified: 2026-07-21
@@ -75,19 +73,22 @@ items:
     command: null
     last_verified: null
     expected_result: >
-      Standalone Hugging Face export is intentionally unsupported because the
-      Bridge converts only the language backbone and omits the checkpoint's
-      vision tower, projector, lightning indexer, and multimodal configuration.
+      The current single-process config-only CPU exporter cannot provide the
+      pinned source checkpoint required to preserve MiniMax-M3's unbridged
+      tensors. Use the distributed GPU source-overlay path for persisted export.
 
   megatron_to_hf_gpu:
-    status: unsupported
-    precision: null
+    status: unverified
+    precision: bf16
     command: null
     last_verified: null
     expected_result: >
-      Distributed standalone Hugging Face export is intentionally unsupported
-      because the Bridge cannot reconstruct the omitted multimodal modules and
-      configuration into a complete MiniMax-M3 checkpoint.
+      A pinned distributed source-overlay export must replace all 22,665
+      supported text tensors and preserve all 751 unbridged vision, projector,
+      patch-merge, and lightning-indexer tensors byte-for-byte. The persisted HF
+      artifact must contain exactly 23,416 indexed tensors, reload successfully,
+      and have zero missing, unexpected, shape, dtype, or value mismatches in a
+      strict supported-text audit.
 
   manual_forward_pass:
     status: unverified
@@ -108,7 +109,7 @@ items:
       uv run python examples/conversion/hf_to_megatron_generate_text.py
       --hf_model_path MiniMaxAI/MiniMax-M3
       --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
-      --megatron_model_path work/model-verification/minimax-m3/imported-megatron/iter_0000000
+      --megatron_model_path work/model-verification/minimax-m3-text-only/imported-megatron/iter_0000000
       --tp 1 --pp 1 --ep 32 --etp 1
       --prompt "Write a detailed 500-word explanation of why the sky appears blue."
       --max_new_tokens 64 --apply-chat-template --thinking-mode disabled
@@ -158,16 +159,16 @@ items:
         all four metrics, and a reloadable final checkpoint.
 
   sft_export_inference:
-    all:
-      status: unsupported
-      precision: null
+    H100:
+      status: unverified
+      precision: bf16
       depends_on: sft
       commands: null
       last_verified: null
       expected_result: >
-        Post-SFT Hugging Face export and native Hugging Face inference are
-        unsupported on every hardware target because standalone Hugging Face
-        export cannot reconstruct the complete multimodal checkpoint.
+        Export the verified H100 full-SFT checkpoint through the strict
+        source-overlay path, reload the resulting checkpoint with Transformers,
+        and require two greedy fixed-length text generations to be byte-identical.
 
   sft_long_context:
     H100:

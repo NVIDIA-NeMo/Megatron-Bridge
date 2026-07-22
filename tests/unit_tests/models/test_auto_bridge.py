@@ -329,6 +329,41 @@ class TestAutoBridge:
 
         assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
 
+    def test_save_hf_weights_prepends_bridge_passthrough_tensors(self, tmp_path):
+        """Composite bridges can preserve source-only tensors during HF save."""
+        source = _make_fake_source(present=set())
+        saved_pairs = []
+
+        def capture_generator(generator, _path, **_kwargs):
+            saved_pairs.extend(generator)
+
+        source.save_generator.side_effect = capture_generator
+        hf_pretrained = SimpleNamespace(
+            config=SimpleNamespace(),
+            state=SimpleNamespace(source=source),
+        )
+
+        class CompositeBridge:
+            def stream_weights_megatron_to_hf(self, *_args, **_kwargs):
+                return iter([("language.weight", torch.ones(1))])
+
+            def stream_hf_export_passthrough(self, *_args, **_kwargs):
+                return iter([("vision.weight", torch.zeros(1))])
+
+        bridge_obj = object.__new__(AutoBridge)
+        bridge_obj.hf_pretrained = hf_pretrained
+        composite_bridge = CompositeBridge()
+        model_instance = SimpleNamespace(config=SimpleNamespace(mtp_num_layers=1))
+
+        with (
+            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock, return_value=composite_bridge),
+            patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
+            patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
+        ):
+            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
+
+        assert [name for name, _tensor in saved_pairs] == ["vision.weight", "language.weight"]
+
     def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
         """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
         behavior under test is the MTP prefix-resolution wiring.

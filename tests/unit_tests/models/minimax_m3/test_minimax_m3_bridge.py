@@ -18,7 +18,7 @@ Unit tests for the MiniMax-M3 bridge.
 
 from functools import partial
 from types import SimpleNamespace
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 import pytest
 import torch
@@ -28,6 +28,7 @@ from transformers import GenerationConfig, PretrainedConfig
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
+from megatron.bridge.models.conversion.utils import conform_config_to_reference
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     MiniMaxM3Bridge,
@@ -439,21 +440,130 @@ class TestMiniMaxM3Bridge:
                 assert "index_" not in str(p)
                 assert "vision_tower" not in str(p)
 
-    def test_megatron_to_hf_config_rejects_incomplete_multimodal_export(self, mock_pretrained):
+    def test_megatron_to_hf_config_builds_nested_text_config(self, mock_pretrained):
         bridge = MiniMaxM3Bridge()
         provider = bridge.provider_bridge(mock_pretrained)
+        config = MiniMaxM3Bridge.megatron_to_hf_config(provider)
 
-        with pytest.raises(NotImplementedError, match="multimodal"):
-            MiniMaxM3Bridge.megatron_to_hf_config(provider)
+        assert config["architectures"] == ["MiniMaxM3SparseForConditionalGeneration"]
+        assert config["model_type"] == "minimax_m3_vl"
+        assert config["torch_dtype"] == "bfloat16"
+        assert "vision_config" not in config
 
-    def test_public_hf_save_rejects_before_creating_output(self, tmp_path):
+        text_config = config["text_config"]
+        assert text_config["architectures"] == ["MiniMaxM3SparseForCausalLM"]
+        assert text_config["hidden_size"] == 64
+        assert text_config["intermediate_size"] == 32
+        assert text_config["dense_intermediate_size"] == 128
+        assert text_config["shared_intermediate_size"] == 32
+        assert text_config["head_dim"] == 16
+        assert text_config["rotary_dim"] == 8
+        assert text_config["hidden_act"] == "swigluoai"
+        assert text_config["moe_layer_freq"] == [0, 1, 1, 1]
+        assert text_config["scoring_func"] == "sigmoid"
+        assert text_config["use_routing_bias"] is True
+        assert text_config["use_gemma_norm"] is True
+        assert text_config["use_qk_norm"] is True
+        assert "max_position_embeddings" not in text_config
+        assert "num_nextn_predict_layers" not in text_config
+        assert "mtp_num_hidden_layers" not in text_config
+
+    def test_megatron_to_hf_config_preserves_source_mtp_declaration(self, mock_pretrained):
+        bridge = MiniMaxM3Bridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+        exported = MiniMaxM3Bridge.megatron_to_hf_config(provider)
+        reference = {
+            "architectures": ["MiniMaxM3SparseForConditionalGeneration"],
+            "model_type": "minimax_m3_vl",
+            "text_config": {
+                **_MINIMAX_M3_TEXT_CONFIG,
+                "num_nextn_predict_layers": 1,
+            },
+        }
+
+        conformed = conform_config_to_reference(exported, reference)
+
+        assert conformed["text_config"]["num_nextn_predict_layers"] == 1
+
+    def test_megatron_to_hf_config_preserves_text_semantics(self, mock_pretrained):
+        bridge = MiniMaxM3Bridge()
+        original = bridge.provider_bridge(mock_pretrained)
+        exported = MiniMaxM3Bridge.megatron_to_hf_config(original)
+        roundtrip_pretrained = Mock(spec=PreTrainedCausalLM)
+        roundtrip_config = dict(exported)
+        roundtrip_config["text_config"] = SimpleNamespace(**exported["text_config"])
+        roundtrip_pretrained.config = SimpleNamespace(**roundtrip_config)
+        restored = bridge.provider_bridge(roundtrip_pretrained)
+
+        for field in (
+            "hidden_size",
+            "num_layers",
+            "num_attention_heads",
+            "num_query_groups",
+            "kv_channels",
+            "vocab_size",
+            "ffn_hidden_size",
+            "moe_ffn_hidden_size",
+            "num_moe_experts",
+            "moe_router_topk",
+            "moe_router_score_function",
+            "moe_router_enable_expert_bias",
+            "moe_router_topk_scaling_factor",
+            "moe_shared_expert_intermediate_size",
+            "moe_layer_freq",
+            "rotary_percent",
+            "layernorm_zero_centered_gamma",
+            "qk_layernorm",
+            "share_embeddings_and_output_weights",
+        ):
+            assert getattr(restored, field) == getattr(original, field)
+        assert restored.activation_func is quick_gelu
+        assert restored.activation_func_clamp_value == original.activation_func_clamp_value
+
+    def test_hf_export_is_enabled_for_source_overlay(self):
+        assert MiniMaxM3Bridge.SUPPORTS_HF_PRETRAINED_EXPORT is True
+        assert MiniMaxM3Bridge.REQUIRES_HF_SOURCE_FOR_EXPORT is True
+
+    def test_config_only_hf_export_rejects_before_creating_output(self, tmp_path):
         hf_config = PretrainedConfig()
         hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
         hf_config.model_type = "minimax_m3_vl"
         auto_bridge = AutoBridge(hf_config)
         output_path = tmp_path / "incomplete-hf-export"
 
-        with pytest.raises(NotImplementedError, match="standalone Hugging Face"):
+        with pytest.raises(NotImplementedError, match="original Hugging Face checkpoint"):
             auto_bridge.save_hf_pretrained([], output_path)
 
         assert not output_path.exists()
+
+    def test_config_only_export_ckpt_rejects_before_loading_megatron(self):
+        hf_config = PretrainedConfig()
+        hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
+        hf_config.model_type = "minimax_m3_vl"
+        auto_bridge = AutoBridge(hf_config)
+
+        with patch.object(auto_bridge, "load_megatron_model") as load_megatron_model:
+            with pytest.raises(NotImplementedError, match="original Hugging Face checkpoint"):
+                auto_bridge.export_ckpt("/unused/megatron", "/unused/hf")
+
+        load_megatron_model.assert_not_called()
+
+    def test_hf_export_passthrough_is_narrow_and_lossless(self):
+        state = {
+            "language_model.model.embed_tokens.weight": torch.randn(2, 2),
+            "language_model.model.layers.3.self_attn.index_q_proj.weight": torch.randn(2, 2),
+            "vision_tower.vision_model.embeddings.patch_embedding.weight": torch.randn(2, 2),
+            "multi_modal_projector.linear_1.weight": torch.randn(2, 2),
+            "patch_merge_mlp.linear_1.weight": torch.randn(2, 2),
+        }
+        hf_pretrained = SimpleNamespace(state=state)
+
+        passthrough = dict(MiniMaxM3Bridge().stream_hf_export_passthrough(hf_pretrained))
+
+        assert set(passthrough) == set(state) - {"language_model.model.embed_tokens.weight"}
+        for name, tensor in passthrough.items():
+            assert torch.equal(tensor, state[name])
+
+    def test_hf_export_passthrough_requires_source_checkpoint(self):
+        with pytest.raises(NotImplementedError, match="pinned source checkpoint"):
+            list(MiniMaxM3Bridge().stream_hf_export_passthrough(SimpleNamespace()))
