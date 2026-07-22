@@ -296,6 +296,19 @@ class TestDeepSeekV3Bridge:
         assert provider.bf16 is True
         assert provider.params_dtype == torch.bfloat16
 
+    def test_provider_bridge_preserves_model_specific_context_and_aux_loss(self, mock_pretrained_v3):
+        mock_pretrained_v3.config.max_position_embeddings = 8192
+        mock_pretrained_v3.config.aux_loss_alpha = 0.001
+        bridge = DeepSeekV3Bridge()
+
+        provider = bridge.provider_bridge(mock_pretrained_v3)
+        exported = bridge.megatron_to_hf_config(provider)
+
+        assert provider.seq_length == 8192
+        assert provider.moe_aux_loss_coeff == 0.001
+        assert exported["max_position_embeddings"] == 8192
+        assert exported["aux_loss_alpha"] == 0.001
+
     def test_hf_config_to_provider_kwargs_preserves_none_q_lora_rank(self, mock_pretrained_v3):
         mock_pretrained_v3.config.q_lora_rank = None
         bridge = DeepSeekV3Bridge()
@@ -323,7 +336,7 @@ class TestDeepSeekV3Bridge:
         assert "q_lora_rank" in hf_config
         assert hf_config["q_lora_rank"] is None
 
-    def test_export_injects_inv_freq_for_layer(self, mock_pretrained_v3):
+    def test_export_does_not_synthesize_inv_freq_from_another_layer(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()
         bridge.hf_config = mock_pretrained_v3.config
         mock_pretrained_v3.state = {"model.layers.1.self_attn.rotary_emb.inv_freq": torch.randn(1)}
@@ -336,16 +349,26 @@ class TestDeepSeekV3Bridge:
         result = bridge.maybe_modify_converted_hf_weight(task, dict(converted), mock_pretrained_v3.state)
 
         inv_key = "model.layers.0.self_attn.rotary_emb.inv_freq"
-        expected = 1.0 / (
-            mock_pretrained_v3.config.rope_theta
-            ** (
-                torch.arange(0, mock_pretrained_v3.config.qk_rope_head_dim, 2, dtype=torch.float32)
-                / mock_pretrained_v3.config.qk_rope_head_dim
-            )
-        )
+        assert inv_key not in result
 
-        assert inv_key in result
-        assert torch.allclose(result[inv_key], expected)
+    def test_export_preserves_source_inv_freq_for_layer(self, mock_pretrained_v3):
+        bridge = DeepSeekV3Bridge()
+        bridge.hf_config = mock_pretrained_v3.config
+        inv_key = "model.layers.0.self_attn.rotary_emb.inv_freq"
+        source_inv_freq = torch.linspace(1.0, 0.0, 64, dtype=torch.bfloat16)
+        mock_pretrained_v3.state = {inv_key: source_inv_freq}
+        task = WeightConversionTask(
+            param_name="decoder.layers.0.input_layernorm.weight",
+            global_param_name="decoder.layers.0.input_layernorm.weight",
+            mapping=Mock(),
+        )
+        converted = {"model.layers.0.input_layernorm.weight": torch.randn(1)}
+
+        result = bridge.maybe_modify_converted_hf_weight(task, dict(converted), mock_pretrained_v3.state)
+
+        assert result[inv_key].shape == source_inv_freq.shape
+        assert result[inv_key].dtype == source_inv_freq.dtype
+        assert torch.equal(result[inv_key], source_inv_freq)
 
     def test_export_skips_inv_freq_for_non_layernorm(self, mock_pretrained_v3):
         bridge = DeepSeekV3Bridge()

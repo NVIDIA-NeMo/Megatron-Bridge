@@ -485,6 +485,11 @@ def load_megatron_model(
             if hasattr(model_cfg, key) and value is not None:
                 setattr(model_cfg, key, value)
 
+    # A saved flexible layout describes PP/VPP stage ownership. It must not be
+    # reinterpreted as virtual pipeline chunks after collapsing to one rank.
+    if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
+        model_cfg.pipeline_model_parallel_layout = None
+
     # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":
         tp = getattr(model_cfg, "tensor_model_parallel_size", 1)
