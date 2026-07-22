@@ -129,18 +129,29 @@ def _apply_training_argparse_overrides(config, args):
         # Tokenizer configuration
         from megatron.bridge.training.config import TokenizerConfig
 
+        use_tokenizer_vocab_size = config.tokenizer.use_tokenizer_vocab_size
         if args.tokenizer_type == "NullTokenizer":
-            config.tokenizer = TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=args.vocab_size)
+            config.tokenizer = TokenizerConfig(
+                tokenizer_type="NullTokenizer",
+                vocab_size=args.vocab_size,
+                use_tokenizer_vocab_size=use_tokenizer_vocab_size,
+            )
         elif args.tokenizer_type == "HuggingFaceTokenizer":
             if not args.tokenizer_model:
                 raise ValueError("--tokenizer-model is required when using HuggingFaceTokenizer")
             tokenizer_model = args.tokenizer_model
-            config.tokenizer = TokenizerConfig(tokenizer_type="HuggingFaceTokenizer", tokenizer_model=tokenizer_model)
+            config.tokenizer = TokenizerConfig(
+                tokenizer_type="HuggingFaceTokenizer",
+                tokenizer_model=tokenizer_model,
+                use_tokenizer_vocab_size=use_tokenizer_vocab_size,
+            )
         elif args.tokenizer_type == "SentencePieceTokenizer":
             if not args.tokenizer_model:
                 raise ValueError("--tokenizer-model is required for SentencePieceTokenizer")
             config.tokenizer = TokenizerConfig(
-                tokenizer_type="SentencePieceTokenizer", tokenizer_model=args.tokenizer_model
+                tokenizer_type="SentencePieceTokenizer",
+                tokenizer_model=args.tokenizer_model,
+                use_tokenizer_vocab_size=use_tokenizer_vocab_size,
             )
     else:
         # Diffusion recipes (FLUX, WAN) keep their own dataset object (Wan/FluxDatasetConfig).
@@ -267,10 +278,6 @@ def _prepare_recipe(args, cli_overrides: list[str], *, environment_only: bool):
         train_task=args.task,
         wandb_experiment_name=args.wandb_experiment_name,
     )
-    # Performance runs preserve the recipe's fixed benchmark model shape by
-    # default. Apply this before CLI overrides so an explicit Hydra setting
-    # retains final precedence.
-    recipe.tokenizer.use_tokenizer_vocab_size = False
     base_env_vars = dict(recipe.env_vars)
 
     # 2. User overrides from argparse followed by Hydra.

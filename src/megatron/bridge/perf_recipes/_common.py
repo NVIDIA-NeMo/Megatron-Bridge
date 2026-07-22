@@ -33,8 +33,9 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     Intended for performance benchmark recipes only. Sets short training runs,
     disables checkpointing/eval, tunes scheduler, and enables perf-oriented kernels.
 
-    Must stay in sync with ``_set_common_perf_overrides`` in
-    ``scripts/performance/utils/overrides.py``.
+    This is the fixed-model-shape policy for flat performance recipes.
+    Canonical recipes launched with ``scripts/performance --use_recipes``
+    retain their own tokenizer vocabulary policy.
 
     Individual recipes may override any of these after calling this function
     (e.g. Kimi K2 sets ``grad_reduce_in_fp32 = True``).

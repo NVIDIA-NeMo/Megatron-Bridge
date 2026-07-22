@@ -57,10 +57,6 @@ def _set_common_perf_overrides(recipe: ConfigContainer) -> ConfigContainer:
     recipe.train.manual_gc = True
     recipe.train.manual_gc_interval = 100
 
-    # Performance recipes benchmark a fixed model shape. Synthetic or runtime
-    # tokenizers must not resize the embedding and output layers during setup.
-    recipe.tokenizer.use_tokenizer_vocab_size = False
-
     # Checkpoint save is disabled by default for performance benchmarks
     # Users can enable it via command-line arguments
     recipe.checkpoint.save = None

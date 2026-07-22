@@ -689,7 +689,6 @@ def test_deterministic_environment_reaches_training_exec(monkeypatch):
         ),
         comm_overlap=None,
         ddp=SimpleNamespace(nccl_ub=False, fsdp_manual_registration=False),
-        tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
     )
     args = SimpleNamespace(
         model_family_name="qwen",
@@ -912,6 +911,44 @@ def test_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
+def test_training_tokenizer_override_preserves_recipe_vocab_policy():
+    """Selecting a runtime tokenizer keeps the canonical pretraining vocabulary policy."""
+    from argument_parser import parse_cli_args
+
+    from megatron.bridge.recipes.common import _pretrain_common
+
+    parser = parse_cli_args()
+    args, unknown = parser.parse_known_args(
+        [
+            "--model_family_name",
+            "gpt",
+            "--model_recipe_name",
+            "vanilla_gpt",
+            "--num_gpus",
+            "1",
+            "--gpu",
+            "h100",
+            "--use_recipes",
+            "--max_steps",
+            "1000",
+            "--tokenizer_type",
+            "HuggingFaceTokenizer",
+            "--tokenizer_model",
+            "test-tokenizer",
+        ]
+    )
+    assert unknown == []
+
+    recipe = _pretrain_common()
+    assert recipe.tokenizer.use_tokenizer_vocab_size is True
+
+    updated = run_recipe._apply_training_argparse_overrides(recipe, args)
+
+    assert updated.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert updated.tokenizer.tokenizer_model == "test-tokenizer"
+    assert updated.tokenizer.use_tokenizer_vocab_size is True
+
+
 def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
     """Recipe preparation has one visible path with exactly three config stages."""
     args = SimpleNamespace(
@@ -925,7 +962,6 @@ def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
     base_recipe = SimpleNamespace(
         env_vars={"TORCHINDUCTOR_WORKER_START": "fork"},
         model=SimpleNamespace(moe_flex_dispatcher_backend="hybridep", expert_model_parallel_size=8),
-        tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
     )
     effective_recipe = SimpleNamespace(
         env_vars={"TORCHINDUCTOR_WORKER_START": "fork"},
@@ -940,7 +976,6 @@ def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
         return base_recipe
 
     def apply_overrides(recipe, parsed_args, overrides, *, environment_only):
-        assert recipe.tokenizer.use_tokenizer_vocab_size is False
         calls.append(("overrides", recipe, parsed_args, overrides, environment_only))
         return effective_recipe
 
@@ -968,38 +1003,6 @@ def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
         ("overrides", base_recipe, args, cli_overrides, True),
         ("finalize", effective_recipe, args, cli_overrides, {"TORCHINDUCTOR_WORKER_START": "fork"}),
     ]
-
-
-@pytest.mark.parametrize(
-    ("cli_overrides", "expected"), [([], False), (["tokenizer.use_tokenizer_vocab_size=true"], True)]
-)
-def test_prepare_recipe_preserves_model_shape_unless_hydra_overrides(monkeypatch, cli_overrides, expected):
-    args = SimpleNamespace(
-        model_family_name="deepseek",
-        model_recipe_name="deepseek_v3",
-        task="pretrain",
-        wandb_experiment_name="test-experiment",
-    )
-    recipe = SimpleNamespace(
-        env_vars={},
-        tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
-    )
-
-    monkeypatch.setattr(utils, "build_recipe_config", lambda **_kwargs: recipe)
-
-    def apply_overrides(config, _args, overrides, *, environment_only):
-        assert environment_only is False
-        assert config.tokenizer.use_tokenizer_vocab_size is False
-        if overrides:
-            config.tokenizer.use_tokenizer_vocab_size = True
-        return config
-
-    monkeypatch.setattr(run_recipe, "_apply_recipe_overrides", apply_overrides)
-    monkeypatch.setattr(run_recipe, "_finalize_recipe", lambda config, *_args: config)
-
-    result = run_recipe._prepare_recipe(args, cli_overrides, environment_only=False)
-
-    assert result.tokenizer.use_tokenizer_vocab_size is expected
 
 
 def test_bootstrap_exports_model_recipe_environment_before_exec(monkeypatch):
