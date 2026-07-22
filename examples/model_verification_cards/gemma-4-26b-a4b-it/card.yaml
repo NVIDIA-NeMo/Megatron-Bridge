@@ -70,7 +70,7 @@ items:
       --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
       --megatron-path work/model-verification/gemma-4-26b-a4b-it/cpu-megatron/iter_0000000
       --hf-path work/model-verification/gemma-4-26b-a4b-it/cpu-hf-export
-      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --torch-dtype bfloat16
     last_verified: null
     expected_result: >
       The export must complete with the exact expected key set, shapes, and
