@@ -1,0 +1,197 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: gemma_3_4b_it
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Gemma 3 4B Instruct exact-checkpoint verification is pending for
+  conversion, inference, and training; existing toy-model tests are not used as
+  exact-model evidence.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: google/gemma-3-4b-it
+  hf_revision: 093f9f388b31de276ce2de164bdc2081324b9767f  # pragma: allowlist secret
+  architecture: Gemma3ForConditionalGeneration
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: f858ebcdd81b0e9f28312e2a020411f513070dfa  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Pending exact-revision verification. The CPU import must create a
+      reloadable iter_0000000 checkpoint without missing, unexpected, or
+      namespace-mismatched vision-tower weights.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Pending exact-revision verification. The distributed BF16 import must
+      complete with TP2/PP2 and produce a reloadable checkpoint with the vision
+      tower and multimodal projector on the owning pipeline stage.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Pending exact-revision verification. CPU export must preserve every
+      source key, shape, dtype, and value and reload natively as
+      Gemma3ForConditionalGeneration.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Pending exact-revision verification. TP2/PP2 distributed export must
+      finish without a missing PP owner for vision_tower parameters, preserve
+      the source namespace, and reload natively with no missing or unexpected
+      keys.
+
+  manual_forward_pass:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Pending exact-revision image-and-text comparison. Hugging Face and
+      Megatron must predict the same next token with cosine similarity at least
+      0.99; maximum and mean absolute logit differences must be recorded.
+
+  inference:
+    status: unverified
+    precision: null
+    command: null
+    last_verified: null
+    expected_result: >
+      Pending exact-revision multimodal inference. Two greedy runs must consume
+      the same image and prompt, generate an exact positive token count, and
+      return byte-identical token IDs and completion text.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Pending an exact Gemma 3 VL 4B pretraining recipe and bounded real-data
+        run. The current public recipe inventory exports SFT and PEFT recipes,
+        so toy SFT smoke tests are not pretraining evidence.
+
+  sft:
+    H100:
+      status: unverified
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Pending exact-revision CORD-v2 full-SFT verification with the public
+        Gemma 3 VL 4B H100 recipe. The run must complete at least ten optimizer
+        steps with finite loss, no skipped or NaN iterations, all four metrics,
+        and a reloadable final full-model checkpoint.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: null
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Pending the full-SFT checkpoint. Export must reload natively with exact
+        keys, shapes, and dtypes, then two greedy multimodal Hugging Face runs
+        must produce the same exact-length token sequence and completion.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Pending an exact-revision long-context SFT run that enables both sequence
+        packing and context parallelism greater than one. No short-sequence or
+        toy-model result is accepted as long-context evidence.
+
+  peft:
+    H100:
+      status: unverified
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Pending exact-revision CORD-v2 LoRA verification with the public Gemma 3
+        VL 4B H100 recipe. The run must complete at least ten optimizer steps
+        with finite loss, no skipped or NaN iterations, all four metrics, and a
+        reloadable adapter checkpoint.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: null
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 0.01
+        loss_absolute_tolerance: 0.000001
+        sentinels_match: null
+      expected_result: >
+        Pending a bounded pretraining reference. Resume must load optimizer and
+        RNG state directly from step 50 into a distinct output root and match
+        reference loss at steps 51 and 100 within the recorded tolerance.
