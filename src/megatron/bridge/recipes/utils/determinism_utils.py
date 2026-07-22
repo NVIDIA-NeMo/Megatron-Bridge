@@ -30,18 +30,18 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
     This function is idempotent and is safe to call on configs with
     ``comm_overlap = None``.
 
-    Note:
-        Bit-exact reproducibility additionally requires runtime env vars
-        (``NCCL_ALGO=Ring``, ``NVTE_ALLOW_NONDETERMINISTIC_ALGO=0``,
-        ``CUBLAS_WORKSPACE_CONFIG=:4096:8``). The performance launcher sets
-        these via ``PerfEnvPlugin(deterministic=True)``; callers outside that
-        launcher must set them themselves.
-
     Args:
         cfg: Recipe config to modify.
     """
     cfg.model.deterministic_mode = True
     cfg.model.cross_entropy_loss_fusion = False
+    cfg.env_vars.update(
+        {
+            "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
+            "NCCL_ALGO": "Ring",
+            "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+        }
+    )
 
     if cfg.comm_overlap is not None:
         cfg.comm_overlap.tp_comm_overlap = False

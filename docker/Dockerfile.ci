@@ -25,6 +25,7 @@ ENV PATH="/opt/venv/bin:/opt/venv/bin:/root/.local/bin:$PATH" \
     VIRTUAL_ENV=/opt/venv \
     UV_LINK_MODE=copy \
     UV_VERSION="0.7.2" \
+    UV_HTTP_TIMEOUT=120 \
     NVTE_BUILD_NUM_PHILOX_ROUNDS=3 \
     HYBRID_EP_MULTINODE=1 \
     RDMA_CORE_HOME=/opt/rdma-core/build \

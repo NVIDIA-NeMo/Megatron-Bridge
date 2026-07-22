@@ -84,17 +84,10 @@ set -euo pipefail
 bash -c '{{ pre_cmds }} {{ command }}'
 """
 
-PERF_ENV_VARS = {
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",  # Disable caching NCCL communication buffer memory
+OFFLINE_BENCHMARK_ENV_VARS = {
     "TRANSFORMERS_OFFLINE": "1",  # Default for benchmark runs that mostly use NullTokenizer.
     "TOKENIZERS_PARALLELISM": "False",  # Restrict warning message prints
-    "NCCL_NVLS_ENABLE": "0",  # Disable NVLink SHARP to save memory
-    "NVTE_NORM_FWD_USE_CUDNN": "1",
-    "NVTE_NORM_BWD_USE_CUDNN": "1",
-    "TORCH_NCCL_HIGH_PRIORITY": "1",
     "HF_HUB_OFFLINE": "0",  # Keep HF Hub online by default; --offline flips this to 1.
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-    "NCCL_GRAPH_REGISTER": "0",
 }
 
 
@@ -150,7 +143,7 @@ def slurm_executor(
                 f"Logs will be written to {get_nemorun_home()}, which is probably not desired.  export NEMORUN_HOME in your shell environment or use the --log_dir argument"
             )
 
-    perf_env = PERF_ENV_VARS.copy()
+    perf_env = OFFLINE_BENCHMARK_ENV_VARS.copy()
 
     if wandb_key is not None:
         perf_env["WANDB_API_KEY"] = wandb_key
@@ -291,12 +284,10 @@ def kubeflow_executor(
     Returns:
         Configured ``run.KubeflowExecutor`` instance.
     """
-    # K8s/Kubeflow jobs deliberately do NOT inherit PERF_ENV_VARS. That dict was
-    # tuned for the Slurm perf-benchmark path; the verified standalone K8s launch
-    # (real_trainjob.py) carried its own minimal env. On Kubeflow the cluster
-    # supplies all NCCL/fabric/perf tuning explicitly via KUBEFLOW_ENV_LIST_JSON
-    # (-> custom_env_vars / env_list) in ci_cluster_config.yml, so start empty and
-    # only layer on secrets + whatever the cluster passed in.
+    # K8s/Kubeflow jobs deliberately do NOT inherit the Slurm orchestration
+    # defaults in OFFLINE_BENCHMARK_ENV_VARS. Recipe-owned process settings are applied by
+    # the rank-local bootstrap; the cluster supplies fabric
+    # tuning explicitly via KUBEFLOW_ENV_LIST_JSON (-> custom_env_vars / env_list).
     env_vars: Dict[str, str] = {}
     if wandb_key is not None:
         env_vars["WANDB_API_KEY"] = wandb_key

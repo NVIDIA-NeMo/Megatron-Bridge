@@ -122,4 +122,5 @@ override-dependencies = [
     "decord; sys_platform == 'never'",                   # Optional dependency. Resolves CVE
     "av; sys_platform == 'never'",                       # Optional dependency. Resolves CVE
     "opencv-python-headless; sys_platform == 'never'",   # Optional dependency. Resolves CVE
+    "fastapi<0.139.2"                                    # 0.139.2 fails with ray 2.55.1 at least
 ]

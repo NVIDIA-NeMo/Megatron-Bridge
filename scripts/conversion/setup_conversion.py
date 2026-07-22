@@ -69,9 +69,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     """Validate execution resources and conversion parallelism before launch."""
     if args.nodes < 1:
         raise ValueError("--nodes must be at least 1.")
-    if args.cpus_per_task is not None and args.cpus_per_task < 1:
-        raise ValueError("--cpus-per-task must be at least 1.")
-    if args.distributed_timeout_minutes is not None and args.distributed_timeout_minutes < 1:
+    distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
+    if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
     if any(not value.strip() for value in args.srun_args):
         raise ValueError("--srun-arg values must not be empty.")
@@ -93,6 +92,9 @@ def _validate_args(args: argparse.Namespace) -> None:
     elif not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
 
+    if args.command == "roundtrip" and args.device != "gpu":
+        raise ValueError("Round-trip validation requires the GPU backend.")
+
     if args.device == "cpu":
         if args.nodes != 1:
             raise ValueError("CPU conversion supports exactly one node and one process.")
@@ -105,10 +107,21 @@ def _validate_args(args: argparse.Namespace) -> None:
     else:
         if args.gpus_per_node is None or args.gpus_per_node < 1:
             raise ValueError("GPU conversion requires --gpus-per-node of at least 1.")
+        if args.executor == "local":
+            worker_values = [args.hf_model]
+            if args.command != "roundtrip":
+                worker_values.append(args.megatron_path)
+            if args.command == "export":
+                worker_values.append(args.hf_path)
+            if any(shlex.quote(value) != value for value in worker_values):
+                raise ValueError(
+                    "Local GPU execution cannot pass model IDs or paths containing whitespace or shell "
+                    "metacharacters through NeMo Run 0.10; use shell-safe names and paths."
+                )
         world_size = args.nodes * args.gpus_per_node
-        model_parallel_size = args.tp * args.pp
-        if world_size % model_parallel_size != 0:
-            raise ValueError("nodes*gpus-per-node must be divisible by TP*PP.")
+        model_parallel_size = args.tp * args.pp * args.ep
+        if world_size != model_parallel_size:
+            raise ValueError("nodes*gpus-per-node must equal TP*PP*EP.")
         expert_model_parallel_size = args.etp * args.ep * args.pp
         if world_size % expert_model_parallel_size != 0:
             raise ValueError("nodes*gpus-per-node must be divisible by ETP*EP*PP.")
@@ -150,9 +163,9 @@ def _build_executor(
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
+        job_name_prefix=args.experiment_name,
         nodes=args.nodes,
         ntasks_per_node=task_count,
-        cpus_per_task=args.cpus_per_task,
         mem=args.mem,
         exclusive=True,
         time=args.time,
@@ -174,10 +187,11 @@ def _build_executor(
 
 
 def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
-    """Build the in-job conversion task and its unquoted display arguments."""
-    worker_args = conversion_worker_args(args)
+    """Build the in-job conversion or round-trip task and its display arguments."""
+    display_args = conversion_worker_args(args)
+    relative_task_path = Path("scripts/conversion/run_conversion.py")
     repo_root = LOCAL_REPO_ROOT if args.executor == "local" else CONTAINER_REPO_ROOT
-    task_args = worker_args if args.executor == "local" else [shlex.quote(argument) for argument in worker_args]
+    task_args = display_args if args.executor == "local" else [shlex.quote(argument) for argument in display_args]
     if args.executor == "local":
         existing_pythonpath = os.environ.get("PYTHONPATH", "")
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM"
@@ -185,13 +199,22 @@ def _build_task(args: argparse.Namespace) -> tuple[run.Script, list[str]]:
             pythonpath = f"{pythonpath}:{existing_pythonpath}"
     else:
         pythonpath = f"{repo_root}/src:{repo_root}/3rdparty/Megatron-LM:$PYTHONPATH"
+    task_env = {"PYTHONPATH": pythonpath}
+    if args.executor == "local" and args.device == "gpu":
+        # The torchrun console script can belong to a different Python than the
+        # uv environment running this launcher. PyTorch honors PYTHON_EXEC for
+        # workers, so keep conversion dependencies from this environment.
+        task_env["PYTHON_EXEC"] = sys.executable
     task = run.Script(
-        path=str(repo_root / "scripts/conversion/run_conversion.py"),
-        entrypoint=sys.executable if args.executor == "local" else "python",
-        env={"PYTHONPATH": pythonpath},
+        path=str(repo_root / relative_task_path),
+        # NeMo Run recognizes the literal "python" entrypoint when building a
+        # torchrun command. An absolute interpreter path is treated as a
+        # non-Python executable and makes torchrun execute this file directly.
+        entrypoint="python",
+        env=task_env,
         args=task_args,
     )
-    return task, worker_args
+    return task, display_args
 
 
 def _raise_on_failed_tasks(experiment: run.Experiment) -> None:

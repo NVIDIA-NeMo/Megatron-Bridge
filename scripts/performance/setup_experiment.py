@@ -38,7 +38,7 @@ try:
         kubeflow_executor,
         slurm_executor,
     )
-    from utils.utils import get_exp_name_config, select_config_variant_interactive
+    from utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.executors import (
@@ -47,7 +47,7 @@ except (ImportError, ModuleNotFoundError):
         kubeflow_executor,
         slurm_executor,
     )
-    from .utils.utils import get_exp_name_config, select_config_variant_interactive
+    from .utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
 
 try:
     import wandb
@@ -57,13 +57,12 @@ except (ImportError, ModuleNotFoundError):
     HAVE_WANDB = False
 
 try:
-    from perf_plugins import NsysPlugin, PerfEnvPlugin, PreemptionPlugin, PyTorchProfilerPlugin
+    from perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 except (ImportError, ModuleNotFoundError):
-    from .perf_plugins import NsysPlugin, PerfEnvPlugin, PreemptionPlugin, PyTorchProfilerPlugin
+    from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-ENTRYPOINT_PERFORMANCE = "run_script.py"
-ENTRYPOINT_RECIPE = "run_recipe.py"
+ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -73,24 +72,33 @@ logger.setLevel(logging.DEBUG)  # pin level so nemo_run's WARNING root doesn't s
 def _filter_run_script_args(argv: List[str]) -> List[str]:
     """Drop launcher-only args before forwarding argv to the rank-local script.
 
-    The launcher (this script) and the rank-local entrypoint (run_recipe.py /
-    run_script.py) share one parser, but some args are meaningful only to the
-    launcher and must not reach the rank-local script:
+    The launcher (this script) and the rank-local training scripts share one
+    parser, but some args are meaningful only to the launcher and must not
+    reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
+      Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
-      into run_recipe.py's Hydra override parser.
+      into the training entrypoint's Hydra override parser.
 
     All of these take a value, passed either as ``--flag value`` (two tokens) or
     ``--flag=value`` (one token).
     """
 
     def _is_launcher_only(flag: str) -> bool:
-        return flag in ("--additional_slurm_params", "--csp") or flag.startswith("--kubeflow_")
+        return flag in (
+            "-lgc",
+            "-vb",
+            "--additional_slurm_params",
+            "--csp",
+            "--enable_vboost",
+            "--lock_gpu_freq",
+        ) or flag.startswith("--kubeflow_")
 
     filtered_args = []
     skip_next = False
@@ -478,7 +486,6 @@ def main(
     custom_env_vars: Dict[str, str],
     custom_srun_args: List[str],
     custom_bash_cmds: List[List[str]],
-    nccl_ub: bool,
     pretrained_checkpoint: Optional[str],
     save_dir: Optional[str],
     num_gpus: int,
@@ -509,7 +516,6 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
-    deterministic: bool = False,
     config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -557,8 +563,8 @@ def main(
     if export_nsys_sqlite and not enable_nsys:
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
+    script_name = ENTRYPOINT_BOOTSTRAP
     if use_recipes:
-        script_name = ENTRYPOINT_RECIPE
         exp_name = (
             wandb_experiment_name
             if wandb_experiment_name is not None
@@ -566,7 +572,6 @@ def main(
         )
 
     else:
-        script_name = ENTRYPOINT_PERFORMANCE
         if wandb_experiment_name is not None:
             # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
             # login node in this path: recipe imports belong in the training container.
@@ -632,10 +637,9 @@ def main(
         ]
     )
 
-    if nccl_ub:
-        custom_env_vars.update({"NCCL_NVLS_ENABLE": "1", "NCCL_CTA_POLICY": "1"})
-
     if kubeflow_namespace:
+        if enable_vboost or lock_gpu_freq is not None:
+            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -690,6 +694,11 @@ def main(
             packager=packager,
             enable_pct_binding=enable_pct_binding,
         )
+        configure_slurm_gpu_tuning(
+            executor,
+            enable_vboost=enable_vboost,
+            lock_gpu_freq=lock_gpu_freq,
+        )
 
     plugins = []
 
@@ -704,29 +713,9 @@ def main(
 
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
     # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
-    # arch/recipe/perf env stays in PerfEnvPlugin / the recipe.
+    # architecture and performance settings stay in the recipe.
     if csp is not None:
         plugins.append(_build_csp_plugin(csp))
-
-    if not use_recipes:
-        plugins.append(
-            PerfEnvPlugin(
-                enable_vboost=enable_vboost,
-                lock_gpu_freq=lock_gpu_freq,
-                moe_a2a_overlap=moe_a2a_overlap,
-                tp_size=tp_size,
-                pp_size=pp_size,
-                cp_size=cp_size,
-                ep_size=ep_size,
-                model_family_name=model_family_name,
-                model_recipe_name=model_recipe_name,
-                gpu=gpu,
-                compute_dtype=compute_dtype,
-                train_task=task,
-                config_variant=config_variant,
-                deterministic=deterministic,
-            )
-        )
 
     if enable_nsys:
         if nsys_trace is None:
@@ -1043,7 +1032,6 @@ if __name__ == "__main__":
         custom_env_vars=custom_env_vars,
         custom_srun_args=args.custom_srun_args,
         custom_bash_cmds=args.custom_bash_cmds,
-        nccl_ub=args.nccl_ub,
         pretrained_checkpoint=args.pretrained_checkpoint,
         save_dir=args.save_dir,
         num_gpus=args.num_gpus,
@@ -1090,7 +1078,6 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
-        deterministic=args.deterministic,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,

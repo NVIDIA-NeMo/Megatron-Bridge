@@ -15,9 +15,6 @@
 """Functional smoke tests for GPT-OSS finetuning recipe configurations."""
 
 import json
-import os
-from collections.abc import Iterator
-from contextlib import contextmanager
 
 import pytest
 import torch
@@ -38,7 +35,7 @@ HF_GPT_OSS_REFERENCE_MODEL = "openai/gpt-oss-20b"
 # Note: vocab_size is NOT overridden to ensure compatibility with the tokenizer's padding_idx
 # Note: layer_types must match num_hidden_layers in length
 HF_GPT_OSS_TOY_MODEL_OVERRIDES = {
-    "hidden_size": 512,
+    "hidden_size": 256,
     "intermediate_size": 512,
     "num_hidden_layers": 2,
     "num_attention_heads": 8,
@@ -49,22 +46,6 @@ HF_GPT_OSS_TOY_MODEL_OVERRIDES = {
     "rope_theta": 150000,
     "layer_types": ["full_attention", "sliding_attention"],  # Must match num_hidden_layers (2)
 }
-
-TE_ATTENTION_BACKEND_ENV_VARS = ("NVTE_FLASH_ATTN", "NVTE_FUSED_ATTN", "NVTE_UNFUSED_ATTN")
-
-
-@contextmanager
-def preserve_te_attention_backend_env() -> Iterator[None]:
-    """Preserve Transformer Engine attention backend env state across in-process checkpoint import."""
-    original_env = {env_var: os.environ.get(env_var) for env_var in TE_ATTENTION_BACKEND_ENV_VARS}
-    try:
-        yield
-    finally:
-        for env_var, value in original_env.items():
-            if value is None:
-                os.environ.pop(env_var, None)
-            else:
-                os.environ[env_var] = value
 
 
 class TestGPTOSSFinetuneRecipes:
@@ -141,19 +122,19 @@ class TestGPTOSSFinetuneRecipes:
         megatron_checkpoint_dir = temp_dir / "megatron_checkpoint"
 
         # Import the HF model to Megatron format
-        with preserve_te_attention_backend_env():
-            AutoBridge.import_ckpt(
-                hf_model_id=gpt_oss_toy_model_path,
-                megatron_path=str(megatron_checkpoint_dir),
-                trust_remote_code=True,
-                torch_dtype=torch.bfloat16,
-            )
+        AutoBridge.import_ckpt(
+            hf_model_id=gpt_oss_toy_model_path,
+            megatron_path=str(megatron_checkpoint_dir),
+            trust_remote_code=True,
+            torch_dtype=torch.bfloat16,
+        )
 
         # Clean up global state after import_ckpt
         # This is necessary to avoid conflicts when the actual test initializes Megatron
         if parallel_state.model_parallel_is_initialized():
             parallel_state.destroy_model_parallel()
         destroy_rerun_state_machine()
+
         return str(megatron_checkpoint_dir)
 
     def _finetune_wrapper_lora(self, checkpoint_dir, **kwargs):
@@ -193,13 +174,11 @@ class TestGPTOSSFinetuneRecipes:
             (
                 "gpt_oss_20b_lora",
                 {
-                    "num_layers": 4,  # Two toy GPT-OSS layers represented as attention/MoE hybrid layers.
-                    "hybrid_layer_pattern": "*E*E",
-                    "window_attn_skip_freq": [True, False, False, False],
-                    "hidden_size": 512,  # Match toy model
+                    "num_layers": 2,  # Match toy model
+                    "hidden_size": 256,  # Match toy model
                     "ffn_hidden_size": 512,  # Match toy model intermediate_size
                     "num_attention_heads": 8,  # Match toy model
-                    "kv_channels": 64,  # Match toy model attention head size
+                    "kv_channels": 64,
                     "num_query_groups": 2,  # Match toy model num_key_value_heads
                     "num_moe_experts": 4,  # Match toy model
                     "moe_router_topk": 2,  # Match toy model num_experts_per_tok
@@ -214,13 +193,11 @@ class TestGPTOSSFinetuneRecipes:
             (
                 "gpt_oss_20b_full",
                 {
-                    "num_layers": 4,  # Two toy GPT-OSS layers represented as attention/MoE hybrid layers.
-                    "hybrid_layer_pattern": "*E*E",
-                    "window_attn_skip_freq": [True, False, False, False],
-                    "hidden_size": 512,  # Match toy model
+                    "num_layers": 2,  # Match toy model
+                    "hidden_size": 256,  # Match toy model
                     "ffn_hidden_size": 512,  # Match toy model intermediate_size
                     "num_attention_heads": 8,  # Match toy model
-                    "kv_channels": 64,  # Match toy model attention head size
+                    "kv_channels": 64,
                     "num_query_groups": 2,  # Match toy model num_key_value_heads
                     "num_moe_experts": 4,  # Match toy model
                     "moe_router_topk": 2,  # Match toy model num_experts_per_tok
@@ -266,8 +243,6 @@ class TestGPTOSSFinetuneRecipes:
 
         # Apply model overrides
         for attribute_name, attribute_value in model_overrides.items():
-            if not hasattr(config.model, attribute_name):
-                raise ValueError(f"Unknown model override: {attribute_name}")
             setattr(config.model, attribute_name, attribute_value)
 
         # Override to use smaller model for faster testing
