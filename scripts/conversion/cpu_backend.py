@@ -46,6 +46,7 @@ def _find_run_config(checkpoint_path: Path) -> Path:
 def import_checkpoint(
     *,
     hf_model: str,
+    hf_revision: str | None,
     megatron_path: str,
     torch_dtype: str,
     trust_remote_code: bool,
@@ -55,6 +56,7 @@ def import_checkpoint(
 
     Args:
         hf_model: Hugging Face model ID or local path.
+        hf_revision: Hugging Face Hub revision to load.
         megatron_path: Destination Megatron checkpoint path.
         torch_dtype: Weight dtype name.
         trust_remote_code: Allow custom Hugging Face repository code.
@@ -63,12 +65,14 @@ def import_checkpoint(
     prepare_output_directory(megatron_path, overwrite=overwrite, source_paths=[hf_model])
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU import: %s -> %s", hf_model, megatron_path)
+    revision_kwargs = {"revision": hf_revision} if hf_revision is not None else {}
     AutoBridge.import_ckpt(
         hf_model_id=hf_model,
         megatron_path=megatron_path,
         torch_dtype=parse_dtype(torch_dtype),
         device_map="cpu",
         trust_remote_code=trusted,
+        **revision_kwargs,
     )
     logger.info("CPU import complete: %s", megatron_path)
 

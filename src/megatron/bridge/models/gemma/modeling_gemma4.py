@@ -1744,15 +1744,21 @@ class Gemma4RotaryEmbedding(RotaryEmbedding):
         super().__init__(
             kv_channels=global_kv_channels,
             rotary_base=rotary_base,
-            rotary_percent=global_rotary_percent,
+            rotary_percent=1.0,
             **global_kwargs,
         )
 
-        dim = int(global_kv_channels * global_rotary_percent)
+        # HF proportional RoPE rotates pairs across the full attention head. Represent the
+        # partial rotation with zero-frequency pairs instead of shortening the rotary width.
+        rope_angles = int(global_rotary_percent * global_kv_channels // 2)
+        nope_angles = global_kv_channels // 2 - rope_angles
         device = self.inv_freq.device
-        self.inv_freq = 1.0 / (
-            rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / global_kv_channels)
+        rotated = 1.0 / (
+            rotary_base
+            ** (torch.arange(0, 2 * rope_angles, 2, dtype=torch.float32, device=device) / global_kv_channels)
         )
+        non_rotated = torch.zeros(nope_angles, dtype=torch.float32, device=device)
+        self.inv_freq = torch.cat([rotated, non_rotated], dim=0)
 
         self.rope_local = RotaryEmbedding(
             rotary_base=rotary_base_local,

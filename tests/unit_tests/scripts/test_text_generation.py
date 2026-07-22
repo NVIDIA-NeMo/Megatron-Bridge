@@ -23,6 +23,7 @@ from enum import Enum
 from pathlib import Path
 
 import pytest
+from megatron.core.inference.sampling.torch_sampling import TorchSampling
 
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -287,3 +288,64 @@ def test_validate_sequence_length(text_generation):
     # exceeds -> raise
     with pytest.raises(ValueError, match="Longest prompt plus generation needs"):
         text_generation.validate_sequence_length(longest_prompt_tokens=4090, num_new_tokens=30, max_seq_length=4096)
+
+
+def _parse_sampling_params(text_generation, cli_args):
+    parser = text_generation.argparse.ArgumentParser()
+    text_generation.add_sampling_args(parser)
+    args = parser.parse_args(cli_args)
+    return text_generation.build_sampling_params(
+        temperature=args.temperature,
+        top_k=args.top_k,
+        top_p=args.top_p,
+        return_log_probs=args.return_log_probs,
+        skip_prompt_log_probs=args.skip_prompt_log_probs,
+        num_tokens_to_generate=args.max_new_tokens,
+        termination_id=args.termination_id,
+        top_n_logprobs=args.top_n_logprobs,
+        stop_words=args.stop_words,
+    )
+
+
+def test_top_p_sampling_is_compatible_with_default_cli_values(text_generation):
+    params = _parse_sampling_params(text_generation, ["--top_p", "0.9"])
+    logits = text_generation.torch.tensor([[1.0, 2.0, 3.0]])
+
+    sampled = TorchSampling.sample_from_logits(
+        logits,
+        params.kwargs["temperature"],
+        params.kwargs["top_k"],
+        params.kwargs["top_p"],
+        generator=text_generation.torch.Generator().manual_seed(0),
+    )
+
+    assert params.kwargs["top_k"] == 0
+    assert sampled.shape == (1,)
+
+
+def test_default_sampling_remains_greedy(text_generation):
+    params = _parse_sampling_params(text_generation, [])
+    logits = text_generation.torch.tensor([[1.0, 2.0, 3.0]])
+
+    sampled = TorchSampling.sample_from_logits(
+        logits,
+        params.kwargs["temperature"],
+        params.kwargs["top_k"],
+        params.kwargs["top_p"],
+        generator=text_generation.torch.Generator().manual_seed(0),
+    )
+
+    assert params.kwargs["top_k"] == 1
+    assert sampled.item() == 2
+
+
+def test_top_p_sampling_accepts_explicitly_disabled_top_k(text_generation):
+    params = _parse_sampling_params(text_generation, ["--top_p", "0.9", "--top_k", "0"])
+
+    assert params.kwargs["top_k"] == 0
+    assert params.kwargs["top_p"] == 0.9
+
+
+def test_sampling_rejects_positive_top_p_and_top_k(text_generation):
+    with pytest.raises(ValueError, match="cannot both be positive"):
+        _parse_sampling_params(text_generation, ["--top_p", "0.9", "--top_k", "2"])

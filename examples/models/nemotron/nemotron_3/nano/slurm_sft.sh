@@ -155,7 +155,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
         model.seq_length=$SEQ_LENGTH"
 
     CMD="uv run --no-sync python scripts/training/run_recipe.py"
-    CMD="$CMD --recipe ${MODEL_NAME}_finetune_config"
+    CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."

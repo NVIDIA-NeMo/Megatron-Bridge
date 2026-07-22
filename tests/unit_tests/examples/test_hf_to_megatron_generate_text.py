@@ -14,7 +14,7 @@
 
 import runpy
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
@@ -22,8 +22,14 @@ import torch
 
 _SCRIPT = Path(__file__).parents[3] / "examples" / "conversion" / "hf_to_megatron_generate_text.py"
 _SCRIPT_GLOBALS = runpy.run_path(_SCRIPT)
+_build_parser = _SCRIPT_GLOBALS["build_parser"]
 _decode_completion = _SCRIPT_GLOBALS["_decode_completion"]
+_hf_revision_kwargs = _SCRIPT_GLOBALS["_hf_revision_kwargs"]
+_maybe_gather_tensor_parallel_logits = _SCRIPT_GLOBALS["_maybe_gather_tensor_parallel_logits"]
+_run_megatron_forward = _SCRIPT_GLOBALS["_run_megatron_forward"]
+_text_forward_step = _SCRIPT_GLOBALS["text_forward_step"]
 _tokenize_prompt = _SCRIPT_GLOBALS["_tokenize_prompt"]
+_InferenceMode = _SCRIPT_GLOBALS["InferenceMode"]
 
 
 @pytest.mark.unit
@@ -66,3 +72,75 @@ def test_decode_completion_excludes_prompt_and_special_tokens() -> None:
 
     assert text == "The sky appears blue."
     tokenizer.decode.assert_called_once_with([20, 21], skip_special_tokens=True)
+
+
+@pytest.mark.unit
+def test_hf_revision_is_parsed_and_forwarded() -> None:
+    revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+
+    args = _build_parser().parse_args(["--hf_model_path", "org/model", "--hf-revision", revision])
+
+    assert args.hf_revision == revision
+    assert _hf_revision_kwargs(args.hf_revision) == {"revision": revision}
+    assert _hf_revision_kwargs(None) == {}
+
+
+@pytest.mark.unit
+def test_text_forward_step_passes_static_context_and_gather_request() -> None:
+    inference_context = object()
+    batch = {
+        "tokens": torch.tensor([[1, 2, 3]]),
+        "position_ids": torch.arange(3).unsqueeze(0),
+        "inference_context": inference_context,
+    }
+    model = MagicMock(return_value=torch.randn(1, 3, 16))
+
+    _text_forward_step(iter([batch]), model)
+
+    assert model.call_args.kwargs["inference_context"] is inference_context
+    assert model.call_args.kwargs["runtime_gather_output"] is True
+
+
+@pytest.mark.unit
+def test_generation_forward_activates_inference_mode() -> None:
+    forward = MagicMock(return_value="output")
+    context = MagicMock()
+
+    with patch.object(_InferenceMode, "active", return_value=context) as active:
+        result = _run_megatron_forward(forward, forward_only=True)
+
+    assert result == "output"
+    active.assert_called_once_with()
+    context.__enter__.assert_called_once_with()
+    context.__exit__.assert_called_once()
+    forward.assert_called_once_with(forward_only=True)
+
+
+@pytest.mark.unit
+def test_generation_skips_tp_gather_for_complete_vocabulary() -> None:
+    full_logits = torch.randn(1, 1, 128)
+
+    with patch.object(torch.distributed, "all_gather") as all_gather:
+        result = _maybe_gather_tensor_parallel_logits(full_logits, 128, 2, object())
+
+    assert result is full_logits
+    all_gather.assert_not_called()
+
+
+@pytest.mark.unit
+def test_generation_gathers_tp_vocabulary_shards() -> None:
+    local_logits = torch.arange(64, dtype=torch.float32).reshape(1, 1, 64)
+    tp_group = object()
+
+    def mock_all_gather(outputs, tensor, group):
+        assert group is tp_group
+        outputs[0].copy_(tensor)
+        outputs[1].copy_(tensor + 64)
+
+    with patch.object(torch.distributed, "all_gather", side_effect=mock_all_gather) as all_gather:
+        result = _maybe_gather_tensor_parallel_logits(local_logits, 128, 2, tp_group)
+
+    assert result.shape == (1, 1, 128)
+    assert torch.equal(result[..., :64], local_logits)
+    assert torch.equal(result[..., 64:], local_logits + 64)
+    all_gather.assert_called_once()

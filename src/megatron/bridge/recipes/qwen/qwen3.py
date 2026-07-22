@@ -38,10 +38,13 @@ from megatron.bridge.recipes.qwen.h100.qwen3 import (
     qwen3_8b_peft_1gpu_h100_bf16_config as qwen3_8b_peft_config,
 )
 from megatron.bridge.recipes.qwen.h100.qwen3 import (
-    qwen3_8b_pretrain_4gpu_h100_bf16_config as qwen3_8b_pretrain_config,
+    qwen3_8b_pretrain_16gpu_h100_bf16_config as qwen3_8b_pretrain_config,
 )
 from megatron.bridge.recipes.qwen.h100.qwen3 import (
     qwen3_8b_sft_4gpu_h100_bf16_config as qwen3_8b_sft_config,
+)
+from megatron.bridge.recipes.qwen.h100.qwen3 import (
+    qwen3_8b_sft_8gpu_h100_bf16_32k_config as qwen3_8b_sft_32k_config,
 )
 from megatron.bridge.recipes.qwen.h100.qwen3 import (
     qwen3_14b_peft_1gpu_h100_bf16_config as qwen3_14b_peft_config,
@@ -98,5 +101,6 @@ __all__ = [
     "qwen3_600m_sft_yarn_128k_config",
     "qwen3_8b_peft_config",
     "qwen3_8b_pretrain_config",
+    "qwen3_8b_sft_32k_config",
     "qwen3_8b_sft_config",
 ]

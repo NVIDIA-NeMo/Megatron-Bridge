@@ -305,10 +305,11 @@ jobs:
           REGISTRY_AWS: ${{ needs.pre-flight.outputs.registry }}
           REGISTRY_GCP: ${{ env.container-registry-gb200 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
+          DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
           AWS_ENTRY=$(jq -nc --arg registry "$REGISTRY_AWS" --arg runner "${RUNNER_PREFIX}" \
             '{"cloud": "aws", "registry": $registry, "runner": $runner}')
-          if [[ "$IS_MEMBER" == "true" ]]; then
+          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
             GCP_ENTRY=$(jq -nc --arg registry "$REGISTRY_GCP" --arg runner "nemo-ci-gcp-gpu-x2" \
               '{"cloud": "gcp", "registry": $registry, "runner": $runner}')
             MATRIX=$(jq -nc --argjson aws "$AWS_ENTRY" --argjson gcp "$GCP_ENTRY" \
@@ -410,10 +411,24 @@ jobs:
           # digest on every cold build. Listing more than one cache-from donor lets
           # BuildKit chain from a conflicting copy of such a layer and miss every
           # layer downstream — a ~40 min cold rebuild even when a warm cache exists.
-          # So read EXACTLY ONE donor: PR builds integrate into main, so they seed
-          # from main; main/branch builds seed from their own chain.
+          # So we still read EXACTLY ONE donor; only WHICH donor changes below.
+          #
+          # A PR's first build has no cache of its own and seeds from main. Every
+          # LATER push on the same PR seeds from the PR's OWN buildcache instead of
+          # main: a PR that touches an early layer (Dockerfile.ci, pyproject.toml,
+          # uv.lock, the MCore stubs) never has those layers in main-buildcache, so
+          # seeding from main cold-rebuilt the ~40 min dependency layer on EVERY
+          # push. Seeding from the PR's own cache reuses the layers that same PR
+          # already built and pushed to ${KEY}-buildcache. This stays single-donor,
+          # so the non-reproducible-DeepEP cascade above cannot happen. The probe
+          # falls back to main on any error, so this never fails the build.
           if [[ -n "$PR_NUMBER" && "${{ github.ref }}" != "refs/heads/main" ]]; then
-            SEED="main"
+            PR_CACHE="${{ matrix.registry }}/megatron-bridge:${KEY}-buildcache"
+            if docker buildx imagetools inspect "$PR_CACHE" > /dev/null 2>&1; then
+              SEED="$KEY"
+            else
+              SEED="main"
+            fi
           else
             SEED="$KEY"
           fi
@@ -782,6 +797,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
     steps:
       - uses: actions/checkout@v6
         with:
@@ -843,6 +859,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L0 L1 L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
     environment: ${{ contains(needs.pre-flight.outputs.registry, 'azure') && 'nemo-ci' || '' }}
@@ -890,6 +907,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
       && (github.ref == 'refs/heads/main' || github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || github.event_name == 'merge_group' || needs.configure.outputs.needs_more_tests == 'true' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L1 L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
@@ -938,6 +956,7 @@ jobs:
       )
       && !cancelled()
       && needs.pre-flight.outputs.is_member == 'true'
+      && vars.DISABLE_GB200_TESTS != 'true'
       && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch' || needs.configure.outputs.full_test_suite == 'true')
       && (github.event.inputs.test_suite == '' || github.event.inputs.test_suite == 'all' || github.event.inputs.test_suite == 'functional-only' || contains('L2', github.event.inputs.test_suite))
     name: gb200_${{ matrix.script }}
@@ -970,7 +989,7 @@ jobs:
           runner: ${{ matrix.runner }}
 
   cicd-functional-tests-gb200-flaky:
-    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true'
+    if: github.event_name == 'workflow_dispatch' && github.event.inputs.test_suite == 'all' && needs.pre-flight.outputs.is_member == 'true' && vars.DISABLE_GB200_TESTS != 'true'
     strategy:
       fail-fast: false
       max-parallel: 16
@@ -1038,6 +1057,7 @@ jobs:
           EXPECT_L1: ${{ needs.configure.outputs.expect_l1 }}
           EXPECT_L2: ${{ needs.configure.outputs.expect_l2 }}
           IS_MEMBER: ${{ needs.pre-flight.outputs.is_member }}
+          DISABLE_GB200_TESTS: ${{ vars.DISABLE_GB200_TESTS }}
         run: |
           # NOTE: `gh run view` must NOT be wrapped in `|| echo 0`. Doing so swallows
           # any failure (e.g. "failed to determine base repo" when git context is
@@ -1064,7 +1084,7 @@ jobs:
           check_tier_skips "L0" "$EXPECT_L0"
           check_tier_skips "L1" "$EXPECT_L1"
           check_tier_skips "L2" "$EXPECT_L2"
-          if [[ "$IS_MEMBER" == "true" ]]; then
+          if [[ "$IS_MEMBER" == "true" && "$DISABLE_GB200_TESTS" != "true" ]]; then
             check_tier_skips "gb200_L0" "$EXPECT_L0"
             check_tier_skips "gb200_L1" "$EXPECT_L1"
             check_tier_skips "gb200_L2" "$EXPECT_L2"

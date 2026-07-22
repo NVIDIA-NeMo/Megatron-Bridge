@@ -956,6 +956,16 @@ def infer_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundar
             ("<|im_end|>",),
             {role: f"<|im_start|>{role}\n" for role in ("system", "developer", "user", "tool")},
         ),
+        (
+            ("<|im_assistant|>", "<|im_user|>", "<|im_system|>", "<|im_middle|>", "<|im_end|>"),
+            "<|im_assistant|>assistant<|im_middle|>",
+            "<|im_end|>",
+            (),
+            {
+                "system": "<|im_system|>system<|im_middle|>",
+                "user": "<|im_user|>user<|im_middle|>",
+            },
+        ),
         (("<|turn>model", "<turn|>"), "<|turn>model\n", "<turn|>", (), {}),
         (("<start_of_turn>model", "<end_of_turn>"), "<start_of_turn>model\n", "<end_of_turn>", (), {}),
         (
