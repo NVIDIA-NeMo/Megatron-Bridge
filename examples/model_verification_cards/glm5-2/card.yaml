@@ -1,0 +1,337 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: glm5_2
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. GLM-5.2 has landed Bridge support and public H100 and GB200 128K SFT
+  recipes. Earlier H100 synthetic long-context runs exercised BF16
+  TP1/PP13/CP32/EP32 with cuDNN DSA; the tested variants covered sparse indexer
+  loss and MTP-enabled execution, but the configured 500-step workloads did not
+  finish. Earlier GB200 SFT runs are recorded only as unverified reference
+  targets. All card items remain unverified under the model-verification
+  completion gates.
+verification_index:
+  model_level:
+    unverified: all
+  training:
+    GB200:
+      unverified: all
+    H100:
+      unverified: all
+model:
+  hf_id: zai-org/GLM-5.2
+  hf_revision: 4d67f66cc64d3219133b767c253b2ad1425c6c88  # pragma: allowlist secret
+  architecture: GlmMoeDsaForCausalLM
+  min_transformers_version: "5.12.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: 40a49d83172b2f4d1d8becd6d426424836707eac  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model zai-org/GLM-5.2
+      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --megatron-path work/model-verification/glm5-2/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: >
+      Verification requires a successful import, checkpoint reload, and exact
+      key, shape, dtype, and value comparison against the pinned HF revision.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 8 --gpus-per-node 8
+      --hf-model zai-org/GLM-5.2
+      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --megatron-path work/model-verification/glm5-2/imported-megatron
+      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 32
+    last_verified: null
+    expected_result: >
+      Verification requires a successful distributed import, checkpoint reload,
+      and exact key, shape, dtype, and value comparison against the pinned HF
+      revision. Prior checkpoint creation did not include this full comparison.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model zai-org/GLM-5.2
+      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --megatron-path work/model-verification/glm5-2/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/glm5-2/cpu-hf-export
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: >
+      Verification requires strict Transformers reload and exact exported key,
+      shape, dtype, and value comparison against the pinned HF revision.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 8 --gpus-per-node 8
+      --hf-model zai-org/GLM-5.2
+      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --megatron-path work/model-verification/glm5-2/imported-megatron/iter_0000000
+      --hf-path work/model-verification/glm5-2/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 2 --pp 1 --ep 32
+    last_verified: null
+    expected_result: >
+      Verification requires successful strict export, Transformers reload, and
+      exact key, shape, dtype, and value comparison against the pinned HF
+      revision.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No completed pinned-revision HF and Megatron logit-correlation run is
+      recorded for GLM-5.2.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No completed pair of deterministic Megatron generation runs with an exact
+      token count and byte-identical completion is recorded for GLM-5.2.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        No bounded real-data GLM-5.2 pretraining run with a completed schedule,
+        persisted runtime config, and reloadable checkpoints is recorded.
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        GLM-5.2 pretraining verification has not been recorded for this card.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The available runs used synthetic 128K data for long-context support and
+        performance testing; they do not verify bounded real-data full SFT.
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 32
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4
+        --recipe glm52_sft_192gpu_gb200_bf16_config --mode sft
+        --pretrained_checkpoint work/model-verification/glm5-2/imported-megatron/iter_0000000
+        --max_steps 50
+        --save_dir work/model-verification/glm5-2/sft-cudnn-checkpoints
+        --save_interval 50
+        model.dsa_kernel_backend=cudnn
+        model.dsa_indexer_loss_coeff=0.001
+        model.dsa_indexer_use_sparse_loss=true
+        checkpoint.load=null logger.log_interval=1 logger.log_throughput=true
+      last_verified: null
+      metrics:
+        initial_loss: 9.339188
+        final_loss: 1.372691
+        last_10_steps_step_time_ms_avg: 138212.340
+        last_10_steps_model_tflops_per_gpu_avg: 350.450
+      expected_result: >
+        Reference target from previous GLM-5.2 GB200 SFT runs: the TP1/PP6/CP32
+        EP32/ETP1 cuDNN sparse-indexer-loss configuration completed 50 steps
+        with finite losses, final grad norm 7243.127, and tail-10 throughput
+        350.450 TFLOP/s/GPU. Re-run with the public launcher before marking
+        this item verified.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        No completed full-SFT checkpoint export, strict Transformers reload, and
+        repeated deterministic HF inference result is recorded.
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        Export and deterministic HF reload/inference from the GLM-5.2 SFT
+        checkpoint have not been run for this card.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 32
+        moe_dispatcher: deepep
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A portable public command for the prior packed synthetic workload is not
+        yet recorded. Verification requires a bounded run on H100 with
+        TP1/PP13/VPP2/CP32/EP32/ETP1, GBS/MBS 520/1, offline packed 128K THD
+        sequences, cuDNN DSA, sparse indexer loss coefficient 0.001, and one MTP
+        layer. Loss must remain finite with no skipped or NaN iterations and all
+        four terminal-window metrics must be recorded. The sparse-loss-on
+        reference reached 16 of 500 steps, while the later MTP-enabled loss-off
+        reference reached 19 of 500; neither completed its configured workload,
+        so neither satisfies this gate.
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 32
+        moe_dispatcher: hybridep
+      command: >
+        ./scripts/training/train.sh --wait --nodes 48 --gpus-per-node 4
+        --recipe glm52_sft_192gpu_gb200_bf16_config --mode sft
+        --pretrained_checkpoint work/model-verification/glm5-2/imported-megatron/iter_0000000
+        --max_steps 50
+        --save_dir work/model-verification/glm5-2/sft-long-context-cudnn-checkpoints
+        --save_interval 50
+        model.dsa_kernel_backend=cudnn
+        model.dsa_indexer_loss_coeff=0.001
+        model.dsa_indexer_use_sparse_loss=true
+        checkpoint.load=null logger.log_interval=1 logger.log_throughput=true
+      last_verified: null
+      metrics:
+        initial_loss: 9.339188
+        final_loss: 1.372691
+        last_10_steps_step_time_ms_avg: 138212.340
+        last_10_steps_model_tflops_per_gpu_avg: 350.450
+      expected_result: >
+        Reference target from previous GLM-5.2 GB200 long-context SFT runs: the
+        128K packed-THD TP1/PP6/CP32 EP32/ETP1 cuDNN sparse-indexer-loss
+        configuration completed 50 steps with finite losses, final grad norm
+        7243.127, and tail-10 throughput 350.450 TFLOP/s/GPU. A longer cuDNN
+        trajectory reached 500 steps and ended with LM loss 2.720561e-4 and
+        grad norm 0.167 on its logged dataset. Re-run with the public launcher
+        before marking this item verified.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        No bounded GLM-5.2 PEFT run with a verified trainable-parameter set,
+        completed schedule, and reloadable adapter checkpoint is recorded.
+    GB200:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        GLM-5.2 PEFT verification has not been recorded for this card.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: null
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: false
+      expected_result: >
+        No direct continuation from a GLM-5.2 pretraining checkpoint has been
+        compared with an uninterrupted reference at the required loss
+        sentinels.
+    GB200:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        Checkpoint-resume verification depends on a completed GLM-5.2 pretrain
+        reference and has not been run for this card.
