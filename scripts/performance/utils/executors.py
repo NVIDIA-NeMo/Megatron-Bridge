@@ -253,6 +253,8 @@ def slurm_executor(
     network: str = None,
     custom_bash_cmds: List[List[str]] = None,
     custom_post_bash_cmds: List[List[str]] = None,
+    host_pre_hook: Optional[str] = None,
+    host_post_hook: Optional[str] = None,
     additional_slurm_params: Dict[str, Any] = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -308,6 +310,10 @@ def slurm_executor(
         perf_env["HF_HUB_OFFLINE"] = "1"
 
     perf_env.update(custom_env_vars)
+    if host_pre_hook is not None:
+        perf_env["NEMO_CLUSTERDIAG_HOST_PRE_HOOK"] = host_pre_hook
+    if host_post_hook is not None:
+        perf_env["NEMO_CLUSTERDIAG_HOST_POST_HOOK"] = host_post_hook
     mounts.extend(custom_mounts)
 
     # add --segment flag to sbatch if job uses GB200.
@@ -338,6 +344,11 @@ def slurm_executor(
         },
     )
 
+    setup_lines = _host_hook_setup_lines(
+        host_pre_hook=host_pre_hook,
+        host_post_hook=host_post_hook,
+    )
+
     executor = run.SlurmExecutor(
         account=account,
         partition=partition,
@@ -357,10 +368,74 @@ def slurm_executor(
         segment=segment,
         network=network,
         launcher=launcher,
+        setup_lines=setup_lines or None,
         additional_parameters=additional_slurm_params,
     )
 
     return executor
+
+
+def _host_hook_srun(phase: str, hook_env: str) -> str:
+    """Render one non-containerized, one-task-per-node host hook step."""
+    separator = " \\" + "\n  "
+    return separator.join(
+        [
+            "srun",
+            '--nodes="${SLURM_NNODES}"',
+            '--ntasks="${SLURM_NNODES}"',
+            "--ntasks-per-node=1",
+            "--wait=60",
+            "--kill-on-bad-exit=1",
+            f'--output="${{NEMO_CLUSTERDIAG_ARTIFACT_DIR}}/host-hooks/{phase}-%N.out"',
+            f'--error="${{NEMO_CLUSTERDIAG_ARTIFACT_DIR}}/host-hooks/{phase}-%N.err"',
+            f'bash "${{{hook_env}}}"',
+        ]
+    )
+
+
+def _host_hook_setup_lines(
+    *,
+    host_pre_hook: Optional[str],
+    host_post_hook: Optional[str],
+) -> str:
+    """Render batch-shell orchestration for optional host pre/post hooks."""
+    if host_pre_hook is None and host_post_hook is None:
+        return ""
+
+    lines = [
+        ': "${NEMO_CLUSTERDIAG_ARTIFACT_DIR:?required for host hooks}"',
+        'mkdir -p "${NEMO_CLUSTERDIAG_ARTIFACT_DIR}/host-hooks"',
+    ]
+    if host_post_hook is not None:
+        post_srun = _host_hook_srun("post", "NEMO_CLUSTERDIAG_HOST_POST_HOOK")
+        lines.extend(
+            [
+                "_nemo_run_host_post_hook() {",
+                '  local prior_rc="$?"',
+                "  local post_rc=0",
+                "  trap - EXIT",
+                "  set +e",
+                *(f"  {line}" for line in post_srun.splitlines()),
+                '  post_rc="$?"',
+                '  if [ "${prior_rc}" -ne 0 ]; then',
+                '    exit "${prior_rc}"',
+                "  fi",
+                '  exit "${post_rc}"',
+                "}",
+                "trap _nemo_run_host_post_hook EXIT",
+            ]
+        )
+    if host_pre_hook is not None:
+        lines.extend(
+            [
+                _host_hook_srun("pre", "NEMO_CLUSTERDIAG_HOST_PRE_HOOK"),
+                'HOST_PRE_RC="$?"',
+                'if [ "${HOST_PRE_RC}" -ne 0 ]; then',
+                '  exit "${HOST_PRE_RC}"',
+                "fi",
+            ]
+        )
+    return "\n".join(lines)
 
 
 def kubeflow_executor(

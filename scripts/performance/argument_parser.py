@@ -518,6 +518,18 @@ def parse_cli_args():
         default=None,
     )
     slurm_args.add_argument(
+        "--host_pre_hook",
+        type=str,
+        help="Shared absolute path to a script run once per allocated node outside the container before training",
+        default=None,
+    )
+    slurm_args.add_argument(
+        "--host_post_hook",
+        type=str,
+        help="Shared absolute path to a script run once per allocated node outside the container after training",
+        default=None,
+    )
+    slurm_args.add_argument(
         "--gres",
         type=str,
         help="Slurm generic resources to request (e.g., 'gpu:4').",
