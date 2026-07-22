@@ -44,6 +44,10 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
 
+    # Performance recipes benchmark a fixed model shape. Synthetic or runtime
+    # tokenizers must not resize the embedding and output layers during setup.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
     cfg.checkpoint.save = None
 
     cfg.logger.log_interval = 1

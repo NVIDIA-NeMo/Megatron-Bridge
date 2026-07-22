@@ -119,7 +119,7 @@ class Gemma3ModelProvider(GPTModelProvider):
         if hasattr(model, "embedding"):
             model.embedding = Gemma3LanguageModelEmbedding(
                 config=self,
-                vocab_size=self.vocab_size,
+                vocab_size=model.vocab_size,
                 max_sequence_length=self.seq_length,
                 position_embedding_type=self.position_embedding_type,
                 scatter_to_sequence_parallel=self.scatter_embedding_sequence_parallel,

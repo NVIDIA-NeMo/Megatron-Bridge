@@ -267,6 +267,10 @@ def _prepare_recipe(args, cli_overrides: list[str], *, environment_only: bool):
         train_task=args.task,
         wandb_experiment_name=args.wandb_experiment_name,
     )
+    # Performance runs preserve the recipe's fixed benchmark model shape by
+    # default. Apply this before CLI overrides so an explicit Hydra setting
+    # retains final precedence.
+    recipe.tokenizer.use_tokenizer_vocab_size = False
     base_env_vars = dict(recipe.env_vars)
 
     # 2. User overrides from argparse followed by Hydra.

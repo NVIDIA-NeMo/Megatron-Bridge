@@ -138,11 +138,12 @@ def test_bootstrap_exec_preserves_argv_and_environment(monkeypatch):
     assert environment is not bootstrap.os.environ
 
 
-def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
+def test_compatibility_overrides_preserve_legacy_manual_gc_and_model_shape_defaults():
     from utils.overrides import _set_common_perf_overrides
 
     recipe = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
+        tokenizer=SimpleNamespace(use_tokenizer_vocab_size=True),
         checkpoint=SimpleNamespace(save="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
         ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True),
@@ -159,6 +160,7 @@ def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
 
     assert recipe.train.manual_gc is True
     assert recipe.train.manual_gc_interval == 100
+    assert recipe.tokenizer.use_tokenizer_vocab_size is False
 
 
 def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
