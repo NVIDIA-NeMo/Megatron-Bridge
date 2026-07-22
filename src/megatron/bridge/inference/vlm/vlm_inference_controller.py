@@ -113,6 +113,11 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
 
     def tokenize_prompt(self, prompt: str, image):
         """Tokenize with the HF processor (image + text; same idea as hf_to_megatron_generate_vlm)."""
+        if self.processor is None:
+            if image is not None:
+                raise ValueError("A processor is required for Qwen VLM image prompts.")
+            return self.tokenizer.tokenize(prompt), None
+
         if image is None:
             inputs = self.processor(text=[prompt], return_tensors="pt")
         else:

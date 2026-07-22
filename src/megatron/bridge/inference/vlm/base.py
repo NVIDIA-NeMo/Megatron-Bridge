@@ -117,6 +117,7 @@ def setup_model_and_tokenizer(
         inference_max_seq_length=inference_max_seq_length,
         inference_max_batch_size=inference_max_batch_size,
     )
+    inference_wrapped_model.processor = processor
 
     return inference_wrapped_model, processor
 
@@ -193,6 +194,8 @@ def generate(
     """
 
     if isinstance(wrapped_model, QwenVLInferenceWrapper):
+        if processor is None:
+            processor = getattr(wrapped_model, "processor", None)
         text_generation_controller = QwenVLTextGenerationController(
             inference_wrapped_model=wrapped_model,
             tokenizer=tokenizer,

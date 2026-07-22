@@ -112,6 +112,7 @@ class TestSetupModelAndTokenizer:
         # Verify return values
         assert result_model == mock_wrapped_model
         assert result_processor == mock_processor
+        assert result_model.processor is mock_processor
 
     @patch("megatron.bridge.inference.vlm.base.get_hf_model_id_from_checkpoint", return_value=None)
     @patch("megatron.bridge.inference.vlm.base.print_rank_0")
@@ -320,6 +321,64 @@ class TestSetupInferenceWrapper:
 
 class TestGenerate:
     """Tests for generate function."""
+
+    @patch("megatron.bridge.inference.vlm.base.VLMEngine")
+    def test_generate_qwen_uses_wrapped_processor_by_default(self, mock_engine, mock_tokenizer, mock_image_processor):
+        mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
+        mock_processor = MagicMock()
+        mock_processor.return_value = {
+            "input_ids": torch.tensor([[1, 2, 3]]),
+            "pixel_values": torch.tensor([1]),
+            "image_grid_thw": torch.tensor([2]),
+        }
+        mock_wrapper.processor = mock_processor
+
+        def tokenize_first_prompt(*, prompts, images, sampling_params):
+            controller = mock_engine.call_args.kwargs["text_generation_controller"]
+            return controller.tokenize_prompt(prompts[0], images[0])
+
+        mock_engine.return_value.generate.side_effect = tokenize_first_prompt
+
+        with patch(
+            "megatron.bridge.inference.vlm.vlm_inference_controller.TextGenerationController.__init__",
+            return_value=None,
+        ):
+            result = generate(
+                wrapped_model=mock_wrapper,
+                tokenizer=mock_tokenizer,
+                image_processor=mock_image_processor,
+                prompts=["test"],
+                images=["image"],
+            )
+
+        assert result[0] == [1, 2, 3]
+        mock_processor.assert_called_once_with(text=["test"], images="image", padding=True, return_tensors="pt")
+
+    @patch("megatron.bridge.inference.vlm.base.VLMEngine")
+    def test_generate_qwen_text_only_without_processor(self, mock_engine, mock_tokenizer, mock_image_processor):
+        mock_wrapper = MagicMock(spec=QwenVLInferenceWrapper)
+
+        def tokenize_first_prompt(*, prompts, images, sampling_params):
+            controller = mock_engine.call_args.kwargs["text_generation_controller"]
+            image = images[0] if images is not None else None
+            return controller.tokenize_prompt(prompts[0], image)
+
+        mock_engine.return_value.generate.side_effect = tokenize_first_prompt
+
+        with patch(
+            "megatron.bridge.inference.vlm.vlm_inference_controller.TextGenerationController.__init__",
+            return_value=None,
+        ):
+            result = generate(
+                wrapped_model=mock_wrapper,
+                tokenizer=mock_tokenizer,
+                image_processor=mock_image_processor,
+                prompts=["test"],
+                images=None,
+            )
+
+        assert result == ([1, 2, 3], None)
+        mock_tokenizer.encode.assert_called_once_with("test", add_special_tokens=False)
 
     @patch("megatron.bridge.inference.vlm.base.VLMEngine")
     @patch("megatron.bridge.inference.vlm.base.QwenVLTextGenerationController")
