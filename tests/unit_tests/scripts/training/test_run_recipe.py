@@ -47,6 +47,7 @@ def _load_module():
         "load_recipe",
         "run_config",
         "sync_finetuning_cp_invariants",
+        "sync_model_pipeline_layout",
         "sync_offline_packing_alignment",
         "sync_model_dataset_sequence_length",
     ):
@@ -56,6 +57,7 @@ def _load_module():
     recipe_runner.apply_runtime_environment.side_effect = lambda config: config
     recipe_runner.bootstrap_recipe_environment.side_effect = lambda config, **_: config
     recipe_runner.sync_finetuning_cp_invariants.side_effect = lambda config, **_: config
+    recipe_runner.sync_model_pipeline_layout.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
     recipe_runner.sync_model_dataset_sequence_length.side_effect = lambda config: config
     recipe_runner.load_forward_step.return_value = object()
@@ -222,6 +224,59 @@ def test_full_recipe_uses_library_recipe_and_default_llm_step():
         peft_scheme=None,
     )
     handles.recipe_runner.load_forward_step.assert_called_once_with("llm_step", mode="pretrain")
+
+
+def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
+    module, handles = _load_module()
+    default_layout = [[f"stage-{index}"] for index in range(16)]
+    overridden_layout = [[f"stage-{index}"] for index in range(4)]
+    config = SimpleNamespace(
+        model=SimpleNamespace(
+            pipeline_model_parallel_size=16,
+            virtual_pipeline_model_parallel_size=None,
+            pipeline_model_parallel_layout=default_layout,
+            _pipeline_model_parallel_layout_builder=lambda pp, vp: overridden_layout
+            if (pp, vp) == (4, 1)
+            else default_layout,
+        )
+    )
+    handles.recipe_runner.load_recipe.return_value = config
+
+    def apply_override(current_config, overrides):
+        assert overrides == [
+            "model.pipeline_model_parallel_size=4",
+            "model.virtual_pipeline_model_parallel_size=1",
+        ]
+        current_config.model.pipeline_model_parallel_size = 4
+        current_config.model.virtual_pipeline_model_parallel_size = 1
+        return current_config
+
+    def refresh_layout(current_config, *, cli_overrides):
+        assert cli_overrides == [
+            "model.pipeline_model_parallel_size=4",
+            "model.virtual_pipeline_model_parallel_size=1",
+        ]
+        model = current_config.model
+        model.pipeline_model_parallel_layout = model._pipeline_model_parallel_layout_builder(
+            model.pipeline_model_parallel_size,
+            model.virtual_pipeline_model_parallel_size,
+        )
+        return current_config
+
+    def validate_layout(*, config, **_):
+        model = config.model
+        detected_vp = len(model.pipeline_model_parallel_layout) // model.pipeline_model_parallel_size
+        assert detected_vp == model.virtual_pipeline_model_parallel_size, (
+            "virtual_pipeline_model_parallel_size conflicts with the pipeline layout"
+        )
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_override
+    handles.recipe_runner.sync_model_pipeline_layout.side_effect = refresh_layout
+    handles.recipe_runner.run_config.side_effect = validate_layout
+
+    module.main(["--recipe", "kimi_k2_pretrain_config", "-pp", "4", "-vp", "1"])
+
+    assert config.model.pipeline_model_parallel_layout == overridden_layout
 
 
 @pytest.mark.parametrize(
