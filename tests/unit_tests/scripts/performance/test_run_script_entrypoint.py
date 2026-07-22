@@ -25,7 +25,6 @@ if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
 import bootstrap
-import perf_plugins
 import run_recipe
 import run_script
 import setup_experiment
@@ -163,35 +162,26 @@ def test_compatibility_overrides_preserve_legacy_manual_gc_defaults():
     assert recipe.train.manual_gc_interval == 100
 
 
-def test_gpu_tuning_plugin_uses_assigned_slurm_job_dir():
-    executor = perf_plugins.SlurmExecutor(
-        account="test",
+def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
+    executor = SimpleNamespace(
         nodes=2,
-        tunnel=perf_plugins.run.LocalTunnel(job_dir="/experiments"),
+        tunnel=SimpleNamespace(job_dir="/job/dir"),
         setup_lines="existing setup\n",
     )
-    executor.assign(
-        "name_123",
-        "/experiments/name/name_123",
-        task_id="task",
-        task_dir="task",
-    )
-    plugin = perf_plugins.SlurmGpuTuningPlugin(
+
+    utils.configure_slurm_gpu_tuning(
+        executor,
         enable_vboost=True,
         lock_gpu_freq=1200,
         peak_mem_clk=2600,
     )
-    plugin.setup(SimpleNamespace(), executor)
 
     assert executor.setup_lines.startswith("existing setup\n")
     assert "sudo nvidia-smi boost-slider --vboost 1" in executor.setup_lines
     assert "--ntasks=2" in executor.setup_lines
     assert "sudo nvidia-smi -lgc 1200" in executor.setup_lines
-    assert (
-        "srun --ntasks=2 --ntasks-per-node=1 "
-        "--output /experiments/name/name_123/task/peak_mem_clock.out" in executor.setup_lines
-    )
-    assert "--error /experiments/name/name_123/task/peak_mem_clock.err" in executor.setup_lines
+    assert "srun --ntasks=2 --ntasks-per-node=1 --output /job/dir/peak_mem_clock.out" in executor.setup_lines
+    assert "--error /job/dir/peak_mem_clock.err" in executor.setup_lines
     assert "sudo nvidia-smi -lmc 2600,2600" in executor.setup_lines
 
 
