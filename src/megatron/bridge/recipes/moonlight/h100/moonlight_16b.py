@@ -290,9 +290,9 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the bounded-convergence pre-training config for Moonlight-16B.
 
     Recommended parallelism: TP=1, PP=1, CP=1, EP=16 on 16 H100 GPUs.
-    The 100-step schedule uses the same batch, accumulation, precision, and
-    optimizer fingerprint as ``qwen3_30b_a3b_convergence_v1`` while retaining
-    Moonlight's model-native routing configuration.
+    The 100-step schedule uses GBS/MBS 1024/2 with 32-way gradient
+    accumulation, precision-aware bf16 optimizer state, and Moonlight's
+    model-native routing configuration.
 
     Returns:
         ConfigContainer with the Moonlight-16B pre-training contract.
@@ -308,9 +308,18 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
 
+    # The 16-GPU topology fits without activation recompute at MBS2. Matching
+    # the DeepSeek V3 precision-aware optimizer state reduces accumulation and
+    # optimizer overhead while keeping fp32 main parameters.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.dataset.random_seed = 1234
     cfg.rng.seed = 1234
     cfg.scheduler.lr_warmup_iters = 40
@@ -329,9 +338,9 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.use_distributed_optimizer = True
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     cfg.scheduler.start_weight_decay = 0.033
     cfg.scheduler.end_weight_decay = 0.033
@@ -504,6 +513,22 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
     cfg.model.vocab_size = _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE
 
     cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
+
+    # The model fits without activation recompute at this topology. Router
+    # fusion and bf16 optimizer state reduce otherwise exposed execution and
+    # communication overhead while retaining fp32 main parameters.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
 
     # Plain all-to-all is the correctness-first single-node EP8 path. Clear
     # inactive flex-dispatcher settings so the execution fingerprint is exact.
@@ -775,9 +800,11 @@ def moonlight_16b_peft_4gpu_h100_bf16_config(
 ) -> ConfigContainer:
     """Return the bounded-convergence PEFT config for Moonlight-16B.
 
-    Recommended parallelism is TP=4, PP=1, CP=1, EP=4 on 4 H100 GPUs.
-    The default LoRA keeps the base model frozen and targets only the attention
-    QKV and output projections with rank 8, alpha 16, and zero dropout.
+    Recommended parallelism is TP=1, PP=1, CP=1, EP=4 on 4 H100 GPUs. This
+    keeps sequence parallelism disabled and uses dense DP=4 with eight gradient
+    accumulation steps. The default LoRA keeps the base model frozen and
+    targets only the attention QKV and output projections with rank 8, alpha
+    16, and zero dropout.
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
@@ -787,18 +814,21 @@ def moonlight_16b_peft_4gpu_h100_bf16_config(
     """
     cfg = moonlight_16b_peft_2gpu_h100_bf16_config(peft_scheme=peft_scheme)
 
-    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
-    cfg.model.vocab_size = (
-        (_MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE + cfg.model.tensor_model_parallel_size - 1)
-        // cfg.model.tensor_model_parallel_size
-    ) * cfg.model.tensor_model_parallel_size
+    cfg.model.sequence_parallel = False
+    cfg.model.vocab_size = _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
 
     seq_length = 2048
     cfg.model.seq_length = seq_length
