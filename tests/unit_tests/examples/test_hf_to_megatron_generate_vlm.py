@@ -17,6 +17,7 @@ import sys
 import types
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 import torch
@@ -103,3 +104,57 @@ def test_hf_revision_kwargs(vlm_generation) -> None:
 
     assert vlm_generation._hf_revision_kwargs(revision) == {"revision": revision}
     assert vlm_generation._hf_revision_kwargs(None) == {}
+
+
+@pytest.mark.unit
+def test_checkpoint_load_forwards_float32_pipeline_dtype(vlm_generation, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Checkpoint loading should use the provider precision in pipeline overrides."""
+
+    class StopAfterLoad(RuntimeError):
+        """Stop the example after capturing the checkpoint-load call."""
+
+    provider = SimpleNamespace(
+        params_dtype=torch.float32,
+        finalize=MagicMock(),
+        initialize_model_parallel=MagicMock(),
+    )
+    bridge = MagicMock()
+    bridge.to_megatron_provider.return_value = provider
+    bridge.load_megatron_model.side_effect = StopAfterLoad
+    monkeypatch.setattr(
+        vlm_generation,
+        "AutoConfig",
+        SimpleNamespace(from_pretrained=lambda *args, **kwargs: SimpleNamespace(model_type="gemma4")),
+    )
+    monkeypatch.setattr(
+        vlm_generation,
+        "AutoBridge",
+        SimpleNamespace(from_hf_pretrained=lambda *args, **kwargs: bridge),
+    )
+    args = SimpleNamespace(
+        tp=4,
+        pp=2,
+        ep=1,
+        etp=1,
+        hf_model_path="google/gemma-4-26B-A4B-it",
+        hf_revision=None,
+        megatron_model_path="checkpoint",
+        trust_remote_code=False,
+        pp_layout=None,
+    )
+
+    with pytest.raises(StopAfterLoad):
+        vlm_generation.main(args)
+
+    assert provider.pipeline_dtype is torch.float32
+    bridge.load_megatron_model.assert_called_once_with(
+        "checkpoint",
+        mp_overrides={
+            "tensor_model_parallel_size": 4,
+            "pipeline_model_parallel_size": 2,
+            "expert_model_parallel_size": 1,
+            "expert_tensor_parallel_size": 1,
+            "pipeline_dtype": torch.float32,
+        },
+        wrap_with_ddp=False,
+    )

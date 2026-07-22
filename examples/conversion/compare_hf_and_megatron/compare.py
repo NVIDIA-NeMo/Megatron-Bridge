@@ -217,6 +217,11 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
+def _resolve_pipeline_dtype(model_provider: object) -> torch.dtype:
+    """Match pipeline communication to the provider's parameter precision."""
+    return getattr(model_provider, "params_dtype", None) or torch.bfloat16
+
+
 def is_vision_language_model(
     model_path: str,
     trust_remote_code: bool | None = None,
@@ -657,7 +662,8 @@ def _load_megatron_model(args):
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
+        pipeline_dtype = _resolve_pipeline_dtype(model_provider)
+        model_provider.pipeline_dtype = pipeline_dtype
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(
@@ -667,6 +673,7 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
+                "pipeline_dtype": pipeline_dtype,
             },
             wrap_with_ddp=False,
         )
@@ -685,7 +692,7 @@ def _load_megatron_model(args):
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = torch.bfloat16
+        model_provider.pipeline_dtype = _resolve_pipeline_dtype(model_provider)
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 

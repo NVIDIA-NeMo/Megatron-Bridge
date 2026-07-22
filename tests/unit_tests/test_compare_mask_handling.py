@@ -20,6 +20,7 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -227,6 +228,48 @@ class TestCompareMaskHandling:
         assert hf_logits.dtype == torch.float32
         assert hf_next_token.shape == (1,)
         assert broadcast_shapes == [(1,), (1,), (163840,)]
+
+    def test_checkpoint_load_uses_provider_pipeline_dtype(self):
+        """Test checkpoint loading forwards the provider precision to pipeline overrides."""
+        args = SimpleNamespace(
+            tp=4,
+            pp=2,
+            ep=1,
+            etp=1,
+            hf_model_path="org/model",
+            hf_revision=None,
+            megatron_model_path="checkpoint",
+            trust_remote_code=False,
+            enable_debug_hooks=False,
+        )
+        model = MagicMock()
+        model.eval.return_value = model
+        provider = MagicMock(params_dtype=torch.float32)
+        bridge = MagicMock()
+        bridge.to_megatron_provider.return_value = provider
+        bridge.load_megatron_model.return_value = [model]
+
+        with (
+            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
+            patch.object(compare, "is_safe_repo", return_value=True),
+            patch.object(compare, "disable_mtp_for_inference"),
+        ):
+            models, loaded_bridge = compare._load_megatron_model(args)
+
+        assert models == [model]
+        assert loaded_bridge is bridge
+        assert provider.pipeline_dtype is torch.float32
+        bridge.load_megatron_model.assert_called_once_with(
+            "checkpoint",
+            mp_overrides={
+                "tensor_model_parallel_size": 4,
+                "pipeline_model_parallel_size": 2,
+                "expert_model_parallel_size": 1,
+                "expert_tensor_parallel_size": 1,
+                "pipeline_dtype": torch.float32,
+            },
+            wrap_with_ddp=False,
+        )
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):
