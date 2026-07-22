@@ -6,8 +6,9 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Gemma 3 4B Instruct exact-checkpoint verification is pending for
-  conversion, inference, and training; existing toy-model tests are not used as
-  exact-model evidence.
+  conversion, inference, SFT, and PEFT; pretraining and checkpoint resume are
+  unsupported because there is no public exact-model pretraining recipe.
+  Existing toy-model tests are not used as exact-model evidence.
 verification_index:
   model_level:
     unverified:
@@ -19,7 +20,8 @@ verification_index:
       - inference
   training:
     H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      unverified: [sft, sft_export_inference, sft_long_context, peft]
+      unsupported: [pretrain, checkpoint_resume]
 model:
   hf_id: google/gemma-3-4b-it
   hf_revision: 093f9f388b31de276ce2de164bdc2081324b9767f  # pragma: allowlist secret
@@ -92,8 +94,8 @@ items:
       return byte-identical token IDs and completion text.
 
   pretrain:
-    H100:
-      status: unverified
+    all:
+      status: unsupported
       precision: null
       enabled_features: {}
       command: null
@@ -104,9 +106,9 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        Pending an exact Gemma 3 VL 4B pretraining recipe and bounded real-data
-        run. The current public recipe inventory exports SFT and PEFT recipes,
-        so toy SFT smoke tests are not pretraining evidence.
+        Megatron Bridge does not provide a public Gemma 3 VL 4B pretraining
+        recipe. The available exact-model recipes cover SFT and PEFT, so a
+        supported pretraining command and checkpoint contract cannot be stated.
 
   sft:
     H100:
@@ -174,8 +176,8 @@ items:
         reloadable adapter checkpoint.
 
   checkpoint_resume:
-    H100:
-      status: unverified
+    all:
+      status: unsupported
       precision: null
       depends_on: pretrain
       command: null
@@ -185,13 +187,9 @@ items:
         final_loss: null
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
-      resume_comparison:
-        reference_item: pretrain
-        sentinel_steps: [51, 100]
-        loss_relative_tolerance: 0.01
-        loss_absolute_tolerance: 0.000001
-        sentinels_match: null
+      resume_comparison: null
       expected_result: >
-        Pending a bounded pretraining reference. Resume must load optimizer and
-        RNG state directly from step 50 into a distinct output root and match
-        reference loss at steps 51 and 100 within the recorded tolerance.
+        Checkpoint-resume verification depends on a supported pretraining
+        baseline. Because Megatron Bridge has no public Gemma 3 VL 4B
+        pretraining recipe, there is no supported reference run or resume
+        checkpoint contract for this model.
