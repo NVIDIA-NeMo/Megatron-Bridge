@@ -465,7 +465,7 @@ class PerfEnvPlugin(Plugin):
         clock frequency is required to match simulation assumptions.
         """
 
-        def get_lock_gpu_freq_srun_cmd(nodes, job_dir, freq_mhz):
+        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
             import shlex
 
             lock_freq_cmd = "\n".join(
@@ -475,7 +475,6 @@ class PerfEnvPlugin(Plugin):
                     " ".join(
                         [
                             "srun",
-                            f"--ntasks={nodes}",
                             "--ntasks-per-node=1",
                             "--output",
                             os.path.join(job_dir, "lock_gpu_freq.out"),
@@ -492,7 +491,7 @@ class PerfEnvPlugin(Plugin):
             return lock_freq_cmd
 
         if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
-            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.nodes, executor.tunnel.job_dir, lock_gpu_freq)
+            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
             executor.setup_lines = (
                 executor.setup_lines + lock_freq_cmd
                 if (executor.setup_lines and len(executor.setup_lines) > 0)
@@ -513,7 +512,7 @@ class PerfEnvPlugin(Plugin):
             peak_mem_clk: Peak memory clock frequency in MHz, or None to disable.
         """
 
-        def get_peak_mem_clock_srun_cmd(job_dir: str, peak_mem_clk: int) -> str:
+        def get_peak_mem_clock_srun_cmd(nodes: int, job_dir: str, peak_mem_clk: int) -> str:
             import shlex
 
             peak_mem_clock_cmd = "\n".join(
@@ -523,6 +522,7 @@ class PerfEnvPlugin(Plugin):
                     " ".join(
                         [
                             "srun",
+                            f"--ntasks={nodes}",
                             "--ntasks-per-node=1",
                             "--output",
                             os.path.join(job_dir, "peak_mem_clock.out"),
@@ -539,7 +539,7 @@ class PerfEnvPlugin(Plugin):
             return peak_mem_clock_cmd
 
         if peak_mem_clk is not None and isinstance(executor, SlurmExecutor):
-            peak_mem_clock_cmd = get_peak_mem_clock_srun_cmd(executor.tunnel.job_dir, peak_mem_clk)
+            peak_mem_clock_cmd = get_peak_mem_clock_srun_cmd(executor.nodes, executor.tunnel.job_dir, peak_mem_clk)
             executor.setup_lines = (
                 executor.setup_lines + peak_mem_clock_cmd
                 if (executor.setup_lines and len(executor.setup_lines) > 0)

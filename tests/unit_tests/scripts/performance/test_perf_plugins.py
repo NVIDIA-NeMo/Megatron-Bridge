@@ -62,6 +62,7 @@ def test_set_determinism_env_vars_writes_three_keys():
 def test_setup_adds_peak_mem_clock_slurm_command(monkeypatch):
     class FakeSlurmExecutor:
         def __init__(self):
+            self.nodes = 2
             self.tunnel = SimpleNamespace(job_dir="/tmp/job")
             self.setup_lines = ""
 
@@ -79,6 +80,7 @@ def test_setup_adds_peak_mem_clock_slurm_command(monkeypatch):
 
     plugin.setup(MagicMock(), executor)
 
+    assert "srun --ntasks=2 --ntasks-per-node=1" in executor.setup_lines
     assert "sudo nvidia-smi -lmc 2600,2600" in executor.setup_lines
     assert "--output /tmp/job/peak_mem_clock.out" in executor.setup_lines
     assert "--error /tmp/job/peak_mem_clock.err" in executor.setup_lines
