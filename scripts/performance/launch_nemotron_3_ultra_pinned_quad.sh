@@ -39,7 +39,7 @@ set -euo pipefail
 : "${WANDB_API_KEY:?set WANDB_API_KEY}"
 ACCOUNT="${ACCOUNT:-nemotron_sw_post}"
 PARTITION="${PARTITION:-batch}"
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.04.01.squashfs}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.06.squashfs}"
 REPO_ROOT="${REPO_ROOT:-$(git -C "$(dirname "$0")" rev-parse --show-toplevel)}"
 HF_CACHE="${HF_CACHE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/hf_cache}"
 WANDB_PROJECT="${WANDB_PROJECT:-mbridge-dev}"

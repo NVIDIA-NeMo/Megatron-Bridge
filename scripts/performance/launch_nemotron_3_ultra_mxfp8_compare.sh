@@ -36,6 +36,9 @@
 # ``moe``/``moe_act``. The MoE router-padding flag was NOT the cause (it is at its
 # default False here). If memory then gets tight, re-add recompute via full
 # granularity or offloading rather than the ``mlp`` module under FP8.
+# NOTE: this ``padding_mask`` failure was observed on nemo:26.04.01; the default
+# container is now nemo:26.06 — re-verify whether ``torch.utils.checkpoint`` still
+# rejects the kwarg there before assuming the ``mlp``-drop workaround is required.
 #
 # Output layout (OUT_DIR defaults to ./mxfp8-compare):
 #   nsys-det.csv      -- NVTX nvtx_sum CSV for det-ON run (rank 0)
@@ -69,7 +72,7 @@ ACCOUNT="${ACCOUNT:-nemotron_sw_pre}"
 # Absolute path to a local enroot squashfs (enroot/pyxis won't resolve a relative path).
 # For many-rank runs, stripe it across all OSTs (`lfs setstripe -c -1 <dir>` then copy the
 # image in) so image reads at startup don't bottleneck a few OSTs.
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.04.01.squashfs}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.06.squashfs}"
 : "${REPO_ROOT:?set REPO_ROOT (absolute path to this checkout)}"
 : "${HF_CACHE:?set HF_CACHE (shared HF cache dir)}"
 

@@ -17,7 +17,7 @@
 #   WANDB_API_KEY     Weights & Biases API key
 #   ACCOUNT           Slurm account (e.g. coreai_dlalgo_llm)
 #   PARTITION         Slurm partition (e.g. gb200)
-#   CONTAINER_IMAGE   Path to enroot squashfs (e.g. .../nvcr.io#nvidia/nemo:26.04.01.squashfs)
+#   CONTAINER_IMAGE   Path to enroot squashfs (e.g. .../nvcr.io#nvidia/nemo:26.06.squashfs)
 #   REPO_ROOT         Absolute path to this checkout
 #   HF_CACHE          Absolute path to a shared HF cache directory
 #
@@ -34,7 +34,7 @@ ACCOUNT="${ACCOUNT:-nemotron_sw_pre}"
 # Absolute path to a local enroot squashfs (enroot/pyxis won't resolve a relative path).
 # For many-rank runs, stripe it across all OSTs (`lfs setstripe -c -1 <dir>` then copy the
 # image in) so image reads at startup don't bottleneck a few OSTs.
-CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.04.01.squashfs}"
+CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/llmservice_nemo_reasoning/users/zhiyul/images/nemo-26.06.squashfs}"
 : "${REPO_ROOT:?set REPO_ROOT (absolute path to this checkout)}"
 : "${HF_CACHE:?set HF_CACHE (shared HF cache dir)}"
 
