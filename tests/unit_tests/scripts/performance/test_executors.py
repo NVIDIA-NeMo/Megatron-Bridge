@@ -40,7 +40,6 @@ if HAS_NEMO_RUN:
         INLINE_TEMPLATE,
         KUBEFLOW_NUMA_BINDING_ENV,
         KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV,
-        KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV,
         PERF_ENV_VARS,
         _kubeflow_numa_binding_enabled,
         _kubeflow_numa_binding_script,
@@ -145,8 +144,8 @@ def test_kubeflow_numa_binding_is_disabled_by_default():
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
-def test_kubeflow_launch_script_patches_torchrun_startup_sleep_and_timeout():
-    """Patch generated launch.sh before torchrun starts."""
+def test_kubeflow_launch_script_patches_torchrun_timeout():
+    """Patch the generated launch.sh with a rendezvous timeout."""
     script = "\n".join(
         [
             "#!/usr/bin/env bash",
@@ -162,10 +161,7 @@ def test_kubeflow_launch_script_patches_torchrun_startup_sleep_and_timeout():
 
     patched = _patch_kubeflow_torchrun_launch_script(script)
 
-    assert f'{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}="${{{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}:-0}}"' in patched
-    assert f'sleep "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}"' in patched
     assert f"--rdzv-conf read_timeout=${{{KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV}:-300}}" in patched
-    assert patched.index("sleep $") < patched.index("torchrun --rdzv-backend c10d")
 
 
 @pytest.mark.skipif(not HAS_NEMO_RUN, reason="nemo_run not installed")
@@ -240,7 +236,4 @@ def test_kubeflow_script_wraps_pre_and_post_hooks():
     assert "bash /hooks/pre.sh" in wrapped
     assert "bash /hooks/post.sh" in wrapped
     assert "NEMO_RUN_TRAINING_EXIT_CODE" in wrapped
-    assert "KUBEFLOW_FAILURE_SLEEP_SECONDS" in wrapped
-    assert "NEMO_CLUSTERDIAG_FAILURE_SLEEP_SECONDS" in wrapped
-    assert "Failure detected train_rc=" in wrapped
     assert 'exit "${TRAIN_RC}"' in wrapped

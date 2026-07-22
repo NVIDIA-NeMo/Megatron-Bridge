@@ -175,16 +175,6 @@ export NEMO_RUN_TRAINING_EXIT_CODE="${{TRAIN_RC}}"
 POST_RC=0
 bash -c {shlex.quote(post_cmds)} || POST_RC="$?"
 
-FAILURE_SLEEP_SECONDS="${{KUBEFLOW_FAILURE_SLEEP_SECONDS:-${{NEMO_CLUSTERDIAG_FAILURE_SLEEP_SECONDS:-0}}}}"
-if ! [[ "${{FAILURE_SLEEP_SECONDS}}" =~ ^[0-9]+$ ]]; then
-    echo "[kubeflow-hook-wrapper] Ignoring non-numeric failure sleep: ${{FAILURE_SLEEP_SECONDS}}" >&2
-    FAILURE_SLEEP_SECONDS=0
-fi
-if [ "${{FAILURE_SLEEP_SECONDS}}" -gt 0 ] && {{ [ "${{TRAIN_RC}}" -ne 0 ] || [ "${{POST_RC}}" -ne 0 ]; }}; then
-    echo "[kubeflow-hook-wrapper] Failure detected train_rc=${{TRAIN_RC}} post_rc=${{POST_RC}}; sleeping ${{FAILURE_SLEEP_SECONDS}}s for debugging" >&2
-    sleep "${{FAILURE_SLEEP_SECONDS}}"
-fi
-
 if [ "${{TRAIN_RC}}" -ne 0 ]; then
     exit "${{TRAIN_RC}}"
 fi
@@ -580,7 +570,6 @@ def main(
     kubeflow_extra_resource_limits_json: Optional[str],
     kubeflow_pod_spec_overrides_json: Optional[str],
     kubeflow_container_kwargs_json: Optional[str],
-    kubeflow_spec_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
     deterministic: bool = False,
@@ -740,7 +729,6 @@ def main(
                 json.loads(kubeflow_pod_spec_overrides_json) if kubeflow_pod_spec_overrides_json else None
             ),
             container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
-            spec_kwargs=json.loads(kubeflow_spec_kwargs_json) if kubeflow_spec_kwargs_json else None,
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
         )
@@ -1171,7 +1159,6 @@ if __name__ == "__main__":
         kubeflow_extra_resource_limits_json=args.kubeflow_extra_resource_limits_json,
         kubeflow_pod_spec_overrides_json=args.kubeflow_pod_spec_overrides_json,
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
-        kubeflow_spec_kwargs_json=args.kubeflow_spec_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
         deterministic=args.deterministic,

@@ -16,7 +16,6 @@ import logging
 import os
 import posixpath
 import shlex
-import textwrap
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,7 +30,6 @@ DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", DEFAULT_NEMO_CACHE_HOME)
 logger = logging.getLogger(__name__)
 
 KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
-KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV = "NEMO_CLUSTERDIAG_TORCHRUN_STARTUP_SLEEP_SECONDS"
 KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV = "NEMO_CLUSTERDIAG_TORCHRUN_RDZV_READ_TIMEOUT_SECONDS"
 
 
@@ -70,15 +68,13 @@ def _patch_kubeflow_torchrun_launch_file(launch_script_path: Path) -> None:
 
 
 def _patch_kubeflow_torchrun_launch_script(script: str) -> str:
-    """Inject opt-in pre-torchrun sleep and rendezvous read timeout into launch.sh."""
+    """Inject the rendezvous read timeout into launch.sh."""
     lines = script.splitlines(keepends=True)
     patched: list[str] = []
     changed = False
     for line in lines:
         stripped = line.lstrip()
         if stripped.startswith("torchrun ") and "--rdzv-backend" in line:
-            indent = line[: len(line) - len(stripped)]
-            patched.append(_kubeflow_torchrun_startup_sleep_block(indent))
             if "--rdzv-conf " not in line:
                 line = line.replace(
                     " --nnodes ",
@@ -88,22 +84,6 @@ def _patch_kubeflow_torchrun_launch_script(script: str) -> str:
             changed = True
         patched.append(line)
     return "".join(patched) if changed else script
-
-
-def _kubeflow_torchrun_startup_sleep_block(indent: str) -> str:
-    """Return shell that sleeps before torchrun when the opt-in env var is set."""
-    block = f"""
-{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}="${{{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}:-0}}"
-if ! [[ "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" =~ ^[0-9]+$ ]]; then
-    echo "[kubeflow-launch] Ignoring non-numeric torchrun startup sleep: ${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" >&2
-    {KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}=0
-fi
-if [ "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}" -gt 0 ]; then
-    echo "[kubeflow-launch] sleeping ${{{KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}}}s before torchrun"
-    sleep "${KUBEFLOW_TORCHRUN_STARTUP_SLEEP_ENV}"
-fi
-"""
-    return textwrap.indent(textwrap.dedent(block).lstrip(), indent)
 
 
 if isinstance(run.KubeflowExecutor, type):
@@ -414,7 +394,6 @@ def kubeflow_executor(
     extra_resource_limits: Optional[Dict[str, str]] = None,
     pod_spec_overrides: Optional[Dict[str, Any]] = None,
     container_kwargs: Optional[Dict[str, Any]] = None,
-    spec_kwargs: Optional[Dict[str, Any]] = None,
     labels: Optional[Dict[str, Any]] = None,
     pod_annotations: Optional[Dict[str, Any]] = None,
 ) -> run.KubeflowExecutor:
@@ -457,7 +436,6 @@ def kubeflow_executor(
         extra_resource_limits: Extra container resource limits.
         pod_spec_overrides: Dict merged into the pod spec.
         container_kwargs: Extra container fields (e.g. ``securityContext``).
-        spec_kwargs: Extra TrainJob spec fields.
         labels: Pod labels.
         pod_annotations: Annotations applied to the trainer pod template metadata
             (e.g. ``networking.gke.io/interfaces`` for GKE RDMA NIC attachment).
@@ -526,7 +504,6 @@ def kubeflow_executor(
         extra_resource_limits=extra_resource_limits or {},
         pod_spec_overrides=pod_spec_overrides or {},
         container_kwargs=container_kwargs or {},
-        spec_kwargs=spec_kwargs or {},
         labels=labels,
         # Mirror the CI-origin labels onto the trainer pods too, so both
         # `kubectl get trainjob -l` and `kubectl get pods -l` resolve the origin.
