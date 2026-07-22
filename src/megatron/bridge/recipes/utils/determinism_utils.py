@@ -24,6 +24,14 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
     disables TP comm overlap (which uses non-deterministic NCCL collectives).
     Attention backend selection is a separate concern and is not touched here.
 
+    The deterministic env vars are placed in ``cfg.env_vars`` so they take effect
+    at process start. ``MAMBA_DETERMINISTIC`` in particular must be set before the
+    first kernel launch: for Mamba/hybrid models (e.g. Nemotron-H) the SSD
+    selective-scan Triton kernel cold-autotunes on its first launch, and two
+    processes can otherwise pick different configs -> divergent scan output from
+    iteration 1, before ``deterministic_mode`` takes effect. It is a no-op for
+    non-Mamba models.
+
     The matching validator that enforces these flags at training time is
     :meth:`megatron.bridge.training.config.ConfigContainer._validate_and_apply_deterministic_mode`.
 
@@ -40,6 +48,7 @@ def apply_determinism_overrides(cfg: ConfigContainer) -> None:
             "CUBLAS_WORKSPACE_CONFIG": ":4096:8",
             "NCCL_ALGO": "Ring",
             "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+            "MAMBA_DETERMINISTIC": 1,
         }
     )
 
