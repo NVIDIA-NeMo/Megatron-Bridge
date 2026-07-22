@@ -35,8 +35,8 @@ version = "1.0.0+b7643bd"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
-version = "2.17.0+2e559f06"
-requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
+version = "2.18.0+e7c550c5"
+requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.25.0", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
 provides-extras = ["core-cu13", "pytorch"]
 
 [[package]]
@@ -2142,6 +2142,7 @@ build = [
     { name = "cython" },
     { name = "ninja" },
     { name = "numpy" },
+    { name = "nvidia-cudnn-frontend" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -2227,6 +2228,7 @@ build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "ninja" },
     { name = "numpy" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.25.0" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
