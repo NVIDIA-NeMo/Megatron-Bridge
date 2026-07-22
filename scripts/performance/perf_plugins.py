@@ -465,7 +465,7 @@ class PerfEnvPlugin(Plugin):
         clock frequency is required to match simulation assumptions.
         """
 
-        def get_lock_gpu_freq_srun_cmd(job_dir, freq_mhz):
+        def get_lock_gpu_freq_srun_cmd(nodes, job_dir, freq_mhz):
             import shlex
 
             lock_freq_cmd = "\n".join(
@@ -475,6 +475,7 @@ class PerfEnvPlugin(Plugin):
                     " ".join(
                         [
                             "srun",
+                            f"--ntasks={nodes}",
                             "--ntasks-per-node=1",
                             "--output",
                             os.path.join(job_dir, "lock_gpu_freq.out"),
@@ -491,7 +492,7 @@ class PerfEnvPlugin(Plugin):
             return lock_freq_cmd
 
         if lock_gpu_freq is not None and isinstance(executor, SlurmExecutor):
-            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.tunnel.job_dir, lock_gpu_freq)
+            lock_freq_cmd = get_lock_gpu_freq_srun_cmd(executor.nodes, executor.tunnel.job_dir, lock_gpu_freq)
             executor.setup_lines = (
                 executor.setup_lines + lock_freq_cmd
                 if (executor.setup_lines and len(executor.setup_lines) > 0)
