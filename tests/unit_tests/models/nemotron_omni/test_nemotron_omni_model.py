@@ -54,19 +54,46 @@ class _FakeLanguageModel(nn.Module):
 class _BoundaryModel(NemotronOmniModel):
     """CPU-only shell that exercises the real expanded-sequence forward."""
 
-    def __init__(self, image_features):
+    def __init__(self, image_features, sound_features=None):
         nn.Module.__init__(self)
         self.pre_process = True
         self.image_token_index = 18
+        self.sound_token_index = 19
         self.context_parallel_lm = 1
         self.sequence_parallel_lm = False
         self.config = SimpleNamespace(mtp_num_layers=None)
         self.language_model = _FakeLanguageModel()
         self.image_features = image_features
+        self.sound_features = torch.empty(0, 3) if sound_features is None else sound_features
 
     def _encode_images(self, images, imgs_sizes, vision_packed_seq_params, num_frames):
         del images, imgs_sizes, vision_packed_seq_params, num_frames
         return self.image_features
+
+    def _encode_sound(self, sound_clips, sound_length):
+        del sound_clips, sound_length
+        return self.sound_features
+
+
+class _FakeSoundModel(nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(1))
+        self.config = SimpleNamespace(sound_pad_to_clip_duration=False)
+
+    def forward(self, sound_clips, sound_length):
+        del sound_clips, sound_length
+        embeddings = torch.arange(12, dtype=torch.float32).reshape(2, 3, 2)
+        return embeddings, torch.tensor([2, 1])
+
+
+class _SoundEncoderBoundaryModel(NemotronOmniModel):
+    def __init__(self):
+        nn.Module.__init__(self)
+        self.sound_model = _FakeSoundModel()
+        self.sound_projection = nn.Linear(2, 2, bias=False, dtype=torch.bfloat16)
+        with torch.no_grad():
+            self.sound_projection.weight.copy_(torch.eye(2, dtype=torch.bfloat16))
 
 
 @dataclass
@@ -261,6 +288,71 @@ def test_image_forward_replaces_expanded_placeholders_without_changing_length():
     assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
 
 
+def test_audio_forward_replaces_expanded_placeholders_without_changing_length():
+    sound_features = torch.tensor([[101.0, 102.0, 103.0], [201.0, 202.0, 203.0]])
+    model = _BoundaryModel(torch.empty(0, 3), sound_features)
+    input_ids = torch.tensor([[7, 19, 19, 9]])
+
+    output = model(
+        input_ids=input_ids,
+        attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+        sound_clips=torch.ones(1, 8, 2),
+        sound_length=torch.tensor([8]),
+    )
+
+    assert output.shape == (4, 1, 3)
+    assert torch.equal(output[0, 0], torch.tensor([7.0, 7.0, 7.0]))
+    assert torch.equal(output[1, 0], sound_features[0])
+    assert torch.equal(output[2, 0], sound_features[1])
+    assert torch.equal(output[3, 0], torch.tensor([9.0, 9.0, 9.0]))
+
+
+def test_sound_encoder_drops_padded_rows_and_preserves_sample_order():
+    model = _SoundEncoderBoundaryModel()
+
+    encoded = model._encode_sound(
+        torch.ones(2, 8, 2),
+        torch.tensor([8, 4]),
+    )
+    assert torch.equal(
+        encoded,
+        torch.tensor(
+            [
+                [0.0, 1.0],
+                [2.0, 3.0],
+                [6.0, 7.0],
+            ],
+            dtype=torch.bfloat16,
+        ),
+    )
+
+
+def test_real_parakeet_sound_encoder_matches_subsampled_placeholder_count():
+    from megatron.bridge.models.nemotron_omni.nemotron_omni_sound import BridgeSoundEncoder
+
+    config = SimpleNamespace(
+        hidden_size=32,
+        num_hidden_layers=1,
+        num_attention_heads=4,
+        intermediate_size=64,
+        num_mel_bins=8,
+        subsampling_factor=8,
+        conv_kernel_size=9,
+        use_bias=False,
+        sound_pad_to_clip_duration=False,
+    )
+    model = _SoundEncoderBoundaryModel()
+    model.sound_model = BridgeSoundEncoder(config)
+    model.sound_projection = nn.Linear(config.hidden_size, 3, bias=False)
+    sound_length = torch.tensor([64, 40])
+
+    encoded = model._encode_sound(torch.randn(2, 64, config.num_mel_bins), sound_length)
+
+    expected_lengths = model.sound_model.encoder._get_subsampling_output_length(sound_length)
+    assert encoded.shape == (int(expected_lengths.sum().item()), 3)
+    assert torch.isfinite(encoded).all()
+
+
 def test_text_only_control_preserves_language_embeddings():
     model = _BoundaryModel(torch.empty(0, 3))
     input_ids = torch.tensor([[7, 8, 9]])
@@ -362,6 +454,27 @@ def test_real_radio_image_forward_with_model_owned_cp1_packing(
             pixel_values=torch.randn(1, 3, 32, 32, device="cuda"),
             imgs_sizes=torch.tensor([[32, 32]], dtype=torch.int32, device="cuda"),
             num_frames=torch.tensor([1], dtype=torch.int32, device="cuda"),
+        )
+
+    assert output.shape == (1, 4, 128)
+    assert torch.isfinite(output).all()
+
+
+@pytest.mark.run_only_on("GPU")
+def test_real_radio_multiframe_video_forward(single_rank_model_parallel):
+    del single_rank_model_parallel
+    provider = _TinyOmniProvider()
+    provider.finalize()
+    model = provider.provide().cuda().eval()
+    input_ids = torch.tensor([[7, 18, 9, 10]], device="cuda")
+
+    with torch.no_grad():
+        output = model(
+            input_ids=input_ids,
+            attention_mask=torch.ones_like(input_ids, dtype=torch.bool),
+            pixel_values=torch.randn(2, 3, 32, 32, device="cuda"),
+            imgs_sizes=torch.tensor([[32, 32], [32, 32]], dtype=torch.int32, device="cuda"),
+            num_frames=torch.tensor([2], dtype=torch.int32, device="cuda"),
         )
 
     assert output.shape == (1, 4, 128)
