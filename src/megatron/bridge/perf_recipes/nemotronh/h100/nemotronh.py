@@ -58,9 +58,9 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_nano_pretrain_16gpu_h100_bf16_config(*, enable_mtp: bool = False) -> ConfigContainer:
+def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
-    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
+    cfg = nemotron_3_nano_pretrain_config()
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.recompute_granularity = "selective"
 
@@ -110,9 +110,9 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config(*, enable_mtp: bool = False)
     return cfg
 
 
-def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config(*, enable_mtp: bool = False) -> ConfigContainer:
+def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, FP8 current-scaling, recompute."""
-    cfg = nemotron_3_nano_pretrain_config(enable_mtp=enable_mtp)
+    cfg = nemotron_3_nano_pretrain_config()
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.recompute_granularity = "selective"
 
@@ -164,7 +164,14 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config(*, enable_mtp: bool = False
 
 def nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano with MTP pretrain: 16× H100, BF16."""
-    cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config(enable_mtp=True)
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.use_te_rng_tracker = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
@@ -186,7 +193,14 @@ def nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
 def nemotron_3_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Nemotron 3 Nano with MTP pretrain: 16× H100, FP8 current-scaling."""
-    cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config(enable_mtp=True)
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.calculate_per_token_loss = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.use_te_rng_tracker = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,

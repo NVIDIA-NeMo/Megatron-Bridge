@@ -15,6 +15,7 @@
 """Unit tests for Nemotron 3 Nano with MTP performance recipes."""
 
 from collections.abc import Callable
+from inspect import signature
 
 import pytest
 
@@ -24,6 +25,11 @@ from megatron.bridge.perf_recipes.nemotronh import (
     nemotron_3_nano_mtp_pretrain_8gpu_gb200_nvfp4_config,
     nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config,
     nemotron_3_nano_mtp_pretrain_16gpu_h100_fp8cs_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+    nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
 )
 from megatron.bridge.training.config import ConfigContainer
 
@@ -39,6 +45,20 @@ _GB200_RECIPES = (
     nemotron_3_nano_mtp_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_mtp_pretrain_8gpu_gb200_nvfp4_config,
 )
+_NON_MTP_RECIPES = (
+    nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
+    nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
+    nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+)
+
+
+@pytest.mark.parametrize("recipe_factory", _NON_MTP_RECIPES, ids=lambda recipe: recipe.__name__)
+def test_standard_perf_recipes_do_not_expose_mtp_flag(recipe_factory: Callable[[], ConfigContainer]) -> None:
+    """Standard performance recipes remain parameterless and non-MTP."""
+    assert "enable_mtp" not in signature(recipe_factory).parameters
+    assert recipe_factory().model.mtp_num_layers == 0
 
 
 @pytest.mark.parametrize("recipe_factory", (*_H100_RECIPES, *_GB200_RECIPES), ids=lambda recipe: recipe.__name__)

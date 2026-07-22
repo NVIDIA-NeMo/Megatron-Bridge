@@ -29,60 +29,31 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.model_load_save import load_model_config
 
 
-_NEMOTRON_3_NANO_MTP_PATTERN = "*E"
-_NEMOTRON_3_NANO_MTP_NUM_LAYERS = 2
-
-
-def _configure_nemotron_3_nano_mtp(model: HybridModelProvider, *, enabled: bool) -> None:
-    """Enable or disable the Nano MTP architecture on a model provider."""
-    model.mtp_num_layers = _NEMOTRON_3_NANO_MTP_NUM_LAYERS if enabled else 0
-    model.mtp_hybrid_override_pattern = _NEMOTRON_3_NANO_MTP_PATTERN if enabled else None
-    model.mtp_use_repeated_layer = enabled
-    model.keep_mtp_spec_in_bf16 = enabled
-    if enabled:
-        model.calculate_per_token_loss = True
-        model.mtp_loss_scaling_factor = 0.3
-        model.use_te_rng_tracker = True
-
-
-def _inherit_nemotron_3_nano_mtp_from_checkpoint(
-    model: HybridModelProvider,
-    checkpoint_path: str,
-) -> None:
-    """Copy MTP architecture settings from a Megatron checkpoint."""
-    checkpoint_model, _ = load_model_config(checkpoint_path)
-    mtp_num_layers = int(getattr(checkpoint_model, "mtp_num_layers", 0) or 0)
-    mtp_pattern = getattr(checkpoint_model, "mtp_hybrid_override_pattern", None)
-    if mtp_num_layers > 0 and not mtp_pattern:
-        raise ValueError("The pretrained checkpoint enables MTP but does not define mtp_hybrid_override_pattern.")
-
-    model.mtp_num_layers = mtp_num_layers
-    model.mtp_hybrid_override_pattern = mtp_pattern if mtp_num_layers > 0 else None
-    model.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(checkpoint_model, "mtp_use_repeated_layer", False))
-    model.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(checkpoint_model, "keep_mtp_spec_in_bf16", False))
-    if mtp_num_layers > 0:
-        model.mtp_loss_scaling_factor = getattr(checkpoint_model, "mtp_loss_scaling_factor", 0.3)
-        model.use_te_rng_tracker = getattr(checkpoint_model, "use_te_rng_tracker", True)
-
-
 class _Nemotron3NanoFinetuneConfig(ConfigContainer):
     """Nano finetuning config that derives MTP architecture from its checkpoint."""
 
     def validate(self) -> None:
         if self.checkpoint.pretrained_checkpoint:
-            _inherit_nemotron_3_nano_mtp_from_checkpoint(
-                self.model,
-                self.checkpoint.pretrained_checkpoint,
+            checkpoint_model, _ = load_model_config(self.checkpoint.pretrained_checkpoint)
+            mtp_num_layers = int(getattr(checkpoint_model, "mtp_num_layers", 0) or 0)
+            mtp_pattern = getattr(checkpoint_model, "mtp_hybrid_override_pattern", None)
+            if mtp_num_layers > 0 and not mtp_pattern:
+                raise ValueError(
+                    "The pretrained checkpoint enables MTP but does not define mtp_hybrid_override_pattern."
+                )
+
+            self.model.mtp_num_layers = mtp_num_layers
+            self.model.mtp_hybrid_override_pattern = mtp_pattern if mtp_num_layers > 0 else None
+            self.model.mtp_use_repeated_layer = bool(
+                mtp_num_layers and getattr(checkpoint_model, "mtp_use_repeated_layer", False)
             )
+            self.model.keep_mtp_spec_in_bf16 = bool(
+                mtp_num_layers and getattr(checkpoint_model, "keep_mtp_spec_in_bf16", False)
+            )
+            if mtp_num_layers > 0:
+                self.model.mtp_loss_scaling_factor = getattr(checkpoint_model, "mtp_loss_scaling_factor", 0.3)
+                self.model.use_te_rng_tracker = getattr(checkpoint_model, "use_te_rng_tracker", True)
         super().validate()
-
-
-def _with_checkpoint_mtp_detection(cfg: ConfigContainer) -> _Nemotron3NanoFinetuneConfig:
-    """Wrap a common finetuning config with Nano checkpoint detection."""
-    init_fields = (config_field for config_field in fields(cfg) if config_field.init)
-    return _Nemotron3NanoFinetuneConfig(
-        **{config_field.name: getattr(cfg, config_field.name) for config_field in init_fields}
-    )
 
 
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) -> ConfigContainer:
@@ -151,7 +122,14 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) 
         expert_tensor_parallel_size=1,
         expert_model_parallel_size=8,
     )
-    _configure_nemotron_3_nano_mtp(cfg.model, enabled=enable_mtp)
+    cfg.model.mtp_num_layers = 2 if enable_mtp else 0
+    cfg.model.mtp_hybrid_override_pattern = "*E" if enable_mtp else None
+    cfg.model.mtp_use_repeated_layer = enable_mtp
+    cfg.model.keep_mtp_spec_in_bf16 = enable_mtp
+    if enable_mtp:
+        cfg.model.calculate_per_token_loss = True
+        cfg.model.mtp_loss_scaling_factor = 0.3
+        cfg.model.use_te_rng_tracker = True
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
@@ -273,7 +251,14 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3 Nano SFT.
     """
-    cfg = _sft_common()
+    base_cfg = _sft_common()
+    cfg = _Nemotron3NanoFinetuneConfig(
+        **{
+            config_field.name: getattr(base_cfg, config_field.name)
+            for config_field in fields(base_cfg)
+            if config_field.init
+        }
+    )
 
     # Model config - Nemotron 3 Nano
     cfg.model = HybridModelProvider(
@@ -445,7 +430,7 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
-    return _with_checkpoint_mtp_detection(cfg)
+    return cfg
 
 
 # =============================================================================
@@ -466,7 +451,14 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3 Nano PEFT.
     """
-    cfg = _peft_common()
+    base_cfg = _peft_common()
+    cfg = _Nemotron3NanoFinetuneConfig(
+        **{
+            config_field.name: getattr(base_cfg, config_field.name)
+            for config_field in fields(base_cfg)
+            if config_field.init
+        }
+    )
 
     # Model config - PEFT uses same parallelism as SFT
     cfg.model = HybridModelProvider(
@@ -655,7 +647,7 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
-    return _with_checkpoint_mtp_detection(cfg)
+    return cfg
 
 
 __all__ = [
