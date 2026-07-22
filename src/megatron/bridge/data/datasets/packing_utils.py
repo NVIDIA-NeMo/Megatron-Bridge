@@ -351,8 +351,18 @@ def calculate_avg_seqlen(
     Raises:
         ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
     """
-    with open(dataset_file, "rb") as f:
-        data = safe_load_npy(f.read())
+    if str(dataset_file).lower().endswith((".parquet", ".pq")):
+        import pyarrow.parquet as pq
+
+        table = pq.read_table(dataset_file, columns=["input_ids", "seq_start_id"])
+        ids, starts = table.column("input_ids"), table.column("seq_start_id")
+        data = [
+            {"input_ids": ids[i].as_py(), "seq_start_id": starts[i].as_py()}
+            for i in range(table.num_rows)
+        ]
+    else:
+        with open(dataset_file, "rb") as f:
+            data = safe_load_npy(f.read())
 
     total_len_accum = 0
     seqlen_sq_accum = 0
