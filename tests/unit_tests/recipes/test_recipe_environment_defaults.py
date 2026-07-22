@@ -159,7 +159,7 @@ def test_explicit_recipe_environment_invariants():
                 assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
 
     assert len(recipes) == 259
-    assert hybrid_ep_count == 8
+    assert hybrid_ep_count == 9
     assert deepseek_v3_environment_recipe_names == _DEEPSEEK_V3_ENVIRONMENT_RECIPE_NAMES
 
 
