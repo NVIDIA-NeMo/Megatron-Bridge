@@ -36,6 +36,10 @@ class NemotronBridge(MegatronModelBridge):
     """
     Megatron Bridge for Nemotron Causal LM.
 
+    Deprecated: this legacy bridge is no longer actively maintained or tested
+    against current upstream checkpoints and will be removed in Megatron Bridge
+    0.7.0.
+
     As a user you would not use this bridge directly, but through `AutoBridge`.
 
     Example:
