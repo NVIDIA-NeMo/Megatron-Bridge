@@ -46,7 +46,7 @@ class TestQwen3OmniModelProvider:
         assert provider.moe_router_dtype == "fp32"
         assert provider.moe_router_score_function == "softmax"
         assert provider.masked_softmax_fusion is False
-        assert provider.enable_routing_replay is False
+        assert provider.moe_enable_routing_replay is False
         assert provider.apply_rotary_pos_emb_in_fp32 is False
         assert provider.image_token_id == 151655
         assert provider.video_token_id == 151656
@@ -77,6 +77,16 @@ class TestQwen3OmniModelProvider:
         )
 
         assert provider.thinker_config.text_config.hidden_size == 128
+
+    def test_qwen3_omni_uses_mcore_routing_replay_field(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            moe_enable_routing_replay=True,
+        )
+
+        assert provider.moe_enable_routing_replay is True
 
     def test_qwen3_omni_freeze_flags(self):
         provider = Qwen3OmniModelProvider(

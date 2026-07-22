@@ -21,14 +21,15 @@ def test_converts_qwen_valid_mask_for_te(monkeypatch):
     torch.testing.assert_close(actual, expected)
 
 
-def test_drops_all_valid_qwen_mask_for_te(monkeypatch):
+def test_converts_all_valid_qwen_mask_for_te_without_host_sync(monkeypatch):
     monkeypatch.setattr(attention_module, "TEDotProductAttention", _FakeTEDotProductAttention)
+    monkeypatch.setattr(torch.Tensor, "item", lambda _tensor: pytest.fail("attention mask must not synchronize to host"))
     valid_mask = torch.ones((2, 4), dtype=torch.bool)
 
-    assert (
-        _qwen_attention_mask_for_core_attention(_FakeTEDotProductAttention(), valid_mask, packed_seq_params=None)
-        is None
-    )
+    actual = _qwen_attention_mask_for_core_attention(_FakeTEDotProductAttention(), valid_mask, packed_seq_params=None)
+    monkeypatch.undo()
+
+    torch.testing.assert_close(actual, torch.zeros((2, 1, 1, 4), dtype=torch.bool))
 
 
 @pytest.mark.parametrize(

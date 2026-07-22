@@ -109,7 +109,7 @@ class Qwen3OmniModelProvider(GPTModelProvider):
     moe_token_dispatcher_type: str = "alltoall"
     moe_permute_fusion: bool = True
     masked_softmax_fusion: bool = False
-    enable_routing_replay: bool = False
+    moe_enable_routing_replay: bool = False
 
     image_token_id: int = 151655
     video_token_id: int = 151656

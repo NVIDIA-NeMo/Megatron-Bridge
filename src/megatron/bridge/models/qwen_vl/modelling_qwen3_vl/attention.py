@@ -46,8 +46,6 @@ def _qwen_attention_mask_for_core_attention(
         or attention_mask.dtype != torch.bool
     ):
         return attention_mask
-    if bool(attention_mask.all().item()):
-        return None
     return (~attention_mask).unsqueeze(1).unsqueeze(1)
 
 
