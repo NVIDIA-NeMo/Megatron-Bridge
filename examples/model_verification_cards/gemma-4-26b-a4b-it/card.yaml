@@ -20,8 +20,7 @@ verification_index:
   training:
     H100:
       unverified: [sft, sft_export_inference, sft_long_context, peft]
-      unsupported: [pretrain]
-      not_applicable: [checkpoint_resume]
+      unsupported: [pretrain, checkpoint_resume]
 model:
   hf_id: google/gemma-4-26B-A4B-it
   hf_revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52  # pragma: allowlist secret
@@ -29,7 +28,7 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: a1afa4b875c5b2beb14b97141f7534efb061e50d  # pragma: allowlist secret
+  bridge_commit: 4d1551130f98d1922adbb331e9b8ec587f5d35a8  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -109,7 +108,10 @@ items:
     expected_result: >
       Hugging Face and Megatron must select the same next token and reach at
       least 0.99 cosine similarity. Record the maximum and mean absolute logit
-      differences as report-only diagnostics.
+      differences as report-only diagnostics. The Gemma 4 provider currently
+      computes in FP32, which the public card precision schema does not encode
+      for direct model items; keep precision null and this item unverified
+      until the schema supports that workload or the provider precision changes.
 
   inference:
     status: unverified
@@ -126,7 +128,9 @@ items:
     expected_result: >
       Two independent greedy executions must finish without a pipeline dtype
       error and produce the same literal 32-token completion, including
-      whitespace.
+      whitespace. The Gemma 4 provider currently computes in FP32, which the
+      public card precision schema does not encode for direct model items; keep
+      precision null and this item unverified until that blocker is resolved.
 
   pretrain:
     all:
@@ -151,7 +155,7 @@ items:
       precision: bf16
       enabled_features: {}
       command: >
-        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2
         --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
         --max_steps 40 --seq_length 4096
@@ -166,10 +170,12 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The 16-GPU TP2/PP1/EP8 full-SFT run must complete exactly 40 optimizer
+        The 8-GPU TP2/PP1/EP8/ETP1 full-SFT run must complete exactly 40 optimizer
         steps with finite loss, no skipped or NaN iterations, all four required
         training metrics, a persisted post-setup config, and a reloadable final
-        checkpoint. An 8-GPU EP1 run is not equivalent evidence.
+        checkpoint. This is a topology requirement, not a success claim; runtime
+        verification is still pending. The failing 8-GPU EP1 paths are not
+        equivalent evidence.
 
   sft_export_inference:
     H100:
@@ -228,7 +234,7 @@ items:
 
   checkpoint_resume:
     all:
-      status: not_applicable
+      status: unsupported
       precision: null
       depends_on: pretrain
       command: null
@@ -240,5 +246,6 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
       resume_comparison: null
       expected_result: >
-        Pretraining checkpoint resume is not applicable until this model variant
-        has a supported pretraining recipe and a bounded reference checkpoint.
+        Megatron Bridge does not provide a Gemma 4 VLM pretraining recipe, so
+        there is no supported reference run, middle checkpoint, optimizer/RNG
+        state contract, or model-wide checkpoint-resume workflow to verify.
