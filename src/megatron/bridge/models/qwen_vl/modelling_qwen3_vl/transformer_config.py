@@ -28,6 +28,8 @@ class Qwen3VLTransformerConfig(TransformerConfig):
     """Configuration for Qwen3-VL transformer with vision and language components."""
 
     vocab_size: int = 64000
+    make_vocab_size_divisible_by: int = 128
+    should_pad_vocab: bool = False
     language_max_sequence_length: int = 4096
 
     patch_size: int = 16

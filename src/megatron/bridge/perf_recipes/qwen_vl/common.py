@@ -39,6 +39,9 @@ def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
     cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.tokenizer_model = None
     cfg.tokenizer.vocab_size = cfg.model.vocab_size
+    # The synthetic tokenizer mirrors the fixed benchmark model shape; it does
+    # not define a new tokenizer-derived vocabulary for from-scratch training.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
 
 
 def _qwen35_vl_common(cfg: ConfigContainer) -> None:
