@@ -20,9 +20,6 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    _validate_dsa_index_share_pipeline_split,
-)
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
@@ -88,6 +85,20 @@ def _build_recipe(recipe_func: Callable[[], ConfigContainer], monkeypatch: pytes
     recipe_module = importlib.import_module(recipe_func.__module__)
     monkeypatch.setattr(recipe_module, "AutoBridge", _FakeAutoBridge)
     return recipe_func()
+
+
+def _dsa_source_layer_id(layer_id: int, *, skip_topk_offset: int, topk_freq: int) -> int:
+    """Return the zero-based source layer defined by MCore's DSA sharing contract."""
+    # Mirrors the private MCore `_validate_dsa_index_share_pipeline_split`
+    # helper that guarded this recipe before removal from the pinned revision.
+    # MCore defines DSA sharing with one-based layers: layers through
+    # max(skip_topk_offset, 1) compute their own indices, then each topk_freq
+    # group reuses the indices computed by its first layer.
+    layer_number = layer_id + 1
+    sharing_offset = max(skip_topk_offset, 1)
+    if layer_number <= sharing_offset:
+        return layer_id
+    return layer_number - ((layer_number - sharing_offset) % topk_freq) - 1
 
 
 @pytest.mark.parametrize("recipe_func", _RECIPES, ids=lambda recipe: recipe.__name__)
@@ -183,7 +194,14 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chun
             decoder_count = stage.count(LayerType.decoder)
             if decoder_count:
                 local_layer_ids = range(decoder_offset, decoder_offset + decoder_count)
-                _validate_dsa_index_share_pipeline_split(cfg.model, local_layer_ids)
+                local_layer_id_set = set(local_layer_ids)
+                for layer_id in local_layer_ids:
+                    source_layer_id = _dsa_source_layer_id(
+                        layer_id,
+                        skip_topk_offset=cfg.model.dsa_indexer_skip_topk_offset,
+                        topk_freq=cfg.model.dsa_indexer_topk_freq,
+                    )
+                    assert source_layer_id in local_layer_id_set
                 decoder_offset += decoder_count
 
     assert decoder_offset == cfg.model.num_layers
