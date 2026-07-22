@@ -304,10 +304,28 @@ class TestDataLoaders:
     @mock.patch("torch.distributed.get_rank")
     @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
     @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    @pytest.mark.parametrize("dataset_kind", ["gpt", "sft"])
     def test_build_train_valid_test_data_loaders_uses_eval_dp_group(
-        self, mock_build_datasets, mock_build_loader, mock_get_rank, mock_get_world_size, _mock_broadcast
+        self,
+        mock_build_datasets,
+        mock_build_loader,
+        mock_get_rank,
+        mock_get_world_size,
+        _mock_broadcast,
+        dataset_kind,
     ):
         cfg = create_simple_test_config()
+        if dataset_kind == "sft":
+            cfg.dataset = GPTSFTDatasetConfig(
+                dataset_root="/tmp/dataset",
+                seq_length=512,
+                seed=4321,
+                num_workers=0,
+                persistent_workers=False,
+            )
+            expected_seed = cfg.dataset.seed
+        else:
+            expected_seed = cfg.dataset.random_seed
         train_ds = mock.MagicMock()
         train_ds.__len__.return_value = cfg.train.global_batch_size
         valid_ds = mock.MagicMock()
@@ -334,6 +352,9 @@ class TestDataLoaders:
         assert valid_call.kwargs["data_parallel_size"] == 1
         assert test_call.kwargs["data_parallel_rank"] == 0
         assert test_call.kwargs["data_parallel_size"] == 1
+        assert train_call.kwargs["seed"] == expected_seed
+        assert valid_call.kwargs["seed"] == expected_seed
+        assert test_call.kwargs["seed"] == expected_seed
 
     @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size", return_value=1)

@@ -34,6 +34,10 @@ _CLI_PATH = _SCRIPT_DIR / "gpu_backend.py"
 def _fake_megatron_modules():
     class AutoBridge:
         @staticmethod
+        def from_auto_config(*args, **kwargs):
+            raise NotImplementedError
+
+        @staticmethod
         def from_hf_pretrained(*args, **kwargs):
             raise NotImplementedError
 
@@ -126,6 +130,7 @@ class TestImportHfToMegatron:
         class FakeBridge:
             _model_bridge = _FakeModelBridge()
             hf_pretrained = _FakeHfPretrained()
+            hf_model_revision = "0123456789abcdef"  # pragma: allowlist secret
 
             def to_megatron_provider(self, *args, **kwargs):
                 calls.append(("to_megatron_provider", args, kwargs))
@@ -149,6 +154,7 @@ class TestImportHfToMegatron:
 
         cli.import_checkpoint.__wrapped__(
             hf_model="hf",
+            hf_revision="0123456789abcdef",  # pragma: allowlist secret
             megatron_path="/ckpt",
             tp=1,
             pp=1,
@@ -164,14 +170,25 @@ class TestImportHfToMegatron:
         assert save_call[1] == (["megatron-model"], "/ckpt")
         assert "low_memory_save" not in save_call[2]
         assert save_call[2]["hf_tokenizer_path"] == "hf"
-        assert save_call[2]["hf_tokenizer_kwargs"] == {"padding_side": "left", "trust_remote_code": True}
+        assert save_call[2]["hf_tokenizer_kwargs"] == {
+            "padding_side": "left",
+            "trust_remote_code": True,
+            "revision": "0123456789abcdef",  # pragma: allowlist secret
+        }
+        from_hf_call = next(call for call in calls if call[0] == "from_hf_pretrained")
+        assert from_hf_call[1] == ("hf",)
+        assert from_hf_call[2]["revision"] == "0123456789abcdef"  # pragma: allowlist secret
         assert prepared_outputs == [(("/ckpt",), {"overwrite": False, "source_paths": ["hf"]})]
 
 
 class TestExportMegatronToHf:
-    def test_export_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch, tmp_path):
+    def test_export_uses_checkpoint_config_and_does_not_move_loaded_model_to_cuda(self, cli, monkeypatch, tmp_path):
         calls = []
         prepared_outputs = []
+        checkpoint_config = types.SimpleNamespace(num_hidden_layers=2, num_nextn_predict_layers=0)
+        reference_state_source = object()
+        reference_pretrained = _FakeHfPretrained()
+        reference_pretrained.state = types.SimpleNamespace(source=reference_state_source)
 
         class FakeModelShard:
             def cuda(self):
@@ -179,9 +196,9 @@ class TestExportMegatronToHf:
 
         fake_model = [FakeModelShard()]
 
-        class FakeBridge:
+        class FakeStateBackedBridge:
             _model_bridge = object()
-            hf_pretrained = _FakeHfPretrained()
+            hf_pretrained = reference_pretrained
 
             def to_megatron_provider(self, *args, **kwargs):
                 calls.append(("to_megatron_provider", args, kwargs))
@@ -196,7 +213,11 @@ class TestExportMegatronToHf:
 
         def fake_from_hf_pretrained(*args, **kwargs):
             calls.append(("from_hf_pretrained", args, kwargs))
-            return FakeBridge()
+            return FakeStateBackedBridge()
+
+        def fake_from_auto_config(*args, **kwargs):
+            calls.append(("from_auto_config", args, kwargs))
+            return types.SimpleNamespace(hf_pretrained=checkpoint_config)
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
         monkeypatch.setattr(
@@ -206,6 +227,7 @@ class TestExportMegatronToHf:
         )
         monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: trust_remote_code)
         monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", fake_from_hf_pretrained)
+        monkeypatch.setattr(cli.AutoBridge, "from_auto_config", fake_from_auto_config)
 
         checkpoint_path = tmp_path / "iter_0000000"
         checkpoint_path.mkdir()
@@ -232,9 +254,22 @@ class TestExportMegatronToHf:
         assert load_call[1] == (str(checkpoint_path),)
         assert load_call[2]["mp_overrides"]["expert_model_parallel_size"] == 2
 
+        reference_call = next(call for call in calls if call[0] == "from_hf_pretrained")
+        assert reference_call[1] == ("hf",)
+        assert reference_call[2] == {"trust_remote_code": True, "torch_dtype": torch.bfloat16}
+
+        bridge_call = next(call for call in calls if call[0] == "from_auto_config")
+        assert bridge_call[1] == (str(checkpoint_path), "hf")
+        assert bridge_call[2] == {"trust_remote_code": True}
+        assert FakeStateBackedBridge.hf_pretrained is reference_pretrained
+        assert reference_pretrained.config is checkpoint_config
+        assert reference_pretrained.state.source is reference_state_source
+
         save_call = next(call for call in calls if call[0] == "save_hf_pretrained")
         assert save_call[1] == (fake_model, "/hf-export")
+        assert save_call[2]["strict"] is True
         assert save_call[2]["distributed_save"] is True
+        assert save_call[2]["save_every_n_ranks"] == 1
         assert prepared_outputs == [
             (("/hf-export",), {"overwrite": False, "source_paths": [str(checkpoint_path), "hf"]})
         ]

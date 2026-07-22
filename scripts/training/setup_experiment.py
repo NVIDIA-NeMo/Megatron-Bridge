@@ -31,30 +31,20 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from performance_recipe import PerformanceRecipeMetadata, resolve_performance_recipe_args  # noqa: E402
+from recipe_metadata import (  # noqa: E402
+    BenchmarkRecipeMetadata,
+    selected_benchmark_recipe,
+    validate_selected_benchmark_recipe,
+)
 
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
-TRAINING_ENTRYPOINT = CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"
-PERFORMANCE_ENTRYPOINT = CONTAINER_REPO_ROOT / "scripts/performance/run_script.py"
-TRAINING_LAUNCH_ENV = {
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": "1",
-    "TRANSFORMERS_OFFLINE": "1",
-    "TOKENIZERS_PARALLELISM": "False",
-    "NCCL_NVLS_ENABLE": "0",
-    "NVTE_NORM_FWD_USE_CUDNN": "1",
-    "NVTE_NORM_BWD_USE_CUDNN": "1",
-    "TORCH_NCCL_HIGH_PRIORITY": "1",
-    "HF_HUB_OFFLINE": "0",
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-    "NCCL_GRAPH_REGISTER": "0",
-}
 
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the lightweight head-node parser."""
     parser = argparse.ArgumentParser(
-        description="Launch Megatron Bridge library or exact performance recipes through Slurm.",
+        description="Launch Megatron Bridge library or exact benchmark recipes through Slurm.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
         epilog="""
@@ -66,11 +56,9 @@ Training examples:
 
   ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 \\
       --account ACCOUNT --partition PARTITION --container-image IMAGE \\
-      --env HF_TOKEN \\
-      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
+      --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --mode pretrain
 
-Library arguments are forwarded to run_recipe.py. Exact performance names are
-translated to the existing selector interface of the unchanged performance runner.
+Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
 """,
     )
     execution = parser.add_argument_group("Execution")
@@ -124,6 +112,11 @@ translated to the existing selector interface of the unchanged performance runne
         dest="submission_dry_run",
         help="Render the Slurm submission without submitting it.",
     )
+    execution.add_argument(
+        "--wait",
+        action="store_true",
+        help="Wait for the Slurm experiment to finish and stream its logs.",
+    )
     return parser
 
 
@@ -159,7 +152,7 @@ def _parse_mounts(values: list[str]) -> list[str]:
 
 def _validate_args(
     args: argparse.Namespace,
-    performance_metadata: PerformanceRecipeMetadata | None = None,
+    benchmark_metadata: BenchmarkRecipeMetadata | None = None,
 ) -> None:
     """Validate launcher requirements before creating an executor."""
     if any(not value.strip() for value in args.srun_args):
@@ -172,40 +165,33 @@ def _validate_args(
         raise ValueError("Slurm execution requires --account and --partition.")
     if not args.container_image:
         raise ValueError("Slurm execution requires --container-image or CONTAINER_IMAGE.")
-    if performance_metadata is not None:
+    if benchmark_metadata is not None:
         requested_gpus = args.nodes * args.gpus_per_node
-        if requested_gpus != performance_metadata.num_gpus:
+        if requested_gpus != benchmark_metadata.num_gpus:
             raise ValueError(
-                f"Performance recipe requires exactly {performance_metadata.num_gpus} GPUs, but --nodes and "
+                f"Benchmark recipe requires exactly {benchmark_metadata.num_gpus} GPUs, but --nodes and "
                 f"--gpus-per-node request {requested_gpus}."
             )
 
 
-def _task_environment(
-    performance_metadata: PerformanceRecipeMetadata | None,
+def _task_environment() -> dict[str, str]:
+    """Build source-agnostic rank-local environment defaults."""
+    return {
+        "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
+    }
+
+
+def _build_executor(
+    args: argparse.Namespace,
+    env_names: list[str],
+    mounts: list[str],
     *,
-    inherited_env_names: list[str],
-) -> dict[str, str]:
-    """Build the rank-local environment without materializing inherited values."""
-    python_paths = [
-        str(CONTAINER_REPO_ROOT / "src"),
-        str(CONTAINER_REPO_ROOT / "3rdparty/Megatron-LM"),
-    ]
-    if performance_metadata is not None:
-        python_paths.insert(0, str(CONTAINER_REPO_ROOT / "scripts/performance"))
-    environment = {"PYTHONPATH": f"{':'.join(python_paths)}:$PYTHONPATH"}
-    launch_environment = dict(TRAINING_LAUNCH_ENV)
-    if "HF_TOKEN" in inherited_env_names and "TRANSFORMERS_OFFLINE" not in inherited_env_names:
-        launch_environment["TRANSFORMERS_OFFLINE"] = "0"
-    for name, value in launch_environment.items():
-        if name not in inherited_env_names:
-            environment[name] = value
-    return environment
-
-
-def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list[str]) -> object:
+    task_environment: dict[str, str] | None = None,
+) -> object:
     """Build a Slurm NeMo-Run executor."""
     gpu_kwargs = {} if args.no_gpu_resource_request else {"gpus_per_node": args.gpus_per_node}
+    srun_args = list(args.srun_args)
+
     executor = run.SlurmExecutor(
         account=args.account,
         partition=args.partition,
@@ -224,13 +210,16 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     # Slurm inherits these values from the launcher environment. NeMo-Run receives
     # names only so secrets are not materialized into generated sbatch scripts.
     executor.env_vars = {}
-    task_env_names = _task_environment(None, inherited_env_names=env_names)
+    task_env_names = task_environment if task_environment is not None else _task_environment()
     # Pyxis otherwise lets values baked into the image override the task
     # environment. Name every task variable here while keeping secret values in
     # the inherited Slurm environment only.
     executor.container_env = sorted(set(env_names) | set(task_env_names))
-    executor.additional_parameters = {"export": ",".join(env_names) if env_names else "NIL"}
-    executor.srun_args = args.srun_args
+    # Keep Slurm control commands available to the batch script without
+    # forwarding the host PATH into the training container.
+    slurm_env_names = list(dict.fromkeys(["PATH", *env_names]))
+    executor.additional_parameters = {"export": ",".join(slurm_env_names)}
+    executor.srun_args = srun_args
     return executor
 
 
@@ -242,24 +231,29 @@ def parse_args(argv: list[str] | None = None) -> tuple[argparse.Namespace, list[
 def main(argv: list[str] | None = None) -> None:
     """Build and launch the selected training experiment."""
     args, training_args = parse_args(argv)
-    performance_metadata, task_args = resolve_performance_recipe_args(training_args)
-    entrypoint = PERFORMANCE_ENTRYPOINT if performance_metadata is not None else TRAINING_ENTRYPOINT
+    benchmark_metadata = selected_benchmark_recipe(training_args)
+    if benchmark_metadata is not None:
+        validate_selected_benchmark_recipe(training_args, benchmark_metadata)
+    _validate_args(args, benchmark_metadata)
 
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
-    _validate_args(args, performance_metadata)
-    executor = _build_executor(args, env_names, mounts)
+    task_environment = _task_environment()
+    executor = _build_executor(args, env_names, mounts, task_environment=task_environment)
 
     task = run.Script(
-        path=str(entrypoint),
+        path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),
         entrypoint="python",
-        env=_task_environment(performance_metadata, inherited_env_names=env_names),
+        env=task_environment,
         # NeMo-Run 0.10 joins Script arguments into an sbatch shell command.
         # Quote each value here so spaces and metacharacters remain one argument.
-        args=[shlex.quote(argument) for argument in task_args],
+        args=[shlex.quote(argument) for argument in training_args],
     )
     experiment_name = args.experiment_name or "training"
-    logger.info("Training command: %s", shlex.join(["python", str(entrypoint), *task_args]))
+    logger.info(
+        "Training command: %s",
+        shlex.join(["python", str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"), *training_args]),
+    )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
@@ -268,7 +262,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.submission_dry_run:
             experiment.dryrun()
             return
-        experiment.run(detach=True)
+        experiment.run(detach=not args.wait, tail_logs=args.wait)
 
 
 if __name__ == "__main__":
