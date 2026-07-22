@@ -33,7 +33,7 @@ KUBEFLOW_NUMA_BINDING_ENV = "NEMO_KUBEFLOW_NUMA_BINDING"
 KUBEFLOW_TORCHRUN_RDZV_READ_TIMEOUT_ENV = "NEMO_CLUSTERDIAG_TORCHRUN_RDZV_READ_TIMEOUT_SECONDS"
 
 
-def _install_kubeflow_torchrun_launch_patch(executor: run.KubeflowExecutor) -> None:
+def _install_kubeflow_torchrun_launch_patch() -> None:
     """Patch the NeMo-Run Kubeflow dry-run scheduler before PVC packaging."""
     from nemo_run.run.torchx_backend.schedulers.kubeflow import KubeflowScheduler
 
@@ -86,74 +86,64 @@ def _patch_kubeflow_torchrun_launch_script(script: str) -> str:
     return "".join(patched) if changed else script
 
 
-if isinstance(run.KubeflowExecutor, type):
+@dataclass(kw_only=True)
+class WorkspaceRootKubeflowExecutor(run.KubeflowExecutor):
+    """Keep NeMo-Run's code staging beneath a configurable PVC workspace root."""
 
-    @dataclass(kw_only=True)
-    class WorkspaceRootKubeflowExecutor(run.KubeflowExecutor):
-        """Keep NeMo-Run's code staging beneath a configurable PVC workspace root."""
+    workspace_root: Optional[str] = None
 
-        workspace_root: Optional[str] = None
-
-        def __post_init__(self):
-            if self.workspace_root:
-                mount_path = posixpath.normpath(self.workdir_pvc_path)
-                workspace_root = posixpath.normpath(self.workspace_root)
-                if not workspace_root.startswith("/"):
-                    raise ValueError("workspace_root must be an absolute path")
-                if workspace_root != mount_path and not workspace_root.startswith(f"{mount_path}/"):
-                    raise ValueError(
-                        f"workspace_root must be under workdir_pvc_path: {workspace_root} not under {mount_path}"
-                    )
-                self.workspace_root = workspace_root
-            super().__post_init__()
-
-        @property
-        def code_dir(self) -> str:
-            upstream_code_dir = posixpath.normpath(super().code_dir)
-            if not self.workspace_root:
-                return upstream_code_dir
+    def __post_init__(self):
+        if self.workspace_root:
             mount_path = posixpath.normpath(self.workdir_pvc_path)
-            relative_code_dir = posixpath.relpath(upstream_code_dir, mount_path)
-            if relative_code_dir == ".." or relative_code_dir.startswith("../"):
+            workspace_root = posixpath.normpath(self.workspace_root)
+            if not workspace_root.startswith("/"):
+                raise ValueError("workspace_root must be an absolute path")
+            if workspace_root != mount_path and not workspace_root.startswith(f"{mount_path}/"):
                 raise ValueError(
-                    f"NeMo-Run code_dir must be under workdir_pvc_path: {upstream_code_dir} not under {mount_path}"
+                    f"workspace_root must be under workdir_pvc_path: {workspace_root} not under {mount_path}"
                 )
-            return posixpath.join(self.workspace_root, relative_code_dir)
+            self.workspace_root = workspace_root
+        super().__post_init__()
 
-        def get_job_body(self, name: str, command: List[str]) -> Dict[str, Any]:
-            """Preserve runtime-owned resources and generated container mounts."""
-            manifest = super().get_job_body(name, command)
-            trainer = manifest.get("spec", {}).get("trainer", {})
-            resources = trainer.get("resourcesPerNode", {})
-            if resources.get("claims"):
-                # The installed Trainer accepts claims in the TrainJob but does
-                # not propagate them to the realized pod. The run-scoped
-                # runtime already contains the complete requests, limits, and
-                # claims, so avoid replacing that ResourceRequirements object.
-                trainer.pop("resourcesPerNode", None)
-            for override in manifest.get("spec", {}).get("podTemplateOverrides", []):
-                containers = override.get("spec", {}).get("containers", [])
-                for container in containers:
-                    if container.get("name") == "node":
-                        container.setdefault("volumeMounts", self.volume_mounts)
-            return manifest
+    @property
+    def code_dir(self) -> str:
+        upstream_code_dir = posixpath.normpath(super().code_dir)
+        if not self.workspace_root:
+            return upstream_code_dir
+        mount_path = posixpath.normpath(self.workdir_pvc_path)
+        relative_code_dir = posixpath.relpath(upstream_code_dir, mount_path)
+        if relative_code_dir == ".." or relative_code_dir.startswith("../"):
+            raise ValueError(
+                f"NeMo-Run code_dir must be under workdir_pvc_path: {upstream_code_dir} not under {mount_path}"
+            )
+        return posixpath.join(self.workspace_root, relative_code_dir)
 
-else:  # Minimal offline test doubles expose KubeflowExecutor as a function.
-    WorkspaceRootKubeflowExecutor = None
+    def get_job_body(self, name: str, command: List[str]) -> Dict[str, Any]:
+        """Preserve runtime-owned resources."""
+        manifest = super().get_job_body(name, command)
+        trainer = manifest.get("spec", {}).get("trainer", {})
+        resources = trainer.get("resourcesPerNode", {})
+        if resources.get("claims"):
+            # The installed Trainer accepts claims in the TrainJob but does
+            # not propagate them to the realized pod. The run-scoped
+            # runtime already contains the complete requests, limits, and
+            # claims, so avoid replacing that ResourceRequirements object.
+            trainer.pop("resourcesPerNode", None)
+        return manifest
 
 
-if WorkspaceRootKubeflowExecutor is not None:
-    # NeMo-Run selects its TorchX scheduler and parallel-execution support with
-    # exact-class lookups rather than isinstance(). Register the workspace-
-    # scoped subclass anywhere upstream grants KubeflowExecutor support.
-    from nemo_run.run.experiment import Experiment
-    from nemo_run.run.torchx_backend.schedulers.api import EXECUTOR_MAPPING
+# NeMo-Run selects its TorchX scheduler and parallel-execution support with
+# exact-class lookups rather than isinstance(). Register the workspace-scoped
+# subclass anywhere upstream grants KubeflowExecutor support.
+from nemo_run.run.experiment import Experiment
+from nemo_run.run.torchx_backend.schedulers.api import EXECUTOR_MAPPING
 
-    EXECUTOR_MAPPING[WorkspaceRootKubeflowExecutor] = EXECUTOR_MAPPING[run.KubeflowExecutor]
-    Experiment._PARALLEL_SUPPORTED_EXECUTORS = (
-        *Experiment._PARALLEL_SUPPORTED_EXECUTORS,
-        WorkspaceRootKubeflowExecutor,
-    )
+
+EXECUTOR_MAPPING[WorkspaceRootKubeflowExecutor] = EXECUTOR_MAPPING[run.KubeflowExecutor]
+Experiment._PARALLEL_SUPPORTED_EXECUTORS = (
+    *Experiment._PARALLEL_SUPPORTED_EXECUTORS,
+    WorkspaceRootKubeflowExecutor,
+)
 
 
 def _kubeflow_numa_binding_script(task: run.Script) -> run.Script:
@@ -473,8 +463,6 @@ def kubeflow_executor(
     labels = {**ci_labels, **(labels or {})}
 
     executor_class = WorkspaceRootKubeflowExecutor if workspace_root else run.KubeflowExecutor
-    if executor_class is None:
-        raise RuntimeError("workspace_root requires a class-based KubeflowExecutor")
     executor = executor_class(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
@@ -525,5 +513,5 @@ def kubeflow_executor(
         # are harmless cost there.)
         packager=run.GitArchivePackager(include_submodules=True),
     )
-    _install_kubeflow_torchrun_launch_patch(executor)
+    _install_kubeflow_torchrun_launch_patch()
     return executor
