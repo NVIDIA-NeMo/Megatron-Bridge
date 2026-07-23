@@ -403,15 +403,17 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.model.sequence_parallel is False
     assert cfg.model.vocab_size == 163842
     assert cfg.get_data_parallel_size(8) == 8
-    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(8)) == 4
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(8)) == 1
     assert cfg.model.num_moe_experts // cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.seq_length == 2048
-    assert cfg.dataset.seq_length == 2048
-    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 2048
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 8192
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
+    assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.train.train_iters == 100
-    assert cfg.train.global_batch_size == 32
+    assert cfg.train.global_batch_size == 8
     assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size * cfg.model.seq_length == 65536
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
     assert cfg.optimizer.lr == 5e-6

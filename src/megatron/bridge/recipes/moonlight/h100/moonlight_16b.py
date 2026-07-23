@@ -513,8 +513,9 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
 
     Recommended parallelism is TP=1, PP=1, CP=1, EP=8 on 8 H100 GPUs. This
     topology keeps sequence parallelism disabled so the shared SFT packing
-    contract remains ``pad_seq_to_mult=1``. With GBS=32 and MBS=1 it uses
-    dense DP=8 and four gradient-accumulation steps.
+    contract remains ``pad_seq_to_mult=1``. An 8K offline pack with GBS=8 and
+    MBS=1 keeps the per-update token budget at 65,536 while dense DP=8 removes
+    gradient accumulation.
 
     Returns:
         ConfigContainer with the Moonlight-16B full-SFT convergence contract.
@@ -531,7 +532,19 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
     cfg.model.sequence_parallel = False
     cfg.model.vocab_size = _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE
 
+    seq_length = 8192
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
+    # HybridEP combines tokens in 128-token chunks. Pad only the small
+    # end-of-pack gap to the fixed 8K width so each row is dispatcher-compatible
+    # without padding every constituent sequence.
+    cfg.dataset.dataset_kwargs = {
+        **(cfg.dataset.dataset_kwargs or {}),
+        "pad_to_max_length": True,
+    }
+    cfg.train.global_batch_size = 8
 
     # The model fits without activation recompute at this topology. Router
     # fusion and bf16 optimizer state reduce otherwise exposed execution and

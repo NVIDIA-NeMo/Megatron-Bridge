@@ -78,6 +78,7 @@ See: [bridge.recipes.moonlight](../../apidocs/bridge/bridge.recipes.moonlight.md
 **Key Features**:
 - **Expert Parallelism**: EP=8 for pretraining/full SFT and EP=4 for PEFT
 - **Sequence Parallel**: Disabled in the bounded-convergence recipes; enabled by higher-TP support configs
+- **Packed SFT**: The TP1 full-SFT recipe uses 8K offline packs with GBS/MBS 8/1, one dense-DP step per update, and 65,536 token slots per update
 - **Selective Recomputation**: Available for long-context and memory-constrained support configs
 - **RoPE Fusion**: Optional MLA-specific optimization (`apply_rope_fusion=True`)
 - **DeePEP**: Optional expert permutation optimization (`enable_deepep=True`)
@@ -123,7 +124,8 @@ cfg = moonlight_16b_sft_config(
     name="moonlight_full_sft",
     pretrained_checkpoint="/results/moonlight_16b/checkpoints/iter_0500000",
     train_iters=1000,
-    global_batch_size=128,
+    global_batch_size=8,
+    seq_length=8192,
     finetune_lr=5e-6,
     # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
 )
