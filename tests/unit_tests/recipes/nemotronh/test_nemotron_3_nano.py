@@ -91,15 +91,16 @@ class TestNemotron3NanoPretrain:
 
     def test_pretrain_config_enables_mtp_explicitly(self):
         """The pretraining flag enables the repeated Nano MTP head."""
+        base_config = nemotron_3_nano_pretrain_config()
         config = nemotron_3_nano_pretrain_config(enable_mtp=True)
 
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
         assert config.model.mtp_use_repeated_layer is True
         assert config.model.keep_mtp_spec_in_bf16 is True
-        assert config.model.calculate_per_token_loss is True
         assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.use_te_rng_tracker is True
+        assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
+        assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
 
     def test_pretrain_config_deepep_enabled(self):
         """Test that DeepEP is enabled by default for MoE pretrain."""
@@ -244,6 +245,7 @@ class TestNemotron3NanoSft:
             config,
             cli_overrides=['checkpoint.pretrained_checkpoint="/path/to/checkpoint"'],
         )
+        config.model.use_te_rng_tracker = False
         checkpoint_model = SimpleNamespace(
             mtp_num_layers=2,
             mtp_hybrid_override_pattern="*E",
@@ -264,7 +266,7 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_use_repeated_layer is True
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.use_te_rng_tracker is True
+        assert config.model.use_te_rng_tracker is False
 
     def test_sft_disables_mtp_for_non_mtp_checkpoint(self):
         """A non-MTP checkpoint keeps SFT on the non-MTP architecture."""

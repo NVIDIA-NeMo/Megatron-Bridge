@@ -52,7 +52,6 @@ class _Nemotron3NanoFinetuneConfig(ConfigContainer):
             )
             if mtp_num_layers > 0:
                 self.model.mtp_loss_scaling_factor = getattr(checkpoint_model, "mtp_loss_scaling_factor", 0.3)
-                self.model.use_te_rng_tracker = getattr(checkpoint_model, "use_te_rng_tracker", True)
         super().validate()
 
 
@@ -127,9 +126,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) 
     cfg.model.mtp_use_repeated_layer = enable_mtp
     cfg.model.keep_mtp_spec_in_bf16 = enable_mtp
     if enable_mtp:
-        cfg.model.calculate_per_token_loss = True
         cfg.model.mtp_loss_scaling_factor = 0.3
-        cfg.model.use_te_rng_tracker = True
 
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"

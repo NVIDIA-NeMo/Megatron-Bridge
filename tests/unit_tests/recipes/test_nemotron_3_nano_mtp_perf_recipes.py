@@ -52,6 +52,28 @@ _NON_MTP_RECIPES = (
     nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
     nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
 )
+_MTP_BASE_RECIPE_PAIRS = (
+    (
+        nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config,
+        nemotron_3_nano_pretrain_16gpu_h100_bf16_config,
+    ),
+    (
+        nemotron_3_nano_mtp_pretrain_16gpu_h100_fp8cs_config,
+        nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config,
+    ),
+    (
+        nemotron_3_nano_mtp_pretrain_8gpu_gb200_bf16_config,
+        nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    ),
+    (
+        nemotron_3_nano_mtp_pretrain_8gpu_gb200_fp8mx_config,
+        nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config,
+    ),
+    (
+        nemotron_3_nano_mtp_pretrain_8gpu_gb200_nvfp4_config,
+        nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
+    ),
+)
 
 
 @pytest.mark.parametrize("recipe_factory", _NON_MTP_RECIPES, ids=lambda recipe: recipe.__name__)
@@ -73,6 +95,24 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+
+
+@pytest.mark.parametrize(
+    ("mtp_recipe_factory", "base_recipe_factory"),
+    _MTP_BASE_RECIPE_PAIRS,
+    ids=[mtp_recipe.__name__ for mtp_recipe, _ in _MTP_BASE_RECIPE_PAIRS],
+)
+def test_perf_recipes_inherit_non_mtp_policy(
+    mtp_recipe_factory: Callable[[], ConfigContainer],
+    base_recipe_factory: Callable[[], ConfigContainer],
+) -> None:
+    """MTP variants inherit environment, loss normalization, and RNG policy."""
+    mtp_cfg = mtp_recipe_factory()
+    base_cfg = base_recipe_factory()
+
+    assert mtp_cfg.env_vars == base_cfg.env_vars
+    assert mtp_cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
+    assert mtp_cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
 
 
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)
