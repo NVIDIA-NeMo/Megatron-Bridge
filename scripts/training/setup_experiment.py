@@ -74,6 +74,11 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
+    execution.add_argument(
+        "--mem",
+        default="0",
+        help="Slurm memory request per node, for example 512G. Defaults to all node memory.",
+    )
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
         "--exclusive",
@@ -257,7 +262,7 @@ def _build_executor(
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
-        mem="0",
+        mem=args.mem,
         exclusive=True if args.exclusive else None,
         time=args.time,
         gres=args.gres,
