@@ -88,6 +88,9 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_a2a_overlap = False
 
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
+
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
@@ -110,6 +113,8 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
     }
     return cfg
 
