@@ -262,6 +262,15 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
                 resolved_spec = hybrid_stack_spec()
         else:
             resolved_spec = hybrid_stack_spec
+
+        if self.attention_backend in {AttnBackend.local, "local"}:
+            from megatron.core.transformer.dot_product_attention import DotProductAttention
+
+            resolved_spec = copy.deepcopy(resolved_spec)
+            attention_layer = getattr(resolved_spec.submodules, "attention_layer", None)
+            if attention_layer is not None:
+                attention_layer.submodules.self_attention.submodules.core_attention = DotProductAttention
+
         return _configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreHybridModel:

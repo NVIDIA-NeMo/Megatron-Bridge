@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -16,36 +16,14 @@
 set -euo pipefail
 
 WORKSPACE=${WORKSPACE:-/workspace}
-MODEL_SIZE=${MODEL_SIZE:-3B}
-
-case "$MODEL_SIZE" in
-    3B)
-        DEFAULT_MODEL_NAME=Ministral-3-3B-Base-2512
-        DEFAULT_TP=2
-        ;;
-    8B)
-        DEFAULT_MODEL_NAME=Ministral-3-8B-Base-2512
-        DEFAULT_TP=2
-        ;;
-    14B)
-        DEFAULT_MODEL_NAME=Ministral-3-14B-Base-2512
-        DEFAULT_TP=4
-        ;;
-    *)
-        echo "Unsupported MODEL_SIZE=${MODEL_SIZE}; expected one of: 3B, 8B, 14B" >&2
-        exit 2
-        ;;
-esac
-
-HF_MODEL_ID=${HF_MODEL_ID:-mistralai/${DEFAULT_MODEL_NAME}}
-HF_MODEL_BASENAME=${HF_MODEL_ID%/}
-MODEL_NAME=${MODEL_NAME:-${HF_MODEL_BASENAME##*/}}
+HF_MODEL_ID=${HF_MODEL_ID:-mistralai/${MODEL_NAME:-Mistral-7B-v0.1}}
+MODEL_NAME=${MODEL_NAME:-${HF_MODEL_ID##*/}}
 MEGATRON_PATH=${MEGATRON_PATH:-${WORKSPACE}/models/${MODEL_NAME}}
 MEGATRON_LOAD_PATH=${MEGATRON_LOAD_PATH:-${MEGATRON_PATH}/iter_0000000}
 HF_EXPORT_PATH=${HF_EXPORT_PATH:-${WORKSPACE}/models/${MODEL_NAME}-hf-export}
 ROUNDTRIP_OUTPUT_DIR=${ROUNDTRIP_OUTPUT_DIR:-${WORKSPACE}/models/${MODEL_NAME}-roundtrip}
 
-TP=${TP:-$DEFAULT_TP}
+TP=${TP:-2}
 PP=${PP:-1}
 EP=${EP:-1}
 ETP=${ETP:-1}
