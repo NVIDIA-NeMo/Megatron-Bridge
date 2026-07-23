@@ -16,6 +16,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 from megatron.bridge.recipes.llama.h100.llama3 import (
     llama3_8b_peft_1gpu_h100_bf16_config as llama3_8b_peft_config,
 )
@@ -23,7 +25,13 @@ from megatron.bridge.recipes.llama.h100.llama3 import (
     llama3_8b_pretrain_2gpu_h100_bf16_config as llama3_8b_pretrain_config,
 )
 from megatron.bridge.recipes.llama.h100.llama3 import (
-    llama3_8b_pretrain_2gpu_h100_fp8cs_config as llama3_8b_low_precision_pretrain_config,
+    llama3_8b_pretrain_2gpu_h100_fp8cs_config as _llama3_8b_pretrain_2gpu_h100_fp8cs_config,
+)
+from megatron.bridge.recipes.llama.h100.llama3 import (
+    llama3_8b_pretrain_2gpu_h100_fp8mx_config as _llama3_8b_pretrain_2gpu_h100_fp8mx_config,
+)
+from megatron.bridge.recipes.llama.h100.llama3 import (
+    llama3_8b_pretrain_2gpu_h100_nvfp4_config as _llama3_8b_pretrain_2gpu_h100_nvfp4_config,
 )
 from megatron.bridge.recipes.llama.h100.llama3 import (
     llama3_8b_pretrain_16gpu_h100_bf16_16k_config as llama3_8b_16k_pretrain_config,
@@ -103,6 +111,36 @@ from megatron.bridge.recipes.llama.h100.llama3 import (
 from megatron.bridge.recipes.llama.h100.llama3 import (
     llama32_3b_sft_1gpu_h100_bf16_config as llama32_3b_sft_config,
 )
+
+
+if TYPE_CHECKING:
+    from megatron.bridge.training.config import ConfigContainer
+
+
+def llama3_8b_low_precision_pretrain_config(
+    mixed_precision_recipe: str = "bf16_with_fp8_current_scaling_mixed",
+) -> "ConfigContainer":
+    """Return a low-precision Llama 3 8B pre-training config.
+
+    Args:
+        mixed_precision_recipe: Low-precision recipe to use.
+
+    Returns:
+        Llama 3 8B pre-training configuration.
+
+    Raises:
+        ValueError: If ``mixed_precision_recipe`` is not supported.
+    """
+    recipes = {
+        "bf16_with_fp8_current_scaling_mixed": _llama3_8b_pretrain_2gpu_h100_fp8cs_config,
+        "bf16_with_mxfp8_mixed": _llama3_8b_pretrain_2gpu_h100_fp8mx_config,
+        "bf16_with_nvfp4_mixed": _llama3_8b_pretrain_2gpu_h100_nvfp4_config,
+    }
+    try:
+        recipe = recipes[mixed_precision_recipe]
+    except KeyError as error:
+        raise ValueError(f"Unsupported low-precision recipe: {mixed_precision_recipe}") from error
+    return recipe()
 
 
 __all__ = [
