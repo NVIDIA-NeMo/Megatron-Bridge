@@ -6,11 +6,7 @@ from PIL import Image
 
 
 _HELPER_PATH = (
-    Path(__file__).parents[3]
-    / "skills"
-    / "create-model-verification-card"
-    / "scripts"
-    / "verify_hf_inference.py"
+    Path(__file__).parents[3] / "skills" / "create-model-verification-card" / "scripts" / "verify_hf_inference.py"
 )
 _SPEC = importlib.util.spec_from_file_location("model_verification_hf_inference", _HELPER_PATH)
 assert _SPEC is not None and _SPEC.loader is not None

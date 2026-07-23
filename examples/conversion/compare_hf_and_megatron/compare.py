@@ -264,7 +264,9 @@ def is_vision_language_model(
             "minicpm",
         ]
 
-        return any(indicator in model_type or indicator in arch_str for indicator in vl_indicators)
+        return getattr(config, "vision_config", None) is not None or any(
+            indicator in model_type or indicator in arch_str for indicator in vl_indicators
+        )
 
     except Exception as e:
         print_rank_0(f"Warning: Could not determine model type from config: {e}")
@@ -288,6 +290,7 @@ class SingleBatchIterator:
         attention_mask,
         pixel_values=None,
         image_grid_thw=None,
+        image_position_ids=None,
         inference_context=None,
     ):
         self.batch = dict(
@@ -302,6 +305,8 @@ class SingleBatchIterator:
             self.batch["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             self.batch["image_grid_thw"] = image_grid_thw
+        if image_position_ids is not None:
+            self.batch["image_position_ids"] = image_position_ids
 
         self._yielded = False
 
@@ -338,10 +343,9 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     }
 
     # Add vision inputs if present
-    if "pixel_values" in batch:
-        forward_args["pixel_values"] = batch["pixel_values"]
-    if "image_grid_thw" in batch:
-        forward_args["image_grid_thw"] = batch["image_grid_thw"]
+    for key in ("pixel_values", "image_grid_thw", "image_position_ids"):
+        if key in batch:
+            forward_args[key] = batch[key]
 
     def loss_func(x, **kwargs):
         return x
@@ -451,9 +455,40 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, messages, image_position_ids)
     """
     if is_vl_model and image_path:
+        if processor is not None and "gemma4" in processor.__class__.__name__.lower():
+            image = load_image(image_path)
+            messages = [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "image", "image": image},
+                        {"type": "text", "text": prompt},
+                    ],
+                }
+            ]
+            inputs = processor.apply_chat_template(
+                messages,
+                tokenize=True,
+                return_dict=True,
+                return_tensors="pt",
+                add_generation_prompt=True,
+            )
+            input_ids = pad_input_ids_to_tp_multiple(
+                inputs["input_ids"],
+                tp_size,
+                tokenizer.pad_token_id or 0,
+            )
+            return (
+                input_ids,
+                inputs.get("pixel_values"),
+                None,
+                messages,
+                inputs.get("image_position_ids"),
+            )
+
         if not QWEN_VL_UTILS_AVAILABLE:
             raise ImportError("qwen_vl_utils is required for vision-language models but not installed")
 
@@ -484,7 +519,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         )
 
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages, None
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -494,7 +529,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None, None
+        return input_ids, None, None, None, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -578,7 +613,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
+def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, image_position_ids=None):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -587,6 +622,7 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
+        image_position_ids: Image position IDs for models that require them (optional).
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -605,6 +641,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             hf_inputs["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw
+        if image_position_ids is not None:
+            hf_inputs["image_position_ids"] = image_position_ids
 
         hf_output = hf_model(**hf_inputs)
 
@@ -811,7 +849,7 @@ def compare_models_one_step(args) -> None:
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, messages = process_inputs(
+    input_ids, pixel_values, image_grid_thw, messages, image_position_ids = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
@@ -821,13 +859,20 @@ def compare_models_one_step(args) -> None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
+    if image_position_ids is not None:
+        image_position_ids = image_position_ids.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
+        hf_model,
+        input_ids,
+        pixel_values,
+        image_grid_thw,
+        tokenizer,
+        image_position_ids,
     )
 
     del hf_model
@@ -873,6 +918,7 @@ def compare_models_one_step(args) -> None:
                 attention_mask,
                 pixel_values,
                 image_grid_thw,
+                image_position_ids,
             )
             megatron_output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,

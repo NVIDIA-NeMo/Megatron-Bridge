@@ -187,6 +187,7 @@ class TestCompareMaskHandling:
 
         input_ids = torch.tensor([[1, 2, 3]])
         expected_mask = torch.ones_like(input_ids, dtype=torch.bool)
+        image_position_ids = torch.tensor([[0, 1, 2]])
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.decode.return_value = "test"
@@ -201,6 +202,7 @@ class TestCompareMaskHandling:
                 pixel_values=None,
                 image_grid_thw=None,
                 tokenizer=mock_tokenizer,
+                image_position_ids=image_position_ids,
             )
 
         call_kwargs = mock_hf_model.call_args.kwargs
@@ -208,6 +210,7 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].dtype == torch.bool
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
+        assert torch.equal(call_kwargs["image_position_ids"], image_position_ids)
 
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
@@ -269,6 +272,63 @@ class TestCompareMaskHandling:
                 "pipeline_dtype": torch.float32,
             },
             wrap_with_ddp=False,
+        )
+
+    def test_vlm_detection_accepts_structured_vision_config(self):
+        """Test Gemma 4 is detected from vision_config without a VL name marker."""
+        config = SimpleNamespace(
+            model_type="gemma4",
+            architectures=["Gemma4ForConditionalGeneration"],
+            vision_config=SimpleNamespace(),
+        )
+
+        with (
+            patch.object(compare.AutoConfig, "from_pretrained", return_value=config),
+            patch.object(compare, "is_safe_repo", return_value=False),
+        ):
+            assert compare.is_vision_language_model("google/gemma-4-26b-a4b-it")
+
+    def test_gemma4_inputs_use_chat_template_and_forward_image_positions(self):
+        """Test Gemma 4 bypasses Qwen-only processing and preserves image positions."""
+
+        class Gemma4Processor:
+            def __init__(self):
+                self.apply_chat_template = MagicMock(
+                    return_value={
+                        "input_ids": torch.tensor([[1, 2, 3, 4]]),
+                        "pixel_values": torch.randn(1, 3, 4, 4),
+                        "image_position_ids": torch.tensor([[0, 1, 2, 3]]),
+                    }
+                )
+
+        processor = Gemma4Processor()
+        tokenizer = SimpleNamespace(pad_token_id=0)
+        image = object()
+
+        with (
+            patch.object(compare, "load_image", return_value=image),
+            patch.object(compare, "QWEN_VL_UTILS_AVAILABLE", False),
+        ):
+            input_ids, pixel_values, image_grid_thw, messages, image_position_ids = compare.process_inputs(
+                tokenizer,
+                processor,
+                "/tmp/image.png",
+                "Describe the image.",
+                True,
+                tp_size=4,
+            )
+
+        assert input_ids.shape == (1, 4)
+        assert pixel_values.shape == (1, 3, 4, 4)
+        assert image_grid_thw is None
+        assert torch.equal(image_position_ids, torch.tensor([[0, 1, 2, 3]]))
+        assert messages[0]["content"][0] == {"type": "image", "image": image}
+        processor.apply_chat_template.assert_called_once_with(
+            messages,
+            tokenize=True,
+            return_dict=True,
+            return_tensors="pt",
+            add_generation_prompt=True,
         )
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
