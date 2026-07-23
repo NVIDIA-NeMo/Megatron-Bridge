@@ -224,21 +224,21 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: f9f215b8e4dd47239508e2e91e5614c52c8048a4  # pragma: allowlist secret
+      bridge_commit: 4b8a6929348d6e25e32744d89228254cc3985564  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 8
           --hf-model moonshotai/Moonlight-16B-A3B
-          --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-checkpoints/iter_0000100
-          --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-hf-export
+          --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-checkpoints/iter_0000100
+          --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
           --distributed-save --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
         - >
           uv run python
           skills/create-model-verification-card/scripts/verify_hf_inference.py
-          --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-hf-export
+          --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-hf-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template
       last_verified: 2026-07-22
