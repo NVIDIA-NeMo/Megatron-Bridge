@@ -33,13 +33,18 @@ def _configure_logging() -> None:
 
 def _validate_args(args: argparse.Namespace) -> None:
     """Validate worker arguments for direct invocations and submitted jobs."""
-    for name in ("tp", "pp", "ep", "etp"):
-        if getattr(args, name) < 1:
-            raise ValueError(f"--{name} must be at least 1.")
+    if args.command != "compare-hf":
+        for name in ("tp", "pp", "ep", "etp"):
+            if getattr(args, name) < 1:
+                raise ValueError(f"--{name} must be at least 1.")
     distributed_timeout_minutes = getattr(args, "distributed_timeout_minutes", None)
     if distributed_timeout_minutes is not None and distributed_timeout_minutes < 1:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
-    if args.device == "cpu" and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
+    if (
+        args.command != "compare-hf"
+        and args.device == "cpu"
+        and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp"))
+    ):
         raise ValueError("CPU conversion requires TP=PP=EP=ETP=1.")
     if args.command == "export":
         if args.save_every_n_ranks < 1:
@@ -118,6 +123,14 @@ def _run_roundtrip(args: argparse.Namespace) -> None:
     )
 
 
+def _run_hf_comparison(args: argparse.Namespace) -> None:
+    """Compare two persisted Hugging Face checkpoints on CPU."""
+    cpu_backend.compare_hf_checkpoints(
+        reference_hf_path=args.hf_model,
+        candidate_hf_path=args.hf_path,
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     """Parse worker arguments and run checkpoint conversion."""
     args = build_parser(include_execution=False).parse_args(argv)
@@ -138,8 +151,10 @@ def main(argv: list[str] | None = None) -> None:
         _run_import(args)
     elif args.command == "export":
         _run_export(args)
-    else:
+    elif args.command == "roundtrip":
         _run_roundtrip(args)
+    else:
+        _run_hf_comparison(args)
 
 
 if __name__ == "__main__":

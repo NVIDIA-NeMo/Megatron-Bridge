@@ -7,6 +7,9 @@ import sys
 import types
 from pathlib import Path
 
+import pytest
+import torch
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_DIR = REPO_ROOT / "scripts" / "conversion"
@@ -25,10 +28,12 @@ def _load_cpu_backend():
         "megatron.bridge": types.ModuleType("megatron.bridge"),
         "megatron.bridge.models": types.ModuleType("megatron.bridge.models"),
         "megatron.bridge.models.hf_pretrained": types.ModuleType("megatron.bridge.models.hf_pretrained"),
+        "megatron.bridge.models.hf_pretrained.state": types.ModuleType("megatron.bridge.models.hf_pretrained.state"),
         "megatron.bridge.models.hf_pretrained.utils": types.ModuleType("megatron.bridge.models.hf_pretrained.utils"),
         "utils": types.ModuleType("utils"),
     }
     modules["megatron.bridge"].AutoBridge = AutoBridge
+    modules["megatron.bridge.models.hf_pretrained.state"].SafeTensorsStateSource = object
     modules["megatron.bridge.models.hf_pretrained.utils"].is_safe_repo = lambda **kwargs: kwargs["trust_remote_code"]
     modules["utils"].parse_dtype = lambda value: f"dtype:{value}"
     modules["utils"].prepare_output_directory = lambda *args, **kwargs: calls.append(
@@ -77,3 +82,52 @@ def test_import_preserves_model_id_and_forwards_revision():
             },
         ),
     ]
+
+
+def test_compare_hf_checkpoints_reports_bitwise_match(caplog):
+    module, _ = _load_cpu_backend()
+    checkpoints = {
+        "reference": {"a": torch.tensor([1, 2]), "b": torch.tensor([3], dtype=torch.bfloat16)},
+        "candidate": {"a": torch.tensor([1, 2]), "b": torch.tensor([3], dtype=torch.bfloat16)},
+    }
+
+    class StateSource:
+        def __init__(self, path):
+            self.tensors = checkpoints[path]
+
+        def get_all_keys(self):
+            return list(self.tensors)
+
+        def load_tensors(self, keys):
+            return {key: self.tensors[key] for key in keys}
+
+    module.SafeTensorsStateSource = StateSource
+    with caplog.at_level("INFO"):
+        module.compare_hf_checkpoints(reference_hf_path="reference", candidate_hf_path="candidate")
+
+    assert "tensors=2, serialized_tensor_bytes=18" in caplog.text
+
+
+def test_compare_hf_checkpoints_rejects_inventory_and_value_mismatches():
+    module, _ = _load_cpu_backend()
+    checkpoints = {
+        "reference": {"a": torch.tensor([1, 2]), "missing": torch.tensor([3])},
+        "candidate": {"a": torch.tensor([1, 9]), "unexpected": torch.tensor([3])},
+    }
+
+    class StateSource:
+        def __init__(self, path):
+            self.tensors = checkpoints[path]
+
+        def get_all_keys(self):
+            return list(self.tensors)
+
+        def load_tensors(self, keys):
+            return {key: self.tensors[key] for key in keys}
+
+    module.SafeTensorsStateSource = StateSource
+    with pytest.raises(
+        ValueError,
+        match=r"missing=1, unexpected=1, shape=0, dtype=0, value=1",
+    ):
+        module.compare_hf_checkpoints(reference_hf_path="reference", candidate_hf_path="candidate")

@@ -92,6 +92,12 @@ def _parse_roundtrip(module, *options):
     )
 
 
+def _parse_hf_comparison(module, *options):
+    return module.build_parser(include_execution=True).parse_args(
+        ["compare-hf", "--hf-model", "hf/model", "--hf-path", "/candidate", *options]
+    )
+
+
 def test_setup_import_is_lightweight(monkeypatch):
     monkeypatch.delitem(sys.modules, "torch", raising=False)
     monkeypatch.delitem(sys.modules, "megatron.bridge", raising=False)
@@ -219,6 +225,31 @@ def test_roundtrip_rejects_cpu_backend():
     args = _parse_roundtrip(module, "--device", "cpu")
 
     with pytest.raises(ValueError, match="requires the GPU backend"):
+        module._validate_args(args)
+
+
+def test_hf_comparison_accepts_cpu_without_gpu_resource():
+    module = _load_setup_conversion_module()
+    args = _parse_hf_comparison(
+        module,
+        "--executor",
+        "slurm",
+        "--account",
+        "account",
+        "--partition",
+        "partition",
+        "--container-image",
+        "image.sqsh",
+    )
+
+    module._validate_args(args)
+
+
+def test_hf_comparison_rejects_gpu_backend():
+    module = _load_setup_conversion_module()
+    args = _parse_hf_comparison(module, "--device", "gpu", "--gpus-per-node", "1")
+
+    with pytest.raises(ValueError, match="requires the CPU backend"):
         module._validate_args(args)
 
 

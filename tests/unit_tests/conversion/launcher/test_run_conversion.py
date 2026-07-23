@@ -202,6 +202,34 @@ def test_gpu_roundtrip_dispatches_to_gpu_backend():
     ]
 
 
+def test_hf_comparison_dispatches_to_cpu_backend(monkeypatch):
+    module, cpu_backend, _ = _load_run_conversion_module()
+    calls = []
+    cpu_backend.compare_hf_checkpoints = lambda **kwargs: calls.append(kwargs)
+    monkeypatch.setattr(module, "resolve_hf_model_revision", lambda model, revision: "/resolved/reference")
+
+    module.main(
+        [
+            "compare-hf",
+            "--device",
+            "cpu",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--hf-path",
+            "/candidate",
+        ]
+    )
+
+    assert calls == [
+        {
+            "reference_hf_path": "/resolved/reference",
+            "candidate_hf_path": "/candidate",
+        }
+    ]
+
+
 def test_cpu_worker_rejects_parallelism():
     module, _, _ = _load_run_conversion_module()
 

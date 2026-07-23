@@ -17,13 +17,16 @@ import logging
 import shutil
 from pathlib import Path
 
+import torch
 from utils import parse_dtype, prepare_output_directory
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
 
 
 logger = logging.getLogger(__name__)
+_MAX_MISMATCH_SAMPLES = 20
 
 
 def _find_run_config(checkpoint_path: Path) -> Path:
@@ -124,3 +127,65 @@ def export_checkpoint(
             ) from error
         raise
     logger.info("CPU export complete: %s", hf_path)
+
+
+def compare_hf_checkpoints(*, reference_hf_path: str, candidate_hf_path: str) -> None:
+    """Compare two persisted Hugging Face safetensors checkpoints bitwise.
+
+    Args:
+        reference_hf_path: Reference Hugging Face checkpoint directory.
+        candidate_hf_path: Candidate Hugging Face checkpoint directory.
+
+    Raises:
+        ValueError: If keys, shapes, dtypes, or tensor values differ.
+    """
+    reference = SafeTensorsStateSource(reference_hf_path)
+    candidate = SafeTensorsStateSource(candidate_hf_path)
+    reference_keys = set(reference.get_all_keys())
+    candidate_keys = set(candidate.get_all_keys())
+    missing_keys = sorted(reference_keys - candidate_keys)
+    unexpected_keys = sorted(candidate_keys - reference_keys)
+
+    shape_mismatches = 0
+    dtype_mismatches = 0
+    value_mismatches = 0
+    mismatch_samples: list[str] = []
+    total_bytes = 0
+    for key in sorted(reference_keys & candidate_keys):
+        reference_tensor = reference.load_tensors([key])[key]
+        candidate_tensor = candidate.load_tensors([key])[key]
+        total_bytes += reference_tensor.numel() * reference_tensor.element_size()
+        if reference_tensor.shape != candidate_tensor.shape:
+            shape_mismatches += 1
+            if len(mismatch_samples) < _MAX_MISMATCH_SAMPLES:
+                mismatch_samples.append(
+                    f"{key}: shape {tuple(reference_tensor.shape)} != {tuple(candidate_tensor.shape)}"
+                )
+            continue
+        if reference_tensor.dtype != candidate_tensor.dtype:
+            dtype_mismatches += 1
+            if len(mismatch_samples) < _MAX_MISMATCH_SAMPLES:
+                mismatch_samples.append(f"{key}: dtype {reference_tensor.dtype} != {candidate_tensor.dtype}")
+            continue
+        if not torch.equal(reference_tensor, candidate_tensor):
+            value_mismatches += 1
+            if len(mismatch_samples) < _MAX_MISMATCH_SAMPLES:
+                mismatch_samples.append(f"{key}: tensor values differ")
+
+    mismatch_count = len(missing_keys) + len(unexpected_keys) + shape_mismatches + dtype_mismatches + value_mismatches
+    if mismatch_count:
+        samples = [*(f"missing: {key}" for key in missing_keys), *(f"unexpected: {key}" for key in unexpected_keys)]
+        samples.extend(mismatch_samples)
+        sample_text = "; ".join(samples[:_MAX_MISMATCH_SAMPLES])
+        raise ValueError(
+            "Hugging Face checkpoint mismatch: "
+            f"missing={len(missing_keys)}, unexpected={len(unexpected_keys)}, "
+            f"shape={shape_mismatches}, dtype={dtype_mismatches}, value={value_mismatches}. "
+            f"Samples: {sample_text}"
+        )
+
+    logger.info(
+        "Hugging Face checkpoints match bitwise: tensors=%d, serialized_tensor_bytes=%d",
+        len(reference_keys),
+        total_bytes,
+    )
