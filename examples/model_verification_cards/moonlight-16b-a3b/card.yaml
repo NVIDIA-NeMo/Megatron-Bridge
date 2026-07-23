@@ -179,9 +179,10 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 411c6b1dc26eef50124843fbf9b6253b7b6c43cb  # pragma: allowlist secret
+      bridge_commit: f9f215b8e4dd47239508e2e91e5614c52c8048a4  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
+        moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe moonlight_16b_sft_8gpu_h100_bf16_tp1_config --mode sft
@@ -192,48 +193,50 @@ items:
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'
-        dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-b14afda60f1b
+        dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-hybridep-b14afda60f1b
         dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
         +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-        --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints
+        --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
       last_verified: 2026-07-22
       metrics:
-        initial_loss: 1.362663
-        final_loss: 1.067557
-        last_10_steps_step_time_ms_avg: 1823.700
-        last_10_steps_model_tflops_per_gpu_avg: 70.580
+        initial_loss: 1.447553
+        final_loss: 1.080537
+        last_10_steps_step_time_ms_avg: 1287.110
+        last_10_steps_model_tflops_per_gpu_avg: 100.000
       expected_result: >
         The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at
         TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 32/1, and four-way gradient
-        accumulation. Pad-1 offline packing is 99.20% efficient, and the sampled
-        6,553,600 token slots contain 4,308,035 supervised tokens after label
-        masking. LM loss is finite from 1.362663 to 1.067557 with no skipped or
-        NaN iterations, all four metrics are recorded, and the complete
-        eight-shard iter_0000100 full-model checkpoint reloads successfully.
+        accumulation, using the HybridEP flex dispatcher with overlapped expert
+        communication and delayed weight-gradient compute. Pad-1 offline packing
+        is 99.20% efficient, and the sampled 6,553,600 token slots contain
+        4,308,035 supervised tokens after label masking. LM loss is finite from
+        1.447553 to 1.080537 with no skipped or NaN iterations, all four metrics
+        are recorded, and the complete eight-shard iter_0000100 full-model
+        checkpoint reloads successfully.
 
   sft_export_inference:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 411c6b1dc26eef50124843fbf9b6253b7b6c43cb  # pragma: allowlist secret
+      bridge_commit: f9f215b8e4dd47239508e2e91e5614c52c8048a4  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 8
           --hf-model moonshotai/Moonlight-16B-A3B
-          --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints/iter_0000100
-          --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
+          --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-checkpoints/iter_0000100
+          --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
           --distributed-save --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
         - >
           uv run python
           skills/create-model-verification-card/scripts/verify_hf_inference.py
-          --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
+          --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v2-hf-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template
       last_verified: 2026-07-22
@@ -246,9 +249,9 @@ items:
         unexpected keys. Two independent runs using greedy decoding produce
         byte-identical token IDs and exactly 32 new tokens with this literal
         completion:
-        "Paris is the capital of France and is considered the cultural and
-        political center of the country. It is home to many of France's most
-        famous landmarks, such as".
+        "Paris is the capital city of France and is considered the cultural,
+        political, and economic center of the country. It is home to many of
+        France's most famous".
 
   sft_long_context:
     H100:
