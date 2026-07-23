@@ -246,7 +246,7 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     cfg.train.global_batch_size = global_batch_size
 
     # Fine-grained activation offloading. Requires NVTE_CPU_OFFLOAD_V1=1 in the
-    # launch environment (set by perf_plugins.py).
+    # launch environment (set in this recipe's env_vars).
     # NOTE: also requires setting the min_offloaded_tensor_size to avoid CPU OOM issues
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["fused_group_mlp"]
@@ -295,6 +295,13 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
         # Transformer Engine overlap settings for this model.
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
+        # offloading weights;
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by the
+        # op fuser + fused weighted squared-ReLU with moe_act activation recompute
+        # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
 
