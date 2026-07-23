@@ -405,5 +405,21 @@ def nemotron_3_ultra_pretrain_96gpu_gb200_bf16_config() -> ConfigContainer:
     # which trips the "save path not set" assert. Disable it.
     cfg.checkpoint.async_save = False
 
-    cfg.env_vars = {**COMMON_PERF_ENV_VARS}
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # Disable NVLS (NVLink SHARP multicast). On this GB200 fleet the NCCL NVLS
+        # transport setup raises CUDA 801 'operation not supported' at init; every
+        # other gb200 perf recipe disables it too. Also determinism-friendly
+        # (the deterministic launcher forces NCCL_ALGO=Ring).
+        "NCCL_NVLS_ENABLE": 0,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # NOTE: running this recipe with the HybridEP flex dispatcher additionally
+        # needs the NVLink-domain topology vars (NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN,
+        # NVLINK_DOMAIN_SIZE, USE_MNNVL) — see the super gb200 recipe. Omitted here
+        # because the deterministic launcher overrides the dispatcher to alltoall.
+    }
     return cfg
