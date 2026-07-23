@@ -34,7 +34,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 
 
-def _ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
+def ernie45_decoder_block_spec(config: "GPTModelProvider", vp_stage: int | None = None):
     """Create a decoder block spec that respects ``moe_layer_freq``.
 
     The default ``GPTModelProvider.transformer_layer_spec`` calls
@@ -196,7 +196,7 @@ class Ernie45Bridge(MegatronModelBridge):
         # Mixed dense/MoE layers (layer 0 dense, rest MoE): use decoder
         # block spec that parses moe_layer_freq per-layer instead of the
         # default spec which applies MoE uniformly to all layers.
-        provider.transformer_layer_spec = _ernie45_decoder_block_spec
+        provider.transformer_layer_spec = ernie45_decoder_block_spec
 
         # --- MoE settings (ERNIE uses non-standard HF config field names) ---
         num_experts = self._get_num_experts(hf_config)
@@ -233,9 +233,10 @@ class Ernie45Bridge(MegatronModelBridge):
         # flag is irrelevant; for training it will be enabled whenever
         # the required extensions are present.
 
-        # Disable MTP (Multi-Token Prediction) for inference -- the ERNIE HF
-        # model stores num_nextn_predict_layers in config but does not ship
-        # MTP weights, so we must not create MTP layers in Megatron.
+        # Disable MTP (Multi-Token Prediction) for conversion and inference.
+        # The PT checkpoint stores MTP weights but they are pre-training-only;
+        # Stage 1 validation only requires the main model weights.
+        # Export uses --not-strict so the 12 missing MTP tensors are warnings.
         provider.mtp_num_layers = None
 
         # Determine which layers are dense vs MoE.

@@ -25,13 +25,13 @@ HF_MODEL_ID_IMPORT=openai/gpt-oss-20b
 HF_MODEL_ID_EXPORT=unsloth/gpt-oss-20b-BF16
 
 # Import HF → Megatron
-./scripts/conversion/convert.sh import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model "$HF_MODEL_ID_IMPORT" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}" \
     --trust-remote-code
 
 # Export Megatron → HF
-./scripts/conversion/convert.sh export \
+uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model "$HF_MODEL_ID_EXPORT" \
     --megatron-path "${WORKSPACE}/models/${MODEL_NAME}/iter_0000000" \
     --hf-path "${WORKSPACE}/models/${MODEL_NAME}-hf-export"

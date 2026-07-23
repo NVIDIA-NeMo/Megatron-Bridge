@@ -28,7 +28,7 @@ See the [conversion.sh](conversion.sh) script for checkpoint conversion examples
 To import the HF model to your desired Megatron path:
 
 ```bash
-./scripts/conversion/convert.sh import \
+uv run python examples/conversion/convert_checkpoints.py import \
     --hf-model openai/gpt-oss-20b \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b \
     --trust-remote-code
@@ -39,7 +39,7 @@ To import the HF model to your desired Megatron path:
 The export uses `unsloth/gpt-oss-20b-BF16` as the reference so the saved HF checkpoint matches that unquantized format:
 
 ```bash
-./scripts/conversion/convert.sh export \
+uv run python examples/conversion/convert_checkpoints.py export \
     --hf-model unsloth/gpt-oss-20b-BF16 \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gpt-oss-20b-hf-export

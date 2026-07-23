@@ -60,17 +60,57 @@ from megatron.bridge.utils.common_utils import hook_hf_module_setattr_for_tp_gra
 
 
 def _normalize_hf_config(hf_config):
-    """Ensure the HF config has a ``text_config`` attribute.
+    """Ensure the HF config has a ``text_config`` attribute and that it supports
+    attribute access (not a plain dict).
 
-    The transformers-builtin ``Ernie4_5_VLMoeVariableResolutionResamplerModel`` accesses
-    ``config.text_config.hidden_size`` and ``config.text_config.rms_norm_eps``.  The
-    nested config (Instruct model) has ``text_config`` as a sub-object, but the flat
-    config (Thinking model) stores all LLM fields directly on the top-level config.
-
-    For flat configs, we set ``text_config`` to point to the config itself so that
-    ``config.text_config.hidden_size`` resolves to ``config.hidden_size``.
+    When the model is reconstructed from run_config.yaml, NeMo Run instantiates the
+    outer HF config correctly via its ``_target_`` key. However, the nested
+    ``text_config`` sub-field may be deserialized as a plain Python dict (because HF's
+    ``PretrainedConfig.__init__`` does not convert dict kwargs to config objects).
+    This function ensures ``text_config`` supports attribute access by converting it
+    to a ``SimpleNamespace`` when needed.
     """
-    if hf_config is not None and not hasattr(hf_config, "text_config"):
+    if hf_config is None:
+        return hf_config
+
+    import types as _types
+
+    def _to_ns(obj):
+        if isinstance(obj, dict):
+            return _types.SimpleNamespace(**{k: _to_ns(v) for k, v in obj.items()})
+        if isinstance(obj, list):
+            return [_to_ns(x) for x in obj]
+        return obj
+
+    # Handle the case where hf_config itself is a dict or OmegaConf DictConfig
+    # (e.g. when OmegaConf deserializes without a _target_ key)
+    _is_dict_like = isinstance(hf_config, dict)
+    if not _is_dict_like:
+        try:
+            from omegaconf import OmegaConf
+
+            if OmegaConf.is_config(hf_config):
+                hf_config = OmegaConf.to_container(hf_config, resolve=True)
+                _is_dict_like = True
+        except ImportError:
+            pass
+    if _is_dict_like:
+        hf_config = _to_ns(hf_config)
+
+    # Handle the common case where hf_config is a proper HF PretrainedConfig object
+    # but its nested text_config was deserialized as a plain dict.
+    text_config = getattr(hf_config, "text_config", None)
+    if isinstance(text_config, dict):
+        try:
+            hf_config.text_config = _to_ns(text_config)
+        except (AttributeError, TypeError):
+            # If we can't set the attribute (e.g. frozen config), wrap hf_config
+            pass
+
+    # For flat configs (Thinking/auto_map) that don't have a text_config sub-object,
+    # set text_config to point to hf_config itself so that config.text_config.hidden_size
+    # resolves to hf_config.hidden_size.
+    if not hasattr(hf_config, "text_config"):
         hf_config.text_config = hf_config
     return hf_config
 
@@ -289,9 +329,9 @@ class Ernie45VLModel(MegatronModule):
             # 1. Vision config: DFNRopeVisionTransformerConfig may lack rms_norm_eps,
             #    intermediate_size, temporal_merge_size.
             _normalize_vision_config(config.vision_config, hf_config=config.hf_config)
-            # 2. HF config: flat config (Thinking) lacks text_config sub-object
-            #    that the resampler accesses as config.text_config.hidden_size, etc.
-            _normalize_hf_config(config.hf_config)
+            # 2. HF config: flat config (Thinking) lacks text_config sub-object;
+            #    also converts OmegaConf DictConfig to SimpleNamespace for attribute access.
+            _normalized_hf_cfg = _normalize_hf_config(config.hf_config)
 
             if self.use_mg_vit:
                 # Megatron-Core native ViT: TP-native attention and MLP via
@@ -319,7 +359,9 @@ class Ernie45VLModel(MegatronModule):
             # Instantiate the HF resampler (spatial + temporal merging + projection).
             # The resampler is kept as an HF module regardless of use_mg_vit because
             # it is small, replicated, and already has bridge weight mappings.
-            self.resampler_model = Ernie4_5_VLMoeVariableResolutionResamplerModel(config.hf_config)
+            # _normalize_hf_config above already converts any dict-typed text_config
+            # to SimpleNamespace so that .text_config.hidden_size attribute access works.
+            self.resampler_model = Ernie4_5_VLMoeVariableResolutionResamplerModel(_normalized_hf_cfg)
             hook_hf_module_setattr_for_tp_grad_sync(self.resampler_model)
 
         # Build the Megatron-Core GPT language model

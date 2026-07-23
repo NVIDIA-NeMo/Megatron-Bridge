@@ -139,12 +139,24 @@ def _tokenize_prompt(tokenizer, prompt: str, *, apply_chat_template: bool, think
     return encoded["input_ids"]
 
 
+def _safe_decode_token(tokenizer, token_id: int) -> str:
+    """Decode a single token, replacing invalid UTF-8 bytes rather than raising."""
+    try:
+        return tokenizer.decode([token_id])
+    except (UnicodeDecodeError, ValueError):
+        return repr(token_id)
+
+
 def _decode_completion(tokenizer, generated_ids: torch.Tensor, prompt_length: int) -> str:
     """Decode generated tokens without echoing the prompt or special tokens."""
-    return tokenizer.decode(
-        generated_ids[0, prompt_length:].tolist(),
-        skip_special_tokens=True,
-    )
+    tokens = generated_ids[0, prompt_length:].tolist()
+    try:
+        return tokenizer.decode(tokens, skip_special_tokens=True)
+    except (UnicodeDecodeError, ValueError):
+        # Some tokenizers produce non-UTF-8 bytes (e.g. byte-level vocabularies).
+        # Decode without skipping specials first, then replace invalid bytes.
+        raw = tokenizer.decode(tokens, skip_special_tokens=False)
+        return raw.encode("utf-8", errors="replace").decode("utf-8")
 
 
 def main(args) -> None:
@@ -319,10 +331,10 @@ def main(args) -> None:
                     print_rank_0(f"Step {step}: output shape={output.shape}, var={output.var():.4f}")
                     logits = output[0, -1, :]
                     top5_vals, top5_ids = torch.topk(logits, 5)
-                    top5_tokens = [tokenizer.decode([idx]) for idx in top5_ids]
+                    top5_tokens = [_safe_decode_token(tokenizer, idx) for idx in top5_ids]
                     print_rank_0(f"Top 5: {list(zip(top5_tokens, top5_vals.tolist()))}")
                     print_rank_0(
-                        f"Selected: '{tokenizer.decode([next_token_ids.item()])}' (id={next_token_ids.item()})"
+                        f"Selected: '{_safe_decode_token(tokenizer, next_token_ids.item())}' (id={next_token_ids.item()})"
                     )
             else:
                 next_token_ids = torch.ones((1, 1), device=generated_ids.device, dtype=generated_ids.dtype)
