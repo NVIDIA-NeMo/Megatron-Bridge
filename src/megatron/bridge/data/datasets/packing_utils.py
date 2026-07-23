@@ -336,7 +336,10 @@ def calculate_avg_seqlen(
     """Calculate average sequence length statistics from a packed dataset.
 
     Args:
-        dataset_file: Path to the .npy packed dataset file.
+        dataset_file: Path to the packed dataset. Either a legacy ``.npy`` file, or a
+            parquet spec (``.parquet`` / ``.pq``) which may be a single file, a glob
+            pattern, or a directory -- resolved via ``resolve_packed_parquet_paths``
+            so this matches the specs accepted by the FLOP-accounting existence gate.
         gbs: Global batch size used to determine how many rows to process.
         max_seq_len: Maximum sequence length (reserved for future use).
         drop_remainder: If True, drop rows that don't fill a complete batch.
@@ -351,10 +354,22 @@ def calculate_avg_seqlen(
     Raises:
         ValueError: If no rows remain after applying drop_remainder, or if no sequences are found.
     """
-    if str(dataset_file).lower().endswith((".parquet", ".pq")):
+    # Same predicate the packed-parquet loader (and flop_utils._packed_data_exists)
+    # uses, so the format detected here matches the spec accepted by the existence
+    # gate -- covers single file, glob pattern, and directory specs.
+    from megatron.bridge.data.datasets.packed_parquet import (
+        is_packed_parquet_spec,
+        resolve_packed_parquet_paths,
+    )
+
+    if is_packed_parquet_spec(dataset_file):
         import pyarrow.parquet as pq
 
-        table = pq.read_table(dataset_file, columns=["input_ids", "seq_start_id"])
+        # Resolve the spec (single file / glob / directory) to concrete shard paths
+        # before reading, so a glob/dir spec that passes the existence gate does not
+        # then crash pq.read_table (which cannot take a raw glob string).
+        shards = resolve_packed_parquet_paths(dataset_file)
+        table = pq.read_table(shards, columns=["input_ids", "seq_start_id"])
         ids, starts = table.column("input_ids"), table.column("seq_start_id")
         data = [
             {"input_ids": ids[i].as_py(), "seq_start_id": starts[i].as_py()}
