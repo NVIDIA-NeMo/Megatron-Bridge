@@ -32,3 +32,4 @@ For checkpoint conversion and inference scripts, recommended parallelism setting
 
 ## Related Docs
 - DeepSeek V4 examples: [examples/models/deepseek_v4/README.md](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/deepseek_v4)
+- DeepSeek-V4-Pro GB300 performance reproduction: [examples/models/deepseek_v4_perf/README.md](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/r0.5.0/examples/models/deepseek_v4_perf)
