@@ -381,10 +381,7 @@ def calculate_avg_seqlen(
         shards = resolve_packed_parquet_paths(dataset_file)
         table = pq.read_table(shards, columns=["input_ids", "seq_start_id"])
         ids, starts = table.column("input_ids"), table.column("seq_start_id")
-        data = [
-            {"input_ids": ids[i].as_py(), "seq_start_id": starts[i].as_py()}
-            for i in range(table.num_rows)
-        ]
+        data = [{"input_ids": ids[i].as_py(), "seq_start_id": starts[i].as_py()} for i in range(table.num_rows)]
     else:
         with open(dataset_file, "rb") as f:
             data = safe_load_npy(f.read())
