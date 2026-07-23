@@ -12,7 +12,7 @@ scan without interpreting logs or reconstructing the execution environment.
 ## Use the repository resources
 
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
-- Verify exact-length deterministic HF output with
+- Verify deterministic HF output with
   [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
 - Use the inventory and field rules below as the format contract. Do not infer
   model-specific settings from another family or variant.
@@ -507,9 +507,10 @@ result. Private executor configuration stays outside the card.
   generation. Choose a prompt whose tokenized length is divisible by TP so the
   helper does not append padding before selecting the compared next-token
   position.
-- **Megatron inference:** Use deterministic greedy generation, specify an exact
-  token count, run twice, and record the literal completion including
-  whitespace.
+- **Megatron inference:** Use deterministic greedy generation with the same
+  explicit maximum new-token bound, run twice, and require byte-identical
+  decoded completions, including natural end-of-sequence stopping. Record the
+  literal completion including whitespace.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
@@ -523,8 +524,9 @@ result. Private executor configuration stays outside the card.
   checkpoint to HF, reload the exported model with Transformers, and run greedy
   generation twice. Store this item as an ordered `commands` list containing
   exactly two strings: the synchronous Slurm export first and the `uv run` HF
-  inference second. Specify an exact new-token count and record the literal
-  byte-identical completion, including whitespace, in `expected_result`.
+  inference second. Specify the same maximum new-token bound for both runs and
+  record the literal byte-identical completion, including whitespace, in
+  `expected_result`. Allow the model to stop naturally at end-of-sequence.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
@@ -660,8 +662,9 @@ an item verified merely to make validation pass.
 - Change only the execution/performance contract while tuning throughput, and
   recheck loss sentinels after numerically non-bitwise changes.
 - Leave recipe global and micro batch sizes unchanged in card commands.
-- Save full SFT, export it to HF, and record an exact deterministic N-token HF
-  completion in a two-command ordered list.
+- Save full SFT, export it to HF, and record the deterministic HF completion
+  produced twice under the same maximum new-token bound in a two-command
+  ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.

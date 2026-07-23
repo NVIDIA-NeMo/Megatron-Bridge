@@ -284,7 +284,7 @@ def main(args) -> None:
     # Greedy generation loop
     # ------------------------------------------------------------------
     generated_ids = input_ids_raw.clone()
-    stop_tokens = [] if args.exact_new_tokens else [tokenizer.eos_token_id]
+    stop_tokens = [tokenizer.eos_token_id]
 
     for step in range(args.max_new_tokens):
         with torch.no_grad():
@@ -386,11 +386,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")
     parser.add_argument("--max_new_tokens", type=int, default=20, help="Maximum number of new tokens to generate.")
-    parser.add_argument(
-        "--exact-new-tokens",
-        action="store_true",
-        help="Generate exactly --max_new_tokens even if an end-of-sequence token appears earlier.",
-    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")

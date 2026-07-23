@@ -61,7 +61,6 @@ def test_hf_revision_is_optional():
     args = symbols["build_parser"]().parse_args(["--hf_model_path", "Qwen/model"])
 
     assert args.hf_revision is None
-    assert args.exact_new_tokens is False
 
 
 def test_hf_revision_is_exposed_by_the_cli():
@@ -92,25 +91,6 @@ def test_hf_revision_is_forwarded_to_every_loader():
             revision_loaders.add((node.func.value.id, node.func.attr))
 
     assert revision_loaders == expected_loaders
-
-
-def test_exact_new_tokens_bypasses_eos_stopping():
-    symbols = _load_cli_symbols()
-
-    args = symbols["build_parser"]().parse_args(["--hf_model_path", "Qwen/model", "--exact-new-tokens"])
-
-    assert args.exact_new_tokens is True
-    assignment = next(
-        node
-        for node in ast.walk(_main_function())
-        if isinstance(node, ast.Assign)
-        and any(isinstance(target, ast.Name) and target.id == "stop_tokens" for target in node.targets)
-    )
-    expression = compile(ast.Expression(assignment.value), str(_SCRIPT), "eval")
-    tokenizer = types.SimpleNamespace(eos_token_id=2)
-
-    assert eval(expression, {}, {"args": types.SimpleNamespace(exact_new_tokens=False), "tokenizer": tokenizer}) == [2]
-    assert eval(expression, {}, {"args": args, "tokenizer": tokenizer}) == []
 
 
 def test_decode_completion_slices_prompt():

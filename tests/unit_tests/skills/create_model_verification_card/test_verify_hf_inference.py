@@ -81,7 +81,7 @@ class _Model:
 
     def generate(self, **kwargs):
         self.calls.append(kwargs)
-        return torch.tensor([[1, 2, 3, 4, 5]])
+        return torch.tensor([[1, 2, 3, 4]])
 
 
 def test_image_content_uses_processor_native_location_keys():
@@ -115,7 +115,7 @@ def test_image_requires_chat_template():
         )
 
 
-def test_multimodal_main_uses_processor_chat_and_exact_greedy_generation(monkeypatch):
+def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypatch):
     module = _load_module()
     processor = _Processor()
     model = _Model()
@@ -156,7 +156,7 @@ def test_multimodal_main_uses_processor_chat_and_exact_greedy_generation(monkeyp
     assert len(model.calls) == 2
     for call in model.calls:
         assert call["do_sample"] is False
-        assert call["min_new_tokens"] == 2
+        assert "min_new_tokens" not in call
         assert call["max_new_tokens"] == 2
         assert call["pad_token_id"] == 0
         assert "pixel_values" in call
