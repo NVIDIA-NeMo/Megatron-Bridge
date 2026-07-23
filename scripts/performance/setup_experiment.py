@@ -84,6 +84,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
       carry JSON values whose ``{}`` / ``[]`` are brace/glob-expanded by the
       shell in the generated launch command, corrupting argv and leaking tokens
       into the training entrypoint's Hydra override parser.
+    * ``--runai_*`` — consumed here to build the RunAIPlugin; same JSON brace
+      risk as ``--kubeflow_*``.
 
     All of these take a value, passed either as ``--flag value`` (two tokens) or
     ``--flag=value`` (one token).
@@ -97,7 +99,7 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
             "--csp",
             "--enable_vboost",
             "--lock_gpu_freq",
-        ) or flag.startswith("--kubeflow_")
+        ) or flag.startswith(("--kubeflow_", "--runai_"))
 
     filtered_args = []
     skip_next = False
@@ -153,20 +155,6 @@ def _build_nemorun_script(
         logger.info("Enabling per-rank GPU-local NUMA binding for Kubeflow torchrun workers")
         return _kubeflow_numa_binding_script(task)
     return task
-
-
-def _build_csp_plugin(csp: str) -> Any:
-    """Build a CSP plugin lazily so Slurm/login-node launch does not import Kubeflow helpers."""
-    try:
-        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-    except (ImportError, ModuleNotFoundError):
-        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin
-
-    if csp == "aws":
-        return EKSEnvPlugin()
-    if csp == "gcp":
-        return GKEEnvPlugin()
-    raise ValueError(f"Unsupported CSP plugin: {csp}")
 
 
 def _calc_convergence_and_performance(**kwargs: Any) -> Any:
@@ -458,6 +446,52 @@ def maybe_increase_n_attempts_on_flaky_failure(
     return n_attempts
 
 
+def build_csp_plugin(
+    csp: Optional[str],
+    *,
+    runai_extended_resources_json: Optional[str] = None,
+    runai_annotations_json: Optional[str] = None,
+    runai_pvc_claim_name: Optional[str] = None,
+    runai_pvc_mount_path: str = "/nemo-workspace",
+    runai_large_shm: bool = True,
+    runai_env_json: Optional[str] = None,
+    runai_scheduler_name: Optional[str] = None,
+    runai_labels_json: Optional[str] = None,
+) -> Any:
+    """Map ``--csp`` (+ its ``--runai_*`` args) to a single CSP fabric plugin.
+
+    Imports CSP helpers lazily so Slurm/login-node launch does not pull in
+    Kubeflow dependencies. Returns the plugin instance for the selected CSP, or
+    ``None`` when no CSP is selected. Kept as a small pure function (no
+    executor/cluster state) so the args -> plugin wiring is unit-testable
+    without a live cluster — see ``tests/.../test_setup_experiment_csp.py``.
+    """
+    if csp is None:
+        return None
+
+    try:
+        from utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
+    except (ImportError, ModuleNotFoundError):
+        from .utils.csp_plugins import EKSEnvPlugin, GKEEnvPlugin, RunAIPlugin
+
+    if csp == "aws":
+        return EKSEnvPlugin()
+    if csp == "gcp":
+        return GKEEnvPlugin()
+    if csp == "runai":
+        return RunAIPlugin(
+            extended_resources=json.loads(runai_extended_resources_json) if runai_extended_resources_json else {},
+            annotations=json.loads(runai_annotations_json) if runai_annotations_json else {},
+            large_shm=runai_large_shm,
+            pvc_claim_name=runai_pvc_claim_name,
+            pvc_mount_path=runai_pvc_mount_path,
+            env_vars=json.loads(runai_env_json) if runai_env_json else {},
+            scheduler_name=runai_scheduler_name,
+            labels=json.loads(runai_labels_json) if runai_labels_json else {},
+        )
+    raise ValueError(f"Unsupported CSP plugin: {csp}")
+
+
 def main(
     use_recipes: bool,
     model_family_name: str,
@@ -527,6 +561,15 @@ def main(
     kubeflow_container_kwargs_json: Optional[str],
     kubeflow_labels_json: Optional[str],
     kubeflow_pod_annotations_json: Optional[str],
+    kubeflow_api_version: str = "v2",
+    runai_extended_resources_json: Optional[str] = None,
+    runai_annotations_json: Optional[str] = None,
+    runai_pvc_claim_name: Optional[str] = None,
+    runai_pvc_mount_path: str = "/nemo-workspace",
+    runai_large_shm: bool = True,
+    runai_env_json: Optional[str] = None,
+    runai_scheduler_name: Optional[str] = None,
+    runai_labels_json: Optional[str] = None,
     config_variant: str | None = None,
     gres: Optional[str] = None,
     packager: str = "git",
@@ -664,6 +707,7 @@ def main(
             container_kwargs=json.loads(kubeflow_container_kwargs_json) if kubeflow_container_kwargs_json else None,
             labels=json.loads(kubeflow_labels_json) if kubeflow_labels_json else None,
             pod_annotations=(json.loads(kubeflow_pod_annotations_json) if kubeflow_pod_annotations_json else None),
+            api_version=kubeflow_api_version,
         )
     else:
         executor = slurm_executor(
@@ -706,10 +750,22 @@ def main(
         plugins.append(PreemptionPlugin(preempt_time=preempt_time, enable_exit_handler=True))
 
     # CSP fabric plugins (Kubeflow only; inert on Slurm via their isinstance guard):
-    # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB). Networking/fabric only;
+    # aws -> EKSEnvPlugin (EFA), gcp -> GKEEnvPlugin (gIB),
+    # runai -> RunAIPlugin (RoCE/SR-IOV). Networking/fabric only;
     # architecture and performance settings stay in the recipe.
-    if csp is not None:
-        plugins.append(_build_csp_plugin(csp))
+    csp_plugin = build_csp_plugin(
+        csp,
+        runai_extended_resources_json=runai_extended_resources_json,
+        runai_annotations_json=runai_annotations_json,
+        runai_pvc_claim_name=runai_pvc_claim_name,
+        runai_pvc_mount_path=runai_pvc_mount_path,
+        runai_large_shm=runai_large_shm,
+        runai_env_json=runai_env_json,
+        runai_scheduler_name=runai_scheduler_name,
+        runai_labels_json=runai_labels_json,
+    )
+    if csp_plugin is not None:
+        plugins.append(csp_plugin)
 
     if enable_nsys:
         if nsys_trace is None:
@@ -1064,6 +1120,15 @@ if __name__ == "__main__":
         kubeflow_container_kwargs_json=args.kubeflow_container_kwargs_json,
         kubeflow_labels_json=args.kubeflow_labels_json,
         kubeflow_pod_annotations_json=args.kubeflow_pod_annotations_json,
+        kubeflow_api_version=args.kubeflow_api_version,
+        runai_extended_resources_json=args.runai_extended_resources_json,
+        runai_annotations_json=args.runai_annotations_json,
+        runai_pvc_claim_name=args.runai_pvc_claim_name,
+        runai_pvc_mount_path=args.runai_pvc_mount_path,
+        runai_large_shm=args.runai_large_shm,
+        runai_env_json=args.runai_env_json,
+        runai_scheduler_name=args.runai_scheduler_name,
+        runai_labels_json=args.runai_labels_json,
         config_variant=config_variant,
         gres=args.gres,
         packager=args.packager,

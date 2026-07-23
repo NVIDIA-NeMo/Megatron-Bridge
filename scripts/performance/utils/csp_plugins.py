@@ -27,7 +27,7 @@ the recipe/perf configuration.
 
 import json
 from dataclasses import dataclass, field
-from typing import List, Union
+from typing import Dict, List, Optional, Union
 
 import nemo_run as run
 from nemo_run import Plugin
@@ -110,3 +110,101 @@ class GKEEnvPlugin(Plugin):
             "networking.gke.io/interfaces": json.dumps(interfaces, separators=(",", ":")),
         }
         executor.env_vars.setdefault("NCCL_NET", "gIB")
+
+
+@dataclass(kw_only=True)
+class RunAIPlugin(Plugin):
+    """NVIDIA Run:ai (RoCE / SR-IOV) fabric.
+
+    Attaches RoCE/GDR rails as Kubernetes extended resources and Multus
+    network-attachment annotations, and optionally enlarges ``/dev/shm`` via an
+    ``emptyDir`` volume.  This is the on-prem / colocation equivalent of the
+    cloud CSP plugins: the networking topology is expressed through Multus
+    NetworkAttachmentDefinitions and SR-IOV device-plugin resources instead of
+    cloud-provider device plugins (EFA, gIB).
+
+    Typical B300 NVL72 topology exposes 8 RoCE rails (``r0-p0`` … ``r7-p0``)
+    each with one SR-IOV VF. A single Multus annotation attaches all rails.
+
+    Attributes:
+        extended_resources: Kubernetes extended-resource requests per pod,
+            e.g. ``{"nvidia.com/r0-p0": "1", "nvidia.com/r1-p0": "1", …}``.
+            Maps directly to ``extra_resource_requests`` / ``limits``.
+        annotations: Pod annotations dict, typically a single
+            ``k8s.v1.cni.cncf.io/networks`` key listing comma-separated Multus
+            NetworkAttachmentDefinitions.
+        large_shm: Mount a memory-backed ``/dev/shm`` (``emptyDir.medium:
+            Memory``) to avoid the default 64 MiB limit, which is too small for
+            NCCL shared-memory collectives on multi-GPU nodes.
+        pvc_claim_name: If set, attach the named PersistentVolumeClaim to the
+            pod and mount it at ``pvc_mount_path``.  Typically the shared
+            workspace PVC that holds model assets, HuggingFace cache, and
+            experiment logs.
+        pvc_mount_path: Container mount path for the PVC.
+        env_vars: Additional environment variables injected into the training
+            container (e.g. ``TRANSFORMERS_OFFLINE``, ``HF_HOME``).
+        scheduler_name: If set, pin the workload pods to this Kubernetes
+            scheduler (``spec.schedulerName``). Run:ai gang-schedules through its
+            own scheduler — typically ``"runai-scheduler"`` — so raw
+            PyTorchJob/TrainJob submissions (i.e. not via the ``runai`` CLI) must
+            name it explicitly or the default scheduler will place the pods and
+            bypass Run:ai quota/fair-share. Left unset (default) so non-Run:ai
+            paths are unaffected.
+        labels: Extra pod labels merged onto the workload pods. Run:ai expresses
+            project/queue membership through a pod label whose key varies by
+            version (e.g. ``project`` or ``kai.scheduler/queue``); pass the
+            key/value your cluster expects here rather than hardcoding one.
+    """
+
+    extended_resources: Dict[str, str] = field(default_factory=dict)
+    annotations: Dict[str, str] = field(default_factory=dict)
+    large_shm: bool = True
+    pvc_claim_name: Optional[str] = None
+    pvc_mount_path: str = "/nemo-workspace"
+    env_vars: Dict[str, str] = field(default_factory=dict)
+    scheduler_name: Optional[str] = None
+    labels: Dict[str, str] = field(default_factory=dict)
+
+    def setup(self, task: Union["run.Partial", "run.Script"], executor: "run.Executor") -> None:
+        """Layer the Run:ai RoCE/SR-IOV fabric onto a Kubeflow executor."""
+        if not isinstance(executor, KubeflowExecutor):
+            return
+
+        if self.scheduler_name:
+            # pod_spec_overrides merges into the (v2 TrainJob) podTemplateOverrides
+            # spec and the (v1 PyTorchJob) replica pod spec alike.
+            executor.pod_spec_overrides = {
+                **executor.pod_spec_overrides,
+                "schedulerName": self.scheduler_name,
+            }
+
+        if self.labels:
+            if hasattr(executor, "pod_labels"):
+                executor.pod_labels = {**executor.pod_labels, **self.labels}
+            else:
+                executor.labels = {**executor.labels, **self.labels}
+
+        if self.extended_resources:
+            executor.extra_resource_requests = {**executor.extra_resource_requests, **self.extended_resources}
+            executor.extra_resource_limits = {**executor.extra_resource_limits, **self.extended_resources}
+
+        if self.annotations:
+            if hasattr(executor, "pod_annotations"):
+                executor.pod_annotations = {**executor.pod_annotations, **self.annotations}
+            else:
+                executor.annotations = {**executor.annotations, **self.annotations}
+
+        if self.large_shm and not any(v.get("name") == "dshm" for v in executor.volumes):
+            executor.volumes.append({"name": "dshm", "emptyDir": {"medium": "Memory"}})
+            executor.volume_mounts.append({"name": "dshm", "mountPath": "/dev/shm"})
+
+        if self.pvc_claim_name:
+            vol_name = "runai-workspace"
+            if not any(v.get("name") == vol_name for v in executor.volumes):
+                executor.volumes.append(
+                    {"name": vol_name, "persistentVolumeClaim": {"claimName": self.pvc_claim_name}}
+                )
+                executor.volume_mounts.append({"name": vol_name, "mountPath": self.pvc_mount_path})
+
+        if self.env_vars:
+            executor.env_vars.update(self.env_vars)

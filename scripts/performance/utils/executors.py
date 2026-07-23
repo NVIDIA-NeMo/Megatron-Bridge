@@ -239,6 +239,7 @@ def kubeflow_executor(
     container_kwargs: Optional[Dict[str, Any]] = None,
     labels: Optional[Dict[str, Any]] = None,
     pod_annotations: Optional[Dict[str, Any]] = None,
+    api_version: str = "v2",
 ) -> run.KubeflowExecutor:
     """Build a Kubeflow Training Operator executor.
 
@@ -280,9 +281,16 @@ def kubeflow_executor(
         labels: Pod labels.
         pod_annotations: Annotations applied to the trainer pod template metadata
             (e.g. ``networking.gke.io/interfaces`` for GKE RDMA NIC attachment).
+        api_version: Which Kubeflow Training-Operator API to submit against.
+            ``"v2"`` (default) builds a ``run.KubeflowExecutor`` (TrainJob,
+            ``trainer.kubeflow.org``). ``"v1"`` builds a
+            ``run.PyTorchJobExecutor`` (PyTorchJob, ``kubeflow.org/v1``) for
+            clusters running the v1 operator — notably **NVIDIA Run:ai**. Both
+            share the same configuration surface; only the submitted custom
+            resource and the distributed-launch env contract differ.
 
     Returns:
-        Configured ``run.KubeflowExecutor`` instance.
+        Configured ``run.KubeflowExecutor`` (or ``run.PyTorchJobExecutor`` for v1).
     """
     # K8s/Kubeflow jobs deliberately do NOT inherit the Slurm orchestration
     # defaults in OFFLINE_BENCHMARK_ENV_VARS. Recipe-owned process settings are applied by
@@ -311,7 +319,7 @@ def kubeflow_executor(
     }
     labels = {**ci_labels, **(labels or {})}
 
-    executor = run.KubeflowExecutor(
+    kf_kwargs = dict(
         # Launch each replica's entrypoint under torchrun so the torch-distributed
         # ClusterTrainingRuntime's rendezvous env (MASTER_ADDR, nnodes, nproc) is
         # consumed and a single WORLD_SIZE = num_nodes * gpus_per_node process
@@ -347,7 +355,8 @@ def kubeflow_executor(
         # `kubectl get trainjob -l` and `kubectl get pods -l` resolve the origin.
         pod_labels=labels,
         # pod_annotations land on the trainer pod template metadata (e.g. GKE
-        # networking.gke.io/interfaces to attach the RDMA NICs for gIB).
+        # networking.gke.io/interfaces to attach the RDMA NICs for gIB, or the
+        # Run:ai Multus k8s.v1.cni.cncf.io/networks RoCE rail attachments).
         pod_annotations=pod_annotations or {},
         # include_submodules=True: KubeflowExecutor.package() ships the packager
         # tarball to <workdir_pvc_path>/<user>/code, which the launcher overlays
@@ -360,4 +369,47 @@ def kubeflow_executor(
         # are harmless cost there.)
         packager=run.GitArchivePackager(include_submodules=True),
     )
+
+    # Select the Training-Operator API. v1 (PyTorchJob) lives in a separate
+    # nemo_run executor subclass; fall back with a clear error if the installed
+    # nemo_run predates it rather than silently launching a v2 TrainJob onto a
+    # v1-only cluster (e.g. Run:ai), which would never schedule.
+    if api_version in ("v1", "pytorchjob", "PyTorchJob"):
+        executor_cls = getattr(run, "PyTorchJobExecutor", None)
+        if executor_cls is None:
+            raise RuntimeError(
+                "kubeflow_api_version='v1' requires a nemo_run build that provides "
+                "PyTorchJobExecutor (Kubeflow Training Operator v1 / PyTorchJob). "
+                "Upgrade nemo_run (NVIDIA-NeMo/Run) to a commit that includes it, or "
+                "use --kubeflow_api_version v2 for the TrainJob (v2) operator."
+            )
+    else:
+        executor_cls = run.KubeflowExecutor
+
+    # Reconcile against the installed executor API. Older releases (e.g.
+    # 0.9.0rc0) predate the granular ``pod_labels`` / ``pod_annotations`` fields
+    # (they expose a single ``annotations``) and ``train_job_basename``. Rather
+    # than pin a newer nemo_run, degrade gracefully so the same recipe launches
+    # across versions — folding the granular values into the legacy fields so
+    # RoCE/Multus pod annotations and CI-origin labels are not silently dropped.
+    # PyTorchJobExecutor inherits the same dataclass fields as KubeflowExecutor,
+    # so this reconciliation works identically for either class.
+    _kf_fields = set(
+        getattr(executor_cls, "model_fields", None) or getattr(executor_cls, "__dataclass_fields__", {}) or {}
+    )
+    if _kf_fields:
+        if "pod_annotations" not in _kf_fields and kf_kwargs.get("pod_annotations"):
+            if "annotations" in _kf_fields:
+                kf_kwargs["annotations"] = {
+                    **(kf_kwargs.get("annotations") or {}),
+                    **kf_kwargs["pod_annotations"],
+                }
+        if "pod_labels" not in _kf_fields and kf_kwargs.get("pod_labels"):
+            kf_kwargs["labels"] = {
+                **(kf_kwargs.get("labels") or {}),
+                **kf_kwargs["pod_labels"],
+            }
+        kf_kwargs = {k: v for k, v in kf_kwargs.items() if k in _kf_fields}
+
+    executor = executor_cls(**kf_kwargs)
     return executor
