@@ -34,4 +34,7 @@ from megatron.bridge.perf_recipes.gpt_oss.vr200.gpt_oss import (
     gpt_oss_20b_pretrain_64gpu_vr200_nvfp4_config,
     gpt_oss_120b_pretrain_64gpu_vr200_bf16_config,
     gpt_oss_120b_pretrain_64gpu_vr200_fp8mx_config,
+    gpt_oss_120b_pretrain_128gpu_vr200_fp8mx_config,
+    gpt_oss_120b_pretrain_256gpu_vr200_fp8mx_config,
+    gpt_oss_120b_pretrain_512gpu_vr200_fp8mx_config,
 )

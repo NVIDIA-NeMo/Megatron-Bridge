@@ -50,4 +50,7 @@ from megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh import (
     nemotron_3_super_pretrain_64gpu_vr200_bf16_config,
     nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config,
     nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config,
+    nemotron_3_super_pretrain_128gpu_vr200_fp8mx_config,
+    nemotron_3_super_pretrain_256gpu_vr200_fp8mx_config,
+    nemotron_3_super_pretrain_512gpu_vr200_fp8mx_config,
 )

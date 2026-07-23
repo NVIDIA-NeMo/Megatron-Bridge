@@ -168,6 +168,87 @@ def nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_super_pretrain_128gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 128× VR200, FP8-MX, GBS scaled from the 64-GPU recipe."""
+    cfg = nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config()
+    cfg.train.global_batch_size = 1024
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def nemotron_3_super_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 256× VR200, FP8-MX, GBS scaled from the 64-GPU recipe."""
+    cfg = nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config()
+    cfg.train.global_batch_size = 2048
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def nemotron_3_super_pretrain_512gpu_vr200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Super pretrain: 512× VR200, FP8-MX, GBS scaled from the 64-GPU recipe."""
+    cfg = nemotron_3_super_pretrain_64gpu_vr200_fp8mx_config()
+    cfg.train.global_batch_size = 4096
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
 def nemotron_3_super_pretrain_64gpu_vr200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Super pretrain: 64× VR200, NVFP4 (alias of GB300)."""
     cfg = nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config()
