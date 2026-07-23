@@ -129,7 +129,7 @@ override-dependencies = [
     "torch; sys_platform == 'never'",
     "torchvision; sys_platform == 'never'",
     "triton; sys_platform == 'never'",
-    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@2e559f062497bef768dfbe9d7e45548fadeca80a",
+    "transformer-engine @ git+https://github.com/NVIDIA/TransformerEngine.git@f031cf87bd054c7558b887df7bed93975456667f",
     "mlflow>=3.9.0",                                        # To address CVE-2025-15031
     "cachetools>=5.0.0",
     "cryptography>=43.0.0,<47",
@@ -161,14 +161,14 @@ requires-dist = []
 # its metadata at lock time — a cold nvcc/ninja compile that runs tens of minutes and stalled the nightly
 # mcore bump (CI-Events-Workflows#746). Provide its metadata so the resolver skips that build, exactly as
 # the flash-mla block above. Mirrors what uv extracted into uv.lock for this pinned commit: version =
-# VERSION.txt (2.17.0) + uv's git-hash local segment; requires-dist = build_tools/pytorch.install_requirements()
+# VERSION.txt (2.14.0) + uv's git-hash local segment; requires-dist = build_tools/pytorch.install_requirements()
 # ∪ the base setup_requirements() (setup.py). The pytorch/core_cu13 extras are no-ops on the self-contained
 # source build (its extras_require is {"test": ...}), declared so `transformer-engine[pytorch,core_cu13]`
 # resolves without a build. Bump version + requires-dist together whenever the TE pin (override-dependencies
 # above) changes — an out-of-date entry sends uv back to building TE.
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.17.0+2e559f06"
+version = "2.14.0+f031cf87"
 requires-dist = [
     "einops",
     "importlib-metadata>=1.0",
