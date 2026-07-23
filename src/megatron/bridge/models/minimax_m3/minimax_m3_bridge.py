@@ -186,6 +186,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
+    REQUIRES_HF_SOURCE_FOR_EXPORT = True
     # AutoTokenizer.save_pretrained() consolidates these artifacts. Preserve the
     # pinned source files so the source-overlay checkpoint remains self-contained.
     ADDITIONAL_FILE_PATTERNS = [
