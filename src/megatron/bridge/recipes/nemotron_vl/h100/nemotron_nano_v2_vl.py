@@ -131,6 +131,8 @@ def nemotron_nano_v2_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _DEFAULT_HF_MODEL_PATH
+    cfg.dataset.trust_remote_code = True
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - Nemotron uses average_in_collective=False
     cfg.ddp.overlap_grad_reduce = False
@@ -255,6 +257,8 @@ def nemotron_nano_v2_vl_12b_peft_2gpu_h100_bf16_config(
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _DEFAULT_HF_MODEL_PATH
+    cfg.dataset.trust_remote_code = True
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - Nemotron uses average_in_collective=False
     cfg.ddp.overlap_grad_reduce = False

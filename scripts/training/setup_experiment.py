@@ -20,6 +20,7 @@ import os
 import shlex
 import sys
 from pathlib import Path
+from typing import Any
 
 import nemo_run as run
 from nemo_run.config import get_nemorun_home
@@ -104,6 +105,18 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
         metavar="ARG",
         help="Additional cluster-specific argument passed to srun; may be repeated. Use --srun-arg=--flag.",
     )
+    execution.add_argument(
+        "-lmc",
+        "--peak-mem-clk",
+        "--peak_mem_clk",
+        type=int,
+        default=None,
+        dest="peak_mem_clk",
+        help=(
+            "Lock the GPU memory clock to a fixed frequency in MHz once per node. "
+            "Defaults to 4752 for VR200 benchmark recipes and is disabled otherwise; pass -1 to disable the default."
+        ),
+    )
     execution.add_argument("--experiment-name", help="NeMo-Run experiment name.")
     execution.add_argument(
         "--submission-dry-run",
@@ -181,6 +194,48 @@ def _task_environment() -> dict[str, str]:
     }
 
 
+def _resolve_peak_mem_clk(
+    requested_peak_mem_clk: int | None,
+    benchmark_metadata: BenchmarkRecipeMetadata | None,
+) -> int | None:
+    """Resolve the explicit memory clock or the VR200 benchmark default."""
+    if requested_peak_mem_clk == -1:
+        return None
+    if requested_peak_mem_clk is not None:
+        return requested_peak_mem_clk
+    if benchmark_metadata is not None and benchmark_metadata.hardware == "vr200":
+        return 4752
+    return None
+
+
+def _configure_slurm_peak_mem_clk(executor: Any, peak_mem_clk: int | None) -> None:
+    """Add a once-per-node GPU memory-clock lock to a Slurm executor."""
+    if peak_mem_clk is None:
+        return
+
+    command = "\n".join(
+        [
+            "",
+            "# Lock GPU memory clock",
+            " ".join(
+                [
+                    "srun",
+                    f"--ntasks={executor.nodes}",
+                    "--ntasks-per-node=1",
+                    "--output",
+                    os.path.join(executor.tunnel.job_dir, "peak_mem_clock.out"),
+                    "--error",
+                    os.path.join(executor.tunnel.job_dir, "peak_mem_clock.err"),
+                    "bash -c",
+                    shlex.quote(f"sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"),
+                ]
+            ),
+            "",
+        ]
+    )
+    executor.setup_lines = f"{executor.setup_lines or ''}{command}"
+
+
 def _build_executor(
     args: argparse.Namespace,
     env_names: list[str],
@@ -240,6 +295,8 @@ def main(argv: list[str] | None = None) -> None:
     mounts = _parse_mounts(args.mount)
     task_environment = _task_environment()
     executor = _build_executor(args, env_names, mounts, task_environment=task_environment)
+    peak_mem_clk = _resolve_peak_mem_clk(args.peak_mem_clk, benchmark_metadata)
+    _configure_slurm_peak_mem_clk(executor, peak_mem_clk)
 
     task = run.Script(
         path=str(CONTAINER_REPO_ROOT / "scripts/training/run_recipe.py"),

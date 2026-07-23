@@ -59,8 +59,9 @@ class _FakeAutoBridge:
 
 @pytest.fixture(autouse=True)
 def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep Super and Ultra recipe construction deterministic and offline."""
+    """Keep AutoBridge-backed recipe construction deterministic and offline."""
     for module_name in (
+        "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
@@ -136,6 +137,13 @@ def test_nemotronh_recipe_rejects_unknown_cli_override():
         process_config_with_overrides(cfg, cli_overrides=["model.not_a_real_field=true"])
 
     assert not hasattr(cfg.model, "not_a_real_field")
+
+
+def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
+    """The GB200 pretraining model vocabulary must follow its runtime tokenizer."""
+    cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+
+    assert cfg.model.vocab_size is None
 
 
 def test_nemotron_nano_9b_v2_lora_defaults():
