@@ -38,7 +38,7 @@ def _load_cpu_backend():
         @staticmethod
         def from_auto_config(*args, **kwargs):
             calls.append(("from_auto_config", args, kwargs))
-            return Bridge("checkpoint-config")
+            return types.SimpleNamespace(hf_pretrained="checkpoint-config")
 
     modules = {
         "megatron": types.ModuleType("megatron"),

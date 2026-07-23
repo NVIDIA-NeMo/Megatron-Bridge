@@ -118,7 +118,7 @@ def export_checkpoint(
     )
     # Preserve the reference wrapper's state source and shard map so model
     # families with packed HF weights export in their canonical representation.
-    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained.config
+    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     try:
         bridge.export_ckpt(
             megatron_path=megatron_path,
