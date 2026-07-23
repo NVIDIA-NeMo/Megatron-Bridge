@@ -71,6 +71,7 @@ TRAINING_INDEX_SCOPE = (
     "peft",
     "checkpoint_resume",
 )
+DIRECT_ITEMS = frozenset(MODEL_LEVEL_INDEX_SCOPE)
 TRAINING_ITEMS = frozenset(
     {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
 )
@@ -1372,7 +1373,7 @@ def _validate_item(
         errors.append(f"{_pointer(*path, 'precision')}: expected one of {sorted(PRECISIONS)} or null")
     elif isinstance(precision, str) and item_name not in TRAINING_ITEMS and precision in TRAINING_ONLY_PRECISIONS:
         errors.append(f"{_pointer(*path, 'precision')}: {precision} is supported only on training items")
-    elif isinstance(precision, str) and item_name in TRAINING_ITEMS and precision in DIRECT_ONLY_PRECISIONS:
+    elif isinstance(precision, str) and item_name not in DIRECT_ITEMS and precision in DIRECT_ONLY_PRECISIONS:
         errors.append(f"{_pointer(*path, 'precision')}: {precision} is supported only on direct items")
     if status == "verified" and precision is None:
         errors.append(f"{_pointer(*path, 'precision')}: verified items require a concrete precision")

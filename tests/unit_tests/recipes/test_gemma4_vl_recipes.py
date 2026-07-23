@@ -78,12 +78,13 @@ def test_gemma4_vl_long_context_sft_uses_packing_and_cp(monkeypatch: pytest.Monk
     cfg.model.finalize()
 
     assert cfg.model.seq_length == 8192
-    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.seq_length == 4096
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.calculate_per_token_loss is True
     assert cfg.dataset.enable_in_batch_packing is True
     assert cfg.train.micro_batch_size == 2
     assert cfg.ddp.average_in_collective is False
+    assert cfg.dataset.seq_length * cfg.train.micro_batch_size == cfg.model.seq_length
     required_world_size = cfg.model.pipeline_model_parallel_size * max(
         cfg.model.tensor_model_parallel_size * cfg.model.context_parallel_size,
         cfg.model.expert_model_parallel_size * cfg.model.expert_tensor_parallel_size,

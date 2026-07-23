@@ -163,18 +163,19 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return an 8K in-batch-packed full-SFT config with CP=2 on eight H100 GPUs.
+    """Return an 8K-aggregate in-batch-packed full-SFT config with CP=2.
 
-    The two examples in each microbatch are packed into THD layout. CP=2 keeps
-    the per-rank language-token footprint comparable to the 4K/MBS=1 baseline,
-    while EP=8 continues to shard the MoE experts across all eight ranks.
+    Each of the two examples is truncated to 4K before the collator packs them
+    into an emergent THD sequence of at most 8K tokens. CP=2 therefore caps the
+    per-rank language-token footprint at 4K, while EP=8 continues to shard the
+    MoE experts across all eight ranks.
     """
     cfg = gemma4_vl_26b_sft_8gpu_h100_bf16_config()
 
     cfg.model.seq_length = 8192
     cfg.model.context_parallel_size = 2
     cfg.model.calculate_per_token_loss = True
-    cfg.dataset.seq_length = 8192
+    cfg.dataset.seq_length = 4096
     cfg.dataset.enable_in_batch_packing = True
     cfg.train.micro_batch_size = 2
     cfg.ddp.average_in_collective = False

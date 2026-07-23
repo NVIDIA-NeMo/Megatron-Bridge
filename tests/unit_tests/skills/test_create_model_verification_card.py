@@ -20,6 +20,10 @@ def _validate_precision(item_name: str, precision: str) -> list[str]:
         "expected_result": "Pending exact-model verification.",
         "command": None,
     }
+    if item_name == "sft_export_inference":
+        item.pop("command")
+        item["commands"] = None
+        item["depends_on"] = "sft"
     if item_name in _VALIDATOR.TRAINING_ITEMS:
         item["metrics"] = {name: None for name in _VALIDATOR.METRIC_NAMES}
     if item_name in _VALIDATOR.FEATURE_ITEMS:
@@ -42,3 +46,9 @@ def test_fp32_is_rejected_for_training_items() -> None:
     errors = _validate_precision("sft", "fp32")
 
     assert errors == ["/items/sft/precision: fp32 is supported only on direct items"]
+
+
+def test_fp32_is_rejected_for_sft_export_inference_composite() -> None:
+    errors = _validate_precision("sft_export_inference", "fp32")
+
+    assert errors == ["/items/sft_export_inference/precision: fp32 is supported only on direct items"]

@@ -18,6 +18,7 @@
 from __future__ import annotations
 
 import argparse
+import io
 import json
 import logging
 from pathlib import Path
@@ -31,7 +32,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hf-model", required=True, help="Exported HF model directory.")
     parser.add_argument("--prompt", required=True, help="Prompt to generate from.")
-    parser.add_argument("--image-path", help="Optional local image for a vision-language generation.")
+    parser.add_argument("--image-path", help="Optional local path or public HTTP(S) image URL.")
     parser.add_argument("--max-new-tokens", required=True, type=int, help="Exact number of tokens to generate.")
     parser.add_argument("--chat-template", action="store_true", help="Format the prompt as a user chat turn.")
     parser.add_argument(
@@ -71,11 +72,29 @@ def _format_prompt(tokenizer: Any, prompt: str, *, chat_template: bool, disable_
     )
 
 
-def _prepare_vlm_inputs(processor: Any, prompt: str, image_path: str) -> Any:
-    """Build one image-and-text chat batch without relying on model-specific helpers."""
+def _read_public_image_url(image_url: str) -> bytes:
+    """Read an allowlisted public image URL with Bridge's SSRF protections."""
+    from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
+
+    is_safe, reason = is_safe_public_http_url(image_url)
+    if not is_safe:
+        raise ValueError(f"Refusing to fetch image URL ({reason}): {image_url}")
+    with safe_url_open(image_url) as response:
+        return response.read()
+
+
+def _load_image(image_path: str) -> Any:
+    """Load one RGB image from a local path or safe public URL."""
     from PIL import Image
 
-    image = Image.open(Path(image_path)).convert("RGB")
+    if image_path.startswith(("http://", "https://")):
+        return Image.open(io.BytesIO(_read_public_image_url(image_path))).convert("RGB")
+    return Image.open(Path(image_path)).convert("RGB")
+
+
+def _prepare_vlm_inputs(processor: Any, prompt: str, image_path: str) -> Any:
+    """Build one image-and-text chat batch without relying on model-specific helpers."""
+    image = _load_image(image_path)
     if hasattr(processor, "apply_chat_template") and getattr(processor, "chat_template", None) is not None:
         messages = [
             {

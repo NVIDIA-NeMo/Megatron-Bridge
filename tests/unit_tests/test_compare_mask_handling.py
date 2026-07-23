@@ -366,3 +366,23 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
+
+    def test_hf_reference_precision_and_device_map_are_explicit(self):
+        """Test FP32 parity cards can load a sharded FP32 Hugging Face reference."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+                "--hf-dtype",
+                "float32",
+                "--hf-device-map",
+                "auto",
+            ]
+        )
+
+        assert compare._hf_load_precision_kwargs(args) == {
+            "torch_dtype": torch.float32,
+            "device_map": "auto",
+        }

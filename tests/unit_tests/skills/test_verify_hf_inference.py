@@ -1,4 +1,5 @@
 import importlib.util
+import io
 from pathlib import Path
 
 import torch
@@ -36,13 +37,29 @@ def test_prepare_vlm_inputs_preserves_image_and_prompt(tmp_path: Path) -> None:
 
     assert inputs["input_ids"].tolist() == [[1, 2]]
     assert processor.messages[0]["content"][1] == {"type": "text", "text": "What is shown?"}
-    assert isinstance(processor.messages[0]["content"][0]["image"], Image.Image)
+    assert processor.messages[0]["content"][0]["image"].mode == "RGB"
     assert processor.kwargs == {
         "tokenize": True,
         "return_dict": True,
         "return_tensors": "pt",
         "add_generation_prompt": True,
     }
+
+
+def test_prepare_vlm_inputs_accepts_pinned_public_image_url(monkeypatch) -> None:
+    image_bytes = io.BytesIO()
+    Image.new("RGB", (2, 2), color="blue").save(image_bytes, format="PNG")
+    monkeypatch.setattr(_HELPER, "_read_public_image_url", lambda _url: image_bytes.getvalue())
+    processor = _FakeProcessor()
+
+    inputs = _HELPER._prepare_vlm_inputs(
+        processor,
+        "What is shown?",
+        "https://example.com/pinned/image.png",
+    )
+
+    assert inputs["input_ids"].tolist() == [[1, 2]]
+    assert processor.messages[0]["content"][0]["image"].mode == "RGB"
 
 
 def test_move_inputs_casts_only_floating_tensors() -> None:

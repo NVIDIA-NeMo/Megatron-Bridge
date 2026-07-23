@@ -69,6 +69,8 @@ Available Arguments:
     --prompt: Text prompt for generation (required)
     --image_path: Path or URL to image for VL models (optional)
     --model_class: Specific HuggingFace model class (e.g., 'Qwen2_5_VLForConditionalGeneration' for VL models, optional)
+    --hf-dtype: Hugging Face reference model dtype (default: bfloat16)
+    --hf-device-map: Hugging Face reference model device map (default: cuda)
     --megatron_model_path: Path to Megatron checkpoint (optional, converts from HF if not provided)
     --tp: Tensor parallelism size (default: 1)
     --pp: Pipeline parallelism size (default: 1)
@@ -220,6 +222,18 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
 def _resolve_pipeline_dtype(model_provider: object) -> torch.dtype:
     """Match pipeline communication to the provider's parameter precision."""
     return getattr(model_provider, "params_dtype", None) or torch.bfloat16
+
+
+def _hf_load_precision_kwargs(args) -> dict[str, object]:
+    """Resolve the explicitly requested Hugging Face reference precision and placement."""
+    dtype_by_name = {
+        "bfloat16": torch.bfloat16,
+        "float32": torch.float32,
+    }
+    return {
+        "torch_dtype": dtype_by_name[args.hf_dtype],
+        "device_map": args.hf_device_map,
+    }
 
 
 def is_vision_language_model(
@@ -549,8 +563,7 @@ def _load_hf_model(args, is_vl_model: bool):
     model_class = get_model_class(args.model_class, is_vl_model)
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda",
+        **_hf_load_precision_kwargs(args),
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
@@ -603,7 +616,9 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
         print_rank_0("Loading exported HF model for comparison...")
         model_class = get_model_class(args.model_class, is_vl_model)
         hf_model = model_class.from_pretrained(
-            save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
+            save_path,
+            **_hf_load_precision_kwargs(args),
+            trust_remote_code=True,
         ).eval()
         if args.enable_debug_hooks:
             print_rank_0("Registering debug hooks for exported HF model...")
@@ -1051,6 +1066,18 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Specific HuggingFace model class to use (e.g., 'Qwen2_5_VLForConditionalGeneration' for VL models). If not specified, uses AutoModelForCausalLM.",
+    )
+    parser.add_argument(
+        "--hf-dtype",
+        choices=("bfloat16", "float32"),
+        default="bfloat16",
+        help="Floating-point dtype for the Hugging Face reference model.",
+    )
+    parser.add_argument(
+        "--hf-device-map",
+        choices=("cuda", "auto", "cpu"),
+        default="cuda",
+        help="Transformers device_map for the Hugging Face reference model.",
     )
     parser.add_argument(
         "--enable_debug_hooks",
