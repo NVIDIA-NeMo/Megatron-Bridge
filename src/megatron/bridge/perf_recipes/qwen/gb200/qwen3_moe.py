@@ -348,6 +348,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
         "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
+    cfg.optimizer.use_precision_aware_optimizer = True
     return cfg
 
 
@@ -611,6 +612,7 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = False
     # NVFP4 fast-math path (matches the 235B A22B NVFP4 recipes).
     cfg.env_vars["NVTE_USE_FAST_MATH"] = 1
+    cfg.optimizer.use_precision_aware_optimizer = True
     return cfg
 
 

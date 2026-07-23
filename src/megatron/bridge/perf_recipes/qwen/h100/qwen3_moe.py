@@ -119,6 +119,17 @@ def qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     return cfg
 
 
+def qwen3_30b_a3b_pretrain_16gpu_h100_fp8_delayed_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 16× H100, FP8 delayed-scaling, EP=16.
+
+    Same layout as the fp8cs recipe (TE partial CUDA graph + cuDNN LayerNorm),
+    with FP8 delayed scaling instead of current scaling.
+    """
+    cfg = qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config()
+    cfg.mixed_precision = _perf_precision("fp8_ds")
+    return cfg
+
+
 def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3 235B-A22B pretrain: 256× H100, BF16, TP=2 PP=8 VP=4 EP=32."""
     cfg = qwen3_235b_a22b_pretrain_config()

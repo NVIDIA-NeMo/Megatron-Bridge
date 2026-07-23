@@ -22,6 +22,7 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import (
     bf16_mixed,
     bf16_with_fp8_current_scaling_mixed,
+    bf16_with_fp8_delayed_scaling_mixed,
     bf16_with_mxfp8_mixed,
     bf16_with_nvfp4_mixed,
 )
@@ -102,6 +103,9 @@ def _perf_precision(compute_dtype: str):
         cfg = bf16_mixed()
     elif compute_dtype == "fp8_cs":
         cfg = bf16_with_fp8_current_scaling_mixed()
+        cfg.first_last_layers_bf16 = False
+    elif compute_dtype == "fp8_ds":
+        cfg = bf16_with_fp8_delayed_scaling_mixed()
         cfg.first_last_layers_bf16 = False
     elif compute_dtype == "fp8_mx":
         cfg = bf16_with_mxfp8_mixed()
