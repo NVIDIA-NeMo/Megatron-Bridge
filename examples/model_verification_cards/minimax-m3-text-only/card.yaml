@@ -14,12 +14,17 @@ summary: >
   gate computation when BF16 hidden states reach Transformer Engine. Two clean,
   independent 32-H100 Megatron executions reloaded the persisted checkpoint,
   completed exactly 64 greedy generation steps apiece, and produced
-  byte-identical decoded completions. Persisted Megatron-to-HF conversion remains
-  unverified until a strict source-overlay export and reload completes.
+  byte-identical decoded completions. A persisted 32-H100 BF16 Megatron-to-HF
+  source-overlay export wrote exactly 23,416 indexed tensors
+  (854,172,958,720 bytes). A strict persisted-output audit matched all 22,665
+  mapped text tensors at exact shape, dtype, and expected value, including a
+  declared Megatron-side provenance sentinel, and preserved all 751 unbridged
+  tensors byte-for-byte. The exported config, tokenizer, processor, custom code,
+  and provider semantics matched the canonical pinned-source expectations.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, inference]
-    unverified: [hf_to_megatron_cpu, megatron_to_hf_gpu, manual_forward_pass]
+    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
+    unverified: [hf_to_megatron_cpu, manual_forward_pass]
     unsupported: [megatron_to_hf_cpu]
   training:
     H100:
@@ -33,7 +38,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 58f72364644ea83f3c683a0cbe9fa6c0f9f3f525  # pragma: allowlist secret
+  bridge_commit: 2863ff4ca17d8fd0a848683ef9b8550acc6ee73c  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -78,17 +83,32 @@ items:
       tensors. Use the distributed GPU source-overlay path for persisted export.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 4 --gpus-per-node 8 --hf-model MiniMaxAI/MiniMax-M3
+      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
+      --megatron-path work/model-verification/minimax-m3-text-only/imported-megatron/iter_0000000
+      --hf-path work/model-verification/minimax-m3-text-only/exported-hf
+      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
+      --trust-remote-code --distributed-save --save-every-n-ranks 1
+      --distributed-timeout-minutes 120 --no-progress
+    last_verified: 2026-07-22
     expected_result: >
-      A pinned distributed source-overlay export must replace all 22,665
-      supported text tensors and preserve all 751 unbridged vision, projector,
-      patch-merge, and lightning-indexer tensors byte-for-byte. The persisted HF
-      artifact must contain exactly 23,416 indexed tensors, reload successfully,
-      and have zero missing, unexpected, shape, dtype, or value mismatches in a
-      strict supported-text audit.
+      The pinned 32-H100 BF16 source-overlay export wrote 59 safetensors shards
+      containing exactly 23,416 indexed tensors and 854,172,958,720 bytes. A
+      strict persisted-output audit matched all 22,665 mapped text tensors at
+      exact shape, dtype, and expected value: 22,664 were source-equal and the
+      declared final-layernorm provenance sentinel changed from source 1.125 to
+      exported 42.0. All 751 unbridged vision, projector, patch-merge, and
+      lightning-indexer tensors remained byte-identical. There were zero
+      duplicate, missing, unexpected, shard, index, shape, dtype, or value
+      mismatches. AutoBridge reconstructed the exact provider semantics, and the
+      config, tokenizer, processor, and custom-code artifacts matched the
+      canonical pinned-source save. This verifies persisted safetensors and
+      Bridge config/provider reopening, not native Transformers model
+      instantiation.
 
   manual_forward_pass:
     status: unverified
