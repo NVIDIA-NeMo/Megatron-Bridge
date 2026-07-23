@@ -558,6 +558,8 @@ def qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config() -> ConfigContainer:
     cfg = qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config()
     cfg.mixed_precision = _perf_precision("nvfp4")
     cfg.comm_overlap.tp_comm_overlap = False
+    # NVFP4 fast-math path (matches the 235B A22B NVFP4 recipes).
+    cfg.env_vars["NVTE_USE_FAST_MATH"] = 1
     return cfg
 
 
