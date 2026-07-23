@@ -173,9 +173,15 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chun
     assert parsed_layout.virtual_pipeline_model_parallel_size == 2
     assert parsed_layout.layout[-1][-1][-2:] == [LayerType.mtp, LayerType.loss]
 
-    decoder_count = sum(
-        stage.count(LayerType.decoder)
-        for pipeline_stage in parsed_layout.layout
-        for stage in pipeline_stage
-    )
-    assert decoder_count == cfg.model.num_layers
+    decoder_offset = 0
+    for vpp_rank in range(parsed_layout.virtual_pipeline_model_parallel_size):
+        for pp_rank in range(parsed_layout.pipeline_model_parallel_size):
+            stage = parsed_layout.layout[pp_rank][vpp_rank]
+            decoder_count = stage.count(LayerType.decoder)
+            if decoder_count:
+                assert (
+                    decoder_offset - cfg.model.dsa_indexer_skip_topk_offset
+                ) % cfg.model.dsa_indexer_topk_freq == 0
+                decoder_offset += decoder_count
+
+    assert decoder_offset == cfg.model.num_layers
