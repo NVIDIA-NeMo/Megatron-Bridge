@@ -58,7 +58,7 @@ def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = []
-    cfg.model.mtp_num_layers = 1
+    cfg.model.mtp_num_layers = 2
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
     cfg.model.mtp_use_repeated_layer = True
