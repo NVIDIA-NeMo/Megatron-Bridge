@@ -81,7 +81,7 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 
 For the complete import, export, round-trip, and three-source generation
 workflow, see
-[`examples/models/mistral/mistral`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/mistral/mistral).
+[`examples/models/mistral/mistral`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/6a706b1c3afab4d21a6f5dd88aa6a75296d33fe2/examples/models/mistral/mistral/README.md).
 
 ## Recipes
 

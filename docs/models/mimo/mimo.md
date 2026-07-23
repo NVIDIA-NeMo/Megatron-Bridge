@@ -17,7 +17,7 @@ Megatron Bridge supports Hugging Face checkpoints using the `MiMoForCausalLM` ar
 
 Checkpoint conversion and text-generation examples for MiMo causal language
 models live under
-[`examples/models/mimo`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/mimo).
+[`examples/models/mimo`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/6a706b1c3afab4d21a6f5dd88aa6a75296d33fe2/examples/models/mimo/README.md).
 Heterogeneous multimodal training examples live separately under
 [`examples/megatron_mimo`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/megatron_mimo).
 
