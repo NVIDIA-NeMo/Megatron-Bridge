@@ -2083,7 +2083,7 @@ class GroupedExpertLinearAdapter(nn.Module):
                 result = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
             else:
                 result = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
-            if explicit_m_splits:
+            if isinstance(result, tuple):
                 result, _ = result
             return result
         finally:

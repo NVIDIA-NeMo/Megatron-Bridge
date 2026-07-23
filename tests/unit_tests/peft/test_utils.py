@@ -1679,7 +1679,7 @@ class TestGroupedExpertLinearAdapter:
                 calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
                 return expected, []
 
-        autograd_function = TE214GroupedLinear if te_version == "2.14" else TE217GroupedLinear
+        autograd_function = TE214GroupedLinear if te_version in {"2.14", "2.16"} else TE217GroupedLinear
         helper = Mock()
         helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
         helper._get_quantizers.return_value = tuple(
