@@ -52,6 +52,7 @@ from megatron.core.transformer.mlp import MLP, MLPSubmodules
 from megatron.core.transformer.moe.moe_layer import MoELayer, te_checkpoint
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.transformer.spec_utils import ModuleSpec, get_submodules
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.transformer.transformer_layer import (
     LayerNormBuilder,
@@ -1496,8 +1497,12 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
         attn._tied_kv = True
 
 
-def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
-    """Build Gemma 4 MoE block spec with patched attention, layer, and MoE modules."""
+def gemma4_block_spec(
+    config: TransformerConfig,
+    use_transformer_engine: bool = True,
+    **kwargs: bool | int | str | None,
+) -> TransformerBlockSubmodules:
+    """Build the serializable Gemma 4 MoE transformer block specification."""
     block_spec = get_gpt_decoder_block_spec(config, use_transformer_engine=use_transformer_engine, **kwargs)
 
     for layer_spec in block_spec.layer_specs:
