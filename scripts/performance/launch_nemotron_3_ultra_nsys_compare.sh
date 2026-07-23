@@ -66,6 +66,7 @@ TRAIN_ITERS="${TRAIN_ITERS:-50}"
 # Recipe selection knobs (default: the gb200/bf16 3D-parallel baseline).
 # For the PR#4911 gb300/MXFP8 FSDP recipe set GPU_TYPE=gb300 COMPUTE_DTYPE=fp8mx
 # NVTE_CPU_OFFLOAD_V1=1 KEEP_RECIPE_DISPATCHER=1 (keep HybridEP instead of forcing alltoall).
+TIME_LIMIT="${TIME_LIMIT:-00:30:00}"
 GPU_TYPE="${GPU_TYPE:-gb200}"
 COMPUTE_DTYPE="${COMPUTE_DTYPE:-bf16}"
 NVTE_CPU_OFFLOAD_V1_VAL="${NVTE_CPU_OFFLOAD_V1:-0}"
@@ -218,7 +219,7 @@ submit_run() {
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
         --gpu "$GPU_TYPE" \
-        --time_limit 00:30:00 \
+        --time_limit "$TIME_LIMIT" \
         -m nemotronh -mr nemotron_3_ultra -c "$COMPUTE_DTYPE" -cv v1 \
         -ng "$NGPUS" -gn "$GN" \
         "${GRES_ARG[@]}" \
