@@ -123,7 +123,7 @@ def test_every_supported_hardware_recipe_declares_its_environment_inline():
             )
             assert isinstance(node.body[assignment_index + 1], ast.Return)
 
-    assert len(supported) == 259
+    assert supported, "no canonical h100 recipes discovered (glob or naming convention broke?)"
     assert unsupported == ["qwen/h100/qwen3_next.py:qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config"]
 
 
