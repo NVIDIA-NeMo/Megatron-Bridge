@@ -15,6 +15,7 @@
 """Serializable config and runtime builder for direct Hugging Face SFT."""
 
 import logging
+import random
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from functools import partial
@@ -69,6 +70,10 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     do_test: bool = True
     skip_getting_attention_mask_from_dataset: bool = True
     dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "single"
+    shuffle: bool = True
+    """Whether to deterministically shuffle each loaded split."""
+    shuffle_seed: int = 42
+    """Seed used to shuffle Direct-HF examples."""
     enable_in_batch_packing: bool = False
     defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False
@@ -201,6 +206,9 @@ def build_direct_hf_sft_split(
     from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
 
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
+    if config.shuffle:
+        examples = list(examples)
+        random.Random(config.shuffle_seed).shuffle(examples)
     if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
         if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
             raise ValueError(

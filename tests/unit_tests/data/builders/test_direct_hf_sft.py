@@ -77,6 +77,61 @@ def test_builder_auto_selects_shared_text_collate_for_all_chat_columns(monkeypat
     assert (validation, test) == (None, None)
 
 
+def test_builder_shuffles_examples_by_default_without_mutating_source(monkeypatch):
+    examples = [
+        {
+            "id": index,
+            "messages": [
+                {"role": "user", "content": f"question {index}"},
+                {"role": "assistant", "content": f"answer {index}"},
+            ],
+        }
+        for index in range(4)
+    ]
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: examples)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    train, validation, test = DirectHFSFTDatasetBuilder(config).build(
+        DatasetBuildContext(4, 0, 0, tokenizer=_Tokenizer())
+    )
+
+    assert train is not None
+    assert [train[index]["id"] for index in range(4)] == [2, 1, 3, 0]
+    assert [example["id"] for example in examples] == [0, 1, 2, 3]
+    assert (validation, test) == (None, None)
+
+
+def test_builder_allows_source_order_opt_out(monkeypatch):
+    examples = [
+        {
+            "id": index,
+            "messages": [
+                {"role": "user", "content": f"question {index}"},
+                {"role": "assistant", "content": f"answer {index}"},
+            ],
+        }
+        for index in range(4)
+    ]
+    monkeypatch.setattr(builder_module, "load_direct_hf_sft_examples", lambda source, preprocessing: examples)
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+        shuffle=False,
+    )
+
+    train, _, _ = DirectHFSFTDatasetBuilder(config).build(DatasetBuildContext(4, 0, 0, tokenizer=_Tokenizer()))
+
+    assert train is not None
+    assert [train[index]["id"] for index in range(4)] == [0, 1, 2, 3]
+
+
 def test_config_validates_source_and_padding():
     config = DirectHFSFTDatasetConfig(
         seq_length=0,
@@ -392,6 +447,8 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
     assert isinstance(restored, DirectHFSFTDatasetConfig)
     assert restored.preprocessing.loss_mode == "assistant"
     assert restored.source.load_kwargs == config.source.load_kwargs
+    assert restored.shuffle is True
+    assert restored.shuffle_seed == 42
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized
