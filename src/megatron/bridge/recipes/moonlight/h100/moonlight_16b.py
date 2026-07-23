@@ -289,10 +289,10 @@ def moonlight_16b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return the bounded-convergence pre-training config for Moonlight-16B.
 
-    Recommended parallelism: TP=1, PP=1, CP=1, EP=16 on 16 H100 GPUs.
-    The 100-step schedule uses the same batch, accumulation, precision, and
-    optimizer fingerprint as ``qwen3_30b_a3b_convergence_v1`` while retaining
-    Moonlight's model-native routing configuration.
+    Recommended parallelism: TP=1, PP=1, CP=1, EP=8 on 16 H100 GPUs.
+    The 100-step schedule uses GBS/MBS 1024/2 with 32-way gradient
+    accumulation, two expert-data replicas, precision-aware bf16 optimizer
+    state, and Moonlight's model-native routing configuration.
 
     Returns:
         ConfigContainer with the Moonlight-16B pre-training contract.
@@ -304,13 +304,34 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 16
+    # Keep each expert-parallel group inside one 8-GPU NVLink domain. The
+    # resulting two expert-data replicas avoid cross-node token dispatch.
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.sequence_parallel = False
 
+    # The 16-GPU topology fits without activation recompute at MBS2. Matching
+    # the DeepSeek V3 precision-aware optimizer state reduces accumulation and
+    # optimizer overhead while keeping fp32 main parameters.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_deepep_num_sms = None
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.high_priority_a2a_comm_stream = True
+
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
+    cfg.comm_overlap.delay_wgrad_compute = True
+
     cfg.train.train_iters = 100
     cfg.train.global_batch_size = 1024
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
     cfg.dataset.random_seed = 1234
     cfg.rng.seed = 1234
     cfg.scheduler.lr_warmup_iters = 40
@@ -329,9 +350,9 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.use_distributed_optimizer = True
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.main_grads_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
     cfg.scheduler.start_weight_decay = 0.033
     cfg.scheduler.end_weight_decay = 0.033
@@ -350,6 +371,13 @@ def moonlight_16b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "USE_MNNVL": 0,
     }
     return cfg
 
@@ -485,8 +513,9 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
 
     Recommended parallelism is TP=1, PP=1, CP=1, EP=8 on 8 H100 GPUs. This
     topology keeps sequence parallelism disabled so the shared SFT packing
-    contract remains ``pad_seq_to_mult=1``. With GBS=32 and MBS=1 it uses
-    dense DP=8 and four gradient-accumulation steps.
+    contract remains ``pad_seq_to_mult=1``. An 8K offline pack with GBS=8 and
+    MBS=1 keeps the per-update token budget at 65,536 while dense DP=8 removes
+    gradient accumulation.
 
     Returns:
         ConfigContainer with the Moonlight-16B full-SFT convergence contract.
@@ -503,21 +532,62 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
     cfg.model.sequence_parallel = False
     cfg.model.vocab_size = _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE
 
+    seq_length = 8192
+    cfg.model.seq_length = seq_length
+    cfg.dataset.seq_length = seq_length
+    cfg.dataset.offline_packing_specs.packed_sequence_size = seq_length
     cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
+    # HybridEP combines tokens in 128-token chunks. Pad only the small
+    # end-of-pack gap to the fixed 8K width so each row is dispatcher-compatible
+    # without padding every constituent sequence.
+    cfg.dataset.dataset_kwargs = {
+        **(cfg.dataset.dataset_kwargs or {}),
+        "pad_to_max_length": True,
+    }
+    cfg.train.global_batch_size = 8
 
-    # Plain all-to-all is the correctness-first single-node EP8 path. Clear
-    # inactive flex-dispatcher settings so the execution fingerprint is exact.
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = None
+    # The model fits without activation recompute at this topology. Router
+    # fusion and bf16 optimizer state reduce otherwise exposed execution and
+    # communication overhead while retaining fp32 main parameters.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    # Reuse the tuned single-node HybridEP transport and expert-communication
+    # overlap from the bounded pretraining topology.
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_deepep_num_sms = None
     cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_a2a_overlap = False
     cfg.model.moe_shared_expert_overlap = False
-    cfg.comm_overlap = None
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "USE_MNNVL": 0,
     }
     return cfg
 
@@ -775,9 +845,11 @@ def moonlight_16b_peft_4gpu_h100_bf16_config(
 ) -> ConfigContainer:
     """Return the bounded-convergence PEFT config for Moonlight-16B.
 
-    Recommended parallelism is TP=4, PP=1, CP=1, EP=4 on 4 H100 GPUs.
-    The default LoRA keeps the base model frozen and targets only the attention
-    QKV and output projections with rank 8, alpha 16, and zero dropout.
+    Recommended parallelism is TP=1, PP=1, CP=1, EP=4 on 4 H100 GPUs. This
+    keeps sequence parallelism disabled and uses dense DP=4 with eight gradient
+    accumulation steps. The default LoRA keeps the base model frozen and
+    targets only the attention QKV and output projections with rank 8, alpha
+    16, and zero dropout.
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
@@ -787,18 +859,21 @@ def moonlight_16b_peft_4gpu_h100_bf16_config(
     """
     cfg = moonlight_16b_peft_2gpu_h100_bf16_config(peft_scheme=peft_scheme)
 
-    cfg.model.tensor_model_parallel_size = 4
+    cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_layout = _get_moonlight_pipeline_layout(1, 1)
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 4
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
-    cfg.model.vocab_size = (
-        (_MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE + cfg.model.tensor_model_parallel_size - 1)
-        // cfg.model.tensor_model_parallel_size
-    ) * cfg.model.tensor_model_parallel_size
+    cfg.model.sequence_parallel = False
+    cfg.model.vocab_size = _MOONLIGHT_16B_FINETUNING_UNPADDED_VOCAB_SIZE
+
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+    cfg.model.moe_router_fusion = True
 
     seq_length = 2048
     cfg.model.seq_length = seq_length

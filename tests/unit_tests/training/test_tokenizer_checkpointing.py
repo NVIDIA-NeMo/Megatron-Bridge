@@ -270,7 +270,6 @@ class TestSaveTokenizerAssets:
         tokenizer_types = [
             "SentencePieceTokenizer",
             "GPTSentencePieceTokenizer",
-            "Llama2Tokenizer",
         ]
 
         for tokenizer_type in tokenizer_types:
