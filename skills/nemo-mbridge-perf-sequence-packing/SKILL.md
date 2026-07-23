@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-sequence-packing
-description: Validate and use packed sequences and long-context training in Megatron-Bridge, distinguishing offline packed SFT for LLMs from in-batch packing for VLMs, and applying the right CP constraints.
+description: Validate and use packed sequences and long-context training in Megatron-Bridge, including equal-token offline pack-length sizing for LLM SFT and PEFT, the distinction from VLM in-batch packing, and CP constraints.
 license: Apache-2.0
-when_to_use: Enabling sequence packing or long-context SFT, or investigating a commit that broke sequence packing or changed packing behavior; 'packed sequences', 'sequence packing', 'PackedSequenceSpecs', 'enable_in_batch_packing', 'CP with packing'.
 ---
 
 # Sequence Packing Skill
@@ -20,15 +19,47 @@ Offline packed SFT for LLM finetuning:
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
 cfg.train.micro_batch_size = 1
-cfg.dataset.seq_length = 4096
-cfg.model.seq_length = 4096
-cfg.dataset.dataset_kwargs = {"pad_to_max_length": True}
+cfg.train.global_batch_size = 8
+cfg.dataset.seq_length = 8192
+cfg.model.seq_length = 8192
+cfg.dataset.dataset_kwargs = {
+    **(cfg.dataset.dataset_kwargs or {}),
+    "pad_to_max_length": True,
+}
 cfg.dataset.enable_offline_packing = True
 cfg.dataset.offline_packing_specs = PackedSequenceSpecs(
-    packed_sequence_size=4096,
+    packed_sequence_size=8192,
     pad_seq_to_mult=1,
 )
 ```
+
+### Choose the offline pack length
+
+For text-only LLM SFT and PEFT verification, start with an 8192-token offline
+pack when the model context limit, memory, and model-family support allow it.
+Benchmark pack lengths at equal token slots per optimizer step:
+
+```text
+token_slots_per_step = packed_sequence_size * global_batch_size
+```
+
+For example, 2K/GBS32, 4K/GBS16, and 8K/GBS8 each expose 65,536 token slots per
+step. Longer packs aggregate more source examples into each physical MBS1 row
+and can reduce gradient accumulation and per-step overhead. They also increase
+activation memory and may expose kernel-width constraints, so select the
+largest measured configuration that fits rather than assuming longer is
+always faster.
+
+Offline packing requires MBS1. Require `global_batch_size % data_parallel_size
+== 0` and `global_batch_size >= data_parallel_size`; an 8K/GBS8 workload
+therefore needs DP no larger than 8. Keep `model.seq_length`,
+`dataset.seq_length`, and `packed_sequence_size` equal, use a fresh packed-data
+output root after changing any of them, and inspect the resolved post-setup
+configuration.
+
+Equal token slots do not make different pack lengths numerically identical:
+the longer target changes truncation and pack membership. Rerun finite-loss,
+no-skip/NaN, and convergence sentinels before replacing verified evidence.
 
 If CP is enabled:
 
@@ -176,6 +207,7 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
 5. Packing support is model-family-specific. `Qwen3-Next`, `GLM-4.5`, and `Qwen3.5-VL` contain explicit opt-outs in different paths.
 6. MTP finetuning is documented as incompatible with packed sequences.
 7. Synthetic padding rows, including negative indices remapped through `samples_mapping`, must retain an all-zero loss mask.
+8. `global_batch_size` must be divisible by and no smaller than data parallel size when offline packing uses MBS1.
 
 ## Verification
 

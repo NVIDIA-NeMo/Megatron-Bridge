@@ -54,6 +54,30 @@ Packed sequences are usually not the right answer when:
   the main technique
 - your model family or recipe explicitly opts out of packed-sequence support
 
+## Choosing the Offline Pack Length
+
+For text-only LLM SFT and PEFT, use 8192 as the first offline-pack target when
+the model context limit, memory, and recipe support allow it. Compare candidate
+lengths at the same token slots per optimizer step:
+
+```text
+token_slots_per_step = packed_sequence_size * global_batch_size
+```
+
+Thus 2K/GBS32, 4K/GBS16, and 8K/GBS8 each retain 65,536 token slots per step.
+A longer pack can contain more source examples in the physical MBS1 row and
+reduce gradient accumulation and launch overhead. It also consumes more
+activation memory and can encounter fixed-width kernel constraints, so measure
+the candidates rather than treating 8K as unconditional.
+
+Offline packing requires MBS1. The selected GBS must be divisible by and no
+smaller than data parallel size; an 8K/GBS8 run therefore requires DP no
+larger than 8. Keep model, dataset, and packed sequence lengths equal, write
+changed packing configurations to a fresh output root, and verify the resolved
+post-setup configuration. Changing pack length can alter truncation and pack
+membership even when token slots stay constant, so rerun loss and stability
+checks before replacing existing verification evidence.
+
 ## Stable Constraints
 
 The durable constraints for packed sequences in Bridge are:

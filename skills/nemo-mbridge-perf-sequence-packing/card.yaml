@@ -40,10 +40,13 @@ feature_meaning:
     knobs.
 recommended_path:
   llm_packed_sft:
+    target_seq_length: 8192_when_model_and_memory_support_it
     train.micro_batch_size: 1
+    train.global_batch_size: preserve_equal_token_slots
     dataset.dataset_kwargs.pad_to_max_length: true
     dataset.enable_offline_packing: true
     dataset.offline_packing_specs.packed_sequence_size: match_seq_length
+    sizing_rule: packed_sequence_size * global_batch_size = token_slots_per_step
   cp_finetuning:
     model.calculate_per_token_loss: true
     ddp.average_in_collective: false
@@ -54,6 +57,7 @@ recommended_path:
 known_constraints:
   - seq_length must be divisible by 2 * context_parallel_size when CP > 1.
   - Offline packed SFT requires micro_batch_size == 1.
+  - With offline MBS1 packing, global_batch_size must be divisible by and no smaller than data_parallel_size.
   - VLM in-batch packing requires micro_batch_size > 1.
   - For finetuning with CP > 1, calculate_per_token_loss must be true.
   - For finetuning with CP > 1, ddp.average_in_collective must be false.

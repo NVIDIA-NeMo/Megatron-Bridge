@@ -287,13 +287,22 @@ evaluation, or checkpoint checks. These settings may be valid for a canonical
 `pretrain_performance` item, but their losses and checkpoints are never
 convergence evidence.
 
-Use `qwen3_30b_a3b_convergence_v1` as the named default cross-model bounded
-convergence cohort. It is the target contract derived from the resolved
-Qwen3-30B-A3B H100 recipes; the name identifies settings, not evidence status.
+Use `qwen3_30b_a3b_convergence_v2` as the named default cross-model bounded
+convergence cohort. It retains the optimizer, data, objective, and token-budget
+contract derived from the resolved Qwen3-30B-A3B H100 recipes while changing
+offline-packed SFT and PEFT from 2K/GBS32 to 8K/GBS8. The name identifies
+target settings, not evidence status.
 Do not call a workload cohort-verified until its recipe owns this contract and
 a clean-commit run passes the applicable gates below. Its 100 optimizer steps
 test finite loss, short-horizon loss trend, checkpoint reload, and direct
 resume; they do not establish full training convergence.
+
+Historical `qwen3_30b_a3b_convergence_v1` evidence used 2K/GBS32 for SFT and
+PEFT. Keep an existing verified card on that exact command, recipe commit, and
+metrics until the model is rerun. Never relabel 2K evidence as v2 or rewrite its
+command to 8K without fresh training. When refreshing a model, update the
+recipe first, write packed data to a fresh output root, rerun the training
+gates, and rerun post-SFT export/inference.
 
 Freeze this optimizer fingerprint for all three workloads:
 
@@ -319,9 +328,10 @@ Freeze the following workload profiles:
 | --- | --- | --- | --- |
 | Start / trainable set | Random initialization, no checkpoint load, full model | Exact immutable HF checkpoint revision, full model | Same immutable HF revision, frozen base model; LoRA on model-native attention Q/K/V and output projections, rank 8, alpha 16, dropout 0 |
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
-| Sequence / GBS | `4096 / 1024` | `2048 / 32` | `2048 / 32` |
+| Sequence / GBS | `4096 / 1024` | `8192 / 8` | `8192 / 8` |
 | Reference MBS | `1` | `1` | `1` |
 | Reference packing alignment | Not applicable | `pad_seq_to_mult=1` | `pad_seq_to_mult=4` |
+| Fixed-width offline packs | Not applicable | `pad_to_max_length=true` | `pad_to_max_length=true` |
 | Token slots | `4,194,304` per step; `419,430,400` total | `65,536` per step; `6,553,600` total | `65,536` per step; `6,553,600` total |
 | Peak / minimum LR | `3e-4 / 3e-5` | `5e-6 / 0` | `1e-4 / 0` |
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
@@ -336,15 +346,39 @@ and actual supervised-token count, then classify that run as support
 verification rather than evidence for this cross-model convergence cohort.
 Never let runtime alignment synchronization silently change a cohort run.
 
+Use 8K as the default offline-pack target only when the exact model supports at
+least 8192 tokens, the recipe supports offline packing, and the resolved
+topology fits one MBS1 pack per data-parallel rank. Set `model.seq_length`,
+`dataset.seq_length`, and `packed_sequence_size` to 8192 together. Fixed-width
+padding fills only the residual gap at the end of a completed pack; require its
+loss mask to remain zero. A model-family packing opt-out, MTP incompatibility,
+context limit, or demonstrated memory limit is a cohort exception, not a
+reason to silently fall back.
+
+The equal-token rule is:
+
+```text
+token_slots_per_step = packed_sequence_size * global_batch_size
+```
+
+Moving from 2K/GBS32 to 8K/GBS8 preserves 65,536 token slots per optimizer step
+and can reduce gradient accumulation while presenting more source sequences in
+each physical MBS1 pack. It still changes truncation and packing membership, so
+it is a convergence-contract migration that requires fresh loss sentinels.
+Because offline packing requires MBS1, require `GBS % DP == 0` and `GBS >= DP`.
+For the v2 GBS8 target, select a model-appropriate topology with DP in
+`{1, 2, 4, 8}`; do not reuse a DP16 layout.
+
 The public training runner applies `--dataset` after constructing the model
 recipe and replaces the recipe's dataset object with the selected preset.
 Consequently, a card command that uses `--dataset tulu3` must explicitly pin
 the dataset revision, split, data-order/packing seed, offline-packing enablement,
-and `+dataset.offline_packing_specs.pad_seq_to_mult`; recipe-level dataset
+`+dataset.offline_packing_specs.pad_seq_to_mult`, and
+`dataset.dataset_kwargs={pad_to_max_length:true}`; recipe-level dataset
 defaults alone do not freeze the resolved CLI workload. Use a fresh
-`dataset.hf_output_root` (or force a deliberate rewrite) whenever any of these
-fields changes, and audit the final `ConfigContainer` after all overrides and
-runtime synchronization.
+`dataset.hf_output_root` (or force a deliberate rewrite) whenever sequence
+length, packing width, alignment, or any of these fields changes, and audit the
+final `ConfigContainer` after all overrides and runtime synchronization.
 
 Before launching training, create the parent directory named by
 `logger.save_config_filepath` and require the post-setup file to persist.
@@ -358,20 +392,20 @@ Treat the token counts above as token slots. For SFT and PEFT, also record the
 actual supervised-token count after label masking; do not present padded or
 masked token slots as supervised tokens.
 
-Use these accumulation layouts for the Qwen reference executions:
+Use these accumulation constraints for the reference executions:
 
-| Workload | Reference topology | DP | Gradient accumulation |
+| Workload | Topology constraint | DP | Gradient accumulation |
 | --- | --- | ---: | ---: |
 | Pretrain | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 64 |
-| Full SFT | 16 GPUs, TP1/PP1/CP1/EP16 | 16 | 2 |
-| PEFT | 4 GPUs, TP4/PP1/CP1/EP4 | 1 | 32 |
+| Full SFT | Model-appropriate topology with DP dividing GBS8 | 1, 2, 4, or 8 | `8 / DP` |
+| PEFT | Model-appropriate topology with DP dividing GBS8 | 1, 2, 4, or 8 | `8 / DP` |
 
-Topology, DP, micro batch size, and gradient accumulation are execution
-fingerprints rather than convergence constraints. They may change while the
-global batch size remains fixed. Every new execution layout must pass fresh
-loss sentinels, and its step-by-step values are not strictly numerically
-comparable with another layout. The current offline-packed SFT implementation
-requires MBS=1; treat that as an implementation limit, not a convergence rule.
+Topology, DP, and gradient accumulation are execution fingerprints rather than
+convergence constraints. They may change while GBS8 remains fixed. Every new
+execution layout must pass fresh loss sentinels, and its step-by-step values
+are not strictly numerically comparable with another layout. The current
+offline-packed SFT implementation requires MBS1; treat that as an
+implementation limit, not a convergence rule.
 
 For the Qwen anchor, record 128 experts, top-8 post-softmax-normalized routing,
 auxiliary load-balancing loss coefficient `1e-3`, natural routing, and no
@@ -415,7 +449,7 @@ instead of overriding it in the card. A canonical `perf_recipes` benchmark may
 intentionally use mock data, forced balancing, or a different batch and is not
 convergence evidence.
 
-Keep long-context SFT outside `qwen3_30b_a3b_convergence_v1`. Sequence length,
+Keep long-context SFT outside `qwen3_30b_a3b_convergence_v2`. Sequence length,
 CP, packing, batch construction, LR, and horizon define a separate convergence
 cohort even when the starting checkpoint and dataset are shared.
 
@@ -597,7 +631,7 @@ an item verified merely to make validation pass.
   buckets, and use `unverified: all` for an indexed hardware target with no
   verified functional-training evidence.
 - Audit the resolved convergence contract before each training run; align it
-  with `qwen3_30b_a3b_convergence_v1` or record the exception and classify the
+  with `qwen3_30b_a3b_convergence_v2` or record the exception and classify the
   result as support verification rather than cross-model convergence evidence.
 - Change only the execution/performance contract while tuning throughput, and
   recheck loss sentinels after numerically non-bitwise changes.
