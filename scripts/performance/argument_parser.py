@@ -24,7 +24,7 @@ from nemo_run.config import get_nemorun_home
 logger: logging.Logger = logging.getLogger(__name__)
 
 DEFAULT_NEMO_HOME = os.getenv("NEMO_HOME", Path.home() / ".cache" / "nemo")
-VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine"]
+VALID_CUDA_GRAPH_IMPLS = ["none", "local", "transformer_engine", "full_iteration"]
 VALID_CUDA_GRAPH_SCOPES = ["full_iteration", "attn", "mlp", "moe", "moe_router", "moe_preprocess", "mamba"]
 
 NUM_GPUS_PER_NODE_MAP = {
