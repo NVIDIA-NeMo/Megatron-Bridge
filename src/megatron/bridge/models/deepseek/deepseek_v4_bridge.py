@@ -582,10 +582,10 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         Optional CSA indexer weights may use the legacy flat name or the native
         Transformers scorer submodule name.
         """
-        if isinstance(hf_param, str) and ".indexer.weights_proj." in hf_param:
-            scorer_param = hf_param.replace(".indexer.weights_proj.", ".indexer.scorer.weights_proj.")
-            if scorer_param in hf_state_dict:
-                hf_param = scorer_param
+        if isinstance(hf_param, str) and hf_param not in hf_state_dict:
+            legacy_param = hf_param.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
+            if legacy_param in hf_state_dict:
+                hf_param = legacy_param
         return quantization_utils.maybe_dequantize_hf_quantized_weight(hf_param, hf_state_dict)
 
     # ------------------------------------------------------------------
@@ -682,7 +682,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             ),
             _ReplicatedOptional(
                 "decoder.layers.*.self_attention.core_attention.indexer.linear_weights_proj.weight",
-                "layers.*.attn.indexer.weights_proj.weight",
+                "layers.*.attn.indexer.scorer.weights_proj.weight",
             ),
             # Indexer sub-compressor (each indexer has its own compressor)
             _ReplicatedOptional(
