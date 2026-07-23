@@ -9,13 +9,18 @@ summary: >
   and training.
 verification_index:
   model_level:
-    verified: all
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft]
-      unverified: [checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
-      unverified: all
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: moonshotai/Moonlight-16B-A3B
   hf_revision: 476b36a473d4467f94469414bef6cee75c9c8172  # pragma: allowlist secret
@@ -140,8 +145,9 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
-      enabled_features: {}
+      bridge_commit: 411c6b1dc26eef50124843fbf9b6253b7b6c43cb  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe moonlight_16b_pretrain_16gpu_h100_bf16_config --mode pretrain
@@ -159,83 +165,89 @@ items:
         --save_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-reference-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
-      last_verified: 2026-07-21
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: 12.42632
-        final_loss: 5.212543
-        last_10_steps_step_time_ms_avg: 24569.290
-        last_10_steps_model_tflops_per_gpu_avg: 183.030
+        initial_loss: 12.43248
+        final_loss: 5.158420
+        last_10_steps_step_time_ms_avg: 11636.350
+        last_10_steps_model_tflops_per_gpu_avg: 386.590
       expected_result: >
         The uninterrupted 16-GPU bounded RP2 run completes exactly 100 steps at
-        TP1/PP1/CP1/EP16/ETP1, DP16, GBS/MBS 1024/1, and 64-way gradient
-        accumulation. It reaches peak learning rate at step 40 and completes
-        cosine decay at step 100. LM loss is finite from 12.42632 to 5.212543
-        with no skipped or NaN iterations, all four metrics are recorded, the
-        post-setup configuration persists, and complete 16-shard iter_0000050
-        and iter_0000100 checkpoints are saved.
+        TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient
+        accumulation with natural MoE routing and the HybridEP flex dispatcher.
+        It reaches peak learning rate at step 40 and completes cosine decay at
+        step 100. LM loss is finite from 12.43248 to 5.158420 with no skipped or
+        NaN iterations, all four metrics are recorded, the post-setup
+        configuration persists, and complete 16-shard iter_0000050 and
+        iter_0000100 checkpoints are saved.
 
   sft:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
+      bridge_commit: 4b8a6929348d6e25e32744d89228254cc3985564  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
+        moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
         --recipe moonlight_16b_sft_8gpu_h100_bf16_tp1_config --mode sft
         --dataset tulu3
         --pretrained_checkpoint work/model-verification/moonlight-16b-a3b/imported-megatron/iter_0000000
-        --max_steps 100 --seq_length 2048
+        --max_steps 100 --seq_length 8192
         --lr 5e-6 --min_lr 0 --warmup_iters 10
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'
-        dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-b14afda60f1b
+        dataset.hf_output_root=work/data/tulu3/moonlight-16b-a3b-sft-hybridep-b14afda60f1b
         dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
-        +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
+        +dataset.offline_packing_specs.pad_seq_to_mult=1
+        'dataset.dataset_kwargs={pad_to_max_length:true}'
+        scheduler.lr_decay_iters=100
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-        --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints
+        --save_dir work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-      last_verified: 2026-07-21
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: 1.362357
-        final_loss: 1.065960
-        last_10_steps_step_time_ms_avg: 2008.240
-        last_10_steps_model_tflops_per_gpu_avg: 64.110
+        initial_loss: 1.770799
+        final_loss: 1.180197
+        last_10_steps_step_time_ms_avg: 562.140
+        last_10_steps_model_tflops_per_gpu_avg: 229.500
       expected_result: >
         The immutable-revision 8-GPU run completes exactly 100 full-SFT steps at
-        TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 32/1, and four-way gradient
-        accumulation. Pad-1 offline packing is 99.20% efficient, and the sampled
-        6,553,600 token slots contain 4,308,035 supervised tokens after label
-        masking. LM loss is finite from 1.362357 to 1.065960 with no skipped or
-        NaN iterations, all four metrics are recorded, and the complete
-        eight-shard iter_0000100 full-model checkpoint reloads successfully.
+        TP1/PP1/CP1/EP8/ETP1, DP8, SP off, GBS/MBS 8/1, and no gradient
+        accumulation, using the HybridEP flex dispatcher with overlapped expert
+        communication and delayed weight-gradient compute. Fixed-width 8K,
+        pad-1 offline packing is 99.73% efficient and averages 21.550 source
+        sequences per pack while retaining 6,553,600 token slots across the
+        100 updates. LM loss is finite from 1.770799 to 1.180197 with no skipped
+        or NaN iterations, all four metrics are recorded, and the complete
+        eight-shard iter_0000100 full-model checkpoint saves successfully.
 
   sft_export_inference:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 575c0e393215eb65c20ec61883258a160d411502  # pragma: allowlist secret
+      bridge_commit: 4b8a6929348d6e25e32744d89228254cc3985564  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 8
           --hf-model moonshotai/Moonlight-16B-A3B
-          --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-v1-checkpoints/iter_0000100
-          --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
+          --megatron-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-checkpoints/iter_0000100
+          --hf-path work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
           --distributed-save --tp 1 --pp 1 --ep 8 --etp 1 --trust-remote-code
         - >
           uv run python
           skills/create-model-verification-card/scripts/verify_hf_inference.py
-          --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-v1-hf-export
+          --hf-model work/model-verification/moonlight-16b-a3b/sft-convergence-hybridep-v3-hf-export
           --prompt "In one short sentence, explain why Paris is important to France."
           --max-new-tokens 32 --chat-template
-      last_verified: 2026-07-21
+      last_verified: 2026-07-22
       expected_result: >
         The immutable-revision step-100 SFT checkpoint exports as 27 indexed
         BF16 shards with 5,344 weights, vocabulary size 163842, and embedding
@@ -293,7 +305,7 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 619cc20bd3c7eca1dc84e8ea0f822307dfbd5cc3  # pragma: allowlist secret
+      bridge_commit: 411c6b1dc26eef50124843fbf9b6253b7b6c43cb  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -314,27 +326,28 @@ items:
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
         --save_dir work/model-verification/moonlight-16b-a3b/peft-convergence-v1-checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true
-      last_verified: 2026-07-21
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: 1.265733
-        final_loss: 1.099398
-        last_10_steps_step_time_ms_avg: 18790.150
-        last_10_steps_model_tflops_per_gpu_avg: 13.740
+        initial_loss: 1.264324
+        final_loss: 1.100755
+        last_10_steps_step_time_ms_avg: 3822.840
+        last_10_steps_model_tflops_per_gpu_avg: 67.380
       expected_result: >
         The immutable-revision 4-GPU run completes exactly 100 PEFT steps at
-        TP4/PP1/CP1/EP4/ETP1, DP1, SP on, GBS/MBS 32/1, and 32-way gradient
+        TP1/PP1/CP1/EP4/ETP1, DP4, SP off, GBS/MBS 32/1, and eight-way gradient
         accumulation. Pad-4 offline packing is 99.29% efficient, and the sampled
         6,553,600 token slots contain 4,291,091 supervised tokens after label
         masking. Only rank-8, alpha-16, zero-dropout LoRA on linear_q_proj,
         linear_kv_down_proj, linear_kv_up_proj, and linear_proj is trainable. LM
-        loss is finite from 1.265733 to 1.099398 with no skipped or NaN
+        loss is finite from 1.264324 to 1.100755 with no skipped or NaN
         iterations, all four metrics are recorded, and the complete four-shard
         iter_0000100 adapter checkpoint covers all 216 expected adapter entries.
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 411c6b1dc26eef50124843fbf9b6253b7b6c43cb  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
@@ -349,27 +362,33 @@ items:
         validation.eval_iters=0 validation.eval_interval=0
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
+        checkpoint.load_optim=true checkpoint.load_rng=true
+        checkpoint.finetune=false
         dist.distributed_timeout_minutes=30
         --load_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-reference-checkpoints
         --save_dir work/model-verification/moonlight-16b-a3b/pretrain-convergence-v1-resumed-checkpoints
         --save_interval 50 checkpoint.ckpt_step=50
         logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: null
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 5.775853
+        final_loss: 5.150805
+        last_10_steps_step_time_ms_avg: 11717.960
+        last_10_steps_model_tflops_per_gpu_avg: 383.920
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        After the pending uninterrupted reference completes, this command must
-        restore optimizer, scheduler, data-order, and RNG state directly from
-        iter_0000050, begin at step 51, and finish at step 100 in the distinct
-        resumed output root. Step-51 and step-100 loss must satisfy the declared
-        absolute-plus-relative tolerance against the reference, with finite
-        losses and no skipped or NaN iterations.
+        The direct 16-GPU continuation restores optimizer, scheduler,
+        data-order, and RNG state from iter_0000050, begins at step 51, and
+        finishes exactly at step 100 in a distinct output root at
+        TP1/PP1/CP1/EP8/ETP1, DP16, GBS/MBS 1024/2, and 32-way gradient
+        accumulation. All 50 losses are finite with no skipped or NaN
+        iterations, all four metrics are recorded, the post-setup configuration
+        persists, and a complete 16-shard iter_0000100 checkpoint is saved.
+        Step-51 resumed/reference loss is 5.775853/5.775853. Step-100
+        resumed/reference loss is 5.150805/5.158420, an absolute difference of
+        0.007615 that satisfies the declared 1e-6-plus-1%-relative tolerance.

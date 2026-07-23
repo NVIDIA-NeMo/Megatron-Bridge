@@ -14,21 +14,74 @@
 
 """GLM VL collator implementations."""
 
+from typing import Any
+
 import torch
 
 from megatron.bridge.data.collators.sequence import prepare_sequence_batch
 from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
 from megatron.bridge.data.collators.visual import THW_GRID_VISUAL_KEYS
 from megatron.bridge.data.conversation_processing import (
+    AssistantMaskBoundaryConfig,
+    assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
-    infer_assistant_mask_boundary_config,
+    get_processor_tokenizer,
     shared_chat_template_kwargs_from_examples,
+    tokenize_text_without_special_tokens,
 )
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
 from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
+
+
+GLM4V_ASSISTANT_START = "<|assistant|>\n"
+GLM4V_ASSISTANT_END = "<|endoftext|>"
+GLM4V_EMPTY_THINK = "<think></think>\n"
+GLM4V_NEXT_ROLE_MARKERS = ("<|system|>\n", "<|user|>\n", "<|observation|>\n")
+
+
+def _glm4v_assistant_mask_boundary_config(processor: Any) -> AssistantMaskBoundaryConfig:
+    """Build GLM-4.5V role boundaries and exclude its empty thinking prefix."""
+    tokenizer = get_processor_tokenizer(processor)
+    empty_think_tokens = tokenize_text_without_special_tokens(tokenizer, GLM4V_EMPTY_THINK)
+    trim_leading_token_sequences = (empty_think_tokens,) if empty_think_tokens else ()
+
+    return assistant_mask_boundary_config_from_markers(
+        processor,
+        assistant_start=GLM4V_ASSISTANT_START,
+        assistant_end=GLM4V_ASSISTANT_END,
+        assistant_end_fallbacks=GLM4V_NEXT_ROLE_MARKERS,
+        include_end_tokens_for_roles=(),
+        trim_leading_token_sequences=trim_leading_token_sequences,
+    )
+
+
+def _build_glm4v_assistant_loss_mask(
+    example: dict,
+    input_ids: torch.Tensor,
+    processor: Any,
+    skipped_tokens: torch.Tensor,
+    boundary_config: AssistantMaskBoundaryConfig,
+) -> torch.Tensor:
+    """Build GLM-4.5V loss spans using a virtual final turn terminator."""
+    tokenizer = get_processor_tokenizer(processor)
+    eos_token_id = getattr(tokenizer, "eos_token_id", None)
+    if eos_token_id is None:
+        raise ValueError("GLM-4.5V assistant masking requires tokenizer.eos_token_id.")
+
+    # GLM role markers terminate intermediate turns, but its final assistant
+    # turn ends directly at the sequence boundary. Add EOS only to delimit that
+    # final span for masking; it is neither returned nor trained as a target.
+    terminated_input_ids = torch.cat([input_ids, input_ids.new_tensor([int(eos_token_id)])])
+    return build_assistant_loss_mask(
+        example,
+        terminated_input_ids,
+        processor,
+        skipped_tokens,
+        boundary_config=boundary_config,
+    )[:-1]
 
 
 def glm4v_collate_fn(
@@ -55,7 +108,7 @@ def glm4v_collate_fn(
     del visual_keys, min_pixels, max_pixels
 
     skipped_tokens = extract_skipped_token_ids(processor)
-    boundary_config = infer_assistant_mask_boundary_config(processor)
+    boundary_config = _glm4v_assistant_mask_boundary_config(processor)
 
     if enable_in_batch_packing:
         sequence_rows = []
@@ -80,12 +133,12 @@ def glm4v_collate_fn(
                     if position_ids is not None
                     else torch.arange(input_ids.numel(), device=input_ids.device, dtype=torch.long)
                 )
-                loss_mask = build_assistant_loss_mask(
+                loss_mask = _build_glm4v_assistant_loss_mask(
                     example,
                     input_ids,
                     processor,
                     skipped_tokens,
-                    boundary_config=boundary_config,
+                    boundary_config,
                 ).to(device=input_ids.device, dtype=torch.float32)
                 labels = torch.cat([input_ids[1:], input_ids.new_full((1,), IGNORE_INDEX)])
                 if skipped_tokens.numel() > 0:
@@ -144,12 +197,12 @@ def glm4v_collate_fn(
 
     loss_mask = torch.stack(
         [
-            build_assistant_loss_mask(
+            _build_glm4v_assistant_loss_mask(
                 example,
                 input_ids,
                 processor,
                 skipped_tokens,
-                boundary_config=boundary_config,
+                boundary_config,
             )
             for example, input_ids in zip(examples, batch["input_ids"])
         ]

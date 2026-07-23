@@ -346,16 +346,15 @@ def _validate_index_status_buckets(
     scope_names = frozenset(scope)
     assignments: dict[str, str] = {}
     assignment_paths: dict[str, tuple[str, ...]] = {}
-    all_statuses: list[str] = []
     for status, members in buckets.items():
         if status not in STATUSES:
             continue
         bucket_path = (*path, status)
         if members == "all":
-            all_statuses.append(status)
+            errors.append(f"{_pointer(*bucket_path)}: list every item name explicitly; scalar all is not allowed")
             continue
         if not isinstance(members, list) or not members:
-            errors.append(f"{_pointer(*bucket_path)}: expected all or a non-empty item list")
+            errors.append(f"{_pointer(*bucket_path)}: expected a non-empty item list")
             continue
         for index, item_name in enumerate(members):
             item_path = (*bucket_path, str(index))
@@ -367,23 +366,6 @@ def _validate_index_status_buckets(
                 continue
             assignments[item_name] = status
             assignment_paths[item_name] = bucket_path
-
-    if all_statuses:
-        if len(buckets) != 1 or len(all_statuses) != 1:
-            errors.append(f"{_pointer(*path)}: all must be the only status bucket in its scope")
-        else:
-            status = all_statuses[0]
-            assignments = dict.fromkeys(scope, status)
-            assignment_paths = dict.fromkeys(scope, (*path, status))
-            if len(expected_statuses) == len(scope) and any(
-                expected_statuses[item_name] != status for item_name in scope
-            ):
-                errors.append(
-                    f"{_pointer(*path, status)}: all is allowed only when every detailed item in the scope "
-                    f"has status {status}"
-                )
-    elif len(assignments) == len(scope) and len(set(assignments.values())) == 1:
-        errors.append(f"{_pointer(*path)}: use scalar all when every item in the scope has the same status")
 
     missing_items = [item_name for item_name in scope if item_name not in assignments]
     if missing_items:
