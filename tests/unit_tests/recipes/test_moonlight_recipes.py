@@ -434,13 +434,24 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
             '++hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'  # pragma: allowlist secret
         ],
     )
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
-    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_deepep_num_sms is None
     assert cfg.model.moe_hybridep_num_sms is None
-    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_a2a_overlap is False
     assert cfg.model.moe_shared_expert_overlap is False
-    assert cfg.comm_overlap is None
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["USE_MNNVL"] == 0
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
     assert cfg.model.recompute_method is None

@@ -549,19 +549,32 @@ def moonlight_16b_sft_8gpu_h100_bf16_tp1_config() -> ConfigContainer:
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
 
-    # Plain all-to-all is the correctness-first single-node EP8 path. Clear
-    # inactive flex-dispatcher settings so the execution fingerprint is exact.
-    cfg.model.moe_token_dispatcher_type = "alltoall"
-    cfg.model.moe_flex_dispatcher_backend = None
+    # Reuse the tuned single-node HybridEP transport and expert-communication
+    # overlap from the bounded pretraining topology.
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_deepep_num_sms = None
     cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = 32
     cfg.model.moe_a2a_overlap = False
     cfg.model.moe_shared_expert_overlap = False
-    cfg.comm_overlap = None
+    cfg.model.high_priority_a2a_comm_stream = True
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=False,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=True,
+    )
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "USE_MNNVL": 0,
     }
     return cfg
 
