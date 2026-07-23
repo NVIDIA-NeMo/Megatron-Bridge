@@ -91,8 +91,6 @@ def test_common_recipe_environment_is_small_and_universal():
     assert COMMON_RECIPE_ENV_VARS == {
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "TORCH_NCCL_HIGH_PRIORITY": 1,
