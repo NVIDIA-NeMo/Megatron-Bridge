@@ -331,6 +331,20 @@ class TestGemma4BridgeConfigExport:
         assert config["layer_types"][:6] == ["sliding_attention"] * 5 + ["full_attention"]
         Gemma4TextConfig(**config)
 
+    def test_moe_rope_fields_after_checkpoint_config_reload(self):
+        """Checkpoint YAML reloads the dual rotary-base tuple as a list."""
+        provider = Gemma4ModelProvider(
+            rotary_base=[10_000, 1_000_000],
+            vocab_size=262_144,
+        )
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        rope_parameters = config["rope_parameters"]
+        assert rope_parameters["sliding_attention"]["rope_theta"] == 10_000
+        assert rope_parameters["full_attention"]["rope_theta"] == 1_000_000
+        Gemma4TextConfig(**config)
+
 
 # ===========================================================================
 # _infer_attn_pattern helper

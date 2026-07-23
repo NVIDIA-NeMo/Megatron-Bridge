@@ -141,7 +141,7 @@ def _rope_parameters_from_provider(provider: Gemma4ModelProvider | Gemma4DensePr
         global_partial_factor = provider.full_attention_rope_partial_factor
     else:
         rotary_base = provider.rotary_base
-        if isinstance(rotary_base, tuple):
+        if isinstance(rotary_base, (list, tuple)) and len(rotary_base) == 2:
             local_base, global_base = rotary_base
         else:
             local_base = global_base = rotary_base
