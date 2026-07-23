@@ -137,21 +137,9 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
-    """Return optional immutable Hub revision kwargs."""
-    return {"revision": revision} if revision is not None else {}
-
-
-def _should_stop_generation(next_token_id: int, stop_tokens: list[int], *, exact_new_tokens: bool) -> bool:
-    """Return whether EOS should end generation before the requested token count."""
-    return not exact_new_tokens and next_token_id in stop_tokens
-
-
-def _completion_output(generated_ids, prompt_length: int, tokenizer) -> tuple[list[int], str]:
-    """Return completion-only token IDs and decoded text."""
-    completion_ids = generated_ids[0, prompt_length:].tolist()
-    completion = tokenizer.decode(completion_ids, skip_special_tokens=True)
-    return completion_ids, completion
+def _decode_completion(tokenizer, generated_ids: torch.Tensor, prompt_length: int) -> str:
+    """Decode generated tokens without echoing the prompt or special tokens."""
+    return tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
 
 
 def main(args) -> None:
@@ -167,11 +155,7 @@ def main(args) -> None:
     )
 
     # Detect model family for processor-specific handling
-    config = AutoConfig.from_pretrained(
-        args.hf_model_path,
-        trust_remote_code=trust_remote,
-        **_hf_revision_kwargs(args.hf_revision),
-    )
+    config = AutoConfig.from_pretrained(args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote)
     model_type = getattr(config, "model_type", "")
     is_kimi = "kimi" in model_type
     image_token_id = getattr(config, "image_token_id", None)
@@ -183,9 +167,7 @@ def main(args) -> None:
     # Load model
     # ------------------------------------------------------------------
     bridge = AutoBridge.from_hf_pretrained(
-        args.hf_model_path,
-        trust_remote_code=trust_remote,
-        **_hf_revision_kwargs(args.hf_revision),
+        args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote
     )
 
     if args.megatron_model_path:
@@ -246,20 +228,12 @@ def main(args) -> None:
     # Tokenizer & processor
     # ------------------------------------------------------------------
     tokenizer = AutoTokenizer.from_pretrained(
-        args.hf_model_path,
-        trust_remote_code=trust_remote,
-        **_hf_revision_kwargs(args.hf_revision),
+        args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote
     )
     if is_kimi:
-        patch_kimi_vision_processor(
-            args.hf_model_path,
-            revision=args.hf_revision,
-            trust_remote_code=trust_remote,
-        )
+        patch_kimi_vision_processor(args.hf_model_path)
     processor = AutoProcessor.from_pretrained(
-        args.hf_model_path,
-        trust_remote_code=trust_remote,
-        **_hf_revision_kwargs(args.hf_revision),
+        args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote
     )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
@@ -310,7 +284,7 @@ def main(args) -> None:
     # Greedy generation loop
     # ------------------------------------------------------------------
     generated_ids = input_ids_raw.clone()
-    stop_tokens = [tokenizer.eos_token_id]
+    stop_tokens = [] if args.exact_new_tokens else [tokenizer.eos_token_id]
 
     for step in range(args.max_new_tokens):
         with torch.no_grad():
@@ -388,21 +362,16 @@ def main(args) -> None:
                     [mm_token_type_ids, torch.zeros_like(next_token_ids, dtype=mm_token_type_ids.dtype)], dim=-1
                 )
 
-            if _should_stop_generation(
-                next_token_ids.item(),
-                stop_tokens,
-                exact_new_tokens=args.exact_new_tokens,
-            ):
+            if next_token_ids.item() in stop_tokens:
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
-    completion_ids, completion = _completion_output(generated_ids, prompt_length, tokenizer)
+    completion = _decode_completion(tokenizer, generated_ids, prompt_length)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
     print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
-    print_rank_0(f"Completion token IDs: {completion_ids}")
     print_rank_0(f"Completion: {completion}")
     print_rank_0("=======================================")
 
@@ -413,7 +382,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hf_model_path", type=str, required=True, help="Path to the HuggingFace VL model.")
     parser.add_argument(
         "--hf-revision",
-        dest="hf_revision",
         help="Immutable Hugging Face Hub revision used for model, config, tokenizer, and processor loading.",
     )
     parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")

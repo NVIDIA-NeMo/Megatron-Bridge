@@ -9,7 +9,7 @@ Qwen 3.5/3.6 models feature a hybrid architecture combining GDN (Gated DeltaNet)
 Qwen 3.5/3.6 models are supported via Megatron Bridge with auto-detected configuration and weight mapping.
 
 ```{important}
-Please upgrade to `transformers` >= 5.2.0 in order to use the Qwen 3.5 models.
+Use `transformers` >= 5.2.0 for Qwen3.5 and >= 5.8.1 for Qwen3.6.
 ```
 
 ## Available Models

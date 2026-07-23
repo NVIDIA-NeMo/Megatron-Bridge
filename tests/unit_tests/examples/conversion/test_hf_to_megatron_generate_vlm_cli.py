@@ -17,23 +17,27 @@
 from __future__ import annotations
 
 import ast
-import sys
 import types
 from pathlib import Path
 
 
+_SCRIPT = Path(__file__).resolve().parents[4] / "examples" / "conversion" / "hf_to_megatron_generate_vlm.py"
+
+
+def _main_function() -> ast.FunctionDef:
+    tree = ast.parse(_SCRIPT.read_text(), filename=str(_SCRIPT))
+    return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
+
+
 def _load_cli_symbols():
-    script = Path(__file__).resolve().parents[4] / "examples" / "conversion" / "hf_to_megatron_generate_vlm.py"
-    tree = ast.parse(script.read_text(), filename=str(script))
+    tree = ast.parse(_SCRIPT.read_text(), filename=str(_SCRIPT))
     selected = [
         node
         for node in tree.body
         if isinstance(node, ast.FunctionDef)
         and node.name
         in {
-            "_completion_output",
-            "_hf_revision_kwargs",
-            "_should_stop_generation",
+            "_decode_completion",
             "build_parser",
         }
     ]
@@ -43,21 +47,12 @@ def _load_cli_symbols():
             type_ignores=[],
         )
     )
-    namespace = {"__name__": "test_hf_to_megatron_generate_vlm_cli"}
-    exec(compile(module, str(script), "exec"), namespace)
+    namespace = {
+        "__name__": "test_hf_to_megatron_generate_vlm_cli",
+        "torch": types.SimpleNamespace(Tensor=object),
+    }
+    exec(compile(module, str(_SCRIPT), "exec"), namespace)
     return namespace
-
-
-def _load_kimi_patch():
-    script = Path(__file__).resolve().parents[4] / "examples" / "conversion" / "vlm_generate_utils.py"
-    tree = ast.parse(script.read_text(), filename=str(script))
-    selected = [
-        node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "patch_kimi_vision_processor"
-    ]
-    module = ast.fix_missing_locations(ast.Module(body=selected, type_ignores=[]))
-    namespace = {"__name__": "test_vlm_generate_utils"}
-    exec(compile(module, str(script), "exec"), namespace)
-    return namespace["patch_kimi_vision_processor"]
 
 
 def test_hf_revision_is_optional():
@@ -67,29 +62,58 @@ def test_hf_revision_is_optional():
 
     assert args.hf_revision is None
     assert args.exact_new_tokens is False
-    assert symbols["_hf_revision_kwargs"](args.hf_revision) == {}
 
 
-def test_hf_revision_is_forwarded_as_a_transformers_kwarg():
+def test_hf_revision_is_exposed_by_the_cli():
     symbols = _load_cli_symbols()
     revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
 
     args = symbols["build_parser"]().parse_args(["--hf_model_path", "Qwen/model", "--hf-revision", revision])
 
     assert args.hf_revision == revision
-    assert symbols["_hf_revision_kwargs"](args.hf_revision) == {"revision": revision}
 
 
-def test_exact_new_tokens_ignores_early_eos():
+def test_hf_revision_is_forwarded_to_every_loader():
+    expected_loaders = {
+        ("AutoBridge", "from_hf_pretrained"),
+        ("AutoConfig", "from_pretrained"),
+        ("AutoProcessor", "from_pretrained"),
+        ("AutoTokenizer", "from_pretrained"),
+    }
+    revision_loaders = set()
+
+    for node in ast.walk(_main_function()):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if not isinstance(node.func.value, ast.Name):
+            continue
+        revision = next((keyword.value for keyword in node.keywords if keyword.arg == "revision"), None)
+        if revision is not None and ast.unparse(revision) == "args.hf_revision":
+            revision_loaders.add((node.func.value.id, node.func.attr))
+
+    assert revision_loaders == expected_loaders
+
+
+def test_exact_new_tokens_bypasses_eos_stopping():
     symbols = _load_cli_symbols()
-    should_stop = symbols["_should_stop_generation"]
 
-    assert should_stop(2, [2], exact_new_tokens=False) is True
-    assert should_stop(2, [2], exact_new_tokens=True) is False
-    assert should_stop(3, [2], exact_new_tokens=True) is False
+    args = symbols["build_parser"]().parse_args(["--hf_model_path", "Qwen/model", "--exact-new-tokens"])
+
+    assert args.exact_new_tokens is True
+    assignment = next(
+        node
+        for node in ast.walk(_main_function())
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "stop_tokens" for target in node.targets)
+    )
+    expression = compile(ast.Expression(assignment.value), str(_SCRIPT), "eval")
+    tokenizer = types.SimpleNamespace(eos_token_id=2)
+
+    assert eval(expression, {}, {"args": types.SimpleNamespace(exact_new_tokens=False), "tokenizer": tokenizer}) == [2]
+    assert eval(expression, {}, {"args": args, "tokenizer": tokenizer}) == []
 
 
-def test_completion_output_slices_prompt_and_emits_every_token_id():
+def test_decode_completion_slices_prompt():
     symbols = _load_cli_symbols()
 
     class _Completion:
@@ -107,38 +131,4 @@ def test_completion_output_slices_prompt_and_emits_every_token_id():
             assert skip_special_tokens is True
             return "completion only"
 
-    assert symbols["_completion_output"](_Generated(), 5, _Tokenizer()) == (
-        [17, 23, 42],
-        "completion only",
-    )
-
-
-def test_kimi_patch_forwards_revision_and_respects_trust_policy(monkeypatch):
-    patch_kimi = _load_kimi_patch()
-    calls = []
-
-    class _KimiProcessor:
-        pass
-
-    def get_class_from_dynamic_module(class_name, model_path, **kwargs):
-        calls.append((class_name, model_path, kwargs))
-        return _KimiProcessor
-
-    transformers = types.ModuleType("transformers")
-    transformers.__path__ = []
-    dynamic_module_utils = types.ModuleType("transformers.dynamic_module_utils")
-    dynamic_module_utils.get_class_from_dynamic_module = get_class_from_dynamic_module
-    monkeypatch.setitem(sys.modules, "transformers", transformers)
-    monkeypatch.setitem(sys.modules, "transformers.dynamic_module_utils", dynamic_module_utils)
-
-    patch_kimi("org/model", revision="immutable", trust_remote_code=False)
-    assert calls == []
-
-    patch_kimi("org/model", revision="immutable", trust_remote_code=True)
-    assert calls == [
-        (
-            "kimi_k25_vision_processing.KimiK25VisionProcessor",
-            "org/model",
-            {"revision": "immutable"},
-        )
-    ]
+    assert symbols["_decode_completion"](_Tokenizer(), _Generated(), 5) == "completion only"

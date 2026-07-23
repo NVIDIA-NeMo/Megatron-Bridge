@@ -35,26 +35,18 @@ except ImportError:
     _HAS_QWEN_VL_UTILS = False
 
 
-def patch_kimi_vision_processor(
-    hf_model_path: str,
-    *,
-    revision: str | None = None,
-    trust_remote_code: bool = False,
-) -> None:
+def patch_kimi_vision_processor(hf_model_path: str):
     """Monkey-patch KimiK25VisionProcessor.from_dict to avoid duplicate keyword errors.
 
     The upstream from_dict passes both **config and **kwargs to cls(), which causes
     'got multiple values for keyword argument' when AutoProcessor injects '_from_auto'.
     """
-    if not trust_remote_code:
-        return
     try:
         from transformers.dynamic_module_utils import get_class_from_dynamic_module
 
         klass = get_class_from_dynamic_module(
             "kimi_k25_vision_processing.KimiK25VisionProcessor",
             hf_model_path,
-            **({"revision": revision} if revision is not None else {}),
         )
         if klass is None or getattr(klass, "_from_dict_patched", False):
             return

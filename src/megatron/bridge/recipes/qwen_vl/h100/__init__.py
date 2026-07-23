@@ -15,7 +15,6 @@
 from megatron.bridge.recipes.qwen_vl.h100.qwen3_vl import *  # noqa: F403
 from megatron.bridge.recipes.qwen_vl.h100.qwen25_vl import *  # noqa: F403
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import *  # noqa: F403
-from megatron.bridge.recipes.qwen_vl.h100.qwen36_vl import *  # noqa: F403
 
 
 __all__ = [
@@ -49,8 +48,6 @@ __all__ = [
     "qwen35_vl_9b_peft_1gpu_h100_bf16_config",
     "qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config",  # pragma: allowlist secret
     "qwen35_vl_9b_sft_4gpu_h100_bf16_config",
-    "qwen36_vl_35b_a3b_peft_4gpu_h100_bf16_config",
-    "qwen36_vl_35b_a3b_sft_16gpu_h100_bf16_config",
     "qwen3_vl_235b_a22b_peft_16gpu_h100_bf16_config",
     "qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config",  # pragma: allowlist secret
     "qwen3_vl_235b_a22b_sft_32gpu_h100_bf16_config",

@@ -24,7 +24,7 @@ import torch
 from megatron.core.process_groups_config import ProcessGroupCollection
 from transformers import AutoProcessor, AutoTokenizer
 
-from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext, validate_declarative_mapping
+from megatron.bridge.data.base import DataloaderConfig, DatasetBuildContext
 from megatron.bridge.data.collators.sft import text_chat_collate_fn, text_prompt_completion_collate_fn
 from megatron.bridge.data.conversation_processing import get_processor_tokenizer, is_text_only_chat_example
 from megatron.bridge.data.datasets.direct_sft import DirectSFTDataset
@@ -65,7 +65,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     test_source: HFDatasetSourceConfig | None = None
     preprocessing: SFTPreprocessingConfig = field(default_factory=ChatSFTPreprocessingConfig)
     hf_processor_path: str | None = None
-    hf_processor_kwargs: dict[str, Any] | None = None
     do_validation: bool = True
     do_test: bool = True
     skip_getting_attention_mask_from_dataset: bool = True
@@ -90,11 +89,6 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
             self.test_source.validate()
         if self.hf_processor_path is not None and not self.hf_processor_path.strip():
             raise ValueError("hf_processor_path must be a non-empty string when set.")
-        validate_declarative_mapping(self.hf_processor_kwargs, field_name="hf_processor_kwargs")
-        if self.hf_processor_kwargs is not None and "trust_remote_code" in self.hf_processor_kwargs:
-            raise ValueError(
-                "hf_processor_kwargs must not override trust_remote_code; use the dataset trust policy instead."
-            )
         if self.pad_to_multiple_of <= 0:
             raise ValueError("pad_to_multiple_of must be greater than 0.")
         if self.in_batch_packing_pad_to_multiple_of <= 0:
@@ -143,13 +137,11 @@ def load_direct_hf_sft_processor(config: DirectHFSFTDatasetConfig, tokenizer: An
         trust_remote_code=config.trust_remote_code,
         hf_path=config.hf_processor_path,
     )
-    processor_kwargs = dict(config.hf_processor_kwargs or {})
     try:
         return normalize_direct_hf_sft_processor(
             AutoProcessor.from_pretrained(
                 config.hf_processor_path,
                 trust_remote_code=trust_remote_code,
-                **processor_kwargs,
             )
         )
     except (OSError, ValueError):
@@ -162,7 +154,6 @@ def load_direct_hf_sft_processor(config: DirectHFSFTDatasetConfig, tokenizer: An
             AutoTokenizer.from_pretrained(
                 config.hf_processor_path,
                 trust_remote_code=trust_remote_code,
-                **processor_kwargs,
             )
         )
 
