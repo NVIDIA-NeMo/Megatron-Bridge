@@ -21,10 +21,10 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - manual_forward_pass
       - inference
   training:
     H100:
@@ -119,7 +119,7 @@ items:
       missing, unexpected, mismatched, and error sets.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
@@ -132,16 +132,16 @@ items:
       --tp 1 --pp 8 --ep 1 --etp 1
       --image_path work/data/medpix/verification.png
       --prompt "What was observed in the imaging?"
-    last_verified: null
+    last_verified: 2026-07-23
+    bridge_commit: ac39e582036c4f120257735bf22d71b8d7a1cddb  # pragma: allowlist secret
     expected_result: >
-      Materialize verification.png from one recorded row of the pinned MedPix
-      validation split before running this command. TP1 makes the
-      processor-expanded multimodal prompt length divisible by tensor
-      parallelism. The pinned one-step comparison must report matching HF and
-      Megatron next-token IDs and decoded tokens, cosine similarity at least
-      0.99, and finite maximum and mean absolute logit differences; the exact
-      token IDs, similarity, and differences must be recorded before this item
-      is marked verified.
+      Using a recorded image from the pinned MedPix validation split, the Qwen
+      processor produced 83 input tokens and a 256-by-1536 pixel tensor. The
+      pinned HF model and imported Megatron checkpoint had next-token
+      predictions that matched at token 760 ('The'). Cosine similarity:
+      0.999156; maximum
+      and mean absolute logit differences were 0.484375 and 0.082185,
+      respectively.
 
   inference:
     status: unverified

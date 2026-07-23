@@ -1146,10 +1146,15 @@ def _validate_manual_forward_pass(
     if status != "verified" or not isinstance(expected, str):
         return
 
+    uses_inference_launcher = (
+        bool(tokens)
+        and tokens[0].removeprefix("./") == "scripts/inference/infer.sh"
+        and _argument_values(command, "--task") == ["model-comparison"]
+    )
     prefix = ["uv", "run", "python", "-m", "torch.distributed.run"]
-    if tokens[:5] != prefix:
+    if not uses_inference_launcher and tokens[:5] != prefix:
         errors.append(f"{_pointer(*path, 'command')}: manual forward pass must use uv distributed run")
-    if "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
+    if not uses_inference_launcher and "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
         errors.append(f"{_pointer(*path, 'command')}: use the HF/Megatron comparison helper")
     for argument in ("--hf_model_path", "--megatron_model_path", "--prompt"):
         if len(_argument_values(command, argument)) != 1:
