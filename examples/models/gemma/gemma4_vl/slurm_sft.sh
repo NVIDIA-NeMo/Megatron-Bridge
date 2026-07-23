@@ -13,13 +13,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 #
-# Gemma 4 VL 26B-A4B-it SFT fine-tuning.
+# Gemma 4 VL 26B-A4B SFT fine-tuning.
 #
-# Usage (1 node, 8 GPUs, TP=2/PP=1/EP=8/ETP=1):
+# Usage (single node, 8 GPUs):
 #   sbatch slurm_sft.sh
+#
+# Usage (multi-node, e.g. 2 nodes with EP=8):
+#   NUM_NODES=2 TP=2 PP=1 EP=8 sbatch --nodes=2 slurm_sft.sh
 
 #SBATCH --job-name=gemma4vl-sft
-#SBATCH --nodes=1
+#SBATCH --nodes=2
 #SBATCH --ntasks-per-node=8
 #SBATCH --gpus-per-node=8
 #SBATCH --time=00:30:00
@@ -34,7 +37,7 @@
 # ==============================================================================
 WORKSPACE=${WORKSPACE:-/workspace}
 
-PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gemma-4-26B-A4B-it}
+PRETRAINED_CHECKPOINT=${PRETRAINED_CHECKPOINT:-${WORKSPACE}/models/gemma-4-26B-A4B}
 RECIPE=${RECIPE:-gemma4_vl_26b_sft_config}
 DATASET_NAME=${DATASET_NAME:-cord_v2}
 SEQ_LENGTH=${SEQ_LENGTH:-4096}
@@ -47,8 +50,7 @@ MIN_LR=${MIN_LR:-0.000005}
 LR_WARMUP_ITERS=${LR_WARMUP_ITERS:-10}
 TP=${TP:-2}
 PP=${PP:-1}
-EP=${EP:-8}
-ETP=${ETP:-1}  # Required world: PP*max(TP,EP*ETP)=8; dense DP=4, expert DP=1.
+EP=${EP:-8}   # Max EP with 16 GPUs, TP=2, PP=1: DP=8, EP=8 (EP must divide DP)
 SAVE_DIR=${SAVE_DIR:-${WORKSPACE}/results/gemma4_vl_sft_tp${TP}_pp${PP}_ep${EP}_${SLURM_JOB_ID}}
 
 # Container image (required)
@@ -88,7 +90,7 @@ echo "Job ID: $SLURM_JOB_ID"
 echo "Nodes: $SLURM_JOB_NUM_NODES"
 echo "Total tasks: $SLURM_NTASKS"
 echo "Recipe: $RECIPE"
-echo "TP=$TP PP=$PP EP=$EP ETP=$ETP"
+echo "TP=$TP PP=$PP EP=$EP"
 echo "Checkpoint: $PRETRAINED_CHECKPOINT"
 echo "Save: $SAVE_DIR"
 echo "Master: $MASTER_ADDR:$MASTER_PORT"
@@ -104,7 +106,6 @@ CMD="${CMD} checkpoint.pretrained_checkpoint=${PRETRAINED_CHECKPOINT}"
 CMD="${CMD} model.tensor_model_parallel_size=${TP}"
 CMD="${CMD} model.pipeline_model_parallel_size=${PP}"
 CMD="${CMD} model.expert_model_parallel_size=${EP}"
-CMD="${CMD} model.expert_tensor_parallel_size=${ETP}"
 CMD="${CMD} model.seq_length=${SEQ_LENGTH}"
 CMD="${CMD} train.train_iters=${TRAIN_ITERS}"
 CMD="${CMD} train.global_batch_size=${GBS}"
