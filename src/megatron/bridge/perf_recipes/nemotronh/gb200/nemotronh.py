@@ -279,7 +279,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap.tp_comm_overlap = True
 
     _benchmark_common(cfg)
-    cfg.model.moe_hybridep_num_sms = 16
+    cfg.model.moe_hybridep_num_sms = 32
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
