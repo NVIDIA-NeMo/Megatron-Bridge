@@ -220,6 +220,8 @@ submit_run() {
         --task pretrain \
         "${NSYS_CLI_FLAGS[@]}" \
         "${DET_ENVS[@]}" \
+        -E NCCL_NVLS_ENABLE=0 \
+        -E NCCL_CUMEM_ENABLE=0 \
         -E TRITON_CACHE_AUTOTUNING=1 \
         -E HF_HOME="$HF_CACHE" \
         -E HF_DATASETS_CACHE="$HF_CACHE/datasets" \
