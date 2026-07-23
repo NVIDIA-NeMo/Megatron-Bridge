@@ -19,6 +19,7 @@ import sys
 
 import torch
 from argument_parser import parse_cli_args
+from utils.mcore_patches import patch_skip_force_all_tensors_to_non_fp8
 from utils.overrides import set_cli_overrides, set_post_overrides, set_user_overrides
 from utils.utils import get_perf_optimized_recipe
 
@@ -64,6 +65,8 @@ def _dump_env_rank0() -> None:
 
 def main():
     """Main function to run the pretraining/finetuning script."""
+    patch_skip_force_all_tensors_to_non_fp8()
+
     # Parse known args and treat any unknown args as Hydra-style config overrides.
     # `argparse.parse_known_args()` returns the unknown args as a `list[str]`.
     parser = parse_cli_args()

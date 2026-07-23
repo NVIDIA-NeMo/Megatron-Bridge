@@ -507,6 +507,19 @@ def reduce_max_stat_across_model_parallel_group(
         return stat.item()
 
 
+def _coerce_log_scalar(
+    value: float | int | torch.Tensor | None,
+    *,
+    as_int: bool = False,
+) -> float | int | None:
+    """Convert optimizer stats to Python scalars for logging."""
+    if value is None:
+        return None
+    if isinstance(value, torch.Tensor):
+        value = value.item()
+    return int(value) if as_int else float(value)
+
+
 def logical_and_across_model_parallel_group(input: bool, mp_group: "TorchProcessGroup") -> bool:
     """Performs a logical AND operation across the model parallel group.
 
@@ -717,6 +730,11 @@ def training_log(
     logger_config = config.logger
     train_config = config.train
     pg_collection = pg_collection or get_pg_collection(model)
+
+    grad_norm = _coerce_log_scalar(grad_norm)
+    params_norm = _coerce_log_scalar(params_norm)
+    num_zeros_in_grad = _coerce_log_scalar(num_zeros_in_grad, as_int=True)
+    log_max_attention_logit = _coerce_log_scalar(log_max_attention_logit)
 
     loggers_exist = writer is not None or wandb_writer is not None or mlflow_logger is not None
 
