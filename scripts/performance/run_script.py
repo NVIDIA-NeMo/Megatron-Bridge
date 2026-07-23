@@ -62,6 +62,10 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     from utils.utils import explicit_environment_override_names
 
     if not hasattr(recipe, "env_vars"):
+        logger.warning(
+            "No environment variables are set explicitly. We typically set "
+            "NVTE_BWD_LAYERNORM_SM_MARGIN, NVTE_FWD_LAYERNORM_SM_MARGIN, etc. Performance might be degraded."
+        )
         recipe.env_vars = {}
     base_env_vars = dict(recipe.env_vars)
     base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)

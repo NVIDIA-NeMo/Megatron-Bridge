@@ -231,7 +231,7 @@ def test_perf_runner_environment_rejects_invalid_values(env_vars):
 
 
 @pytest.mark.parametrize("model_recipe_name", ["deepseek_v3", "qwen3_235b_a22b"])
-def test_flat_environment_preparation_defaults_missing_recipe_environment(model_recipe_name, monkeypatch):
+def test_flat_environment_preparation_defaults_missing_recipe_environment(model_recipe_name, monkeypatch, caplog):
     recipe = SimpleNamespace(
         model=SimpleNamespace(
             tensor_model_parallel_size=1,
@@ -263,6 +263,8 @@ def test_flat_environment_preparation_defaults_missing_recipe_environment(model_
 
     assert result is recipe
     assert result.env_vars == {}
+    assert "No environment variables are set explicitly" in caplog.text
+    assert "Performance might be degraded" in caplog.text
 
 
 def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
