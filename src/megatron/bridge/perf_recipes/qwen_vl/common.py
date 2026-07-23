@@ -32,11 +32,24 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
+def _use_model_vocab_null_tokenizer(cfg: ConfigContainer) -> None:
+    """Use a model-sized synthetic tokenizer for Qwen-VL performance runs."""
+    if cfg.model.vocab_size is None:
+        raise ValueError("Qwen-VL performance recipes require a model vocabulary size.")
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
+    cfg.tokenizer.tokenizer_model = None
+    cfg.tokenizer.vocab_size = cfg.model.vocab_size
+    # The synthetic tokenizer mirrors the fixed benchmark model shape; it does
+    # not define a new tokenizer-derived vocabulary for from-scratch training.
+    cfg.tokenizer.use_tokenizer_vocab_size = False
+
+
 def _qwen35_vl_common(cfg: ConfigContainer) -> None:
     """Apply VLM-specific performance benchmark settings for Qwen3.5-VL.
 
     Must be called before ``_benchmark_common`` and after setting precision.
     """
+    _use_model_vocab_null_tokenizer(cfg)
     cfg.model.bias_activation_fusion = True
     cfg.model.recompute_granularity = None
     cfg.model.recompute_method = None
@@ -82,6 +95,7 @@ def _qwen35_vl_post_clear_scope_with_overlap(cfg: ConfigContainer) -> None:
 
 def _finalize_qwen3_vl(cfg: ConfigContainer) -> None:
     """Apply Qwen3-VL perf defaults that must override generic benchmark defaults."""
+    _use_model_vocab_null_tokenizer(cfg)
     # _benchmark_common sets apply_rope_fusion=True; Qwen3-VL asserts it must be False
     # (per-token absolute positional frequencies are incompatible with TE's fused RoPE).
     cfg.model.apply_rope_fusion = False

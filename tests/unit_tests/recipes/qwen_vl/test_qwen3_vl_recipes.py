@@ -600,7 +600,9 @@ def test_each_qwen3_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable,
 
     _assert_basic_config(cfg)
 
-    assert cfg.tokenizer.tokenizer_type == "NullTokenizer"
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.tokenizer.tokenizer_model == cfg.dataset.hf_processor_path
+    assert cfg.tokenizer.use_tokenizer_vocab_size is True
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 

@@ -195,6 +195,28 @@ class TestValidateAndSetVocabSize:
         assert vocab_size == 40960
         assert should_pad_vocab is False
 
+    def test_pretraining_uses_tokenizer_vocab_over_larger_model_vocab(self):
+        """Tokenizer-derived pretraining vocab ignores the source model vocabulary."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
+            model_vocab_size=248320,
+            tokenizer_vocab_size=32000,
+            use_tokenizer_vocab_size=True,
+        )
+
+        assert vocab_size == 32000
+        assert should_pad_vocab is True
+
+    def test_checkpoint_compatibility_override_preserves_model_vocab(self):
+        """Disabling the policy preserves the explicit vocabulary used by an existing checkpoint."""
+        vocab_size, should_pad_vocab = _validate_and_set_vocab_size(
+            model_vocab_size=248320,
+            tokenizer_vocab_size=32000,
+            use_tokenizer_vocab_size=False,
+        )
+
+        assert vocab_size == 248320
+        assert should_pad_vocab is False
+
     def test_vocab_size_equal_to_tokenizer_returns_same_value(self):
         """Test that vocab_size equal to tokenizer returns the same value and disables padding."""
         vocab_size, should_pad_vocab = _validate_and_set_vocab_size(

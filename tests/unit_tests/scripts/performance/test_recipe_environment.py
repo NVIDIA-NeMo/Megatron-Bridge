@@ -911,6 +911,44 @@ def test_hydra_disable_clears_argparse_dependent_state(monkeypatch):
     assert effective_recipe.model.moe_flex_dispatcher_backend is None
 
 
+def test_training_tokenizer_override_preserves_recipe_vocab_policy():
+    """Selecting a runtime tokenizer keeps the canonical pretraining vocabulary policy."""
+    from argument_parser import parse_cli_args
+
+    from megatron.bridge.recipes.common import _pretrain_common
+
+    parser = parse_cli_args()
+    args, unknown = parser.parse_known_args(
+        [
+            "--model_family_name",
+            "gpt",
+            "--model_recipe_name",
+            "vanilla_gpt",
+            "--num_gpus",
+            "1",
+            "--gpu",
+            "h100",
+            "--use_recipes",
+            "--max_steps",
+            "1000",
+            "--tokenizer_type",
+            "HuggingFaceTokenizer",
+            "--tokenizer_model",
+            "test-tokenizer",
+        ]
+    )
+    assert unknown == []
+
+    recipe = _pretrain_common()
+    assert recipe.tokenizer.use_tokenizer_vocab_size is True
+
+    updated = run_recipe._apply_training_argparse_overrides(recipe, args)
+
+    assert updated.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert updated.tokenizer.tokenizer_model == "test-tokenizer"
+    assert updated.tokenizer.use_tokenizer_vocab_size is True
+
+
 def test_prepare_recipe_runs_base_override_and_finalize_stages(monkeypatch):
     """Recipe preparation has one visible path with exactly three config stages."""
     args = SimpleNamespace(

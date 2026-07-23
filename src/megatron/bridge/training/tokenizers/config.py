@@ -33,6 +33,17 @@ class TokenizerConfig(MTrainTokenizerConfig):
     rank: int = 0
     """Distributed rank used by MCore tokenizer helper logging."""
 
+    use_tokenizer_vocab_size: bool = False
+    """Use the runtime tokenizer vocabulary size for the model.
+
+    Enable this for from-scratch pretraining, where the tokenizer selected for
+    the dataset defines the embedding and output vocabulary. Keep it disabled
+    when model or checkpoint compatibility requires an explicitly configured
+    model vocabulary size. This policy also applies during checkpoint loading;
+    disable it and configure the checkpoint's original model vocabulary when
+    resuming a run created with a different vocabulary policy.
+    """
+
     hf_tokenizer_kwargs: dict[str, Any] | None = field(default_factory=dict)
     """Additional keyword arguments to pass to HuggingFace AutoTokenizer.from_pretrained.
 

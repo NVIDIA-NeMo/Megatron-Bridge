@@ -32,7 +32,6 @@ from megatron.bridge.recipes.common import _peft_common_vlm, _pretrain_common, _
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
-from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 
@@ -77,8 +76,7 @@ def qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -127,8 +125,7 @@ def qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
@@ -178,8 +175,7 @@ def qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config() -> ConfigContaine
         persistent_workers=False,
         pad_to_max_length=True,
     )
-    cfg.tokenizer.tokenizer_type = "NullTokenizer"
-    cfg.tokenizer.vocab_size = DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+    cfg.tokenizer.tokenizer_model = hf_path
     cfg.train.eval_interval = 500
     cfg.train.eval_iters = 32
     cfg.ddp.overlap_grad_reduce = False
