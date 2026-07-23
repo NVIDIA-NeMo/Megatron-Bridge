@@ -25,6 +25,7 @@ def build_pretraining_data_loader(
     data_parallel_size: int = 1,
     drop_last: Optional[bool] = True,
     global_batch_size: Optional[int] = None,
+    seed: int | None = None,
 ) -> Optional[DataLoader]:
     """Build a dataloader for pretraining.
 
@@ -49,6 +50,9 @@ def build_pretraining_data_loader(
         drop_last: Whether to drop last incomplete batch.
         global_batch_size: Total batch size across all data parallel ranks.
                           Required for 'batch' dataloader_type.
+        seed: Explicit shuffle seed for the global-batch sampler. Supplying the
+              dataset seed keeps pipeline stages on the same sample order even
+              though their model RNG seeds differ.
 
     Returns:
         A PyTorch DataLoader instance, or the dataset itself if dataloader_type is
@@ -97,6 +101,7 @@ def build_pretraining_data_loader(
             data_parallel_size=data_parallel_size,
             drop_last=drop_last,
             pad_samples_to_global_batch_size=not drop_last,
+            seed=seed,
         )
     elif dataloader_type == "external":
         # External dataloaders are passed through. User is expected to provide a

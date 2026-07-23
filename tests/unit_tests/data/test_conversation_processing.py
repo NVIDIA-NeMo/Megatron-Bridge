@@ -243,6 +243,51 @@ class _ChatMLBoundaryProcessor(_Processor):
         self.tokenizer = _ChatMLBoundaryTokenizer()
 
 
+class _MoonlightBoundaryTokenizer(_Tokenizer):
+    chat_template = (
+        "{%- for message in messages -%}"
+        "{%- if message['role'] == 'system' -%}<|im_system|>{%- endif -%}"
+        "{%- if message['role'] == 'user' -%}<|im_user|>{%- endif -%}"
+        "{%- if message['role'] == 'assistant' -%}<|im_assistant|>{%- endif -%}"
+        "{{ message['role'] }}<|im_middle|>{{ message['content'] }}<|im_end|>"
+        "{%- endfor -%}"
+    )
+
+    _role_markers = {
+        "system": [405, 415, 401],
+        "user": [400, 414, 401],
+        "assistant": [402, 412, 401],
+    }
+
+    def __call__(self, text, add_special_tokens=False):
+        mapping = {
+            "<|im_system|>system<|im_middle|>": self._role_markers["system"],
+            "<|im_user|>user<|im_middle|>": self._role_markers["user"],
+            "<|im_assistant|>assistant<|im_middle|>": self._role_markers["assistant"],
+            "<|im_end|>": [403],
+            "question": [16],
+            "answer": [3, 4],
+        }
+        return {"input_ids": mapping.get(text, [42])}
+
+    def apply_chat_template(self, conversation, tokenize=True, add_generation_prompt=False, return_dict=False):
+        assert tokenize is True
+        assert add_generation_prompt is False
+        assert return_dict is True
+        input_ids = []
+        for turn in conversation:
+            input_ids.extend(self._role_markers[turn["role"]])
+            input_ids.extend(self(turn["content"])["input_ids"])
+            input_ids.append(403)
+        return {"input_ids": input_ids}
+
+
+class _MoonlightBoundaryProcessor(_Processor):
+    def __init__(self):
+        super().__init__()
+        self.tokenizer = _MoonlightBoundaryTokenizer()
+
+
 class _ProcessorTemplateBoundaryProcessor(_ChatMLBoundaryProcessor):
     chat_template = "<|turn>model\n{{ content }}<turn|>"
 
@@ -491,6 +536,44 @@ def test_infer_assistant_mask_boundary_config_from_chatml_template():
     }
     assert all(token_ids == [103, 104] for token_ids in boundary_config.role_end_tokens.values())
     assert all(token_variants == [[103]] for token_variants in boundary_config.role_end_token_variants.values())
+
+
+def test_infer_assistant_mask_boundary_config_from_moonlight_template():
+    processor = _MoonlightBoundaryProcessor()
+    assert "<|im_assistant|>assistant<|im_middle|>" not in processor.tokenizer.chat_template
+    boundary_config = infer_assistant_mask_boundary_config(processor)
+
+    assert boundary_config is not None
+    assert boundary_config.role_start_tokens == {
+        "assistant": [402, 412, 401],
+        "system": [405, 415, 401],
+        "user": [400, 414, 401],
+    }
+    assert all(token_ids == [403] for token_ids in boundary_config.role_end_tokens.values())
+
+    tokenized = tokenize_chat_example(
+        {
+            "messages": [
+                {"role": "user", "content": "question"},
+                {"role": "assistant", "content": "answer"},
+            ]
+        },
+        processor,
+    )
+    assert tokenized.input_ids.tolist() == [400, 414, 401, 16, 403, 402, 412, 401, 3, 4, 403]
+    assert tokenized.assistant_mask.tolist() == [
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        False,
+        True,
+        True,
+        True,
+    ]
 
 
 def test_infer_assistant_mask_boundary_config_handles_jinja_separated_chatml_newline():

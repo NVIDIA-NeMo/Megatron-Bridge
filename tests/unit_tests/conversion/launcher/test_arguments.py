@@ -146,6 +146,8 @@ def test_roundtrip_alias_and_worker_args():
             "8",
             "--hf-model-id",
             "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
             "--tp",
             "2",
             "--pp",
@@ -176,10 +178,31 @@ def test_roundtrip_alias_and_worker_args():
         "4",
         "--etp",
         "2",
+        "--hf-revision",
+        "0123456789abcdef",
         "--trust-remote-code",
         "--distributed-timeout-minutes",
         "30",
     ]
+
+
+def test_import_worker_args_forward_hf_revision():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "import",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--megatron-path",
+            "/checkpoint",
+        ]
+    )
+
+    worker_args = module.conversion_worker_args(args)
+
+    assert worker_args[worker_args.index("--hf-revision") + 1] == "0123456789abcdef"
 
 
 def test_roundtrip_worker_parser_accepts_serialized_args():

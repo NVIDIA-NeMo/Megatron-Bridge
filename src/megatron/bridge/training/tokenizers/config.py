@@ -40,6 +40,7 @@ class TokenizerConfig(MTrainTokenizerConfig):
         - use_fast (bool): Whether to use fast tokenizer implementation
         - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
         - include_special_tokens (bool): Whether to include special tokens when converting text to ids
+        - revision (str): Hugging Face Hub revision used to resolve an immutable tokenizer snapshot
 
     Example:
         hf_tokenizer_kwargs = {

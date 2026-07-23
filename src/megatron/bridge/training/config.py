@@ -392,8 +392,21 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
 
+    max_steps: int | None = None
+    """Number of steps used to configure schedules during shortened test runs.
+
+    Set this to ``y`` together with ``TrainingConfig.train_iters=x`` when a
+    test should run only the first ``x`` steps of a full ``y``-step training
+    run. This keeps the learning-rate and weight-decay schedules the same as
+    the full ``y``-step run. ``max_steps`` must be greater than or equal to
+    ``train_iters``. When unset, existing scheduler behavior is unchanged.
+    """
+
     def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
+        if self.max_steps is not None and self.max_steps <= 0:
+            raise ValueError(f"scheduler.max_steps must be positive, got {self.max_steps}.")
+
         if self.start_weight_decay is not None:
             assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
             assert self.end_weight_decay >= self.start_weight_decay
@@ -947,6 +960,13 @@ class InProcessRestartConfig:
 @dataclass(kw_only=True)
 class ConfigContainer(Container):
     """Top-level container holding all configuration objects."""
+
+    env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
+    """Environment variable defaults applied before runtime config finalization.
+
+    Values already present in the process environment take precedence, allowing
+    launchers and users to override recipe defaults.
+    """
 
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
@@ -1510,6 +1530,10 @@ class ConfigContainer(Container):
 
         if has_train_samples:
             # Sample-based training validation
+            assert self.scheduler.max_steps is None, (
+                "scheduler.max_steps is only supported for iteration-based training; "
+                "use sample-based scheduler fields with train_samples"
+            )
             assert self.scheduler.lr_decay_iters is None, (
                 "Use lr_decay_samples for sample-based training, not lr_decay_iters"
             )
@@ -1567,12 +1591,21 @@ class ConfigContainer(Container):
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_samples
         else:
             # Iteration-based training
-            if self.scheduler.lr_decay_iters is None:
+            scheduler_max_steps = self.scheduler.max_steps
+            if scheduler_max_steps is not None:
+                if scheduler_max_steps < self.train.train_iters:
+                    raise ValueError(
+                        f"scheduler.max_steps ({scheduler_max_steps}) must be greater than or equal to "
+                        f"train.train_iters ({self.train.train_iters})."
+                    )
+                self.scheduler.lr_decay_iters = scheduler_max_steps
+            elif self.scheduler.lr_decay_iters is None:
                 self.scheduler.lr_decay_iters = self.train.train_iters
             if self.scheduler.lr_wsd_decay_iters is None and self.scheduler.lr_decay_style == "WSD":
                 self.scheduler.lr_wsd_decay_iters = self.scheduler.lr_decay_iters
             self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
-            self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
+            weight_decay_iters = scheduler_max_steps or self.train.train_iters
+            self.scheduler.wd_incr_steps = weight_decay_iters * self.train.global_batch_size
 
             if self.scheduler.lr_wsd_decay_iters is not None:
                 self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size
@@ -1763,6 +1796,27 @@ def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
     return values
 
 
+def apply_environment_variables(cfg: ConfigContainer) -> None:
+    """Apply recipe environment variable defaults to the current process.
+
+    Existing process values are preserved so explicit launcher or shell
+    settings take precedence over recipe defaults.
+
+    Args:
+        cfg: Configuration container with environment variable defaults.
+
+    Raises:
+        ValueError: If an environment variable name is empty.
+        TypeError: If an environment variable value is not a scalar.
+    """
+    for name, value in cfg.env_vars.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Environment variable names must be non-empty strings.")
+        if not isinstance(value, (str, int, float, bool)):
+            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        os.environ.setdefault(name, str(value))
+
+
 def runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
@@ -1779,6 +1833,9 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     Args:
         cfg: Configuration container to update
     """
+    # Environment settings may affect runtime finalization and must be applied first.
+    apply_environment_variables(cfg)
+
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):
@@ -1808,6 +1865,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     This function cherry-picks the safe, model-agnostic parts:
 
     Keeps (safe for MegatronMIMO):
+    - Recipe environment variable defaults
     - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
     - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
@@ -1820,6 +1878,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
+    apply_environment_variables(cfg)
+
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
 

@@ -559,19 +559,20 @@ class TestMegatronMIMOInfra:
 class TestEmbeddingGroupHelpers:
     """Test cases for embedding group helper functions."""
 
+    @patch("torch.distributed.get_rank")
     @patch("torch.distributed.new_group")
-    @patch("torch.distributed.get_process_group_ranks")
-    def test_populate_embedding_groups_single_pp_rank(self, mock_get_ranks, mock_new_group):
+    def test_populate_embedding_groups_single_pp_rank(self, mock_new_group, mock_get_rank):
         """Test embedding groups with single PP rank (PP=1)."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
             populate_embedding_and_position_groups,
         )
 
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0]  # Single PP rank
-        mock_new_group.return_value = MagicMock()
+        mock_get_rank.return_value = 0
+        mock_pos_embd = MagicMock()
+        mock_embd = MagicMock()
+        mock_new_group.side_effect = [mock_pos_embd, mock_embd]
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0]])
 
         # Should create groups for both position and word embeddings
         assert mock_new_group.call_count == 2
@@ -579,28 +580,33 @@ class TestEmbeddingGroupHelpers:
         calls = mock_new_group.call_args_list
         assert calls[0].kwargs["ranks"] == [0]
         assert calls[1].kwargs["ranks"] == [0]
+        assert pos_embd_pg is mock_pos_embd
+        assert embd_pg is mock_embd
 
+    @patch("torch.distributed.get_rank")
     @patch("torch.distributed.new_group")
-    @patch("torch.distributed.get_process_group_ranks")
-    def test_populate_embedding_groups_multiple_pp_ranks(self, mock_get_ranks, mock_new_group):
-        """Test embedding groups with multiple PP ranks (PP>1)."""
+    @patch("torch.distributed.get_process_group_ranks", return_value=[0, 4])
+    def test_populate_embedding_groups_multiple_pp_groups(self, _mock_get_ranks, mock_new_group, mock_get_rank):
+        """Test every PP subgroup is created in one global order."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
             populate_embedding_and_position_groups,
         )
 
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]  # PP=4
-        mock_new_group.return_value = MagicMock()
+        mock_get_rank.return_value = 0
+        created_groups = [MagicMock() for _ in range(4)]
+        mock_new_group.side_effect = created_groups
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0, 4], [1, 5]])
 
-        # Should create two groups
-        assert mock_new_group.call_count == 2
+        # Every rank makes the same calls for every PP subgroup, not just its local subgroup.
+        assert mock_new_group.call_count == 4
         calls = mock_new_group.call_args_list
-        # pos_embd only on first rank
         assert calls[0].kwargs["ranks"] == [0]
-        # embd on first and last ranks
-        assert calls[1].kwargs["ranks"] == [0, 12]
+        assert calls[1].kwargs["ranks"] == [0, 4]
+        assert calls[2].kwargs["ranks"] == [1]
+        assert calls[3].kwargs["ranks"] == [1, 5]
+        assert pos_embd_pg is created_groups[0]
+        assert embd_pg is created_groups[1]
 
     def test_populate_embedding_groups_none_pp_group(self):
         """Test embedding groups with None PP group."""

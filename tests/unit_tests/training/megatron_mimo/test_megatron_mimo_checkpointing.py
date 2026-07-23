@@ -1099,7 +1099,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
         "megatron.core.parallel_state._DATA_PARALLEL_GROUP_WITH_CP",
     ]
 
-    def _run_setup(self, *, load_path=None, checkpoint_exists_return=False):
+    def _run_setup(self, *, load_path=None, checkpoint_exists_return=False, checkpoint_manager=None):
         """Run setup_megatron_mimo with mocks, return dict of mock handles."""
         from megatron.bridge.training.setup_megatron_mimo import setup_megatron_mimo
 
@@ -1172,11 +1172,11 @@ class TestSetupMegatronMIMOCheckpointLoading:
                     return_value=checkpoint_exists_return,
                 )
             )
-            m_load = stack.enter_context(patch("megatron.bridge.training.setup_megatron_mimo.load_checkpoint"))
             m_create_mgr = stack.enter_context(
                 patch("megatron.bridge.training.setup_megatron_mimo.create_checkpoint_manager")
             )
-            m_create_mgr.return_value = MagicMock(checkpointing_context={"ctx": True})
+            checkpoint_manager = checkpoint_manager or MagicMock()
+            m_create_mgr.return_value = checkpoint_manager
 
             stack.enter_context(
                 patch("megatron.core.models.mimo.optimizer.get_mimo_optimizer", return_value=mock_optimizer)
@@ -1196,7 +1196,7 @@ class TestSetupMegatronMIMOCheckpointLoading:
 
             result = setup_megatron_mimo(state=state)
 
-            mocks["load_checkpoint"] = m_load
+            mocks["checkpoint_manager"] = checkpoint_manager
             mocks["checkpoint_exists"] = m_ckpt_exists
             mocks["result"] = result
 
@@ -1204,27 +1204,54 @@ class TestSetupMegatronMIMOCheckpointLoading:
 
     def test_load_invoked_when_persistent_checkpoint_exists(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        mocks["load_checkpoint"].assert_called_once()
+        mocks["checkpoint_manager"].load.assert_called_once()
+
+    def test_load_dispatches_through_custom_checkpoint_manager(self):
+        class CustomCheckpointManager:
+            def __init__(self):
+                self.load_context = None
+
+            def save(self, ctx, callback_manager):
+                pass
+
+            def load(self, ctx):
+                self.load_context = ctx
+                return (0, 0)
+
+            def finalize_async_saves(self, state, blocking=False, terminate=False):
+                pass
+
+        checkpoint_manager = CustomCheckpointManager()
+
+        self._run_setup(
+            load_path="/tmp/ckpt",
+            checkpoint_exists_return=True,
+            checkpoint_manager=checkpoint_manager,
+        )
+
+        assert checkpoint_manager.load_context is not None
+        assert checkpoint_manager.load_context.pg_collection is not None
+        assert checkpoint_manager.load_context.module_name == "language"
 
     def test_load_not_invoked_when_no_checkpoint(self):
         mocks = self._run_setup(load_path=None, checkpoint_exists_return=False)
-        mocks["load_checkpoint"].assert_not_called()
+        mocks["checkpoint_manager"].load.assert_not_called()
 
     def test_load_passes_model_as_list(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert isinstance(kwargs["model"], list)
-        assert len(kwargs["model"]) == 1
+        context = mocks["checkpoint_manager"].load.call_args.args[0]
+        assert isinstance(context.model, list)
+        assert len(context.model) == 1
 
     def test_load_passes_pg_collection(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["pg_collection"] is not None
+        context = mocks["checkpoint_manager"].load.call_args.args[0]
+        assert context.pg_collection is not None
 
     def test_load_passes_module_name(self):
         mocks = self._run_setup(load_path="/tmp/ckpt", checkpoint_exists_return=True)
-        _, kwargs = mocks["load_checkpoint"].call_args
-        assert kwargs["module_name"] == "language"
+        context = mocks["checkpoint_manager"].load.call_args.args[0]
+        assert context.module_name == "language"
 
 
 # ---------------------------------------------------------------------------

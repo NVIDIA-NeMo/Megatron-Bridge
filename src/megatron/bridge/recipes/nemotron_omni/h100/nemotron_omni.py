@@ -28,6 +28,7 @@ from megatron.bridge.data.builders import (
     NemotronOmniEnergonTaskEncoderConfig,
 )
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -73,13 +74,17 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         hf_processor_path=_DEFAULT_HF_PATH,
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -122,13 +127,17 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         hf_processor_path=_DEFAULT_HF_PATH,
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -217,6 +226,10 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -257,6 +270,10 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

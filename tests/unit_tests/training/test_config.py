@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 from dataclasses import fields
 from typing import Any, Optional, Union
 from unittest.mock import MagicMock, patch
@@ -51,6 +52,7 @@ from megatron.bridge.training.config import (
     ValidationConfig,
     _validate_and_sync_distributed_optimizer_settings,
     _validate_mixed_precision_consistency,
+    apply_environment_variables,
     megatron_mimo_runtime_config_update,
 )
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
@@ -675,6 +677,39 @@ class TestConfigContainerValidation:
             container.validate()
             assert container.scheduler.lr_decay_iters == custom_lr_decay_iters
             assert container.scheduler.lr_decay_steps == custom_lr_decay_iters * train_cfg.global_batch_size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_scheduler_max_steps_preserves_full_run_schedules(self, monkeypatch):
+        """A short test run can use the schedules from the full training run."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=1000, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(max_steps=48000)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            container.validate()
+            assert container.train.train_iters == 1000
+            assert container.scheduler.max_steps == 48000
+            assert container.scheduler.lr_decay_iters == 48000
+            assert container.scheduler.lr_decay_steps == 48000 * train_cfg.global_batch_size
+            assert container.scheduler.wd_incr_steps == 48000 * train_cfg.global_batch_size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_scheduler_max_steps_rejects_value_shorter_than_training(self, monkeypatch):
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=1000)
+        sched_cfg = create_test_scheduler_config(max_steps=999)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.raises(ValueError, match="must be greater than or equal to train.train_iters"):
+                container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
@@ -3134,6 +3169,102 @@ class TestMixedPrecisionConsistencyValidation:
 class TestRuntimeConfigUpdate:
     """Tests for the runtime_config_update function."""
 
+    def test_recipe_environment_variables_are_applied_before_runtime_update(self, monkeypatch):
+        """Recipe env defaults should be stringified without replacing launcher values."""
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        full_cfg.env_vars = {
+            "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+            "NVTE_BWD_LAYERNORM_SM_MARGIN": 16,
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "QUANTIZATION_TYPE_DEBUG": 1,
+            "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+            "USE_MNNVL": 1,
+        }
+        for name in full_cfg.env_vars:
+            monkeypatch.delenv(name, raising=False)
+        monkeypatch.setenv("USE_MNNVL", "launcher-value")
+
+        try:
+            from megatron.bridge.training.config import runtime_config_update
+
+            runtime_config_update(full_cfg)
+
+            assert os.environ["NVTE_FWD_LAYERNORM_SM_MARGIN"] == "16"
+            assert os.environ["NVTE_BWD_LAYERNORM_SM_MARGIN"] == "16"
+            assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
+            assert os.environ["QUANTIZATION_TYPE_DEBUG"] == "1"
+            assert os.environ["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == "64"
+            assert os.environ["USE_MNNVL"] == "launcher-value"
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    @pytest.mark.parametrize("env_vars", [{"": "1"}, {1: "bad-name"}, {"VALID_NAME": ["not", "scalar"]}])
+    def test_recipe_environment_variables_reject_invalid_values(self, env_vars):
+        """Invalid recipe environment mappings should fail before training starts."""
+        config = MagicMock(spec=ConfigContainer)
+        config.env_vars = env_vars
+
+        with pytest.raises((TypeError, ValueError)):
+            apply_environment_variables(config)
+
+    def test_recipe_environment_variables_support_hydra_overrides(self):
+        """The top-level mapping should be replaceable through the shared recipe override path."""
+        from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
+
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+
+        try:
+            updated_cfg = process_config_with_overrides(
+                full_cfg,
+                cli_overrides=[
+                    "++env_vars={NVTE_FWD_LAYERNORM_SM_MARGIN:16,TORCHINDUCTOR_WORKER_START:fork,USE_MNNVL:1}"
+                ],
+            )
+
+            assert updated_cfg.env_vars == {
+                "NVTE_FWD_LAYERNORM_SM_MARGIN": 16,
+                "TORCHINDUCTOR_WORKER_START": "fork",
+                "USE_MNNVL": 1,
+            }
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_recipe_environment_variables_round_trip_through_yaml(self, tmp_path):
+        """Environment mappings should be preserved in saved recipe configs."""
+        gpt_cfg = create_test_gpt_config()
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        full_cfg.env_vars = {
+            "TORCHINDUCTOR_WORKER_START": "fork",
+            "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        }
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+
+            assert restored_cfg.env_vars == full_cfg.env_vars
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_hf_model_revision_round_trip_through_yaml(self, tmp_path):
+        """Immutable Hugging Face model provenance should survive runtime config persistence."""
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        gpt_cfg = create_test_gpt_config(hf_model_id="Qwen/Qwen3-8B", hf_model_revision=revision)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+
+            assert restored_cfg.model.hf_model_id == "Qwen/Qwen3-8B"
+            assert restored_cfg.model.hf_model_revision == revision
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_runtime_config_update_with_mixed_precision_string(self):
         """Test runtime_config_update with mixed precision as string."""
         from megatron.bridge.training.config import runtime_config_update
@@ -3544,6 +3675,23 @@ class TestSampleBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_sample_based_training_rejects_scheduler_max_steps(self):
+        """scheduler.max_steps applies only to iteration-based training."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(max_steps=1000)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="only supported for iteration-based training"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_iteration_based_scheduler_field_validation(self):
         """Test that iteration-based training rejects sample-based scheduler fields."""
         train_cfg = create_test_training_config(train_iters=1000)
@@ -3831,12 +3979,15 @@ class TestEpochBasedTraining:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-    def test_megatron_mimo_runtime_config_update_rejects_num_epochs(self):
+    def test_megatron_mimo_runtime_config_update_rejects_num_epochs(self, monkeypatch):
         cfg = MagicMock()
+        cfg.env_vars = {"TORCHINDUCTOR_WORKER_START": "fork"}
         cfg.train.num_epochs = 1.0
+        monkeypatch.delenv("TORCHINDUCTOR_WORKER_START", raising=False)
 
         with pytest.raises(ValueError, match="num_epochs is not supported for MegatronMIMO datasets"):
             megatron_mimo_runtime_config_update(cfg)
+        assert os.environ["TORCHINDUCTOR_WORKER_START"] == "fork"
 
 
 class TestDatasetSequenceLengthValidation:

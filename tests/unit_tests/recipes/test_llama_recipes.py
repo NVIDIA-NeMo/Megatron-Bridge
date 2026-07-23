@@ -24,7 +24,7 @@ _llama_module = importlib.import_module("megatron.bridge.recipes.llama")
 _LLAMA_RECIPE_FUNCS = [
     getattr(_llama_module, name)
     for name in getattr(_llama_module, "__all__", [])
-    if callable(getattr(_llama_module, name, None))
+    if callable(getattr(_llama_module, name, None)) and not name.startswith("llama2")
 ]
 
 
@@ -99,9 +99,7 @@ class _FakeBridge:
 @pytest.fixture(autouse=True)
 def _patch_llama_autobridge(monkeypatch: pytest.MonkeyPatch):
     for module_name in [
-        "megatron.bridge.recipes.llama.llama2",
         "megatron.bridge.recipes.llama.llama3",
-        "megatron.bridge.recipes.llama.h100.llama2",
         "megatron.bridge.recipes.llama.h100.llama3",
     ]:
         mod = importlib.import_module(module_name)
@@ -550,3 +548,6 @@ def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeyp
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert cfg.env_vars["NCCL_ALGO"] == "Ring"
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0

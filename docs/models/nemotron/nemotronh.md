@@ -1,5 +1,10 @@
 # Nemotron H and Nemotron Nano v2
 
+> **Deprecation notice:** Nemotron H v1 support (4B, 8B, 47B, and 56B) is no
+> longer actively maintained or tested against current upstream checkpoints and
+> will be removed in Megatron Bridge 0.7.0. Nemotron Nano v2 and Nemotron 3 are
+> not deprecated.
+
 [Nemotron H](https://huggingface.co/collections/nvidia/nemotron-h) and [Nemotron Nano v2](https://huggingface.co/collections/nvidia/nvidia-nemotron-v2) are families of **hybrid SSM-Attention models** from **NVIDIA** that combine Mamba (State Space Model) layers with traditional attention layers. These models achieve strong performance while maintaining computational efficiency through their hybrid architecture.
 
 The Nemotron H family includes models from 4B to 56B parameters with 8K context length, while Nemotron Nano v2 models (9B and 12B) are optimized for edge deployment with extended 128K context support.
@@ -184,7 +189,7 @@ bridge.export_ckpt(
 ## Examples
 
 - Checkpoint conversion: [scripts/conversion/convert.sh](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
-- Training scripts: [examples/models/train_any_basic.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/models/train_any_basic.py)
+- Training scripts: [examples/models/train_any_basic.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/recipes/llama/00_quickstart_pretrain.py)
 
 ## Finetuning Recipes
 
@@ -439,4 +444,3 @@ Nemotron H models support several PP configurations with pre-defined layouts:
 - Training configuration: [Configuration overview](../../training/config-container-overview.md)
 - Training entry points: [Entry points](../../training/entry-points.md)
 - PEFT methods (LoRA, DoRA): [PEFT Guide](../../training/peft.md)
-

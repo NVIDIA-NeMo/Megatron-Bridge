@@ -7,7 +7,7 @@ This guide will cover the next steps to make use of a training recipe, including
 
 - **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
 - **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point. 
-- **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md) (see the published docs as well: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/entry-points.html).
+- **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
 
 ## Choosing a recipe or a new config
@@ -295,6 +295,39 @@ The reason for this is that Megatron Bridge uses Python's `multiprocessing` modu
 multi-GPU job. The multiprocessing module will create new Python processes that will import the current module (your
 script). If you did not add `__name__== "__main__"`,  then your module will spawn new processes which import the
 module and then each spawn new processes. This results in an infinite loop of process spawning.
+
+## Recipe environment variables
+
+Model and performance recipes can declare process environment defaults in the top-level `env_vars` mapping. Megatron Bridge applies them before runtime configuration is finalized and before training setup starts:
+
+```python
+cfg.env_vars.update(
+    {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    }
+)
+```
+
+Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for model recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
+
+When launching through `scripts/performance/setup_experiment.py`, the rank-local `bootstrap.py` resolves the selected recipe defaults inside the worker container, exports them, and then replaces itself with a clean interpreter running `run_script.py` or `run_recipe.py`. This keeps recipe imports off dependency-light launcher nodes, lets each training entrypoint run only once, and ensures training-framework imports observe recipe-owned process settings. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
+
+Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={CUDA_DEVICE_MAX_CONNECTIONS:1,NCCL_NVLS_ENABLE:0}'`. Do not store credentials or other secrets in recipe configs.
+
+Flat performance and hardware-specific model recipes keep their baseline environment values static and visible. The performance entry points preserve legacy coupling for NCCL user buffers and explicit TP, CP, PP, EP, and MoE A2A argparse overrides. Broader feature changes, such as a different CUDA graph mode or dispatcher backend, should include the corresponding explicit `env_vars` override. Explicit `env_vars` overrides remain final.
+
+Every flat performance recipe builder assigns `cfg.env_vars` directly before returning its config. `COMMON_PERF_ENV_VARS` contains only `TORCH_NCCL_HIGH_PRIORITY=1`, the one value shared by every workload; all GPU-, topology-, precision-, CUDA graph-, and model-specific values are written inline with comments in the owning recipe. This is intentionally verbose so a recipe user can see the exact benchmark environment without following a decorator or global derivation rules.
+
+Hardware recipe builders follow the same explicit pattern. `COMMON_RECIPE_ENV_VARS` contains only the seven settings that are identical across every supported recipe; each of the 245 supported builders assigns `cfg.env_vars` directly before returning and writes any HybridEP or model-specific additions inline. There is no recipe decorator or generic launcher-side environment recomposition. Because the compatibility catalog currently reuses H100 builders on other targets, the recipe entry point adapts HybridEP topology after overrides and preserves legacy coupling for an explicit argparse `--nccl_ub`; explicit `env_vars` remain final. The nemo-ci executors under `scripts/performance` do not provide fallback values for recipe-owned process settings.
+
+Cluster fabric and orchestration settings do not belong in recipes. Keep credentials, cache/offline policy, scheduler metadata, W&B state, and cluster-specific NCCL network tuning in the launcher or executor. In particular, settings such as `NCCL_NET_GDR_LEVEL`, `NCCL_NET_GDR_C2C`, and `NCCL_IB_QPS_PER_CONNECTION` must remain deployment-owned.
 
 ## Resources
 

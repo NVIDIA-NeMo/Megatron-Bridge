@@ -73,33 +73,9 @@ class TestLlamaBridgeConfigConverter:
         }
 
     @pytest.fixture
-    def llama_2_7b_config_dict(self):
-        """Create a sample Llama 2 7B configuration without RoPE scaling."""
-        return {
-            "architectures": ["LlamaForCausalLM"],
-            "hidden_size": 4096,
-            "num_hidden_layers": 32,
-            "num_attention_heads": 32,
-            "num_key_value_heads": 32,
-            "intermediate_size": 11008,
-            "vocab_size": 32000,
-            "max_position_embeddings": 4096,
-            "rope_theta": 10000.0,
-            "rms_norm_eps": 1e-05,
-            "tie_word_embeddings": False,
-            "model_type": "llama",
-            "initializer_range": 0.02,
-        }
-
-    @pytest.fixture
     def llama_config(self, llama_3_2_1b_config_dict):
         """Create a LlamaConfig instance for Llama 3.2 1B."""
         return LlamaConfig(**llama_3_2_1b_config_dict)
-
-    @pytest.fixture
-    def llama_2_config(self, llama_2_7b_config_dict):
-        """Create a LlamaConfig instance for Llama 2 7B."""
-        return LlamaConfig(**llama_2_7b_config_dict)
 
     @pytest.fixture
     def mock_pretrained_llama(self, llama_config):
@@ -111,28 +87,9 @@ class TestLlamaBridgeConfigConverter:
         mock_pretrained.model.dtype = torch.bfloat16
         return mock_pretrained
 
-    @pytest.fixture
-    def mock_pretrained_llama_2(self, llama_2_config):
-        """Create a mock PreTrainedCausalLM with Llama 2 config."""
-        mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = llama_2_config
-        mock_pretrained.generation_config = None
-        mock_pretrained.model = Mock(spec=LlamaForCausalLM)
-        mock_pretrained.model.dtype = torch.float32
-        return mock_pretrained
-
     def test_bridge_registration(self):
         """Test that LlamaBridge is properly registered."""
         assert issubclass(LlamaBridge, MegatronModelBridge)
-
-    def test_provider_bridge_returns_gpt_provider(self, mock_pretrained_llama_2):
-        """Test that provider_bridge returns a GPTModelProvider for Llama 2."""
-        bridge = LlamaBridge()
-        result = bridge.provider_bridge(mock_pretrained_llama_2)
-
-        # For Llama 2 (no RoPE scaling), should return base GPTModelProvider with rope_scaling=False
-        assert isinstance(result, GPTModelProvider)
-        assert result.rope_scaling is False
 
     def test_provider_bridge_stores_rope_scaling_for_llama31(self, mock_pretrained_llama):
         """Test that provider_bridge enables rope_scaling for Llama 3.1/3.2."""
@@ -164,10 +121,10 @@ class TestLlamaBridgeConfigConverter:
         assert result.attention_dropout == llama_config.attention_dropout
         assert result.add_qkv_bias == llama_config.attention_bias
 
-    def test_provider_bridge_llama_defaults_applied(self, mock_pretrained_llama_2):
+    def test_provider_bridge_llama_defaults_applied(self, mock_pretrained_llama):
         """Test that Llama-specific defaults are correctly applied."""
         bridge = LlamaBridge()
-        result = bridge.provider_bridge(mock_pretrained_llama_2)
+        result = bridge.provider_bridge(mock_pretrained_llama)
 
         # Check Llama-specific defaults from MEGATRON_DEFAULTS
         assert result.normalization == "RMSNorm"
@@ -199,9 +156,9 @@ class TestLlamaBridgeConfigConverter:
         assert result.bf16 is True
         assert result.fp16 is False
 
-    def test_provider_bridge_dtype_handling_float16(self, llama_2_7b_config_dict):
+    def test_provider_bridge_dtype_handling_float16(self, llama_3_2_1b_config_dict):
         """Test dtype handling for float16."""
-        config_dict = llama_2_7b_config_dict.copy()
+        config_dict = llama_3_2_1b_config_dict.copy()
         config_dict["torch_dtype"] = "float16"
         config = LlamaConfig(**config_dict)
 
@@ -322,11 +279,11 @@ class TestLlamaBridgeConfigConverter:
         with pytest.raises(ValueError, match="Unsupported activation function"):
             LlamaBridge.hf_to_megatron_activation("unknown_activation")
 
-    def test_llama_defaults_applied_via_provider_bridge(self, mock_pretrained_llama_2):
+    def test_llama_defaults_applied_via_provider_bridge(self, mock_pretrained_llama):
         """Test that Llama-specific defaults are applied via provider_bridge (not class attributes)."""
         # Per refactoring guide: MEGATRON_DEFAULTS removed, now use direct property assignment
         bridge = LlamaBridge()
-        provider = bridge.provider_bridge(mock_pretrained_llama_2)
+        provider = bridge.provider_bridge(mock_pretrained_llama)
 
         # These values are set directly in provider_bridge, not via class attributes
         assert provider.normalization == "RMSNorm"
@@ -342,43 +299,6 @@ class TestLlamaBridgeConfigConverter:
 
 class TestBaseClassHelperMethods:
     """Test cases for base class helper methods used by LlamaBridge."""
-
-    @pytest.fixture
-    def mock_pretrained_llama_2(self):
-        """Create a mock PreTrainedCausalLM with Llama 2 config."""
-        llama_2_7b_config_dict = {
-            "architectures": ["LlamaForCausalLM"],
-            "hidden_size": 4096,
-            "num_hidden_layers": 32,
-            "num_attention_heads": 32,
-            "num_key_value_heads": 32,
-            "intermediate_size": 11008,
-            "vocab_size": 32000,
-            "max_position_embeddings": 4096,
-            "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
-            "rms_norm_eps": 1e-05,
-            "tie_word_embeddings": False,
-            "model_type": "llama",
-            "initializer_range": 0.02,
-        }
-        config = LlamaConfig(**llama_2_7b_config_dict)
-        mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = config
-        mock_pretrained.generation_config = None
-        mock_pretrained.model = Mock(spec=LlamaForCausalLM)
-        mock_pretrained.model.dtype = torch.float32
-        return mock_pretrained
-
-    def test_provider_bridge_uses_base_class_and_direct_assignment(self, mock_pretrained_llama_2):
-        """Test that LlamaBridge.provider_bridge uses base class + direct property assignment."""
-        bridge = LlamaBridge()
-        provider = bridge.provider_bridge(mock_pretrained_llama_2)
-
-        # Verify Llama-specific values are applied via direct assignment in provider_bridge
-        assert provider.normalization == "RMSNorm"
-        assert provider.gated_linear_unit is True
-        assert provider.position_embedding_type == "rope"
-        assert provider.hidden_dropout == 0.0
 
     def testhf_config_to_provider_kwargs_from_base_class(self):
         """Test that hf_config_to_provider_kwargs is inherited from MegatronModelBridge."""
@@ -636,6 +556,32 @@ class TestLlamaBridgeMappingRegistry:
         assert mapping is not None
         assert mapping.hf_param == "model.norm.weight"
 
+    def test_export_preserves_persisted_rotary_inv_freq(self):
+        """Test that Llama 2 rotary buffers are copied from the source checkpoint."""
+        bridge = LlamaBridge()
+        task = Mock(global_param_name="decoder.layers.3.self_attention.linear_qkv.layer_norm_weight")
+        converted = {"model.layers.3.input_layernorm.weight": torch.ones(4096)}
+        inv_freq_key = "model.layers.3.self_attn.rotary_emb.inv_freq"
+        source_inv_freq = torch.tensor([1.0, 0.25, 0.03125], dtype=torch.float32)
+
+        result = bridge.maybe_modify_converted_hf_weight(
+            task,
+            converted,
+            {inv_freq_key: source_inv_freq},
+        )
+
+        torch.testing.assert_close(result[inv_freq_key], source_inv_freq, rtol=0, atol=0)
+
+    def test_export_does_not_add_unpersisted_rotary_inv_freq(self):
+        """Test that modern Llama checkpoints without persisted RoPE buffers are unchanged."""
+        bridge = LlamaBridge()
+        task = Mock(global_param_name="decoder.layers.3.self_attention.linear_qkv.layer_norm_weight")
+        converted = {"model.layers.3.input_layernorm.weight": torch.ones(4096)}
+
+        result = bridge.maybe_modify_converted_hf_weight(task, converted, {})
+
+        assert set(result) == {"model.layers.3.input_layernorm.weight"}
+
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Llama models."""
@@ -664,21 +610,6 @@ class TestAutoBridgeIntegration:
                     "high_freq_factor": 4.0,
                     "original_max_position_embeddings": 8192,
                 },
-            },
-            "llama-2-7b": {
-                "architectures": ["LlamaForCausalLM"],
-                "model_type": "llama",
-                "hidden_size": 4096,
-                "num_hidden_layers": 32,
-                "num_attention_heads": 32,
-                "num_key_value_heads": 32,  # No GQA
-                "intermediate_size": 11008,
-                "vocab_size": 32000,
-                "max_position_embeddings": 4096,
-                "rope_parameters": {"rope_type": "default", "rope_theta": 10000.0},
-                "rms_norm_eps": 1e-05,
-                "tie_word_embeddings": False,
-                # No rope_scaling for Llama 2
             },
             "llama-3-8b": {
                 "architectures": ["LlamaForCausalLM"],

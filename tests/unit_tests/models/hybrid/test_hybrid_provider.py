@@ -16,7 +16,10 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.extensions.transformer_engine import TEDotProductAttention
 from megatron.core.transformer import ModuleSpec
+from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.enums import AttnBackend
 
 from megatron.bridge.models.hybrid import hybrid_provider
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
@@ -40,6 +43,7 @@ class TestHybridModelProvider:
         assert provider.fp16 is False
         assert provider.bf16 is True
         assert provider.mamba_num_groups == 8
+        assert provider.mamba_chunk_size == 128
         assert provider.hybrid_layer_pattern is None
         assert provider.hybrid_stack_spec is None
         assert provider.seq_length == 8192
@@ -111,6 +115,26 @@ class TestHybridModelProvider:
                 mock_calc_vocab.assert_called_once_with(50000, 128, 8)
                 assert mock_model.call_args.kwargs["vocab_size"] == 50176
 
+    def test_nondefault_mamba_chunk_size_is_applied_without_mutating_default_spec(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            vocab_size=1000,
+            tensor_model_parallel_size=1,
+            mamba_chunk_size=256,
+        )
+        provider._pg_collection = type("PG", (), {"pp": object()})()
+
+        with patch("megatron.bridge.models.hybrid.hybrid_provider.MCoreHybridModel") as mock_model:
+            provider.provide(pre_process=True, post_process=True)
+
+        configured_spec = mock_model.call_args.kwargs["hybrid_stack_spec"]
+        configured_mixer = configured_spec.submodules.mamba_layer.submodules.mixer
+        default_mixer = hybrid_provider.default_hybrid_stack_spec.submodules.mamba_layer.submodules.mixer
+        assert configured_mixer.params["chunk_size"] == 256
+        assert "chunk_size" not in default_mixer.params
+
     @patch("megatron.bridge.models.hybrid.hybrid_provider.is_pp_first_stage", return_value=True)
     @patch("megatron.bridge.models.hybrid.hybrid_provider.is_pp_last_stage", return_value=True)
     def test_provide_method_respects_explicit_pipeline_stages(self, *_):
@@ -151,6 +175,41 @@ class TestHybridModelProvider:
         spec_call_kwarg = mock_model.call_args.kwargs["hybrid_stack_spec"]
         assert isinstance(spec_call_kwarg, Mock)
         assert spec_call_kwarg.info == "custom spec"
+
+    @pytest.mark.parametrize("attention_backend", [AttnBackend.local, "local"])
+    def test_local_attention_clones_stack_spec_and_uses_mcore_attention(self, attention_backend):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            attention_backend=attention_backend,
+        )
+
+        resolved_spec = provider._resolve_hybrid_stack_spec()
+        resolved_core_attention = (
+            resolved_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+        )
+        default_core_attention = hybrid_provider.default_hybrid_stack_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+
+        assert resolved_spec is not hybrid_provider.default_hybrid_stack_spec
+        assert resolved_core_attention is DotProductAttention
+        assert default_core_attention is TEDotProductAttention
+
+    def test_non_local_attention_keeps_transformer_engine_stack_spec(self):
+        provider = HybridModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=1,
+            attention_backend=AttnBackend.flash,
+        )
+
+        resolved_spec = provider._resolve_hybrid_stack_spec()
+        resolved_core_attention = (
+            resolved_spec.submodules.attention_layer.submodules.self_attention.submodules.core_attention
+        )
+
+        assert resolved_spec is hybrid_provider.default_hybrid_stack_spec
+        assert resolved_core_attention is TEDotProductAttention
 
     def test_finalize_uses_compatible_hybrid_layer_count(self):
         provider = HybridModelProvider(
