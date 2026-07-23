@@ -295,6 +295,34 @@ def test_save_artifacts_preserves_rejected_source_generation_config():
         assert (target_dir / "generation_config.json").read_text() == source_generation_config
 
 
+def test_save_artifacts_preserves_generation_config_from_pinned_hub_revision(tmp_path):
+    """Test the source fallback keeps the immutable revision for a remote model."""
+    expected_revision = "dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f"  # pragma: allowlist secret
+    generation_config = '{"do_sample": false, "top_p": 0.95}\n'
+
+    def fake_hf_hub_download(*, repo_id, filename, local_dir, local_dir_use_symlinks, revision):
+        assert repo_id == "org/model"
+        assert filename == "generation_config.json"
+        assert local_dir_use_symlinks is False
+        assert revision == expected_revision
+        (Path(local_dir) / filename).write_text(generation_config)
+
+    base = MockPreTrainedBase(model_name_or_path="org/model", revision=expected_revision)
+    base._config = Mock()
+    base._generation_config = Mock()
+    base._generation_config.save_pretrained.side_effect = ValueError("invalid generation config")
+
+    with (
+        patch("huggingface_hub.list_repo_files", return_value=["generation_config.json"]) as list_repo_files,
+        patch("huggingface_hub.hf_hub_download", side_effect=fake_hf_hub_download) as hf_hub_download,
+    ):
+        base.save_artifacts(tmp_path / "target")
+
+    list_repo_files.assert_called_once_with("org/model", revision=expected_revision)
+    hf_hub_download.assert_called_once()
+    assert (tmp_path / "target" / "generation_config.json").read_text() == generation_config
+
+
 def test_save_artifacts_reraises_generation_config_error_without_source_file():
     """Test generation config save errors are not hidden without a source artifact."""
     with tempfile.TemporaryDirectory() as tmp_dir:

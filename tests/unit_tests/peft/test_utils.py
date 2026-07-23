@@ -286,6 +286,16 @@ class TestUtilityFunctions:
 
         assert torch.equal(unpadded, original)
 
+    def test_pad_unpad_roundtrip_preserves_gradients(self):
+        """Padding expert tokens must not detach adapter gradients."""
+        original = torch.randn(7, 10, requires_grad=True)
+
+        padded, pad_len = pad_seq_to_mult(original, 4)
+        unpadded = unpad_seq_to_mult(padded, pad_len)
+        unpadded.sum().backward()
+
+        torch.testing.assert_close(original.grad, torch.ones_like(original))
+
 
 class TestAll2AllCommunication:
     """Test All2All communication functions."""
@@ -1576,12 +1586,22 @@ class TestGroupedExpertLinearAdapter:
         assert mock_grouped_mm.call_args_list[0].args[1].shape[0] == 2
         assert mock_grouped_mm.call_args_list[0].kwargs["offs"].tolist() == [1, 3]
 
-    def test_grouped_expert_linear_adapter_grouped_mm_requires_rank_alignment(self):
-        """Grouped GEMM should be disabled when the LoRA rank violates kernel stride requirements."""
+    @pytest.mark.parametrize(
+        ("in_features", "out_features", "dim"),
+        [
+            (16, 32, 12),
+            (12, 32, 8),
+            (16, 30, 8),
+        ],
+    )
+    def test_grouped_expert_linear_adapter_grouped_mm_requires_dimension_alignment(
+        self, in_features, out_features, dim
+    ):
+        """Grouped GEMM should be disabled when any matrix stride is not 16-byte aligned."""
         adapter = GroupedExpertLinearAdapter(
-            in_features=16,
-            out_features=32,
-            dim=12,
+            in_features=in_features,
+            out_features=out_features,
+            dim=dim,
             num_local_experts=2,
             base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
             activation="identity",
@@ -1593,8 +1613,295 @@ class TestGroupedExpertLinearAdapter:
         with patch("megatron.bridge.peft.utils.torch.cuda.get_device_capability", return_value=(8, 0)):
             assert not adapter._can_use_grouped_mm(fake_x)
 
-    def test_grouped_expert_linear_adapter_te_grouped_mlp_prefers_te_backend_over_grouped_mm(self):
-        """TEGroupedMLP-style positional list splits should prefer the TE backend."""
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required for BF16 grouped expert weights")
+    def test_grouped_expert_linear_adapter_noncontiguous_input_uses_fallback(self):
+        """Unsupported input strides should use the correct per-expert linear fallback."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=8,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_device=torch.device("cuda"),
+            params_dtype=torch.bfloat16,
+        )
+        with torch.no_grad():
+            adapter.linear_in.weight.normal_()
+            adapter.linear_out.weight.normal_()
+        x = torch.randn(16, 5, device="cuda", dtype=torch.bfloat16).transpose(0, 1)
+        assert not x.is_contiguous()
+
+        with patch(
+            "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+            side_effect=AssertionError("non-contiguous input should use the fallback"),
+            create=True,
+        ):
+            output = adapter(x, [2, 3])
+
+        expected_chunks = []
+        for expert_idx, expert_input in enumerate(x.split([2, 3])):
+            hidden = nn.functional.linear(expert_input, adapter.linear_in.weight[expert_idx])
+            expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
+        torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
+
+    @pytest.mark.parametrize("te_version", ["2.16", "2.17"])
+    @pytest.mark.parametrize("grad_enabled", [True, False])
+    @pytest.mark.parametrize("active_expert_indices", [(0, 1), (1, 2)])
+    def test_grouped_expert_linear_adapter_fp8_te_contract(self, te_version, grad_enabled, active_expert_indices):
+        """FP8 dispatch should pack the supported TE 2.16 and 2.17 call layouts."""
+        calls = []
+        expected = torch.randn(3, 2)
+
+        class TE216GroupedLinear:
+            @staticmethod
+            def apply(inp, non_tensor_args, *weights_and_biases):
+                calls.append((inp, None, non_tensor_args, weights_and_biases))
+                return expected, []
+
+            @staticmethod
+            def forward(ctx, inp, non_tensor_args, *weights_and_biases):
+                assert ctx is None
+                calls.append((inp, None, non_tensor_args, weights_and_biases))
+                return expected, []
+
+        class TE217GroupedLinear:
+            @staticmethod
+            def apply(inp, m_splits, non_tensor_args, *weights_and_biases):
+                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
+                return expected, []
+
+            @staticmethod
+            def forward(ctx, inp, m_splits, non_tensor_args, *weights_and_biases):
+                assert ctx is None
+                calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
+                return expected, []
+
+        autograd_function = TE216GroupedLinear if te_version == "2.16" else TE217GroupedLinear
+        helper = Mock()
+        helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
+        helper._get_quantizers.return_value = tuple(
+            [f"quantizer-{group_idx}-{expert_idx}" for expert_idx in range(3)] for group_idx in range(6)
+        )
+        helper.apply_bias = False
+        helper.fp8 = True
+        helper.fp8_calibration = False
+        helper.wgrad_store = Mock()
+        helper.fuse_wgrad_accumulation = False
+        helper.sequence_parallel = False
+        helper.activation_dtype = torch.float32
+        helper.save_original_input = False
+
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.randn(3, 2)
+        context = torch.enable_grad() if grad_enabled else torch.no_grad()
+        with (
+            patch.object(adapter, "_get_te_grouped_linear_helper", return_value=helper),
+            patch.object(peft_utils, "TEPytorchGroupedLinearAutograd", autograd_function),
+            patch.object(peft_utils, "TEPytorchIsCPUOffloadEnabled", return_value=True),
+            context,
+        ):
+            output = adapter._forward_te_grouped_linear_fp8(
+                x,
+                weight=adapter.linear_in(list(active_expert_indices)),
+                m_splits=[1, 2],
+                projection="linear_in",
+                active_expert_indices=active_expert_indices,
+            )
+
+        torch.testing.assert_close(output, expected)
+        assert len(calls) == 1
+        received_input, explicit_splits, non_tensor_args, weights_and_biases = calls[0]
+        assert received_input is x
+        if te_version == "2.16":
+            assert explicit_splits is None
+            assert non_tensor_args[0] == [1, 2]
+            common_non_tensor_args = non_tensor_args[1:]
+        else:
+            torch.testing.assert_close(explicit_splits, torch.tensor([1, 2], dtype=torch.int64))
+            assert explicit_splits.device.type == "cpu"
+            common_non_tensor_args = non_tensor_args
+        assert common_non_tensor_args[0] is False
+        assert common_non_tensor_args[2] is True
+        assert common_non_tensor_args[12] is True
+        for group_idx in range(6):
+            assert common_non_tensor_args[5 + group_idx] == [
+                f"quantizer-{group_idx}-{expert_idx}" for expert_idx in active_expert_indices
+            ]
+        assert len(weights_and_biases) == 4
+        helper.prepare_forward.assert_called_once_with(x, num_gemms=3)
+        helper.end_forward.assert_called_once_with()
+
+    def test_grouped_expert_linear_adapter_fp8_prefers_te_backend(self):
+        """An active FP8 context should select TE instead of the public BF16 backend."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.tensor([[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]])
+        expected = torch.tensor([[1.0, 1.5], [2.0, 2.5], [3.0, 3.5]])
+        hidden = torch.zeros(32, 2)
+        padded_output = torch.zeros(32, 2)
+        padded_output[0] = expected[0]
+        padded_output[16:18] = expected[1:]
+
+        with (
+            patch.object(adapter, "_is_te_fp8_enabled", return_value=True),
+            patch.object(adapter, "_can_use_te_grouped_linear_fp8", return_value=True),
+            patch.object(
+                adapter,
+                "_can_use_grouped_mm",
+                side_effect=AssertionError("FP8 should not probe the BF16 grouped-MM backend"),
+            ),
+            patch.object(adapter, "_forward_te_grouped_linear_fp8", side_effect=[hidden, padded_output]) as mock_te,
+        ):
+            output = adapter(x, [1, 2])
+
+        torch.testing.assert_close(output, expected)
+        assert mock_te.call_count == 2
+        assert mock_te.call_args_list[0].kwargs["m_splits"] == [16, 16]
+        assert mock_te.call_args_list[1].kwargs["m_splits"] == [16, 16]
+
+    def test_grouped_expert_linear_adapter_fp8_without_te_uses_fallback(self):
+        """An unsupported FP8 layout should not silently run the public BF16 grouped backend."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=2,
+            out_features=2,
+            dim=2,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        x = torch.randn(3, 2)
+        expected = torch.randn(3, 2)
+
+        with (
+            patch.object(adapter, "_is_te_fp8_enabled", return_value=True),
+            patch.object(adapter, "_can_use_te_grouped_linear_fp8", return_value=False),
+            patch.object(
+                adapter,
+                "_can_use_grouped_mm",
+                side_effect=AssertionError("FP8 must not use the BF16 grouped-MM backend"),
+            ),
+            patch.object(adapter, "_forward_per_expert", return_value=expected) as mock_fallback,
+        ):
+            output = adapter(x, [1, 2])
+
+        torch.testing.assert_close(output, expected)
+        mock_fallback.assert_called_once_with(x, expert_splits=[1, 2], expert_tp_size=1)
+
+    def test_grouped_expert_linear_adapter_fp8_requires_dimension_alignment(self):
+        """A rank-eight adapter should avoid TE's 16-element-aligned FP8 grouped GEMM."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=8,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_dtype=torch.bfloat16,
+        )
+        fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda:0"))
+
+        with (
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS", True),
+            patch("megatron.bridge.peft.utils.torch.cuda.current_device", return_value=0),
+        ):
+            assert not adapter._can_use_te_grouped_linear_fp8(fake_x)
+
+    def test_grouped_expert_linear_adapter_fp8_requires_current_cuda_device(self):
+        """TE FP8 should fall back when autocast state belongs to another CUDA device."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=16,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_dtype=torch.bfloat16,
+        )
+        fake_x = Mock(is_cuda=True, dtype=torch.bfloat16, device=torch.device("cuda:1"))
+
+        with (
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD", True),
+            patch.object(peft_utils, "HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS", True),
+            patch("megatron.bridge.peft.utils.torch.cuda.current_device", return_value=0),
+        ):
+            assert not adapter._can_use_te_grouped_linear_fp8(fake_x)
+
+    def test_grouped_expert_linear_adapter_te_helpers_have_stable_weight_identity(self):
+        """FP8 runtime state should use bounded device/projection helpers with stable expert slots."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=16,
+            num_local_experts=3,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+        )
+        cuda0_linear_in_helper = Mock()
+        cuda0_linear_out_helper = Mock()
+        cuda1_linear_in_helper = Mock()
+        helper_kwargs = {
+            "projection": "linear_in",
+            "num_gemms": 3,
+            "in_features": 16,
+            "out_features": 16,
+            "params_dtype": torch.bfloat16,
+        }
+
+        with patch.object(
+            peft_utils,
+            "TEPytorchGroupedLinear",
+            side_effect=[
+                cuda0_linear_in_helper,
+                cuda1_linear_in_helper,
+                cuda0_linear_out_helper,
+            ],
+        ) as grouped_linear:
+            first_cuda0_helper = adapter._get_te_grouped_linear_helper(**helper_kwargs, device=torch.device("cuda:0"))
+            second_cuda0_helper = adapter._get_te_grouped_linear_helper(**helper_kwargs, device=torch.device("cuda:0"))
+            first_cuda1_helper = adapter._get_te_grouped_linear_helper(**helper_kwargs, device=torch.device("cuda:1"))
+            cuda0_linear_out = adapter._get_te_grouped_linear_helper(
+                **{**helper_kwargs, "projection": "linear_out"}, device=torch.device("cuda:0")
+            )
+
+        assert first_cuda0_helper is cuda0_linear_in_helper
+        assert second_cuda0_helper is cuda0_linear_in_helper
+        assert first_cuda1_helper is cuda1_linear_in_helper
+        assert cuda0_linear_out is cuda0_linear_out_helper
+        assert grouped_linear.call_count == 3
+
+    def test_grouped_expert_linear_adapter_te_grouped_mlp_split_call_uses_public_grouped_mm(self):
+        """TEGroupedMLP-style positional splits should work through the public backend."""
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
             out_features=2,
@@ -1612,41 +1919,191 @@ class TestGroupedExpertLinearAdapter:
                 [5.0, 6.0],
             ]
         )
-        hidden = torch.tensor(
-            [
-                [0.5, 1.0],
-                [1.5, 2.0],
-                [2.5, 3.0],
-            ]
-        )
-        expected = torch.tensor(
-            [
-                [1.0, 1.5],
-                [2.0, 2.5],
-                [3.0, 3.5],
-            ]
-        )
+        with torch.no_grad():
+            adapter.linear_in.weight[0].copy_(torch.eye(2))
+            adapter.linear_out.weight[0].copy_(torch.eye(2))
+            adapter.linear_in.weight[1].copy_(2 * torch.eye(2))
+            adapter.linear_out.weight[1].copy_(torch.eye(2))
+
+        def fake_grouped_mm(inputs, weights, *, offs):
+            chunks = []
+            start = 0
+            for weight_idx, end in enumerate(offs.tolist()):
+                chunks.append(inputs[start:end] @ weights[weight_idx])
+                start = end
+            return torch.cat(chunks, dim=0)
 
         with (
             patch.object(GroupedExpertLinearAdapter, "_can_use_grouped_mm", return_value=True),
-            patch.object(GroupedExpertLinearAdapter, "_can_use_te_grouped_linear", return_value=True),
-            patch.object(
-                GroupedExpertLinearAdapter,
-                "_forward_te_grouped_linear",
-                side_effect=[hidden, expected],
-            ) as mock_te_backend,
             patch(
                 "megatron.bridge.peft.utils.nn.functional.grouped_mm",
-                side_effect=AssertionError("grouped_mm should not run for TEGroupedMLP"),
+                side_effect=fake_grouped_mm,
                 create=True,
-            ),
+            ) as mock_grouped_mm,
         ):
             output = adapter(x, [1, 2])
 
+        expected = torch.tensor(
+            [
+                [1.0, 2.0],
+                [6.0, 8.0],
+                [10.0, 12.0],
+            ]
+        )
         torch.testing.assert_close(output, expected)
-        assert mock_te_backend.call_count == 2
-        assert mock_te_backend.call_args_list[0].kwargs["m_splits"] == [1, 2]
-        assert mock_te_backend.call_args_list[1].kwargs["m_splits"] == [1, 2]
+        assert mock_grouped_mm.call_count == 2
+        assert mock_grouped_mm.call_args_list[0].kwargs["offs"].tolist() == [1, 3]
+
+    @pytest.mark.skipif(
+        not torch.cuda.is_available() or getattr(nn.functional, "grouped_mm", None) is None,
+        reason="public grouped_mm requires a supported CUDA PyTorch build",
+    )
+    def test_grouped_expert_linear_adapter_public_grouped_mm_forward_backward(self):
+        """The public grouped GEMM path should match per-expert linear algebra and backpropagate."""
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=8,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_device=torch.device("cuda"),
+            params_dtype=torch.bfloat16,
+        )
+        with torch.no_grad():
+            adapter.linear_in.weight.normal_()
+            adapter.linear_out.weight.normal_()
+        x = torch.randn(5, 16, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+
+        reference_x = x.detach().clone().requires_grad_()
+        reference_linear_in = adapter.linear_in.weight.detach().clone().requires_grad_()
+        reference_linear_out = adapter.linear_out.weight.detach().clone().requires_grad_()
+        expected_chunks = []
+        for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
+            hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
+        expected = torch.cat(expected_chunks)
+        expected.float().sum().backward()
+
+        output = adapter(x, [2, 3])
+        torch.testing.assert_close(output, expected, rtol=2e-2, atol=2e-2)
+        output.float().sum().backward()
+        torch.testing.assert_close(x.grad, reference_x.grad, rtol=2e-2, atol=2e-2)
+        torch.testing.assert_close(adapter.linear_in.weight.grad, reference_linear_in.grad, rtol=2e-2, atol=2e-2)
+        torch.testing.assert_close(adapter.linear_out.weight.grad, reference_linear_out.grad, rtol=2e-2, atol=2e-2)
+
+    @pytest.mark.skipif(not torch.cuda.is_available(), reason="TE FP8 grouped linear requires CUDA")
+    def test_grouped_expert_linear_adapter_te_fp8_forward_backward_and_inference(self):
+        """The real TE FP8 path should produce finite outputs and gradients without public grouped-MM."""
+        if not (
+            peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER
+            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR
+            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD
+            and peft_utils.HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS
+        ):
+            pytest.skip("Transformer Engine grouped-linear FP8 support is unavailable")
+        te = pytest.importorskip("transformer_engine.pytorch")
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=16,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_device=torch.device("cuda"),
+            params_dtype=torch.bfloat16,
+        )
+        with torch.no_grad():
+            adapter.linear_in.weight.normal_(std=0.1)
+            adapter.linear_out.weight.normal_(std=0.1)
+        x = torch.randn(5, 16, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+        reference_x = x.detach().clone().requires_grad_()
+        reference_linear_in = adapter.linear_in.weight.detach().clone().requires_grad_()
+        reference_linear_out = adapter.linear_out.weight.detach().clone().requires_grad_()
+        expected_chunks = []
+        for expert_idx, expert_input in enumerate(reference_x.split([2, 3])):
+            hidden = nn.functional.linear(expert_input, reference_linear_in[expert_idx])
+            expected_chunks.append(nn.functional.linear(hidden, reference_linear_out[expert_idx]))
+        expected = torch.cat(expected_chunks)
+        expected.float().sum().backward()
+
+        with (
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=AssertionError("FP8 should use TE instead of public grouped-MM"),
+            ),
+            te.autocast(enabled=True),
+        ):
+            output = adapter(x, [2, 3])
+
+        assert torch.isfinite(output).all()
+        torch.testing.assert_close(output, expected, rtol=2e-1, atol=1e-1)
+        output.float().sum().backward()
+        for grad in (x.grad, adapter.linear_in.weight.grad, adapter.linear_out.weight.grad):
+            assert grad is not None
+            assert torch.isfinite(grad).all()
+        torch.testing.assert_close(x.grad, reference_x.grad, rtol=3e-1, atol=2e-1)
+        torch.testing.assert_close(adapter.linear_in.weight.grad, reference_linear_in.grad, rtol=3e-1, atol=2e-1)
+        torch.testing.assert_close(adapter.linear_out.weight.grad, reference_linear_out.grad, rtol=3e-1, atol=2e-1)
+
+        with (
+            torch.no_grad(),
+            patch(
+                "megatron.bridge.peft.utils.nn.functional.grouped_mm",
+                side_effect=AssertionError("FP8 inference should use TE instead of public grouped-MM"),
+            ),
+            te.autocast(enabled=True),
+        ):
+            inference_output = adapter(x.detach(), [2, 3])
+        assert torch.isfinite(inference_output).all()
+
+    @pytest.mark.skipif(torch.cuda.device_count() < 2, reason="TE FP8 device migration requires two CUDA devices")
+    def test_grouped_expert_linear_adapter_te_fp8_device_mismatch_uses_fallback(self):
+        """An adapter moved away from the current CUDA device should use the safe fallback."""
+        if not (
+            peft_utils.HAVE_TE_FP8_GLOBAL_STATE_MANAGER
+            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR
+            and peft_utils.HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD
+            and peft_utils.HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS
+        ):
+            pytest.skip("Transformer Engine grouped-linear FP8 support is unavailable")
+        te = pytest.importorskip("transformer_engine.pytorch")
+        torch.cuda.set_device(0)
+        adapter = GroupedExpertLinearAdapter(
+            in_features=16,
+            out_features=16,
+            dim=16,
+            num_local_experts=2,
+            base_linear_name="decoder.layers.0.mlp.experts.linear_fc2",
+            activation="identity",
+            input_is_parallel=False,
+            model_parallel_config=MockModelParallelConfig(),
+            params_device=torch.device("cuda:0"),
+            params_dtype=torch.bfloat16,
+        )
+
+        device = torch.device("cuda:1")
+        adapter.to(device)
+        x = torch.randn(5, 16, device=device, dtype=torch.bfloat16, requires_grad=True)
+        with (
+            patch.object(
+                adapter,
+                "_forward_te_grouped_linear_fp8",
+                side_effect=AssertionError("mismatched CUDA devices must not use TE grouped FP8"),
+            ),
+            te.autocast(enabled=True),
+        ):
+            output = adapter(x, [2, 3])
+        output.float().sum().backward()
+        torch.cuda.synchronize(device)
+        assert x.grad is not None
+        assert torch.isfinite(x.grad).all()
+
+        assert adapter._te_grouped_linear_helpers == {}
 
     def test_grouped_expert_linear_adapter_requires_expert_tp_group_for_gather(self):
         """Per-expert LoRA should fail clearly when expert TP is configured without initialized groups."""

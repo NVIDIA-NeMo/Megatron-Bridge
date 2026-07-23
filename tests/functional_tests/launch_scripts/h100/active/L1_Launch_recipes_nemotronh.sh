@@ -22,15 +22,14 @@ if [[ "${GHA_RUNNER:-}" == *"azure"* ]]; then
   export UB_SKIPMC="1"
 fi
 
-# Run Nemotron H and Nemotron Nano v2 recipe functional tests on 2 GPUs
+# Run current Nemotron recipe functional tests on 2 GPUs
 # This script tests recipe configurations with their default settings to ensure
 # they can run basic training without crashes
 
-# Test pretrain recipes (4B and 9B v2)
+# Test pretrain recipes
 uv run python -m torch.distributed.run --nproc_per_node=2 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/recipes/test_nemotronh_recipes_pretrain.py
 
 # Test finetune recipes (9B v2 with LoRA and full SFT)
 uv run python -m torch.distributed.run --nproc_per_node=1 --nnodes=1 -m coverage run --data-file=/opt/Megatron-Bridge/.coverage --source=/opt/Megatron-Bridge/ --parallel-mode -m pytest -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA tests/functional_tests/test_groups/recipes/test_nemotronh_recipes_finetune.py
 
 coverage combine -q
-

@@ -3,6 +3,11 @@
 This directory contains text-generation examples for Megatron Bridge and
 Megatron-Core inference.
 
+To submit offline text generation from a Slurm login node without entering an
+allocation, use [`scripts/inference/infer.sh`](../../scripts/inference/README.md).
+The launcher uses the project NeMo Run Slurm executor and forwards the existing
+Bridge text-generation CLI.
+
 ## Offline Text Generation with Bridge Loading
 
 `scripts/inference/text_generation.py` is the Bridge-backed synchronous
@@ -82,19 +87,15 @@ launching, such as `WORKSPACE`, `HF_MODEL_ID`, `MEGATRON_MODEL_PATH`,
 
 ## Concurrent Async Generation
 
-`scripts/inference/async_text_generation.py` is intentionally direct
-MCore-style. It does not use `AutoBridge`; pass normal Megatron
-training/inference arguments such as `--load`, tokenizer args, model provider,
-and parallelism settings.
+`scripts/inference/async_text_generation.py` uses the same Bridge/AutoBridge
+model loading and shared inference arguments as the synchronous entrypoint.
 
 ```bash
-bash examples/inference/run_async_text_generation.sh --nproc 8 \
-  --load /path/to/megatron/checkpoint \
-  --tokenizer-type HuggingFaceTokenizer \
-  --tokenizer-model Qwen/Qwen2.5-1.5B \
-  --model-provider gpt \
-  --bf16 \
-  --prompts "Megatron async inference is" "Concurrent generation is"
+bash examples/inference/run_async_text_generation.sh --nproc 1 \
+  --hf_model_path Qwen/Qwen2.5-1.5B \
+  --dtype bf16 \
+  --prompt "Megatron async inference is" \
+  --prompt "Concurrent generation is"
 ```
 
 The async example uses `MegatronAsyncLLM` in coordinator mode and submits
@@ -102,16 +103,13 @@ multiple prompts concurrently from the primary rank.
 
 ## OpenAI-Compatible Server
 
-`scripts/inference/openai_server.py` is also direct MCore-style and uses
-`MegatronAsyncLLM.serve(...)`.
+`scripts/inference/openai_server.py` uses the Bridge/AutoBridge model-loading
+arguments and serves requests through `MegatronAsyncLLM.serve(...)`.
 
 ```bash
-bash examples/inference/run_openai_server.sh --nproc 8 \
-  --load /path/to/megatron/checkpoint \
-  --tokenizer-type HuggingFaceTokenizer \
-  --tokenizer-model Qwen/Qwen2.5-1.5B \
-  --model-provider gpt \
-  --bf16 \
+bash examples/inference/run_openai_server.sh --nproc 1 \
+  --hf_model_path Qwen/Qwen2.5-1.5B \
+  --dtype bf16 \
   --host 0.0.0.0 \
   --port 5000
 ```

@@ -1286,10 +1286,16 @@ class Gemma4TransformerLayer(TransformerLayer):
         hidden_states: Tensor,
         inference_context: BaseInferenceContext | None = None,
         padding_mask: Tensor | None = None,
+        input_ids: Tensor | None = None,
         packed_seq_params: PackedSeqParams | None = None,
     ) -> Tensor:
-        """Run HF's separate shared-expert, routed-expert, and router inputs."""
-        del inference_context
+        """Run HF's separate shared-expert, routed-expert, and router inputs.
+
+        ``input_ids`` is accepted for compatibility with Megatron-Core ``dev``'s
+        ``TransformerLayer.forward``, which forwards it for hash-based MoE routing;
+        Gemma 4's separate-input MoE path does not use it.
+        """
+        del inference_context, input_ids
         residual = hidden_states.float() if self.config.fp32_residual_connection else hidden_states
 
         moe_input = residual
@@ -1377,9 +1383,10 @@ class Gemma4TopKRouter(TopKRouter):
         logits: Tensor,
         padding_mask: Tensor | None = None,
         input_ids: Tensor | None = None,
+        **kwargs: object,
     ) -> tuple[Tensor, Tensor | None]:
-        # Token identities do not affect Gemma 4 routing; retain the argument for compatibility with existing callers.
-        del input_ids
+        """Route Gemma 4 tokens with arguments accepted by both MCore refs."""
+        del input_ids, kwargs
         routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask)
         if routing_map is not None:
             prob_sums = routing_probs.sum(dim=-1, keepdim=True).clamp(min=1e-20)
@@ -1744,15 +1751,21 @@ class Gemma4RotaryEmbedding(RotaryEmbedding):
         super().__init__(
             kv_channels=global_kv_channels,
             rotary_base=rotary_base,
-            rotary_percent=global_rotary_percent,
+            rotary_percent=1.0,
             **global_kwargs,
         )
 
-        dim = int(global_kv_channels * global_rotary_percent)
+        # HF proportional RoPE rotates pairs across the full attention head. Represent the
+        # partial rotation with zero-frequency pairs instead of shortening the rotary width.
+        rope_angles = int(global_rotary_percent * global_kv_channels // 2)
+        nope_angles = global_kv_channels // 2 - rope_angles
         device = self.inv_freq.device
-        self.inv_freq = 1.0 / (
-            rotary_base ** (torch.arange(0, dim, 2, dtype=torch.float32, device=device) / global_kv_channels)
+        rotated = 1.0 / (
+            rotary_base
+            ** (torch.arange(0, 2 * rope_angles, 2, dtype=torch.float32, device=device) / global_kv_channels)
         )
+        non_rotated = torch.zeros(nope_angles, dtype=torch.float32, device=device)
+        self.inv_freq = torch.cat([rotated, non_rotated], dim=0)
 
         self.rope_local = RotaryEmbedding(
             rotary_base=rotary_base_local,

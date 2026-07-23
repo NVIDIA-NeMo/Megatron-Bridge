@@ -1783,7 +1783,8 @@ class MegatronModelBridge(
             model_config: Transformer configuration
             sorted_global_param_names_all_pp_ranks: Sorted list of global parameter names
             pp_group: Pipeline parallel group for distributed communication
-            fp8_scale_inv_attr: Attribute name for the FP8 scale_inv tensor
+            fp8_scale_inv_attr: Metadata key for the FP8 scale_inv tensor. A leading
+                underscore is accepted for backward compatibility.
 
         Returns:
             Dictionary mapping global parameter names to boolean flags indicating
@@ -1791,10 +1792,7 @@ class MegatronModelBridge(
         """
         local_fp8_flags: Dict[str, bool] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
-        try:
-            from transformer_engine.pytorch.tensor import Float8BlockwiseQTensor
-        except Exception:
-            Float8BlockwiseQTensor = None
+        scale_inv_metadata_key = fp8_scale_inv_attr.removeprefix("_")
 
         for vp_stage, model in enumerate(megatron_model):
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
@@ -1810,19 +1808,22 @@ class MegatronModelBridge(
                 if local_weights is None:
                     continue
 
-                # Determine if this is a blockwise FP8 tensor and has the requested scale_inv attr.
-                # We intentionally require the scale_inv attribute to be non-None:
+                # Determine if this is a blockwise FP8 tensor with valid scale metadata.
+                # We intentionally require the scale_inv metadata to be non-None:
                 # - Some initialization paths may leave scale tensors unset; we should not emit
                 #   a scale task in that case (would break deterministic export/consumer assumptions).
-                is_blockwise_fp8 = False
-                if Float8BlockwiseQTensor is not None:
+                metadata = {}
+                get_metadata = getattr(local_weights, "get_metadata", None)
+                if callable(get_metadata):
                     try:
-                        is_blockwise_fp8 = isinstance(local_weights, Float8BlockwiseQTensor)
-                    except Exception:
-                        is_blockwise_fp8 = False
+                        candidate_metadata = get_metadata()
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+                    else:
+                        if isinstance(candidate_metadata, dict):
+                            metadata = candidate_metadata
 
-                # Float8BlockwiseQTensor should have the scale_inv attribute, but check if it's set (not None)
-                if is_blockwise_fp8 and getattr(local_weights, fp8_scale_inv_attr, None) is not None:
+                if "is_2D_scaled" in metadata and metadata.get(scale_inv_metadata_key) is not None:
                     local_fp8_flags[global_name] = True
 
         # Gather across PP ranks to ensure consistent insertion decisions
@@ -1879,8 +1880,6 @@ class MegatronModelBridge(
             fp8_scale_inv_attr,
         )
 
-        from transformer_engine.pytorch.constants import TE_DType_To_Torch
-
         # 2) Expand the global name list with `*.scale_inv` entries.
         #    This defines the final deterministic task ordering.
         expanded_global_names: list[str] = []
@@ -1914,22 +1913,14 @@ class MegatronModelBridge(
 
                 # Main (weight/bias) task
                 export_weight_tensor = local_weights
+                fp8_metadata = {}
                 if global_fp8_flags.get(global_name, False):
-                    if local_weights is not None and hasattr(local_weights, "_rowwise_data"):
-                        rd = getattr(local_weights, "_rowwise_data")
-                        if rd is not None:
-                            export_weight_tensor = rd
-                            # TE blockwise _rowwise_data is stored as uint8; view to correct FP8 type.
-                            # Read _fp8_dtype from tensor when available (robust for future formats).
-                            # Megatron fp8_param weights are always e4m3 (forward pass) in both
-                            # fp8_format=e4m3 and fp8_format=hybrid; e5m2 is only for backward gradients.
-                            fp8_dtype = getattr(local_weights, "_fp8_dtype", None)
-                            torch_fp8_dtype = (
-                                TE_DType_To_Torch.get(fp8_dtype, torch.float8_e4m3fn)
-                                if fp8_dtype is not None
-                                else torch.float8_e4m3fn
-                            )
-                            export_weight_tensor = export_weight_tensor.contiguous().view(torch_fp8_dtype)
+                    fp8_metadata = local_weights.get_metadata() if local_weights is not None else {}
+                    rowwise_data = fp8_metadata.get("rowwise_data")
+                    if rowwise_data is not None:
+                        # FP8 parameter weights are E4M3 in both E4M3 and hybrid recipes;
+                        # E5M2 is used only for backward gradients.
+                        export_weight_tensor = rowwise_data.contiguous().view(torch.float8_e4m3fn)
                 tasks[global_names_index_dict[global_name]] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
@@ -1944,9 +1935,8 @@ class MegatronModelBridge(
                 if global_fp8_flags.get(global_name, False):
                     scale_global_name = f"{global_name}{scale_inv_suffix}"
                     scale_local_name = f"{local_name}{scale_inv_suffix}"
-                    scale_tensor = None
-                    if local_weights is not None and hasattr(local_weights, fp8_scale_inv_attr):
-                        scale_tensor = getattr(local_weights, fp8_scale_inv_attr)
+                    scale_tensor = fp8_metadata.get(fp8_scale_inv_attr.removeprefix("_"))
+                    if scale_tensor is not None:
                         scale_tensor = self._trim_blockwise_fp8_scale_inv_padding(local_weights, scale_tensor)
                     # Note:
                     # Do NOT reuse the same mapping instance as the base weight task.
@@ -2002,9 +1992,10 @@ class MegatronModelBridge(
     ) -> Optional[torch.Tensor]:
         # This function is used to trim the padding in the scales for blockwise FP8 parameters.
         # The GEMM for 2D blocks required padding in the scales.
-        quantizer = getattr(local_weights, "_quantizer", None)
+        metadata = local_weights.get_metadata() if local_weights is not None else {}
+        quantizer = metadata.get("quantizer")
         block_len = getattr(quantizer, "block_len", None)
-        is_2d_scaled = getattr(local_weights, "_is_2D_scaled", None)
+        is_2d_scaled = metadata.get("is_2D_scaled")
         if block_len is None or not is_2d_scaled:
             logger.warning("WARNING: block_len or not is_2d_scaled")
             return scale_tensor

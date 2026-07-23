@@ -1022,6 +1022,17 @@ class TestGlobalState:
         assert state._async_calls_queue == mock_async_queue
         assert state.rank_monitor_client is not None
 
+    def test_reset_for_restart_closes_tensorboard_writer(self):
+        """Test reset_for_restart closes the attempt-scoped TensorBoard writer."""
+        state = GlobalState()
+        mock_writer = MagicMock()
+        state._tensorboard_logger = mock_writer
+
+        state.reset_for_restart()
+
+        mock_writer.close.assert_called_once_with()
+        assert state._tensorboard_logger is None
+
 
 class TestTimersWriteToMlflow:
     """Test suite for _timers_write_to_mlflow function."""

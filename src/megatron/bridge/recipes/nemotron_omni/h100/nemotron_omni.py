@@ -28,6 +28,7 @@ from megatron.bridge.data.builders import (
     NemotronOmniEnergonTaskEncoderConfig,
 )
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -80,14 +81,18 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
 def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a LoRA PEFT config for Nemotron Omni on CORD v2.
 
-    LoRA adapters are applied to language-model attention + Mamba projections.
-    Vision encoder/projection and sound encoder/projection are frozen.
+    LoRA adapters are applied to attention, Mamba, and FC1/FC2 projections.
+    Vision and sound base modules remain frozen while matching adapters are trainable.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
@@ -96,7 +101,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
     cfg.peft = LoRA(
-        target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj"],
+        target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"],
         dim=16,
         alpha=32,
     )
@@ -129,6 +134,10 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
         enable_in_batch_packing=False,
     )
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -139,10 +148,6 @@ def _nemotron_omni_base() -> ConfigContainer:
         load_weights=False
     )
     cfg.model.seq_length = 4096
-    # Dynamic-resolution is the native behavior for the Nemotron-3 Omni
-    # Reasoning HF processor (variable per-image H×W within [min, max] patches).
-    # The collate pre-patchifies pixel_values and emits imgs_sizes/num_frames.
-    cfg.model.dynamic_resolution = True
 
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.pipeline_model_parallel_size = 1
@@ -207,7 +212,7 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     Uses RADIO's ``separate_video_embedder`` to fuse temporal frame pairs
     (2 consecutive frames → 1 vision embedding) instead of discarding every
-    other frame. Requires ``dynamic_resolution=True``.
+    other frame.
     The shard path must be set via CLI override: ``dataset.path=<path>``.
 
     Uses ``nemotron_omni_step`` (pass ``--step_func nemotron_omni_step``).
@@ -215,29 +220,35 @@ def nemotron_omni_valor32k_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _nemotron_omni_base()
 
     # Enable temporal video embedder on the model side
-    cfg.model.dynamic_resolution = True
     cfg.model.temporal_patch_dim = 2
     cfg.model.separate_video_embedder = True
     cfg.model.temporal_ckpt_compat = True
 
     cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
 def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
-    """LoRA PEFT recipe on temporal-video Energon path (temporal_patch_dim=2)."""
+    """LoRA PEFT recipe on temporal-video Energon path (temporal_patch_dim=2).
+
+    Adapters target attention, Mamba, and FC1/FC2 projections. Vision and sound
+    base modules remain frozen while matching adapters are trainable.
+    """
     from megatron.bridge.peft.lora import LoRA
 
     cfg = _nemotron_omni_base()
 
-    cfg.model.dynamic_resolution = True
     cfg.model.temporal_patch_dim = 2
     cfg.model.separate_video_embedder = True
     cfg.model.temporal_ckpt_compat = True
 
     cfg.peft = LoRA(
-        target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj"],
+        target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"],
         dim=16,
         alpha=32,
     )
@@ -259,6 +270,10 @@ def nemotron_omni_valor32k_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg.dataset = _make_nemotron_omni_energon_dataset(cfg.train.micro_batch_size)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

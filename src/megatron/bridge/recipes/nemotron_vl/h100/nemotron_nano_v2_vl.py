@@ -24,6 +24,7 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.peft.lora import VLMLoRA
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -130,6 +131,8 @@ def nemotron_nano_v2_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _DEFAULT_HF_MODEL_PATH
+    cfg.dataset.trust_remote_code = True
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - Nemotron uses average_in_collective=False
     cfg.ddp.overlap_grad_reduce = False
@@ -146,6 +149,10 @@ def nemotron_nano_v2_vl_12b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     # FP8 and MXFP8 settings (disabled by default)
     cfg.mixed_precision = "bf16_mixed"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -250,6 +257,8 @@ def nemotron_nano_v2_vl_12b_peft_2gpu_h100_bf16_config(
     # Dataset configuration
     cfg.dataset.seq_length = 4096
     cfg.dataset.hf_processor_path = _DEFAULT_HF_MODEL_PATH
+    cfg.dataset.trust_remote_code = True
+    cfg.dataset.enable_in_batch_packing = False
 
     # DDP settings - Nemotron uses average_in_collective=False
     cfg.ddp.overlap_grad_reduce = False
@@ -266,6 +275,10 @@ def nemotron_nano_v2_vl_12b_peft_2gpu_h100_bf16_config(
     # FP8 and MXFP8 settings (disabled by default)
     cfg.mixed_precision = "bf16_mixed"
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

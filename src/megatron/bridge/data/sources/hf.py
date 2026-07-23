@@ -131,7 +131,7 @@ class _HFDatasetPreset:
     """Resolved physical source metadata for a built-in dataset."""
 
     path_or_dataset: str
-    schema_adapter: str
+    schema_adapter: str | None
     split: str = "train"
     subset: str | list[str] | None = None
     load_kwargs: dict[str, Any] | None = None
@@ -199,6 +199,11 @@ _HF_DATASET_PRESETS: dict[str, _HFDatasetPreset] = {
         path_or_dataset="rajpurkar/squad",
         schema_adapter="squad",
         supported_splits=("train", "validation"),
+    ),
+    "tulu3": _HFDatasetPreset(
+        path_or_dataset="allenai/tulu-3-sft-mixture",
+        schema_adapter=None,
+        supported_splits=("train",),
     ),
 }
 

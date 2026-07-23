@@ -198,12 +198,23 @@ def build_direct_hf_sft_split(
     """Build one requested direct-HF SFT split."""
     if target_length <= 0:
         return None
+    from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples
+
     examples = load_direct_hf_sft_examples(source, config.preprocessing)
+    if collate_impl is None and model_collate_required_for_all_examples(type(processor).__name__):
+        if not isinstance(config.preprocessing, ChatSFTPreprocessingConfig):
+            raise ValueError(
+                f"Processor type '{type(processor).__name__}' requires chat preprocessing through its "
+                "model-owned collator."
+            )
+        selected_collate = None
+    else:
+        selected_collate = select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl)
     return DirectSFTDataset(
         base_examples=examples,
         target_length=target_length,
         processor=processor,
-        collate_impl=select_direct_hf_sft_collate(examples, config.preprocessing, collate_impl),
+        collate_impl=selected_collate,
         sequence_length=config.seq_length,
         pad_to_max_length=config.pad_to_max_length,
         pad_to_multiple_of=config.pad_to_multiple_of,

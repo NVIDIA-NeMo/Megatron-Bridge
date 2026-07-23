@@ -12,9 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from unittest.mock import patch
+
 import pytest
+from transformers import AutoConfig, AutoModel, AutoProcessor
 
 from megatron.bridge.models.conversion.utils import conform_config_to_reference
+from megatron.bridge.models.qwen3_asr.hf_qwen3_asr import (
+    Qwen3ASRForConditionalGeneration,
+    Qwen3ASRProcessor,
+    _register_auto_classes,
+)
 from megatron.bridge.models.qwen3_asr.hf_qwen3_asr.configuration_qwen3_asr import (
     Qwen3ASRConfig,
     Qwen3ASRThinkerConfig,
@@ -23,6 +31,34 @@ from megatron.bridge.training.config import ConfigContainer
 
 
 pytestmark = [pytest.mark.unit]
+
+
+def test_auto_classes_are_not_overridden_when_transformers_has_native_support():
+    with (
+        patch.object(AutoConfig, "register") as config_register,
+        patch.object(AutoModel, "register") as model_register,
+        patch.object(AutoProcessor, "register") as processor_register,
+    ):
+        registered = _register_auto_classes({Qwen3ASRConfig.model_type: object()})
+
+    assert registered is False
+    config_register.assert_not_called()
+    model_register.assert_not_called()
+    processor_register.assert_not_called()
+
+
+def test_auto_classes_are_registered_when_transformers_has_no_native_support():
+    with (
+        patch.object(AutoConfig, "register") as config_register,
+        patch.object(AutoModel, "register") as model_register,
+        patch.object(AutoProcessor, "register") as processor_register,
+    ):
+        registered = _register_auto_classes({})
+
+    assert registered is True
+    config_register.assert_called_once_with(Qwen3ASRConfig.model_type, Qwen3ASRConfig)
+    model_register.assert_called_once_with(Qwen3ASRConfig, Qwen3ASRForConditionalGeneration)
+    processor_register.assert_called_once_with(Qwen3ASRConfig, Qwen3ASRProcessor)
 
 
 def test_qwen3_asr_config_default_constructs_thinker_config():

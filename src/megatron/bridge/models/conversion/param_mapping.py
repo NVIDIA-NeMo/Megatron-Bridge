@@ -3290,7 +3290,7 @@ def split_qkv_weights(
         qkv_reshaped = qkv.view(qkv_total_dim, head_size, hidden_size)
     else:
         # NOTE: For standard (BF16/FP16) weights, `head_size` is the usual kv_channels/head_dim.
-        # For blockwise FP8 scale tensors (e.g. Float8BlockwiseQTensor._rowwise_scale_inv),
+        # For blockwise FP8 scale tensors (e.g. the rowwise_scale_inv metadata tensor),
         # the last dim is typically compressed by a block-size factor (e.g. 4096 -> 32).
         # In that case we infer a divisor and scale down `head_size` accordingly so that the
         # same QKV slicing logic works for both weight tensors and their scale tensors.

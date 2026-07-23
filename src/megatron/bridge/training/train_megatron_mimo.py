@@ -401,7 +401,6 @@ def train_megatron_mimo(
         ):
             if train_config.manual_gc and train_config.manual_gc_eval:
                 gc.collect()
-            timers("evaluate", log_level=0).start(barrier=True)
             evaluate_and_print_results(
                 state=global_state,
                 prefix=f"iteration {train_state.step}",
@@ -414,7 +413,6 @@ def train_megatron_mimo(
                 p2p_communicator=multimodule_communicator,
                 pg_collection=multimodule_pg_collection,
             )
-            timers("evaluate").stop()
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect only objects created during eval (gen-0 is cheap).
                 gc.collect(generation=0)

@@ -86,7 +86,11 @@ class QwenVLEnergonTaskEncoderConfig:
 
 @dataclass(kw_only=True)
 class NemotronOmniEnergonTaskEncoderConfig:
-    """Serializable settings for the Nemotron Omni Energon task encoder."""
+    """Serializable settings for the Nemotron Omni Energon task encoder.
+
+    ``visual_keys`` is retained for configuration compatibility, but Omni owns
+    its visual input contract and supports only ``("pixel_values",)``.
+    """
 
     hf_processor_path: str
     max_audio_duration: float
@@ -109,8 +113,8 @@ class NemotronOmniEnergonTaskEncoderConfig:
                 raise ValueError(f"{field_name} must be greater than 0.")
         if self.video_fps <= 0:
             raise ValueError("video_fps must be greater than 0.")
-        if not self.visual_keys or not all(isinstance(key, str) and key for key in self.visual_keys):
-            raise ValueError("visual_keys must contain non-empty strings.")
+        if not self.visual_keys or tuple(self.visual_keys) != ("pixel_values",):
+            raise ValueError("Nemotron Omni visual_keys must be exactly ('pixel_values',).")
 
 
 EnergonTaskEncoderConfig = (

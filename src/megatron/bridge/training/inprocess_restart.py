@@ -48,14 +48,18 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
     ):
         warnings.warn("Set TORCH_CPP_LOG_LEVEL=error to suppress c10d waitForInput timeout warning messages")
 
+    active_world_size = config.active_world_size
+    if active_world_size is None:
+        active_world_size = int(os.getenv("WORLD_SIZE", "1"))
+
     # Layers represents a configuration for a layer of branches at a certain
     # depth in a topology tree constructed by inprocess.rank_assignment.Tree.
     # First layer contains all ranks and it's the root of the topology tree,
     # the second optional layer groups ranks by nodes.
     layers = [
         inprocess.rank_assignment.Layer(
-            min_ranks=config.active_world_size,
-            max_ranks=config.active_world_size,
+            min_ranks=active_world_size,
+            max_ranks=active_world_size,
             flag=inprocess.rank_assignment.LayerFlag.RESERVE,
         )
     ]
@@ -89,7 +93,7 @@ def inprocess_restart(train_fn: Callable, config: InProcessRestartConfig, global
         finalize.append(inprocess.finalize.ThreadedFinalize(timeout=timedelta(seconds=10), fn=torch.cuda.empty_cache))
 
     initialize = inprocess.Compose(
-        inprocess.initialize.RetryController(min_world_size=config.active_world_size),
+        inprocess.initialize.RetryController(min_world_size=active_world_size),
         inprocess.nested_restarter.NestedRestarterHandlingCompleted(),
     )
 

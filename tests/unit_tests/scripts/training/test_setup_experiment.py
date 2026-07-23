@@ -80,6 +80,122 @@ def test_parser_forwards_training_selection_and_overrides():
     ]
 
 
+def test_parser_forwards_and_auto_detects_benchmark_recipe():
+    module = _load_setup_experiment_module()
+
+    args, training_args = module.parse_args(
+        [
+            "--gpus-per-node",
+            "8",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+            "--mode",
+            "pretrain",
+        ]
+    )
+
+    assert args.gpus_per_node == 8
+    assert training_args == [
+        "--recipe",
+        "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "--mode",
+        "pretrain",
+    ]
+    metadata = module.selected_benchmark_recipe(training_args)
+    assert metadata is not None
+    assert metadata.num_gpus == 16
+    assert metadata.family == "qwen"
+    assert metadata.hardware == "h100"
+
+
+def test_library_resolved_recipe_does_not_enable_benchmark_executor():
+    module = _load_setup_experiment_module()
+    recipe_name = "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config"
+    _, training_args = module.parse_args(["--recipe", recipe_name])
+
+    assert module.selected_benchmark_recipe(training_args) is None
+
+
+def test_benchmark_recipe_validates_total_submission_size():
+    module = _load_setup_experiment_module()
+    args, training_args = module.parse_args(
+        [
+            "--nodes",
+            "2",
+            "--gpus-per-node",
+            "4",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        ]
+    )
+
+    with pytest.raises(ValueError, match="requires exactly 16 GPUs"):
+        module._validate_args(args, module.selected_benchmark_recipe(training_args))
+
+
+def test_benchmark_recipe_accepts_user_selected_node_shape():
+    module = _load_setup_experiment_module()
+    args, training_args = module.parse_args(
+        [
+            "--nodes",
+            "4",
+            "--gpus-per-node",
+            "4",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        ]
+    )
+
+    module._validate_args(args, module.selected_benchmark_recipe(training_args))
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
+    [
+        "llama3_8b_sft_8gpu_gb200_bf16_config",
+        "llama3_70b_peft_8gpu_gb200_bf16_config",
+        "qwen3_vl_30b_a3b_pretrain_16gpu_h100_bf16_config",
+        "wan_14b_pretrain_16gpu_gb200_bf16_config",
+    ],
+)
+def test_all_benchmark_tasks_and_modalities_are_accepted_before_submission(recipe_name):
+    module = _load_setup_experiment_module()
+    training_args = ["--recipe", recipe_name]
+    metadata = module.selected_benchmark_recipe(training_args)
+
+    assert metadata is not None
+    module.validate_selected_benchmark_recipe(training_args, metadata)
+
+
+@pytest.mark.parametrize(
+    ("mode", "message"),
+    [
+        ("peft", "Unsupported benchmark mode 'peft'"),
+        ("dora", "fixed LoRA configs"),
+    ],
+)
+def test_invalid_benchmark_peft_mode_is_rejected_before_submission(mode, message):
+    module = _load_setup_experiment_module()
+    training_args = ["--recipe", "llama3_70b_peft_8gpu_h100_bf16_config", "--mode", mode]
+    metadata = module.selected_benchmark_recipe(training_args)
+
+    assert metadata is not None
+    with pytest.raises(ValueError, match=message):
+        module.validate_selected_benchmark_recipe(training_args, metadata)
+
+
 def test_parser_consumes_repeatable_srun_args():
     module = _load_setup_experiment_module()
 
@@ -94,6 +210,118 @@ def test_parser_consumes_repeatable_srun_args():
 
     assert args.srun_args == ["--mpi=pmix", "--container-writable"]
     assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
+
+
+@pytest.mark.parametrize("option", ["-lmc", "--peak-mem-clk", "--peak_mem_clk"])
+def test_parser_consumes_peak_mem_clk(option):
+    module = _load_setup_experiment_module()
+
+    args, training_args = module.parse_args(
+        [
+            option,
+            "2600",
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+        ]
+    )
+
+    assert args.peak_mem_clk == 2600
+    assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
+
+
+@pytest.mark.parametrize(
+    ("requested_peak_mem_clk", "hardware", "expected"),
+    [
+        (None, "vr200", 4752),
+        (None, "h100", None),
+        (2600, "vr200", 2600),
+        (-1, "vr200", None),
+    ],
+)
+def test_peak_mem_clk_resolution(requested_peak_mem_clk, hardware, expected):
+    module = _load_setup_experiment_module()
+    metadata = types.SimpleNamespace(hardware=hardware)
+
+    assert module._resolve_peak_mem_clk(requested_peak_mem_clk, metadata) == expected
+
+
+def test_peak_mem_clk_resolution_without_benchmark_metadata():
+    module = _load_setup_experiment_module()
+
+    assert module._resolve_peak_mem_clk(None, None) is None
+    assert module._resolve_peak_mem_clk(2600, None) == 2600
+
+
+def test_peak_mem_clk_is_applied_once_per_slurm_node():
+    module = _load_setup_experiment_module()
+    executor = types.SimpleNamespace(
+        nodes=2,
+        tunnel=types.SimpleNamespace(job_dir="/job/dir"),
+        setup_lines="existing setup\n",
+    )
+
+    module._configure_slurm_peak_mem_clk(executor, 4752)
+
+    assert executor.setup_lines.startswith("existing setup\n")
+    assert "srun --ntasks=2 --ntasks-per-node=1 --output /job/dir/peak_mem_clock.out" in executor.setup_lines
+    assert "--error /job/dir/peak_mem_clock.err" in executor.setup_lines
+    assert "sudo nvidia-smi -lmc 4752,4752" in executor.setup_lines
+
+
+def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
+    module = _load_setup_experiment_module()
+    configured_clocks = []
+    sentinel_executor = object()
+
+    class _Script:
+        def __init__(self, **_kwargs):
+            pass
+
+    class _Experiment:
+        def __init__(self, _name):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, _task, *, executor, name):
+            assert executor is sentinel_executor
+            assert name == "training"
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = _Script
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: sentinel_executor)
+    monkeypatch.setattr(
+        module,
+        "_configure_slurm_peak_mem_clk",
+        lambda executor, peak_mem_clk: configured_clocks.append((executor, peak_mem_clk)),
+    )
+
+    module.main(
+        [
+            "--nodes",
+            "1",
+            "--gpus-per-node",
+            "8",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--submission-dry-run",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+        ]
+    )
+
+    assert configured_clocks == [(sentinel_executor, 4752)]
 
 
 def test_srun_args_reject_empty_values():
@@ -209,10 +437,63 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
     assert executor.env_vars == {}
-    assert executor.container_env == ["HF_TOKEN"]
-    assert executor.additional_parameters == {"export": "HF_TOKEN"}
+    assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
+    assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
     assert executor.srun_args == []
+
+
+def test_benchmark_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monkeypatch):
+    module = _load_setup_experiment_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.Packager = object
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, training_args = module.parse_args(
+        [
+            "--nodes",
+            "8",
+            "--gpus-per-node",
+            "8",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--srun-arg=--label",
+            "--recipe",
+            "qwen3_235b_a22b_pretrain_64gpu_gb200_bf16_config",
+        ]
+    )
+    metadata = module.selected_benchmark_recipe(training_args)
+    assert metadata is not None
+    module._validate_args(args, metadata)
+    task_environment = module._task_environment()
+
+    executor = module._build_executor(args, [], [], task_environment=task_environment)
+
+    assert executor.kwargs["ntasks_per_node"] == 8
+    assert executor.kwargs["gpus_per_node"] == 8
+    assert executor.srun_args == ["--label"]
+    assert "launcher" not in executor.kwargs
+    assert "segment" not in executor.kwargs
+    assert set(executor.container_env) == {"PYTHONPATH"}
+
+
+def test_training_task_environment_does_not_inject_benchmark_offline_defaults():
+    module = _load_setup_experiment_module()
+    environment = module._task_environment()
+
+    assert "TRANSFORMERS_OFFLINE" not in environment
+    assert "TOKENIZERS_PARALLELISM" not in environment
+    assert "HF_HUB_OFFLINE" not in environment
+    assert environment["PYTHONPATH"].startswith("/opt/Megatron-Bridge/src:")
 
 
 def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tmp_path, monkeypatch):
@@ -246,15 +527,17 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
 
     assert executor.kwargs["ntasks_per_node"] == 8
     assert "gpus_per_node" not in executor.kwargs
-    assert executor.additional_parameters == {"export": "NIL"}
+    assert executor.additional_parameters == {"export": "PATH"}
     assert executor.srun_args == ["--mpi=pmix", "--container-writable"]
 
 
 @pytest.mark.parametrize(
     ("extra_options", "expected_run", "expected_dryrun"),
     [
-        ([], [{"detach": True}], 0),
-        (["--dry_run"], [{"detach": True}], 0),
+        ([], [{"detach": True, "tail_logs": False}], 0),
+        (["--wait"], [{"detach": False, "tail_logs": True}], 0),
+        (["--dry_run"], [{"detach": True, "tail_logs": False}], 0),
+        (["--wait", "--dry_run"], [{"detach": False, "tail_logs": True}], 0),
         (["--submission-dry-run"], [], 1),
         (["--dry-run"], [], 1),
     ],
@@ -304,7 +587,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     sentinel_executor = object()
     module.run.Script = _Script
     module.run.Experiment = _Experiment
-    monkeypatch.setattr(module, "_build_executor", lambda *_args: sentinel_executor)
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: sentinel_executor)
 
     training_args = ["--recipe", "gpt_oss_20b_pretrain_config", "--mode", "pretrain"]
     module.main(
@@ -330,7 +613,7 @@ def test_main_keeps_submission_and_training_dry_runs_separate(
     assert scripts[0].env == {
         "PYTHONPATH": "/opt/Megatron-Bridge/src:/opt/Megatron-Bridge/3rdparty/Megatron-LM:$PYTHONPATH"
     }
-    submission_options = {"--submission-dry-run", "--dry-run"}
+    submission_options = {"--submission-dry-run", "--dry-run", "--wait"}
     expected_training_options = [option for option in extra_options if option not in submission_options]
     assert scripts[0].args == [*training_args, *expected_training_options]
 
@@ -361,7 +644,7 @@ def test_main_shell_quotes_forwarded_training_arguments(monkeypatch):
 
     module.run.Script = _Script
     module.run.Experiment = _Experiment
-    monkeypatch.setattr(module, "_build_executor", lambda *_args: object())
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: object())
     sentinel = "logger.wandb_exp_name=benign; echo should-not-run"
 
     module.main(

@@ -83,8 +83,8 @@ export PYTHONPATH="${MBRIDGE_ROOT}:${MBRIDGE_ROOT}/scripts/performance${PYTHONPA
 # ──────────────────────────────────────────────────────────────────────
 # Sanity checks
 # ──────────────────────────────────────────────────────────────────────
-if [ ! -f "${MBRIDGE_ROOT}/scripts/performance/run_script.py" ]; then
-    echo "ERROR: run_script.py not found at ${MBRIDGE_ROOT}/scripts/performance/run_script.py"
+if [ ! -f "${MBRIDGE_ROOT}/scripts/performance/bootstrap.py" ]; then
+    echo "ERROR: bootstrap.py not found at ${MBRIDGE_ROOT}/scripts/performance/bootstrap.py"
     echo "       Set MBRIDGE_ROOT to the Megatron-Bridge directory inside the container."
     exit 1
 fi
@@ -96,7 +96,7 @@ cd "${MBRIDGE_ROOT}"
 # ──────────────────────────────────────────────────────────────────────
 
 # Hydra-style overrides appended after the argparse flags.
-# run_script.py passes unknown args through to set_cli_overrides().
+# bootstrap.py forwards unknown args to the selected training entrypoint.
 HYDRA_OVERRIDES=(
     # Force FP32 reduction to fix NaN grad norm issues on single-GPU runs.
     mixed_precision.grad_reduce_in_fp32=true
@@ -129,7 +129,7 @@ fi
 # Build the command (after nsys may have patched MAX_STEPS)
 # ──────────────────────────────────────────────────────────────────────
 RUN_CMD=(
-    scripts/performance/run_script.py
+    scripts/performance/bootstrap.py
     --model_family_name  "${MODEL_FAMILY}"
     --model_recipe_name  "${MODEL_RECIPE}"
     --gpu                "${GPU_TYPE}"

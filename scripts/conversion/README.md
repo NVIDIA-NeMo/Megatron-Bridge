@@ -9,8 +9,9 @@ Slurm submission and selects one of two conversion backends:
 - `--device gpu`: distributed conversion with one process per GPU and TP, PP,
   EP, and ETP support.
 
-Run `./scripts/conversion/convert.sh import --help` or
-`./scripts/conversion/convert.sh export --help` for the complete CLI.
+Run `./scripts/conversion/convert.sh import --help`,
+`./scripts/conversion/convert.sh export --help`, or
+`./scripts/conversion/convert.sh roundtrip --help` for the complete CLI.
 
 ## Local CPU conversion
 
@@ -40,6 +41,10 @@ host memory and CPUs for large checkpoints rather than increasing `--nodes`.
 The GPU backend uses NeMo Run's torchrun launcher for local execution and
 srun-native tasks for Slurm. Users should not wrap the command in `torchrun`,
 `srun`, or `sbatch`.
+
+The requested topology must satisfy
+`nodes * gpus-per-node == TP * PP * EP`; conversion does not create redundant
+data-parallel replicas. `ETP * EP * PP` must also divide the total GPU count.
 
 ```bash
 export HF_TOKEN="$(<${HOME}/HF_TOKEN)"
@@ -77,6 +82,32 @@ cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
+## Distributed round-trip validation
+
+Like `import` and `export`, the `roundtrip` command runs the shared
+`scripts/conversion/run_conversion.py` worker through the NeMo Run local or
+Slurm executor. It compares weights after the Hugging Face → Megatron → Hugging
+Face conversion and requires the GPU backend. The standalone
+`examples/conversion/hf_megatron_roundtrip_multi_gpu.py` example remains
+available for direct `torch.distributed.run` usage.
+
+```bash
+./scripts/conversion/convert.sh roundtrip \
+  --executor local \
+  --device gpu \
+  --gpus-per-node 8 \
+  --hf-model Qwen/Qwen3-30B-A3B \
+  --tp 1 --pp 1 --ep 8 --etp 1 \
+  --trust-remote-code
+```
+
+`--hf-model` and `--hf-model-id` are aliases. Round-trip validation converts the
+Hugging Face weights into a distributed Megatron model, exports them back in
+memory, and compares them with the original weights. It does not read or write
+Megatron checkpoints or write a Hugging Face output; use the `import` and
+`export` commands for persistent conversion. For long multi-node validations, set
+`--distributed-timeout-minutes` to raise the NCCL process-group timeout.
+
 ## CPU conversion on Slurm
 
 CPU mode submits one task and does not request GPUs or GRES:
@@ -86,7 +117,6 @@ CPU mode submits one task and does not request GPUs or GRES:
   --executor slurm \
   --device cpu \
   --nodes 1 \
-  --cpus-per-task 64 \
   --mem 1T \
   --account ACCOUNT \
   --partition CPU_PARTITION \

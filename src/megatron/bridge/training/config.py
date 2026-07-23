@@ -948,6 +948,13 @@ class InProcessRestartConfig:
 class ConfigContainer(Container):
     """Top-level container holding all configuration objects."""
 
+    env_vars: dict[str, str | int | float | bool] = field(default_factory=dict)
+    """Environment variable defaults applied before runtime config finalization.
+
+    Values already present in the process environment take precedence, allowing
+    launchers and users to override recipe defaults.
+    """
+
     rng: RNGConfig = field(default_factory=RNGConfig)
     rerun_state_machine: RerunStateMachineConfig = field(default_factory=RerunStateMachineConfig)
     train: TrainingConfig
@@ -1763,6 +1770,27 @@ def _get_key_config_values(config_obj: Any) -> Dict[str, Any]:
     return values
 
 
+def apply_environment_variables(cfg: ConfigContainer) -> None:
+    """Apply recipe environment variable defaults to the current process.
+
+    Existing process values are preserved so explicit launcher or shell
+    settings take precedence over recipe defaults.
+
+    Args:
+        cfg: Configuration container with environment variable defaults.
+
+    Raises:
+        ValueError: If an environment variable name is empty.
+        TypeError: If an environment variable value is not a scalar.
+    """
+    for name, value in cfg.env_vars.items():
+        if not isinstance(name, str) or not name:
+            raise ValueError("Environment variable names must be non-empty strings.")
+        if not isinstance(value, (str, int, float, bool)):
+            raise TypeError(f"Environment variable {name!r} must have a scalar value, got {type(value).__name__}.")
+        os.environ.setdefault(name, str(value))
+
+
 def runtime_config_update(cfg: ConfigContainer) -> None:
     """Apply runtime configuration updates prior to initialization.
 
@@ -1779,6 +1807,9 @@ def runtime_config_update(cfg: ConfigContainer) -> None:
     Args:
         cfg: Configuration container to update
     """
+    # Environment settings may affect runtime finalization and must be applied first.
+    apply_environment_variables(cfg)
+
     # Apply mixed precision configuration if provided
     if cfg.mixed_precision is not None:
         if isinstance(cfg.mixed_precision, str):
@@ -1808,6 +1839,7 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
     This function cherry-picks the safe, model-agnostic parts:
 
     Keeps (safe for MegatronMIMO):
+    - Recipe environment variable defaults
     - ``data_parallel_size = 1`` (MegatronMIMO-specific hard-code)
     - Sub-config finalization (optimizer, ddp, logger, train, scheduler, checkpoint)
     - Distributed optimizer sync validation
@@ -1820,6 +1852,8 @@ def megatron_mimo_runtime_config_update(cfg: ConfigContainer) -> None:
 
     See ``playground/runtime_config_update_analysis.md`` for the full analysis.
     """
+    apply_environment_variables(cfg)
+
     if cfg.train.num_epochs is not None:
         raise ValueError("num_epochs is not supported for MegatronMIMO datasets")
 

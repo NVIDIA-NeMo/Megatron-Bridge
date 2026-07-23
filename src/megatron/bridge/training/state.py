@@ -478,8 +478,20 @@ class GlobalState:
         # The top-level tracker is overwritten after every checkpoint. A restart must
         # not reuse the iteration cached by an earlier invocation in this process.
         read_train_state.cache_clear()
+        if self.cfg is not None:
+            model_config = getattr(self.cfg.model, "transformer", self.cfg.model)
+            for callback_name in (
+                "finalize_model_grads_func",
+                "grad_scale_func",
+                "no_sync_func",
+                "grad_sync_func",
+                "param_sync_func",
+            ):
+                setattr(model_config, callback_name, None)
         self._timers = None
         self._train_state = None
+        if self._tensorboard_logger is not None:
+            self._tensorboard_logger.close()
         self._tensorboard_logger = None
         self._wandb_logger = None
         self._mlflow_logger = None

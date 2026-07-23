@@ -17,7 +17,8 @@ from typing import Tuple
 
 import torch
 import torch.distributed as dist
-import transformer_engine_torch as tex
+
+from megatron.bridge.training.utils.packed_seq_utils import get_thd_cp_partition_indices
 
 
 def grid_sizes_calculation(
@@ -116,16 +117,13 @@ def thd_split_inputs_cp(
     x_bs = x.transpose(0, 1).contiguous()  # [B, S, ...]
 
     total_S = x_bs.size(1)
-    cp_size = dist.get_world_size(cp_group)
-    cp_rank = dist.get_rank(cp_group)
-
-    # Compute this rank's THD partition indices (same API as during gather)
-    idx = tex.thd_get_partitioned_indices(
-        cu_seqlens_q_padded,  # int32 offsets
-        total_S,
-        cp_size,
-        cp_rank,
-    ).to(device=x_bs.device, dtype=torch.long)  # [S_local]
+    # Compute this rank's THD partition indices through MCore's public CP API.
+    idx = get_thd_cp_partition_indices(
+        cu_seqlens_q_padded,
+        total_tokens=total_S,
+        cp_group=cp_group,
+        device=x_bs.device,
+    )
 
     # Take the shard along sequence dim
     x_local_bs = x_bs.index_select(dim=1, index=idx).contiguous()  # [B, S_local, ...]

@@ -268,7 +268,19 @@ def build_train_valid_test_data_loaders(
         cfg=cfg, build_train_valid_test_datasets_provider=build_train_valid_test_datasets_provider
     )
 
-    drop_last = cfg.train.num_epochs is None
+    drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
+    if (
+        train_ds is not None
+        and cfg.dataset.dataloader_type == "batch"
+        and not drop_last
+        and len(train_ds) % cfg.train.global_batch_size != 0
+        and not isinstance(cfg.dataset, GPTSFTDatasetConfig)
+    ):
+        raise ValueError(
+            'dataloader_type="batch" with drop_last=False requires GPTSFTDatasetConfig because incomplete '
+            "global batches use negative indices that only GPT SFT datasets convert to loss-masked padding. "
+            "Use drop_last=True for other dataset providers."
+        )
 
     # Check that the train dataset has at least one global batch of samples.
     if (
@@ -296,6 +308,14 @@ def build_train_valid_test_data_loaders(
         eval_dp_group = dp_group
     eval_dp_rank = torch.distributed.get_rank(group=eval_dp_group)
     eval_dp_size = torch.distributed.get_world_size(group=eval_dp_group)
+    # Text SFT configs call this field ``seed`` while Megatron GPT configs call
+    # it ``random_seed``. Fall back to the unoffset config RNG seed so batch
+    # sampling never depends on the pipeline-rank-specific torch global seed.
+    sampler_seed = getattr(cfg.dataset, "seed", None)
+    if sampler_seed is None:
+        sampler_seed = getattr(cfg.dataset, "random_seed", None)
+    if sampler_seed is None:
+        sampler_seed = getattr(getattr(cfg, "rng", None), "seed", None)
 
     # Build dataloders.
     train_dataloader = build_pretraining_data_loader(
@@ -313,6 +333,7 @@ def build_train_valid_test_data_loaders(
         data_parallel_size=dp_size,
         global_batch_size=cfg.train.global_batch_size,
         drop_last=drop_last,
+        seed=sampler_seed,
     )
     eval_gbs = (
         cfg.validation.eval_global_batch_size
@@ -339,6 +360,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            seed=sampler_seed,
         )
     elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
@@ -356,6 +378,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            seed=sampler_seed,
         )
 
     if cfg.validation.eval_iters > 0:
@@ -373,6 +396,7 @@ def build_train_valid_test_data_loaders(
             data_parallel_rank=eval_dp_rank,
             data_parallel_size=eval_dp_size,
             global_batch_size=eval_gbs,
+            seed=sampler_seed,
         )
 
     # Flags to know if we need to do training/validation/testing.
