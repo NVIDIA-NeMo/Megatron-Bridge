@@ -6,16 +6,17 @@ the vision tower, both multimodal projectors, and the sparse-MoE language
 backbone. The vision stack is replicated across tensor-parallel ranks.
 
 MiniMax-M3's Lightning Indexer is not yet executed by Megatron: the text model
-uses full causal attention. When saving back to Hugging Face, the original
-checkpoint is required so those 228 source-only indexer tensors can be
-preserved byte-for-byte alongside the converted VLM weights. These tensors are
-not updated during Megatron training, so a post-training HF export keeps the
-source indexer rather than a trained sparse-attention indexer.
+uses full causal attention. Its 228 tensors are stored as frozen
+MiniMax-specific model state so they survive native checkpointing and
+Hugging Face export without access to the original HF checkpoint. They are
+not updated during Megatron training, so a post-training export keeps the
+imported indexer rather than a trained sparse-attention indexer.
 
-The bundled H100 pretraining and SQuAD SFT recipes remain text-only and freeze
-the unused vision tower and projectors. VLM training requires a multimodal
+The bundled H100 pretraining and SQuAD SFT recipes remain text-only: they use
+the checkpoint-compatible text provider and do not instantiate the vision,
+projector, or Lightning Indexer state. VLM training requires a multimodal
 dataset and the VLM training step; this change targets complete VLM checkpoint
-import and source-backed export.
+import and export.
 
 ## Hardware requirements
 
@@ -58,13 +59,12 @@ writing a second 869 GB copy.
 bash examples/models/minimax/minimax_m3/slurm_conversion.sh
 ```
 
-Success is reported only when all bridged language, vision, and projector
-parameters match within the round-trip script's standard tolerances. This is
-an in-memory verification and does not include the passthrough Lightning
-Indexer tensors. Persisted Hugging Face export is supported only from a bridge
-created with the original HF checkpoint; config-only CPU export cannot
-reconstruct the unsupported indexer. Pass optional launcher settings after
-the wrapper, such as `--srun-arg=--mpi=pmix` when the cluster requires it.
+Success is reported only when all bridged language, vision, projector, and
+Lightning Indexer parameters match within the round-trip script's standard
+tolerances. The Indexer weights use the same mapped model state for in-memory
+round trips, native checkpoints, and persisted Hugging Face export. Pass
+optional launcher settings after the wrapper, such as
+`--srun-arg=--mpi=pmix` when the cluster requires it.
 
 ## Inference
 

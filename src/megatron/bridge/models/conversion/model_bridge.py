@@ -416,11 +416,6 @@ class MegatronModelBridge(
 
     SUPPORTS_HF_PRETRAINED_EXPORT: ClassVar[bool] = True
 
-    # Composite bridges may require access to the original HF checkpoint during
-    # export so source-only components can be preserved. Such bridges cannot use
-    # the config-only CPU export path.
-    REQUIRES_HF_SOURCE_FOR_EXPORT: ClassVar[bool] = False
-
     # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider
@@ -1225,27 +1220,6 @@ class MegatronModelBridge(
             if converted_weights is not None:
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
-
-    def stream_hf_export_passthrough(
-        self,
-        hf_pretrained: HFPreTrained,
-        *,
-        cpu: bool = True,
-    ) -> Iterable[HFWeightTuple]:
-        """Yield source tensors that a composite bridge must preserve on HF save.
-
-        Most bridges map every tensor and return an empty iterator. A bridge
-        with a deliberately unsupported source component may override this
-        hook to overlay that narrow component from the original checkpoint.
-
-        Args:
-            hf_pretrained: Wrapper providing the original Hugging Face state.
-            cpu: Move yielded tensors to CPU when True.
-
-        Returns:
-            Source tensors to prepend to the converted-weight stream.
-        """
-        return iter(())
 
     @torch.no_grad()
     def stream_weights_megatron_to_hf(

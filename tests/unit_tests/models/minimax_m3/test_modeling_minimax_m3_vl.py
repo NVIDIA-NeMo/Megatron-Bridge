@@ -18,11 +18,125 @@ import pytest
 import torch
 
 from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import (
+    MiniMaxM3LightningIndexerState,
     MiniMaxM3ProjectorMLP,
     MiniMaxM3VisionModel,
     MiniMaxM3VLModel,
     _apply_vision_rope,
 )
+
+
+def test_lightning_indexer_state_has_exact_frozen_weight_shapes():
+    config = SimpleNamespace(
+        hidden_size=16,
+        index_n_heads=2,
+        index_head_dim=4,
+        params_dtype=torch.bfloat16,
+    )
+
+    indexer = MiniMaxM3LightningIndexerState(config)
+
+    assert indexer.q_proj.weight.shape == (8, 16)
+    assert indexer.k_proj.weight.shape == (4, 16)
+    assert indexer.q_norm.weight.shape == (4,)
+    assert indexer.k_norm.weight.shape == (4,)
+    assert all(parameter.dtype == torch.bfloat16 for parameter in indexer.parameters())
+    assert all(not parameter.requires_grad for parameter in indexer.parameters())
+
+
+def test_wrapper_keeps_only_indexers_owned_by_local_pipeline_layers():
+    class LocalLayer(torch.nn.Module):
+        def __init__(self, layer_number: int) -> None:
+            super().__init__()
+            self.layer_number = layer_number
+
+    class LanguageModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.decoder = torch.nn.Module()
+            self.decoder.layers = torch.nn.ModuleList([LocalLayer(1), LocalLayer(4)])
+            self.shared_embedding_or_output_weight = None
+
+    config = SimpleNamespace(
+        hidden_size=16,
+        index_n_heads=2,
+        index_head_dim=4,
+        params_dtype=torch.bfloat16,
+        lightning_indexer_layers=[1, 3],
+        provide_language_model=lambda **_kwargs: LanguageModel(),
+        share_embeddings_and_output_weights=False,
+    )
+
+    model = MiniMaxM3VLModel(config, pre_process=False)
+
+    assert list(model.lightning_indexers) == ["3"]
+    assert set(model.state_dict()) == {
+        "lightning_indexers.3.q_proj.weight",
+        "lightning_indexers.3.k_proj.weight",
+        "lightning_indexers.3.q_norm.weight",
+        "lightning_indexers.3.k_norm.weight",
+    }
+
+
+def test_lightning_indexer_distributed_checkpoint_round_trip(tmp_path):
+    from megatron.core import parallel_state
+    from megatron.core.dist_checkpointing import load, save
+
+    class LocalLayer(torch.nn.Module):
+        def __init__(self, layer_number: int) -> None:
+            super().__init__()
+            self.layer_number = layer_number
+
+    class LanguageModel(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.decoder = torch.nn.Module()
+            self.decoder.layers = torch.nn.ModuleList([LocalLayer(2)])
+            self.shared_embedding_or_output_weight = None
+
+    def make_model() -> MiniMaxM3VLModel:
+        config = SimpleNamespace(
+            hidden_size=16,
+            index_n_heads=2,
+            index_head_dim=4,
+            params_dtype=torch.bfloat16,
+            lightning_indexer_layers=[1],
+            provide_language_model=lambda **_kwargs: LanguageModel(),
+            share_embeddings_and_output_weights=False,
+        )
+        return MiniMaxM3VLModel(config, pre_process=False)
+
+    rendezvous = tmp_path / "dist_init"
+    checkpoint_dir = tmp_path / "checkpoint"
+    checkpoint_dir.mkdir()
+    torch.distributed.init_process_group(
+        "gloo",
+        init_method=f"file://{rendezvous}",
+        rank=0,
+        world_size=1,
+    )
+    parallel_state.initialize_model_parallel()
+
+    try:
+        source = make_model()
+        with torch.no_grad():
+            for parameter_idx, parameter in enumerate(source.lightning_indexers.parameters()):
+                values = torch.arange(parameter.numel(), dtype=torch.float32).reshape(parameter.shape)
+                parameter.copy_(values.add(parameter_idx).to(parameter.dtype))
+        expected_state = {name: tensor.clone() for name, tensor in source.state_dict().items()}
+        save(source.sharded_state_dict(), checkpoint_dir, async_sharded_save=False)
+
+        destination = make_model()
+        loaded_state = load(destination.sharded_state_dict(), checkpoint_dir)
+        load_result = destination.load_state_dict(loaded_state, strict=True)
+
+        assert not load_result.missing_keys
+        assert not load_result.unexpected_keys
+        for name, expected in expected_state.items():
+            torch.testing.assert_close(destination.state_dict()[name], expected, rtol=0, atol=0)
+    finally:
+        parallel_state.destroy_model_parallel()
+        torch.distributed.destroy_process_group()
 
 
 def _vision_config() -> SimpleNamespace:

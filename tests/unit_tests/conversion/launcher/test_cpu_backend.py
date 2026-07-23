@@ -7,8 +7,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_DIR = REPO_ROOT / "scripts" / "conversion"
@@ -79,27 +77,3 @@ def test_import_preserves_model_id_and_forwards_revision():
             },
         ),
     ]
-
-
-def test_export_rejects_source_dependent_bridge_before_preparing_output(tmp_path):
-    module, calls = _load_cpu_backend()
-    megatron_path = tmp_path / "megatron"
-    megatron_path.mkdir()
-    (megatron_path / "run_config.yaml").write_text("model: {}\n")
-
-    model_bridge = types.SimpleNamespace(REQUIRES_HF_SOURCE_FOR_EXPORT=True)
-    bridge = types.SimpleNamespace(_model_bridge=model_bridge)
-    module.AutoBridge.from_auto_config = lambda *_args, **_kwargs: bridge
-
-    with pytest.raises(NotImplementedError, match="original Hugging Face checkpoint"):
-        module.export_checkpoint(
-            hf_model="hf/model",
-            megatron_path=str(megatron_path),
-            hf_path=str(tmp_path / "hf-output"),
-            show_progress=False,
-            strict=True,
-            trust_remote_code=False,
-            overwrite=False,
-        )
-
-    assert not any(call[0] == "prepare_output_directory" for call in calls)

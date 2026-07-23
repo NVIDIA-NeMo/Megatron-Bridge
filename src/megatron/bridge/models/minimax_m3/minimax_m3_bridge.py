@@ -13,9 +13,9 @@
 # limitations under the License.
 
 import copy
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field, fields, replace
 from functools import partial
-from typing import Any, Iterable
+from typing import Any
 
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
@@ -26,7 +26,7 @@ from megatron.core.transformer.transformer_block import TransformerBlockSubmodul
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     GatedMLPMapping,
@@ -170,6 +170,10 @@ class MiniMaxM3VLModelProvider(MiniMaxM3ModelProvider):
     spatial_merge_size: int = 2
     temporal_patch_size: int = 2
 
+    lightning_indexer_layers: list[int] = field(default_factory=list)
+    index_n_heads: int = 4
+    index_head_dim: int = 128
+
     freeze_language_model: bool = False
     freeze_vision_model: bool = False
     freeze_vision_projection: bool = False
@@ -202,6 +206,20 @@ class MiniMaxM3VLModelProvider(MiniMaxM3ModelProvider):
             pre_process=pre_process,
             post_process=post_process,
             vp_stage=vp_stage,
+        )
+
+    def to_text_provider(self) -> MiniMaxM3ModelProvider:
+        """Return the equivalent text-only provider.
+
+        This preserves the lightweight model shape and native checkpoint keys
+        used by the existing text pretraining and SFT recipes.
+        """
+        return MiniMaxM3ModelProvider(
+            **{
+                provider_field.name: getattr(self, provider_field.name)
+                for provider_field in fields(MiniMaxM3ModelProvider)
+                if provider_field.init
+            }
         )
 
 
@@ -239,19 +257,16 @@ class MiniMaxM3Bridge(MegatronModelBridge):
 
     Known limitations:
         - The lightning-indexer block-sparse attention branch
-          (``self_attn.index_{q,k}_{proj,norm}``) is not mapped; the Megatron
-          model runs full causal attention on every layer. Selection happens at
-          ``index_block_size`` granularity with ``index_topk_blocks`` kept per
-          query, so full attention is mathematically identical for sequences up
-          to ``index_topk_blocks * index_block_size`` tokens (2048 for the
+          (``self_attn.index_{q,k}_{proj,norm}``) is stored as frozen model
+          state but is not executed; Megatron runs full causal attention on
+          every layer. Selection happens at ``index_block_size`` granularity
+          with ``index_topk_blocks`` kept per query, so full attention is
+          mathematically identical for sequences up to
+          ``index_topk_blocks * index_block_size`` tokens (2048 for the
           released checkpoint) and an approximation beyond that.
         - MTP (Multi-Token Prediction) modules are not mapped. The released
           checkpoint advertises ``num_nextn_predict_layers`` in its config but
           ships no ``mtp.*`` weights, so ``mtp_num_layers`` is forced to None.
-        - Persisted Hugging Face export requires the original source checkpoint.
-          Converted language/vision/projector tensors replace their source
-          values, while the unsupported lightning-indexer tensors are preserved
-          byte-for-byte. Config-only CPU export is therefore unsupported.
         - The vision forward matches the native Transformers implementation,
           which concatenates multiple image/video patch grids into one
           bidirectional attention sequence. Segmented multi-image/video
@@ -262,8 +277,6 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         >>> bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code=True)
         >>> provider = bridge.to_megatron_provider()
     """
-
-    REQUIRES_HF_SOURCE_FOR_EXPORT = True
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
@@ -436,17 +449,51 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         provider.projector_hidden_size = int(_config_value(hf_config, "projector_hidden_size", provider.hidden_size))
         provider.multimodal_projector_bias = bool(_config_value(hf_config, "multimodal_projector_bias", True))
 
+        sparse_config = _config_value(text_config, "sparse_attention_config", {}) or {}
+        layer_types = _config_value(text_config, "layer_types")
+        if layer_types is not None:
+            provider.lightning_indexer_layers = [
+                layer_idx for layer_idx, layer_type in enumerate(layer_types) if layer_type == "minimax_m3_sparse"
+            ]
+        else:
+            sparse_attention_freq = _config_value(sparse_config, "sparse_attention_freq", []) or []
+            provider.lightning_indexer_layers = [
+                layer_idx for layer_idx, enabled in enumerate(sparse_attention_freq) if enabled
+            ]
+        provider.index_n_heads = int(
+            _config_value(
+                text_config,
+                "index_n_heads",
+                _config_value(sparse_config, "sparse_num_index_heads", provider.index_n_heads),
+            )
+        )
+        provider.index_head_dim = int(
+            _config_value(
+                text_config,
+                "index_head_dim",
+                _config_value(sparse_config, "sparse_index_dim", provider.index_head_dim),
+            )
+        )
+
         return provider
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict[str, Any]:
-        """Build the nested MiniMax-M3 VLM config used for reference-backed export."""
+        """Build the nested MiniMax-M3 VLM config used for Hugging Face export."""
         hf_config = (
             copy.deepcopy(provider.hf_config_dict)
             if isinstance(provider, MiniMaxM3VLModelProvider) and provider.hf_config_dict
             else {}
         )
         text_config = copy.deepcopy(hf_config.get("text_config", {}))
+        moe_layer_freq = list(provider.moe_layer_freq)
+        rope_parameters = copy.deepcopy(text_config.get("rope_parameters", {})) or {}
+        rope_parameters.update(
+            {
+                "rope_theta": provider.rotary_base,
+                "partial_rotary_factor": provider.rotary_percent,
+            }
+        )
         text_config.update(
             {
                 "architectures": ["MiniMaxM3SparseForCausalLM"],
@@ -472,7 +519,9 @@ class MiniMaxM3Bridge(MegatronModelBridge):
                 "n_shared_experts": 1 if provider.moe_shared_expert_intermediate_size else 0,
                 "scoring_func": provider.moe_router_score_function,
                 "use_routing_bias": provider.moe_router_enable_expert_bias,
-                "moe_layer_freq": provider.moe_layer_freq,
+                "moe_layer_freq": moe_layer_freq,
+                "mlp_layer_types": ["sparse" if enabled else "dense" for enabled in moe_layer_freq],
+                "rope_parameters": rope_parameters,
                 "swiglu_alpha": 1.702,
                 "swiglu_limit": provider.activation_func_clamp_value,
                 "routed_scaling_factor": provider.moe_router_topk_scaling_factor,
@@ -481,6 +530,30 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         text_config.setdefault("max_position_embeddings", provider.seq_length)
 
         if isinstance(provider, MiniMaxM3VLModelProvider):
+            sparse_layer_indices = set(provider.lightning_indexer_layers)
+            sparse_attention_freq = [
+                int(layer_idx in sparse_layer_indices) for layer_idx in range(provider.num_layers)
+            ]
+            text_config.update(
+                {
+                    "index_n_heads": provider.index_n_heads,
+                    "index_head_dim": provider.index_head_dim,
+                    "layer_types": [
+                        "minimax_m3_sparse" if enabled else "full_attention" for enabled in sparse_attention_freq
+                    ],
+                }
+            )
+            sparse_config = copy.deepcopy(text_config.get("sparse_attention_config", {}))
+            sparse_config.update(
+                {
+                    "sparse_num_index_heads": provider.index_n_heads,
+                    "sparse_index_dim": provider.index_head_dim,
+                    "sparse_attention_freq": sparse_attention_freq,
+                    "sparse_disable_index_value": sparse_attention_freq,
+                }
+            )
+            text_config["sparse_attention_config"] = sparse_config
+
             vision_config = copy.deepcopy(hf_config.get("vision_config", _config_to_dict(provider.vision_config)))
             vision_config.update(
                 {
@@ -513,29 +586,11 @@ class MiniMaxM3Bridge(MegatronModelBridge):
                 "architectures": ["MiniMaxM3SparseForConditionalGeneration"],
                 "model_type": "minimax_m3_vl",
                 "text_config": text_config,
+                "tie_word_embeddings": provider.share_embeddings_and_output_weights,
                 "torch_dtype": dtype_name,
             }
         )
         return hf_config
-
-    def stream_hf_export_passthrough(
-        self,
-        hf_pretrained: PreTrainedCausalLM,
-        *,
-        cpu: bool = True,
-    ) -> Iterable[HFWeightTuple]:
-        """Preserve unsupported Lightning Indexer weights from the source checkpoint."""
-        if not hasattr(hf_pretrained, "state"):
-            raise NotImplementedError(
-                "MiniMax-M3 VLM export requires the original Hugging Face checkpoint "
-                "to preserve Lightning Indexer tensors."
-            )
-
-        for name in hf_pretrained.state:
-            if not (name.startswith("language_model.") and ".self_attn.index_" in name):
-                continue
-            tensor = hf_pretrained.state[name].detach()
-            yield HFWeightTuple(name, tensor.cpu() if cpu else tensor)
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return parameter mappings for the MiniMax-M3 VLM.
@@ -606,6 +661,22 @@ class MiniMaxM3Bridge(MegatronModelBridge):
                 AutoMapping(
                     megatron_param=f"{language_prefix}decoder.layers.*.mlp.experts.linear_fc2.weight*",
                     hf_param="language_model.model.layers.*.block_sparse_moe.experts.*.w2.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="lightning_indexers.*.q_proj.weight",
+                    hf_param="language_model.model.layers.*.self_attn.index_q_proj.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="lightning_indexers.*.k_proj.weight",
+                    hf_param="language_model.model.layers.*.self_attn.index_k_proj.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="lightning_indexers.*.q_norm.weight",
+                    hf_param="language_model.model.layers.*.self_attn.index_q_norm.weight",
+                ),
+                ReplicatedMapping(
+                    megatron_param="lightning_indexers.*.k_norm.weight",
+                    hf_param="language_model.model.layers.*.self_attn.index_k_norm.weight",
                 ),
                 ReplicatedMapping(
                     megatron_param="vision_tower.**",

@@ -6,7 +6,7 @@
 
 | Variant | Hugging Face ID | Notes |
 |---------|-----------------|-------|
-| MiniMax-M3 | `MiniMaxAI/MiniMax-M3` | VLM import and source-backed HF export (bf16 weights) |
+| MiniMax-M3 | `MiniMaxAI/MiniMax-M3` | VLM import and HF export (bf16 weights) |
 
 ## Architecture Notes
 
@@ -21,9 +21,9 @@
 ## Known Limitations
 
 - **Full attention only.** The lightning-indexer block-sparse attention branch (`self_attn.index_*` weights) is not executed by Megatron; the model runs full causal attention on every layer. Block selection keeps `index_topk_blocks * index_block_size` (2048) key tokens per query, so full attention is mathematically identical up to that sequence length and an approximation beyond it.
-- **Source-backed export.** Persisted HF export requires the original HF checkpoint so the 228 unsupported lightning-indexer tensors can be preserved. Config-only CPU export is unsupported. After training, those preserved tensors are unchanged from the source and therefore are not trained alongside the converted backbone.
+- **Frozen Lightning Indexer state.** The 228 lightning-indexer tensors are imported, checkpointed, and exported, but are not executed or updated by Megatron. A post-training HF export therefore combines the trained full-attention backbone with the unchanged imported indexer weights.
 - **Combined vision attention.** As in the native Transformers implementation, patches from multiple image/video grids share one bidirectional vision-attention sequence; segmented attention between media items is not yet implemented.
-- **Bundled recipes remain text-only.** The H100 pretraining and SQuAD SFT recipes freeze the unused vision tower and projectors. VLM training requires a multimodal dataset and the VLM training step.
+- **Bundled recipes remain text-only.** The H100 pretraining and SQuAD SFT recipes convert the VLM config to the checkpoint-compatible text provider and do not instantiate the vision, projector, or Lightning Indexer state. VLM training requires a multimodal dataset and the VLM training step.
 - **MTP modules are not mapped.** The released checkpoint advertises `num_nextn_predict_layers` in its config but ships no `mtp.*` weights.
 - **Auxiliary-loss scoring differs for training.** The recipes use MCore's token-global load-balancing loss over normalized sigmoid scores. Hugging Face leaves its optional router loss disabled by default and uses softmax scores when enabled.
 - The MXFP8 variant (`MiniMaxAI/MiniMax-M3-MXFP8`) is not supported; use the bf16 checkpoint.
@@ -37,11 +37,10 @@ bridge = AutoBridge.from_hf_pretrained("MiniMaxAI/MiniMax-M3", trust_remote_code
 provider = bridge.to_megatron_provider()
 ```
 
-The bridge imports the language, vision, and projector tensors. Saving a
-format-complete Hugging Face checkpoint is supported when the bridge was
-created from the original HF checkpoint; converted tensors replace their
-source values and the unsupported lightning-indexer tensors are copied from
-that source.
+The bridge imports and exports the language, vision, projector, and Lightning
+Indexer tensors. The Indexer weights are stored as frozen MiniMax-specific
+model state, so a native Megatron checkpoint can be exported to Hugging Face
+without access to the original Hugging Face checkpoint.
 
 ## Examples
 

@@ -15,7 +15,6 @@
 """Input/output checkpointing."""
 
 import contextlib
-import itertools
 import os
 import random
 import shutil
@@ -937,8 +936,6 @@ def _save_hf_weights(
         show_progress=False,
         merge_adapter_weights=True,
     )
-    passthrough = model_bridge.stream_hf_export_passthrough(bridge.hf_pretrained, cpu=True)
-    raw_generator = itertools.chain(passthrough, raw_generator)
 
     # Step 2 depends on async behaviour
     state_source = getattr(bridge.hf_pretrained, "state", None)

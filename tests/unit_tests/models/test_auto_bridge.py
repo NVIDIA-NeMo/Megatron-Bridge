@@ -329,40 +329,6 @@ class TestAutoBridge:
 
         assert source.save_generator_kwargs["ignored_source_key_prefixes"] is None
 
-    def test_save_hf_weights_prepends_source_passthrough(self, tmp_path):
-        source = _make_fake_source(present=set())
-        saved_pairs = []
-
-        def capture_generator(generator, _path, **_kwargs):
-            saved_pairs.extend(generator)
-
-        source.save_generator.side_effect = capture_generator
-        hf_pretrained = SimpleNamespace(
-            config=SimpleNamespace(),
-            state=SimpleNamespace(source=source),
-        )
-
-        class CompositeBridge:
-            def stream_weights_megatron_to_hf(self, *_args, **_kwargs):
-                return iter([("language.weight", torch.ones(1))])
-
-            def stream_hf_export_passthrough(self, *_args, **_kwargs):
-                return iter([("indexer.weight", torch.zeros(1))])
-
-        bridge_obj = object.__new__(AutoBridge)
-        bridge_obj.hf_pretrained = hf_pretrained
-        composite_bridge = CompositeBridge()
-        model_instance = SimpleNamespace(config=SimpleNamespace(mtp_num_layers=1))
-
-        with (
-            patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock, return_value=composite_bridge),
-            patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
-            patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
-        ):
-            bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
-
-        assert [name for name, _tensor in saved_pairs] == ["indexer.weight", "language.weight"]
-
     def _run_save_hf_weights(self, source, tmp_path, *, mtp_num_layers):
         """Drive ``save_hf_weights`` with a stubbed bridge/model so the only
         behavior under test is the MTP prefix-resolution wiring.
@@ -381,7 +347,6 @@ class TestAutoBridge:
 
         fake_model_bridge = Mock()
         fake_model_bridge.stream_weights_megatron_to_hf.return_value = iter([])
-        fake_model_bridge.stream_hf_export_passthrough.return_value = iter([])
 
         with (
             # ``state`` is a read-only property on PreTrainedBase, so patch it
@@ -1998,7 +1963,6 @@ class TestAutoBridge:
         ):
             mock_model_bridge = Mock()
             mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
-            mock_model_bridge.stream_hf_export_passthrough.return_value = iter([])
             mock_model_bridge_prop.return_value = mock_model_bridge
 
             # Capture what save_generator receives by consuming the generator it's passed
@@ -2067,7 +2031,6 @@ class TestAutoBridge:
         ):
             mock_model_bridge = Mock()
             mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter(weight_iter)
-            mock_model_bridge.stream_hf_export_passthrough.return_value = iter([])
             mock_model_bridge_prop.return_value = mock_model_bridge
 
             mock_source.save_generator = Mock()
@@ -2116,7 +2079,6 @@ class TestAutoBridge:
 
         mock_model_bridge = Mock()
         mock_model_bridge.stream_weights_megatron_to_hf.return_value = iter([("model.weight", torch.ones(1))])
-        mock_model_bridge.stream_hf_export_passthrough.return_value = iter([])
 
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,

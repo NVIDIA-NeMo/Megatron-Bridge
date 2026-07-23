@@ -332,6 +332,42 @@ class MiniMaxM3ProjectorMLP(nn.Module):
         return self.linear_2(F.gelu(self.linear_1(hidden_states)))
 
 
+class _MiniMaxM3CheckpointWeight(nn.Module):
+    """Frozen checkpoint tensor with a conventional ``weight`` leaf."""
+
+    def __init__(self, shape: tuple[int, ...], *, dtype: torch.dtype) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.zeros(shape, dtype=dtype), requires_grad=False)
+
+
+class MiniMaxM3LightningIndexerState(nn.Module):
+    """Checkpoint-only state for one Lightning Indexer layer.
+
+    Megatron currently executes full causal attention instead of MiniMax-M3's
+    block-sparse selection path. Keeping these tensors as frozen parameters
+    makes checkpoint conversion lossless without adding trainable
+    parameters or coupling the shared conversion path to the source checkpoint.
+    """
+
+    def __init__(self, config: Any) -> None:
+        super().__init__()
+        hidden_size = int(config.hidden_size)
+        index_n_heads = int(config.index_n_heads)
+        index_head_dim = int(config.index_head_dim)
+        dtype = _config_value(config, "params_dtype", torch.float32) or torch.float32
+
+        self.q_proj = _MiniMaxM3CheckpointWeight(
+            (index_n_heads * index_head_dim, hidden_size),
+            dtype=dtype,
+        )
+        self.k_proj = _MiniMaxM3CheckpointWeight(
+            (index_head_dim, hidden_size),
+            dtype=dtype,
+        )
+        self.q_norm = _MiniMaxM3CheckpointWeight((index_head_dim,), dtype=dtype)
+        self.k_norm = _MiniMaxM3CheckpointWeight((index_head_dim,), dtype=dtype)
+
+
 class MiniMaxM3VLModel(MegatronModule):
     """MiniMax-M3 vision tower, projectors, and Megatron language model."""
 
@@ -375,6 +411,13 @@ class MiniMaxM3VLModel(MegatronModule):
             post_process=post_process,
             vp_stage=vp_stage,
         )
+        sparse_layer_indices = set(config.lightning_indexer_layers)
+        local_layers = getattr(getattr(self.language_model, "decoder", None), "layers", ())
+        self.lightning_indexers = nn.ModuleDict()
+        for layer in local_layers:
+            layer_idx = int(layer.layer_number) - 1
+            if layer_idx in sparse_layer_indices:
+                self.lightning_indexers[str(layer_idx)] = MiniMaxM3LightningIndexerState(config)
         self.share_embeddings_and_output_weights = config.share_embeddings_and_output_weights
         self.shared_embedding_or_output_weight = self.language_model.shared_embedding_or_output_weight
 
@@ -553,6 +596,7 @@ class MiniMaxM3VLModel(MegatronModule):
 
 
 __all__ = [
+    "MiniMaxM3LightningIndexerState",
     "MiniMaxM3VLModel",
     "MiniMaxM3VisionModel",
 ]

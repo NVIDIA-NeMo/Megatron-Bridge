@@ -15,7 +15,6 @@
 from __future__ import annotations
 
 import dataclasses
-import itertools
 import logging
 from collections.abc import Callable
 from contextlib import nullcontext
@@ -984,10 +983,12 @@ class AutoBridge(Generic[MegatronModelT]):
             saves the configuration files, while weight saving is coordinated
             across all ranks.
         """
-        # Gate export on the resolved bridge's capability flags. Resolving a bridge
-        # needs a concrete registered architecture: a bare ``PretrainedConfig`` may
-        # not have one, so an unresolvable bridge falls through to the normal
-        # config-only path.
+        # Some bridges (e.g. the language-model-only bridge of a multimodal model) cannot
+        # produce a valid standalone Hugging Face checkpoint; gate the export on the
+        # resolved bridge's capability flag. Resolving the bridge needs a concrete,
+        # registered architecture: a config-only save from a bare ``PretrainedConfig`` has
+        # none, so treat an unresolvable bridge as "nothing to gate" and fall through to the
+        # normal config-only path instead of failing here.
         try:
             model_bridge = self._model_bridge
         except (ValueError, NotImplementedError):
@@ -999,14 +1000,6 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(self.hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
             raise ValueError("save_hf_pretrained requires a pretrained HuggingFace model or config.")
         is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)
-        requires_hf_source = (
-            model_bridge is not None and getattr(type(model_bridge), "REQUIRES_HF_SOURCE_FOR_EXPORT", False) is True
-        )
-        if requires_hf_source and is_config_only:
-            raise NotImplementedError(
-                f"{type(model_bridge).__name__} export requires the original Hugging Face checkpoint; "
-                "the config-only CPU export path is not supported."
-            )
 
         def _save_artifacts():
             if is_config_only:
@@ -1127,10 +1120,6 @@ class AutoBridge(Generic[MegatronModelT]):
             merge_adapter_weights=merge_adapter_weights,
             weight_dtype=weight_dtype,
         )
-        passthrough = bridge.stream_hf_export_passthrough(self.hf_pretrained, cpu=True)
-        # Source-only tensors are yielded first so source-defined shards can
-        # flush as soon as their converted tensors arrive.
-        generator = itertools.chain(passthrough, generator)
         model_instance = self._get_model_instance(model)
         quant_tensors = None
         # Import lazily so Bridge conversion modules can load before ModelOpt
@@ -1464,11 +1453,6 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> from transformers import AutoModelForCausalLM
             >>> hf_model = AutoModelForCausalLM.from_pretrained("./hf_exports/my_model")
         """
-        if isinstance(self.hf_pretrained, PretrainedConfig) and self._model_bridge.REQUIRES_HF_SOURCE_FOR_EXPORT:
-            raise NotImplementedError(
-                f"{type(self._model_bridge).__name__} export requires the original Hugging Face checkpoint; "
-                "the config-only CPU export path is not supported."
-            )
         try:
             from megatron.bridge.training.model_load_save import temporary_distributed_context
         except ImportError:

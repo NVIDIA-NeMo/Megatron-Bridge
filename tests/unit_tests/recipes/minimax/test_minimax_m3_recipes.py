@@ -18,13 +18,14 @@ import megatron.bridge.recipes.minimax.h100.minimax_m3 as _minimax_m3_module
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
-class _FakeProvider:
-    freeze_language_model = False
-    freeze_vision_model = False
-    freeze_vision_projection = False
-
+class _FakeTextProvider:
     def finalize(self):
         return None
+
+
+class _FakeVLMProvider:
+    def to_text_provider(self):
+        return _FakeTextProvider()
 
 
 class _FakeAutoBridge:
@@ -35,7 +36,7 @@ class _FakeAutoBridge:
 
     def to_megatron_provider(self, *, load_weights: bool):
         assert load_weights is False
-        return _FakeProvider()
+        return _FakeVLMProvider()
 
 
 @pytest.mark.parametrize(
@@ -45,11 +46,9 @@ class _FakeAutoBridge:
         _minimax_m3_module.minimax_m3_sft_128gpu_h100_bf16_config,
     ],
 )
-def test_text_recipe_freezes_unused_vlm_modules(monkeypatch, recipe):
+def test_text_recipe_uses_text_only_provider(monkeypatch, recipe):
     patch_recipe_module_global(monkeypatch, _minimax_m3_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe()
 
-    assert cfg.model.freeze_vision_model is True
-    assert cfg.model.freeze_vision_projection is True
-    assert cfg.model.freeze_language_model is not True
+    assert isinstance(cfg.model, _FakeTextProvider)
