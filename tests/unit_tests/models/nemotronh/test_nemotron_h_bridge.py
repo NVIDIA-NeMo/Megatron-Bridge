@@ -935,7 +935,20 @@ class TestMTPFlatteningQKVMapping:
         assert result.hf_param["k"] == "mtp.layers.7.mixer.k_proj.weight"
         assert result.hf_param["v"] == "mtp.layers.7.mixer.v_proj.weight"
 
-    def test_resolve_insufficient_captures_raises(self):
+    def test_resolve_hf_reverse_lookup(self):
+        m = _MTPFlatteningQKVMapping(
+            megatron_param="mtp.layers.*.mtp_model_layer.layers.*.weight",
+            q="mtp.layers.*.q.weight",
+            k="mtp.layers.*.k.weight",
+            v="mtp.layers.*.v.weight",
+            mtp_layers_per_block=2,
+        )
+        result = m.resolve(("3",))
+        assert isinstance(result, QKVMapping)
+        assert result.megatron_param == "mtp.layers.1.mtp_model_layer.layers.1.weight"
+        assert result.hf_param["q"] == "mtp.layers.3.q.weight"
+
+    def test_resolve_without_captures_raises(self):
         m = _MTPFlatteningQKVMapping(
             megatron_param="mtp.layers.*.mtp_model_layer.layers.*.weight",
             q="mtp.layers.*.q.weight",
@@ -944,7 +957,7 @@ class TestMTPFlatteningQKVMapping:
             mtp_layers_per_block=2,
         )
         with pytest.raises(ValueError, match="Expected \\(outer, inner\\) captures"):
-            m.resolve(("0",))
+            m.resolve(())
 
     def test_hf_to_megatron_raises(self):
         m = _MTPFlatteningQKVMapping(

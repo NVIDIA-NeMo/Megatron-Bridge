@@ -26,7 +26,6 @@ from megatron.bridge.data.energon.nemotron_omni_task_encoder import (
     NemotronOmniTaskSample,
 )
 from megatron.bridge.data.energon.task_encoder_utils import ChatMLSample
-from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -410,195 +409,13 @@ def test_raw_video_bytes_are_decoded_through_one_temporary_mp4(monkeypatch):
     assert sampled_fps == 2.5
 
 
-def test_energon_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
-    from PIL import Image
-
-    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
-    monkeypatch.setattr(
-        omni_collate,
-        "_patchify_frame",
-        lambda frame, *, height, width, patch_dim: torch.ones(2, 3),
-    )
+def test_energon_canonical_collator_rejects_collator_side_packing():
     encoder = NemotronOmniTaskEncoder(
-        processor=_Processor(
-            [
-                [1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID],
-                [2, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 31, 32, PAD_AND_END_ID],
-            ]
-        ),
-        seq_length=768,
-        use_temporal_video_embedder=True,
+        processor=_Processor([[1, 2]]),
         enable_in_batch_packing=True,
-        in_batch_packing_pad_to_multiple_of=8,
         pad_to_multiple_of=1,
     )
-    samples = [
-        encoder.encode_sample(
-            _sample(
-                [{"role": "user", "content": [{"type": "video"}]}],
-                key=f"row-{row_index}",
-                videos=[[Image.new("RGB", (16, 16)), Image.new("RGB", (16, 16))]],
-            )
-        )
-        for row_index in range(2)
-    ]
 
-    batch = encoder.batch(samples)
-
-    assert batch.input_ids.tolist() == [
-        [
-            1,
-            IMG_START_ID,
-            IMAGE_TOKEN_ID,
-            IMG_END_ID,
-            21,
-            PAD_AND_END_ID,
-            PAD_AND_END_ID,
-            PAD_AND_END_ID,
-            PAD_AND_END_ID,
-            2,
-            IMG_START_ID,
-            IMAGE_TOKEN_ID,
-            IMG_END_ID,
-            31,
-            32,
-            PAD_AND_END_ID,
-            PAD_AND_END_ID,
-            PAD_AND_END_ID,
-        ]
-    ]
-    assert batch.attention_mask is None
-    assert batch.cu_seqlens_q.tolist() == [0, 261, 523]
-    assert batch.cu_seqlens_q_padded.tolist() == [0, 264, 528]
-    assert batch.max_seqlen_q.item() == 264
-    assert batch.total_tokens == 528
-    assert batch.num_image_tiles.tolist() == [1, 1]
-    packed_seq_params = get_packed_seq_params(encoder.encode_batch(batch))
-    assert packed_seq_params.seq_idx.shape == (1, 528)
-    assert packed_seq_params.seq_idx[0, :264].unique().tolist() == [0]
-    assert packed_seq_params.seq_idx[0, 264:].unique().tolist() == [1]
-
-
-def test_hf_and_energon_multimodal_packing_are_identical_for_image_video_audio(monkeypatch):
-    from PIL import Image
-
-    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
-    monkeypatch.setattr(
-        omni_collate,
-        "_patchify_frame",
-        lambda frame, *, height, width, patch_dim: torch.ones(2, 3),
-    )
-    monkeypatch.setattr(
-        "megatron.bridge.models.nemotron_omni.nemotron_omni_utils.compute_mel_features",
-        lambda waveform, sampling_rate=16000, num_mel_bins=4: torch.ones(9, num_mel_bins),
-    )
-    rows = [
-        [1, IMG_START_ID, IMAGE_TOKEN_ID, IMG_END_ID, 21, PAD_AND_END_ID],
-        [
-            2,
-            IMG_START_ID,
-            IMAGE_TOKEN_ID,
-            IMG_END_ID,
-            IMG_START_ID,
-            IMAGE_TOKEN_ID,
-            IMG_END_ID,
-            31,
-            32,
-            PAD_AND_END_ID,
-        ],
-    ]
-    image = Image.new("RGB", (16, 16), color=32)
-    frames = [Image.new("RGB", (16, 16), color=value) for value in (0, 64, 128)]
-    source_samples = [
-        _sample(
-            [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": "image"}]}],
-            key="image-row",
-            imgs=[image],
-            audio=torch.tensor([0.0, 0.1, -0.1]),
-        ),
-        _sample(
-            [{"role": "user", "content": [{"type": "video"}, {"type": "text", "text": "video"}]}],
-            key="video-row",
-            videos=[frames],
-            audio=torch.tensor([0.2, 0.0, -0.2]),
-        ),
-    ]
-    normalizer = NemotronOmniTaskEncoder(processor=_Processor(rows), pad_to_multiple_of=1)
-    normalized_samples = [normalizer.encode_sample(sample) for sample in source_samples]
-    examples = [sample.example for sample in normalized_samples]
-    collate_kwargs = {
-        "sequence_length": 1024,
-        "enable_in_batch_packing": True,
-        "in_batch_packing_pad_to_multiple_of": 8,
-        "use_temporal_video_embedder": True,
-        "temporal_patch_size": 2,
-        "num_mel_bins": 4,
-        "pad_to_multiple_of": 1,
-    }
-
-    hf_batch = omni_collate.nemotron_omni_collate_fn(examples, _Processor(rows), **collate_kwargs)
-    energon_encoder = NemotronOmniTaskEncoder(
-        processor=_Processor(rows),
-        seq_length=1024,
-        enable_in_batch_packing=True,
-        in_batch_packing_pad_to_multiple_of=8,
-        use_temporal_video_embedder=True,
-        temporal_patch_size=2,
-        num_mel_bins=4,
-        pad_to_multiple_of=1,
-    )
-    energon_batch = energon_encoder.encode_batch(energon_encoder.batch(normalized_samples))
-
-    tensor_keys = (
-        "input_ids",
-        "labels",
-        "loss_mask",
-        "position_ids",
-        "sound_clips",
-        "sound_length",
-        "imgs_sizes",
-        "num_frames",
-        "num_image_tiles",
-        "cu_seqlens_q",
-        "cu_seqlens_kv",
-        "cu_seqlens_q_padded",
-        "cu_seqlens_kv_padded",
-        "max_seqlen_q",
-        "max_seqlen_kv",
-    )
-    for key in tensor_keys:
-        assert torch.equal(hf_batch[key], energon_batch[key]), key
-    assert hf_batch["attention_mask"] is energon_batch["attention_mask"] is None
-    assert hf_batch["total_tokens"] == energon_batch["total_tokens"] == 800
-    assert hf_batch["cu_seqlens_q"].tolist() == [0, 265, 789]
-    assert hf_batch["cu_seqlens_q_padded"].tolist() == [0, 272, 800]
-    assert torch.equal(
-        hf_batch["visual_inputs"].pixel_values,
-        energon_batch["visual_inputs"].pixel_values,
-    )
-
-
-def test_energon_temporal_video_refuses_unsafe_sequence_truncation(monkeypatch):
-    from PIL import Image
-
-    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
-    monkeypatch.setattr(
-        omni_collate,
-        "_patchify_frame",
-        lambda frame, *, height, width, patch_dim: torch.ones(2, 3),
-    )
-    encoder = NemotronOmniTaskEncoder(
-        processor=_Processor([[1, IMG_START_ID, 97, IMG_END_ID, IMG_START_ID, 97, IMG_END_ID, 21, PAD_AND_END_ID]]),
-        seq_length=6,
-        use_temporal_video_embedder=True,
-        pad_to_multiple_of=1,
-    )
-    encoded = encoder.encode_sample(
-        _sample(
-            [{"role": "user", "content": [{"type": "video"}]}],
-            videos=[[Image.new("RGB", (16, 16)), Image.new("RGB", (16, 16)), Image.new("RGB", (16, 16))]],
-        )
-    )
-
-    with pytest.raises(ValueError, match="cannot fit the rectangular multimodal batch"):
-        encoder.batch([encoded])
+    sample = encoder.encode_sample(_sample([{"role": "user", "content": "text"}]))
+    with pytest.raises(ValueError, match="Canonical Nemotron Omni owns sequence packing"):
+        encoder.batch([sample])
