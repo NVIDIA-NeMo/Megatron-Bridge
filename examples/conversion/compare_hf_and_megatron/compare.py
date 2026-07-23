@@ -789,14 +789,14 @@ def compare_models_one_step(args) -> None:
         print_rank_0("Warning: Image provided but model is not a vision-language model. Ignoring image.")
         args.image_path = None
 
-    # Load Megatron model (and bridge)
-    megatron_model, bridge = _load_megatron_model(args)
-
-    # Optionally perform HF round-trip export and use exported HF model for comparison
+    megatron_model = bridge = None
     if getattr(args, "roundtrip_hf", False):
+        # Round-trip comparison must export from a materialized Megatron model.
+        megatron_model, bridge = _load_megatron_model(args)
         hf_model = _export_and_load_roundtrip_hf_model(args, is_vl_model, megatron_model, bridge)
     else:
-        # Load HF model directly from the hub/path
+        # Run and release HF before materializing Megatron so large models do
+        # not need both complete parameter sets resident on rank 0.
         hf_model = _load_hf_model(args, is_vl_model)
 
     # Setup tokenizer and processor
@@ -826,6 +826,9 @@ def compare_models_one_step(args) -> None:
     del hf_model
     gc.collect()
     torch.cuda.empty_cache()
+
+    if megatron_model is None:
+        megatron_model, bridge = _load_megatron_model(args)
 
     # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():

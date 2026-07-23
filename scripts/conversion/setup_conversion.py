@@ -83,6 +83,8 @@ def _validate_args(args: argparse.Namespace) -> None:
             raise ValueError("Local execution supports exactly one node.")
         if args.detach:
             raise ValueError("--detach is only supported by the Slurm executor.")
+        if args.exclusive:
+            raise ValueError("--exclusive is only supported by the Slurm executor.")
         if args.srun_args:
             raise ValueError("--srun-arg is only supported by the Slurm executor.")
         if args.mount:
@@ -98,8 +100,8 @@ def _validate_args(args: argparse.Namespace) -> None:
     if args.device == "cpu":
         if args.nodes != 1:
             raise ValueError("CPU conversion supports exactly one node and one process.")
-        if args.gpus_per_node not in (None, 0):
-            raise ValueError("CPU conversion does not accept --gpus-per-node.")
+        if args.gpus_per_node is not None and args.gpus_per_node < 0:
+            raise ValueError("--gpus-per-node must not be negative.")
         if args.gres:
             raise ValueError("CPU conversion does not accept --gres.")
         if any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
@@ -155,7 +157,7 @@ def _build_executor(
         )
 
     gpu_kwargs = {}
-    if args.device == "gpu" and not args.no_gpu_resource_request:
+    if args.gpus_per_node and not args.no_gpu_resource_request:
         gpu_kwargs["gpus_per_node"] = args.gpus_per_node
     container_env = [*env_names]
     if "PYTHONPATH" not in container_env:
@@ -167,7 +169,7 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=task_count,
         mem=args.mem,
-        exclusive=True,
+        exclusive=True if args.exclusive else None,
         time=args.time,
         gres=args.gres,
         launcher=launcher,

@@ -41,13 +41,18 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
-        help="GPUs per node; required for the GPU backend.",
+        help="GPUs per node; required for the GPU backend and optional as a CPU-backend runtime resource.",
     )
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit (default: 04:00:00).")
     execution.add_argument("--gres", help="Optional Slurm GRES value for GPU jobs.")
+    execution.add_argument(
+        "--exclusive",
+        action="store_true",
+        help="Request exclusive Slurm nodes; by default conversion jobs may share nodes.",
+    )
     execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",

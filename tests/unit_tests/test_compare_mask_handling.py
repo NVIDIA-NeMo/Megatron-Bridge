@@ -20,6 +20,7 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -207,6 +208,44 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].dtype == torch.bool
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
+
+    def test_hf_model_is_released_before_megatron_model_load(self):
+        """The normal comparison path must avoid co-resident full model weights."""
+        events = []
+        input_ids = MagicMock()
+        input_ids.cuda.return_value = input_ids
+        args = SimpleNamespace(
+            hf_model_path="hf/model",
+            trust_remote_code=False,
+            hf_revision=None,
+            image_path=None,
+            prompt="Hello",
+            tp=1,
+            roundtrip_hf=False,
+        )
+
+        def load_megatron(_args):
+            events.append("megatron_load")
+            raise RuntimeError("stop after load-order check")
+
+        with (
+            patch.object(torch.cuda, "is_available", return_value=False),
+            patch.object(torch.cuda, "empty_cache"),
+            patch.object(compare, "is_vision_language_model", return_value=False),
+            patch.object(compare, "_load_hf_model", side_effect=lambda *_: events.append("hf_load") or object()),
+            patch.object(compare, "_setup_tokenizer_and_processor", return_value=(MagicMock(), None)),
+            patch.object(compare, "process_inputs", return_value=(input_ids, None, None, None)),
+            patch.object(
+                compare,
+                "_run_hf_inference",
+                side_effect=lambda *_: events.append("hf_run") or (MagicMock(), MagicMock(), None, None, None),
+            ),
+            patch.object(compare, "_load_megatron_model", side_effect=load_megatron),
+            pytest.raises(RuntimeError, match="load-order check"),
+        ):
+            compare.compare_models_one_step(args)
+
+        assert events == ["hf_load", "hf_run", "megatron_load"]
 
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""

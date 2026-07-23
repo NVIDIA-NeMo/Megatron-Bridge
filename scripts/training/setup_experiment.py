@@ -76,6 +76,11 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
+        "--exclusive",
+        action="store_true",
+        help="Request exclusive Slurm nodes; by default training jobs may share nodes.",
+    )
+    execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
         help="Do not emit a Slurm GPU/GRES request on clusters that allocate whole GPU nodes implicitly.",
@@ -253,7 +258,7 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
         mem="0",
-        exclusive=True,
+        exclusive=True if args.exclusive else None,
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),

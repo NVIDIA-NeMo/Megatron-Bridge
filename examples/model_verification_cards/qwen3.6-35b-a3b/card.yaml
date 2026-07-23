@@ -44,7 +44,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu
-      --nodes 1 --hf-model Qwen/Qwen3.6-35B-A3B
+      --nodes 1 --gpus-per-node 1 --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron
       --torch-dtype bfloat16
@@ -62,7 +62,8 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
-      --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3.6-35B-A3B
+      --nodes 2 --gpus-per-node 8 --exclusive
+      --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 1 --ep 8 --etp 1
@@ -81,11 +82,11 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu
-      --nodes 1 --hf-model Qwen/Qwen3.6-35B-A3B
+      --nodes 1 --gpus-per-node 1 --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron/iter_0000000
       --hf-path work/model-verification/qwen3.6-35b-a3b/cpu-hf-export
-      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --torch-dtype bfloat16
     last_verified: null
     expected_result: >
       Export must exit successfully and Transformers must strictly reload the
@@ -99,7 +100,8 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3.6-35B-A3B
+      --nodes 2 --gpus-per-node 8 --exclusive
+      --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
       --hf-path work/model-verification/qwen3.6-35b-a3b/hf-export
@@ -120,8 +122,8 @@ items:
     status: unverified
     precision: bf16
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      examples/conversion/compare_hf_and_megatron/compare.py
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task model-comparison
       --hf_model_path Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --model_class Qwen3_5MoeForConditionalGeneration
@@ -145,13 +147,13 @@ items:
     status: unverified
     precision: bf16
     command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      examples/conversion/hf_to_megatron_generate_vlm.py
+      ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
+      --task vlm-generation
       --hf_model_path Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron_model_path
       work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-      --tp 2 --pp 1 --ep 8 --etp 1
+      --tp 1 --pp 8 --ep 1 --etp 1
       --image_path work/data/medpix/verification.png
       --prompt "What was observed in the imaging?"
       --max_new_tokens 32

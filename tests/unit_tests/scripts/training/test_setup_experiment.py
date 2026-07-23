@@ -436,6 +436,7 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
+    assert executor.kwargs["exclusive"] is None
     assert executor.env_vars == {}
     assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
     assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}
@@ -484,6 +485,36 @@ def test_benchmark_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monk
     assert "launcher" not in executor.kwargs
     assert "segment" not in executor.kwargs
     assert set(executor.container_env) == {"PYTHONPATH"}
+
+
+def test_slurm_executor_requests_exclusive_node_only_when_explicit(tmp_path, monkeypatch):
+    module = _load_setup_experiment_module()
+
+    class _SlurmExecutor:
+        def __init__(self, **kwargs):
+            self.kwargs = kwargs
+
+    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
+    module.run.Packager = object
+    module.run.SlurmExecutor = _SlurmExecutor
+    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
+    args, _ = module.parse_args(
+        [
+            "--gpus-per-node",
+            "8",
+            "--exclusive",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+        ]
+    )
+
+    executor = module._build_executor(args, [], [])
+
+    assert executor.kwargs["exclusive"] is True
 
 
 def test_training_task_environment_does_not_inject_benchmark_offline_defaults():

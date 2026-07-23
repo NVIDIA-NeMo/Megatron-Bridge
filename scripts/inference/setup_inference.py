@@ -12,7 +12,7 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-"""Submit Bridge-backed offline text generation through Slurm."""
+"""Submit Bridge-backed offline inference and comparison through Slurm."""
 
 from __future__ import annotations
 
@@ -30,12 +30,17 @@ from torchx.specs.api import AppState
 logger = logging.getLogger(__name__)
 
 CONTAINER_REPO_ROOT = Path("/opt/Megatron-Bridge")
+INFERENCE_TASKS = {
+    "text-generation": Path("scripts/inference/text_generation.py"),
+    "vlm-generation": Path("examples/conversion/hf_to_megatron_generate_vlm.py"),
+    "model-comparison": Path("examples/conversion/compare_hf_and_megatron/compare.py"),
+}
 
 
 def _build_parser() -> argparse.ArgumentParser:
     """Build the lightweight head-node parser."""
     parser = argparse.ArgumentParser(
-        description="Launch Megatron Bridge offline text generation through Slurm.",
+        description="Launch Megatron Bridge offline inference or model comparison through Slurm.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         allow_abbrev=False,
         epilog="""
@@ -46,12 +51,18 @@ Example:
       --hf-model-path meta-llama/Llama-3.2-1B \\
       --prompt "Megatron Bridge inference is" --max_new_tokens 32
 
-Arguments not owned by this launcher are forwarded unchanged to
-scripts/inference/text_generation.py. Run that entry point with --help to see
-model, checkpoint, prompt, sampling, and inference-engine options.
+Use --task vlm-generation for multimodal generation or --task model-comparison
+for a one-step Hugging Face/Megatron comparison. Arguments not owned by this
+launcher are forwarded unchanged to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")
+    execution.add_argument(
+        "--task",
+        choices=tuple(INFERENCE_TASKS),
+        default="text-generation",
+        help="Repository inference task to launch (default: text-generation).",
+    )
     execution.add_argument("--nodes", type=int, default=1, help="Number of Slurm nodes (default: 1).")
     execution.add_argument(
         "--gpus-per-node",
@@ -196,10 +207,11 @@ def _build_executor(args: argparse.Namespace, env_names: list[str], mounts: list
     return executor
 
 
-def _build_task(inference_args: list[str]) -> run.Script:
-    """Build the existing Bridge text-generation task for the submitted container."""
+def _build_task(task_name: str, inference_args: list[str]) -> run.Script:
+    """Build the selected Bridge inference task for the submitted container."""
+    task_path = CONTAINER_REPO_ROOT / INFERENCE_TASKS[task_name]
     return run.Script(
-        path=str(CONTAINER_REPO_ROOT / "scripts/inference/text_generation.py"),
+        path=str(task_path),
         entrypoint="python",
         env={
             "PYTHONPATH": f"{CONTAINER_REPO_ROOT}/src:{CONTAINER_REPO_ROOT}/3rdparty/Megatron-LM:$PYTHONPATH",
@@ -229,17 +241,18 @@ def main(argv: list[str] | None = None) -> None:
     env_names = _parse_env(args.env)
     mounts = _parse_mounts(args.mount)
     executor = _build_executor(args, env_names, mounts)
-    task = _build_task(inference_args)
+    task = _build_task(args.task, inference_args)
+    task_path = CONTAINER_REPO_ROOT / INFERENCE_TASKS[args.task]
 
     logger.info(
         "Inference command: %s",
-        shlex.join(["python", str(CONTAINER_REPO_ROOT / "scripts/inference/text_generation.py"), *inference_args]),
+        shlex.join(["python", str(task_path), *inference_args]),
     )
     logger.info("Forwarded environment variables: %s", ", ".join(env_names) or "none")
     logger.info("Container mounts: %s", ", ".join(mounts) or "none")
 
     with run.Experiment(args.experiment_name or "inference") as experiment:
-        experiment.add(task, executor=executor, name="text-generation")
+        experiment.add(task, executor=executor, name=args.task)
         if args.submission_dry_run:
             experiment.dryrun()
             return
