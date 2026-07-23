@@ -33,7 +33,9 @@ import pytest
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_nano as recipe_module
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_nano_mtp_peft_config,
     nemotron_3_nano_mtp_pretrain_config,
+    nemotron_3_nano_mtp_sft_config,
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
@@ -101,6 +103,7 @@ class TestNemotron3NanoPretrain:
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
         assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
+        assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_NANO_MTP_MODEL_ID
 
     def test_pretrain_recipes_do_not_expose_mtp_flag(self):
         """Standard and MTP pretraining use distinct parameterless factories."""
@@ -157,8 +160,8 @@ class TestNemotron3NanoPretrain:
 class TestNemotron3NanoSft:
     """Test cases for Nemotron 3 Nano SFT recipe.
 
-    The default Hugging Face model can be replaced to derive a matching model
-    architecture before applying finetuning policy.
+    Standard and MTP recipes derive their model architecture from their
+    respective hard-coded Hugging Face repositories.
     """
 
     def test_sft_config_default_parameters(self):
@@ -242,9 +245,16 @@ class TestNemotron3NanoSft:
 
         assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
 
-    @pytest.mark.parametrize("recipe_factory", [nemotron_3_nano_sft_config, nemotron_3_nano_peft_config])
-    @pytest.mark.parametrize("mtp_num_layers", [0, 2])
-    def test_finetuning_derives_mtp_from_hf_model(self, recipe_factory, mtp_num_layers):
+    @pytest.mark.parametrize(
+        ("recipe_factory", "model_id", "mtp_num_layers"),
+        [
+            (nemotron_3_nano_sft_config, recipe_module._NEMOTRON_3_NANO_MODEL_ID, 0),
+            (nemotron_3_nano_peft_config, recipe_module._NEMOTRON_3_NANO_MODEL_ID, 0),
+            (nemotron_3_nano_mtp_sft_config, recipe_module._NEMOTRON_3_NANO_MTP_MODEL_ID, 2),
+            (nemotron_3_nano_mtp_peft_config, recipe_module._NEMOTRON_3_NANO_MTP_MODEL_ID, 2),
+        ],
+    )
+    def test_finetuning_derives_mtp_from_hf_model(self, recipe_factory, model_id, mtp_num_layers):
         """SFT and PEFT preserve the MTP architecture selected by AutoBridge."""
         provider = HybridModelProvider(
             mtp_num_layers=mtp_num_layers,
@@ -257,16 +267,23 @@ class TestNemotron3NanoSft:
         bridge.to_megatron_provider.return_value = provider
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
-            config = recipe_factory(hf_model_id="example/model")
+            config = recipe_factory()
 
-        from_hf.assert_called_once_with("example/model")
+        from_hf.assert_called_once_with(model_id)
         bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
         assert config.model is provider
         assert config.model.mtp_num_layers == mtp_num_layers
         assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
         assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
         assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
-        assert config.tokenizer.tokenizer_model == "example/model"
+        assert config.tokenizer.tokenizer_model == model_id
+
+    def test_finetuning_recipes_do_not_expose_model_id(self):
+        """Model selection is fixed by separate standard and MTP factories."""
+        assert not signature(nemotron_3_nano_sft_config).parameters
+        assert not signature(nemotron_3_nano_mtp_sft_config).parameters
+        assert set(signature(nemotron_3_nano_peft_config).parameters) == {"peft_scheme"}
+        assert set(signature(nemotron_3_nano_mtp_peft_config).parameters) == {"peft_scheme"}
 
     def test_sft_config_with_custom_directory(self):
         """Test custom directory configuration for SFT."""

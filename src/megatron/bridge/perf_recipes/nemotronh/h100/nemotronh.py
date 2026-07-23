@@ -170,6 +170,7 @@ def nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
     return cfg
 
 
@@ -181,4 +182,5 @@ def nemotron_3_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
     return cfg

@@ -113,6 +113,7 @@ def test_perf_recipes_inherit_non_mtp_policy(
     assert mtp_cfg.env_vars == base_cfg.env_vars
     assert mtp_cfg.model.calculate_per_token_loss == base_cfg.model.calculate_per_token_loss
     assert mtp_cfg.model.use_te_rng_tracker == base_cfg.model.use_te_rng_tracker
+    assert mtp_cfg.tokenizer.tokenizer_model != base_cfg.tokenizer.tokenizer_model
 
 
 @pytest.mark.parametrize("recipe_factory", _H100_RECIPES, ids=lambda recipe: recipe.__name__)
