@@ -1960,6 +1960,7 @@ class TestGemma4MoEHelpers:
             layer,
             hidden_states,
             padding_mask=torch.tensor([[True]]),
+            input_ids=torch.tensor([[7]]),
         )
 
         base = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)

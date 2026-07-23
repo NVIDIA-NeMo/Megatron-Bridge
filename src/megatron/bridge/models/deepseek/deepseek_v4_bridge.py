@@ -578,8 +578,14 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         V4 stores attention/embedding weights as float8_e4m3fn with 128x128-block
         scales, and expert FFN weights as MXFP4 packed (I8, 2 nibbles/byte) with
         F8_E8M0 per-32-element scales.  For dict hf_param (GatedMLPMapping etc.),
-        dequantizes each key individually so expert gate/up weights are also handled.
+        dequantizes each key independently so expert gate/up weights are handled.
+        Optional CSA indexer weights may use the legacy flat name or the native
+        Transformers scorer submodule name.
         """
+        if isinstance(hf_param, str) and ".indexer.weights_proj." in hf_param:
+            scorer_param = hf_param.replace(".indexer.weights_proj.", ".indexer.scorer.weights_proj.")
+            if scorer_param in hf_state_dict:
+                hf_param = scorer_param
         return quantization_utils.maybe_dequantize_hf_quantized_weight(hf_param, hf_state_dict)
 
     # ------------------------------------------------------------------

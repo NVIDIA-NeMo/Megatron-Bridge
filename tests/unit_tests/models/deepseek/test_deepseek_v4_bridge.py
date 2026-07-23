@@ -141,6 +141,16 @@ class TestNativeDeepSeekV4ConfigTranslation:
 class TestDeepSeekV4QuantizedExport:
     """DSv4 export must regenerate quantized weights and scale tensors."""
 
+    def test_import_accepts_native_indexer_scorer_weight_name(self):
+        bridge = DeepSeekV4Bridge()
+        flat_name = "layers.1.attn.indexer.weights_proj.weight"
+        scorer_name = "layers.1.attn.indexer.scorer.weights_proj.weight"
+        weight = torch.randn(4, 4, dtype=torch.bfloat16)
+
+        result = bridge.maybe_modify_loaded_hf_weight(flat_name, {scorer_name: weight})
+
+        assert result is weight
+
     def test_export_quantizes_fp8_weight_and_emits_scale(self):
         bridge = DeepSeekV4Bridge()
         hf_param = "layers.0.attn.wq_a.weight"

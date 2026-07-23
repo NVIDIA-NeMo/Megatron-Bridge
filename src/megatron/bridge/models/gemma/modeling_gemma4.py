@@ -1286,10 +1286,11 @@ class Gemma4TransformerLayer(TransformerLayer):
         hidden_states: Tensor,
         inference_context: BaseInferenceContext | None = None,
         padding_mask: Tensor | None = None,
+        input_ids: Tensor | None = None,
         packed_seq_params: PackedSeqParams | None = None,
     ) -> Tensor:
         """Run HF's separate shared-expert, routed-expert, and router inputs."""
-        del inference_context
+        del inference_context, input_ids
         residual = hidden_states.float() if self.config.fp32_residual_connection else hidden_states
 
         moe_input = residual
