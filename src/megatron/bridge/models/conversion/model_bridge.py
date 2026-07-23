@@ -1492,17 +1492,24 @@ class MegatronModelBridge(
         Args:
             megatron_model: Megatron model instance or list of model instances.
         """
-        unwrapped_model = unwrap_model(megatron_model)[0]
+        pp_group = _get_pp_group(megatron_model)
+        is_first_pp_stage = is_pp_first_stage(pp_group)
+        is_last_pp_stage = is_pp_last_stage(pp_group)
+
+        unwrapped_models = unwrap_model(megatron_model)
+        if not isinstance(unwrapped_models, list):
+            unwrapped_models = [unwrapped_models]
+        # VPP chunk 0 owns the input embedding; the final chunk owns the output layer.
+        unwrapped_model = unwrapped_models[-1] if is_last_pp_stage else unwrapped_models[0]
+
         # hack for vlm to work properly
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
         share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
-        # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
-        pp_group = _get_pp_group(megatron_model)
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
-            is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group)
+            is_first_pp_stage or is_last_pp_stage
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
             embd_group = _get_embedding_group(megatron_model)
