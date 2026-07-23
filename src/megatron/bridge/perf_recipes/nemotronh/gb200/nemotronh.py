@@ -412,6 +412,9 @@ def nemotron_3_ultra_pretrain_96gpu_gb200_bf16_config() -> ConfigContainer:
         # other gb200 perf recipe disables it too. Also determinism-friendly
         # (the deterministic launcher forces NCCL_ALGO=Ring).
         "NCCL_NVLS_ENABLE": 0,
+        # Legacy CUDA-IPC P2P instead of cuMem/fabric handles: the 26.06 container's
+        # CUDA 13.2 cuMem fabric P2P raises CUDA 801 on this fleet's driver.
+        "NCCL_CUMEM_ENABLE": 0,
         "NCCL_GRAPH_REGISTER": 0,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,

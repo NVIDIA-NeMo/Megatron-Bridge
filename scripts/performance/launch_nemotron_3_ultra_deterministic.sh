@@ -101,6 +101,7 @@ MOUNTS="/lustre:/lustre,${REPO_ROOT}:/opt/Megatron-Bridge"
   --task pretrain \
   -E NCCL_ALGO=Ring \
   -E NCCL_NVLS_ENABLE=0 \
+  -E NCCL_CUMEM_ENABLE=0 \
   -E NVTE_ALLOW_NONDETERMINISTIC_ALGO=0 \
   -E CUBLAS_WORKSPACE_CONFIG=:4096:8 \
   -E MAMBA_DETERMINISTIC=1 \
