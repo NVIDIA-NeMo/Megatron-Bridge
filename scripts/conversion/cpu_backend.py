@@ -110,7 +110,15 @@ def export_checkpoint(
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
     logger.info("CPU export: %s -> %s", megatron_path, hf_path)
     logger.info("Using Megatron run config: %s", config_path)
-    bridge = AutoBridge.from_auto_config(megatron_path, hf_model, trust_remote_code=trusted)
+    bridge = AutoBridge.from_hf_pretrained(hf_model, trust_remote_code=trusted)
+    checkpoint_config_bridge = AutoBridge.from_auto_config(
+        megatron_path,
+        hf_model,
+        trust_remote_code=trusted,
+    )
+    # Preserve the reference wrapper's state source and shard map so model
+    # families with packed HF weights export in their canonical representation.
+    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained.config
     try:
         bridge.export_ckpt(
             megatron_path=megatron_path,

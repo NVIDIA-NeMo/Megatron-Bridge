@@ -18,10 +18,27 @@ SCRIPT_DIR = REPO_ROOT / "scripts" / "conversion"
 def _load_cpu_backend():
     calls = []
 
+    class Bridge:
+        def __init__(self, config):
+            self.hf_pretrained = types.SimpleNamespace(config=config)
+
+        def export_ckpt(self, **kwargs):
+            calls.append(("export_ckpt", self.hf_pretrained.config, kwargs))
+
     class AutoBridge:
         @staticmethod
         def import_ckpt(**kwargs):
             calls.append(("import_ckpt", kwargs))
+
+        @staticmethod
+        def from_hf_pretrained(*args, **kwargs):
+            calls.append(("from_hf_pretrained", args, kwargs))
+            return Bridge("reference-config")
+
+        @staticmethod
+        def from_auto_config(*args, **kwargs):
+            calls.append(("from_auto_config", args, kwargs))
+            return Bridge("checkpoint-config")
 
     modules = {
         "megatron": types.ModuleType("megatron"),
@@ -79,6 +96,43 @@ def test_import_preserves_model_id_and_forwards_revision():
                 "device_map": "cpu",
                 "trust_remote_code": True,
                 "revision": "0123456789abcdef",  # pragma: allowlist secret
+            },
+        ),
+    ]
+
+
+def test_export_preserves_reference_state_layout_with_checkpoint_config(tmp_path):
+    module, calls = _load_cpu_backend()
+    checkpoint = tmp_path / "checkpoint"
+    checkpoint.mkdir()
+    (checkpoint / "run_config.yaml").touch()
+
+    module.export_checkpoint(
+        hf_model="hf/model",
+        megatron_path=str(checkpoint),
+        hf_path="/hf-export",
+        show_progress=False,
+        strict=True,
+        trust_remote_code=False,
+        overwrite=False,
+    )
+
+    assert calls == [
+        (
+            "prepare_output_directory",
+            ("/hf-export",),
+            {"overwrite": False, "source_paths": [str(checkpoint), "hf/model"]},
+        ),
+        ("from_hf_pretrained", ("hf/model",), {"trust_remote_code": False}),
+        ("from_auto_config", (str(checkpoint), "hf/model"), {"trust_remote_code": False}),
+        (
+            "export_ckpt",
+            "checkpoint-config",
+            {
+                "megatron_path": str(checkpoint),
+                "hf_path": "/hf-export",
+                "show_progress": False,
+                "strict": True,
             },
         ),
     ]
