@@ -1664,6 +1664,8 @@ class TestAutoBridge:
                 hf_tokenizer_path=None,
                 low_memory_save=True,
                 hf_tokenizer_kwargs=None,
+                fully_parallel_save=True,
+                validate_access_integrity=True,
             )
 
     def test_save_megatron_model_with_tokenizer(self):
@@ -1692,6 +1694,34 @@ class TestAutoBridge:
                 hf_tokenizer_path="meta-llama/Meta-Llama-3-8B",
                 low_memory_save=True,
                 hf_tokenizer_kwargs=None,
+                fully_parallel_save=True,
+                validate_access_integrity=True,
+            )
+
+    def test_save_megatron_model_forwards_save_options(self):
+        """Test save_megatron_model forwards non-default save options."""
+        mock_hf_model = Mock(spec=PreTrainedCausalLM)
+        bridge = AutoBridge.__new__(AutoBridge)
+        bridge.hf_pretrained = mock_hf_model
+
+        mock_megatron_model = [Mock()]
+
+        with patch("megatron.bridge.training.model_load_save.save_megatron_model") as mock_save_megatron_model:
+            bridge.save_megatron_model(
+                mock_megatron_model,
+                "./checkpoint_path",
+                fully_parallel_save=False,
+                validate_access_integrity=False,
+            )
+
+            mock_save_megatron_model.assert_called_once_with(
+                mock_megatron_model,
+                "./checkpoint_path",
+                hf_tokenizer_path=None,
+                low_memory_save=False,
+                hf_tokenizer_kwargs=None,
+                fully_parallel_save=False,
+                validate_access_integrity=False,
             )
 
     def test_save_megatron_model_import_error(self):
