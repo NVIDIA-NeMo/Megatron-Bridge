@@ -14,11 +14,15 @@
 
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
     nemotron_3_nano_gb200_pretrain_config,
+    nemotron_3_nano_peft_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
+    nemotron_3_nano_sft_8gpu_gb200_bf16_config,
 )
 
 
 __all__ = [
     "nemotron_3_nano_gb200_pretrain_config",
+    "nemotron_3_nano_peft_8gpu_gb200_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_sft_8gpu_gb200_bf16_config",
 ]
