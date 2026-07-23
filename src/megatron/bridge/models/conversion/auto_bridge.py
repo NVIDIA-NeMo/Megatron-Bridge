@@ -979,7 +979,10 @@ class AutoBridge(Generic[MegatronModelT]):
         if not isinstance(self.hf_pretrained, (*_PRETRAINED_WRAPPER_TYPES, PretrainedConfig)):
             raise ValueError("save_hf_pretrained requires a pretrained HuggingFace model or config.")
         is_config_only = isinstance(self.hf_pretrained, PretrainedConfig)
-        if model_bridge is not None and model_bridge.REQUIRES_HF_SOURCE_FOR_EXPORT and is_config_only:
+        requires_hf_source = (
+            model_bridge is not None and getattr(type(model_bridge), "REQUIRES_HF_SOURCE_FOR_EXPORT", False) is True
+        )
+        if requires_hf_source and is_config_only:
             raise NotImplementedError(
                 f"{type(model_bridge).__name__} export requires the original Hugging Face checkpoint; "
                 "the config-only CPU export path is not supported."

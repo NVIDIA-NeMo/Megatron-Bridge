@@ -491,7 +491,12 @@ class TestMiniMaxM3Bridge:
         exported = MiniMaxM3Bridge.megatron_to_hf_config(original)
         roundtrip_pretrained = Mock(spec=PreTrainedCausalLM)
         roundtrip_config = dict(exported)
-        roundtrip_config["text_config"] = SimpleNamespace(**exported["text_config"])
+        # MiniMaxM3Config propagates the outer checkpoint dtype into its nested
+        # text config. Mirror that constructor behavior in this lightweight
+        # namespace round trip.
+        roundtrip_text_config = dict(exported["text_config"])
+        roundtrip_text_config["torch_dtype"] = exported["torch_dtype"]
+        roundtrip_config["text_config"] = SimpleNamespace(**roundtrip_text_config)
         roundtrip_pretrained.config = SimpleNamespace(**roundtrip_config)
         restored = bridge.provider_bridge(roundtrip_pretrained)
 
