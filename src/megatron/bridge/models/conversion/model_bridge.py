@@ -1221,31 +1221,6 @@ class MegatronModelBridge(
                 # Assert that vp_stage is not None for HF->Megatron tasks
                 yield MegatronWeightTuple(task.param_name, converted_weights, task.vp_stage)
 
-    def stream_hf_export_passthrough(
-        self,
-        hf_pretrained: HFPreTrained,
-        *,
-        cpu: bool = True,
-    ) -> Iterable[HFWeightTuple]:
-        """Yield source HF tensors that must be preserved during checkpoint save.
-
-        Most bridges convert every tensor represented by their Hugging Face
-        checkpoint and therefore return an empty iterator. A bridge that owns
-        only part of a composite checkpoint may override this hook to preserve
-        explicitly unsupported components byte-for-byte from the source
-        checkpoint while replacing the converted component.
-
-        Args:
-            hf_pretrained: Hugging Face wrapper that provides the source state.
-            cpu: Whether yielded tensors must be moved to CPU.
-
-        Returns:
-            An iterator of source tensors to append only when saving an HF
-            checkpoint. In-memory conversion APIs continue to expose converted
-            tensors only.
-        """
-        return iter(())
-
     @torch.no_grad()
     def stream_weights_megatron_to_hf(
         self,
