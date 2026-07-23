@@ -34,6 +34,8 @@ if HAVE_MEGATRON_BRIDGE:
         llama3_70b_pretrain_config_vr200,
     )
     from .llama31_llm_pretrain import (
+        llama31_8b_pretrain_config_gb300,
+        llama31_8b_pretrain_config_gb200,
         llama31_405b_pretrain_config_b200,
         llama31_405b_pretrain_config_b300,
         llama31_405b_pretrain_config_gb200,
@@ -137,6 +139,12 @@ from .llama3_workload_base_configs import (
     LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1,
 )
 from .llama31_workload_base_configs import (
+    LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1,
+    LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2,
+    LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1,
+    LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V1,
+    LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V2,
+    LLAMA31_8B_PRETRAIN_CONFIG_GB200_FP8_CS_V1,
     LLAMA31_405B_PRETRAIN_CONFIG_B200_BF16_V1,
     LLAMA31_405B_PRETRAIN_CONFIG_B200_BF16_V2,
     LLAMA31_405B_PRETRAIN_CONFIG_B200_FP8_CS_V1,
@@ -180,6 +188,13 @@ from .llama31_workload_base_configs import (
 
 
 __all__ = [
+    # MLPerf Llama3.1 8B configs
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V2",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB200_FP8_CS_V1",
     # V1 (GB300/GB200: num_gpus=128, GBS=64; H100: GBS=512)
     "LLAMA31_405B_PRETRAIN_CONFIG_GB200_BF16_V1",
     "LLAMA31_405B_PRETRAIN_CONFIG_GB200_FP8_CS_V1",
@@ -347,6 +362,8 @@ if HAVE_MEGATRON_BRIDGE:
             "llama3_70b_lora_config_gb300",
             "llama3_70b_lora_config_h100",
             "llama3_70b_sft_config_gb300",
+            "llama31_8b_pretrain_config_gb300",
+            "llama31_8b_pretrain_config_gb200",
             "llama31_405b_pretrain_config_gb300",
             "llama31_405b_pretrain_config_gb200",
             "llama31_405b_pretrain_config_b300",

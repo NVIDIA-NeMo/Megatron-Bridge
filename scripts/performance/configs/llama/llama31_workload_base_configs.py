@@ -316,6 +316,46 @@ LLAMA31_405B_PRETRAIN_CONFIG_H100_FP8_CS_V2 = replace(
     global_batch_size=1536,
 )
 
+# =============================================================================
+# Llama3.1 8B presets - MLPerf (GB300/GB200: num_gpus=8, 72, 512)
+# =============================================================================
+
+BASE_LLAMA31_8B_CONFIG = WorkloadBaseConfig()
+
+LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1 = replace(
+    BASE_LLAMA31_8B_CONFIG,
+    num_gpus=8,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    global_batch_size=16,
+    micro_batch_size=2,
+)
+
+LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
+    BASE_LLAMA31_8B_CONFIG,
+    num_gpus=72,
+    tensor_model_parallel_size=1,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=1,
+    global_batch_size=72,
+    micro_batch_size=1,
+)
+
+LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(
+    BASE_LLAMA31_8B_CONFIG,
+    num_gpus=512,
+    tensor_model_parallel_size=2,
+    pipeline_model_parallel_size=1,
+    context_parallel_size=4,
+    global_batch_size=64,
+    micro_batch_size=1,
+)
+
+LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V1 = LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1
+LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V2 = LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2
+LLAMA31_8B_PRETRAIN_CONFIG_GB200_FP8_CS_V1 = LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1
+
 
 __all__ = [
     # V1
@@ -359,4 +399,11 @@ __all__ = [
     "LLAMA31_405B_PRETRAIN_CONFIG_VR200_BF16_V2",
     "LLAMA31_405B_PRETRAIN_CONFIG_VR200_FP8_MX_V2",
     "LLAMA31_405B_PRETRAIN_CONFIG_VR200_NVFP4_V2",
+    # MLPerf Llama3.1 8B configs
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB200_FP8_CS_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V1",
+    "LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V2",
 ]
