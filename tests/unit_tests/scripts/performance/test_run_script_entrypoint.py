@@ -45,6 +45,7 @@ def test_gpu_tuning_options_are_not_forwarded_to_rank_local_scripts():
             "--enable_vboost",
             "true",
             "--lock_gpu_freq=1200",
+            "--peak_mem_clk=2600",
             "--deterministic",
         ]
     ) == ["--deterministic"]
@@ -172,13 +173,16 @@ def test_gpu_tuning_options_are_applied_directly_to_slurm_executor():
         executor,
         enable_vboost=True,
         lock_gpu_freq=1200,
+        peak_mem_clk=2600,
     )
 
     assert executor.setup_lines.startswith("existing setup\n")
     assert "sudo nvidia-smi boost-slider --vboost 1" in executor.setup_lines
     assert "--ntasks=2" in executor.setup_lines
     assert "sudo nvidia-smi -lgc 1200" in executor.setup_lines
-    assert "--ntasks-per-node=1" in executor.setup_lines
+    assert "srun --ntasks=2 --ntasks-per-node=1 --output /job/dir/peak_mem_clock.out" in executor.setup_lines
+    assert "--error /job/dir/peak_mem_clock.err" in executor.setup_lines
+    assert "sudo nvidia-smi -lmc 2600,2600" in executor.setup_lines
 
 
 def test_run_script_main_runs_training_once(monkeypatch):

@@ -77,6 +77,26 @@ class _FakeBridge:
             assert kwargs == {"revision": expected_revisions[hf_path]}
         return _FakeBridge()
 
+    @staticmethod
+    def from_hf_config(hf_config):
+        # Ignore hf_config; return a bridge that yields a fake provider
+        return _FakeBridge()
+
+
+class _FakeTextConfig:
+    architectures = None
+
+
+class _FakeRootConfig:
+    text_config = _FakeTextConfig()
+
+
+class _FakeAutoConfig:
+    @staticmethod
+    def from_pretrained(hf_path: str):
+        # Ignore hf_path; return a unified config with a nested text config.
+        return _FakeRootConfig()
+
 
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
@@ -114,6 +134,8 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     mod = importlib.import_module(module_name)
     if hasattr(mod, "AutoBridge"):
         patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+    if hasattr(mod, "AutoConfig"):
+        patch_recipe_module_global(monkeypatch, mod, "AutoConfig", _FakeAutoConfig)
 
     overrides = _safe_overrides_for(recipe_func.__name__)
 
@@ -150,7 +172,12 @@ def test_each_qwen_recipe_builds_config(recipe_func: Callable, monkeypatch: pyte
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
-    if "qwen3" in recipe_name and "pretrain" in recipe_name and "next" not in recipe_name:
+    if (
+        "qwen3" in recipe_name
+        and "pretrain" in recipe_name
+        and "next" not in recipe_name
+        and "qwen35" not in recipe_name
+    ):
         assert cfg.model.cross_entropy_fusion_impl == "te"
 
     # SFT and PEFT-specific assertions

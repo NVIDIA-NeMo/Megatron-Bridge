@@ -72,7 +72,13 @@ _DEFAULT_GPU_COUNT_OVERRIDES = {
 }
 
 
-def configure_slurm_gpu_tuning(executor: Any, *, enable_vboost: bool, lock_gpu_freq: int | None) -> None:
+def configure_slurm_gpu_tuning(
+    executor: Any,
+    *,
+    enable_vboost: bool,
+    lock_gpu_freq: int | None,
+    peak_mem_clk: int | None,
+) -> None:
     """Add optional GPU tuning commands to a Slurm executor before submission."""
     commands = []
     job_dir = executor.tunnel.job_dir
@@ -110,6 +116,30 @@ def configure_slurm_gpu_tuning(executor: Any, *, enable_vboost: bool, lock_gpu_f
                             os.path.join(job_dir, "lock_gpu_freq.err"),
                             "bash -c",
                             shlex.quote(f"sudo nvidia-smi -lgc {lock_gpu_freq}"),
+                        ]
+                    ),
+                    "",
+                ]
+            )
+        )
+
+    if peak_mem_clk is not None:
+        commands.append(
+            "\n".join(
+                [
+                    "",
+                    "# Lock GPU memory clock",
+                    " ".join(
+                        [
+                            "srun",
+                            f"--ntasks={executor.nodes}",
+                            "--ntasks-per-node=1",
+                            "--output",
+                            os.path.join(job_dir, "peak_mem_clock.out"),
+                            "--error",
+                            os.path.join(job_dir, "peak_mem_clock.err"),
+                            "bash -c",
+                            shlex.quote(f"sudo nvidia-smi -lmc {peak_mem_clk},{peak_mem_clk}"),
                         ]
                     ),
                     "",

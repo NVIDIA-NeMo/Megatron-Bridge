@@ -56,6 +56,7 @@ BENCHMARK_RECIPE_PRECEDENCE_COLLISIONS = frozenset(
         "llama3_70b_peft_8gpu_h100_bf16_config",
         "llama3_70b_sft_32gpu_h100_bf16_config",
         "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",
+        "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     }
 )
 

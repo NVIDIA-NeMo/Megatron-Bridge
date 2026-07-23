@@ -210,6 +210,41 @@ def nemotron_3_super_pretrain_64gpu_gb300_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
+# Process/environment settings for the Nemotron 3 Ultra GB300 MXFP8 benchmark.
+# These are num_gpus-independent (HybridEP topology is per fixed 64-GPU NVLink
+# domain; GBS is set via the config, not the env), so every DP-scaled count shares
+# them. Mirrors the inline dict in ``nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config``
+# (PR #4911's canonical recipe); the shared builder applies it so the DP-autotuned
+# configs below also enable the CuteDSL fused grouped MLP kernel required by the
+# op fuser + fused weighted squared-ReLU with moe_act activation recompute.
+_ULTRA_GB300_FP8MX_ENV_VARS = {
+    **COMMON_PERF_ENV_VARS,
+    # CUDA stream scheduling for this model and parallel layout.
+    "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+    # CUDA graph and allocator behavior for this recipe.
+    "NCCL_GRAPH_REGISTER": 0,
+    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+    # NCCL user-buffer and launch settings.
+    "NCCL_NVLS_ENABLE": 0,
+    # HybridEP topology for the target system.
+    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+    "NVLINK_DOMAIN_SIZE": 72,
+    "USE_MNNVL": 1,
+    # Transformer Engine overlap settings for this model.
+    "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
+    # offloading weights;
+    "NVTE_CPU_OFFLOAD_V1": 1,
+    # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by the
+    # op fuser + fused weighted squared-ReLU with moe_act activation recompute
+    # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
+    "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+}
+
+
 def _nemotron_3_ultra_gb300_fp8mx_config(
     *, num_gpus: int, expert_model_parallel_size: int, global_batch_size: int
 ) -> ConfigContainer:
@@ -246,7 +281,7 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     cfg.train.global_batch_size = global_batch_size
 
     # Fine-grained activation offloading. Requires NVTE_CPU_OFFLOAD_V1=1 in the
-    # launch environment (set by perf_plugins.py).
+    # launch environment (set in this recipe's env_vars).
     # NOTE: also requires setting the min_offloaded_tensor_size to avoid CPU OOM issues
     cfg.model.fine_grained_activation_offloading = True
     cfg.model.offload_modules = ["fused_group_mlp"]
@@ -261,6 +296,9 @@ def _nemotron_3_ultra_gb300_fp8mx_config(
     # Apply HSDP / FSDP dtype overrides last so they win over the generic defaults.
     _apply_nemotron_3_ultra_fsdp_hsdp(cfg, num_gpus=num_gpus)
 
+    # Benchmark process/env settings (shared with the 256-GPU canonical recipe).
+    cfg.env_vars = dict(_ULTRA_GB300_FP8MX_ENV_VARS)
+
     return cfg
 
 
@@ -271,7 +309,39 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
     recompute + fine-grained activation offload of the expert MLP, MTP=2.
     """
-    return _nemotron_3_ultra_gb300_fp8mx_config(num_gpus=256, expert_model_parallel_size=64, global_batch_size=256)
+    cfg = _nemotron_3_ultra_gb300_fp8mx_config(
+        num_gpus=256,
+        expert_model_parallel_size=64,
+        global_batch_size=256,
+    )
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP topology for the target system.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # Required by fine_grained_activation_offloading (TE >= 2.10.0) to avoid
+        # offloading weights;
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        # Enable TE's CuteDSL fused grouped MLP kernel (sm100+). Required by the
+        # op fuser + fused weighted squared-ReLU with moe_act activation recompute
+        # (ScaledSReLU(activation_recompute_in_mlp=True) only runs on this path).
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+    }
+    return cfg
 
 
 # DP-autotuned Nemotron 3 Ultra GB300 MXFP8 perf recipes.

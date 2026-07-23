@@ -14,7 +14,6 @@
 
 import datetime
 import os
-import socket
 
 import pytest
 import torch
@@ -143,44 +142,86 @@ def _make_layer_spec():
     )
 
 
+def _initialize_distributed_process_group():
+    timeout = datetime.timedelta(minutes=30)
+    rendezvous_store = dist.TCPStore(
+        host_name="127.0.0.1",
+        port=0,
+        world_size=1,
+        is_master=True,
+        timeout=timeout,
+    )
+    os.environ["MASTER_ADDR"] = "127.0.0.1"
+    os.environ["MASTER_PORT"] = str(rendezvous_store.port)
+    os.environ["RANK"] = "0"
+    os.environ["LOCAL_RANK"] = "0"
+    os.environ["WORLD_SIZE"] = "1"
+
+    if torch.cuda.device_count() > 0:
+        torch.cuda.set_device(0)
+
+    dist.init_process_group(
+        backend="nccl" if torch.cuda.is_available() else "gloo",
+        store=rendezvous_store,
+        world_size=1,
+        rank=0,
+        timeout=timeout,
+    )
+    return rendezvous_store
+
+
 @pytest.fixture(scope="module", autouse=True)
 def _distributed_env():
     original_env = {
         key: os.environ.get(key) for key in ("MASTER_ADDR", "MASTER_PORT", "RANK", "LOCAL_RANK", "WORLD_SIZE")
     }
+    owns_process_group = not dist.is_initialized()
+    rendezvous_store = None
 
-    if not dist.is_initialized():
-        os.environ["MASTER_ADDR"] = "127.0.0.1"
-        os.environ["MASTER_PORT"] = _find_free_port()
-        os.environ["RANK"] = "0"
-        os.environ["LOCAL_RANK"] = "0"
-        os.environ["WORLD_SIZE"] = "1"
+    try:
+        if owns_process_group:
+            rendezvous_store = _initialize_distributed_process_group()
 
-        if torch.cuda.device_count() > 0:
-            torch.cuda.set_device(0)
-
-        dist.init_process_group(
-            backend="nccl" if torch.cuda.is_available() else "gloo",
-            world_size=1,
-            rank=0,
-            timeout=datetime.timedelta(minutes=30),
-        )
-
-    yield
-
-    if dist.is_initialized():
-        dist.destroy_process_group()
-    for key, value in original_env.items():
-        if value is None:
-            os.environ.pop(key, None)
-        else:
-            os.environ[key] = value
+        # Retain the store reference across the yield so its kernel-assigned
+        # port stays owned until after process-group teardown.
+        yield rendezvous_store
+    finally:
+        if owns_process_group and dist.is_initialized():
+            dist.destroy_process_group()
+        for key, value in original_env.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
 
 
-def _find_free_port() -> str:
-    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
-        sock.bind(("127.0.0.1", 0))
-        return str(sock.getsockname()[1])
+def test_distributed_setup_uses_tcpstore_owned_port(monkeypatch):
+    calls = {}
+
+    class StubStore:
+        port = 45678
+
+    store = StubStore()
+
+    def fake_tcp_store(**kwargs):
+        calls["tcp_store"] = kwargs
+        return store
+
+    def fake_init_process_group(**kwargs):
+        calls["init_process_group"] = kwargs
+
+    monkeypatch.setattr(os, "environ", {})
+    monkeypatch.setattr(dist, "TCPStore", fake_tcp_store)
+    monkeypatch.setattr(dist, "init_process_group", fake_init_process_group)
+    monkeypatch.setattr(torch.cuda, "device_count", lambda: 0)
+    monkeypatch.setattr(torch.cuda, "is_available", lambda: False)
+
+    rendezvous_store = _initialize_distributed_process_group()
+
+    assert calls["tcp_store"]["port"] == 0
+    assert calls["init_process_group"]["store"] is store
+    assert os.environ["MASTER_PORT"] == str(store.port)
+    assert rendezvous_store is store
 
 
 def _setup_parallel_state():

@@ -23,7 +23,6 @@ import sys
 import tempfile
 import time
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
 import nemo_run as run
@@ -38,7 +37,7 @@ try:
         kubeflow_executor,
         slurm_executor,
     )
-    from utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
+    from utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
 except (ImportError, ModuleNotFoundError):
     from .argument_parser import NUM_GPUS_PER_NODE_MAP, parse_cli_args
     from .utils.executors import (
@@ -47,7 +46,7 @@ except (ImportError, ModuleNotFoundError):
         kubeflow_executor,
         slurm_executor,
     )
-    from .utils.utils import configure_slurm_gpu_tuning, get_exp_name_config, select_config_variant_interactive
+    from .utils.utils import configure_slurm_gpu_tuning, select_config_variant_interactive
 
 try:
     import wandb
@@ -77,8 +76,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
-    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
-      Slurm executor before submission.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` / ``--peak_mem_clk`` — applied
+      directly to the Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
@@ -93,11 +92,13 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     def _is_launcher_only(flag: str) -> bool:
         return flag in (
             "-lgc",
+            "-lmc",
             "-vb",
             "--additional_slurm_params",
             "--csp",
             "--enable_vboost",
             "--lock_gpu_freq",
+            "--peak_mem_clk",
         ) or flag.startswith("--kubeflow_")
 
     filtered_args = []
@@ -113,6 +114,26 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
         filtered_args.append(arg)
 
     return filtered_args
+
+
+def _default_experiment_name(
+    *,
+    use_recipes: bool,
+    model_recipe_name: str,
+    task: str,
+    compute_dtype: str,
+    num_gpus: int,
+    gpu: str,
+    config_variant: str | None,
+) -> str:
+    """Build a stable experiment name without importing a performance recipe."""
+    if use_recipes:
+        return f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
+
+    fields = [task, model_recipe_name, compute_dtype, f"gpus{num_gpus}", gpu]
+    if config_variant and config_variant.lower() not in {"v1", "v2"}:
+        fields.append(config_variant.lower())
+    return "_".join(fields)
 
 
 def _build_nemorun_script(
@@ -452,18 +473,11 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     lock_gpu_freq: Optional[int],
+    peak_mem_clk: Optional[int],
     enable_nsys: bool,
     export_nsys_sqlite: bool,
     pytorch_profiler: bool,
     moe_a2a_overlap: bool,
-    tp_size: Optional[int],
-    pp_size: Optional[int],
-    cp_size: Optional[int],
-    vp_size: Optional[int],
-    ep_size: Optional[int],
-    etp_size: Optional[int],
-    micro_batch_size: Optional[int],
-    global_batch_size: Optional[int],
     wandb_key: str,
     wandb_project_name: str,
     wandb_experiment_name: str,
@@ -564,35 +578,18 @@ def main(
         logger.warning("--export_nsys_sqlite was set without --enable_nsys; no Nsys SQLite export will be generated.")
 
     script_name = ENTRYPOINT_BOOTSTRAP
-    if use_recipes:
-        exp_name = (
-            wandb_experiment_name
-            if wandb_experiment_name is not None
-            else f"{model_recipe_name}_{task}_{num_gpus}gpu_{gpu}"
-        )
-
-    else:
-        if wandb_experiment_name is not None:
-            # CI supplies the complete experiment name. Avoid resolving a perf recipe on the
-            # login node in this path: recipe imports belong in the training container.
-            exp_name = wandb_experiment_name
-        else:
-            # Create a simple namespace with the args needed by get_exp_name_config
-            args_for_config = SimpleNamespace(
-                num_gpus=num_gpus,
-                tensor_model_parallel_size=tp_size,
-                pipeline_model_parallel_size=pp_size,
-                context_parallel_size=cp_size,
-                virtual_pipeline_model_parallel_size=vp_size,
-                expert_model_parallel_size=ep_size,
-                expert_tensor_parallel_size=etp_size,
-                micro_batch_size=micro_batch_size,
-                global_batch_size=global_batch_size,
-            )
-            exp_config = get_exp_name_config(
-                args_for_config, model_family_name, model_recipe_name, gpu, compute_dtype, task, config_variant
-            )
-            exp_name = f"{task}_{model_recipe_name}_{compute_dtype}_{exp_config}"
+    # Keep the historical W&B-name behavior for CI. The lightweight fallback
+    # deliberately avoids resolving a recipe: effective parallelism, batches,
+    # and process environment are finalized by bootstrap.py in the container.
+    exp_name = wandb_experiment_name or _default_experiment_name(
+        use_recipes=use_recipes,
+        model_recipe_name=model_recipe_name,
+        task=task,
+        compute_dtype=compute_dtype,
+        num_gpus=num_gpus,
+        gpu=gpu,
+        config_variant=config_variant,
+    )
 
     if pretrained_checkpoint is not None:
         custom_mounts.append(f"{pretrained_checkpoint}:{pretrained_checkpoint}")
@@ -637,9 +634,16 @@ def main(
         ]
     )
 
+    if peak_mem_clk is None and gpu == "vr200":
+        peak_mem_clk = 4752
+    if peak_mem_clk == -1:
+        peak_mem_clk = None
+
     if kubeflow_namespace:
-        if enable_vboost or lock_gpu_freq is not None:
-            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
+        if enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None:
+            logger.warning(
+                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow."
+            )
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -698,6 +702,7 @@ def main(
             executor,
             enable_vboost=enable_vboost,
             lock_gpu_freq=lock_gpu_freq,
+            peak_mem_clk=peak_mem_clk,
         )
 
     plugins = []
@@ -998,18 +1003,11 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
+        peak_mem_clk=args.peak_mem_clk,
         enable_nsys=args.enable_nsys,
         export_nsys_sqlite=args.export_nsys_sqlite,
         pytorch_profiler=args.pytorch_profiler,
         moe_a2a_overlap=args.moe_a2a_overlap,
-        tp_size=args.tensor_model_parallel_size,
-        pp_size=args.pipeline_model_parallel_size,
-        cp_size=args.context_parallel_size,
-        vp_size=args.virtual_pipeline_model_parallel_size,
-        ep_size=args.expert_model_parallel_size,
-        etp_size=args.expert_tensor_parallel_size,
-        micro_batch_size=args.micro_batch_size,
-        global_batch_size=args.global_batch_size,
         wandb_key=args.wandb_key,
         wandb_project_name=args.wandb_project_name,
         wandb_experiment_name=args.wandb_experiment_name,

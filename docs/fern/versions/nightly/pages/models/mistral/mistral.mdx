@@ -1,5 +1,9 @@
 # Mistral
 
+> **Deprecation notice:** Mistral 7B and Mistral Small 3 24B support is no
+> longer actively maintained or tested against current upstream checkpoints and
+> will be removed in Megatron Bridge 0.7.0. Ministral 3 is not deprecated.
+
 [Mistral AI](https://mistral.ai/) develops frontier large language models with a focus on efficiency and performance. The Mistral family includes both dense and Mixture-of-Experts architectures, featuring innovations like sliding window attention and efficient context handling.
 
 Mistral models are supported via the Bridge system with auto-detected configuration and weight mapping.

@@ -9,12 +9,18 @@ summary: >
   and training.
 verification_index:
   model_level:
-    verified: all
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
   training:
     H100:
-      verified: all
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
-      unverified: all
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: nvidia/NVIDIA-Nemotron-3-Nano-4B-BF16
   hf_revision: dfaf35de3e30f1867dd8dbc38a7fc9fb52d3914f  # pragma: allowlist secret
