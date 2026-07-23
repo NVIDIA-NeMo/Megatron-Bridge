@@ -76,8 +76,8 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     reach the rank-local scripts:
 
     * ``--additional_slurm_params`` — Slurm orchestration only.
-    * ``--enable_vboost`` / ``--lock_gpu_freq`` — applied directly to the
-      Slurm executor before submission.
+    * ``--enable_vboost`` / ``--lock_gpu_freq`` / ``--peak_mem_clk`` — applied
+      directly to the Slurm executor before submission.
     * ``--csp`` — launcher-only; selects the CSP fabric plugin. The rank-local
       script forwards unrecognized args to Hydra, which rejects ``--csp``.
     * ``--kubeflow_*`` — consumed here to build the Kubeflow TrainJob. Several
@@ -92,11 +92,13 @@ def _filter_run_script_args(argv: List[str]) -> List[str]:
     def _is_launcher_only(flag: str) -> bool:
         return flag in (
             "-lgc",
+            "-lmc",
             "-vb",
             "--additional_slurm_params",
             "--csp",
             "--enable_vboost",
             "--lock_gpu_freq",
+            "--peak_mem_clk",
         ) or flag.startswith("--kubeflow_")
 
     filtered_args = []
@@ -471,6 +473,7 @@ def main(
     dryrun: bool,
     enable_vboost: bool,
     lock_gpu_freq: Optional[int],
+    peak_mem_clk: Optional[int],
     enable_nsys: bool,
     export_nsys_sqlite: bool,
     pytorch_profiler: bool,
@@ -631,9 +634,16 @@ def main(
         ]
     )
 
+    if peak_mem_clk is None and gpu == "vr200":
+        peak_mem_clk = 4752
+    if peak_mem_clk == -1:
+        peak_mem_clk = None
+
     if kubeflow_namespace:
-        if enable_vboost or lock_gpu_freq is not None:
-            logger.warning("--enable_vboost and --lock_gpu_freq are Slurm-only and will be ignored on Kubeflow.")
+        if enable_vboost or lock_gpu_freq is not None or peak_mem_clk is not None:
+            logger.warning(
+                "--enable_vboost, --lock_gpu_freq, and --peak_mem_clk are Slurm-only and will be ignored on Kubeflow."
+            )
         executor = kubeflow_executor(
             namespace=kubeflow_namespace,
             nodes=-(num_gpus // -gpus_per_node),
@@ -692,6 +702,7 @@ def main(
             executor,
             enable_vboost=enable_vboost,
             lock_gpu_freq=lock_gpu_freq,
+            peak_mem_clk=peak_mem_clk,
         )
 
     plugins = []
@@ -992,6 +1003,7 @@ if __name__ == "__main__":
         dryrun=args.dryrun,
         enable_vboost=args.enable_vboost,
         lock_gpu_freq=args.lock_gpu_freq,
+        peak_mem_clk=args.peak_mem_clk,
         enable_nsys=args.enable_nsys,
         export_nsys_sqlite=args.export_nsys_sqlite,
         pytorch_profiler=args.pytorch_profiler,
