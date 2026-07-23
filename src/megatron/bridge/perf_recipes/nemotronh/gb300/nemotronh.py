@@ -274,6 +274,19 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return _nemotron_3_ultra_gb300_fp8mx_config(num_gpus=256, expert_model_parallel_size=64, global_batch_size=256)
 
 
+def nemotron_3_ultra_pretrain_3072gpu_gb300_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 3072× GB300, MXFP8, Megatron-FSDP (HSDP).
+
+    The canonical 256-GPU GB300 recipe scaled linearly in the data-parallel dimension:
+    model parallelism is unchanged (TP1 / PP1 / CP1 / EP64 / ETP1, MBS 1, seq 8192,
+    selective recompute + activation offload), only DP grows. At 3072 GPUs that is
+    48 NVLink domains of 64 GPUs (HSDP replicates optimizer state across them) and
+    GBS 3072 (= 256 x 3072/256). All other settings inherit unchanged from the
+    shared builder.
+    """
+    return _nemotron_3_ultra_gb300_fp8mx_config(num_gpus=3072, expert_model_parallel_size=64, global_batch_size=3072)
+
+
 def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB300, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
