@@ -244,6 +244,8 @@ def is_vision_language_model(
         model_type = getattr(config, "model_type", "").lower()
         arch = getattr(config, "architectures", [])
         arch_str = " ".join(arch).lower() if arch else ""
+        if getattr(config, "vision_config", None) is not None:
+            return True
 
         # Common patterns for VL models
         vl_indicators = [

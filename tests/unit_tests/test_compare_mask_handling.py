@@ -89,6 +89,20 @@ from compare import (  # noqa: E402
 class TestCompareMaskHandling:
     """Tests for attention_mask handling in compare.py Megatron and HF paths."""
 
+    def test_vlm_detection_accepts_shared_architecture_with_vision_config(self):
+        """Qwen3.5/3.6 VL configs need not include ``vl`` in their model type."""
+        config = SimpleNamespace(
+            model_type="qwen3_5_moe",
+            architectures=["Qwen3_5MoeForConditionalGeneration"],
+            vision_config=SimpleNamespace(),
+        )
+
+        with (
+            patch.object(compare.AutoConfig, "from_pretrained", return_value=config),
+            patch.object(compare, "is_safe_repo", return_value=False),
+        ):
+            assert compare.is_vision_language_model("Qwen/Qwen3.6-35B-A3B") is True
+
     def test_single_batch_iterator_stores_none_attention_mask(self):
         """Test that SingleBatchIterator preserves None attention_mask in batch dict."""
         input_ids = torch.tensor([[1, 2, 3]])
