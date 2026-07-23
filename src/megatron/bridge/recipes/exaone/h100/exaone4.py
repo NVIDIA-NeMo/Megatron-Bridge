@@ -19,6 +19,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 
 
@@ -73,6 +74,9 @@ def exaone4_1p2b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
     _apply_exaone4_common(cfg)
     cfg.dataset.num_workers = 8
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -82,6 +86,9 @@ def exaone4_1p2b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     _apply_exaone4_common(cfg)
     cfg.model.seq_length = 2048
     cfg.train.global_batch_size = 128
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -92,6 +99,9 @@ def exaone4_1p2b_peft_1gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") ->
     cfg.model.seq_length = 2048
     cfg.peft = default_peft_config(peft_scheme)
     cfg.train.global_batch_size = 128
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
