@@ -71,6 +71,13 @@ GPU_TYPE="${GPU_TYPE:-gb200}"
 COMPUTE_DTYPE="${COMPUTE_DTYPE:-bf16}"
 NVTE_CPU_OFFLOAD_V1_VAL="${NVTE_CPU_OFFLOAD_V1:-0}"
 KEEP_RECIPE_DISPATCHER="${KEEP_RECIPE_DISPATCHER:-0}"
+# NCCL cuMem: default off (0) to dodge the 26.06 cuMem-P2P CUDA-801 on alltoall/bf16;
+# set NCCL_CUMEM_ENABLE=1 when keeping HybridEP (its MNNVL fabric needs cuMem).
+NCCL_CUMEM_ENABLE_VAL="${NCCL_CUMEM_ENABLE:-0}"
+# Arbitrary extra "-E NAME=VAL" env, space-separated NAME=VAL pairs. Use to force the
+# correct gb300 HybridEP topology the perf path mis-applies as the h100 profile, e.g.
+# EXTRA_ENV="NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=64 NVLINK_DOMAIN_SIZE=72 USE_MNNVL=1".
+EXTRA_ENV="${EXTRA_ENV:-}"
 OUT_DIR="${OUT_DIR:-./nsys-compare}"
 NSYS_START="${NSYS_START:-15}"
 NSYS_STOP="${NSYS_STOP:-18}"
@@ -210,6 +217,11 @@ submit_run() {
     local DISPATCHER_OVERRIDE=(model.moe_token_dispatcher_type=alltoall model.moe_flex_dispatcher_backend=null)
     [ "$KEEP_RECIPE_DISPATCHER" = "1" ] && DISPATCHER_OVERRIDE=()
 
+    # Extra "-E NAME=VAL" env from $EXTRA_ENV (space-separated NAME=VAL pairs).
+    local EXTRA_ENV_ARGS=()
+    local _kv
+    for _kv in $EXTRA_ENV; do EXTRA_ENV_ARGS+=(-E "$_kv"); done
+
     # --- Positional override block: mirrors launch_nemotron_3_ultra_deterministic.sh ---
     # The two ``false → true`` last-wins DDP overlap toggles are kept verbatim so
     # this run is the bit-exact-proven recipe + optional nsys instrumentation.
@@ -234,8 +246,9 @@ submit_run() {
         "${NSYS_CLI_FLAGS[@]}" \
         "${DET_ENVS[@]}" \
         -E NCCL_NVLS_ENABLE=0 \
-        -E NCCL_CUMEM_ENABLE=0 \
+        -E NCCL_CUMEM_ENABLE="$NCCL_CUMEM_ENABLE_VAL" \
         -E NVTE_CPU_OFFLOAD_V1="$NVTE_CPU_OFFLOAD_V1_VAL" \
+        "${EXTRA_ENV_ARGS[@]}" \
         -E TRITON_CACHE_AUTOTUNING=1 \
         -E HF_HOME="$HF_CACHE" \
         -E HF_DATASETS_CACHE="$HF_CACHE/datasets" \
