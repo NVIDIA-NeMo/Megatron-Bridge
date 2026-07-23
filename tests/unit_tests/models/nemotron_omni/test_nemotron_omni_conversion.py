@@ -24,6 +24,7 @@ from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import get_model_bridge
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.nemotron_omni import nemotron_omni_provider as provider_module
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_bridge import NemotronOmniBridge
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import NemotronOmniModelProvider
@@ -173,6 +174,21 @@ def test_nemotron_omni_provider_requires_sound_config_when_enabled():
 
     with pytest.raises(ValueError, match="requires sound_config"):
         provider.finalize()
+
+
+def test_nemotron_omni_provide_uses_provider_as_runtime_config(monkeypatch):
+    provider = NemotronOmniModelProvider(image_token_index=18)
+    llava_model = SimpleNamespace()
+    model = SimpleNamespace()
+    model_factory = Mock(return_value=model)
+
+    monkeypatch.setattr(provider_module, "LLaVAModel", Mock(return_value=llava_model))
+    monkeypatch.setattr(provider_module, "get_vit_layer_with_transformer_engine_spec", Mock(return_value=object()))
+    monkeypatch.setattr(provider_module, "get_language_mlp_submodules", Mock(return_value=object()))
+    monkeypatch.setattr(provider_module, "NemotronOmniModel", model_factory)
+
+    assert provider.provide() is model
+    model_factory.assert_called_once_with(config=provider, llava_model=llava_model)
 
 
 def test_nemotron_omni_vision_projection_uses_squared_relu():
