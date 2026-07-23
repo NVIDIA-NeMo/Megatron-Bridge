@@ -34,19 +34,24 @@ _lora_seq_stats_cache: dict = {}
 def _packed_data_exists(path: str | None) -> bool:
     """Return True if a packed dataset file exists, for both parquet and npy formats.
 
-    Parquet specs may be a single file, a glob, or a directory, so they are validated
-    via the packed-parquet resolver rather than a bare ``Path.exists()`` check (which
-    would fail for globs/directories and silently disable LoRA-aware FLOP accounting).
+    Parquet specs may be a single file, a glob, or a directory, so they are detected
+    with ``is_packed_parquet_spec`` and validated via the packed-parquet resolver
+    rather than a bare ``Path.exists()`` check (which would fail for globs/directories
+    and silently disable LoRA-aware FLOP accounting). This mirrors the format detection
+    in ``calculate_avg_seqlen`` so a spec that passes this gate also reads correctly.
     """
     if not path:
         return False
-    if str(path).lower().endswith((".parquet", ".pq")):
-        try:
-            from megatron.bridge.data.packing.paths import resolve_packed_parquet_paths
+    try:
+        from megatron.bridge.data.packing.paths import (
+            is_packed_parquet_spec,
+            resolve_packed_parquet_paths,
+        )
 
+        if is_packed_parquet_spec(path):
             return len(resolve_packed_parquet_paths(path)) > 0
-        except Exception:
-            return False
+    except Exception:
+        return False
     return Path(path).exists()
 
 
