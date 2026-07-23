@@ -317,6 +317,20 @@ class TestGemma4BridgeConfigExport:
         assert config["moe_intermediate_size"] == 704
         assert config["intermediate_size"] == 2112
 
+    def test_moe_architecture_fields_after_checkpoint_config_reload(self):
+        """Checkpoint YAML reloads the interleaved attention tuple as a list."""
+        provider = Gemma4ModelProvider(
+            interleaved_attn_pattern=[5, 1],
+            num_layers=30,
+            vocab_size=262_144,
+        )
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        assert len(config["layer_types"]) == provider.num_layers
+        assert config["layer_types"][:6] == ["sliding_attention"] * 5 + ["full_attention"]
+        Gemma4TextConfig(**config)
+
 
 # ===========================================================================
 # _infer_attn_pattern helper

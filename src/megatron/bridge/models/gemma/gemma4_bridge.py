@@ -102,7 +102,16 @@ def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvid
     else:
         pattern = provider.interleaved_attn_pattern
 
-    if isinstance(pattern, list):
+    if (
+        not isinstance(provider, Gemma4DenseProvider)
+        and isinstance(pattern, (list, tuple))
+        and len(pattern) == 2
+        and all(isinstance(value, int) and not isinstance(value, bool) for value in pattern)
+    ):
+        sliding_count, full_count = pattern
+        cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
+        layer_types = [cycle[index % len(cycle)] for index in range(provider.num_layers)] if cycle else []
+    elif isinstance(pattern, list):
         layer_types = [
             value if isinstance(value, str) else "sliding_attention" if bool(value) else "full_attention"
             for value in pattern
