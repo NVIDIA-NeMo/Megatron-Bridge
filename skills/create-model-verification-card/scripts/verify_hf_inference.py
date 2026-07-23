@@ -27,7 +27,7 @@ from urllib.parse import urlparse
 LOG = logging.getLogger(__name__)
 
 
-def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hf-model", required=True, help="Exported HF model directory.")
     parser.add_argument("--prompt", required=True, help="Prompt to generate from.")
@@ -54,7 +54,7 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default="bfloat16",
         help="Model loading dtype.",
     )
-    args = parser.parse_args(argv)
+    args = parser.parse_args()
     if args.max_new_tokens <= 0:
         parser.error("--max-new-tokens must be positive")
     if args.disable_thinking and not args.chat_template:
@@ -145,9 +145,9 @@ def _processor_tokenizer(processor: Any) -> Any:
     return getattr(processor, "tokenizer", processor)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main() -> int:
     """Run two greedy generations and print their shared completion."""
-    args = _parse_args(argv)
+    args = _parse_args()
     torch, model, processor = _load_runtime(args)
     tokenizer = _processor_tokenizer(processor)
     inputs = _prepare_inputs(processor, args).to(model.device)

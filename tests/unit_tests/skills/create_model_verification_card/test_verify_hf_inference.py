@@ -17,6 +17,7 @@
 from __future__ import annotations
 
 import importlib.util
+import sys
 from pathlib import Path
 
 import pytest
@@ -97,22 +98,26 @@ def test_image_content_uses_processor_native_location_keys():
     }
 
 
-def test_image_requires_chat_template():
+def test_image_requires_chat_template(monkeypatch):
     module = _load_module()
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "verify_hf_inference.py",
+            "--hf-model",
+            "model",
+            "--prompt",
+            "prompt",
+            "--image",
+            "image.png",
+            "--max-new-tokens",
+            "2",
+        ],
+    )
 
     with pytest.raises(SystemExit):
-        module._parse_args(
-            [
-                "--hf-model",
-                "model",
-                "--prompt",
-                "prompt",
-                "--image",
-                "image.png",
-                "--max-new-tokens",
-                "2",
-            ]
-        )
+        module._parse_args()
 
 
 def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypatch):
@@ -120,9 +125,11 @@ def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypat
     processor = _Processor()
     model = _Model()
     monkeypatch.setattr(module, "_load_runtime", lambda args: (torch, model, processor))
-
-    result = module.main(
+    monkeypatch.setattr(
+        sys,
+        "argv",
         [
+            "verify_hf_inference.py",
             "--hf-model",
             "model",
             "--prompt",
@@ -133,8 +140,10 @@ def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypat
             "2",
             "--chat-template",
             "--disable-thinking",
-        ]
+        ],
     )
+
+    result = module.main()
 
     assert result == 0
     assert processor.messages == [
@@ -167,9 +176,11 @@ def test_text_main_keeps_the_legacy_tokenizer_path(monkeypatch):
     tokenizer = _Tokenizer()
     model = _Model()
     monkeypatch.setattr(module, "_load_runtime", lambda args: (torch, model, tokenizer))
-
-    result = module.main(
+    monkeypatch.setattr(
+        sys,
+        "argv",
         [
+            "verify_hf_inference.py",
             "--hf-model",
             "model",
             "--prompt",
@@ -177,8 +188,10 @@ def test_text_main_keeps_the_legacy_tokenizer_path(monkeypatch):
             "--max-new-tokens",
             "2",
             "--chat-template",
-        ]
+        ],
     )
+
+    result = module.main()
 
     assert result == 0
     assert tokenizer.prompt == "formatted text prompt"
