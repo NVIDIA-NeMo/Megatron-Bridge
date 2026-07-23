@@ -75,6 +75,7 @@ RECIPE_FORWARD_STEP_PREFIXES = (
     ("qwen3_omni_", "qwen3_omni_step"),
     ("qwen3_vl_", "qwen3_vl_step"),
     ("qwen35_vl_", "qwen3_vl_step"),
+    ("qwen36_vl_", "qwen3_vl_step"),
     ("step37_", "step37_flickr8k_step"),
     ("gemma3_vl_", "vlm_step"),
     ("gemma4_vl_", "vlm_step"),

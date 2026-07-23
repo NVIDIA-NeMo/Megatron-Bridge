@@ -137,6 +137,23 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Return optional immutable Hub revision kwargs."""
+    return {"revision": revision} if revision is not None else {}
+
+
+def _should_stop_generation(next_token_id: int, stop_tokens: list[int], *, exact_new_tokens: bool) -> bool:
+    """Return whether EOS should end generation before the requested token count."""
+    return not exact_new_tokens and next_token_id in stop_tokens
+
+
+def _completion_output(generated_ids, prompt_length: int, tokenizer) -> tuple[list[int], str]:
+    """Return completion-only token IDs and decoded text."""
+    completion_ids = generated_ids[0, prompt_length:].tolist()
+    completion = tokenizer.decode(completion_ids, skip_special_tokens=True)
+    return completion_ids, completion
+
+
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
     tp = args.tp
@@ -150,7 +167,11 @@ def main(args) -> None:
     )
 
     # Detect model family for processor-specific handling
-    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    config = AutoConfig.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     model_type = getattr(config, "model_type", "")
     is_kimi = "kimi" in model_type
     image_token_id = getattr(config, "image_token_id", None)
@@ -161,7 +182,11 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Load model
     # ------------------------------------------------------------------
-    bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    bridge = AutoBridge.from_hf_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
 
     if args.megatron_model_path:
         print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
@@ -220,10 +245,22 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Tokenizer & processor
     # ------------------------------------------------------------------
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     if is_kimi:
-        patch_kimi_vision_processor(args.hf_model_path)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+        patch_kimi_vision_processor(
+            args.hf_model_path,
+            revision=args.hf_revision,
+            trust_remote_code=trust_remote,
+        )
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     pad_token_id = tokenizer.pad_token_id or 0
@@ -259,6 +296,7 @@ def main(args) -> None:
             image_token_id=image_token_id,
         )
 
+    prompt_length = input_ids_raw.size(1)
     input_ids_raw = input_ids_raw.cuda()
     pixel_values = to_cuda(pixel_values)
     image_grid_thw = to_cuda(image_grid_thw)
@@ -350,23 +388,41 @@ def main(args) -> None:
                     [mm_token_type_ids, torch.zeros_like(next_token_ids, dtype=mm_token_type_ids.dtype)], dim=-1
                 )
 
-            if next_token_ids.item() in stop_tokens:
+            if _should_stop_generation(
+                next_token_ids.item(),
+                stop_tokens,
+                exact_new_tokens=args.exact_new_tokens,
+            ):
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
+    completion_ids, completion = _completion_output(generated_ids, prompt_length, tokenizer)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
     print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
+    print_rank_0(f"Completion token IDs: {completion_ids}")
+    print_rank_0(f"Completion: {completion}")
     print_rank_0("=======================================")
 
 
-if __name__ == "__main__":
+def build_parser() -> argparse.ArgumentParser:
+    """Build the VLM generation CLI parser."""
     parser = argparse.ArgumentParser(description="VLM Generation from HuggingFace Models")
     parser.add_argument("--hf_model_path", type=str, required=True, help="Path to the HuggingFace VL model.")
+    parser.add_argument(
+        "--hf-revision",
+        dest="hf_revision",
+        help="Immutable Hugging Face Hub revision used for model, config, tokenizer, and processor loading.",
+    )
     parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")
     parser.add_argument("--max_new_tokens", type=int, default=20, help="Maximum number of new tokens to generate.")
+    parser.add_argument(
+        "--exact-new-tokens",
+        action="store_true",
+        help="Generate exactly --max_new_tokens even if an end-of-sequence token appears earlier.",
+    )
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
     parser.add_argument("--pp", type=int, default=1, help="Pipeline parallelism size")
     parser.add_argument("--ep", type=int, default=1, help="Expert parallelism size")
@@ -388,8 +444,11 @@ if __name__ == "__main__":
         "--video_fps", type=float, default=2.0, help="Frames per second to sample from the video (default: 2.0)."
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
-    args = parser.parse_args()
+    return parser
 
+
+if __name__ == "__main__":
+    args = build_parser().parse_args()
     main(args)
 
     if torch.distributed.is_initialized():

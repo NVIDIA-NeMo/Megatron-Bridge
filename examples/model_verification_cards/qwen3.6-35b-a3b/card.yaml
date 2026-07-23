@@ -1,0 +1,360 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen3_6_35b_a3b
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Public identity decision: the canonical checkpoint is
+  Qwen/Qwen3.6-35B-A3B even though its name has no VL suffix. Its public task is
+  image-text-to-text and its Transformers architecture is
+  Qwen3_5MoeForConditionalGeneration, matching the shared Qwen3.5/Qwen3.6
+  vision-language Bridge implementation. Qwen3.6 has distinct 40-layer,
+  256-expert, top-8 geometry, so this card uses exact Qwen3.6 recipes rather
+  than substituting the Qwen3.5 35B recipe. Functional finetuning uses
+  mmoukouba/MedPix-VQA at immutable revision
+  69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
+  and text conversations. No model-scale GPU workflow below has been executed
+  yet.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+    GB200:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+model:
+  hf_id: Qwen/Qwen3.6-35B-A3B
+  hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
+  architecture: Qwen3_5MoeForConditionalGeneration
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: ebdef7c11b14bec53c4abedf4783bb75d70ef406  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu
+      --nodes 1 --hf-model Qwen/Qwen3.6-35B-A3B
+      --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+      --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: null
+    expected_result: >
+      The pinned-revision import must exit successfully and create
+      iter_0000000. Before verification, strict inventory evidence must show
+      that every expected language, vision, projection, router, shared-expert,
+      routed-expert, and packed Qwen3.6 MTP tensor has the expected key, shape,
+      dtype, and value after a CPU round-trip; tensor counts and comparison
+      totals must be recorded rather than inferred from support metadata.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3.6-35B-A3B
+      --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+      --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron
+      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 16 --etp 1
+    last_verified: null
+    expected_result: >
+      The 16-GPU pinned-revision import must exit successfully and create a
+      complete iter_0000000 distributed checkpoint at TP2/PP1/EP16/ETP1.
+      Strict inventory evidence must cover language, vision, projection, MoE,
+      shared-expert, and packed MTP tensors, and a reload must report no missing,
+      unexpected, shape-mismatched, or dtype-mismatched weights.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu
+      --nodes 1 --hf-model Qwen/Qwen3.6-35B-A3B
+      --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+      --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3.6-35b-a3b/cpu-hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+    last_verified: null
+    expected_result: >
+      Export must exit successfully and Transformers must strictly reload the
+      result as Qwen3_5MoeForConditionalGeneration. The exported config must
+      preserve the 40-layer, 256-expert, top-8 multimodal geometry and one MTP
+      layer, and a complete tensor inventory must match the pinned source after
+      the CPU round-trip with no dropped vision or packed next-token weights.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3.6-35B-A3B
+      --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+      --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+      --hf-path work/model-verification/qwen3.6-35b-a3b/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 2 --pp 1 --ep 16 --etp 1
+    last_verified: null
+    expected_result: >
+      Distributed export must exit successfully, write a complete indexed BF16
+      checkpoint, and strictly reload without missing or unexpected keys.
+      Recorded inventory evidence must prove that all language, vision,
+      projection, router, expert, shared-expert, and packed MTP tensors match
+      the pinned source in key, shape, dtype, and value.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path Qwen/Qwen3.6-35B-A3B
+      --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+      --model_class Qwen3_5MoeForConditionalGeneration
+      --megatron_model_path
+      work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+      --tp 1 --pp 8 --ep 1 --etp 1
+      --image_path work/data/medpix/verification.png
+      --prompt "What was observed in the imaging?"
+    last_verified: null
+    expected_result: >
+      Materialize verification.png from one recorded row of the pinned MedPix
+      validation split before running this command. TP1 makes the
+      processor-expanded multimodal prompt length divisible by tensor
+      parallelism. The pinned one-step comparison must report matching HF and
+      Megatron next-token IDs and decoded tokens, cosine similarity at least
+      0.99, and finite maximum and mean absolute logit differences; the exact
+      token IDs, similarity, and differences must be recorded before this item
+      is marked verified.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/hf_to_megatron_generate_vlm.py
+      --hf_model_path Qwen/Qwen3.6-35B-A3B
+      --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+      --megatron_model_path
+      work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+      --tp 2 --pp 1 --ep 8 --etp 1
+      --image_path work/data/medpix/verification.png
+      --prompt "What was observed in the imaging?"
+      --max_new_tokens 32 --exact-new-tokens
+    last_verified: null
+    expected_result: >
+      After materializing the recorded MedPix validation image, two independent
+      greedy executions must load the imported checkpoint, consume both image
+      pixels and text through the Qwen processor, and produce byte-identical
+      token IDs. Before verification, the exact generated-token count and a
+      literal quoted completion must be recorded; an early end-of-sequence or a
+      text-only path does not satisfy this gate.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        No pretraining run is claimed. MedPix is a supervised multimodal
+        question-answer dataset and the public launcher correctly treats it as
+        finetuning data, so it cannot be substituted mechanically into the
+        pretrain loop. A future pretrain verification requires an exact
+        Qwen3.6 pretrain recipe, a suitable pinned pretraining corpus, finite
+        loss movement, all four metrics, and a reloadable full-state
+        checkpoint.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --wait
+        --recipe qwen36_vl_35b_a3b_sft_16gpu_h100_bf16_config --mode sft
+        --dataset medpix
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+        --max_steps 100 --seq_length 4096
+        'dataset.source.split="train[:10000]"'
+        'dataset.source.load_kwargs={revision:"69eb219d477ab8699296da1fd6b89beb768042d3"}'
+        dataset.do_validation=true dataset.do_test=false
+        dataset.enable_in_batch_packing=false
+        dataset.defer_in_batch_packing_to_step=true
+        scheduler.lr_decay_iters=100 validation.eval_interval=50
+        validation.eval_iters=8 checkpoint.load=null
+        --save_dir work/model-verification/qwen3.6-35b-a3b/sft-medpix-checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The exact Qwen3.6 recipe must resolve the immutable model and processor
+        revision, and the immutable MedPix source must adapt image_id, question,
+        and answer into a user turn containing typed image and text blocks plus
+        an assistant text turn. The Qwen-specific collator and qwen3_vl_step
+        must preserve pixel values, image grid metadata, input IDs, labels, and
+        assistant-only loss masks without text-only offline packing. The
+        16-GPU run must complete 100 full-SFT steps at TP2/PP1/CP1/EP16/ETP1,
+        GBS/MBS 32/4, record all four metrics with finite loss and no skipped or
+        NaN iterations, and strictly reload iter_0000100.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3.6-35B-A3B
+          --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+          --megatron-path
+          work/model-verification/qwen3.6-35b-a3b/sft-medpix-checkpoints/iter_0000100
+          --hf-path work/model-verification/qwen3.6-35b-a3b/sft-medpix-hf-export
+          --torch-dtype bfloat16 --export-weight-dtype bfloat16
+          --distributed-save --tp 2 --pp 1 --ep 16 --etp 1
+        - >
+          uv run python
+          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          --hf-model work/model-verification/qwen3.6-35b-a3b/sft-medpix-hf-export
+          --image work/data/medpix/verification.png
+          --prompt "What was observed in the imaging?"
+          --max-new-tokens 32 --chat-template --disable-thinking
+      last_verified: null
+      expected_result: >
+        The step-100 full-SFT checkpoint must export every language, vision,
+        projection, MoE, shared-expert, and MTP weight to an indexed BF16 HF
+        checkpoint that strictly reloads with no missing, unexpected, or
+        mismatched tensors. The processor-native image verifier must generate
+        exactly 32 new greedy tokens twice with byte-identical token IDs.
+        Tensor counts, serialized byte totals, and the literal quoted completion
+        must be recorded before this item is marked verified.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features:
+        sequence_packing: in_batch
+        context_parallel_size: 2
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8 --wait
+        --recipe qwen36_vl_35b_a3b_sft_16gpu_h100_bf16_config --mode sft
+        --dataset medpix
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+        --max_steps 20 --seq_length 32768 --context_parallel_size 2
+        -tp 2 -pp 1 -ep 8
+        'dataset.source.split="train[:10000]"'
+        'dataset.source.load_kwargs={revision:"69eb219d477ab8699296da1fd6b89beb768042d3"}'
+        dataset.do_validation=false dataset.do_test=false
+        dataset.enable_in_batch_packing=true
+        dataset.defer_in_batch_packing_to_step=true
+        model.cp_comm_type=p2p model.recompute_granularity=full
+        model.recompute_method=uniform model.recompute_num_layers=1
+        ddp.average_in_collective=false scheduler.lr_decay_iters=20
+        validation.eval_iters=0 validation.eval_interval=0
+        checkpoint.load=null checkpoint.save=null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The pinned MedPix/Qwen3.6 workload must complete 20 steps with sequence
+        length 32768 at TP2/PP1/CP2/EP8/ETP1 while preserving image tensors and
+        processor-expanded multimodal positions through CP slicing. The
+        Qwen-specific step must perform deferred in-batch packing and build
+        packed sequence metadata without text-only offline packing. Runtime
+        configuration must confirm the requested sequence length, CP topology,
+        and in-batch packing; finite loss, no skipped or NaN iterations, and all
+        four metrics must be recorded.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --wait
+        --recipe qwen36_vl_35b_a3b_peft_4gpu_h100_bf16_config --mode lora
+        --dataset medpix
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+        --max_steps 100 --seq_length 4096
+        'dataset.source.split="train[:10000]"'
+        'dataset.source.load_kwargs={revision:"69eb219d477ab8699296da1fd6b89beb768042d3"}'
+        dataset.do_validation=true dataset.do_test=false
+        dataset.enable_in_batch_packing=false
+        dataset.defer_in_batch_packing_to_step=true
+        scheduler.lr_decay_iters=100 validation.eval_interval=50
+        validation.eval_iters=8 checkpoint.load=null
+        --save_dir work/model-verification/qwen3.6-35b-a3b/peft-medpix-checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The exact Qwen3.6 recipe and pinned MedPix source must complete 100 LoRA
+        steps at TP2/PP1/CP1/EP4/ETP1, GBS/MBS 32/4. Processor-native images,
+        image grid metadata, labels, and assistant-only loss masks must reach
+        qwen3_vl_step. Only rank-32, alpha-32, zero-dropout LoRA adapters on
+        linear_qkv, linear_proj, linear_fc1, and linear_fc2 may be trainable.
+        The run must record all four metrics with finite loss and no skipped or
+        NaN iterations, and the complete iter_0000100 adapter checkpoint must
+        strictly reload.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        No resume result is claimed because the required uninterrupted
+        pretraining reference is also unverified. A future run must restore
+        full optimizer, scheduler, RNG, and data-order state from step 50 into
+        a distinct output root, resume at step 51, finish at step 100, record
+        all four metrics, and match steps 51 and 100 against the uninterrupted
+        reference within the declared tolerances.

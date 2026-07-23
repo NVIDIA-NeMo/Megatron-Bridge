@@ -130,6 +130,7 @@ def test_benchmark_recipe_metadata_selects_task_and_step(recipe_name, task, step
         ("qwen25_vl_7b_sft_config", "vlm_step"),
         ("qwen3_vl_8b_sft_config", "qwen3_vl_step"),
         ("qwen35_vl_9b_sft_config", "qwen3_vl_step"),
+        ("qwen36_vl_35b_a3b_sft_config", "qwen3_vl_step"),
         ("gemma3_vl_4b_sft_config", "vlm_step"),
         ("gemma4_vl_26b_sft_config", "vlm_step"),
         ("glm_45v_sft_config", "vlm_step"),

@@ -61,6 +61,10 @@ from .qwen35_vl import (
     qwen35_vl_800m_peft_config,
     qwen35_vl_800m_sft_config,
 )
+from .qwen36_vl import (
+    qwen36_vl_35b_a3b_peft_config,
+    qwen36_vl_35b_a3b_sft_config,
+)
 
 
 __all__ = [
@@ -90,6 +94,9 @@ __all__ = [
     "qwen35_vl_35b_a3b_peft_config",
     "qwen35_vl_122b_a10b_peft_config",
     "qwen35_vl_397b_a17b_peft_config",
+    # Qwen3.6-VL configs
+    "qwen36_vl_35b_a3b_peft_config",
+    "qwen36_vl_35b_a3b_sft_config",
     # Qwen2.5-VL SFT configs
     "qwen25_vl_3b_sft_config",
     "qwen25_vl_7b_sft_config",
