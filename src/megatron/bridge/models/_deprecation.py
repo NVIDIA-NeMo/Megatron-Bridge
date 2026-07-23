@@ -14,11 +14,9 @@
 
 from __future__ import annotations
 
-import functools
 import warnings
-from collections.abc import Callable
 from pathlib import Path
-from typing import Any, ParamSpec, TypeVar
+from typing import Any
 
 import torch.distributed as dist
 
@@ -36,9 +34,6 @@ _DEPRECATED_ARCHITECTURES = {
 _LLAMA2_SHAPES = {(32000, 4096)}
 _MISTRAL_SHAPES = {(4096, 32), (5120, 40)}
 _NEMOTRON_H_V1_SHAPES = {(3072, 52), (4096, 52), (8192, 98), (8192, 118)}
-
-P = ParamSpec("P")
-R = TypeVar("R")
 
 
 def _model_identifier(config: Any, model_name_or_path: str | Path | None) -> str:
@@ -121,24 +116,3 @@ def warn_if_legacy_nemotron_path(model_name_or_path: str | Path) -> None:
     """
     if "nemotron-4-340b" in str(model_name_or_path).lower():
         warn_deprecated_model(_LEGACY_NEMOTRON_NAME, stacklevel=4)
-
-
-def deprecated_model(model_name: str) -> Callable[[Callable[P, R]], Callable[P, R]]:
-    """Decorate a legacy model recipe with a removal warning.
-
-    Args:
-        model_name: User-facing model family or variant name.
-
-    Returns:
-        Decorator that preserves the wrapped recipe signature and return type.
-    """
-
-    def decorator(func: Callable[P, R]) -> Callable[P, R]:
-        @functools.wraps(func)
-        def wrapper(*args: P.args, **kwargs: P.kwargs) -> R:
-            warn_deprecated_model(model_name, stacklevel=3)
-            return func(*args, **kwargs)
-
-        return wrapper
-
-    return decorator

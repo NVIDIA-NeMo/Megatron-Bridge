@@ -281,9 +281,13 @@ class AutoBridge(Generic[MegatronModelT]):
             hf_config = hf_pretrained
             model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
         else:
-            hf_config = hf_pretrained.config
-            model_name_or_path = getattr(hf_pretrained, "model_name_or_path", None)
-        warn_if_deprecated_model(hf_config, model_name_or_path)
+            # Pretrained wrappers load their config lazily. A deprecation
+            # warning must not turn construction into an HF Hub request.
+            wrapper_state = vars(hf_pretrained)
+            hf_config = wrapper_state.get("_config")
+            model_name_or_path = wrapper_state.get("_model_name_or_path")
+        if hf_config is not None:
+            warn_if_deprecated_model(hf_config, model_name_or_path)
 
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
@@ -523,7 +527,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         wrapper_cls = _resolve_pretrained_wrapper_cls(config)
         try:
-            return cls(wrapper_cls.from_pretrained(path, **kwargs))
+            hf_pretrained = wrapper_cls.from_pretrained(path, **kwargs)
+            # Reuse the config that was already loaded and validated above.
+            # Besides avoiding a second Hub request, this guarantees that the
+            # warning and model wrapper observe the same immutable revision.
+            hf_pretrained.config = config
+            return cls(hf_pretrained)
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 
