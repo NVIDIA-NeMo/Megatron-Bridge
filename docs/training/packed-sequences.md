@@ -78,6 +78,28 @@ post-setup configuration. Changing pack length can alter truncation and pack
 membership even when token slots stay constant, so rerun loss and stability
 checks before replacing existing verification evidence.
 
+Derive the internal sequence alignment from the resolved topology for both SFT
+and PEFT:
+
+```text
+cp_multiple = 2 * CP if CP > 1 else 1
+sp_multiple = CP * TP if sequence parallelism is enabled and TP > 1 else 1
+pad_seq_to_mult = lcm(cp_multiple, sp_multiple)
+```
+
+For example, TP1/CP1 with SP disabled uses 1, while TP4/CP1 with SP enabled
+uses 4. The difference comes from execution topology, not from whether the
+trainable set is full SFT or PEFT. Pin the derived value explicitly and rebuild
+the packed output after changing topology because the alignment changes pack
+membership.
+
+Keep this internal alignment separate from fixed final pack width.
+`pad_to_max_length=true` is needed when a dispatcher or kernel requires a
+static width, such as a HybridEP combine kernel with a fixed token chunk, or
+when using CUDA graphs. CUDA graphs additionally require
+`pad_cu_seqlens=true` and packing metadata. Ordinary eager offline packing
+does not universally require fixed-width padding.
+
 ## Stable Constraints
 
 The durable constraints for packed sequences in Bridge are:

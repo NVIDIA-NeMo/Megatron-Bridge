@@ -330,30 +330,45 @@ Freeze the following workload profiles:
 | Data | Same bounded raw RP2 selection, revision, sample order, and seeds | Tulu 3 `train[:10000]`; same revision, order, chat template, label mask, truncation, and offline packing | Same as full SFT |
 | Sequence / GBS | `4096 / 1024` | `8192 / 8` | `8192 / 8` |
 | Reference MBS | `1` | `1` | `1` |
-| Reference packing alignment | Not applicable | `pad_seq_to_mult=1` | `pad_seq_to_mult=4` |
-| Fixed-width offline packs | Not applicable | `pad_to_max_length=true` | `pad_to_max_length=true` |
+| Offline packing alignment | Not applicable | Derive from resolved CP/TP/SP topology and pin explicitly | Same rule |
 | Token slots | `4,194,304` per step; `419,430,400` total | `65,536` per step; `6,553,600` total | `65,536` per step; `6,553,600` total |
 | Peak / minimum LR | `3e-4 / 3e-5` | `5e-6 / 0` | `1e-4 / 0` |
 | Horizon | 100 steps, 40 warmup steps, cosine decay through step 100, saves at steps 50 and 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final checkpoint at step 100 | 100 steps, 10 warmup steps, cosine decay through step 100, final adapter checkpoint at step 100 |
 | RNG | Model and dataset seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` | Model RNG seed `5678`; data-order and packing seed `1234` |
 | Gradient path | BF16 gradient reduction; precision-aware optimizer enabled | FP32 gradient reduction; precision-aware optimizer disabled | FP32 gradient reduction; precision-aware optimizer disabled |
 
-Treat the reference packing alignments as frozen data semantics, not as
-topology-derived performance defaults. Set them explicitly in the recipe and
-build every compared run from a fresh packing output. If a topology or kernel
-requires a larger alignment, record the resolved value, packing-manifest hash,
-and actual supervised-token count, then classify that run as support
-verification rather than evidence for this cross-model convergence cohort.
-Never let runtime alignment synchronization silently change a cohort run.
+Derive `pad_seq_to_mult` for both SFT and PEFT from the resolved execution
+topology:
+
+```text
+cp_multiple = 2 * CP if CP > 1 else 1
+sp_multiple = CP * TP if sequence parallelism is enabled and TP > 1 else 1
+pad_seq_to_mult = lcm(cp_multiple, sp_multiple)
+```
+
+The two workloads use the same rule; there is no intrinsic SFT-versus-PEFT
+alignment difference. Offline packing does not finalize this value
+automatically, so set the derived integer explicitly in the recipe and card
+command. Because changing it changes padding and pack membership, use a fresh
+packing output, record the resolved value, packing-manifest hash, and actual
+supervised-token count, and require fresh loss sentinels after a topology
+change.
 
 Use 8K as the default offline-pack target only when the exact model supports at
 least 8192 tokens, the recipe supports offline packing, and the resolved
 topology fits one MBS1 pack per data-parallel rank. Set `model.seq_length`,
-`dataset.seq_length`, and `packed_sequence_size` to 8192 together. Fixed-width
-padding fills only the residual gap at the end of a completed pack; require its
-loss mask to remain zero. A model-family packing opt-out, MTP incompatibility,
-context limit, or demonstrated memory limit is a cohort exception, not a
-reason to silently fall back.
+`dataset.seq_length`, and `packed_sequence_size` to 8192 together. A
+model-family packing opt-out, MTP incompatibility, context limit, or
+demonstrated memory limit is a cohort exception, not a reason to silently fall
+back.
+
+Treat fixed-width pack padding as an execution requirement, not part of the
+cross-model convergence profile. Set `pad_to_max_length=true` when the selected
+dispatcher or kernel requires a fixed token width; for example, the verified
+Moonlight HybridEP path requires the pack width to be divisible by its
+128-token combine chunk. CUDA graphs also require fixed token width and
+`pad_cu_seqlens=true` plus packing metadata. Otherwise do not require
+fixed-width padding universally. Any padded tail must retain a zero loss mask.
 
 The equal-token rule is:
 
@@ -373,9 +388,11 @@ The public training runner applies `--dataset` after constructing the model
 recipe and replaces the recipe's dataset object with the selected preset.
 Consequently, a card command that uses `--dataset tulu3` must explicitly pin
 the dataset revision, split, data-order/packing seed, offline-packing enablement,
-`+dataset.offline_packing_specs.pad_seq_to_mult`, and
-`dataset.dataset_kwargs={pad_to_max_length:true}`; recipe-level dataset
-defaults alone do not freeze the resolved CLI workload. Use a fresh
+and the derived `+dataset.offline_packing_specs.pad_seq_to_mult`; recipe-level
+dataset defaults alone do not freeze the resolved CLI workload. When the
+execution requires fixed-width packs, also pin
+`dataset.dataset_kwargs={pad_to_max_length:true}` and, for CUDA graphs,
+`+dataset.offline_packing_specs.pad_cu_seqlens=true`. Use a fresh
 `dataset.hf_output_root` (or force a deliberate rewrite) whenever sequence
 length, packing width, alignment, or any of these fields changes, and audit the
 final `ConfigContainer` after all overrides and runtime synchronization.

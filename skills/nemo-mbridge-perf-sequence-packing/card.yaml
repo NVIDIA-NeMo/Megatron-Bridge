@@ -1,5 +1,5 @@
 title: packed_sequences_long_context
-validated_on: "2026-07-06"
+validated_on: "2026-07-23"
 summary: >
   Megatron-Bridge currently supports two distinct packing paths: offline packed
   SFT for text-only finetuning and in-batch packing for some VLM finetuning
@@ -43,10 +43,17 @@ recommended_path:
     target_seq_length: 8192_when_model_and_memory_support_it
     train.micro_batch_size: 1
     train.global_batch_size: preserve_equal_token_slots
-    dataset.dataset_kwargs.pad_to_max_length: true
     dataset.enable_offline_packing: true
     dataset.offline_packing_specs.packed_sequence_size: match_seq_length
+    dataset.offline_packing_specs.pad_seq_to_mult: lcm(cp_multiple, sp_multiple)
     sizing_rule: packed_sequence_size * global_batch_size = token_slots_per_step
+  fixed_width_execution:
+    when: dispatcher_kernel_or_cuda_graph_requires_static_token_width
+    dataset.dataset_kwargs.pad_to_max_length: true
+    packed_sequence_size: divisible_by_kernel_chunk
+  cuda_graph_packing:
+    dataset.offline_packing_specs.pad_cu_seqlens: true
+    requires_pack_metadata: true
   cp_finetuning:
     model.calculate_per_token_loss: true
     ddp.average_in_collective: false
@@ -58,6 +65,8 @@ known_constraints:
   - seq_length must be divisible by 2 * context_parallel_size when CP > 1.
   - Offline packed SFT requires micro_batch_size == 1.
   - With offline MBS1 packing, global_batch_size must be divisible by and no smaller than data_parallel_size.
+  - pad_seq_to_mult is derived from CP/TP/SP and follows the same rule for SFT and PEFT.
+  - pad_to_max_length is conditional on a fixed-width dispatcher, kernel, or CUDA-graph path.
   - VLM in-batch packing requires micro_batch_size > 1.
   - For finetuning with CP > 1, calculate_per_token_loss must be true.
   - For finetuning with CP > 1, ddp.average_in_collective must be false.

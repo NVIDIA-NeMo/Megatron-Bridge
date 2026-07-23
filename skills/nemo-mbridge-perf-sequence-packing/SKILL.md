@@ -16,20 +16,23 @@ For stable background and recommendation level, see:
 Offline packed SFT for LLM finetuning:
 
 ```python
+import math
+
 from megatron.bridge.data.datasets.packed_sequence import PackedSequenceSpecs
 
 cfg.train.micro_batch_size = 1
 cfg.train.global_batch_size = 8
 cfg.dataset.seq_length = 8192
 cfg.model.seq_length = 8192
-cfg.dataset.dataset_kwargs = {
-    **(cfg.dataset.dataset_kwargs or {}),
-    "pad_to_max_length": True,
-}
 cfg.dataset.enable_offline_packing = True
+
+cp_size = cfg.model.context_parallel_size
+tp_size = cfg.model.tensor_model_parallel_size
+cp_multiple = 2 * cp_size if cp_size > 1 else 1
+sp_multiple = cp_size * tp_size if cfg.model.sequence_parallel and tp_size > 1 else 1
 cfg.dataset.offline_packing_specs = PackedSequenceSpecs(
     packed_sequence_size=8192,
-    pad_seq_to_mult=1,
+    pad_seq_to_mult=math.lcm(cp_multiple, sp_multiple),
 )
 ```
 
@@ -61,22 +64,35 @@ Equal token slots do not make different pack lengths numerically identical:
 the longer target changes truncation and pack membership. Rerun finite-loss,
 no-skip/NaN, and convergence sentinels before replacing verified evidence.
 
-If CP is enabled:
+For finetuning with CP enabled:
 
 ```python
 cfg.model.context_parallel_size = 2
 cfg.model.calculate_per_token_loss = True
 cfg.ddp.average_in_collective = False
-cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
-
-# Offline packing is not finalized by ConfigContainer. If sequence_parallel is
-# also enabled, align offline samples to both constraints explicitly:
-# import math
-# cfg.dataset.offline_packing_specs.pad_seq_to_mult = math.lcm(2 * CP, CP * TP)
-# ConfigContainer computes this CP/SP LCM automatically for in-batch packing only.
 ```
 
-If CUDA graphs are enabled for this packed path:
+Use the same alignment formula for SFT and PEFT. It produces 1 for TP1/CP1 with
+SP disabled and 4 for TP4/CP1 with SP enabled. Offline packing does not derive
+the value automatically, so pin it explicitly and rebuild packed data after a
+topology change.
+
+If a dispatcher or kernel requires a fixed final token width:
+
+```python
+cfg.dataset.dataset_kwargs = {
+    **(cfg.dataset.dataset_kwargs or {}),
+    "pad_to_max_length": True,
+}
+```
+
+Choose `packed_sequence_size` to satisfy the kernel multiple. For example,
+HybridEP with a 128-token combine chunk requires a width divisible by 128.
+This is separate from `pad_seq_to_mult`, which aligns each constituent
+sequence for CP/SP.
+
+If CUDA graphs are enabled for this packed path, fixed token width is required
+and packed metadata must also have a static shape:
 
 ```python
 cfg.dataset.offline_packing_specs.pad_cu_seqlens = True
@@ -125,6 +141,11 @@ return _text_hf_dataset_config(
     num_workers=1,
 )
 ```
+
+The shared text-dataset helper currently opts into fixed-width packs. Treat
+that as a helper default, not a universal offline-packing runtime requirement;
+preserve it when the selected dispatcher, kernel, or CUDA-graph path requires
+static width.
 
 Bridge validation:
 
@@ -208,6 +229,8 @@ if cu_seqlens.dim() > 1 and cu_seqlens.size(0) != 1:
 6. MTP finetuning is documented as incompatible with packed sequences.
 7. Synthetic padding rows, including negative indices remapped through `samples_mapping`, must retain an all-zero loss mask.
 8. `global_batch_size` must be divisible by and no smaller than data parallel size when offline packing uses MBS1.
+9. Derive `pad_seq_to_mult` from CP/TP/SP for both SFT and PEFT; do not hardcode different values by workload type.
+10. `pad_to_max_length` controls final pack width and is conditional on fixed-shape execution requirements.
 
 ## Verification
 
