@@ -1378,9 +1378,10 @@ class Gemma4TopKRouter(TopKRouter):
         logits: Tensor,
         padding_mask: Tensor | None = None,
         input_ids: Tensor | None = None,
+        packed_seq_params: PackedSeqParams | None = None,
     ) -> tuple[Tensor, Tensor | None]:
-        # Token identities do not affect Gemma 4 routing; retain the argument for compatibility with existing callers.
-        del input_ids
+        # Token identities and packed metadata do not affect Gemma 4 routing.
+        del input_ids, packed_seq_params
         routing_probs, routing_map = super().routing(logits, padding_mask=padding_mask)
         if routing_map is not None:
             prob_sums = routing_probs.sum(dim=-1, keepdim=True).clamp(min=1e-20)

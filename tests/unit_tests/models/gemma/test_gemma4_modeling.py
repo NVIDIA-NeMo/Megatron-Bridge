@@ -1910,7 +1910,12 @@ class TestGemma4MoEHelpers:
         router = object.__new__(Gemma4TopKRouter)
         router.per_expert_scale = torch.tensor([1.0, 2.0, 3.0])
 
-        out_probs, out_map = Gemma4TopKRouter.routing(router, torch.zeros(2, 3))
+        out_probs, out_map = Gemma4TopKRouter.routing(
+            router,
+            torch.zeros(2, 3),
+            input_ids=torch.ones(2, 1, dtype=torch.long),
+            packed_seq_params=SimpleNamespace(),
+        )
 
         assert out_map is routing_map
         torch.testing.assert_close(out_probs[0], torch.tensor([0.4, 1.2, 0.0]))
