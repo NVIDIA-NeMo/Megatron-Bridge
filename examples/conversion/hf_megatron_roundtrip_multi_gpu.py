@@ -331,9 +331,8 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _run_cli(argv: list[str] | None = None) -> None:
-    """Run the multi-GPU round-trip example from parsed CLI arguments."""
-    args = _build_parser().parse_args(argv)
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
     main(
         args.hf_model_id,
         args.output_dir,
@@ -352,7 +351,3 @@ def _run_cli(argv: list[str] | None = None) -> None:
 
     if torch.distributed.is_initialized():
         torch.distributed.destroy_process_group()
-
-
-if __name__ == "__main__":
-    _run_cli()
