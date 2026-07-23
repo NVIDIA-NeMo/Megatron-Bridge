@@ -118,7 +118,7 @@ def test_build_nemorun_script_wraps_only_enabled_kubeflow_tasks():
     """The setup helper must preserve task env while gating the Kubeflow wrapper."""
     kwargs = {
         "script_path": "/opt/Megatron-Bridge/scripts/performance/run_recipe.py",
-        "script_dir": "/opt/Megatron-Bridge/scripts/performance",
+        "repo_root": "/opt/Megatron-Bridge",
         "args": ["--steps", "10"],
     }
     enabled = _build_nemorun_script(
@@ -137,7 +137,14 @@ def test_build_nemorun_script_wraps_only_enabled_kubeflow_tasks():
         custom_env_vars={KUBEFLOW_NUMA_BINDING_ENV: "1"},
     )
 
-    expected_env = {"PYTHONPATH": "/opt/Megatron-Bridge/scripts/performance:$PYTHONPATH"}
+    expected_env = {
+        "PYTHONPATH": (
+            "/opt/Megatron-Bridge/scripts/performance:"
+            "/opt/Megatron-Bridge/src:"
+            "/opt/Megatron-Bridge/3rdparty/Megatron-LM:"
+            "$PYTHONPATH"
+        )
+    }
     assert enabled.inline
     assert enabled.env == expected_env
     assert not disabled.inline
