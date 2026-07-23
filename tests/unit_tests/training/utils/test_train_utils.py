@@ -3087,13 +3087,7 @@ class TestCalcParamsL2Norm:
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
     ):
-        """Test calc_params_l2_norm when main_param is None with main_param_sharded=False.
-
-        This is an edge case that currently causes an error because None is added to
-        params_data, and multi_tensor_l2norm doesn't accept None values. This test
-        documents the current behavior - ideally the code should handle this more
-        gracefully (e.g., skip None values or fallback to creating FP32 copy).
-        """
+        """Test calc_params_l2_norm falls back when a non-sharded main_param is None."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3108,9 +3102,10 @@ class TestCalcParamsL2Norm:
             param.main_param = None
             param.main_param_sharded = False
 
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
 
     # ==================== MoE BF16 main_param tests ====================
 
@@ -3359,11 +3354,7 @@ class TestCalcParamsL2Norm:
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
     ):
-        """Test MoE params when main_param is None with main_param_sharded=False.
-
-        This is an edge case that causes an error because None is added to
-        moe_params_data, and multi_tensor_l2norm doesn't accept None values.
-        """
+        """Test MoE norm falls back when a non-sharded main_param is None."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3379,9 +3370,10 @@ class TestCalcParamsL2Norm:
             param.main_param = None
             param.main_param_sharded = False
 
-        # This currently raises a TypeError because None is passed to multi_tensor_l2norm
-        with pytest.raises(TypeError, match="incompatible function arguments"):
-            calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+        result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
+
+        expected_norm = 5.0  # sqrt(25 * 1.0^2)
+        assert result == pytest.approx(expected_norm, rel=1e-3)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
