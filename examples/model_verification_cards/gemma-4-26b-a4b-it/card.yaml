@@ -5,9 +5,9 @@ title: gemma_4_26b_a4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 4 26B-A4B-it GPU import, GPU export, and deterministic
-  multimodal inference are verified. FP32 manual forward comparison is also
-  verified. Full SFT remains unverified because the default and selective-MLP
+  results. Gemma 4 26B-A4B-it BF16 GPU import, GPU export, and deterministic
+  multimodal inference are verified. BF16 manual forward comparison is
+  pending. Full SFT remains unverified because the default and selective-MLP
   configurations exceed H100 memory, while full-layer recompute is too slow
   for the 10-step verification window. Long-context SFT and PEFT are pending.
   CPU conversion is blocked by CUDA device initialization during provider
@@ -17,11 +17,11 @@ verification_index:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
-      - manual_forward_pass
       - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
+      - manual_forward_pass
   training:
     H100:
       unverified: [sft, sft_export_inference, sft_long_context, peft]
@@ -107,34 +107,30 @@ items:
       chocolate-covered candies shaped like turtles.of\nThe animal on the".
 
   manual_forward_pass:
-    status: verified
-    precision: fp32
+    status: unverified
+    precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/compare_hf_and_megatron/compare.py
       --hf_model_path google/gemma-4-26B-A4B-it
       --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
       --model_class Gemma4ForConditionalGeneration
-      --hf-dtype float32 --hf-device-map auto
+      --hf-dtype bfloat16 --hf-device-map auto
       --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
       --image_path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
       --tp 2 --pp 1 --ep 4 --etp 1 --distributed-timeout-minutes 60
       --prompt "What is in this image?"
-    last_verified: 2026-07-23
+    last_verified: null
     expected_result: >
-      Token match: true. The sharded FP32 Hugging Face reference and FP32
-      Megatron model both selected token 1455, rendered as " An". Cosine
-      similarity: 0.999757; maximum and mean absolute logit differences were
-      0.505172 and 0.083505.
-      The immutable-revision processor tokenized this prompt and image turn to
-      20 tokens, exactly divisible by TP2, so the comparison helper added no
-      padding. The image came from documentation-images revision
-      bc25e2903646a3d325c5632a0683122f7f755ed4 and had SHA-256
-      fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
+      The BF16 Hugging Face reference and BF16 Megatron model must select the
+      same next token with cosine similarity of at least 0.99. Record maximum
+      and mean absolute logit differences as diagnostics. The immutable-revision
+      processor must produce a prompt length divisible by TP2 so the comparison
+      helper does not append padding before selecting the compared position.
 
   inference:
     status: verified
-    precision: fp32
+    precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/hf_to_megatron_generate_vlm.py
@@ -146,7 +142,7 @@ items:
       --tp 2 --pp 1 --ep 4 --etp 1
     last_verified: 2026-07-23
     expected_result: >
-      Two independent runs using FP32 greedy decoding completed 32 generation
+      Two independent runs using BF16 greedy decoding completed 32 generation
       steps and produced byte-identical output, including whitespace, with SHA-256
       f06e8dfaf7736afb2efea58bdcb33febdb31cb29943a5954ae8a35a75ce41324.
       The exact 32-token completion, with control-token boundaries rendered as
