@@ -359,13 +359,12 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     return cfg
 
 
-def _nemotron_3_ultra_gb200_bf16_config(*, global_batch_size: int) -> ConfigContainer:
-    """Shared builder for the Nemotron 3 Ultra GB200 BF16 3D-parallel perf recipes.
+def nemotron_3_ultra_pretrain_96gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 96× GB200 (24 nodes), BF16.
 
-    Parallelism is fixed (TP2 / PP3 / EP32 / ETP1 / CP1, MBS 1); scaling to more
-    GPUs only grows data parallelism and the global batch size. Callers pass the
-    GPU-count-specific ``global_batch_size`` (128 at 96 GPUs, 4096 at 3072 GPUs =
-    128 × the 32× DP scale).
+    3D-parallel (DDP) baseline matching the README Hardware Starting Points table:
+    TP2 / PP3 / EP32 / ETP1, GBS 128 / MBS 1, selective recompute of the full
+    hybrid stack. This is the config the deterministic 24-node launcher targets.
 
     Dispatcher note: the recipe defaults to the HybridEP flex dispatcher, but the
     deterministic launcher overrides it to ``alltoall`` — HybridEP cannot allocate
@@ -382,7 +381,7 @@ def _nemotron_3_ultra_gb200_bf16_config(*, global_batch_size: int) -> ConfigCont
     cfg.model.context_parallel_size = 1
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 32
-    cfg.train.global_batch_size = global_batch_size
+    cfg.train.global_batch_size = 128
     cfg.train.micro_batch_size = 1
 
     # Selective recompute of the full hybrid stack (fits activations at MBS 1).
@@ -427,23 +426,3 @@ def _nemotron_3_ultra_gb200_bf16_config(*, global_batch_size: int) -> ConfigCont
         # because the deterministic launcher overrides the dispatcher to alltoall.
     }
     return cfg
-
-
-def nemotron_3_ultra_pretrain_96gpu_gb200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 96× GB200 (24 nodes), BF16.
-
-    TP2 / PP3 / EP32 / ETP1, GBS 128 / MBS 1, selective recompute. This is the
-    config the deterministic 24-node launcher targets.
-    """
-    return _nemotron_3_ultra_gb200_bf16_config(global_batch_size=128)
-
-
-def nemotron_3_ultra_pretrain_3072gpu_gb200_bf16_config() -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 3072× GB200 (768 nodes), BF16.
-
-    Same fixed model parallelism as the 96-GPU config (TP2 / PP3 / EP32 / ETP1,
-    MBS 1, selective recompute); only data parallelism and the global batch size
-    scale with the 32× larger allocation: GBS 4096 (= 128 × 3072/96). Used for the
-    3072-GPU det-vs-nondet nsys comparison under the sla reservation.
-    """
-    return _nemotron_3_ultra_gb200_bf16_config(global_batch_size=4096)
