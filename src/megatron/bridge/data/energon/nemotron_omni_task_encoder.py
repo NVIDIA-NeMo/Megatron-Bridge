@@ -14,7 +14,7 @@
 
 """Nemotron Omni Energon adapter backed by the shared HF-style collator."""
 
-from collections.abc import Callable, Iterator, MutableMapping
+from collections.abc import Iterator, MutableMapping
 from dataclasses import dataclass, fields
 from typing import Any, Mapping, Sequence
 
@@ -145,14 +145,13 @@ class NemotronOmniTaskEncoder(HFTaskEncoder):
         pad_to_multiple_of: int = 128,
         enable_in_batch_packing: bool = False,
         in_batch_packing_pad_to_multiple_of: int = 1,
-        collate_fn: Callable[..., dict[str, Any]] = nemotron_omni_collate_fn,
     ) -> None:
         _validate_nemotron_omni_visual_keys(visual_keys)
         super().__init__(
             processor=processor,
             seq_length=seq_length,
             visual_keys=visual_keys,
-            collate_fn=collate_fn,
+            collate_fn=nemotron_omni_collate_fn,
             pad_to_max_length=pad_to_max_length,
             pad_to_multiple_of=pad_to_multiple_of,
             enable_in_batch_packing=enable_in_batch_packing,
