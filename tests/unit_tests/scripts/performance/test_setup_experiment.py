@@ -61,23 +61,6 @@ def test_default_experiment_name_uses_only_cli_metadata() -> None:
     )
 
 
-def test_rank_local_pythonpath_prefers_checkout_packages() -> None:
-    task = setup_experiment._build_nemorun_script(
-        script_path="/checkout/scripts/performance/bootstrap.py",
-        repo_root="/checkout",
-        args=[],
-        kubeflow_namespace=None,
-        custom_env_vars={},
-    )
-
-    assert task.env["PYTHONPATH"].split(":") == [
-        "/checkout/scripts/performance",
-        "/checkout/src",
-        "/checkout/3rdparty/Megatron-LM",
-        "$PYTHONPATH",
-    ]
-
-
 def test_recipe_arguments_are_forwarded_unchanged() -> None:
     recipe_args = [
         "--tensor_model_parallel_size",

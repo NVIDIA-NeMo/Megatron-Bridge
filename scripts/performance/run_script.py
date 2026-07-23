@@ -61,6 +61,8 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     from utils.overrides import _apply_flat_cli_environment_compatibility, set_cli_overrides, set_user_overrides
     from utils.utils import explicit_environment_override_names
 
+    if not hasattr(recipe, "env_vars"):
+        recipe.env_vars = {}
     base_env_vars = dict(recipe.env_vars)
     base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
     comm_overlap = getattr(recipe, "comm_overlap", None)

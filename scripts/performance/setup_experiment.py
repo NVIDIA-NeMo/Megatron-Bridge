@@ -61,7 +61,6 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
-REPO_ROOT = SCRIPT_DIR.parents[1]
 ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -138,24 +137,16 @@ def _default_experiment_name(
 def _build_nemorun_script(
     *,
     script_path: str,
-    repo_root: str,
+    script_dir: str,
     args: List[str],
     kubeflow_namespace: Optional[str],
     custom_env_vars: Dict[str, str],
 ) -> run.Script:
     """Build the rank-local task and apply optional Kubeflow NUMA binding."""
-    pythonpath = ":".join(
-        (
-            f"{repo_root}/scripts/performance",
-            f"{repo_root}/src",
-            f"{repo_root}/3rdparty/Megatron-LM",
-            "$PYTHONPATH",
-        )
-    )
     task = run.Script(
         path=script_path,
         entrypoint="python",
-        env={"PYTHONPATH": pythonpath},
+        env={"PYTHONPATH": f"{script_dir}:$PYTHONPATH"},
         args=args,
     )
     if kubeflow_namespace and _kubeflow_numa_binding_enabled(custom_env_vars):
@@ -627,15 +618,18 @@ def main(
     # /opt/Megatron-Bridge — and custom_mounts do not apply, so the launcher's
     # /tmp path does not exist in the pod; use the image's script path instead.
     if kubeflow_namespace:
-        in_container_repo_root = "/opt/Megatron-Bridge"
-        in_container_script_path = f"{in_container_repo_root}/scripts/performance/{script_name}"
+        in_container_script_dir = "/opt/Megatron-Bridge/scripts/performance"
+        in_container_script_path = f"{in_container_script_dir}/{script_name}"
     else:
-        in_container_repo_root = str(REPO_ROOT)
+        in_container_script_dir = str(SCRIPT_DIR)
         in_container_script_path = str(run_script_path)
 
-    checkout_mount = f"{REPO_ROOT}:{REPO_ROOT}"
-    if checkout_mount not in custom_mounts:
-        custom_mounts.append(checkout_mount)
+    custom_mounts.extend(
+        [
+            f"{run_script_path}:{run_script_path}",
+            f"{SCRIPT_DIR}:{SCRIPT_DIR}",
+        ]
+    )
 
     if kubeflow_namespace:
         if enable_vboost or lock_gpu_freq is not None:
@@ -746,7 +740,7 @@ def main(
 
     nemorun_script = _build_nemorun_script(
         script_path=in_container_script_path,
-        repo_root=in_container_repo_root,
+        script_dir=in_container_script_dir,
         args=_filter_run_script_args(sys.argv[1:]),
         kubeflow_namespace=kubeflow_namespace,
         custom_env_vars=custom_env_vars,
