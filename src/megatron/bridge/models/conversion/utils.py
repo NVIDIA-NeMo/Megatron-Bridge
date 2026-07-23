@@ -362,7 +362,12 @@ def get_causal_lm_class_name_via_auto_map(
 def conform_config_to_reference(
     hf_config_dict: dict[str, object], reference_config: dict[str, object]
 ) -> dict[str, object]:
-    """Return hf_config_dict projected onto reference keys, filling missing values from reference_config."""
+    """Return hf_config_dict projected onto reference keys, imputing missing values from reference.
+
+    Nested config dictionaries are projected recursively so export-time config
+    reconstruction does not lose sub-config fields that were not emitted by the
+    Megatron-side config.
+    """
     reference_config_keys = set(reference_config.keys())
     filtered_config_dict = {}
     for key, value in hf_config_dict.items():
