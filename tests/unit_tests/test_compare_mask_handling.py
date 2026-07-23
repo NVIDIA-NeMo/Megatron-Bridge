@@ -181,11 +181,13 @@ class TestCompareMaskHandling:
     def test_hf_path_receives_ones_like_attention_mask(self):
         """Test that HF model receives torch.ones_like(input_ids, dtype=torch.bool) attention_mask."""
         mock_hf_model = MagicMock()
+        mock_hf_model.dtype = torch.bfloat16
         mock_output = MagicMock()
         mock_output.logits = torch.randn(1, 3, 100)
         mock_hf_model.return_value = mock_output
 
         input_ids = torch.tensor([[1, 2, 3]])
+        pixel_values = torch.randn(1, 3, 4, 4, dtype=torch.float32)
         expected_mask = torch.ones_like(input_ids, dtype=torch.bool)
         image_position_ids = torch.tensor([[0, 1, 2]])
 
@@ -199,7 +201,7 @@ class TestCompareMaskHandling:
             _run_hf_inference(
                 mock_hf_model,
                 input_ids,
-                pixel_values=None,
+                pixel_values=pixel_values,
                 image_grid_thw=None,
                 tokenizer=mock_tokenizer,
                 image_position_ids=image_position_ids,
@@ -210,6 +212,7 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].dtype == torch.bool
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
+        assert call_kwargs["pixel_values"].dtype == torch.bfloat16
         assert torch.equal(call_kwargs["image_position_ids"], image_position_ids)
 
     def test_hf_broadcast_uses_model_output_vocab_size(self):

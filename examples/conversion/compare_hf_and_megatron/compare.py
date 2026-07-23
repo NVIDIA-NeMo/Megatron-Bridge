@@ -638,7 +638,10 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
         }
         if pixel_values is not None:
-            hf_inputs["pixel_values"] = pixel_values
+            model_dtype = getattr(hf_model, "dtype", None)
+            hf_inputs["pixel_values"] = (
+                pixel_values.to(dtype=model_dtype) if isinstance(model_dtype, torch.dtype) else pixel_values
+            )
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw
         if image_position_ids is not None:
