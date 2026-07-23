@@ -12,20 +12,21 @@ summary: >
   vision-language Bridge implementation. The common architecture is configured
   dynamically from each checkpoint; the existing Qwen3.5 35B recipe remains a
   Qwen3.5 checkpoint preset and is not relabeled as Qwen3.6. Functional
-  finetuning is intended to use mmoukouba/MedPix-VQA at immutable revision
+  finetuning uses mmoukouba/MedPix-VQA at immutable revision
   69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
-  and text conversations. GPU import and round-trip weight verification were
-  run on H100 GPUs; other items retain their explicit status below.
+  and text conversations. GPU import, round-trip weight verification,
+  forward-pass correlation, and deterministic multimodal inference were run
+  on H100 GPUs; other items retain their explicit status below.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
       - manual_forward_pass
+      - inference
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - inference
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
@@ -62,7 +63,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
-      --nodes 2 --gpus-per-node 8 --exclusive
+      --nodes 2 --gpus-per-node 8
       --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron
@@ -100,7 +101,7 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 2 --gpus-per-node 8 --exclusive
+      --nodes 2 --gpus-per-node 8
       --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
@@ -144,7 +145,7 @@ items:
       respectively.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8
@@ -157,14 +158,16 @@ items:
       --image_path work/data/medpix/verification.png
       --prompt "What was observed in the imaging?"
       --max_new_tokens 32
-    last_verified: null
+    last_verified: 2026-07-23
+    bridge_commit: 72d554863cd4dbcacd26abda92054afd0506e668  # pragma: allowlist secret
     expected_result: >
-      After materializing the recorded MedPix validation image, two independent
-      greedy executions must load the imported checkpoint, consume both image
-      pixels and text through the Qwen processor, and produce byte-identical
-      completions under the same 32-token maximum, including the same natural
-      end-of-sequence behavior. Before verification, the literal quoted
-      completion must be recorded; a text-only path does not satisfy this gate.
+      Two independent runs used greedy decoding, loaded the imported checkpoint,
+      consumed the recorded MedPix validation image and question through the
+      Qwen processor, and exited successfully with byte-identical 32-token
+      completions. Neither run emitted EOS before the safety bound. The exact
+      completion, represented with JSON newline escapes, was "The user wants
+      me to identify the findings in the provided MRI image.\n\n1.  **Analyze
+      the image:**\n    *   **Modality:**".
 
   pretrain:
     H100:

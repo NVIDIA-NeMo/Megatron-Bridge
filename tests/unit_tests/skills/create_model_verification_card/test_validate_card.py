@@ -40,3 +40,25 @@ def test_manual_forward_accepts_inference_launcher():
     )
 
     assert errors == []
+
+
+def test_inference_accepts_vlm_generation_launcher():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_inference(
+        {
+            "command": (
+                "./scripts/inference/infer.sh --task vlm-generation --prompt 'Describe the image' --max_new_tokens 32"
+            ),
+            "expected_result": (
+                "Two independent runs produced byte-identical 32-token output. "
+                'The exact completion was "The image contains a sufficiently long deterministic description."'
+            ),
+        },
+        item_name="inference",
+        status="verified",
+        errors=errors,
+    )
+
+    assert errors == []

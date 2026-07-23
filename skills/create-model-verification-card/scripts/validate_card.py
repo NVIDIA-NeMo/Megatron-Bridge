@@ -1042,7 +1042,12 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
-    if command_tokens[:2] != ["uv", "run"]:
+    uses_inference_launcher = (
+        bool(command_tokens)
+        and command_tokens[0].removeprefix("./") == "scripts/inference/infer.sh"
+        and _argument_values(command, "--task") == ["vlm-generation"]
+    )
+    if not uses_inference_launcher and command_tokens[:2] != ["uv", "run"]:
         errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
