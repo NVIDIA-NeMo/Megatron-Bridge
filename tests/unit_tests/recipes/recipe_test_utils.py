@@ -219,6 +219,8 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     deepseek_v4_recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v4")
     monkeypatch.setattr(deepseek_v4_recipe_module, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
+    deepseek_v4_gb300_module = importlib.import_module("megatron.bridge.recipes.deepseek.gb300.deepseek_v4")
+    monkeypatch.setattr(deepseek_v4_gb300_module, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
 
     from transformers import AutoConfig, AutoTokenizer
 

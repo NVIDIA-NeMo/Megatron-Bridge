@@ -53,6 +53,10 @@ def _enable_deepseek_full_iteration_mxfp8(
     fp8_output_proj: bool = False,
 ) -> None:
     """Apply legacy DeepSeek V3 HybridEP full-iteration MXFP8 settings."""
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = 32
     cfg.model.cuda_graph_impl = "full_iteration"
     cfg.model.cuda_graph_scope = []
     cfg.model.high_priority_a2a_comm_stream = True

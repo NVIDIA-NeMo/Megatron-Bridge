@@ -480,7 +480,7 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
     cfg.model.context_parallel_size = 1
-    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.virtual_pipeline_model_parallel_size = 3
     cfg.model.expert_model_parallel_size = 8
     cfg.model.sequence_parallel = False
     cfg.train.global_batch_size = 8192
@@ -493,6 +493,7 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
 
     _benchmark_common(cfg)
+    _enable_hybridep_full_iteration_mxfp8(cfg)
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -500,8 +501,8 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -510,7 +511,9 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,
@@ -529,8 +532,8 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigCon
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -539,7 +542,9 @@ def qwen3_235b_a22b_pretrain_256gpu_b300_fp8mx_large_scale_config() -> ConfigCon
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # B300 CPU-affinity behavior.
         "NCCL_IGNORE_CPU_AFFINITY": 1,

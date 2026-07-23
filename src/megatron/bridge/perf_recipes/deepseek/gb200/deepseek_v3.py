@@ -224,31 +224,8 @@ def deepseek_v3_pretrain_256gpu_gb200_nvfp4_config() -> ConfigContainer:
 
 def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContainer:
     """DeepSeek V3 pretrain: 256× GB200, MXFP8, large-scale proxy (GBS=256)."""
-    cfg = deepseek_v3_pretrain_config()
-    cfg.mixed_precision = _perf_precision("fp8_mx")
-    _deepseek_v3_common(cfg)
-
-    cfg.model.tensor_model_parallel_size = 1
-    cfg.model.pipeline_model_parallel_size = 4
-    cfg.model.virtual_pipeline_model_parallel_size = 4
-    cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 64
-    cfg.model.sequence_parallel = False
+    cfg = deepseek_v3_pretrain_256gpu_gb200_fp8mx_config()
     cfg.train.global_batch_size = 256
-    cfg.train.micro_batch_size = 1
-
-    cfg.model.recompute_modules = ["mlp"]
-
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "moe_router", "moe_preprocess"]
-
-    cfg.ddp.overlap_grad_reduce = True
-    cfg.comm_overlap.overlap_grad_reduce = True
-
-    set_deepseek_v3_pipeline_model_parallel_layout(cfg.model)
-
-    _benchmark_common(cfg)
-    cfg.model.fp8_output_proj = True
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -256,8 +233,8 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContai
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for the target system.
@@ -266,7 +243,9 @@ def deepseek_v3_pretrain_256gpu_gb200_fp8mx_large_scale_config() -> ConfigContai
         "NVLINK_DOMAIN_SIZE": 72,
         "USE_MNNVL": 1,
         # Transformer Engine overlap settings for this model.
+        "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # Use cuDNN LayerNorm for this measured baseline.
         "NVTE_NORM_BWD_USE_CUDNN": 1,

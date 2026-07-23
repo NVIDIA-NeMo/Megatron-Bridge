@@ -15,6 +15,15 @@ uv sync
 
 Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
 
+The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
+recipe preserves the stack validated by Megatron Bridge PR
+[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824):
+`nvcr.io/nvidia/nemo:26.06.01` with Megatron-LM dev commit
+`9d46c924dce3818f2b5f894f7380712c780d1801` and the capability-check patch
+documented in that PR. The Megatron-LM commit pinned by the current
+Megatron Bridge `main` branch does not provide the required DeepSeek V4
+performance features, so it is not a supported runtime for that recipe.
+
 | Variant | HF path | Quant scheme | Validation |
 |---------|---------|--------------|------------|
 | DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | Verified on GB200, last-token logit cosine 0.96-0.99 (short prompts ~0.98, long prompts >1024 tokens ~0.96-0.99) vs official inference |
@@ -39,6 +48,9 @@ Available Blackwell pretraining recipes:
 
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
+- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
+  performance configuration (requires the PR #4824 container and dev-MCore
+  stack described above)
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 
