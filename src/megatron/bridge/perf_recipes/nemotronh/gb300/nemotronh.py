@@ -274,17 +274,39 @@ def nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config() -> ConfigContainer:
     return _nemotron_3_ultra_gb300_fp8mx_config(num_gpus=256, expert_model_parallel_size=64, global_batch_size=256)
 
 
-def nemotron_3_ultra_pretrain_3072gpu_gb300_fp8mx_config() -> ConfigContainer:
-    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 3072× GB300, MXFP8, Megatron-FSDP (HSDP).
+# DP-autotuned Nemotron 3 Ultra GB300 MXFP8 perf recipes.
+#
+# The canonical 256-GPU recipe above scales linearly in the data-parallel dimension:
+# model parallelism is fixed (TP1 / PP1 / CP1 / EP64 / ETP1, MBS 1, seq 8192, selective
+# recompute + activation offload); only DP grows. Weak scaling sets GBS = num_gpus, and
+# HSDP replicates across num_gpus // 64 NVLink domains (handled by the shared builder).
+# Valid GPU counts are multiples of the 64-GPU NVLink domain; a config function is
+# generated per count so ``setup_experiment.py -ng <N>`` resolves without a hand-written
+# function each. 256 keeps its explicit definition above (PR #4911's canonical recipe).
+_ULTRA_GB300_FP8MX_GPU_COUNTS = (64, 128, 512, 1024, 1536, 2048, 3072)
 
-    The canonical 256-GPU GB300 recipe scaled linearly in the data-parallel dimension:
-    model parallelism is unchanged (TP1 / PP1 / CP1 / EP64 / ETP1, MBS 1, seq 8192,
-    selective recompute + activation offload), only DP grows. At 3072 GPUs that is
-    48 NVLink domains of 64 GPUs (HSDP replicates optimizer state across them) and
-    GBS 3072 (= 256 x 3072/256). All other settings inherit unchanged from the
-    shared builder.
-    """
-    return _nemotron_3_ultra_gb300_fp8mx_config(num_gpus=3072, expert_model_parallel_size=64, global_batch_size=3072)
+
+def _make_ultra_gb300_fp8mx_config(num_gpus: int):
+    """Build a DP-scaled Nemotron 3 Ultra GB300 MXFP8 config function for ``num_gpus``."""
+
+    def _config() -> ConfigContainer:
+        return _nemotron_3_ultra_gb300_fp8mx_config(
+            num_gpus=num_gpus, expert_model_parallel_size=64, global_batch_size=num_gpus
+        )
+
+    name = f"nemotron_3_ultra_pretrain_{num_gpus}gpu_gb300_fp8mx_config"
+    _config.__name__ = name
+    _config.__qualname__ = name
+    _config.__doc__ = (
+        f"Nemotron 3 Ultra pretrain: {num_gpus}x GB300, MXFP8, Megatron-FSDP (HSDP). "
+        f"PR #4911's 256-GPU recipe DP-scaled: fixed TP1/PP1/CP1/EP64/ETP1, GBS {num_gpus} "
+        f"(= num_gpus), {num_gpus // 64} NVLink domain(s)."
+    )
+    return _config
+
+
+for _n in _ULTRA_GB300_FP8MX_GPU_COUNTS:
+    globals()[f"nemotron_3_ultra_pretrain_{_n}gpu_gb300_fp8mx_config"] = _make_ultra_gb300_fp8mx_config(_n)
 
 
 def nemotron_3_nano_pretrain_8gpu_gb300_bf16_config() -> ConfigContainer:
