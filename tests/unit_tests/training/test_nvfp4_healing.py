@@ -14,6 +14,9 @@
 
 """Unit tests for the NVFP4 FP8-healing callback."""
 
+import contextlib
+import sys
+import types
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
@@ -404,3 +407,184 @@ class TestHookRegistration:
         assert manager.has_callbacks("on_train_end")
         assert not manager.has_callbacks("on_train_start")
         assert not manager.has_callbacks("on_train_step_start")
+
+
+class TestRequireTE:
+    def test_raises_when_te_version_too_old(self, monkeypatch):
+        import megatron.core.utils as mcu
+
+        from megatron.bridge.training.nvfp4_healing import _require_te
+
+        monkeypatch.setattr(mcu, "is_te_min_version", lambda v: False)
+        with pytest.raises(RuntimeError, match="Transformer Engine"):
+            _require_te()
+
+
+class TestOnDataInitStart:
+    def test_prequantizes_when_enabled(self):
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True))
+        ctx = Mock()
+        ctx.model = [make_fake_chunk([1])]
+        with patch.object(cb, "_pre_quantize") as pre_quantize, patch("torch.cuda.empty_cache"):
+            cb.on_data_init_start(ctx)
+            pre_quantize.assert_called_once_with(ctx.model)
+
+
+class TestResetCudaGraphsFallbacks:
+    def test_missing_module_is_noop(self, monkeypatch):
+        import builtins
+
+        real_import = builtins.__import__
+
+        def fake_import(name, *args, **kwargs):
+            if name == "megatron.core.full_cuda_graph":
+                raise ImportError("simulated")
+            return real_import(name, *args, **kwargs)
+
+        monkeypatch.setattr(builtins, "__import__", fake_import)
+        cb = NVFP4HealingCallback(make_config())
+        cb._reset_cuda_graphs()  # returns cleanly
+
+    def test_missing_attr_is_noop(self, monkeypatch):
+        from megatron.core.full_cuda_graph import FullCudaGraphWrapper
+
+        monkeypatch.delattr(FullCudaGraphWrapper, "cuda_graph", raising=False)
+        cb = NVFP4HealingCallback(make_config())
+        cb._reset_cuda_graphs()  # returns cleanly
+
+
+def _inject_fake_te_quantizers(monkeypatch):
+    """Inject fake Transformer Engine quantizer modules so _build_quantizers runs CPU-only."""
+    tex = types.ModuleType("transformer_engine_torch")
+    tex.DType = types.SimpleNamespace(kFloat8E4M3="e4m3")
+    f8 = types.ModuleType("transformer_engine.pytorch.tensor.float8_tensor")
+    f8.Float8Quantizer = lambda **kwargs: ("float8", kwargs)
+    mx = types.ModuleType("transformer_engine.pytorch.tensor.mxfp8_tensor")
+    mx.MXFP8Quantizer = lambda dtype: ("mxfp8", dtype)
+    nv = types.ModuleType("transformer_engine.pytorch.tensor.nvfp4_tensor")
+    nv.NVFP4Quantizer = lambda: "nvfp4"
+    monkeypatch.setitem(sys.modules, "transformer_engine_torch", tex)
+    monkeypatch.setitem(sys.modules, "transformer_engine.pytorch.tensor.float8_tensor", f8)
+    monkeypatch.setitem(sys.modules, "transformer_engine.pytorch.tensor.mxfp8_tensor", mx)
+    monkeypatch.setitem(sys.modules, "transformer_engine.pytorch.tensor.nvfp4_tensor", nv)
+
+
+class TestBuildQuantizers:
+    def test_delayed_builds_float8_quantizer(self, monkeypatch):
+        import megatron.bridge.training.nvfp4_healing as mod
+
+        monkeypatch.setattr(mod, "_require_te", lambda: None)
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        _inject_fake_te_quantizers(monkeypatch)
+
+        cb = NVFP4HealingCallback(make_config(healing_recipe="delayed"))
+        nvfp4_q, fp8_q = cb._build_quantizers()
+        assert nvfp4_q == "nvfp4"
+        assert fp8_q[0] == "float8"
+        assert fp8_q[1]["fp8_dtype"] == "e4m3"
+
+    def test_mxfp8_builds_mxfp8_quantizer(self, monkeypatch):
+        import megatron.bridge.training.nvfp4_healing as mod
+
+        monkeypatch.setattr(mod, "_require_te", lambda: None)
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        _inject_fake_te_quantizers(monkeypatch)
+
+        cb = NVFP4HealingCallback(make_config(healing_recipe="mxfp8"))
+        nvfp4_q, fp8_q = cb._build_quantizers()
+        assert nvfp4_q == "nvfp4"
+        assert fp8_q == ("mxfp8", "e4m3")
+
+
+class FakeStorage:
+    """Fake quantized storage tracking cpu()/pin_memory()/to() calls."""
+
+    def __init__(self):
+        self.pinned = False
+        self.moved_to = None
+
+    def cpu(self):
+        return self
+
+    def pin_memory(self):
+        self.pinned = True
+        return self
+
+    def to(self, device, non_blocking):
+        self.moved_to = (device, non_blocking)
+        return self
+
+
+class TestStashFP8CopyPinned:
+    def test_mxfp8_pins_rowwise_and_columnwise(self):
+        cb = NVFP4HealingCallback(make_config(healing_recipe="mxfp8", store_quantized_params_on_gpu=False))
+        q = SimpleNamespace(_rowwise_data=FakeStorage(), _columnwise_data=FakeStorage())
+        q.clone = lambda: q
+        cb._stash_fp8_copy(q)
+        assert cb._fp8_stash == [q]
+        assert q._rowwise_data.pinned and q._columnwise_data.pinned
+
+    def test_delayed_pins_data_and_transpose(self):
+        cb = NVFP4HealingCallback(make_config(healing_recipe="delayed", store_quantized_params_on_gpu=False))
+        q = SimpleNamespace(_data=FakeStorage(), _transpose=FakeStorage())
+        q.clone = lambda: q
+        cb._stash_fp8_copy(q)
+        assert q._data.pinned and q._transpose.pinned
+
+
+class TestMoveStashEntryToDevice:
+    def test_mxfp8_moves_rowwise_and_columnwise(self):
+        cb = NVFP4HealingCallback(make_config(healing_recipe="mxfp8"))
+        w = SimpleNamespace(_rowwise_data=FakeStorage(), _columnwise_data=FakeStorage())
+        cb._move_stash_entry_to_device(w, "cuda:0")
+        assert w._rowwise_data.moved_to == ("cuda:0", True)
+        assert w._columnwise_data.moved_to == ("cuda:0", True)
+
+    def test_delayed_moves_data_and_transpose(self):
+        cb = NVFP4HealingCallback(make_config(healing_recipe="delayed"))
+        w = SimpleNamespace(_data=FakeStorage(), _transpose=FakeStorage())
+        cb._move_stash_entry_to_device(w, "cuda:0")
+        assert w._data.moved_to == ("cuda:0", True)
+        assert w._transpose.moved_to == ("cuda:0", True)
+
+
+class TestIsTargetModule:
+    def test_true_for_te_linear_with_weight_false_otherwise(self, monkeypatch):
+        import transformer_engine.pytorch as te
+
+        class Linear(torch.nn.Module):
+            pass
+
+        class LayerNormLinear(torch.nn.Module):
+            pass
+
+        monkeypatch.setattr(te, "Linear", Linear, raising=False)
+        monkeypatch.setattr(te, "LayerNormLinear", LayerNormLinear, raising=False)
+
+        target = Linear()
+        target.weight = torch.zeros(1)
+        assert NVFP4HealingCallback._is_target_module(target) is True
+        assert NVFP4HealingCallback._is_target_module(torch.nn.Linear(2, 2)) is False
+
+
+class TestSwapInFP8WeightsMocked:
+    def test_swaps_stashed_weights_and_clears_stash(self, monkeypatch):
+        model = [make_fake_chunk([1, 2])]  # two Linear modules, op_fuser disabled
+        cb = NVFP4HealingCallback(make_config(pre_quantize_base_weights=True, store_quantized_params_on_gpu=True))
+        cb._fp8_stash = [torch.ones(2, 2), torch.ones(2, 2)]
+
+        class FakeStream:
+            def synchronize(self):
+                self.synced = True
+
+        monkeypatch.setattr(torch.cuda, "current_device", lambda: "cpu")
+        monkeypatch.setattr(torch.cuda, "Stream", lambda: FakeStream())
+        monkeypatch.setattr(torch.cuda, "stream", lambda stream: contextlib.nullcontext())
+
+        with patch_target_module():
+            cb._swap_in_fp8_weights(model)
+
+        assert cb._fp8_stash == []
+        for layer in model[0].decoder.layers:
+            assert torch.all(layer.linear.weight == 1)
+            assert layer.linear.weight.requires_grad is False
