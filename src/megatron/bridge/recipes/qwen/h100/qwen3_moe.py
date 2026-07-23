@@ -19,9 +19,14 @@ from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.flex_dispatcher_backend import apply_flex_dispatcher_backend
 from megatron.bridge.training.mixed_precision import bf16_mixed
+
+
+_QWEN3_30B_A3B_MODEL_ID = "Qwen/Qwen3-30B-A3B"
+_QWEN3_30B_A3B_MODEL_REVISION = "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
 
 
 def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
@@ -32,10 +37,13 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _pretrain_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer (--tokenizer-model)
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None  # Pass the path to the dataset here if not using mock data, along with weight. Ex: (["path/to/data1"], 0.2), [("path/to/data2", 0.8)]
@@ -128,6 +136,88 @@ def qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for Qwen3-30B-A3B on 16 H100 GPUs.
+
+    Recommended parallelism: TP=1, PP=1, EP=16 with HybridEP.
+    """
+    cfg = qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config()
+
+    # Precision and fused kernels
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.model.bias_activation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+
+    # The 16-GPU topology fits without activation recomputation.
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 1024
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.random_seed = 1234
+    cfg.rng.seed = 1234
+
+    cfg.optimizer.lr = 3e-4
+    cfg.optimizer.min_lr = 3e-5
+    cfg.optimizer.adam_beta1 = 0.9
+    cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
+    cfg.optimizer.use_distributed_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.scheduler.lr_warmup_iters = 40
+    cfg.scheduler.lr_decay_iters = 100
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+    cfg.checkpoint.save_interval = 50
+    cfg.checkpoint.load = None
+
+    # HybridEP dispatcher
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_a2a_overlap = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.moe_router_force_load_balancing = False
+
+    # Transformer Engine scoped CUDA graphs
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    cfg.model.cuda_graph_scope = ["moe_router", "moe_preprocess"]
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=True)
+
+    apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
@@ -265,10 +355,13 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg = _sft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
 
     # Parallelism settings (MoE-specific: includes expert parallelism)
     cfg.model.tensor_model_parallel_size = 4
@@ -284,11 +377,12 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Sequence length (2048 for packed sequences)
     cfg.model.seq_length = 2048
 
-    # Global batch size is 32 for MoE packed sequences
+    # qwen3_30b_a3b_convergence_v1 batch and RNG contract
     cfg.train.global_batch_size = 32
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seed = 1234
+    cfg.rng.seed = 5678
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # MoE Token Dispatcher settings, may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -314,7 +408,18 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     # Optimizer and scheduler overrides for MoE
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+    cfg.optimizer.lr = 5e-6
+    cfg.optimizer.min_lr = 0.0
+    cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -353,6 +458,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_distributed_optimizer = True
 
     # Communication overlap
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
@@ -363,6 +469,7 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     # Checkpoint config
     cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.load = None
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _sft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
@@ -381,6 +488,50 @@ def qwen3_30b_a3b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = False
 
     apply_flex_dispatcher_backend(cfg.model, cfg.model.moe_flex_dispatcher_backend)
+
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
+
+
+def qwen3_30b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a full SFT config for Qwen3-30B-A3B MoE on 16 H100 GPUs.
+
+    Recommended parallelism: TP=1, PP=1, EP=16 (2 nodes, 16 GPUs).
+    This topology keeps the global batch size at 32 while using DP=16 and
+    two gradient-accumulation steps for the default micro batch size of 1.
+    """
+    cfg = qwen3_30b_a3b_sft_8gpu_h100_bf16_config()
+
+    # Parallelism settings
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.sequence_parallel = False
+
+    # Keep GBS fixed while increasing data parallelism. Offline packing
+    # currently requires MBS=1, which gives two accumulation steps at DP=16.
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 1
+
+    # The plain all-to-all dispatcher and fused kernels are faster for this
+    # short-sequence SFT workload than DeepEP, EP overlap, or CUDA graphs.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_a2a_overlap = False
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.bias_activation_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.moe_router_fusion = True
+    cfg.model.cuda_graph_impl = "none"
+    cfg.comm_overlap = None
 
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
@@ -537,16 +688,19 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     Args:
         peft_scheme: PEFT scheme - 'lora', 'dora', or a PEFT instance. Default: 'lora'
 
-    Recommended parallelism: TP=4, PP=1, EP=4 (1 node, 8 GPUs with SP=True)
+    Recommended parallelism: TP=4, PP=1, EP=4 (1 node, 4 GPUs with SP=True)
     LoRA/DoRA uses dim=8, alpha=16, target_modules=['linear_qkv', 'linear_proj']
     """
     cfg = _peft_common()
 
     # Model config
-    cfg.model = AutoBridge.from_hf_pretrained("Qwen/Qwen3-30B-A3B").to_megatron_provider(load_weights=False)
+    cfg.model = AutoBridge.from_hf_pretrained(
+        _QWEN3_30B_A3B_MODEL_ID, revision=_QWEN3_30B_A3B_MODEL_REVISION
+    ).to_megatron_provider(load_weights=False)
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "Qwen/Qwen3-30B-A3B"
+    cfg.tokenizer.tokenizer_model = _QWEN3_30B_A3B_MODEL_ID
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN3_30B_A3B_MODEL_REVISION}
 
     # Parallelism settings (MoE-specific: includes expert parallelism)
     # PEFT uses PP=1 (less parallelism needed since only adapters are trained)
@@ -569,14 +723,16 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     if isinstance(peft_scheme, str) and peft_scheme.lower() in ["lora", "dora"]:
         peft_cfg.dim = 8
         peft_cfg.alpha = 16
+        peft_cfg.dropout = 0.0
         peft_cfg.target_modules = ["linear_qkv", "linear_proj"]
     cfg.peft = peft_cfg
 
-    # Global batch size is 32 for MoE packed sequences
+    # qwen3_30b_a3b_convergence_v1 batch and RNG contract
     cfg.train.global_batch_size = 32
-    # Set pad_seq_to_mult for context parallelism
-    if cfg.model.context_parallel_size > 1:
-        cfg.dataset.offline_packing_specs.pad_seq_to_mult = cfg.model.context_parallel_size * 2
+    cfg.train.micro_batch_size = 1
+    cfg.dataset.seed = 1234
+    cfg.rng.seed = 5678
+    cfg.dataset.offline_packing_specs.pad_seq_to_mult = 4
 
     # MoE Token Dispatcher settings, moe_token_dispatcher_type may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_token_dispatcher_type = "alltoall"
@@ -602,7 +758,18 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     # Optimizer and scheduler overrides for MoE
     cfg.scheduler.lr_warmup_iters = 10
     cfg.scheduler.lr_decay_iters = 100  # Same as train_iters
+    cfg.scheduler.lr_warmup_init = 0.0
+    cfg.scheduler.start_weight_decay = 0.033
+    cfg.scheduler.end_weight_decay = 0.033
+    cfg.scheduler.weight_decay_incr_style = "constant"
+    cfg.scheduler.lr_decay_style = "cosine"
+    cfg.optimizer.lr = 1e-4
+    cfg.optimizer.min_lr = 0.0
+    cfg.optimizer.adam_beta1 = 0.9
     cfg.optimizer.adam_beta2 = 0.95
+    cfg.optimizer.adam_eps = 1e-8
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.clip_grad = 1.0
 
     # TE (Transformer Engine)
     cfg.model.transformer_impl = "transformer_engine"
@@ -641,6 +808,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.use_distributed_optimizer = True
 
     # Communication overlap
     # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
@@ -651,6 +819,7 @@ def qwen3_30b_a3b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -
 
     # Checkpoint config
     cfg.checkpoint.save_interval = 100
+    cfg.checkpoint.load = None
     # cfg.checkpoint.save and cfg.checkpoint.load are set in _peft_common. To override:
     # cfg.checkpoint.save = "path/to/save"
     # cfg.checkpoint.load = "path/to/load"
@@ -833,6 +1002,8 @@ __all__ = [
     "qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config",  # pragma: allowlist secret
     "qwen3_235b_a22b_sft_64gpu_h100_bf16_config",
     "qwen3_30b_a3b_peft_4gpu_h100_bf16_config",
+    "qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config",
+    "qwen3_30b_a3b_sft_16gpu_h100_bf16_config",
     "qwen3_30b_a3b_sft_8gpu_h100_bf16_config",
 ]

@@ -102,3 +102,4 @@ def test_qwen3_omni_hf_json_recipe_uses_direct_hf_source(monkeypatch):
     assert cfg.dataset.hf_processor_path == "Qwen/Qwen3-Omni-30B-A3B-Instruct"
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.skip_getting_attention_mask_from_dataset is False
+    assert cfg.dataset.dataloader_type == "cyclic"

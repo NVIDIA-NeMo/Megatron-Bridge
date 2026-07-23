@@ -3249,6 +3249,22 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_hf_model_revision_round_trip_through_yaml(self, tmp_path):
+        """Immutable Hugging Face model provenance should survive runtime config persistence."""
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        gpt_cfg = create_test_gpt_config(hf_model_id="Qwen/Qwen3-8B", hf_model_revision=revision)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+
+            assert restored_cfg.model.hf_model_id == "Qwen/Qwen3-8B"
+            assert restored_cfg.model.hf_model_revision == revision
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_runtime_config_update_with_mixed_precision_string(self):
         """Test runtime_config_update with mixed precision as string."""
         from megatron.bridge.training.config import runtime_config_update

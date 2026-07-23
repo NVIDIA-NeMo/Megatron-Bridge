@@ -241,6 +241,13 @@ def parse_cli_args():
         default=None,
     )
     parser.add_argument(
+        "--num_moe_experts",
+        type=int,
+        help="Number of experts to use for the experiment. Defaults to None.",
+        required=False,
+        default=None,
+    )
+    parser.add_argument(
         "--pipeline_model_parallel_layout",
         type=str,
         help="Pipeline model parallel layout to use for the experiment. Defaults to None.",
@@ -714,6 +721,17 @@ def parse_cli_args():
         help="Lock GPU graphics clock to the specified frequency in MHz via "
         "`sudo nvidia-smi -lgc <freq>`. Runs once per node before training. "
         "Use `nvidia-smi -rgc` to reset after the job.",
+        type=int,
+        required=False,
+        default=None,
+    )
+    performance_args.add_argument(
+        "-lmc",
+        "--peak_mem_clk",
+        help="Lock GPU memory clock to the specified peak frequency in MHz via "
+        "`sudo nvidia-smi -lmc <freq>,<freq>`. Runs once per node before training. "
+        "Defaults to 4752 MHz for VR200 and is disabled by default for other GPUs. "
+        "Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.",
         type=int,
         required=False,
         default=None,

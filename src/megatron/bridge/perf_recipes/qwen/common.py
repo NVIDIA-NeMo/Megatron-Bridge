@@ -19,10 +19,10 @@ from megatron.bridge.perf_recipes._common import (
     _enable_overlap_param_gather_with_optimizer_step,
     _perf_precision,
 )
-from megatron.bridge.recipes.qwen.qwen3_moe import (
-    qwen3_30b_a3b_pretrain_config,
-    qwen3_235b_a22b_pretrain_config,
+from megatron.bridge.recipes.qwen.h100.qwen3_moe import (
+    qwen3_30b_a3b_pretrain_8gpu_h100_bf16_config as qwen3_30b_a3b_pretrain_config,
 )
+from megatron.bridge.recipes.qwen.qwen3_moe import qwen3_235b_a22b_pretrain_config
 from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_pretrain_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer

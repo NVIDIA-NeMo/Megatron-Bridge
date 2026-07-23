@@ -38,7 +38,6 @@ def _encodes_model_size(class_name: str) -> bool:
     "class_name",
     [
         "T5ModelProvider",
-        "Gemma2ModelProvider",
         "Gemma3ModelProvider",
         "Gemma4ModelProvider",
         "GLM5ModelProvider",
