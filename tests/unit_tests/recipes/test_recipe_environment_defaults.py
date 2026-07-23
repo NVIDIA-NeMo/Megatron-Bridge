@@ -91,8 +91,6 @@ def test_common_recipe_environment_is_small_and_universal():
     assert COMMON_RECIPE_ENV_VARS == {
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "TORCH_NCCL_HIGH_PRIORITY": 1,
@@ -125,7 +123,7 @@ def test_every_supported_hardware_recipe_declares_its_environment_inline():
             )
             assert isinstance(node.body[assignment_index + 1], ast.Return)
 
-    assert len(supported) == 247
+    assert len(supported) == 259
     assert unsupported == ["qwen/h100/qwen3_next.py:qwen3_next_80b_a3b_peft_1gpu_h100_bf16_config"]
 
 
@@ -158,7 +156,7 @@ def test_explicit_recipe_environment_invariants():
                 assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
                 assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
 
-    assert len(recipes) == 247
+    assert len(recipes) == 259
     assert hybrid_ep_count == 8
     assert deepseek_v3_environment_recipe_names == _DEEPSEEK_V3_ENVIRONMENT_RECIPE_NAMES
 
