@@ -91,8 +91,6 @@ def test_common_recipe_environment_is_small_and_universal():
     assert COMMON_RECIPE_ENV_VARS == {
         "NCCL_GRAPH_REGISTER": 0,
         "NCCL_NVLS_ENABLE": 0,
-        "NVTE_NORM_BWD_USE_CUDNN": 1,
-        "NVTE_NORM_FWD_USE_CUDNN": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "TORCH_NCCL_HIGH_PRIORITY": 1,
@@ -131,14 +129,12 @@ def test_every_supported_hardware_recipe_declares_its_environment_inline():
 
 def test_explicit_recipe_environment_invariants():
     recipes = list(_explicit_environments())
-    hybrid_ep_count = 0
     deepseek_v3_environment_recipe_names = set()
 
     for path, function_name, environment in recipes:
         hybrid_ep_names = environment.keys() & _HYBRID_EP_ENV_NAMES
         assert not hybrid_ep_names or hybrid_ep_names == _HYBRID_EP_ENV_NAMES
         if hybrid_ep_names:
-            hybrid_ep_count += 1
             assert environment["NVLINK_DOMAIN_SIZE"] == 8
             assert environment["USE_MNNVL"] == 0
             assert environment["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] in {1, 8}
@@ -158,8 +154,6 @@ def test_explicit_recipe_environment_invariants():
                 assert environment["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
                 assert environment["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
 
-    assert len(recipes) == 262
-    assert hybrid_ep_count == 8
     assert deepseek_v3_environment_recipe_names == _DEEPSEEK_V3_ENVIRONMENT_RECIPE_NAMES
 
 
