@@ -416,11 +416,6 @@ class MegatronModelBridge(
 
     SUPPORTS_HF_PRETRAINED_EXPORT: ClassVar[bool] = True
 
-    # Composite bridges may require access to the original HF checkpoint during
-    # export so source-only components can be preserved. Such bridges cannot use
-    # the config-only CPU export path.
-    REQUIRES_HF_SOURCE_FOR_EXPORT: ClassVar[bool] = False
-
     # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
     PROVIDER_CLASS = None  # Set by @register_bridge(provider=...) or defaults to GPTModelProvider

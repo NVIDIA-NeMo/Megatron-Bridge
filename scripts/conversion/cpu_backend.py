@@ -107,11 +107,6 @@ def export_checkpoint(
     logger.info("CPU export: %s -> %s", megatron_path, hf_path)
     logger.info("Using Megatron run config: %s", config_path)
     bridge = AutoBridge.from_auto_config(megatron_path, hf_model, trust_remote_code=trusted)
-    if bridge._model_bridge.REQUIRES_HF_SOURCE_FOR_EXPORT:
-        raise NotImplementedError(
-            f"{type(bridge._model_bridge).__name__} export requires the original Hugging Face checkpoint; "
-            "the config-only CPU export path is not supported."
-        )
     prepare_output_directory(hf_path, overwrite=overwrite, source_paths=[megatron_path, hf_model])
     try:
         bridge.export_ckpt(

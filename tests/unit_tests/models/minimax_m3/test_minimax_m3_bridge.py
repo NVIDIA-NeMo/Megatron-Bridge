@@ -18,14 +18,13 @@ Unit tests for the MiniMax-M3 bridge.
 
 from functools import partial
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import Mock
 
 import pytest
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from transformers import GenerationConfig, PretrainedConfig
+from transformers import GenerationConfig
 
-from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.conversion.utils import conform_config_to_reference
@@ -527,7 +526,6 @@ class TestMiniMaxM3Bridge:
 
     def test_hf_export_is_enabled_for_source_overlay(self):
         assert MiniMaxM3Bridge.SUPPORTS_HF_PRETRAINED_EXPORT is True
-        assert MiniMaxM3Bridge.REQUIRES_HF_SOURCE_FOR_EXPORT is True
 
     def test_hf_export_preserves_source_tokenizer_artifacts(self):
         assert MiniMaxM3Bridge.ADDITIONAL_FILE_PATTERNS == [
@@ -537,30 +535,6 @@ class TestMiniMaxM3Bridge:
             "tokenizer_config.json",
             "vocab.json",
         ]
-
-    def test_config_only_hf_export_rejects_before_creating_output(self, tmp_path):
-        hf_config = PretrainedConfig()
-        hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
-        hf_config.model_type = "minimax_m3_vl"
-        auto_bridge = AutoBridge(hf_config)
-        output_path = tmp_path / "incomplete-hf-export"
-
-        with pytest.raises(NotImplementedError, match="original Hugging Face checkpoint"):
-            auto_bridge.save_hf_pretrained([], output_path)
-
-        assert not output_path.exists()
-
-    def test_config_only_export_ckpt_rejects_before_loading_megatron(self):
-        hf_config = PretrainedConfig()
-        hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
-        hf_config.model_type = "minimax_m3_vl"
-        auto_bridge = AutoBridge(hf_config)
-
-        with patch.object(auto_bridge, "load_megatron_model") as load_megatron_model:
-            with pytest.raises(NotImplementedError, match="original Hugging Face checkpoint"):
-                auto_bridge.export_ckpt("/unused/megatron", "/unused/hf")
-
-        load_megatron_model.assert_not_called()
 
     def test_hf_export_passthrough_is_narrow_and_lossless(self):
         state = {

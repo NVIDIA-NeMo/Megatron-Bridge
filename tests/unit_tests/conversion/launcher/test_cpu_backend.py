@@ -7,8 +7,6 @@ import sys
 import types
 from pathlib import Path
 
-import pytest
-
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 SCRIPT_DIR = REPO_ROOT / "scripts" / "conversion"
@@ -79,34 +77,3 @@ def test_import_preserves_model_id_and_forwards_revision():
             },
         ),
     ]
-
-
-def test_export_requiring_hf_source_rejects_before_preparing_output(tmp_path):
-    module, calls = _load_cpu_backend()
-    checkpoint_path = tmp_path / "megatron"
-    checkpoint_path.mkdir()
-    (checkpoint_path / "run_config.yaml").write_text("model: {}\n")
-    export_called = False
-
-    class SourceOverlayBridge:
-        _model_bridge = types.SimpleNamespace(REQUIRES_HF_SOURCE_FOR_EXPORT=True)
-
-        def export_ckpt(self, **_kwargs):
-            nonlocal export_called
-            export_called = True
-
-    module.AutoBridge.from_auto_config = staticmethod(lambda *_args, **_kwargs: SourceOverlayBridge())
-
-    with pytest.raises(NotImplementedError, match="config-only CPU export path"):
-        module.export_checkpoint(
-            hf_model="hf/model",
-            megatron_path=str(checkpoint_path),
-            hf_path=str(tmp_path / "hf-output"),
-            show_progress=False,
-            strict=False,
-            trust_remote_code=True,
-            overwrite=False,
-        )
-
-    assert not export_called
-    assert not any(call[0] == "prepare_output_directory" for call in calls)
