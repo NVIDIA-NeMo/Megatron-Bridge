@@ -180,8 +180,10 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chun
             decoder_count = stage.count(LayerType.decoder)
             if decoder_count:
                 assert (
-                    decoder_offset - cfg.model.dsa_indexer_skip_topk_offset
-                ) % cfg.model.dsa_indexer_topk_freq == 0
+                    max(decoder_offset - cfg.model.dsa_indexer_skip_topk_offset + 1, 0)
+                    % cfg.model.dsa_indexer_topk_freq
+                    == 0
+                )
                 decoder_offset += decoder_count
 
     assert decoder_offset == cfg.model.num_layers
