@@ -24,6 +24,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     load_quantization_recipe,
     nemotron_3_nano_pretrain_config,
     nemotron_3_super_pretrain_config,
+    nemotron_3_ultra_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
 
@@ -355,4 +356,54 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_96gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 96× GB200 (24 nodes), BF16.
+
+    3D-parallel (DDP) baseline matching the README Hardware Starting Points table:
+    TP2 / PP3 / EP32 / ETP1, GBS 128 / MBS 1, selective recompute of the full
+    hybrid stack. This is the config the deterministic 24-node launcher targets.
+
+    Dispatcher note: the recipe defaults to the HybridEP flex dispatcher, but the
+    deterministic launcher overrides it to ``alltoall`` — HybridEP cannot allocate
+    its buffer at EP=32 on NVL16-block hardware (it needs a single NVL72-style
+    NVLink domain). The launcher also injects the determinism env vars itself.
+    """
+    cfg = nemotron_3_ultra_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")  # also sets grad_reduce_in_fp32=False
+
+    # Parallelism (README Hardware Starting Points for the 96-GPU GB200 minimum).
+    cfg.model.tensor_model_parallel_size = 2
+    cfg.model.pipeline_model_parallel_size = 3
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 32
+    cfg.train.global_batch_size = 128
+    cfg.train.micro_batch_size = 1
+
+    # Selective recompute of the full hybrid stack (fits activations at MBS 1).
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act", "mlp", "shared_experts"]
+
+    # No CUDA graphs for this 3D-parallel deterministic baseline.
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+
+    # HybridEP flex dispatcher is the recipe default (overridden to alltoall by the
+    # deterministic launcher; see the docstring).
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_shared_expert_overlap = False  # unsupported by MCore during training
+
+    # Perf-recipe common settings mirroring the validated 24n deterministic run.
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.model.moe_router_force_load_balancing = True
+    # Perf runs don't set a save path; the Ultra recipe defaults async_save=True,
+    # which trips the "save path not set" assert. Disable it.
+    cfg.checkpoint.async_save = False
+
+    cfg.env_vars = {**COMMON_PERF_ENV_VARS}
     return cfg
