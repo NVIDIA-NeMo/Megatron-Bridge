@@ -20,7 +20,7 @@ recipe builder so users can see the exact benchmark environment.
 """
 
 COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
-    # This is the only process setting with the same value in all 396 flat recipes.
+    # This is the only process setting with the same value in all 410 flat recipes.
     # Run NCCL work on its high-priority stream for every measured workload.
     "TORCH_NCCL_HIGH_PRIORITY": 1,
 }

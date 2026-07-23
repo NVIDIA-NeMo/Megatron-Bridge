@@ -40,8 +40,8 @@ class TestNemotronHBridge:
     """Test cases for NemotronHBridge class."""
 
     @pytest.fixture
-    def nemotronh_8b_config_dict(self):
-        """Create a sample NemotronH configuration."""
+    def nemotron_nano_v2_config_dict(self):
+        """Create a sample Nemotron Nano v2 configuration."""
         return {
             "architectures": ["NemotronHForCausalLM"],
             "attention_bias": False,
@@ -58,22 +58,22 @@ class TestNemotronHBridge:
             "expand": 2,
             "hidden_act": "relu2",  # Required for base class activation mapping
             "hidden_dropout": 0.0,
-            "hidden_size": 4096,
-            "hybrid_override_pattern": "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+            "hidden_size": 4480,
+            "hybrid_override_pattern": "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
             "initializer_range": 0.02,
-            "intermediate_size": 21504,
+            "intermediate_size": 15680,
             "layer_norm_epsilon": 1e-05,
-            "mamba_head_dim": 64,
+            "mamba_head_dim": 80,
             "mamba_hidden_act": "silu",
             "mamba_num_heads": 128,
             "mamba_proj_bias": False,
-            "max_position_embeddings": 8192,
+            "max_position_embeddings": 131072,
             "mlp_bias": False,
             "mlp_hidden_act": "relu2",
             "model_type": "nemotron_h",
             "n_groups": 8,
-            "num_attention_heads": 32,
-            "num_hidden_layers": 52,
+            "num_attention_heads": 40,
+            "num_hidden_layers": 56,
             "num_key_value_heads": 8,
             "num_logits_to_keep": 1,
             "pad_token_id": 0,
@@ -95,14 +95,14 @@ class TestNemotronHBridge:
         }
 
     @pytest.fixture
-    def mock_nemotronh_config(self, nemotronh_8b_config_dict):
+    def mock_nemotronh_config(self, nemotron_nano_v2_config_dict):
         """Create mock config instance.
 
         Uses spec=[] to make getattr return None for undefined attributes
         instead of Mock objects, which would incorrectly be passed to the provider.
         """
         cfg = Mock(spec=[])
-        for k, v in nemotronh_8b_config_dict.items():
+        for k, v in nemotron_nano_v2_config_dict.items():
             setattr(cfg, k, v)
         return cfg
 
@@ -249,11 +249,11 @@ class TestNemotronHBridge:
         assert result.rotary_percent == 1.0
         assert result.rotary_base == 10000
 
-    def test_provider_bridge_moe_config(self, nemotronh_8b_config_dict):
+    def test_provider_bridge_moe_config(self, nemotron_nano_v2_config_dict):
         """Test MoE configuration mapping when n_routed_experts > 0."""
         # Add MoE-specific configurations to the base config
         moe_config_dict = {
-            **nemotronh_8b_config_dict,
+            **nemotron_nano_v2_config_dict,
             "n_routed_experts": 64,
             "moe_intermediate_size": 2048,
             "moe_shared_expert_intermediate_size": 8192,
@@ -282,11 +282,11 @@ class TestNemotronHBridge:
         assert result.moe_router_group_topk == cfg.topk_group
         assert result.moe_router_topk_scaling_factor == cfg.routed_scaling_factor
 
-    def test_provider_bridge_no_moe_when_n_routed_experts_zero(self, nemotronh_8b_config_dict):
+    def test_provider_bridge_no_moe_when_n_routed_experts_zero(self, nemotron_nano_v2_config_dict):
         """Test that MoE configs are not added when n_routed_experts is 0."""
         # Add MoE config with n_routed_experts = 0
         moe_config_dict = {
-            **nemotronh_8b_config_dict,
+            **nemotron_nano_v2_config_dict,
             "n_routed_experts": 0,
             "moe_intermediate_size": 2048,
             "moe_shared_expert_intermediate_size": 8192,
@@ -309,10 +309,10 @@ class TestNemotronHBridge:
         # When n_routed_experts is 0, num_moe_experts should be 0 or None
         assert result.num_moe_experts in (0, None)
 
-    def test_provider_bridge_moe_latent_size(self, nemotronh_8b_config_dict):
+    def test_provider_bridge_moe_latent_size(self, nemotron_nano_v2_config_dict):
         """Test moe_latent_size mapping for Super model."""
         moe_config_dict = {
-            **nemotronh_8b_config_dict,
+            **nemotron_nano_v2_config_dict,
             "n_routed_experts": 512,
             "moe_intermediate_size": 2688,
             "moe_shared_expert_intermediate_size": 5376,
@@ -338,10 +338,10 @@ class TestNemotronHBridge:
         assert result.moe_latent_size == 1024
         assert result.moe_shared_expert_overlap is False
 
-    def test_provider_bridge_mtp_config(self, nemotronh_8b_config_dict):
+    def test_provider_bridge_mtp_config(self, nemotron_nano_v2_config_dict):
         """Test MTP configuration mapping for Super model."""
         mtp_config_dict = {
-            **nemotronh_8b_config_dict,
+            **nemotron_nano_v2_config_dict,
             "n_routed_experts": 0,
             "num_nextn_predict_layers": 2,
             "mtp_hybrid_override_pattern": "*E",
@@ -366,14 +366,14 @@ class TestNemotronHBridge:
     @pytest.mark.parametrize("num_nextn_predict_layers", [None, 0])
     def test_provider_bridge_disables_mtp_naturally(
         self,
-        nemotronh_8b_config_dict,
+        nemotron_nano_v2_config_dict,
         num_nextn_predict_layers,
     ):
         """HF configs without enabled MTP produce a normal non-MTP provider."""
         from types import SimpleNamespace
 
         config_dict = {
-            **nemotronh_8b_config_dict,
+            **nemotron_nano_v2_config_dict,
             "n_routed_experts": 0,
             "mtp_hybrid_override_pattern": "*E",
             "keep_mtp_spec_in_bf16": True,
@@ -390,14 +390,14 @@ class TestNemotronHBridge:
         assert result.mtp_hybrid_override_pattern is None
         assert result.keep_mtp_spec_in_bf16 is False
 
-    def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotronh_8b_config_dict):
+    def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotron_nano_v2_config_dict):
         """An enabled HF MTP config must describe its hybrid block."""
         from types import SimpleNamespace
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = SimpleNamespace(
             **{
-                **nemotronh_8b_config_dict,
+                **nemotron_nano_v2_config_dict,
                 "n_routed_experts": 0,
                 "num_nextn_predict_layers": 1,
             }
@@ -406,12 +406,12 @@ class TestNemotronHBridge:
         with pytest.raises(ValueError, match="mtp_hybrid_override_pattern"):
             NemotronHBridge().provider_bridge(mock_pretrained)
 
-    def test_provider_bridge_no_moe_when_attribute_missing(self, nemotronh_8b_config_dict):
+    def test_provider_bridge_no_moe_when_attribute_missing(self, nemotron_nano_v2_config_dict):
         """Test that MoE configs are not added when n_routed_experts attribute is missing."""
         from types import SimpleNamespace
 
         # Create config without n_routed_experts using SimpleNamespace (hasattr returns False for missing attrs)
-        config_dict = {k: v for k, v in nemotronh_8b_config_dict.items() if k != "n_routed_experts"}
+        config_dict = {k: v for k, v in nemotron_nano_v2_config_dict.items() if k != "n_routed_experts"}
         cfg = SimpleNamespace(**config_dict)
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
@@ -592,11 +592,11 @@ class TestNemotronHBridgeMegatronToHFConfig:
 
 
 class TestAutoBridgeIntegration:
-    """Integration tests for AutoBridge with NemotronH models."""
+    """Integration tests for AutoBridge with current NemotronH models."""
 
     @pytest.fixture
     def nemotronh_config_dict(self):
-        """Create a sample NemotronH configuration."""
+        """Create a sample Nemotron Nano v2 configuration."""
         return {
             "architectures": ["NemotronHForCausalLM"],
             "attention_bias": False,
@@ -613,22 +613,22 @@ class TestAutoBridgeIntegration:
             "expand": 2,
             "hidden_act": "relu2",  # Required for base class activation mapping
             "hidden_dropout": 0.0,
-            "hidden_size": 4096,
-            "hybrid_override_pattern": "M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M*-M-M-M-M-M-",
+            "hidden_size": 4480,
+            "hybrid_override_pattern": "M-M-M-MM-M-M-M*-M-M-M*-M-M-M-M*-M-M-M-M*-M-MM-M-M-M-M-M-",
             "initializer_range": 0.02,
-            "intermediate_size": 21504,
+            "intermediate_size": 15680,
             "layer_norm_epsilon": 1e-05,
-            "mamba_head_dim": 64,
+            "mamba_head_dim": 80,
             "mamba_hidden_act": "silu",
             "mamba_num_heads": 128,
             "mamba_proj_bias": False,
-            "max_position_embeddings": 8192,
+            "max_position_embeddings": 131072,
             "mlp_bias": False,
             "mlp_hidden_act": "relu2",
             "model_type": "nemotron_h",
             "n_groups": 8,
-            "num_attention_heads": 32,
-            "num_hidden_layers": 52,
+            "num_attention_heads": 40,
+            "num_hidden_layers": 56,
             "num_key_value_heads": 8,
             "num_logits_to_keep": 1,
             "pad_token_id": 0,
