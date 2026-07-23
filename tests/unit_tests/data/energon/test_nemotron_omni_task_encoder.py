@@ -410,7 +410,7 @@ def test_raw_video_bytes_are_decoded_through_one_temporary_mp4(monkeypatch):
     assert sampled_fps == 2.5
 
 
-def test_energon_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
+def test_energon_llava_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
     from PIL import Image
 
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
@@ -431,6 +431,7 @@ def test_energon_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
         enable_in_batch_packing=True,
         in_batch_packing_pad_to_multiple_of=8,
         pad_to_multiple_of=1,
+        collate_fn=omni_collate.nemotron_omni_llava_collate_fn,
     )
     samples = [
         encoder.encode_sample(
@@ -479,7 +480,7 @@ def test_energon_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
     assert packed_seq_params.seq_idx[0, 264:].unique().tolist() == [1]
 
 
-def test_hf_and_energon_multimodal_packing_are_identical_for_image_video_audio(monkeypatch):
+def test_hf_and_energon_llava_packing_are_identical_for_image_video_audio(monkeypatch):
     from PIL import Image
 
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
@@ -536,7 +537,7 @@ def test_hf_and_energon_multimodal_packing_are_identical_for_image_video_audio(m
         "pad_to_multiple_of": 1,
     }
 
-    hf_batch = omni_collate.nemotron_omni_collate_fn(examples, _Processor(rows), **collate_kwargs)
+    hf_batch = omni_collate.nemotron_omni_llava_collate_fn(examples, _Processor(rows), **collate_kwargs)
     energon_encoder = NemotronOmniTaskEncoder(
         processor=_Processor(rows),
         seq_length=1024,
@@ -546,6 +547,7 @@ def test_hf_and_energon_multimodal_packing_are_identical_for_image_video_audio(m
         temporal_patch_size=2,
         num_mel_bins=4,
         pad_to_multiple_of=1,
+        collate_fn=omni_collate.nemotron_omni_llava_collate_fn,
     )
     energon_batch = energon_encoder.encode_batch(energon_encoder.batch(normalized_samples))
 
@@ -592,6 +594,7 @@ def test_energon_temporal_video_refuses_unsafe_sequence_truncation(monkeypatch):
         seq_length=6,
         use_temporal_video_embedder=True,
         pad_to_multiple_of=1,
+        collate_fn=omni_collate.nemotron_omni_llava_collate_fn,
     )
     encoded = encoder.encode_sample(
         _sample(

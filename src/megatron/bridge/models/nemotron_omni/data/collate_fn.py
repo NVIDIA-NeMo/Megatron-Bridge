@@ -814,15 +814,14 @@ def nemotron_omni_collate_fn(
     video_nframes: int = 8,
     use_temporal_video_embedder: bool = False,
     patch_dim: int = 16,
-    collapse_image_tokens: bool = True,
+    collapse_image_tokens: bool = False,
 ) -> dict[str, Any]:
     """Build one model-ready Omni batch from either HF or Energon examples.
 
-    This public entry point retains the existing LLaVA collapse/expand data
-    contract. The canonical :class:`NemotronOmniModel` instead consumes the
-    processor-expanded token sequence, with one image placeholder for every
-    projected feature; use :func:`nemotron_omni_expanded_collate_fn` for that
-    contract.
+    The canonical :class:`NemotronOmniModel` consumes the processor-expanded
+    token sequence, with one image placeholder for every projected feature.
+    Use :func:`nemotron_omni_llava_collate_fn` for the legacy LLaVA
+    collapse/expand contract.
     """
     _validate_nemotron_omni_visual_keys(visual_keys)
     del start_of_response_token, min_pixels, max_pixels
