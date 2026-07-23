@@ -161,7 +161,7 @@ def _qwen2_audio_common(
         validation_source=validation_source,
         test_source=test_source,
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,

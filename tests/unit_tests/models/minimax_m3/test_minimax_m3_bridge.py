@@ -16,23 +16,30 @@
 Unit tests for the MiniMax-M3 bridge.
 """
 
+from functools import partial
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
 from transformers import GenerationConfig, PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     MiniMaxM3Bridge,
     MiniMaxM3ModelProvider,
+    MiniMaxM3TopKRouter,
     TopKRouter,
     _promote_router_weights_to_float32,
+    minimax_m3_block_spec,
     quick_gelu,
 )
 from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
+from megatron.bridge.utils.instantiate_utils import instantiate
 
 
 # Toy text-backbone config (mirrors the shape of MiniMaxAI/MiniMax-M3 text_config)
@@ -299,6 +306,115 @@ class TestMiniMaxM3Bridge:
 
         assert isinstance(provider, MiniMaxM3ModelProvider)
         assert provider._pre_wrap_hooks[0] is _promote_router_weights_to_float32
+        assert provider.transformer_layer_spec.func is minimax_m3_block_spec
+
+    def test_provider_upgrades_legacy_checkpoint_layer_spec_idempotently(self, mock_pretrained):
+        provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
+        provider.transformer_layer_spec = partial(get_gpt_decoder_block_spec, use_transformer_engine=True)
+
+        provider.__post_init__()
+
+        assert provider.transformer_layer_spec.func is minimax_m3_block_spec
+        assert provider.transformer_layer_spec.keywords == {"use_transformer_engine": True}
+        assert provider._pre_wrap_hooks.count(_promote_router_weights_to_float32) == 1
+
+    def test_router_gating_casts_input_to_float32_weight_dtype(self, monkeypatch):
+        captured_inputs = []
+
+        def fake_gating(_router, hidden_states):
+            captured_inputs.append(hidden_states)
+            return hidden_states
+
+        monkeypatch.setattr(TopKRouter, "gating", fake_gating)
+        router = object.__new__(MiniMaxM3TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.weight = torch.nn.Parameter(torch.randn(8, 64, dtype=torch.float32))
+        hidden_states = torch.randn(2, 3, 64, dtype=torch.bfloat16)
+
+        output = MiniMaxM3TopKRouter.gating(router, hidden_states)
+
+        assert captured_inputs[0].dtype == torch.float32
+        assert torch.equal(captured_inputs[0], hidden_states.float())
+        assert output is captured_inputs[0]
+        assert hidden_states.dtype == torch.bfloat16
+
+    def test_router_gating_does_not_copy_matching_dtype_input(self, monkeypatch):
+        captured_inputs = []
+
+        def fake_gating(_router, hidden_states):
+            captured_inputs.append(hidden_states)
+            return hidden_states
+
+        monkeypatch.setattr(TopKRouter, "gating", fake_gating)
+        router = object.__new__(MiniMaxM3TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.weight = torch.nn.Parameter(torch.randn(8, 64, dtype=torch.float32))
+        hidden_states = torch.randn(2, 3, 64, dtype=torch.float32)
+
+        MiniMaxM3TopKRouter.gating(router, hidden_states)
+
+        assert captured_inputs[0] is hidden_states
+
+    def test_block_spec_installs_minimax_router_only_for_moe_layers(self, monkeypatch):
+        from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+
+        moe_submodules = MoESubmodules(experts=object())
+        moe_layer_spec = SimpleNamespace(submodules=SimpleNamespace(mlp=partial(MoELayer, submodules=moe_submodules)))
+        dense_mlp_spec = object()
+        dense_layer_spec = SimpleNamespace(submodules=SimpleNamespace(mlp=dense_mlp_spec))
+        block_spec = SimpleNamespace(layer_specs=[dense_layer_spec, moe_layer_spec])
+        calls = []
+
+        def fake_get_gpt_decoder_block_spec(config, use_transformer_engine=True, **kwargs):
+            calls.append((config, use_transformer_engine, kwargs))
+            return block_spec
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.minimax_m3.minimax_m3_bridge.get_gpt_decoder_block_spec",
+            fake_get_gpt_decoder_block_spec,
+        )
+
+        output = minimax_m3_block_spec(
+            "config",
+            use_transformer_engine=True,
+            vp_stage=2,
+            pp_rank=1,
+            extra="value",
+        )
+
+        assert output is block_spec
+        assert calls == [
+            (
+                "config",
+                True,
+                {
+                    "normalization": None,
+                    "qk_l2_norm": False,
+                    "vp_stage": 2,
+                    "pp_rank": 1,
+                    "extra": "value",
+                },
+            )
+        ]
+        assert dense_layer_spec.submodules.mlp is dense_mlp_spec
+        assert moe_layer_spec.submodules.mlp.func is MoELayer
+        assert moe_layer_spec.submodules.mlp.keywords["submodules"].router is MiniMaxM3TopKRouter
+        assert moe_submodules.router is TopKRouter
+
+    def test_minimax_router_is_registered_as_replicated(self):
+        assert "MiniMaxM3TopKRouter" in AutoMapping._MODULE_TYPE_REGISTRY["replicated"]
+
+    def test_block_spec_serialized_target_can_be_instantiated(self):
+        layer_spec = instantiate(
+            {
+                "_target_": ("megatron.bridge.models.minimax_m3.minimax_m3_bridge.minimax_m3_block_spec"),
+                "_partial_": True,
+                "use_transformer_engine": True,
+            }
+        )
+
+        assert layer_spec.func is minimax_m3_block_spec
+        assert layer_spec.keywords == {"use_transformer_engine": True}
 
     def test_mapping_registry_uses_language_model_prefix(self):
         """All HF-side params must live under the multimodal language_model. prefix."""
