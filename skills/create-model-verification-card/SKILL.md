@@ -188,13 +188,16 @@ Put a scalar `precision` on every direct item or hardware leaf. It describes
 the workload that was actually verified, not every precision the model might
 support:
 
-- for conversion, record the imported or exported weight precision;
-- for forward pass and inference, record the compute precision;
+- for conversion, record the imported or exported weight precision; use
+  `fp32` when the direct conversion really stores FP32 weights;
+- for forward pass and inference, record the compute precision; use `fp32`
+  when the provider actually runs FP32 compute;
 - for training, record the recipe's mixed-precision mode.
 
-Use `bf16` for BF16. Training items may instead use `fp8_mx` for MXFP8 or
-`nvfp4` for NVFP4. Keep MXFP8 and NVFP4 training-only, and do not list either
-until that exact item has completed in that mode.
+Use `bf16` for BF16. Keep `fp32` direct-item-only. Training items may instead
+use `fp8_mx` for MXFP8 or `nvfp4` for NVFP4. Keep MXFP8 and NVFP4
+training-only, and do not list either until that exact item has completed in
+that mode.
 
 ### 3. Use the public Slurm launchers
 
