@@ -20,10 +20,10 @@ verification_index:
   model_level:
     verified:
       - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
       - inference
   training:
@@ -95,7 +95,7 @@ items:
       the CPU round-trip with no dropped vision or packed next-token weights.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -105,13 +105,16 @@ items:
       --hf-path work/model-verification/qwen3.6-35b-a3b/hf-export
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 1 --ep 8 --etp 1
-    last_verified: null
+    last_verified: 2026-07-23
     expected_result: >
-      Distributed export must exit successfully, write a complete indexed BF16
-      checkpoint, and strictly reload without missing or unexpected keys.
-      Recorded inventory evidence must prove that all language, vision,
-      projection, router, expert, shared-expert, and packed MTP tensors match
-      the pinned source in key, shape, dtype, and value.
+      The 16-H100 distributed export exited successfully and wrote 26 indexed
+      shards containing 1,045 BF16 tensors and 71,903,645,408 serialized tensor
+      bytes. Its key set, dtype inventory, and byte total exactly match the
+      pinned source. The repository round-trip verifier passed all 1,045
+      language, vision, projection, router, routed/shared expert, and packed
+      MTP weights with zero failed rows. Transformers independently reloaded
+      the persisted export as Qwen3_5MoeForConditionalGeneration with empty
+      missing, unexpected, mismatched, and error sets.
 
   manual_forward_pass:
     status: unverified
