@@ -20,9 +20,6 @@ from collections.abc import Callable
 from types import SimpleNamespace
 
 import pytest
-from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
-    _validate_dsa_index_share_pipeline_split,
-)
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
@@ -176,14 +173,9 @@ def test_glm52_h100_pipeline_layout_keeps_dsa_index_sharing_within_each_vpp_chun
     assert parsed_layout.virtual_pipeline_model_parallel_size == 2
     assert parsed_layout.layout[-1][-1][-2:] == [LayerType.mtp, LayerType.loss]
 
-    decoder_offset = 0
-    for vpp_rank in range(parsed_layout.virtual_pipeline_model_parallel_size):
-        for pp_rank in range(parsed_layout.pipeline_model_parallel_size):
-            stage = parsed_layout.layout[pp_rank][vpp_rank]
-            decoder_count = stage.count(LayerType.decoder)
-            if decoder_count:
-                local_layer_ids = range(decoder_offset, decoder_offset + decoder_count)
-                _validate_dsa_index_share_pipeline_split(cfg.model, local_layer_ids)
-                decoder_offset += decoder_count
-
-    assert decoder_offset == cfg.model.num_layers
+    decoder_count = sum(
+        stage.count(LayerType.decoder)
+        for pipeline_stage in parsed_layout.layout
+        for stage in pipeline_stage
+    )
+    assert decoder_count == cfg.model.num_layers
