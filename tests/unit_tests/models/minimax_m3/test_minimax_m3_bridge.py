@@ -648,3 +648,27 @@ class TestMiniMaxM3Bridge:
         assert config["text_config"]["sparse_attention_config"]["sparse_attention_freq"] == [0, 1, 1, 1]
         assert config["text_config"]["sparse_attention_config"]["sparse_disable_index_value"] == [0, 1, 1, 1]
         assert config["tie_word_embeddings"] is False
+
+    def test_megatron_to_hf_config_refreshes_standard_fields_without_generic_aliases(self, mock_pretrained):
+        bridge = MiniMaxM3Bridge()
+        provider = bridge.provider_bridge(mock_pretrained)
+        provider.hidden_size = 96
+        provider.num_moe_experts = 16
+        provider.hf_config_dict["text_config"]["max_position_embeddings"] = 1_048_576
+        provider.hf_config_dict["text_config"].pop("torch_dtype")
+
+        config = MiniMaxM3Bridge.megatron_to_hf_config(provider)
+        text_config = config["text_config"]
+
+        assert text_config["hidden_size"] == 96
+        assert text_config["num_local_experts"] == 16
+        assert text_config["architectures"] == ["MiniMaxM3SparseForCausalLM"]
+        assert text_config["hidden_act"] == "swigluoai"
+        assert text_config["max_position_embeddings"] == 1_048_576
+        assert text_config["num_nextn_predict_layers"] == 1
+        assert "model_type" not in text_config
+        assert "torch_dtype" not in text_config
+        assert "num_experts" not in text_config
+        assert "n_routed_experts" not in text_config
+        assert "moe_intermediate_size" not in text_config
+        assert config["torch_dtype"] == "bfloat16"

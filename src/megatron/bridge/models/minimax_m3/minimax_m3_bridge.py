@@ -486,6 +486,27 @@ class MiniMaxM3Bridge(MegatronModelBridge):
             else {}
         )
         text_config = copy.deepcopy(hf_config.get("text_config", {}))
+        generated_text_config = super().megatron_to_hf_config(provider)
+        standard_text_config_keys = (
+            "hidden_size",
+            "num_hidden_layers",
+            "num_attention_heads",
+            "num_key_value_heads",
+            "head_dim",
+            "vocab_size",
+            "rms_norm_eps",
+            "rope_theta",
+            "partial_rotary_factor",
+            "use_qk_norm",
+            "tie_word_embeddings",
+            "num_local_experts",
+            "num_experts_per_tok",
+            "scoring_func",
+            "routed_scaling_factor",
+        )
+        text_config.update(
+            {key: generated_text_config[key] for key in standard_text_config_keys if key in generated_text_config}
+        )
         moe_layer_freq = list(provider.moe_layer_freq)
         rope_parameters = copy.deepcopy(text_config.get("rope_parameters", {})) or {}
         rope_parameters.update(
@@ -497,34 +518,19 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         text_config.update(
             {
                 "architectures": ["MiniMaxM3SparseForCausalLM"],
-                "hidden_size": provider.hidden_size,
                 "intermediate_size": provider.moe_ffn_hidden_size,
                 "dense_intermediate_size": provider.ffn_hidden_size,
                 "shared_intermediate_size": provider.moe_shared_expert_intermediate_size,
-                "num_hidden_layers": provider.num_layers,
-                "num_attention_heads": provider.num_attention_heads,
-                "num_key_value_heads": provider.num_query_groups,
-                "head_dim": provider.kv_channels,
-                "vocab_size": provider.vocab_size,
-                "rms_norm_eps": provider.layernorm_epsilon,
-                "rope_theta": provider.rotary_base,
                 "rotary_dim": round(provider.rotary_percent * provider.kv_channels),
-                "partial_rotary_factor": provider.rotary_percent,
                 "hidden_act": "swigluoai",
-                "use_qk_norm": provider.qk_layernorm,
                 "use_gemma_norm": provider.layernorm_zero_centered_gamma,
-                "tie_word_embeddings": provider.share_embeddings_and_output_weights,
-                "num_local_experts": provider.num_moe_experts,
-                "num_experts_per_tok": provider.moe_router_topk,
                 "n_shared_experts": 1 if provider.moe_shared_expert_intermediate_size else 0,
-                "scoring_func": provider.moe_router_score_function,
                 "use_routing_bias": provider.moe_router_enable_expert_bias,
                 "moe_layer_freq": moe_layer_freq,
                 "mlp_layer_types": ["sparse" if enabled else "dense" for enabled in moe_layer_freq],
                 "rope_parameters": rope_parameters,
                 "swiglu_alpha": 1.702,
                 "swiglu_limit": provider.activation_func_clamp_value,
-                "routed_scaling_factor": provider.moe_router_topk_scaling_factor,
             }
         )
         text_config.setdefault("max_position_embeddings", provider.seq_length)
