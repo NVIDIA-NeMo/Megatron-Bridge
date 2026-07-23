@@ -440,8 +440,8 @@ def evaluate_and_print_results(
     mlflow_writer = state.mlflow_logger
     comet_logger = state.comet_logger
 
-    # Only the flag makes a list mean per-set iterators; without it, a list is a
-    # per-virtual-pipeline-chunk iterator for a single set.
+    # A list here is can be ambiguous when pipeline parallelism is used, so we branch based on the
+    # flag, not on the type of data_iterator.
     val_config = state.cfg.validation
     if val_config.multiple_validation_sets and not is_test:
         data_iterators = data_iterator

@@ -370,14 +370,14 @@ def train(
         pre_hook_enabled = False
 
     def _run_validation(prefix: str, toggle_pre_hook: bool) -> None:
-        """Run one validation pass with the surrounding loop bookkeeping.
+        """Run one validation pass with the training-loop bookkeeping applied.
 
-        Brackets ``evaluate_and_print_results`` with the energy-monitor pause,
-        interval/eval timer handling, manual GC, and (optionally) the forward
-        pre-hook toggle shared by the pre-train and in-loop evals.
-
-        ``toggle_pre_hook`` is False for the pre-train pass (the hook is left
-        disabled for loop start) and True for the in-loop eval.
+        Args:
+            prefix: Label for the printed results, e.g. ``"iteration N"``.
+            toggle_pre_hook: Disable the forward pre-hook for the duration of
+                the eval and re-enable it afterwards. True for the in-loop
+                eval; False for the pre-train pass, where the hook is not yet
+                enabled.
         """
         nonlocal pre_hook_enabled
         if energy_monitor is not None:

@@ -352,13 +352,23 @@ def build_train_valid_test_data_loaders(
         else cfg.train.micro_batch_size
     )
 
-    def _build_eval_test_dataloaders(ds, consumed_samples, dataloader_type):
+    def _build_eval_test_dataloaders(
+        ds: Any, consumed_samples: int, dataloader_type: str
+    ) -> DataLoader | list[DataLoader] | None:
         """Build the dataloader(s) for a validation or test dataset slot.
 
-        With multiple_validation_sets the dataset provider returns one validation
-        dataset per set; map over the list to build one dataloader per set,
-        mirroring Megatron-LM's convention. Each set uses the same
-        consumed-samples offset as the single-set case.
+        Args:
+            ds: A single evaluation dataset, or a list with one dataset per
+                validation set when ``multiple_validation_sets`` is enabled.
+            consumed_samples: Sample offset the sampler resumes from. Applied
+                to every set alike; there is no per-set consumed-samples
+                accounting.
+            dataloader_type: Sampler style, passed through to
+                ``build_pretraining_data_loader``.
+
+        Returns:
+            One dataloader per input dataset (a list for a list input), or
+            None when ``ds`` is None.
         """
         if isinstance(ds, list):
             return [_build_eval_test_dataloaders(d, consumed_samples, dataloader_type) for d in ds]
