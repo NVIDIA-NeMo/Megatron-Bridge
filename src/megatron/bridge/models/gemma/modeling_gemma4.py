@@ -1503,7 +1503,7 @@ def _install_tied_kv(model: "torch.nn.Module", provider: "Gemma4ModelProvider") 
         attn._tied_kv = True
 
 
-def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
+def gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
     """Build Gemma 4 MoE block spec with patched attention, layer, and MoE modules."""
     block_spec = get_gpt_decoder_block_spec(config, use_transformer_engine=use_transformer_engine, **kwargs)
 
