@@ -19,14 +19,14 @@ Use this checklist-style flow: scaffold → provider mapping → parameter mappi
 
  Most GPT-style models (such as the Qwen and Llama families) can reuse the Megatron-Core GPT model by mapping their configuration. If the model requires custom building blocks (e.g., an attention variant, RoPE variant, or VLM modules), add a lightweight specialization similar to how 🤗 HuggingFace implements `modeling_xxx.py`.
 
-- **Standard GPT-style models**: Implement a `Provider` and a `Bridge`. For example, see the [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_provider.py) and [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py).
+- **Standard GPT-style models**: Implement a `Provider` and a `Bridge`. For example, see the [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py) and [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py).
 - **Models with custom components**: If your model has custom operations or blocks (e.g., a unique attention mechanism), add a minimal modeling module in the same directory and reference it from the `Provider` (example forthcoming).
 
 ## 2) Scaffold the model folder
 
 Create a folder under `src/megatron/bridge/models/&lt;your_model&gt;/` and add:
 
-- `&lt;your_model&gt;_provider.py`: builds a `TransformerConfig`-compatible provider (or a subclass of an existing provider) and exposes `.provide_distributed_model()`. For example: [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_provider.py), [Qwen provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen_provider.py), or [Qwen2 provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen2_provider.py).
+- `&lt;your_model&gt;_provider.py`: builds a `TransformerConfig`-compatible provider (or a subclass of an existing provider) and exposes `.provide_distributed_model()`. For example: [Llama provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py), [Qwen provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen3_bridge.py), or [Qwen2 provider](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen2_bridge.py).
 - `&lt;your_model&gt;_bridge.py`: architecture-specific bridge that maps HF config → provider and defines parameter mappings. For example: [Llama bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/llama_bridge.py), [Qwen3 bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen3_bridge.py), or [Qwen2 bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/qwen/qwen2_bridge.py).
 - Optional: `README.md` with any model quirks. For example: [Llama README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/llama/README.md).
 
@@ -161,7 +161,6 @@ Tasks:
   - `QKVMapping` for fused QKV if applicable.
   - `GatedMLPMapping` for gate/up if applicable.
 - Use `*` wildcards consistently between Megatron and HF patterns.
-- Add model organization to SAFE_REPOS list at `megatron.bridge.models.hf_pretrained.utils`
 
 References:
 - `src/megatron/bridge/models/conversion/model_bridge.py`
@@ -205,7 +204,7 @@ Use the examples in `examples/conversion/` to verify bidirectional conversion an
 
 ```sh
 uv run python examples/conversion/hf_to_megatron_generate_text.py --hf_model_path <org>/<model-id> --prompt "Hello"
-uv run python examples/conversion/convert_checkpoints.py import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
+./scripts/conversion/convert.sh import --hf-model <org>/<model-id> --megatron-path ./checkpoints/<model-dir>
 ```
 ## 7) Add tests
 

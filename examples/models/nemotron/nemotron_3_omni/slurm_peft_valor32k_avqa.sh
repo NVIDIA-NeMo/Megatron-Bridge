@@ -20,7 +20,7 @@
 #         LoRA targets: linear_qkv, linear_proj, in_proj, out_proj
 #                       (LM only; vision/sound encoders + projections frozen)
 #         Temporal video embedder enabled (temporal_patch_dim=2,
-#         dynamic_resolution=True, separate_video_embedder=True).
+#         separate_video_embedder=True).
 # Default parallelism: TP=2, EP=8, CP=1, MBS=2, GBS=64, packed sequences,
 #                      selective recompute, lr=1e-4
 # Default layout:      1 node / 8 GPUs
@@ -155,7 +155,6 @@ CLI_OVERRIDES="\
 
 CMD="uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --hf_path $HF_MODEL_ID \
     --step_func nemotron_omni_step \
     $CLI_OVERRIDES"
 

@@ -34,6 +34,7 @@ from megatron.bridge.recipes.deepseek import (
     set_deepseek_v4_pipeline_model_parallel_layout,
 )
 from megatron.bridge.recipes.deepseek.deepseek_v3 import _build_standalone_mtp_layout
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _deepseek_module = importlib.import_module("megatron.bridge.recipes.deepseek")
@@ -129,12 +130,12 @@ def _assert_basic_config(cfg):
 def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     # Always patch AutoBridge in the base deepseek_v3 module (where base configs call it)
     deepseek_v3_mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v3")
-    monkeypatch.setattr(deepseek_v3_mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, deepseek_v3_mod, "AutoBridge", _FakeBridge)
     # Also patch in the recipe's own module if it directly imports AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     if hasattr(mod, "AutoBridge"):
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+        patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     # DeepSeek recipes are all pretrain configs - call without parameters
     cfg = recipe_func()
@@ -152,6 +153,37 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     # Parallelism and shaping
     assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
+
+
+def test_model_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Model H100 and flat GB200 recipes should own topology-correct env defaults."""
+    deepseek_v3_mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, deepseek_v3_mod, "AutoBridge", _FakeBridge)
+
+    recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", _FakeBridge)
+    recipe_config = recipe_module.deepseek_v3_pretrain_1024gpu_h100_bf16_config()
+
+    perf_module = importlib.import_module("megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3")
+    perf_config = perf_module.deepseek_v3_pretrain_256gpu_gb200_bf16_config()
+
+    expected_recipe = {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    assert recipe_config.env_vars.items() >= expected_recipe.items()
+    assert recipe_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert recipe_config.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert recipe_config.env_vars["USE_MNNVL"] == 0
+    assert perf_config.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert perf_config.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+    assert "TORCHINDUCTOR_WORKER_START" not in recipe_config.env_vars
+    assert "QUANTIZATION_TYPE_DEBUG" not in recipe_config.env_vars
+    assert "TORCHINDUCTOR_WORKER_START" not in perf_config.env_vars
+    assert "QUANTIZATION_TYPE_DEBUG" not in perf_config.env_vars
+    assert perf_config.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert perf_config.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert perf_config.env_vars["USE_MNNVL"] == 1
 
 
 def test_deepseek_v3_pipeline_layout_can_place_mtp_in_standalone_stage():
@@ -318,8 +350,8 @@ def test_deepseek_v3_pipeline_layout_keeps_default_mtp_with_loss():
 
 def _build_deepseek_v4_recipe(name: str, monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-    monkeypatch.setattr(mod, "deepseek_v4_supports_blackwell_fused_kernels", lambda: True)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "deepseek_v4_supports_blackwell_fused_kernels", lambda: True)
     return getattr(mod, name)()
 
 
@@ -410,8 +442,8 @@ def test_deepseek_v4_recipes_disable_blackwell_only_fusions_when_unavailable(
     recipe_name: str, monkeypatch: pytest.MonkeyPatch
 ):
     mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v4")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-    monkeypatch.setattr(mod, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
 
     cfg = getattr(mod, recipe_name)()
 

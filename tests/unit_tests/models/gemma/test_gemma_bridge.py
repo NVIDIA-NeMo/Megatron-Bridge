@@ -18,6 +18,7 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.activations import fast_gelu
 from transformers import GemmaConfig, GemmaForCausalLM, GenerationConfig
 
 from megatron.bridge.models import AutoBridge
@@ -40,7 +41,7 @@ class TestMegatronGemmaBridge:
             "bos_token_id": 2,
             "eos_token_id": 1,
             "head_dim": 256,
-            "hidden_act": "gelu",
+            "hidden_act": "gelu_pytorch_tanh",
             "hidden_size": 2048,
             "initializer_range": 0.02,
             "intermediate_size": 16384,
@@ -69,7 +70,7 @@ class TestMegatronGemmaBridge:
             "bos_token_id": 2,
             "eos_token_id": 1,
             "head_dim": 256,
-            "hidden_act": "gelu",
+            "hidden_act": "gelu_pytorch_tanh",
             "hidden_size": 3072,
             "initializer_range": 0.02,
             "intermediate_size": 24576,
@@ -156,6 +157,8 @@ class TestMegatronGemmaBridge:
         assert result.num_attention_heads == gemma_2b_config.num_attention_heads
         assert result.seq_length == gemma_2b_config.max_position_embeddings
         assert result.rotary_base == gemma_2b_config.rope_parameters["rope_theta"]
+        # Gemma runs tanh-approximate GELU (fast_gelu).
+        assert result.activation_func is fast_gelu
 
     def test_provider_bridge_basic_7b(self, mock_pretrained_gemma_7b, gemma_7b_config):
         """Test basic provider_bridge functionality for Gemma 7B."""
@@ -535,67 +538,3 @@ class TestAutoBridgeIntegration:
         non_causal_config = Mock()
         non_causal_config.architectures = ["GemmaModel"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
-
-    def test_list_supported_models(self):
-        """Test list_supported_models includes GemmaForCausalLM."""
-        # This test requires the dispatch system to be set up
-        # Since we're testing in isolation, we'll skip this test
-        # In a real environment, this would work if the bridges are registered
-        pass  # Skip for now as it requires full dispatch setup
-
-
-class TestGemmaBridgeParameterMapping:
-    """Test parameter mapping functionality in GemmaBridge."""
-
-    @pytest.fixture
-    def mock_gemma_state_dict(self):
-        """Create a mock state dict with Gemma parameter names."""
-        return {
-            "model.embed_tokens.weight": torch.randn(256000, 2048),
-            "model.norm.weight": torch.randn(2048),
-            "model.layers.0.input_layernorm.weight": torch.randn(2048),
-            "model.layers.0.post_attention_layernorm.weight": torch.randn(2048),
-            "model.layers.0.self_attn.q_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.k_proj.weight": torch.randn(256, 2048),  # GQA: different size for K
-            "model.layers.0.self_attn.v_proj.weight": torch.randn(256, 2048),  # GQA: different size for V
-            "model.layers.0.self_attn.o_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.mlp.gate_proj.weight": torch.randn(16384, 2048),
-            "model.layers.0.mlp.up_proj.weight": torch.randn(16384, 2048),
-            "model.layers.0.mlp.down_proj.weight": torch.randn(2048, 16384),
-        }
-
-    def test_mapping_registry_has_gemma_specific_mappings(self):
-        """Test that mapping registry includes Gemma-specific mappings."""
-        bridge = GemmaBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # This test verifies that the mapping registry was created
-        # The actual parameter mappings are tested in integration tests
-        assert mapping_registry is not None
-
-    def test_gemma_tied_embeddings_mapping(self):
-        """Test that Gemma bridge handles tied embeddings correctly."""
-        bridge = GemmaBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma uses tied embeddings, so there should be no separate lm_head.weight mapping
-        # This is reflected in the mapping registry not including lm_head.weight
-        assert mapping_registry is not None
-
-    def test_gemma_no_bias_mapping(self):
-        """Test that Gemma bridge doesn't include bias mappings."""
-        bridge = GemmaBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma doesn't have bias in linear layers
-        # This is reflected in the QKVMapping and other mappings not including bias terms
-        assert mapping_registry is not None
-
-    def test_gemma_gated_mlp_mapping(self):
-        """Test that Gemma bridge includes gated MLP mappings."""
-        bridge = GemmaBridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Gemma uses gated MLP, so it should have GatedMLPMapping
-        # This combines gate_proj and up_proj into linear_fc1
-        assert mapping_registry is not None

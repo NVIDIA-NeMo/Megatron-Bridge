@@ -7,12 +7,12 @@ This guide will cover the next steps to make use of a training recipe, including
 
 - **Coverage**: We provide recipes across select model families and sizes, including Llama, Qwen, DeepSeek, and Nemotron-H (Mamba-based).
 - **Defaults**: Each recipe sets defaults meant for convergence and performance across parallelisms, precision data types, and optimizer & scheduler choices. These recipes can be used as a high-quality starting point.
-- **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md) (see the published docs as well: https://docs.nvidia.com/nemo/megatron-bridge/latest/training/entry-points.html).
+- **Integration**: Recipes return a single `ConfigContainer` that plugs directly into our training [entry points](training/entry-points.md).
 - **Customization**: You can override any part of the recipe (Python, YAML, CLI) to adapt to your data, scale, and objectives.
 
 ## Choosing a recipe or a new config
 
-Start from an exported recipe when the model family and workflow already exist in `megatron.bridge.recipes`. Recipe functions such as `llama3_8b_pretrain_config`, `llama32_1b_sft_config`, and `qwen3_8b_peft_config` provide model, optimizer, scheduler, precision, dataset, logger, and checkpoint defaults in one `ConfigContainer`. Override those defaults for your dataset, checkpoint paths, run length, parallelism, or precision before creating a new recipe.
+Start from an exported recipe when the model family and workflow already exist in `megatron.bridge.recipes`. Hardware-specific H100 recipes such as `llama3_8b_pretrain_2gpu_h100_bf16_config`, `llama32_1b_sft_1gpu_h100_bf16_config`, and `qwen3_8b_peft_1gpu_h100_bf16_config` are the canonical recipe names and share the same `<model>_<task>_<num>gpu_<gpu>_<dtype>[_<variant>]_config` naming strategy as performance recipes. Other hardware-specific recipe namespaces will follow the same pattern as they are added. The older recipe names remain available as compatibility aliases. Override those defaults for your dataset, checkpoint paths, run length, parallelism, or precision before creating a new recipe.
 
 Create a new recipe or config when the base model architecture is not represented by an existing model provider, the checkpoint conversion needs a new bridge, the forward step or dataset provider is model-specific, or you need a reusable configuration that will be shared across jobs. If the Hugging Face model is already supported by `AutoBridge`, you usually only need to start from the closest recipe and override the model provider or `hf_path`.
 
@@ -21,9 +21,9 @@ Training mode follows the recipe and dataset type:
 | Workflow | Typical config | Entry point | Checkpoint expectation |
 |----------|----------------|-------------|------------------------|
 | LLM pretraining or continued pretraining | `GPTDatasetConfig` | `pretrain()` | No checkpoint for from-scratch runs; use `checkpoint.load` for full resume or `checkpoint.pretrained_checkpoint` for model-weight initialization |
-| Full SFT | `FinetuningDatasetConfig` or a dataset provider | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
+| Full SFT | `GPTSFTDatasetConfig` for local JSONL or Hugging Face source data | `finetune()` | Use `checkpoint.pretrained_checkpoint` for the base model, or `checkpoint.load` for a full native Megatron resume |
 | PEFT / LoRA / DoRA | Same as SFT, plus `cfg.peft` | `finetune()` | `checkpoint.pretrained_checkpoint` is required for the frozen base model; `checkpoint.load` resumes adapter training |
-| VLM SFT or PEFT | VLM dataset provider such as Energon, HF, or preloaded JSON provider | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
+| VLM SFT or PEFT | `DirectHFSFTDatasetConfig` with a Hugging Face source, including its JSON loader, or Energon | `finetune()` with a VLM step function | Use the model-specific checkpoint guidance in the recipe or model docs |
 
 For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses `GPTDatasetConfig` with `data_path`, `blend`, or `blend_per_split`; SFT and PEFT use `dataset_root` for local JSONL data. Do not use `data_path` for SFT/PEFT JSONL roots.
 
@@ -32,7 +32,7 @@ For dataset fields, prefer `seq_length` in Bridge examples. LLM pretraining uses
 Recipes are provided through a {py:class}`~bridge.training.config.ConfigContainer` object. This is a dataclass that holds all configuration objects needed for training. You can find a more detailed overview of the `ConfigContainer` [here](training/config-container-overview.md).
 The benefit of providing the full recipe through a pythonic structure is that it is agnostic to any configuration approach that a user may prefer, whether that's YAML, `argparse` or something else. In other words, the user may override the recipe however they see fit.
 
-The following sections detail a few different ways to override the configuration recipe. For a generic recipe launcher, see [`scripts/training/run_recipe.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/run_recipe.py).
+The following sections detail a few different ways to override the configuration recipe. For the public Slurm launcher and its rank-local recipe runner, see [`scripts/training/README.md`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/README.md).
 
 
 ### Python
@@ -136,6 +136,7 @@ Common dataset overrides:
 
 ```python
 from megatron.bridge.recipes.llama import llama32_1b_sft_config, llama3_8b_pretrain_config
+from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
 
 pretrain_cfg = llama3_8b_pretrain_config()
 finetune_cfg = llama32_1b_sft_config()
@@ -147,8 +148,15 @@ pretrain_cfg.dataset.seq_length = 8192
 
 # SFT/PEFT local JSONL data on a finetune recipe:
 # directory containing training.jsonl, validation.jsonl, and optionally test.jsonl
-finetune_cfg.dataset.dataset_root = "/data/sft_jsonl"
-finetune_cfg.dataset.seq_length = 4096
+finetune_cfg.dataset = GPTSFTDatasetConfig(
+    dataset_root="/data/sft_jsonl",
+    seq_length=4096,
+    preprocessing=PromptCompletionSFTPreprocessingConfig(
+        prompt_column="input",
+        completion_column="output",
+        separator=" ",
+    ),
+)
 ```
 
 For more detail on accepted dataset layouts, see [Data Preparation](training/data-preparation.md).
@@ -220,7 +228,7 @@ if __name__ == "__main__":
     train_script = run.Script(..., args=args_to_fwd)
 ```
 
-For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/launch_with_nemo_run.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/launch_with_nemo_run.py).
+For a complete example of the `run.Script` API, including argument forwarding, see [`scripts/training/setup_experiment.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/training/setup_experiment.py).
 
 #### Plugins
 
@@ -235,8 +243,8 @@ if __name__ == "__main__":
     train_script = run.Script(path="/path/to/train/script.py", entrypoint="python")
     executor = run.LocalExecutor(ntasks_per_node=8, launcher="torchrun")
 
-    plugins = [] # plugins argument expects a list
-    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15, ...)
+    plugins = []  # plugins argument expects a list
+    nsys = NsysPlugin(profile_step_start=10, profile_step_end=15)
     plugins.append(nsys)
     run.run(train_script, plugins=plugins, executor=executor)
 ```
@@ -288,6 +296,39 @@ The reason for this is that Megatron Bridge uses Python's `multiprocessing` modu
 multi-GPU job. The multiprocessing module will create new Python processes that will import the current module (your
 script). If you did not add `__name__== "__main__"`,  then your module will spawn new processes which import the
 module and then each spawn new processes. This results in an infinite loop of process spawning.
+
+## Recipe environment variables
+
+Model and performance recipes can declare process environment defaults in the top-level `env_vars` mapping. Megatron Bridge applies them before runtime configuration is finalized and before training setup starts:
+
+```python
+cfg.env_vars.update(
+    {
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 64,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        # "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+    }
+)
+```
+
+Values may be strings, integers, floats, or booleans and are converted to strings when exported. Existing shell, container, or launcher values take precedence over recipe defaults. This lets the same mechanism work for model recipes under `megatron.bridge.recipes` and flat performance recipes under `megatron.bridge.perf_recipes` without preventing cluster-specific overrides.
+
+When launching through `scripts/performance/setup_experiment.py`, the rank-local `bootstrap.py` resolves the selected recipe defaults inside the worker container, exports them, and then replaces itself with a clean interpreter running `run_script.py` or `run_recipe.py`. This keeps recipe imports off dependency-light launcher nodes, lets each training entrypoint run only once, and ensures training-framework imports observe recipe-owned process settings. Explicit `--env`, `--custom_env_vars`, shell, and container values take precedence.
+
+Environment variables are serialized with the rest of the recipe and can be added or overridden through a Hydra-style override such as `'++env_vars={CUDA_DEVICE_MAX_CONNECTIONS:1,NCCL_NVLS_ENABLE:0}'`. Do not store credentials or other secrets in recipe configs.
+
+Flat performance and hardware-specific model recipes keep their baseline environment values static and visible. The performance entry points preserve legacy coupling for NCCL user buffers and explicit TP, CP, PP, EP, and MoE A2A argparse overrides. Broader feature changes, such as a different CUDA graph mode or dispatcher backend, should include the corresponding explicit `env_vars` override. Explicit `env_vars` overrides remain final.
+
+Every flat performance recipe builder assigns `cfg.env_vars` directly before returning its config. `COMMON_PERF_ENV_VARS` contains only `TORCH_NCCL_HIGH_PRIORITY=1`, the one value shared by every workload; all GPU-, topology-, precision-, CUDA graph-, and model-specific values are written inline with comments in the owning recipe. This is intentionally verbose so a recipe user can see the exact benchmark environment without following a decorator or global derivation rules.
+
+Hardware recipe builders follow the same explicit pattern. `COMMON_RECIPE_ENV_VARS` contains only the seven settings that are identical across every supported recipe; each of the 245 supported builders assigns `cfg.env_vars` directly before returning and writes any HybridEP or model-specific additions inline. There is no recipe decorator or generic launcher-side environment recomposition. Because the compatibility catalog currently reuses H100 builders on other targets, the recipe entry point adapts HybridEP topology after overrides and preserves legacy coupling for an explicit argparse `--nccl_ub`; explicit `env_vars` remain final. The nemo-ci executors under `scripts/performance` do not provide fallback values for recipe-owned process settings.
+
+Cluster fabric and orchestration settings do not belong in recipes. Keep credentials, cache/offline policy, scheduler metadata, W&B state, and cluster-specific NCCL network tuning in the launcher or executor. In particular, settings such as `NCCL_NET_GDR_LEVEL`, `NCCL_NET_GDR_C2C`, and `NCCL_IB_QPS_PER_CONNECTION` must remain deployment-owned.
 
 ## Resources
 

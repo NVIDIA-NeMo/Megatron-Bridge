@@ -20,20 +20,77 @@ from unittest.mock import Mock, patch
 
 import pytest
 import torch
+from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
+from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.model_provider import ModelProviderMixin
-from megatron.bridge.training.config import TokenizerConfig
+from megatron.bridge.training import model_load_save
+from megatron.bridge.training.config import ConfigContainer, TokenizerConfig
 from megatron.bridge.training.model_load_save import (
     dtype_from_hf,
     dtype_from_str,
     load_megatron_model,
+    load_model_config,
     load_tokenizer,
     megatron_cpu_init_context,
     save_megatron_model,
     temporary_distributed_context,
     torch_dtype_from_mcore_config,
 )
+
+
+class TestNormalizeMoeDispatcherSmConfig:
+    """Test compatibility migration for legacy MoE dispatcher SM-count fields."""
+
+    @pytest.mark.parametrize(
+        "backend,unified_value,expected",
+        [
+            ("deepep", None, 20),
+            ("hybridep", None, 16),
+            ("hybridep", 12, 12),
+        ],
+    )
+    def test_migrates_legacy_fields_for_unified_mcore(self, backend, unified_value, expected):
+        """Select the active backend's value and clear both deprecated aliases."""
+
+        class UnifiedTransformerConfig:
+            moe_flex_dispatcher_num_sms = None
+
+        model_dict = {
+            "moe_flex_dispatcher_backend": backend,
+            "moe_flex_dispatcher_num_sms": unified_value,
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
+
+        with patch.object(model_load_save, "TransformerConfig", UnifiedTransformerConfig):
+            model_load_save._normalize_moe_dispatcher_sm_config(model_dict)
+
+        assert model_dict["moe_flex_dispatcher_num_sms"] == expected
+        assert model_dict["moe_deepep_num_sms"] is None
+        assert model_dict["moe_hybridep_num_sms"] is None
+
+    def test_leaves_legacy_fields_for_mcore_without_unified_field(self):
+        """Keep the legacy fields intact for the current MCore dev config API."""
+
+        class LegacyTransformerConfig:
+            pass
+
+        model_dict = {
+            "moe_flex_dispatcher_backend": "hybridep",
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
+
+        with patch.object(model_load_save, "TransformerConfig", LegacyTransformerConfig):
+            model_load_save._normalize_moe_dispatcher_sm_config(model_dict)
+
+        assert model_dict == {
+            "moe_flex_dispatcher_backend": "hybridep",
+            "moe_deepep_num_sms": 20,
+            "moe_hybridep_num_sms": 16,
+        }
 
 
 class TestTorchDtypeFromMcoreConfig:
@@ -189,6 +246,64 @@ class TestTemporaryDistributedContext:
 
 class TestLoadMegatronModel:
     """Test load_megatron_model function."""
+
+    def test_load_model_config_preserves_finalized_pipeline_layout(self, tmp_path):
+        """Verify native checkpoints retain a finalized custom pipeline layout."""
+        provider = GPTModelProvider(num_layers=2, hidden_size=16, num_attention_heads=2)
+        provider.pipeline_model_parallel_size = 2
+        provider.pipeline_model_parallel_layout = [["embedding", "decoder"], ["decoder", "loss"]]
+        provider.finalize()
+
+        assert isinstance(provider.pipeline_model_parallel_layout, PipelineParallelLayerLayout)
+        expected_layout = provider.pipeline_model_parallel_layout.input_data
+
+        config = ConfigContainer(
+            model=provider,
+            train=None,
+            optimizer=None,
+            scheduler=None,
+            dataset=None,
+            logger=None,
+            tokenizer=None,
+            checkpoint=None,
+        )
+        config.to_yaml(str(tmp_path / "run_config.yaml"))
+
+        loaded_provider, _ = load_model_config(str(tmp_path))
+
+        assert loaded_provider.pipeline_model_parallel_layout == expected_layout
+
+    @pytest.mark.parametrize(
+        "pipeline_layout",
+        [None, [["embedding", "decoder"], ["decoder", "loss"]]],
+        ids=["plain", "flexible"],
+    )
+    @patch("megatron.bridge.training.model_load_save.build_and_load_model")
+    @patch("megatron.bridge.training.model_load_save.load_model_config")
+    def test_default_load_builds_all_layers_on_one_rank(
+        self, mock_load_model_config, mock_build_and_load_model, pipeline_layout
+    ):
+        """Verify default loading removes saved pipeline-stage ownership."""
+        provider = GPTModelProvider(
+            num_layers=2,
+            hidden_size=16,
+            num_attention_heads=2,
+            pipeline_model_parallel_size=2,
+            pipeline_model_parallel_layout=pipeline_layout,
+        )
+        mock_load_model_config.return_value = (provider, None)
+
+        def _built_layer_count(checkpoint_path, model_cfg, *args):
+            model_cfg.finalize()
+            if model_cfg.pipeline_model_parallel_layout is None:
+                return model_cfg.num_layers
+            return model_cfg.pipeline_model_parallel_layout.get_num_layers_to_build(vp_stage=None, pp_rank=0)
+
+        mock_build_and_load_model.side_effect = _built_layer_count
+
+        built_layer_count = load_megatron_model("/ckpt")
+
+        assert built_layer_count == provider.num_layers
 
     @patch("megatron.bridge.training.model_load_save.temporary_distributed_context")
     @patch("megatron.bridge.training.checkpointing._load_model_weights_from_checkpoint")

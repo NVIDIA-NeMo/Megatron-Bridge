@@ -14,7 +14,6 @@
 
 """Unit tests for FP8 export behavior."""
 
-import builtins
 import logging
 import sys
 import types
@@ -46,6 +45,9 @@ def _make_qkv_mapping_type(global_name: str = _QKV_GLOBAL):
 
         def resolve(self, _captures):
             return MegatronQkvMapping()
+
+        def set_process_groups_from_pg_collection(self, _pg_collection):
+            pass
 
         def hf_to_megatron(self, hf_weights, _module):
             return hf_weights
@@ -247,25 +249,24 @@ class TestFp8ParamExport:
         gname = _QKV_GLOBAL
         MappingT = _make_qkv_mapping_type(gname)
 
-        class Reg:
-            @staticmethod
-            def megatron_to_hf_lookup(_n):
-                return MappingT()
-
         rowwise = torch.ones(scale_shape, dtype=torch.float32)
-        fake_w = SimpleNamespace(
-            _rowwise_data=torch.zeros((2, 256), dtype=torch.uint8),
-            _rowwise_scale_inv=rowwise,
-            _fp8_dtype=None,
-            _quantizer=quantizer,
-            _is_2D_scaled=is_2d,
-            shape=(2, 256),
-        )
+        metadata = {
+            "rowwise_data": torch.zeros((2, 256), dtype=torch.uint8),
+            "rowwise_scale_inv": rowwise,
+            "quantizer": quantizer,
+            "is_2D_scaled": is_2d,
+        }
+        fake_w = SimpleNamespace(get_metadata=lambda: metadata, shape=(2, 256))
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
         )
-        _patch_export_task_context(monkeypatch, bridge, gname, registry_factory=lambda: Reg())
+        _patch_export_task_context(
+            monkeypatch,
+            bridge,
+            gname,
+            registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+        )
         monkeypatch.setattr(
             f"{_MODEL_MB}.get_module_and_param_from_name",
             lambda *_a, **_k: (SimpleNamespace(config=model.config), fake_w),
@@ -274,28 +275,28 @@ class TestFp8ParamExport:
             SimpleNamespace(state=SimpleNamespace(source=SimpleNamespace())), [model]
         )
         assert len(tasks) == 2 and tasks[1].global_param_name == f"{gname}_scale_inv"
+        assert tasks[0].param_weight.dtype == torch.float8_e4m3fn
         assert tasks[1].param_weight.shape == expect_shape
         assert torch.all(tasks[1].param_weight == 1.0)
         assert ("block_len or not is_2d_scaled" in caplog.text) is warn_trim
         if tasks[1].param_weight.shape == rowwise.shape:
             assert tasks[1].param_weight.data_ptr() == rowwise.data_ptr()
 
-    def test_detect_fp8_params_blockwise(self, monkeypatch):
+    def test_detect_fp8_params_without_top_level_te_class(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
 
-        class TeTensor:
+        class BlockwiseMetadataTensor:
             pass
 
         monkeypatch.setitem(
             sys.modules,
-            "transformer_engine.pytorch.tensor",
-            types.ModuleType("transformer_engine.pytorch.tensor"),
+            "transformer_engine.pytorch",
+            types.ModuleType("transformer_engine.pytorch"),
         )
-        sys.modules["transformer_engine.pytorch.tensor"].Float8BlockwiseQTensor = TeTensor
 
-        holder = TeTensor()
-        holder._rowwise_scale_inv = torch.ones(1)
+        holder = BlockwiseMetadataTensor()
+        holder.get_metadata = lambda: {"rowwise_scale_inv": torch.ones(1), "is_2D_scaled": False}
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
@@ -318,17 +319,9 @@ class TestFp8ParamExport:
         )
         assert flags[gname] and flags["decoder.layers.1.other.weight"]
 
-    def test_detect_fp8_params_te_import_fails(self, monkeypatch):
+    def test_detect_fp8_params_ignores_tensor_without_blockwise_metadata(self, monkeypatch):
         bridge = DummyBridge()
         gname = _QKV_GLOBAL
-        real_imp = builtins.__import__
-
-        def guard(name, glb=None, loc=None, fromlist=(), level=0):
-            if name == "transformer_engine.pytorch.tensor":
-                raise ImportError("no te")
-            return real_imp(name, glb, loc, fromlist, level)
-
-        monkeypatch.setattr(builtins, "__import__", guard)
         model = SimpleNamespace(
             config=SimpleNamespace(share_embeddings_and_output_weights=False),
             named_parameters=lambda: [(gname, torch.nn.Parameter(torch.zeros(1)))],
@@ -361,23 +354,24 @@ class TestFp8ParamExport:
         MappingT = _make_qkv_mapping_type(gname)
 
         if mode == "remote_pp":
-
-            class Reg:
-                @staticmethod
-                def megatron_to_hf_lookup(_n):
-                    return MappingT()
-
             _patch_export_task_context(
-                monkeypatch, bridge, gname, registry_factory=lambda: Reg(), pp_rank=1, pp_size=2
+                monkeypatch,
+                bridge,
+                gname,
+                registry_factory=lambda: MegatronMappingRegistry(MappingT()),
+                pp_rank=1,
+                pp_size=2,
             )
         else:
             n = {"c": 0}
 
-            class Reg:
-                @staticmethod
-                def megatron_to_hf_lookup(_n):
+            class Reg(MegatronMappingRegistry):
+                def __init__(self):
+                    super().__init__(MappingT())
+
+                def megatron_to_hf_lookup(self, _n):
                     n["c"] += 1
-                    return MappingT() if n["c"] == 1 else None
+                    return super().megatron_to_hf_lookup(_n) if n["c"] == 1 else None
 
             _patch_export_task_context(monkeypatch, bridge, gname, registry_factory=lambda: Reg())
 

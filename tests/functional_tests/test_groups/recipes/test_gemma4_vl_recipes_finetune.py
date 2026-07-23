@@ -37,9 +37,10 @@ from tests.functional_tests.test_groups.recipes.utils import run_pretrain_vl_rec
 # - num_moe_experts=4:         reduce from 128 → 4 (critical for memory)
 # - interleaved_attn_pattern:  (1,1) → layer 1 sliding, layer 2 global;
 #                              ensures Gemma4SelfAttention global path is covered
-# - expert/tensor/pipeline:    all-1 for single-node simplicity
+# - expert/pipeline:           1 for single-node simplicity
+# - tensor parallel:           2 to exercise sequence-parallel gradient synchronization
 _SMALL_MODEL_OVERRIDES = {
-    "tensor_model_parallel_size": 1,
+    "tensor_model_parallel_size": 2,
     "pipeline_model_parallel_size": 1,
     "expert_model_parallel_size": 1,
     "num_layers": 2,

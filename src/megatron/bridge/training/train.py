@@ -113,6 +113,15 @@ except ImportError:
     HAS_PAGED_STASHING = False
 
 
+# For Optimizer CUDA graph support
+try:
+    from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+    HAS_OPTIMIZER_CUDA_GRAPH = True
+except ImportError:
+    HAS_OPTIMIZER_CUDA_GRAPH = False
+
+
 def train(
     forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
@@ -305,8 +314,17 @@ def train(
     )
     if is_full_iteration_cuda_graph(config.model):
         forward_backward_func = FullCudaGraphWrapper(
-            forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+            forward_backward_func,
+            cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps,
+            use_single_mempool=config.model.cuda_graph_use_single_mempool,
         )
+    if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
+        optimizer.step = OptimizerCudaGraphWrapper(
+            optimizer.step,
+            cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps,
+            use_single_mempool=config.model.cuda_graph_use_single_mempool,
+        )
+
     # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
     # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
     if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
@@ -610,7 +628,8 @@ def train(
                 global_state,
                 history_wct,
                 model,
-                log_max_attention_logit,
+                pg_collection=pg_collection,
+                log_max_attention_logit=log_max_attention_logit,
                 loaded_iteration=start_iteration,
                 # training_log recomputes seqlen/FLOPS from the (log-step) accumulators
                 # itself; pass None so it uses that path (the per-step seqlen_sum is no
@@ -629,16 +648,8 @@ def train(
             if energy_monitor is not None:
                 energy_monitor.pause()
             timers("interval-time").stop()
-            if config.optimizer.reuse_grad_buf_for_mxfp8_param_ag and config.ddp.overlap_param_gather:
-                # disable_forward_pre_hook(param_sync=True) below force-syncs params for eval.
-                # Copy the main params to param buffer before the forced AllGather.
-                for model_chunk in model:
-                    model_chunk.zero_grad_buffer()
-                for optim_instance in optimizer.chained_optimizers:
-                    if isinstance(optim_instance, DistributedOptimizer):
-                        optim_instance._copy_main_params_to_param_buffer()
             if should_toggle_forward_pre_hook:
-                disable_forward_pre_hook(model)
+                disable_forward_pre_hook(model, optimizer=optimizer)
                 pre_hook_enabled = False
             if train_config.manual_gc and train_config.manual_gc_eval:
                 # Collect all objects.
@@ -682,6 +693,7 @@ def train(
         )
         maybe_check_weight_hash_across_dp_replicas(
             model,
+            optimizer,
             config.train.check_weight_hash_across_dp_replicas_interval,
             global_state.train_state.step,
             should_toggle_forward_pre_hook,
@@ -745,7 +757,7 @@ def train(
 
     # Close out pre-hooks if using distributed optimizer and overlapped param gather.
     if pre_hook_enabled:
-        disable_forward_pre_hook(model)
+        disable_forward_pre_hook(model, optimizer=optimizer)
 
     # This will finalize all unfinalized async request and terminate
     # a persistent async worker if persistent ckpt worker is enabled
@@ -1035,6 +1047,7 @@ def maybe_report_stragglers(
 
 def maybe_check_weight_hash_across_dp_replicas(
     model: list[MegatronModule],
+    optimizer: Optional[MegatronOptimizer],
     check_weight_hash_across_dp_replicas_interval: Optional[int],
     iteration: int,
     should_toggle_forward_pre_hook: bool,
@@ -1043,6 +1056,7 @@ def maybe_check_weight_hash_across_dp_replicas(
 
     Args:
         model: List of model chunks to validate.
+        optimizer: Optimizer used to stage params before disabling the pre-hook.
         check_weight_hash_across_dp_replicas_interval: Interval at which to verify; ``None`` to skip.
         iteration: Zero-based training iteration counter.
         should_toggle_forward_pre_hook: Whether the pre-hook must be disabled during the check.
@@ -1053,7 +1067,7 @@ def maybe_check_weight_hash_across_dp_replicas(
         return
 
     if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model)
+        disable_forward_pre_hook(model, optimizer=optimizer)
     assert check_param_hashes_across_dp_replicas(model, cross_check=True), (
         "Parameter hashes not matching across DP replicas"
     )
@@ -1111,24 +1125,32 @@ def enable_forward_pre_hook(model: list[DDP]) -> None:
         model_chunk.enable_forward_pre_hook()
 
 
-def disable_forward_pre_hook(model: list[DDP], param_sync: bool = True) -> None:
+def disable_forward_pre_hook(
+    model: list[DDP], optimizer: Optional[MegatronOptimizer] = None, param_sync: bool = True
+) -> None:
     """Disable forward pre-hook for all model chunks.
 
     Args:
         model: list of model chunks wrapped in DDP
+        optimizer: Optional optimizer used to stage params before forced sync.
         param_sync: Whether to synchronize parameters across model chunks
     """
+    if param_sync and optimizer is not None:
+        optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.disable_forward_pre_hook(param_sync=param_sync)
 
 
-def force_param_sync(model: list[DDP]) -> None:
+def force_param_sync(model: list[DDP], optimizer: Optional[MegatronOptimizer] = None) -> None:
     """Force parameter synchronization for all model chunks.
 
     Args:
         model: list of model chunks wrapped in DDP.
+        optimizer: Optional optimizer used to stage params before forced sync.
     """
+    if optimizer is not None:
+        optimizer.prepare_model_params_for_param_sync()
     for model_chunk in model:
         assert isinstance(model_chunk, DDP)
         model_chunk.start_param_sync(force_sync=True)
@@ -1279,7 +1301,7 @@ def save_checkpoint_and_time(
         state.cfg.ddp.overlap_param_gather,
     )
     if should_force_param_sync:
-        force_param_sync(model)
+        force_param_sync(model, optimizer=optimizer)
 
     # Free overlap param-gather buffers and release cached GPU memory so
     # that the async checkpoint worker process has enough GPU headroom for
@@ -1628,6 +1650,11 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Explicitly delete optimizer CUDA graph
+    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
+        del OptimizerCudaGraphWrapper.cuda_graph
+        OptimizerCudaGraphWrapper.cuda_graph = None
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper

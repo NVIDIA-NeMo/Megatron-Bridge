@@ -13,111 +13,53 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# ==============================================================================
-# MiMo-V2-Flash Conversion Round-Trip Verification (Multi-Node via Slurm)
+# MiMo-V2-Flash round-trip verification on 2 Slurm nodes (16 GPUs).
+# Run this wrapper from a Slurm login node; convert.sh submits one job and
+# waits for it by default.
 #
-# MiMo-V2-Flash (Hybrid attention + MoE: 256 experts, top-8, FP8 ~310GB).
-# The full model OOMs on a single 8-GPU node — minimum 2 nodes (16 GPUs)
-# with EP >= 8. Context parallelism is not supported. TP must be
-# <= min(num_key_value_heads, swa_num_key_value_heads).
-#
-# Sweeps multiple parallelism configs (TP,PP,EP) to verify HF <-> Megatron
-# round-trip conversion. Each config runs sequentially.
-#
-# Usage:
-#   1. Fill in CONTAINER_IMAGE, CONTAINER_MOUNTS, and token exports
-#   2. Adjust PARALLELISM_CONFIGS if needed
-#   3. Submit: sbatch slurm_conversion.sh
-# ==============================================================================
+# Required:
+#   export CONTAINER_IMAGE=/path/to/container.sqsh
+#   export SLURM_ACCOUNT=<your-account>
+# Optional:
+#   export CONTAINER_MOUNTS=/shared:/shared,/host/path:/container/path
+#   bash "$0" --srun-arg=--mpi=pmix
 
-#SBATCH --job-name=mimo-v2-flash-roundtrip
-#SBATCH --nodes=2
-#SBATCH --ntasks-per-node=8
-#SBATCH --gpus-per-node=8
-#SBATCH --time=4:00:00
-#SBATCH --account=<your-account>
-#SBATCH --partition=batch
-#SBATCH --output=logs/mimo_v2_flash_roundtrip_%j.log
-#SBATCH --exclusive
+set -euo pipefail
 
-# ── Container ────────────────────────────────────────────────────────────
-CONTAINER_IMAGE=""
-# CONTAINER_IMAGE="/path/to/container.sqsh"
-CONTAINER_MOUNTS=""
-# CONTAINER_MOUNTS="/path/to/shared/storage:/mnt/storage,/path/to/project:/opt/Megatron-Bridge"
-WORKDIR="/opt/Megatron-Bridge"
+: "${CONTAINER_IMAGE:?Set CONTAINER_IMAGE to the Megatron-Bridge container}"
+: "${SLURM_ACCOUNT:?Set SLURM_ACCOUNT to your Slurm account}"
 
-# ── Tokens / Caches ──────────────────────────────────────────────────────
-# export HF_TOKEN="hf_your_token_here"
-# export HF_HOME="/path/to/shared/HF_HOME"
-# export UV_CACHE_DIR="/path/to/shared/uv_cache"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(git -C "${SCRIPT_DIR}" rev-parse --show-toplevel)"
+CONVERT_SH="${CONVERT_SH:-${REPO_ROOT}/scripts/conversion/convert.sh}"
 
-# ── Parallelism configs: "TP,PP,EP" per entry ────────────────────────────
-# TP*PP*EP must equal total GPUs (NODES * GPUS_PER_NODE).
-# EP must divide 256 (number of experts).
-# TP must be <= min(num_key_value_heads, swa_num_key_value_heads) = 4.
-# Context parallelism is not supported.
-PARALLELISM_CONFIGS=("2,1,8" "1,2,8" "2,2,4")
-
-# ── Model ─────────────────────────────────────────────────────────────────
-MODEL_NAME=MiMo-V2-Flash
-HF_MODEL_ID=XiaomiMiMo/$MODEL_NAME
-
-# ── Environment ───────────────────────────────────────────────────────────
 export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 
-# ==============================================================================
-# Job Execution
-# ==============================================================================
-
-echo "======================================"
-echo "MiMo-V2-Flash Round-Trip Conversion Sweep"
-echo "Job: $SLURM_JOB_ID | Nodes: $SLURM_JOB_NUM_NODES"
-echo "Parallelism configs: ${PARALLELISM_CONFIGS[*]}"
-echo "======================================"
-
-mkdir -p logs
-
-if [ -z "$CONTAINER_IMAGE" ]; then
-    echo "ERROR: CONTAINER_IMAGE must be set."
-    exit 1
-fi
-
-SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
-if [ -n "$CONTAINER_MOUNTS" ]; then
-    SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
-fi
-
-CONFIG_INDEX=0
-for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
-    IFS=',' read -r TP PP EP <<< "$CONFIG"
-    CONFIG_INDEX=$((CONFIG_INDEX + 1))
-
-    echo ""
-    echo "======================================"
-    echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP"
-    echo "======================================"
-
-    # Sync dependencies once per node, then run the roundtrip
-    CMD="if [ \"\$SLURM_LOCALID\" -eq 0 ]; then uv sync; else sleep 10; fi && "
-    CMD="${CMD}uv run --no-sync python examples/conversion/hf_megatron_roundtrip_multi_gpu.py"
-    CMD="$CMD --hf-model-id $HF_MODEL_ID"
-    CMD="$CMD --tp $TP --pp $PP --ep $EP"
-    CMD="$CMD --trust-remote-code"
-
-    echo "Executing: $CMD"
-
-    $SRUN_CMD bash -c "cd $WORKDIR && $CMD"
-    RUN_EXIT=$?
-    if [ $RUN_EXIT -ne 0 ]; then
-        echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP failed (exit $RUN_EXIT)"
-        exit $RUN_EXIT
+MOUNT_ARGS=(--mount "${REPO_ROOT}:/opt/Megatron-Bridge")
+IFS=',' read -r -a EXTRA_MOUNTS <<< "${CONTAINER_MOUNTS:-}"
+for mount in "${EXTRA_MOUNTS[@]}"; do
+    if [[ -n "${mount}" ]]; then
+        MOUNT_ARGS+=(--mount "${mount}")
     fi
-    echo "[OK] Config $CONFIG_INDEX: TP=$TP, PP=$PP, EP=$EP passed"
 done
 
-echo ""
-echo "======================================"
-echo "All ${#PARALLELISM_CONFIGS[@]} configs passed"
-echo "======================================"
+ENV_ARGS=()
+for name in HF_TOKEN HF_HOME UV_CACHE_DIR TORCH_NCCL_AVOID_RECORD_STREAMS NCCL_NVLS_ENABLE; do
+    if [[ -n "${!name:-}" ]]; then
+        ENV_ARGS+=(--env "${name}")
+    fi
+done
+
+"${CONVERT_SH}" roundtrip \
+    --executor slurm --device gpu \
+    --nodes 2 --gpus-per-node 8 \
+    --account "${SLURM_ACCOUNT}" --partition "${SLURM_PARTITION:-batch}" --time 04:00:00 \
+    --container-image "${CONTAINER_IMAGE}" \
+    "${MOUNT_ARGS[@]}" \
+    "${ENV_ARGS[@]}" \
+    --experiment-name mimo-v2-flash-roundtrip \
+    --hf-model XiaomiMiMo/MiMo-V2-Flash \
+    --tp 2 --pp 1 --ep 8 --etp 2 \
+    --trust-remote-code \
+    "$@"

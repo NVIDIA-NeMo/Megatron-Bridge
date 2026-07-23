@@ -19,7 +19,7 @@ import itertools
 import logging
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import (
     Any,
     Callable,
@@ -97,6 +97,40 @@ class HFWeightTuple(NamedTuple):
     param_name: str
     weight: torch.Tensor
 
+    def iter_finalized(
+        self,
+        *,
+        cpu: bool,
+        export_hook: Callable[[str, torch.Tensor], Iterable["HFWeightTuple"]] | None = None,
+        clone_identity_output: bool = False,
+    ) -> Iterable["HFWeightTuple"]:
+        """Apply an optional export hook and yield finalized weights.
+
+        Export hooks run on a detached tensor before final device placement and may
+        emit zero, one, or multiple weights. Identity outputs can optionally be
+        cloned so independently named tied weights do not share storage.
+
+        Args:
+            cpu: Whether to move exported tensors to CPU.
+            export_hook: Optional transformation applied before device placement.
+            clone_identity_output: Clone an output when it is the detached input.
+
+        Yields:
+            Finalized HuggingFace weights in export-hook order.
+        """
+        source_tensor = self.weight.detach()
+        exported_weights = (
+            export_hook(self.param_name, source_tensor)
+            if export_hook is not None
+            else ((self.param_name, source_tensor),)
+        )
+        for exported_name, exported_tensor in exported_weights:
+            is_identity_output = exported_tensor is source_tensor
+            exported_tensor = exported_tensor.detach()
+            if clone_identity_output and is_identity_output:
+                exported_tensor = exported_tensor.clone().detach()
+            yield HFWeightTuple(exported_name, exported_tensor.cpu() if cpu else exported_tensor)
+
 
 @dataclass(frozen=True)
 class WeightConversionTask(Generic[MappingT]):
@@ -122,6 +156,8 @@ class WeightConversionTask(Generic[MappingT]):
             receive the converted weight (required for loads).
         weight_dtype (Optional[torch.dtype]): Export only. Cast float weights to this
             dtype; bridges that requantize on export skip it (no scale companions).
+        export_hook: Export-only transformation applied after mapping conversion and
+            before final device placement.
 
     """
 
@@ -133,6 +169,9 @@ class WeightConversionTask(Generic[MappingT]):
     megatron_module: Optional[torch.nn.Module] = None
     param_weight: Optional[torch.Tensor] = None
     weight_dtype: Optional[torch.dtype] = None
+    export_hook: Optional[Callable[[str, torch.Tensor], Iterable[HFWeightTuple]]] = field(
+        default=None, compare=False, repr=False
+    )
 
 
 class _HFNameSuffixMapping:
@@ -238,25 +277,6 @@ def _get_ep_group(megatron_model: MegatronModule | List[MegatronModule] | None):
     if pg is not None:
         return getattr(pg, "ep", None)
     return parallel_state.get_expert_model_parallel_group()
-
-
-def _install_pg_collection_on_mappings(
-    mapping_registry: MegatronMappingRegistry,
-    megatron_model: MegatronModule | List[MegatronModule] | None,
-) -> None:
-    """Install the model's ``pg_collection`` onto every param mapping.
-
-    ``MegatronParamMapping.__init__`` snapshots Megatron-Core's ``mpu`` globals
-    when the registry is built. In the decentralized PG path those globals are
-    never populated, so the snapshot is all ``None`` and ``tp_size`` collapses
-    to ``world_size``. Re-install the user-supplied groups before running tasks
-    so per-mapping shape calculations match the actual parallelism topology.
-    """
-    pg_collection = _get_pg_collection_from_model(megatron_model)
-    if pg_collection is None:
-        return
-    for mapping in mapping_registry.get_all_mappings():
-        mapping.set_process_groups_from_pg_collection(pg_collection)
 
 
 def _megatron_local_name_to_global(
@@ -393,6 +413,8 @@ class MegatronModelBridge(
         - ModelProviderTarget: The Megatron model provider type
         - MegatronModel: The Megatron model type
     """
+
+    SUPPORTS_HF_PRETRAINED_EXPORT: ClassVar[bool] = True
 
     # Provider class to instantiate in provider_bridge (set via @register_bridge decorator)
     # For MLA models, use DeepSeekModelProvider or similar; for standard GPT, use GPTModelProvider
@@ -1265,6 +1287,9 @@ class MegatronModelBridge(
             megatron_model = [megatron_model]
 
         unwrapped_model_list = unwrap_model(megatron_model)
+        self.hf_pretrained = hf_pretrained
+        self.hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+
         # Use provided conversion tasks or build them
         if conversion_tasks is None:
             conversion_tasks = self.build_conversion_tasks(
@@ -1288,6 +1313,7 @@ class MegatronModelBridge(
         unwrapped_model = unwrapped_model_list[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
+        tied_mapping_registry = self.mapping_registry() if embeddings_are_tied else None
 
         hf_state_dict: Mapping[str, torch.Tensor] = hf_pretrained.state if hasattr(hf_pretrained, "state") else {}
 
@@ -1333,7 +1359,10 @@ class MegatronModelBridge(
                 if merged_result is not None:
                     merged_result = self._cast_export_weight_dtype(merged_result, task.weight_dtype)
                     for hf_name, tensor in merged_result.items():
-                        yield HFWeightTuple(hf_name, tensor.detach().cpu() if cpu else tensor.detach())
+                        yield from HFWeightTuple(hf_name, tensor).iter_finalized(
+                            export_hook=task.export_hook,
+                            cpu=cpu,
+                        )
                 continue
 
             # --- Standard export path ---
@@ -1358,9 +1387,11 @@ class MegatronModelBridge(
 
             converted_weights_dict = self._cast_export_weight_dtype(converted_weights_dict, task.weight_dtype)
 
-            for hf_name, tensor in converted_weights_dict.items():
-                final_tensor = tensor.detach().cpu() if cpu else tensor.detach()
+            tied_output_hf_name = None
+            if tied_mapping_registry is not None:
+                tied_output_hf_name = self._get_tied_output_hf_name(task, tied_mapping_registry)
 
+            for hf_name, tensor in converted_weights_dict.items():
                 if not merge_adapter_weights and "to_wrap.weight" in task.global_param_name:
                     suffix_pos = hf_name.rfind(".")
                     if suffix_pos == -1:
@@ -1368,28 +1399,35 @@ class MegatronModelBridge(
                     else:
                         hf_name = hf_name[:suffix_pos] + ".base_layer" + hf_name[suffix_pos:]
 
-                # Handle tied embeddings case
-                # TODO(yuya): fix this hard coded naming
-                if embeddings_are_tied and hf_name == "model.embed_tokens.weight":
-                    # Yield the embedding weight
-                    yield HFWeightTuple(hf_name, final_tensor)
-
-                    # Also yield as lm_head.weight if it's expected
+                if tied_output_hf_name is not None and hf_name == task.mapping.hf_param:
+                    emit_output_weight = isinstance(hf_pretrained, PretrainedConfig)
                     if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
                         expected_keys = hf_pretrained.state.source.get_all_keys()
-                        if "lm_head.weight" in expected_keys:
-                            yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
-                    elif isinstance(hf_pretrained, PretrainedConfig):
-                        # Always emit lm_head.weight for config-only
-                        yield HFWeightTuple("lm_head.weight", final_tensor.clone().detach())
-                elif embeddings_are_tied and hf_name == "lm_head.weight":
+                        emit_output_weight = tied_output_hf_name in expected_keys
+
+                    yield from HFWeightTuple(hf_name, tensor).iter_finalized(
+                        export_hook=task.export_hook,
+                        cpu=cpu,
+                    )
+                    if emit_output_weight:
+                        yield from HFWeightTuple(tied_output_hf_name, tensor).iter_finalized(
+                            export_hook=task.export_hook,
+                            cpu=cpu,
+                            clone_identity_output=True,
+                        )
+                elif embeddings_are_tied and (
+                    task.global_param_name.endswith("output_layer.weight") or hf_name == tied_output_hf_name
+                ):
                     # This should not happen when embeddings are tied - assert error
                     raise ValueError(
-                        "Encountered lm_head.weight when embeddings are tied. This indicates a mapping error."
+                        f"Encountered {hf_name} when embeddings are tied. This indicates a mapping error."
                     )
                 else:
                     # Regular case - yield the tensor normally
-                    yield HFWeightTuple(hf_name, final_tensor)
+                    yield from HFWeightTuple(hf_name, tensor).iter_finalized(
+                        export_hook=task.export_hook,
+                        cpu=cpu,
+                    )
 
     def dtype_from_hf(self, config, default=None):
         """Extract torch dtype from a HuggingFace config.
@@ -1521,17 +1559,24 @@ class MegatronModelBridge(
         Args:
             megatron_model: Megatron model instance or list of model instances.
         """
-        unwrapped_model = unwrap_model(megatron_model)[0]
+        pp_group = _get_pp_group(megatron_model)
+        is_first_pp_stage = is_pp_first_stage(pp_group)
+        is_last_pp_stage = is_pp_last_stage(pp_group)
+
+        unwrapped_models = unwrap_model(megatron_model)
+        if not isinstance(unwrapped_models, list):
+            unwrapped_models = [unwrapped_models]
+        # VPP chunk 0 owns the input embedding; the final chunk owns the output layer.
+        unwrapped_model = unwrapped_models[-1] if is_last_pp_stage else unwrapped_models[0]
+
         # hack for vlm to work properly
         if hasattr(unwrapped_model, "language_model") and unwrapped_model.language_model is not None:
             unwrapped_model = unwrapped_model.language_model
         model_config = unwrapped_model.config
         share_embeddings = self._share_embeddings_and_output_weights(model_config)
 
-        # TODO(yuya): Fix for VPP, the vp stage needs to be passed in for stage checks
-        pp_group = _get_pp_group(megatron_model)
         if (share_embeddings and model_config.pipeline_model_parallel_size > 1) and (
-            is_pp_first_stage(pp_group) or is_pp_last_stage(pp_group)
+            is_first_pp_stage or is_last_pp_stage
         ):
             # Broadcast embeddings and output weights from rank 0 to embedding group
             embd_group = _get_embedding_group(megatron_model)
@@ -1572,6 +1617,34 @@ class MegatronModelBridge(
         inner_model = getattr(model_chunk, "language_model", model_chunk)
         return bool(getattr(inner_model, "mtp_process", False))
 
+    def _get_tied_output_hf_name(
+        self,
+        task: WeightConversionTask,
+        mapping_registry: MegatronMappingRegistry,
+    ) -> str | None:
+        """Resolve the HF output-weight alias for a tied embedding task."""
+        embedding_suffix = "embedding.word_embeddings.weight"
+        if not task.global_param_name.endswith(embedding_suffix):
+            return None
+        if not isinstance(task.mapping.hf_param, str):
+            raise ValueError(
+                "Expected tied embedding mapping to resolve to one HuggingFace parameter, "
+                f"got {task.mapping.hf_param!r}."
+            )
+
+        megatron_prefix = task.global_param_name[: -len(embedding_suffix)]
+        output_mapping = mapping_registry.megatron_to_hf_lookup(f"{megatron_prefix}output_layer.weight")
+        if output_mapping is None:
+            return None
+        if not isinstance(output_mapping.hf_param, str):
+            raise ValueError(
+                "Expected tied output-layer mapping to resolve to one HuggingFace parameter, "
+                f"got {output_mapping.hf_param!r}."
+            )
+        if output_mapping.hf_param == task.mapping.hf_param:
+            return None
+        return output_mapping.hf_param
+
     def build_conversion_tasks(
         self,
         hf_pretrained: HFPreTrained,
@@ -1600,7 +1673,8 @@ class MegatronModelBridge(
         hf_keys: Optional[Iterable[str]] = hf_pretrained.state.source.get_all_keys() if has_hf_state else None
 
         mapping_registry = self.mapping_registry()
-        _install_pg_collection_on_mappings(mapping_registry, megatron_model)
+        pg_collection = _get_pg_collection_from_model(megatron_model)
+        mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
@@ -1634,7 +1708,6 @@ class MegatronModelBridge(
                 if not mapping:
                     logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
                     continue
-
                 # Ensure hf weights exist (skip for config-only export where hf_keys is None)
                 if hf_keys is not None and not mapping.allow_hf_name_mismatch:
                     if isinstance(mapping.hf_param, str):
@@ -1710,7 +1783,8 @@ class MegatronModelBridge(
             model_config: Transformer configuration
             sorted_global_param_names_all_pp_ranks: Sorted list of global parameter names
             pp_group: Pipeline parallel group for distributed communication
-            fp8_scale_inv_attr: Attribute name for the FP8 scale_inv tensor
+            fp8_scale_inv_attr: Metadata key for the FP8 scale_inv tensor. A leading
+                underscore is accepted for backward compatibility.
 
         Returns:
             Dictionary mapping global parameter names to boolean flags indicating
@@ -1718,10 +1792,7 @@ class MegatronModelBridge(
         """
         local_fp8_flags: Dict[str, bool] = {}
         global_name_set = set(sorted_global_param_names_all_pp_ranks)
-        try:
-            from transformer_engine.pytorch.tensor import Float8BlockwiseQTensor
-        except Exception:
-            Float8BlockwiseQTensor = None
+        scale_inv_metadata_key = fp8_scale_inv_attr.removeprefix("_")
 
         for vp_stage, model in enumerate(megatron_model):
             for local_name, _ in itertools.chain(model.named_parameters(), persistent_buffers(model)):
@@ -1737,19 +1808,22 @@ class MegatronModelBridge(
                 if local_weights is None:
                     continue
 
-                # Determine if this is a blockwise FP8 tensor and has the requested scale_inv attr.
-                # We intentionally require the scale_inv attribute to be non-None:
+                # Determine if this is a blockwise FP8 tensor with valid scale metadata.
+                # We intentionally require the scale_inv metadata to be non-None:
                 # - Some initialization paths may leave scale tensors unset; we should not emit
                 #   a scale task in that case (would break deterministic export/consumer assumptions).
-                is_blockwise_fp8 = False
-                if Float8BlockwiseQTensor is not None:
+                metadata = {}
+                get_metadata = getattr(local_weights, "get_metadata", None)
+                if callable(get_metadata):
                     try:
-                        is_blockwise_fp8 = isinstance(local_weights, Float8BlockwiseQTensor)
-                    except Exception:
-                        is_blockwise_fp8 = False
+                        candidate_metadata = get_metadata()
+                    except (AttributeError, RuntimeError, TypeError):
+                        pass
+                    else:
+                        if isinstance(candidate_metadata, dict):
+                            metadata = candidate_metadata
 
-                # Float8BlockwiseQTensor should have the scale_inv attribute, but check if it's set (not None)
-                if is_blockwise_fp8 and getattr(local_weights, fp8_scale_inv_attr, None) is not None:
+                if "is_2D_scaled" in metadata and metadata.get(scale_inv_metadata_key) is not None:
                     local_fp8_flags[global_name] = True
 
         # Gather across PP ranks to ensure consistent insertion decisions
@@ -1782,10 +1856,11 @@ class MegatronModelBridge(
             raise ValueError("hf_pretrained.state.source is required for weight ordering")
 
         mapping_registry = self.mapping_registry()
+        pg_collection = _get_pg_collection_from_model(megatron_model)
+        mapping_registry.set_process_groups_from_pg_collection(pg_collection)
         unwrapped_model = unwrap_model(megatron_model)[0]
         model_config = unwrapped_model.config
         embeddings_are_tied = self._share_embeddings_and_output_weights(model_config)
-        _install_pg_collection_on_mappings(mapping_registry, megatron_model)
         pp_rank = _get_pp_rank(megatron_model)
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
@@ -1804,8 +1879,6 @@ class MegatronModelBridge(
             pp_group,
             fp8_scale_inv_attr,
         )
-
-        from transformer_engine.pytorch.constants import TE_DType_To_Torch
 
         # 2) Expand the global name list with `*.scale_inv` entries.
         #    This defines the final deterministic task ordering.
@@ -1834,29 +1907,20 @@ class MegatronModelBridge(
                 if not mapping:
                     logger.warning(f"WARNING: No mapping found for megatron_param: {global_name}")
                     continue
-
                 local_module, local_weights = get_module_and_param_from_name(megatron_model, local_name, vp_stage)
                 if local_module is not None and not hasattr(local_module, "config"):
                     setattr(local_module, "config", model_config)
 
                 # Main (weight/bias) task
                 export_weight_tensor = local_weights
+                fp8_metadata = {}
                 if global_fp8_flags.get(global_name, False):
-                    if local_weights is not None and hasattr(local_weights, "_rowwise_data"):
-                        rd = getattr(local_weights, "_rowwise_data")
-                        if rd is not None:
-                            export_weight_tensor = rd
-                            # TE blockwise _rowwise_data is stored as uint8; view to correct FP8 type.
-                            # Read _fp8_dtype from tensor when available (robust for future formats).
-                            # Megatron fp8_param weights are always e4m3 (forward pass) in both
-                            # fp8_format=e4m3 and fp8_format=hybrid; e5m2 is only for backward gradients.
-                            fp8_dtype = getattr(local_weights, "_fp8_dtype", None)
-                            torch_fp8_dtype = (
-                                TE_DType_To_Torch.get(fp8_dtype, torch.float8_e4m3fn)
-                                if fp8_dtype is not None
-                                else torch.float8_e4m3fn
-                            )
-                            export_weight_tensor = export_weight_tensor.contiguous().view(torch_fp8_dtype)
+                    fp8_metadata = local_weights.get_metadata() if local_weights is not None else {}
+                    rowwise_data = fp8_metadata.get("rowwise_data")
+                    if rowwise_data is not None:
+                        # FP8 parameter weights are E4M3 in both E4M3 and hybrid recipes;
+                        # E5M2 is used only for backward gradients.
+                        export_weight_tensor = rowwise_data.contiguous().view(torch.float8_e4m3fn)
                 tasks[global_names_index_dict[global_name]] = WeightConversionTask(
                     pp_rank=pp_rank,
                     vp_stage=vp_stage,
@@ -1871,14 +1935,13 @@ class MegatronModelBridge(
                 if global_fp8_flags.get(global_name, False):
                     scale_global_name = f"{global_name}{scale_inv_suffix}"
                     scale_local_name = f"{local_name}{scale_inv_suffix}"
-                    scale_tensor = None
-                    if local_weights is not None and hasattr(local_weights, fp8_scale_inv_attr):
-                        scale_tensor = getattr(local_weights, fp8_scale_inv_attr)
+                    scale_tensor = fp8_metadata.get(fp8_scale_inv_attr.removeprefix("_"))
+                    if scale_tensor is not None:
                         scale_tensor = self._trim_blockwise_fp8_scale_inv_padding(local_weights, scale_tensor)
                     # Note:
                     # Do NOT reuse the same mapping instance as the base weight task.
                     # We clone via `resolve(())` which returns a new mapping instance
-                    base_mapping_for_scale = mapping.resolve(())
+                    base_mapping_for_scale = mapping_registry.resolve_mapping(mapping, ())
                     tasks[global_names_index_dict[scale_global_name]] = WeightConversionTask(
                         pp_rank=pp_rank,
                         vp_stage=vp_stage,
@@ -1900,7 +1963,8 @@ class MegatronModelBridge(
                 base_mapping = mapping_registry.megatron_to_hf_lookup(self._get_lora_unwrapped_name(base_global_name))
                 if base_mapping is not None:
                     # clone mapping instance to avoid sharing state across tasks.
-                    mapping = _HFNameSuffixMapping(base_mapping.resolve(()), scale_inv_suffix)
+                    base_mapping_for_scale = mapping_registry.resolve_mapping(base_mapping, ())
+                    mapping = _HFNameSuffixMapping(base_mapping_for_scale, scale_inv_suffix)
                 else:
                     mapping = None
             else:
@@ -1928,9 +1992,10 @@ class MegatronModelBridge(
     ) -> Optional[torch.Tensor]:
         # This function is used to trim the padding in the scales for blockwise FP8 parameters.
         # The GEMM for 2D blocks required padding in the scales.
-        quantizer = getattr(local_weights, "_quantizer", None)
+        metadata = local_weights.get_metadata() if local_weights is not None else {}
+        quantizer = metadata.get("quantizer")
         block_len = getattr(quantizer, "block_len", None)
-        is_2d_scaled = getattr(local_weights, "_is_2D_scaled", None)
+        is_2d_scaled = metadata.get("is_2D_scaled")
         if block_len is None or not is_2d_scaled:
             logger.warning("WARNING: block_len or not is_2d_scaled")
             return scale_tensor

@@ -33,6 +33,7 @@ from transformers.generation.utils import GenerateOutput
 
 from megatron.bridge.models.hf_pretrained.base import PreTrainedBase
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
+from megatron.bridge.models.hf_pretrained.state import StateDict
 
 
 # Python 3.12+ supports PEP 692 (TypedDict Unpack)
@@ -43,28 +44,6 @@ else:
 
 
 CausalLMType = TypeVar("CausalLMType", bound=AutoModelForCausalLM)
-
-
-class _ConfigOnlyPretrainedShim:
-    """Lightweight shim that provides the minimal PreTrainedCausalLM interface for config-only bridges."""
-
-    def __init__(self, config: PretrainedConfig):
-        self.config = config
-        self.model_name_or_path = getattr(config, "name_or_path", None)
-        self.trust_remote_code = getattr(config, "trust_remote_code", False)
-        self.generation_config = self._build_generation_config(config)
-
-    @staticmethod
-    def _build_generation_config(config: PretrainedConfig) -> GenerationConfig:
-        try:
-            config_dict = config.to_dict() if hasattr(config, "to_dict") else {}
-            return GenerationConfig.from_dict(config_dict)
-        except Exception:
-            return GenerationConfig()
-
-    def __repr__(self) -> str:
-        config_name = getattr(self.config, "__class__", type(self.config)).__name__
-        return f"_ConfigOnlyPretrainedShim(config={config_name})"
 
 
 class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
@@ -722,6 +701,35 @@ class PreTrainedCausalLM(PreTrainedBase, Generic[CausalLMType]):
             ]
         )
         return "\n".join(lines)
+
+
+class _ConfigOnlyPretrainedShim(PreTrainedCausalLM):
+    """Config-backed causal LM wrapper used for provider construction without weights."""
+
+    def __init__(self, config: PretrainedConfig):
+        super().__init__(
+            model_name_or_path=getattr(config, "name_or_path", None),
+            trust_remote_code=bool(getattr(config, "trust_remote_code", False)),
+        )
+        self.config = config
+        self.generation_config = self._build_generation_config(config)
+
+    @property
+    def state(self) -> StateDict:
+        """Reject weight-state access so config-only provider construction remains weightless."""
+        raise AttributeError("Config-only pretrained wrappers do not have weight state.")
+
+    @staticmethod
+    def _build_generation_config(config: PretrainedConfig) -> GenerationConfig:
+        try:
+            config_dict = config.to_dict() if hasattr(config, "to_dict") else {}
+            return GenerationConfig.from_dict(config_dict)
+        except Exception:
+            return GenerationConfig()
+
+    def __repr__(self) -> str:
+        config_name = getattr(self.config, "__class__", type(self.config)).__name__
+        return f"_ConfigOnlyPretrainedShim(config={config_name})"
 
 
 # TypedDict definitions for method parameters

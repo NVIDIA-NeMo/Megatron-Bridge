@@ -20,8 +20,9 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.utils import get_dataset_provider
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider, FinetuningDatasetConfig
+from megatron.bridge.training.config import GPTDatasetConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer
 
 
@@ -206,14 +207,14 @@ class TestDatasetProviderIntegration:
     def test_get_dataset_provider_fallback_to_registry(self):
         """Test that get_dataset_provider falls back to registry for non-protocol configs."""
 
-        # Create a mock FinetuningDatasetConfig
-        finetuning_config = MagicMock(spec=FinetuningDatasetConfig)
+        # Create a mock registry-backed GPTDatasetConfig.
+        dataset_config = MagicMock(spec=GPTDatasetConfig)
 
         # Mock the registry to return a specific function
         mock_provider = MagicMock()
 
-        with patch("megatron.bridge.data.utils._REGISTRY", {type(finetuning_config): mock_provider}):
-            provider_func = get_dataset_provider(finetuning_config)
+        with patch("megatron.bridge.data.utils._REGISTRY", {type(dataset_config): mock_provider}):
+            provider_func = get_dataset_provider(dataset_config)
             assert provider_func is mock_provider
 
     def test_protocol_adapter_signature(self):

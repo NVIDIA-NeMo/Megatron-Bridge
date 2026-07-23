@@ -19,12 +19,8 @@ from typing import Any
 
 import torch
 
-from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_batching import (
-    build_mcore_thd_sequence_batch_from_rows,
-    prepare_padded_or_packed_sequence_batch,
-)
-from megatron.bridge.data.vlm_processing import (
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
+from megatron.bridge.data.conversation_processing import (
     AssistantMaskBoundaryConfig,
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
@@ -32,6 +28,8 @@ from megatron.bridge.data.vlm_processing import (
     get_processor_tokenizer,
     tokenize_text_without_special_tokens,
 )
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -382,7 +380,7 @@ def kimi_k25_vl_collate_fn(
     for key in ("pixel_values", "pixel_values_videos", "grid_thws", "video_grid_thw"):
         result.pop(key, None)
     result["visual_inputs"] = visual_inputs
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         result,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

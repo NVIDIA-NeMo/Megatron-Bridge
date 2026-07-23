@@ -14,22 +14,23 @@
 
 """Qwen VL collator implementations."""
 
+from collections.abc import Mapping
+from typing import Any
+
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import (
-    build_mcore_thd_sequence_batch_from_rows,
-    prepare_padded_or_packed_sequence_batch,
-    use_processor_right_padding,
-)
-from megatron.bridge.data.vlm_datasets.collate_utils import THW_GRID_VISUAL_KEYS
-from megatron.bridge.data.vlm_processing import (
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
+from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
+from megatron.bridge.data.collators.visual import THW_GRID_VISUAL_KEYS
+from megatron.bridge.data.conversation_processing import (
     assistant_mask_boundary_config_from_markers,
     build_assistant_loss_mask,
     chat_template_kwargs_from_example,
 )
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.packing.in_batch import build_mcore_thd_sequence_batch_from_rows
+from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -52,6 +53,45 @@ except ImportError:
     HAVE_QWEN_VL_UTILS = False
 
 
+def _normalize_qwen_video_paths(example: dict[str, Any]) -> dict[str, Any]:
+    """Map path-based video parts to the inline schema expected by Qwen processors."""
+    conversation = example.get("conversation")
+    if not isinstance(conversation, list):
+        return example
+
+    normalized_conversation = []
+    example_changed = False
+    for turn in conversation:
+        if not isinstance(turn, Mapping) or not isinstance(turn.get("content"), list):
+            normalized_conversation.append(turn)
+            continue
+
+        normalized_content = []
+        turn_changed = False
+        for part in turn["content"]:
+            if isinstance(part, Mapping) and part.get("type") == "video" and "video" not in part and "path" in part:
+                normalized_part = dict(part)
+                normalized_part["video"] = normalized_part.pop("path")
+                normalized_content.append(normalized_part)
+                turn_changed = True
+            else:
+                normalized_content.append(part)
+
+        if turn_changed:
+            normalized_turn = dict(turn)
+            normalized_turn["content"] = normalized_content
+            normalized_conversation.append(normalized_turn)
+            example_changed = True
+        else:
+            normalized_conversation.append(turn)
+
+    if not example_changed:
+        return example
+    normalized_example = dict(example)
+    normalized_example["conversation"] = normalized_conversation
+    return normalized_example
+
+
 def qwen2_5_collate_fn(
     examples: list,
     processor,
@@ -71,6 +111,7 @@ def qwen2_5_collate_fn(
     if not HAVE_QWEN_VL_UTILS:
         raise ImportError(MISSING_QWEN_VL_UTILS_MSG)
 
+    examples = [_normalize_qwen_video_paths(example) for example in examples]
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = assistant_mask_boundary_config_from_markers(
         processor,
@@ -315,7 +356,7 @@ def qwen2_5_collate_fn(
     for key in QWEN_VISUAL_KEYS:
         batch.pop(key, None)
     batch["visual_inputs"] = visual_inputs
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

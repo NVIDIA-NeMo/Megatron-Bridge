@@ -154,7 +154,7 @@ def import_hf_to_megatron_fsdp(
         print_rank_0("low_memory_save is not supported with fsdp_dtensor. Forcing low_memory_save=False.")
         effective_low_memory_save = False
 
-    # Skip tokenizer save to match `examples/conversion/convert_checkpoints.py`.
+    # Skip tokenizer save to match `scripts/conversion/convert.sh`.
     print_rank_0(f"Saving Megatron checkpoint to: {megatron_path}")
     save_native_megatron_model(
         megatron_model,

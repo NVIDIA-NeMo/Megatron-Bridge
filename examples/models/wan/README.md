@@ -186,6 +186,16 @@ For more details, see the recipe in `src/megatron/bridge/diffusion/recipes/wan/w
 
 The script [inference_wan.py](inference_wan.py) runs text-to-video generation with a Megatron-format WAN checkpoint. Set `--checkpoint_step` to use a specific checkpoint iteration, `--sizes` and `--frame_nums` to specify video shape, and `--sample_steps` (default 50) for the number of noise diffusion steps.
 
+**Prerequisites**: Inference and video saving rely on a few packages that are **not** shipped in the container (the codecs `imageio`, `imageio-ffmpeg`, and `av` carry CVEs and are excluded; `easydict` is an example-only import). Install them into the active environment before running:
+
+```bash
+bash scripts/install_diffusion_deps.sh
+# or directly:
+uv pip install --no-config easydict imageio imageio-ffmpeg av
+```
+
+Without `easydict`, the script fails immediately at import with `ModuleNotFoundError: No module named 'easydict'`.
+
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 \
   examples/models/wan/inference_wan.py \

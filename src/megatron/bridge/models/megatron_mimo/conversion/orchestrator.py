@@ -707,10 +707,10 @@ def _bridged_parallel_state(pg_collection: Any) -> Iterator[None]:
         "_PIPELINE_MODEL_PARALLEL_GROUP": "pp",
         "_CONTEXT_PARALLEL_GROUP": "cp",
         "_EXPERT_MODEL_PARALLEL_GROUP": "ep",
-        "_EXPERT_TENSOR_PARALLEL_GROUP": "etp",
+        "_EXPERT_TENSOR_PARALLEL_GROUP": "expt_tp",
         "_MODEL_PARALLEL_GROUP": "mp",
-        "_TENSOR_AND_EXPERT_PARALLEL_GROUP": "tp_ep",
-        "_TENSOR_AND_EXPERT_AND_PIPELINE_PARALLEL_GROUP": "tp_ep_pp",
+        "_EXPERT_TENSOR_AND_MODEL_PARALLEL_GROUP": "tp_ep",
+        "_EXPERT_TENSOR_MODEL_PIPELINE_PARALLEL_GROUP": "tp_ep_pp",
         "_EMBEDDING_GROUP": "embd",
         "_POSITION_EMBEDDING_GROUP": "pos_embd",
     }

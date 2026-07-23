@@ -32,7 +32,7 @@ Directory structure:
 
 ```bash
 uv pip install -q --upgrade 'transformers>=5.5.0'
-uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model google/gemma-4-26B-A4B \
     --megatron-path ${WORKSPACE}/models/gemma-4-26B-A4B
 ```
@@ -40,7 +40,7 @@ uv run --no-sync python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-uv run --no-sync python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model google/gemma-4-26B-A4B \
     --megatron-path ${WORKSPACE}/models/gemma-4-26B-A4B/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gemma-4-26B-A4B-hf-export

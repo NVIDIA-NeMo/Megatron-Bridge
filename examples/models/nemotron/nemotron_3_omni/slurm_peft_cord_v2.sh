@@ -120,6 +120,8 @@ CLI_OVERRIDES="\
     checkpoint.finetune=True \
     logger.tensorboard_dir=$OUTPUT_DIR/tb_logs \
     model.seq_length=$SEQ_LENGTH \
+    dataset.seq_length=$SEQ_LENGTH \
+    dataset.hf_processor_path=$HF_MODEL_ID \
     model.tensor_model_parallel_size=$TP \
     model.expert_model_parallel_size=$EP \
     model.context_parallel_size=$CP \
@@ -140,7 +142,6 @@ CLI_OVERRIDES="\
 
 CMD="uv run --no-sync python scripts/training/run_recipe.py \
     --recipe $RECIPE \
-    --hf_path $HF_MODEL_ID \
     --step_func nemotron_omni_step \
     $CLI_OVERRIDES"
 

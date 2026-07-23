@@ -25,6 +25,7 @@ from typing import Callable
 import pytest
 
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
@@ -64,7 +65,7 @@ def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
         module = importlib.import_module(module_name)
-        monkeypatch.setattr(module, "AutoBridge", _FakeAutoBridge)
+        patch_recipe_module_global(monkeypatch, module, "AutoBridge", _FakeAutoBridge)
 
 
 def _assert_basic_config(cfg):

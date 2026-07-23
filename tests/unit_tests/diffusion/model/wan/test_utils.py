@@ -55,16 +55,11 @@ def test_patchify_unpatchify_roundtrip():
     torch.testing.assert_close(y[0], x[0], rtol=1e-5, atol=1e-5)
 
 
-@patch("megatron.bridge.diffusion.models.wan.utils.tex")
-@patch("megatron.bridge.diffusion.models.wan.utils.dist")
-def test_thd_split_inputs_cp_selects_correct_indices(mock_dist, mock_tex):
+@patch("megatron.bridge.diffusion.models.wan.utils.get_thd_cp_partition_indices")
+def test_thd_split_inputs_cp_selects_correct_indices(mock_get_indices):
     S, B, D = 8, 2, 4
-    cp_size, cp_rank = 2, 0
-
-    mock_dist.get_world_size.return_value = cp_size
-    mock_dist.get_rank.return_value = cp_rank
     indices = torch.tensor([0, 2, 4, 6])
-    mock_tex.thd_get_partitioned_indices.return_value = indices
+    mock_get_indices.return_value = indices
 
     x = torch.arange(S * B * D, dtype=torch.float32).reshape(S, B, D)
     cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
@@ -76,19 +71,19 @@ def test_thd_split_inputs_cp_selects_correct_indices(mock_dist, mock_tex):
     x_bs = x.transpose(0, 1)
     expected = x_bs.index_select(dim=1, index=indices).transpose(0, 1)
     torch.testing.assert_close(result, expected)
-    mock_tex.thd_get_partitioned_indices.assert_called_once_with(cu_seqlens, S, cp_size, cp_rank)
+    mock_get_indices.assert_called_once_with(
+        cu_seqlens,
+        total_tokens=S,
+        cp_group=cp_group,
+        device=x.device,
+    )
 
 
-@patch("megatron.bridge.diffusion.models.wan.utils.tex")
-@patch("megatron.bridge.diffusion.models.wan.utils.dist")
-def test_thd_split_inputs_cp_rank1(mock_dist, mock_tex):
+@patch("megatron.bridge.diffusion.models.wan.utils.get_thd_cp_partition_indices")
+def test_thd_split_inputs_cp_rank1(mock_get_indices):
     S, B, D = 8, 2, 4
-    cp_size, cp_rank = 2, 1
-
-    mock_dist.get_world_size.return_value = cp_size
-    mock_dist.get_rank.return_value = cp_rank
     indices = torch.tensor([1, 3, 5, 7])
-    mock_tex.thd_get_partitioned_indices.return_value = indices
+    mock_get_indices.return_value = indices
 
     x = torch.arange(S * B * D, dtype=torch.float32).reshape(S, B, D)
     cu_seqlens = torch.tensor([0, 4, 8], dtype=torch.int32)
@@ -102,16 +97,13 @@ def test_thd_split_inputs_cp_rank1(mock_dist, mock_tex):
     torch.testing.assert_close(result, expected)
 
 
-@patch("megatron.bridge.diffusion.models.wan.utils.tex")
-@patch("megatron.bridge.diffusion.models.wan.utils.dist")
-def test_thd_split_inputs_cp_preserves_extra_dims(mock_dist, mock_tex):
+@patch("megatron.bridge.diffusion.models.wan.utils.get_thd_cp_partition_indices")
+def test_thd_split_inputs_cp_preserves_extra_dims(mock_get_indices):
     """Verify the function works with higher-dimensional tensors [S, B, H, W]."""
     S, B, H, W = 6, 2, 3, 5
 
-    mock_dist.get_world_size.return_value = 3
-    mock_dist.get_rank.return_value = 2
     indices = torch.tensor([2, 5])
-    mock_tex.thd_get_partitioned_indices.return_value = indices
+    mock_get_indices.return_value = indices
 
     x = torch.randn(S, B, H, W)
     cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
@@ -125,16 +117,13 @@ def test_thd_split_inputs_cp_preserves_extra_dims(mock_dist, mock_tex):
     torch.testing.assert_close(result, expected)
 
 
-@patch("megatron.bridge.diffusion.models.wan.utils.tex")
-@patch("megatron.bridge.diffusion.models.wan.utils.dist")
-def test_thd_split_inputs_cp_single_rank(mock_dist, mock_tex):
+@patch("megatron.bridge.diffusion.models.wan.utils.get_thd_cp_partition_indices")
+def test_thd_split_inputs_cp_single_rank(mock_get_indices):
     """When cp_size=1, the entire tensor should be returned."""
     S, B, D = 4, 1, 2
 
-    mock_dist.get_world_size.return_value = 1
-    mock_dist.get_rank.return_value = 0
     indices = torch.arange(S)
-    mock_tex.thd_get_partitioned_indices.return_value = indices
+    mock_get_indices.return_value = indices
 
     x = torch.randn(S, B, D)
     cu_seqlens = torch.tensor([0, S], dtype=torch.int32)

@@ -44,6 +44,14 @@ EXAMPLE_PROMPT = {
     },
 }
 
+# Maps each task to its Hugging Face diffusers model id, used to load the non-DiT
+# components (text encoder, tokenizer, VAE, scheduler) when no local checkpoint
+# directory is supplied via --t5_checkpoint_dir / --vae_checkpoint_dir.
+TASK_TO_MODEL_ID = {
+    "t2v-1.3B": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
+    "t2v-14B": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
+}
+
 
 def _validate_args(args):
     # Basic check
@@ -229,10 +237,11 @@ def generate(args):  # noqa: D103
         )
 
         logging.info("Creating flow inference pipeline.")
+        model_id = TASK_TO_MODEL_ID[args.task]
         pipeline = FlowInferencePipeline(
             inference_cfg=inference_cfg,
             checkpoint_dir=args.checkpoint_dir,
-            model_id="Wan-AI/Wan2.1-T2V-14B-Diffusers",
+            model_id=model_id,
             checkpoint_step=args.checkpoint_step,
             t5_checkpoint_dir=args.t5_checkpoint_dir,
             vae_checkpoint_dir=args.vae_checkpoint_dir,

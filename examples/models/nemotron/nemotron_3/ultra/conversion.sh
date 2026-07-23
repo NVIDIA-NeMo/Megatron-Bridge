@@ -34,8 +34,9 @@ echo "Nemotron 3 Ultra CPU import"
 echo "HF_MODEL_PATH=${HF_MODEL_PATH}"
 echo "MEGATRON_MODEL_PATH=${MEGATRON_MODEL_PATH}"
 
-uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
+    --executor local \
+    --device cpu \
     --hf-model "$HF_MODEL_PATH" \
     --megatron-path "$MEGATRON_MODEL_PATH" \
-    --torch-dtype bfloat16 \
-    --device-map cpu
+    --torch-dtype bfloat16

@@ -26,6 +26,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _glm_45v_module = importlib.import_module("megatron.bridge.recipes.glm_vl.glm_45v")
 
@@ -111,7 +113,7 @@ def _assert_basic_config(cfg):
 def test_each_glm_45v_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each GLM-4.5V SFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -138,7 +140,7 @@ def test_each_glm_45v_sft_recipe_builds_config(recipe_func: Callable, monkeypatc
 def test_each_glm_45v_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each GLM-4.5V PEFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()  # Default peft_scheme="lora"
 
@@ -167,7 +169,7 @@ def test_each_glm_45v_peft_recipe_builds_config(recipe_func: Callable, monkeypat
 def test_glm_45v_peft_schemes(peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
     """Test that different PEFT schemes are correctly applied for GLM-4.5V model."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_peft_config(peft_scheme=peft_scheme)
 
@@ -183,7 +185,7 @@ def test_glm_45v_peft_schemes(peft_scheme: str, monkeypatch: pytest.MonkeyPatch)
 def test_glm_45v_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that GLM-4.5V SFT has correct default parallelism and MoE settings."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 
@@ -201,7 +203,7 @@ def test_glm_45v_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_glm_45v_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that GLM-4.5V LoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_peft_config(peft_scheme="lora")
 
@@ -220,7 +222,7 @@ def test_glm_45v_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_glm_45v_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that GLM-4.5V DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_peft_config(peft_scheme="dora")
 
@@ -237,33 +239,33 @@ def test_glm_45v_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_glm_45v_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_glm_45v_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_glm_45v_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 
@@ -276,7 +278,7 @@ def test_glm_45v_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_glm_45v_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_peft_config()
 
@@ -289,7 +291,7 @@ def test_glm_45v_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_glm_45v_precision_config(monkeypatch: pytest.MonkeyPatch):
     """Test that precision config is correctly set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 
@@ -302,7 +304,7 @@ def test_glm_45v_precision_config(monkeypatch: pytest.MonkeyPatch):
 def test_glm_45v_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that DDP config is correctly set for VLMs."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 
@@ -318,7 +320,7 @@ def test_glm_45v_ddp_config(monkeypatch: pytest.MonkeyPatch):
 def test_glm_45v_moe_settings(monkeypatch: pytest.MonkeyPatch):
     """Test that MoE-specific settings are correctly configured."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 
@@ -350,7 +352,7 @@ def test_glm_45v_pipeline_layout_function_exists():
 def test_glm_45v_sft_uses_pipeline_layout(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT config has pipeline model parallel layout set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_glm_45v_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _glm_45v_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _glm_45v_module.glm_45v_sft_config()
 

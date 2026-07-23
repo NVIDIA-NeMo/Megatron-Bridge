@@ -161,7 +161,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
 
     CMD="uv run --no-sync python scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_peft_config"
-    CMD="$CMD --peft_scheme lora"
+    CMD="$CMD --mode lora"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."

@@ -26,7 +26,7 @@ from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.data.sequence_packing import _pack_padded_sequence_as_legacy_tuple
+from megatron.bridge.data.packing.in_batch import pack_right_padded_sequence_batch_to_mcore_thd
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
@@ -178,42 +178,20 @@ def get_batch(data_iterator: Iterable, cfg: ConfigContainer, use_mtp: bool = Fal
     has_sp = getattr(cfg.model, "sequence_parallel", False)
 
     if enable_packing:
-        # Pack sequences
-        tokens_or_input = batch.get("tokens") if batch.get("tokens") is not None else batch.get("input_ids")
-
         cp_multiple = 2 * cp_size if cp_size > 1 else 1
         sp_multiple = cp_size * tp_size if has_sp and tp_size > 1 else 1
         pad_multiple = math.lcm(cp_multiple, sp_multiple)
-
-        (
-            packed_tokens,
-            packed_labels,
-            packed_loss_mask,
-            packed_attention_mask,
-            packed_position_ids,
-            cu_seqlens,
-            max_seqlen,
-        ) = _pack_padded_sequence_as_legacy_tuple(
-            tokens=tokens_or_input,
-            labels=batch.get("labels"),
-            loss_mask=batch.get("loss_mask"),
-            attention_mask=batch.get("attention_mask"),
-            position_ids=batch.get("position_ids"),
+        padding_mask = batch.pop("_padding_mask", None)
+        batch["attention_mask"] = padding_mask
+        pack_right_padded_sequence_batch_to_mcore_thd(
+            batch,
             pad_token_id=0,
             pad_to_multiple_of=pad_multiple,
-            padding_mask=batch.get("_padding_mask"),
         )
-
-        # Update batch dict with packed tensors
-        if batch.get("tokens") is not None:
-            batch["tokens"] = packed_tokens
-        else:
-            batch["input_ids"] = packed_tokens
-        batch["labels"] = packed_labels
-        batch["loss_mask"] = packed_loss_mask
-        batch["attention_mask"] = packed_attention_mask
-        batch["position_ids"] = packed_position_ids
-
+        cu_seqlens = batch.get("cu_seqlens_q_padded")
+        if cu_seqlens is None:
+            cu_seqlens = batch["cu_seqlens_q"]
+        max_seqlen = batch["max_seqlen_q"]
         logger.debug(f"Packed batch: cu_seqlens={cu_seqlens.tolist()}, max_seqlen={max_seqlen}")
     else:
         cu_seqlens = None

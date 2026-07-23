@@ -21,13 +21,13 @@ import pytest
 import torch
 import torch.nn.functional as F
 
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.peft.dora import DoRA
 from megatron.bridge.training.config import (
     CheckpointConfig,
     ConfigContainer,
     DistributedDataParallelConfig,
-    FinetuningDatasetConfig,
     LoggerConfig,
     MockGPTDatasetConfig,
     OptimizerConfig,
@@ -209,7 +209,7 @@ class TestDoRAFinetune:
 
     def _create_sft_dataset_config(self, dataset_root, seq_length, seed=5678):
         """Create a local SFT dataset configuration."""
-        return FinetuningDatasetConfig(
+        return GPTSFTDatasetConfig(
             dataset_root=dataset_root,
             seq_length=seq_length,
             seed=seed,

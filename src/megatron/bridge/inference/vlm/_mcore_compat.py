@@ -14,26 +14,4 @@
 
 """Compatibility helpers for Megatron-Core inference API differences."""
 
-try:
-    from megatron.core.inference.utils import InferenceMode
-except ImportError as exc:
-    if "InferenceMode" not in str(exc):
-        raise
-
-    # TODO(mcore-dev): remove this guard when Megatron-Core dev exposes InferenceMode from
-    # megatron.core.inference.utils.
-    class InferenceMode:
-        """No-op compatibility shim for MCore commits without InferenceMode."""
-
-        @classmethod
-        def is_active(cls) -> bool:
-            """Return whether MCore's process-wide inference mode is active."""
-            return False
-
-        @classmethod
-        def set_active(cls) -> None:
-            """Mark inference as active when the backing MCore API exists."""
-
-        @classmethod
-        def unset_active(cls) -> None:
-            """Mark inference as inactive when the backing MCore API exists."""
+from megatron.core.inference.utils import InferenceMode as InferenceMode

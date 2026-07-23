@@ -447,65 +447,6 @@ class TestAutoBridgeIntegration:
         non_causal_config.architectures = ["Qwen2Model"]  # Not ForCausalLM
         assert AutoBridge.supports(non_causal_config) == False
 
-    def test_list_supported_models(self):
-        """Test list_supported_models includes Qwen3ForCausalLM."""
-        # This test requires the dispatch system to be set up
-        # Since we're testing in isolation, we'll skip this test
-        # In a real environment, this would work if the bridges are registered
-        pass  # Skip for now as it requires full dispatch setup
-
-
-class TestQwen3BridgeParameterMapping:
-    """Test parameter mapping functionality in Qwen3Bridge."""
-
-    @pytest.fixture
-    def mock_qwen3_state_dict(self):
-        """Create a mock state dict with Qwen3 parameter names."""
-        return {
-            "model.embed_tokens.weight": torch.randn(151936, 2048),
-            "lm_head.weight": torch.randn(151936, 2048),
-            "model.norm.weight": torch.randn(2048),
-            "model.layers.0.input_layernorm.weight": torch.randn(2048),
-            "model.layers.0.post_attention_layernorm.weight": torch.randn(2048),
-            "model.layers.0.self_attn.q_norm.weight": torch.randn(256),  # Qwen3 specific
-            "model.layers.0.self_attn.k_norm.weight": torch.randn(256),  # Qwen3 specific
-            "model.layers.0.self_attn.q_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.self_attn.k_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.self_attn.v_proj.weight": torch.randn(1024, 2048),
-            "model.layers.0.self_attn.o_proj.weight": torch.randn(2048, 2048),
-            "model.layers.0.mlp.gate_proj.weight": torch.randn(6144, 2048),
-            "model.layers.0.mlp.up_proj.weight": torch.randn(6144, 2048),
-            "model.layers.0.mlp.down_proj.weight": torch.randn(2048, 6144),
-        }
-
-    def test_mapping_registry_has_qwen3_specific_mappings(self):
-        """Test that mapping registry includes Qwen3-specific QK norm mappings."""
-        bridge = Qwen3Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # This test verifies that the mapping registry was created
-        # The actual parameter mappings are tested in integration tests
-        assert mapping_registry is not None
-
-    def test_qwen3_qk_norm_mapping_difference(self):
-        """Test that Qwen3 bridge includes QK norm mappings not present in Qwen2."""
-        bridge = Qwen3Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Qwen3 should have QK norm mappings
-        # This is implicitly tested by the bridge's mapping_registry method
-        # which includes the QK norm parameter mappings
-        assert mapping_registry is not None
-
-    def test_qwen3_no_qkv_bias_mapping(self):
-        """Test that Qwen3 bridge doesn't include QKV bias mappings."""
-        bridge = Qwen3Bridge()
-        mapping_registry = bridge.mapping_registry()
-
-        # Qwen3 doesn't have QKV bias, unlike Qwen2
-        # This is reflected in the QKVMapping not including bias terms
-        assert mapping_registry is not None
-
 
 class TestQwen3BridgeMTPMapping:
     """Tests for MTP (Multi-Token Prediction) weight mappings in Qwen3Bridge.

@@ -60,6 +60,42 @@ except ImportError:
 ModelT = TypeVar("ModelT", bound=MegatronModule)
 
 
+def _apply_mixed_precision_wrapper(
+    model: list[MegatronModule],
+    model_config: Any,
+    mixed_precision_wrapper: Callable[[Any, MegatronModule], MegatronModule],
+) -> list[MegatronModule]:
+    """Wrap a model while preserving parameters explicitly marked for FP32."""
+    keep_in_fp32: list[tuple[torch.nn.Module, str, torch.Tensor]] = []
+    for model_module in model:
+        for submodule in model_module.modules():
+            # Preserve the existing MCore expert-bias contract.
+            if hasattr(submodule, "_maintain_float32_expert_bias"):
+                expert_bias = getattr(submodule, "expert_bias", None)
+                if expert_bias is not None:
+                    keep_in_fp32.append((submodule, "expert_bias", expert_bias.data.clone()))
+
+            # Model-specific modules can mark direct parameters that must not be
+            # truncated by Float16Module's recursive half()/bfloat16() cast.
+            parameter_names = vars(submodule).get("_keep_in_float32_parameter_names", ())
+            if not isinstance(parameter_names, (list, tuple)):
+                raise TypeError("_keep_in_float32_parameter_names must be a list or tuple")
+            for parameter_name in parameter_names:
+                parameter = getattr(submodule, parameter_name, None)
+                if not isinstance(parameter, torch.nn.Parameter):
+                    raise TypeError(
+                        f"{type(submodule).__name__}.{parameter_name} must be a Parameter to remain in FP32"
+                    )
+                keep_in_fp32.append((submodule, parameter_name, parameter.data.clone()))
+
+    wrapped_model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
+
+    for submodule, parameter_name, fp32_data in keep_in_fp32:
+        getattr(submodule, parameter_name).data = fp32_data
+
+    return wrapped_model
+
+
 class ModelProviderMixin(abc.ABC, Generic[ModelT]):
     """A mixin that implements the ModelProvider pattern for Megatron Bridge.
 
@@ -632,20 +668,7 @@ def get_model(
             model_module.cuda(torch.cuda.current_device())
 
     if (model_config.fp16 or model_config.bf16) and mixed_precision_wrapper is not None:
-        # Save expert bias in float32 to avoid precision loss during conversion
-        keep_in_fp32 = []
-        for model_module in model:
-            for submodule in model_module.modules():
-                if hasattr(submodule, "_maintain_float32_expert_bias"):
-                    expert_bias = getattr(submodule, "expert_bias", None)
-                    if expert_bias is not None:
-                        keep_in_fp32.append((submodule, expert_bias.data.clone()))
-
-        model = [mixed_precision_wrapper(model_config, model_module) for model_module in model]
-
-        # Restore expert bias to float32
-        for submodule, fp32_data in keep_in_fp32:
-            submodule.expert_bias.data = fp32_data
+        model = _apply_mixed_precision_wrapper(model, model_config, mixed_precision_wrapper)
 
     if correct_amax_history_if_needed is not None:
         correct_amax_history_if_needed(model)

@@ -50,4 +50,5 @@ def finetune(
     assert config.checkpoint.pretrained_checkpoint is not None or config.checkpoint.load is not None, (
         "Finetuning requires a loading from a pretrained checkpoint or resuming from a checkpoint"
     )
+    config._checkpoint_load_required = True
     return pretrain(config, forward_step_func, callbacks=callbacks)

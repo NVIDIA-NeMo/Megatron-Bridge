@@ -18,9 +18,12 @@ import warnings
 
 import torch
 
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
+from megatron.bridge.data.conversation_processing import (
+    chat_template_kwargs_from_example,
+    gather_assistant_text_segments,
+)
 from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.sequence_batching import prepare_padded_or_packed_sequence_batch
-from megatron.bridge.data.vlm_processing import chat_template_kwargs_from_example, gather_assistant_text_segments
 from megatron.bridge.training.utils.visual_inputs import Qwen2AudioInputs
 
 
@@ -56,6 +59,8 @@ def qwen2_audio_collate_fn(
 
     texts = []
     audio_inputs = []
+    audio_sampling_rates = set()
+    has_audio_without_sampling_rate = False
     for example in examples:
         texts.append(
             processor.apply_chat_template(
@@ -67,11 +72,24 @@ def qwen2_audio_collate_fn(
         audio = example.get("audio")
         if audio is not None:
             if isinstance(audio, tuple):
-                audio_inputs.append(audio[0])  # (array, sr) -> array
+                audio_inputs.append(audio[0])
+                audio_sampling_rates.add(int(audio[1]))
             elif isinstance(audio, dict):
                 audio_inputs.append(audio["array"])
+                sampling_rate = audio.get("sampling_rate")
+                if sampling_rate is None:
+                    has_audio_without_sampling_rate = True
+                else:
+                    audio_sampling_rates.add(int(sampling_rate))
             else:
                 audio_inputs.append(audio)
+                has_audio_without_sampling_rate = True
+
+    if len(audio_sampling_rates) > 1:
+        raise ValueError("Qwen2-Audio batches require a single sampling rate.")
+    if audio_sampling_rates and has_audio_without_sampling_rate:
+        raise ValueError("Qwen2-Audio batches cannot mix audio with known and unknown sampling rates.")
+    audio_kwargs = {"sampling_rate": next(iter(audio_sampling_rates))} if audio_sampling_rates else {}
 
     tokenizer = getattr(processor, "tokenizer", processor)
 
@@ -84,6 +102,7 @@ def qwen2_audio_collate_fn(
             audio=audio_inputs if audio_inputs else None,
             return_tensors="pt",
             padding=True,
+            **audio_kwargs,
         )
     finally:
         if tokenizer is not None and saved_padding_side is not None:
@@ -149,7 +168,7 @@ def qwen2_audio_collate_fn(
     for key in ("input_features", "feature_attention_mask"):
         batch.pop(key, None)
 
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,

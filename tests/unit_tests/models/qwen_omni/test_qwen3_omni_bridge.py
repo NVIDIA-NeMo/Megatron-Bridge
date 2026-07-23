@@ -19,7 +19,7 @@ import torch
 import torch.nn.functional as F
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_omni import Qwen3OmniBridge, Qwen3OmniModelProvider
 
 
@@ -80,7 +80,7 @@ def mock_hf_config(mock_thinker_config):
 
 @pytest.fixture
 def mock_hf_pretrained(mock_hf_config):
-    pretrained = Mock(spec=PreTrainedVLM)
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = mock_hf_config
     return pretrained
 

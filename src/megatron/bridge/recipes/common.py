@@ -16,9 +16,9 @@ import os
 
 from megatron.core.distributed import DistributedDataParallelConfig
 
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, DirectHFSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.peft.lora import LoRA
-from megatron.bridge.recipes.utils.finetune_utils import default_squad_config
+from megatron.bridge.recipes.utils.dataset_utils import default_squad_config
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.config import (
@@ -140,7 +140,7 @@ def _sft_common() -> ConfigContainer:
     before use.
 
     Key differences from pre-training:
-    - Uses HFTextSFTDatasetProvider with SQuAD as default dataset
+    - Uses GPTSFTDatasetConfig with SQuAD as default dataset
     - Lower learning rate (5e-6) suitable for full fine-tuning
     - Fewer training iterations (1000)
     - Smaller batch sizes
@@ -159,9 +159,9 @@ def _sft_common() -> ConfigContainer:
     # Default sequence length for SFT
     seq_length = 2048
 
-    # Packed sequence is enabled by default for training efficiency
+    # Offline packing is enabled by default for training efficiency
     # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
-    packed_sequence = True
+    enable_offline_packing = True
     pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
 
     # Optimizer and scheduler with lower LR for full SFT
@@ -196,7 +196,9 @@ def _sft_common() -> ConfigContainer:
         ),
         # Dataset config - uses SQuAD with packed sequences by default
         dataset=default_squad_config(
-            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+            seq_length=seq_length,
+            enable_offline_packing=enable_offline_packing,
+            pad_seq_to_mult=pad_seq_to_mult,
         ),
         # Logger config
         logger=LoggerConfig(
@@ -256,9 +258,9 @@ def _peft_common() -> ConfigContainer:
     # Default sequence length for PEFT
     seq_length = 2048
 
-    # Packed sequence is enabled by default for training efficiency
+    # Offline packing is enabled by default for training efficiency
     # pad_seq_to_mult should be set to context_parallel_size * 2 if CP > 1
-    packed_sequence = True
+    enable_offline_packing = True
     pad_seq_to_mult = 1  # Override in model config if context_parallel_size > 1
 
     # Optimizer and scheduler with higher LR for PEFT (only training adapters)
@@ -293,7 +295,9 @@ def _peft_common() -> ConfigContainer:
         ),
         # Dataset config - uses SQuAD with packed sequences by default
         dataset=default_squad_config(
-            seq_length=seq_length, packed_sequence=packed_sequence, pad_seq_to_mult=pad_seq_to_mult
+            seq_length=seq_length,
+            enable_offline_packing=enable_offline_packing,
+            pad_seq_to_mult=pad_seq_to_mult,
         ),
         # Logger config
         logger=LoggerConfig(
@@ -346,7 +350,7 @@ def _sft_common_vlm() -> ConfigContainer:
     The caller MUST set `cfg.model` and `cfg.dataset.hf_processor_path` before use.
 
     Key differences from LLM SFT (`_sft_common`):
-    - Uses HFConversationDatasetProvider with HuggingFace datasets (e.g., CORD-v2)
+    - Uses DirectHFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
     - Uses NullTokenizer (VLMs use processor instead of tokenizer)
     - DDP config optimized for VLM training (no grad/param overlap)
     - Supports freeze options for language_model, vision_model, vision_projection
@@ -401,12 +405,13 @@ def _sft_common_vlm() -> ConfigContainer:
         use_distributed_optimizer=True,
     )
 
-    # VLM-specific dataset - uses HuggingFace dataset provider
+    # VLM-specific dataset - uses the direct Hugging Face Config + Builder path
     # hf_processor_path must be set by model-specific config
-    cfg.dataset = HFConversationDatasetProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
-        maker_name="make_cord_v2_dataset",
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,
@@ -448,7 +453,7 @@ def _peft_common_vlm() -> ConfigContainer:
     The caller MUST set `cfg.model` and `cfg.dataset.hf_processor_path` before use.
 
     Key differences from LLM PEFT (`_peft_common`):
-    - Uses HFConversationDatasetProvider with HuggingFace datasets (e.g., CORD-v2)
+    - Uses DirectHFSFTDatasetConfig with Hugging Face datasets (e.g., CORD-v2)
     - Uses NullTokenizer (VLMs use processor instead of tokenizer)
     - DDP config optimized for VLM training (no grad/param overlap)
     - Supports freeze options for language_model, vision_model, vision_projection
@@ -504,12 +509,13 @@ def _peft_common_vlm() -> ConfigContainer:
         use_distributed_optimizer=True,
     )
 
-    # VLM-specific dataset - uses HuggingFace dataset provider
+    # VLM-specific dataset - uses the direct Hugging Face Config + Builder path
     # hf_processor_path must be set by model-specific config
-    cfg.dataset = HFConversationDatasetProvider(
+    cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=seq_length,
+        preprocessing=ChatSFTPreprocessingConfig(),
         hf_processor_path=None,  # Must be set by model-specific config
-        maker_name="make_cord_v2_dataset",
+        source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
         dataloader_type="single",
         data_sharding=True,

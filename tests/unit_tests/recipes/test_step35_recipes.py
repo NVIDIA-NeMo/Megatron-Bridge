@@ -28,6 +28,8 @@ from typing import Callable
 import pytest
 import torch
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _step35_module = importlib.import_module("megatron.bridge.recipes.stepfun.step35")
 _STEP35_RECIPE_FUNCS = [
@@ -84,8 +86,8 @@ def _assert_basic_config(cfg):
 def _patch_recipe_env(monkeypatch, mod):
     """Patch ``AutoBridge`` and ``apply_flex_dispatcher_backend`` in the recipe
     module so the recipe builds without hitting HF Hub or CUDA."""
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
-    monkeypatch.setattr(mod, "apply_flex_dispatcher_backend", lambda *a, **kw: None)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "apply_flex_dispatcher_backend", lambda *a, **kw: None)
 
 
 # ---------------------------------------------------------------------------

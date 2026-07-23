@@ -14,7 +14,7 @@
 
 """Gemma 4 text-only model providers.
 
-Gemma4DenseProvider: Dense (E4B, ~3.8B) — builds GPTModel with local spec,
+Gemma4DenseProvider: Dense (E2B, E4B, and 31B) — builds GPTModel with local spec,
     dual RoPE, PLE, and shared KV.
 Gemma4ModelProvider: MoE (26B-A4B and similar) — extends GPTModelProvider
     with TE-based layer spec, dual RoPE, and softcapped output layer.
@@ -44,6 +44,33 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
 )
 from megatron.bridge.models.gemma.modules import extend_instance
 from megatron.bridge.models.gpt_provider import GPTModelProvider
+
+
+def _validate_gemma4_moe_orchestration(provider: GPTModelProvider) -> None:
+    """Reject MCore execution modes bypassed by Gemma 4's custom MoE forward."""
+    unsupported = []
+    if provider.transformer_impl == "inference_optimized":
+        unsupported.append("transformer_impl='inference_optimized'")
+    if provider.cuda_graph_impl != "none":
+        unsupported.append(f"cuda_graph_impl={provider.cuda_graph_impl!r}")
+    if provider.moe_shared_expert_overlap:
+        unsupported.append("moe_shared_expert_overlap=True")
+    if provider.mlp_chunks_for_prefill > 1:
+        unsupported.append("mlp_chunks_for_prefill > 1")
+    if provider.mlp_chunks_for_training > 1:
+        unsupported.append("mlp_chunks_for_training > 1")
+    if provider.inference_fuse_tp_communication:
+        unsupported.append("inference_fuse_tp_communication=True")
+    recompute_modules = set(provider.recompute_modules or [])
+    if provider.recompute_granularity == "selective" and "layernorm" in recompute_modules:
+        unsupported.append("selective layernorm recompute")
+    offload_modules = set(provider.offload_modules or [])
+    if provider.fine_grained_activation_offloading and "mlp_norm" in offload_modules:
+        unsupported.append("MLP norm activation offloading")
+    if unsupported:
+        raise ValueError(
+            "Gemma 4 MoE's separate router/shared/routed inputs do not yet support: " + ", ".join(unsupported)
+        )
 
 
 def _install_gemma4_dense_load_state_aliases(model: torch.nn.Module) -> None:
@@ -90,13 +117,13 @@ def _install_gemma4_dense_load_state_aliases(model: torch.nn.Module) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Dense (E4B) provider
+# Dense provider
 # ---------------------------------------------------------------------------
 
 
 @dataclass
 class Gemma4DenseProvider(GPTModelProvider):
-    """Gemma-4 Dense (3.8B) model provider for clean Megatron-Core.
+    """Gemma 4 dense E2B, E4B, and 31B provider for clean Megatron-Core.
 
     All Gemma4-specific settings are encoded here as dataclass fields so that
     no Gemma4-specific CLI arguments are required.
@@ -139,18 +166,23 @@ class Gemma4DenseProvider(GPTModelProvider):
 
     global_kv_channels: int = 512
     num_global_query_groups: int = 2
+    attention_k_eq_v: bool = False
     sliding_window_rope_base: float = 10000.0
     full_attention_rope_base: float = 1000000.0
     full_attention_rope_partial_factor: float = 0.25
     num_kv_shared_layers: int = 18
+    use_double_wide_mlp: bool = False
     per_layer_embed_vocab_size: int = 262144
     per_layer_embed_dim: int = 256
+    final_logit_softcapping: float | None = 30.0
 
     num_moe_experts: Optional[int] = None
     moe_router_topk: Optional[int] = None
     moe_ffn_hidden_size: Optional[int] = None
 
     def finalize(self) -> None:
+        if self.use_double_wide_mlp:
+            self.hetereogenous_dist_checkpoint = True
         super().finalize()
         self._gemma4_dense_finalized = True
 
@@ -221,6 +253,13 @@ class Gemma4DenseProvider(GPTModelProvider):
         _install_ple_forward(model)
         _install_gemma4_dense_load_state_aliases(model)
 
+        if (
+            hasattr(model, "output_layer")
+            and self.final_logit_softcapping is not None
+            and not isinstance(model.output_layer, Gemma4OutputLayer)
+        ):
+            extend_instance(model.output_layer, Gemma4OutputLayer)
+
         return model
 
 
@@ -277,7 +316,7 @@ class Gemma4ModelProvider(GPTModelProvider):
     moe_permute_fusion: bool = True
     moe_layer_freq: int = 1
 
-    final_logit_softcapping: float = 30.0
+    final_logit_softcapping: float | None = 30.0
 
     flash_decode: bool = False
     transformer_layer_spec: Union[Callable, object] = field(
@@ -289,6 +328,10 @@ class Gemma4ModelProvider(GPTModelProvider):
     fp16: bool = False
     params_dtype: torch.dtype = torch.bfloat16
     autocast_dtype: torch.dtype = torch.bfloat16
+
+    def finalize(self) -> None:
+        _validate_gemma4_moe_orchestration(self)
+        super().finalize()
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> "MCoreGPTModel":
         """Configure and instantiate a Megatron Core Gemma 4 MoE model."""
@@ -321,7 +364,11 @@ class Gemma4ModelProvider(GPTModelProvider):
             global_rotary_percent=self.global_rotary_percent,
         )
 
-        if hasattr(model, "output_layer") and self.final_logit_softcapping:
+        if (
+            hasattr(model, "output_layer")
+            and self.final_logit_softcapping is not None
+            and not isinstance(model.output_layer, Gemma4OutputLayer)
+        ):
             extend_instance(model.output_layer, Gemma4OutputLayer)
 
         if hasattr(model, "embedding") or hasattr(model, "output_layer"):

@@ -28,7 +28,7 @@ from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.padding_utils import (
     pad_or_truncate_2d_to_len,
     pad_or_truncate_attn_to_len,
@@ -77,6 +77,8 @@ def get_batch_from_iterator(
 
     batch_required_keys: dict[str, Any] = {}
     for key, value in batch.items():
+        if key == "attention_mask" and skip_getting_attention_mask_from_dataset:
+            continue
         if key in required_device_keys:
             if key == "visual_inputs":
                 if value is None:
@@ -204,11 +206,11 @@ def _get_dense_batch_on_this_cp_rank(batch: dict[str, Any], cp_group) -> dict[st
     if attention_mask is not None and attention_mask.dim() == 2:
         batch = dict(batch)
         batch["_attention_mask_2d"] = batch.pop("attention_mask")
-        batch = get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+        batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
         batch["attention_mask"] = batch.pop("_attention_mask_2d")
         return batch
 
-    return get_batch_on_this_cp_rank(batch, cp_group=cp_group)
+    return get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=cp_group)
 
 
 def forward_step(
@@ -260,7 +262,12 @@ def forward_step(
             if grid is not None and grid.numel() > 0:
                 patches = grid.prod(dim=-1).sum()
                 num_vision_patches = patches if num_vision_patches is None else num_vision_patches + patches
-    accumulate_flops_metadata(state, tokens, num_vision_patches=num_vision_patches)
+    accumulate_flops_metadata(
+        state,
+        tokens,
+        vp_stage=get_model_chunk_vp_stage(model),
+        num_vision_patches=num_vision_patches,
+    )
 
     forward_args = {
         "input_ids": tokens,

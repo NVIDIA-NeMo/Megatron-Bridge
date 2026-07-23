@@ -110,7 +110,7 @@ fi
 if [ "$DATASET_NAME" = "mock" ]; then
     DATASET_TYPE=mock
 else
-    DATASET_TYPE=llm-pretrain
+    DATASET_TYPE=megatron-indexed
 fi
 
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
@@ -174,7 +174,7 @@ CHECKPOINT_DIR=${WORKSPACE}/results/${RUN_NAME}/checkpoints
 
 CLI_OVERRIDES=" \
     model.seq_length=$SEQ_LENGTH \
-    dataset.sequence_length=$SEQ_LENGTH \
+    dataset.seq_length=$SEQ_LENGTH \
     train.train_iters=$TRAIN_ITERS \
     train.global_batch_size=$GLOBAL_BATCH_SIZE \
     train.micro_batch_size=$MICRO_BATCH_SIZE \
@@ -204,7 +204,6 @@ CMD="uv run --no-sync python -m torch.distributed.run \
     --recipe $RECIPE_NAME \
     --dataset $DATASET_TYPE \
     --step_func gpt_step \
-    --hf_path $HF_CONFIG \
     $CLI_OVERRIDES"
 
 echo "======================================"

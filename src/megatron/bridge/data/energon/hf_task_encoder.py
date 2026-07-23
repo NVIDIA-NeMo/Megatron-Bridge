@@ -26,14 +26,14 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 import torch
 from megatron.energon import Batch, DefaultTaskEncoder
 
+from megatron.bridge.data.collators.registry import resolve_model_collate
+from megatron.bridge.data.conversation_processing import (
+    normalize_energon_vlm_sample,
+    normalized_vlm_sample_to_hf_example,
+)
 from megatron.bridge.data.energon.metadata import batch_metadata_kwargs
 from megatron.bridge.data.energon.task_encoder_utils import (
     ChatMLSample,
-)
-from megatron.bridge.data.vlm_datasets.collate import COLLATE_FNS
-from megatron.bridge.data.vlm_processing import (
-    normalize_energon_vlm_sample,
-    normalized_vlm_sample_to_hf_example,
 )
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
@@ -65,6 +65,7 @@ class HFEnergonBatch(Batch):
     cu_seqlens_kv_padded: torch.Tensor | None = None
     max_seqlen_q: torch.Tensor | None = None
     max_seqlen_kv: torch.Tensor | None = None
+    total_tokens: int | None = None
 
 
 class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonBatch, dict]):
@@ -120,12 +121,7 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
         if collate_fn is not None:
             self._collate_impl = collate_fn
         else:
-            if collate_key not in COLLATE_FNS:
-                raise ValueError(
-                    f"No VLM collate function registered for processor type '{collate_key}'. "
-                    "Add it to COLLATE_FNS or pass collate_fn explicitly."
-                )
-            self._collate_impl = COLLATE_FNS[collate_key]
+            self._collate_impl = resolve_model_collate(collate_key)
 
     def encode_sample(self, sample: ChatMLSample) -> HFEnergonSample:
         """Normalize a single ChatML sample into a HF-style collate example.
@@ -177,8 +173,8 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
     # batch
     # ------------------------------------------------------------------
 
-    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
-        """Collate normalized samples with the selected HF VLM collator."""
+    def _collate_batch_kwargs(self, samples: List[HFEnergonSample]) -> tuple[dict[str, Any], dict[str, Any]]:
+        """Collate samples and build kwargs shared by generic/model batches."""
         examples = [sample.example for sample in samples]
         collated = self.collate_fn(examples)
         collated_seq_len = (
@@ -209,8 +205,13 @@ class HFTaskEncoder(DefaultTaskEncoder[ChatMLSample, HFEnergonSample, HFEnergonB
             cu_seqlens_kv_padded=collated.get("cu_seqlens_kv_padded"),
             max_seqlen_q=collated.get("max_seqlen_q"),
             max_seqlen_kv=collated.get("max_seqlen_kv"),
+            total_tokens=collated.get("total_tokens"),
         )
+        return collated, batch_kwargs
 
+    def batch(self, samples: List[HFEnergonSample]) -> HFEnergonBatch:
+        """Collate normalized samples with the selected HF VLM collator."""
+        _, batch_kwargs = self._collate_batch_kwargs(samples)
         return HFEnergonBatch(**batch_kwargs)
 
     # ------------------------------------------------------------------

@@ -24,7 +24,7 @@ We use the following environment variables throughout this page
 
 Unless explicitly stated, any megatron model path in the commands below should NOT contain the iteration number
 `iter_xxxxxx`. For more details on checkpointing, please see
-[here](https://docs.nvidia.com/nemo/megatron-bridge/latest/training/checkpointing.html#checkpoint-contents)
+[here](../../training/checkpointing.md#checkpoint-contents)
 
 </Tip>
 
@@ -33,7 +33,7 @@ Unless explicitly stated, any megatron model path in the commands below should N
 ### Import HF → Megatron
 To import the HF model to your desired `$MEGATRON_MODEL_PATH`, run the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
 --hf-model $HF_MODEL_PATH \
 --megatron-path $MEGATRON_MODEL_PATH \
 --trust-remote-code
@@ -42,7 +42,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 You can export a trained model with the following command.
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
 --hf-model $HF_MODEL_PATH \
 --megatron-path <trained megatron model path> \
 --hf-path <output hf model path> \
@@ -88,7 +88,7 @@ Example usage for full parameter finetuning using the
 uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotron/nemotron_vl/finetune_nemotron_nano_v2_vl.py \
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint <megatron model path> \
-dataset.maker_name=make_raven_dataset \
+dataset.source.dataset_name=raven \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name>
@@ -97,7 +97,7 @@ checkpoint.save=$SAVE_DIR/<experiment name>
 Note:
 - The config file `examples/models/nemotron/nemotron_vl/conf/nemotron_nano_v2_vl_override_example.yaml` contains a list of arguments
   that can be overridden in the command. For example, you can set `train.global_batch_size=&lt;batch size&gt;` in the command.
-- To change the dataset, you only need to change `dataset.maker_name`. See the dataset section below for details.
+- To change to another built-in dataset, set its `dataset.source.dataset_name` preset. To replace the recipe preset with a custom native source from the CLI, set `dataset.source.dataset_name=null` plus `dataset.source.path_or_dataset=<id>`; custom schemas also require an explicit adapter. See the dataset section below.
 - After training, you can run inference with `hf_to_megatron_generate_vlm.py` by supplying the trained megatron checkpoint.
   You can also export the trained checkpoint to Hugging Face format.
 - This full finetuning recipe requires at least 4xH100 (80G) GPUs.
@@ -114,7 +114,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotr
 --hf-model-path $HF_MODEL_PATH \
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
-dataset.maker_name=make_raven_dataset \
+dataset.source.dataset_name=raven \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name> \
@@ -131,7 +131,7 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotr
 --pretrained-checkpoint $MEGATRON_MODEL_PATH \
 --lora-on-language-model \
 --lora-on-vision-model \
-dataset.maker_name=make_raven_dataset \
+dataset.source.dataset_name=raven \
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name> \
@@ -156,12 +156,12 @@ The output is a merged Hugging Face checkpoint for downstream evaluation.
 ## Example Datasets
 
 Megatron Bridge supports various vision-language dataset examples which can be used to finetune Nemotron Nano V2 VL:
-| Dataset | Maker Name | Description |
+| Dataset | Dataset preset | Description |
 |---------|------------|-------------|
-| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `make_cord_v2_dataset` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
-| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `make_medpix_dataset` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
-| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `make_raven_dataset` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
-| [LLaVA-Video-178K (0_30_s_nextqa subset)](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K) | `make_llava_video_178k_dataset` | Video understanding: video question-answer dataset covering every-day scenarios. |
+| [cord-v2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) | `cord_v2` | OCR receipts: Single-image-text dataset for receipt understanding, outputs xml-like annotated text. |
+| [MedPix-VQA](https://huggingface.co/datasets/mmoukouba/MedPix-VQA) | `medpix` | Medical VQA: Single-image question-answer dataset covering clinical medical images and free-form answers. |
+| [The Cauldron (Raven subset)](https://huggingface.co/datasets/HuggingFaceM4/the_cauldron) | `raven` | Visual reasoning: Multi-image, vision reasoning dataset for analogical reasoning in different visual layouts. |
+| [LLaVA-Video-178K (0_30_s_nextqa subset)](https://huggingface.co/datasets/lmms-lab/LLaVA-Video-178K) | `llava_video_178k` | Video understanding: video question-answer dataset covering every-day scenarios. |
 
 `cord-v2` is a tiny dataset and is included for demonstration only. This dataset is not recommended for PEFT tuning for this model since the XML output format interacts with the special tokens, leading to unexpected results.
 
@@ -169,7 +169,7 @@ Note on video training example:
 - We provide a video config yaml file instead of the default config yaml file that overwrites a few commands. Please
   pass in `--config-file "examples/models/nemotron/nemotron_vl/conf/nemotron_nano_v2_vl_video.yaml"`.
 - The LLaVA video dataset requires manual download beforehand. Please place the downloaded and extracted video files
-  in a folder `VIDEO_ROOT` and pass it in to the maker with `dataset.maker_kwargs={"video_root_path":$VIDEO_ROOT}`.
+  in a folder `VIDEO_ROOT` and pass it to the adapter with `dataset.source.adapter_kwargs={"video_root_path":$VIDEO_ROOT}`.
   In the nextqa subset example, `VIDEO_ROOT` should look like
   ```
   $VIDEO_ROOT/
@@ -191,5 +191,5 @@ uv run python -m torch.distributed.run --nproc-per-node=8 examples/models/nemotr
 logger.wandb_project=<optional wandb project name> \
 logger.wandb_save_dir=$SAVE_DIR \
 checkpoint.save=$SAVE_DIR/<experiment name> \
-dataset.maker_kwargs={"video_root_path":$VIDEO_ROOT}
+dataset.source.adapter_kwargs={"video_root_path":$VIDEO_ROOT}
 ```

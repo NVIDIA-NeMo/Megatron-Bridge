@@ -22,18 +22,28 @@
 #
 
 import importlib
+import inspect
 from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _qwen3_vl_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.qwen3_vl")
+_qwen3_vl_h100_module = importlib.import_module("megatron.bridge.recipes.qwen_vl.h100.qwen3_vl")
 
-# Pretrain mock configs (accept **user_kwargs)
+# Pretrain mock configs (parameterless fixed configs)
 _QWEN3_VL_PRETRAIN_MOCK_FUNCS = [
     _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config,
     _qwen3_vl_module.qwen3_vl_30b_a3b_pretrain_mock_config,
     _qwen3_vl_module.qwen3_vl_235b_a22b_pretrain_mock_config,
+]
+
+_QWEN3_VL_H100_PRETRAIN_MOCK_FUNCS = [
+    _qwen3_vl_h100_module.qwen3_vl_8b_pretrain_4gpu_h100_bf16_mock_config,
+    _qwen3_vl_h100_module.qwen3_vl_30b_a3b_pretrain_8gpu_h100_bf16_mock_config,
+    _qwen3_vl_h100_module.qwen3_vl_235b_a22b_pretrain_256gpu_h100_bf16_mock_config,
 ]
 
 # SFT configs (parameterless)
@@ -95,6 +105,15 @@ class _FakeAutoBridge:
         return _FakeModelCfg()
 
 
+@pytest.mark.parametrize(
+    "recipe_func",
+    _QWEN3_VL_PRETRAIN_MOCK_FUNCS + _QWEN3_VL_H100_PRETRAIN_MOCK_FUNCS + _QWEN3_VL_SFT_FUNCS,
+)
+def test_qwen3_vl_fixed_recipe_entry_points_are_parameterless(recipe_func: Callable):
+    """Qwen3-VL fixed recipe entry points should not accept overrides."""
+    assert not inspect.signature(recipe_func).parameters
+
+
 def _assert_basic_config(cfg):
     """Assert that a config has all required components."""
     from megatron.bridge.training.config import ConfigContainer
@@ -119,7 +138,7 @@ def _assert_basic_config(cfg):
 def test_each_qwen3_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3-VL SFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -146,7 +165,7 @@ def test_each_qwen3_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypat
 def test_each_qwen3_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3-VL PEFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()  # Default peft_scheme="lora"
 
@@ -176,7 +195,7 @@ def test_each_qwen3_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypa
 def test_qwen3_vl_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
     """Test that different PEFT schemes are correctly applied for Qwen3-VL models."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
 
@@ -192,7 +211,7 @@ def test_qwen3_vl_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypa
 def test_qwen3_vl_8b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B SFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
@@ -207,7 +226,7 @@ def test_qwen3_vl_8b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_8b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B LoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_config(peft_scheme="lora")
 
@@ -226,7 +245,7 @@ def test_qwen3_vl_8b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_8b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_config(peft_scheme="dora")
 
@@ -245,7 +264,7 @@ def test_qwen3_vl_8b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_30b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 30B-A3B SFT has correct default parallelism and MoE settings."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_30b_a3b_sft_config()
 
@@ -263,7 +282,7 @@ def test_qwen3_vl_30b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_30b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 30B-A3B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_30b_a3b_peft_config()
 
@@ -281,7 +300,7 @@ def test_qwen3_vl_30b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_235b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B SFT has correct default parallelism and MoE settings."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_235b_a22b_sft_config()
 
@@ -299,7 +318,7 @@ def test_qwen3_vl_235b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_235b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_235b_a22b_peft_config()
 
@@ -315,33 +334,33 @@ def test_qwen3_vl_235b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen3_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_qwen3_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_qwen3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
@@ -354,7 +373,7 @@ def test_qwen3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_config()
 
@@ -367,7 +386,7 @@ def test_qwen3_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
     """Test that precision config is correctly set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
@@ -380,7 +399,7 @@ def test_qwen3_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that DDP config is correctly set for VLMs."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
@@ -396,7 +415,7 @@ def test_qwen3_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_moe_settings_30b(monkeypatch: pytest.MonkeyPatch):
     """Test that MoE-specific settings are correctly configured for 30B-A3B model."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_30b_a3b_sft_config()
 
@@ -417,7 +436,7 @@ def test_qwen3_vl_moe_settings_30b(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_moe_settings_235b(monkeypatch: pytest.MonkeyPatch):
     """Test that MoE-specific settings are correctly configured for 235B-A22B model."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_235b_a22b_sft_config()
 
@@ -438,7 +457,7 @@ def test_qwen3_vl_moe_settings_235b(monkeypatch: pytest.MonkeyPatch):
 def test_qwen3_vl_8b_is_dense_model(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B is a dense model without MoE-specific parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_sft_config()
 
@@ -459,30 +478,8 @@ def test_qwen3_vl_8b_is_dense_model(monkeypatch: pytest.MonkeyPatch):
 
 
 def _patch_energon_deps(monkeypatch):
-    """Monkeypatch AutoBridge and HF tokenizer/processor for energon config tests."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
-    monkeypatch.setattr(
-        _qwen3_vl_module,
-        "AutoTokenizer",
-        type(
-            "FakeAutoTokenizer",
-            (),
-            {
-                "from_pretrained": staticmethod(lambda *a, **kw: None),
-            },
-        ),
-    )
-    monkeypatch.setattr(
-        _qwen3_vl_module,
-        "Qwen3VLProcessor",
-        type(
-            "FakeProcessor",
-            (),
-            {
-                "from_pretrained": staticmethod(lambda *a, **kw: None),
-            },
-        ),
-    )
+    """Monkeypatch model construction for Energon config tests."""
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
 
 def test_qwen3_vl_8b_peft_energon_builds_config(monkeypatch: pytest.MonkeyPatch):
@@ -495,15 +492,27 @@ def test_qwen3_vl_8b_peft_energon_builds_config(monkeypatch: pytest.MonkeyPatch)
     assert cfg.peft is not None
 
 
-def test_qwen3_vl_8b_peft_energon_uses_energon_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that the energon config uses EnergonProvider as dataset."""
+def test_qwen3_vl_8b_peft_energon_uses_declarative_config(monkeypatch: pytest.MonkeyPatch):
+    """Test that recipe construction does not load an HF processor or tokenizer."""
     _patch_energon_deps(monkeypatch)
+    import transformers
+
+    monkeypatch.setattr(
+        transformers.AutoTokenizer,
+        "from_pretrained",
+        lambda *_, **__: pytest.fail("recipe construction loaded a tokenizer"),
+    )
+    monkeypatch.setattr(
+        transformers.AutoProcessor,
+        "from_pretrained",
+        lambda *_, **__: pytest.fail("recipe construction loaded a processor"),
+    )
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
 
-    from megatron.bridge.data.energon.energon_provider import EnergonProvider
+    from megatron.bridge.data.builders import EnergonDatasetConfig
 
-    assert isinstance(cfg.dataset, EnergonProvider)
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
 
 
 def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch):
@@ -514,7 +523,6 @@ def test_qwen3_vl_8b_peft_energon_dataset_params(monkeypatch: pytest.MonkeyPatch
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.micro_batch_size == cfg.train.micro_batch_size
-    assert cfg.dataset.global_batch_size == cfg.train.global_batch_size
 
 
 @pytest.mark.parametrize("peft_scheme", ["lora", "dora"])
@@ -562,21 +570,20 @@ def test_qwen3_vl_8b_peft_energon_freeze_defaults(monkeypatch: pytest.MonkeyPatc
 
 
 def test_qwen3_vl_8b_peft_energon_task_encoder(monkeypatch: pytest.MonkeyPatch):
-    """Test that energon config creates a QwenVLTaskEncoder in the dataset."""
+    """Test that Energon recipe carries a serializable Qwen task-encoder config."""
     _patch_energon_deps(monkeypatch)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_peft_energon_config()
 
-    from megatron.bridge.models.qwen_vl.data.energon import QwenVLTaskEncoder
-    from megatron.bridge.recipes.qwen_vl.qwen3_vl import QwenVLEnergonProvider
+    from megatron.bridge.data.builders import EnergonDatasetConfig, QwenVLEnergonTaskEncoderConfig
 
-    assert isinstance(cfg.dataset, QwenVLEnergonProvider)
-    assert isinstance(cfg.dataset.task_encoder, QwenVLTaskEncoder)
-    assert cfg.dataset.min_pixels == 200704
-    assert cfg.dataset.max_pixels == 1003520
-    assert cfg.dataset.max_num_images == 10
-    assert cfg.dataset.max_num_frames == 60
-    assert cfg.dataset.max_visual_tokens == 16384
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert isinstance(cfg.dataset.task_encoder, QwenVLEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.min_pixels == 200704
+    assert cfg.dataset.task_encoder.max_pixels == 1003520
+    assert cfg.dataset.task_encoder.max_num_images == 10
+    assert cfg.dataset.task_encoder.max_num_frames == 60
+    assert cfg.dataset.task_encoder.max_visual_tokens == 16384
 
 
 # =============================================================================
@@ -587,7 +594,7 @@ def test_qwen3_vl_8b_peft_energon_task_encoder(monkeypatch: pytest.MonkeyPatch):
 @pytest.mark.parametrize("recipe_func", _QWEN3_VL_PRETRAIN_MOCK_FUNCS)
 def test_each_qwen3_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Qwen3-VL pretrain mock recipe function builds a valid ConfigContainer."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -606,19 +613,19 @@ def test_each_qwen3_vl_pretrain_mock_recipe_builds_config(recipe_func: Callable,
 
 @pytest.mark.parametrize("recipe_func", _QWEN3_VL_PRETRAIN_MOCK_FUNCS)
 def test_qwen3_vl_pretrain_mock_uses_mock_dataset(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
-    """Test that pretrain mock configs use MockVLMConversationProvider."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    """Test that pretrain mock configs use the declarative mock VLM config."""
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
-    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+    from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, MockVLMConversationProvider)
+    assert isinstance(cfg.dataset, MockVLMSFTDatasetConfig)
 
 
 def test_qwen3_vl_8b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B pretrain mock has correct default parallelism and training params."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config()
 
@@ -643,7 +650,7 @@ def test_qwen3_vl_8b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_qwen3_vl_30b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 30B-A3B pretrain mock has correct default parallelism for MoE."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_30b_a3b_pretrain_mock_config()
 
@@ -662,7 +669,7 @@ def test_qwen3_vl_30b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch
 
 def test_qwen3_vl_235b_a22b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 235B-A22B pretrain mock has correct default parallelism for large MoE."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_235b_a22b_pretrain_mock_config()
 
@@ -674,11 +681,13 @@ def test_qwen3_vl_235b_a22b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPat
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.sequence_parallel is True
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.ddp.average_in_collective is False
 
 
 def test_qwen3_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock DDP config is correctly set."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config()
 
@@ -689,17 +698,16 @@ def test_qwen3_vl_pretrain_mock_ddp_config(monkeypatch: pytest.MonkeyPatch):
     assert cfg.ddp.use_distributed_optimizer is True
 
 
-def test_qwen3_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.MonkeyPatch):
-    """Test that user kwargs properly override recommended defaults."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+def test_qwen3_vl_pretrain_mock_overrides_after_instantiation(monkeypatch: pytest.MonkeyPatch):
+    """Test that callers can override fixed pretrain configs after instantiation."""
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
-    cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config(
-        train_iters=1000,
-        global_batch_size=16,
-        micro_batch_size=1,
-        lr=1e-4,
-        seq_length=2048,
-    )
+    cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config()
+    cfg.train.train_iters = 1000
+    cfg.train.global_batch_size = 16
+    cfg.train.micro_batch_size = 1
+    cfg.optimizer.lr = 1e-4
+    cfg.model.seq_length = 2048
 
     _assert_basic_config(cfg)
 
@@ -710,17 +718,9 @@ def test_qwen3_vl_pretrain_mock_user_kwargs_override(monkeypatch: pytest.MonkeyP
     assert cfg.model.seq_length == 2048
 
 
-def test_qwen3_vl_pretrain_mock_non_mock_raises(monkeypatch: pytest.MonkeyPatch):
-    """Test that mock=False raises ValueError since real datasets are not yet supported."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    with pytest.raises(ValueError, match="Non-mock dataset not yet supported"):
-        _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config(mock=False)
-
-
 def test_qwen3_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock checkpoint config is correctly set."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config()
 
@@ -731,7 +731,7 @@ def test_qwen3_vl_pretrain_mock_checkpoint_config(monkeypatch: pytest.MonkeyPatc
 
 def test_qwen3_vl_pretrain_mock_rng_seed(monkeypatch: pytest.MonkeyPatch):
     """Test that pretrain mock RNG seed is set."""
-    monkeypatch.setattr(_qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _qwen3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen3_vl_module.qwen3_vl_8b_pretrain_mock_config()
 

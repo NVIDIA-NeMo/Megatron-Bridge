@@ -30,7 +30,7 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ### Import HF → Megatron
 
 ```bash
-python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model inclusionAI/Ling-flash-2.0 \
     --megatron-path ${WORKSPACE}/models/Ling-flash-2.0 \
     --trust-remote-code
@@ -39,7 +39,7 @@ python examples/conversion/convert_checkpoints.py import \
 ### Export Megatron → HF
 
 ```bash
-python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model inclusionAI/Ling-flash-2.0 \
     --megatron-path ${WORKSPACE}/models/Ling-flash-2.0/iter_0000000 \
     --hf-path ${WORKSPACE}/models/Ling-flash-2.0-hf-export \

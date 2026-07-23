@@ -17,12 +17,16 @@
 import types
 import weakref
 from contextlib import nullcontext
+from functools import partial
 from types import SimpleNamespace
 
 import pytest
 import torch
+from megatron.core import tensor_parallel
+from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
+    Gemma4DenseMLP,
     Gemma4DenseRotaryEmbedding,
     Gemma4DenseSelfAttention,
     Gemma4DenseTransformerLayer,
@@ -89,6 +93,22 @@ class TestGemma4RMSNorm:
 
         assert not hasattr(norm, "weight")
 
+    def test_weight_uses_model_parameter_dtype(self):
+        norm = Gemma4RMSNorm(
+            _config(params_dtype=torch.bfloat16),
+            hidden_size=2,
+        )
+
+        assert norm.weight.dtype is torch.bfloat16
+
+    def test_weight_is_marked_for_sequence_parallel_reduction(self):
+        norm = Gemma4RMSNorm(
+            _config(params_dtype=torch.bfloat16, sequence_parallel=True),
+            hidden_size=2,
+        )
+
+        assert norm.weight.sequence_parallel is True
+
 
 class TestGemma4MoE:
     def test_router_returns_normalized_topk_weights(self):
@@ -149,6 +169,57 @@ class TestGemma4LayerSpec:
         assert layer_spec.submodules.self_attention.module is Gemma4DenseSelfAttention
         assert layer_spec.submodules.post_self_attn_layernorm is Gemma4RMSNorm
         assert layer_spec.submodules.post_mlp_layernorm is Gemma4RMSNorm
+
+    def test_double_wide_mlp_only_applies_to_shared_kv_layers(self, monkeypatch):
+        mlp_builders = []
+
+        def fake_layer_init(self, config, submodules, layer_number=1, **kwargs):
+            del kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+            self.layer_number = layer_number
+            mlp_builders.append(submodules.mlp)
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer.__init__",
+            fake_layer_init,
+        )
+        config = _config(
+            hidden_size=4,
+            ffn_hidden_size=6,
+            num_layers=4,
+            num_kv_shared_layers=2,
+            use_double_wide_mlp=True,
+            per_layer_embed_dim=0,
+            enable_moe_block=False,
+        )
+
+        Gemma4DenseTransformerLayer(config, get_gemma4_layer_spec().submodules, layer_number=2)
+        Gemma4DenseTransformerLayer(config, get_gemma4_layer_spec().submodules, layer_number=3)
+
+        assert mlp_builders[0].func.__self__ is Gemma4DenseMLP
+        assert mlp_builders[0].keywords["ffn_hidden_size"] == 6
+        assert mlp_builders[1].func.__self__ is Gemma4DenseMLP
+        assert mlp_builders[1].keywords["ffn_hidden_size"] == 12
+
+    def test_dense_mlp_sets_width_on_layer_config_and_constructor(self, monkeypatch):
+        captured = {}
+
+        def fake_mlp_init(self, config, submodules, ffn_hidden_size=None, **kwargs):
+            del submodules, kwargs
+            torch.nn.Module.__init__(self)
+            captured["config"] = config
+            captured["ffn_hidden_size"] = ffn_hidden_size
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.MLP.__init__", fake_mlp_init)
+        config = _config(ffn_hidden_size=6)
+
+        Gemma4DenseMLP(config, submodules=SimpleNamespace(), ffn_hidden_size=12)
+
+        assert captured["config"] is not config
+        assert config.ffn_hidden_size == 6
+        assert captured["config"].ffn_hidden_size == 12
+        assert captured["ffn_hidden_size"] == 12
 
 
 class TestGemma4DenseSelfAttention:
@@ -666,33 +737,50 @@ class TestGemma4SelfAttention:
 
         assert out is expected
 
-    def test_get_query_key_value_tensors_ties_and_normalizes_value(self, monkeypatch):
-        query = torch.ones(2, 1, 1, 2)
-        key = torch.full_like(query, 3.0)
-        value = torch.full_like(query, 5.0)
-        extra = torch.full_like(query, 7.0)
+    def test_get_query_key_value_tensors_normalizes_tied_value_from_raw_key(self, monkeypatch):
+        query = torch.tensor([[[[1.0, 2.0]]]])
+        raw_key = torch.tensor([[[[3.0, 4.0]]]])
+        unused_value = torch.tensor([[[[5.0, 6.0]]]])
+        mixed_qkv = torch.cat((query, raw_key, unused_value), dim=-1)
 
-        def fake_get_qkv(self, hidden_states, key_value_states=None, **kwargs):
-            del self, hidden_states, key_value_states, kwargs
-            return query, key, value, extra
+        def fake_get_qkv(self, hidden_states, key_value_states=None, output_gate=False, split_qkv=True):
+            del self, hidden_states, key_value_states
+            assert output_gate is False
+            assert split_qkv is False
+            return mixed_qkv, [2, 2, 2]
 
         monkeypatch.setattr(
             "megatron.bridge.models.gemma.modeling_gemma4.SelfAttention.get_query_key_value_tensors",
             fake_get_qkv,
         )
         attn = self._make_attention(layer_number=2)
+        attn.config.num_query_groups = 1
+        attn.config.test_mode = False
+        attn.hidden_size_per_attention_head = 2
+        attn.world_size = 1
+
+        class ScaleKey(torch.nn.Module):
+            def forward(self, tensor):
+                return tensor * torch.tensor([2.0, 1.0])
+
+        object.__setattr__(attn, "q_layernorm", torch.nn.Identity())
+        object.__setattr__(attn, "k_layernorm", ScaleKey())
         attn._tied_kv = True
         attn._v_norm_eps = 1e-6
 
-        out_query, out_key, out_value, out_extra = Gemma4SelfAttention.get_query_key_value_tensors(
+        out_query, out_key, out_value = Gemma4SelfAttention.get_query_key_value_tensors(
             attn,
             torch.zeros(1),
         )
 
-        assert out_query is query
-        assert out_key is key
-        assert out_extra is extra
-        torch.testing.assert_close(out_value, torch.ones_like(key))
+        torch.testing.assert_close(out_query, query)
+        torch.testing.assert_close(out_key, raw_key * torch.tensor([2.0, 1.0]))
+        expected_value = raw_key / torch.sqrt(raw_key.pow(2).mean(-1, keepdim=True) + 1e-6)
+        torch.testing.assert_close(out_value, expected_value)
+        assert not torch.allclose(
+            out_value,
+            out_key / torch.sqrt(out_key.pow(2).mean(-1, keepdim=True) + 1e-6),
+        )
 
     def test_forward_selects_local_mask_and_rotary_embedding(self, monkeypatch):
         calls = {}
@@ -809,8 +897,44 @@ class TestGemma4RotaryEmbeddings:
             use_cpu_initialization=True,
         )
 
-        assert rotary.inv_freq.numel() == 2
+        assert rotary.inv_freq.numel() == 8
+        expected_rotated = 1.0 / (1_000_000 ** (torch.arange(0, 4, 2, dtype=torch.float32) / 16))
+        torch.testing.assert_close(rotary.inv_freq[:2], expected_rotated)
+        torch.testing.assert_close(rotary.inv_freq[2:], torch.zeros(6))
         assert rotary.rope_local.inv_freq.numel() == 4
+
+    def test_moe_global_rotary_matches_hf_proportional_coordinate_layout(self):
+        head_dim = 16
+        partial_rotary_factor = 0.25
+        rotary_base = 1_000_000
+        position = 3
+        rotary = Gemma4RotaryEmbedding(
+            kv_channels=8,
+            rotary_percent=1.0,
+            rotary_base=rotary_base,
+            rotary_base_local=10_000,
+            global_kv_channels=head_dim,
+            global_rotary_percent=partial_rotary_factor,
+            use_cpu_initialization=True,
+        )
+
+        hidden_states = torch.arange(1, head_dim + 1, dtype=torch.float32).view(1, 1, 1, head_dim)
+        freqs = rotary.get_freqs_non_repeated(1, offset=position)
+        freqs = torch.cat((freqs, freqs), dim=-1)[:, None, None, :]
+        config = SimpleNamespace(apply_rope_fusion=False, rotary_interleaved=False)
+        actual = apply_rotary_pos_emb(hidden_states, freqs, config, cp_group=object())
+
+        expected = hidden_states.clone()
+        rope_angles = int(partial_rotary_factor * head_dim // 2)
+        angles = position / (rotary_base ** (torch.arange(0, 2 * rope_angles, 2, dtype=torch.float32) / head_dim))
+        cos = torch.cos(angles)
+        sin = torch.sin(angles)
+        left = hidden_states[..., :rope_angles]
+        right = hidden_states[..., head_dim // 2 : head_dim // 2 + rope_angles]
+        expected[..., :rope_angles] = left * cos - right * sin
+        expected[..., head_dim // 2 : head_dim // 2 + rope_angles] = right * cos + left * sin
+
+        torch.testing.assert_close(actual, expected)
 
     def test_dense_rotary_forwards_to_sliding_and_full_rope(self):
         class FakeRope:
@@ -1637,6 +1761,51 @@ class TestGemma4PLEHelpers:
 
 
 class TestGemma4MoEHelpers:
+    def test_topk_router_scale_state_is_trainable(self, monkeypatch):
+        def fake_router_init(self, config, **kwargs):
+            del kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TopKRouter.__init__",
+            fake_router_init,
+        )
+        router = Gemma4TopKRouter(
+            _config(
+                num_moe_experts=3,
+                params_dtype=torch.bfloat16,
+                sequence_parallel=True,
+            )
+        )
+
+        assert isinstance(router.scale, torch.nn.Parameter)
+        assert isinstance(router.per_expert_scale, torch.nn.Parameter)
+        assert router.scale.dtype is torch.bfloat16
+        assert router.per_expert_scale.dtype is torch.bfloat16
+        assert router.scale.sequence_parallel is True
+        assert router.per_expert_scale.sequence_parallel is True
+
+    def test_transformer_moe_norm_state_is_trainable(self, monkeypatch):
+        def fake_layer_init(self, config, submodules, layer_number=1, **kwargs):
+            del submodules, layer_number, kwargs
+            torch.nn.Module.__init__(self)
+            self.config = config
+
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.TransformerLayer.__init__",
+            fake_layer_init,
+        )
+        layer = Gemma4TransformerLayer(
+            _config(params_dtype=torch.bfloat16, sequence_parallel=True),
+            submodules=SimpleNamespace(),
+        )
+
+        assert isinstance(layer.pre_shared_expert_layernorm.weight, torch.nn.Parameter)
+        assert isinstance(layer.post_ffn_layernorm.weight, torch.nn.Parameter)
+        assert layer.pre_shared_expert_layernorm.weight.sequence_parallel is True
+        assert layer.post_ffn_layernorm.weight.sequence_parallel is True
+
     def test_gemma4_block_spec_patches_attention_layer_and_moe_modules(self, monkeypatch):
         from megatron.core.transformer.attention import SelfAttention
         from megatron.core.transformer.moe.moe_layer import MoELayer
@@ -1672,6 +1841,27 @@ class TestGemma4MoEHelpers:
         assert attn_submodules.linear_proj != "old_proj"
         assert layer_spec.submodules.mlp.module is Gemma4MoELayer
         assert mlp_submodules.router is Gemma4TopKRouter
+
+    def test_gemma4_block_spec_patches_partial_moe_builder(self, monkeypatch):
+        from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+
+        mlp_submodules = MoESubmodules(experts=object(), shared_experts=object())
+        layer_spec = SimpleNamespace(
+            module=object,
+            submodules=SimpleNamespace(
+                self_attention=SimpleNamespace(module=object, submodules=None),
+                mlp=partial(MoELayer, submodules=mlp_submodules),
+            ),
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.models.gemma.modeling_gemma4.get_gpt_decoder_block_spec",
+            lambda *args, **kwargs: SimpleNamespace(layer_specs=[layer_spec]),
+        )
+
+        _gemma4_block_spec("config", use_transformer_engine=True)
+
+        assert layer_spec.submodules.mlp.func is Gemma4MoELayer
+        assert layer_spec.submodules.mlp.keywords["submodules"].router is Gemma4TopKRouter
 
     def test_gemma4_block_spec_skips_te_projection_patch_when_disabled(self, monkeypatch):
         from megatron.core.transformer.attention import SelfAttention
@@ -1726,6 +1916,97 @@ class TestGemma4MoEHelpers:
         torch.testing.assert_close(out_probs[0], torch.tensor([0.4, 1.2, 0.0]))
         torch.testing.assert_close(out_probs[1], torch.tensor([0.5, 1.0, 0.0]))
 
+    def test_topk_router_gating_applies_hf_norm_and_scale(self, monkeypatch):
+        captured = []
+
+        def fake_gating(self, hidden_states):
+            del self
+            captured.append(hidden_states)
+            return hidden_states
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.TopKRouter.gating", fake_gating)
+        router = object.__new__(Gemma4TopKRouter)
+        torch.nn.Module.__init__(router)
+        router.config = SimpleNamespace(layernorm_epsilon=1e-6)
+        router.scale = torch.nn.Parameter(torch.tensor([2.0, 3.0]))
+        router.scalar_root_size = 2**-0.5
+        hidden_states = torch.tensor([[3.0, 4.0]])
+
+        output = Gemma4TopKRouter.gating(router, hidden_states)
+
+        normed = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
+        expected = normed * router.scale * router.scalar_root_size
+        torch.testing.assert_close(output, expected)
+        torch.testing.assert_close(captured[0], expected)
+
+    def test_transformer_layer_uses_separate_moe_inputs(self):
+        calls = []
+
+        class FakeMoE:
+            def forward_with_separate_inputs(self, expert, shared, router, padding_mask=None):
+                calls.append((expert, shared, router, padding_mask))
+                return torch.zeros_like(expert), None
+
+        layer = SimpleNamespace(
+            config=SimpleNamespace(fp32_residual_connection=False, layernorm_epsilon=1e-6),
+            pre_mlp_layernorm=SimpleNamespace(weight=torch.tensor([2.0, 2.0])),
+            pre_shared_expert_layernorm=SimpleNamespace(weight=torch.tensor([3.0, 3.0])),
+            mlp=FakeMoE(),
+            _forward_post_mlp=lambda output, residual: (output, residual),
+        )
+        hidden_states = torch.tensor([[[3.0, 4.0]]])
+
+        output, residual = Gemma4TransformerLayer._forward_mlp(
+            layer,
+            hidden_states,
+            padding_mask=torch.tensor([[True]]),
+        )
+
+        base = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
+        expert, shared, router, padding_mask = calls[0]
+        torch.testing.assert_close(expert, base * 2.0)
+        torch.testing.assert_close(shared, base * 3.0)
+        torch.testing.assert_close(router, hidden_states)
+        torch.testing.assert_close(output[0], torch.zeros_like(hidden_states))
+        torch.testing.assert_close(residual, hidden_states)
+        torch.testing.assert_close(padding_mask, torch.tensor([[True]]))
+
+    def test_transformer_layer_preserves_packed_moe_batch_semantics(self):
+        calls = []
+
+        class FakeMoE:
+            def forward_with_separate_inputs(self, expert, shared, router, padding_mask=None):
+                calls.append((expert, shared, router, padding_mask))
+                return expert, None
+
+        layer = SimpleNamespace(
+            config=SimpleNamespace(fp32_residual_connection=False, layernorm_epsilon=1e-6),
+            is_moe_layer=True,
+            pre_mlp_layernorm=SimpleNamespace(weight=torch.tensor([2.0, 2.0])),
+            pre_shared_expert_layernorm=SimpleNamespace(weight=torch.tensor([3.0, 3.0])),
+            mlp=FakeMoE(),
+            _forward_post_mlp=lambda output, residual: (output[0], residual),
+        )
+        hidden_states = torch.arange(1, 9, dtype=torch.float32).view(4, 1, 2)
+        padding_mask = torch.tensor([[False, True], [True, False]])
+
+        output, residual = Gemma4TransformerLayer._forward_mlp(
+            layer,
+            hidden_states,
+            padding_mask=padding_mask,
+            packed_seq_params=SimpleNamespace(tokens_per_sample=2),
+        )
+
+        expected_router = hidden_states.view(2, 2, -1).transpose(0, 1).contiguous()
+        normalized = expected_router * torch.pow(expected_router.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)
+        expert, shared, router, routed_padding_mask = calls[0]
+        torch.testing.assert_close(expert, normalized * 2.0)
+        torch.testing.assert_close(shared, normalized * 3.0)
+        torch.testing.assert_close(router, expected_router)
+        torch.testing.assert_close(routed_padding_mask, padding_mask)
+        torch.testing.assert_close(output, (normalized * 2.0).transpose(0, 1).reshape(4, 1, 2))
+        torch.testing.assert_close(residual, hidden_states)
+
     def test_topk_router_routing_keeps_probs_when_map_missing(self, monkeypatch):
         routing_probs = torch.ones(2, 3)
 
@@ -1759,6 +2040,62 @@ class TestGemma4MoEHelpers:
         out = Gemma4MoELayer.postprocess(layer, output, shared)
 
         torch.testing.assert_close(out, torch.full_like(output, 21.0))
+
+    @pytest.mark.parametrize(
+        ("fp8", "fp4", "expected_checkpoint"),
+        [
+            pytest.param(False, False, "tensor_parallel", id="bf16"),
+            pytest.param(True, False, "te", id="fp8"),
+            pytest.param(False, True, "te", id="fp4"),
+        ],
+    )
+    def test_moe_layer_recompute_uses_expected_checkpoint_for_training(
+        self, monkeypatch, fp8, fp4, expected_checkpoint
+    ):
+        calls = []
+
+        def fake_te_checkpoint(function, distribute_saved_activations, get_rng_tracker, tp_group, *args):
+            calls.append(("te", distribute_saved_activations, get_rng_tracker, tp_group))
+            return function(*args)
+
+        def fake_tensor_parallel_checkpoint(function, distribute_saved_activations, *args):
+            calls.append(("tensor_parallel", distribute_saved_activations))
+            return function(*args)
+
+        monkeypatch.setattr("megatron.bridge.models.gemma.modeling_gemma4.te_checkpoint", fake_te_checkpoint)
+        monkeypatch.setattr(tensor_parallel, "checkpoint", fake_tensor_parallel_checkpoint)
+
+        layer = object.__new__(Gemma4MoELayer)
+        torch.nn.Module.__init__(layer)
+        layer.shared_expert_overlap = False
+        layer.moe_layer_recompute = True
+        layer.train()
+        layer.config = SimpleNamespace(fp8=fp8, fp4=fp4)
+        layer.tp_group = "tp-group"
+        layer.shared_experts_compute = lambda tensor: tensor + 1.0
+        layer.route = lambda tensor, padding_mask: (tensor, padding_mask)
+        layer.preprocess = lambda tensor, probs, routing_map: (tensor + probs, routing_map)
+        layer.dispatch = lambda tensor, probs: (tensor, probs)
+        layer.routed_experts_compute = lambda tensor, probs: (tensor + 1.0, None)
+        layer.combine = lambda tensor: tensor
+        layer.postprocess = lambda output, shared: output + shared
+        expert_input = torch.tensor(1.0)
+        shared_input = torch.tensor(2.0)
+        router_input = torch.tensor(3.0)
+
+        output, bias = Gemma4MoELayer.forward_with_separate_inputs(
+            layer,
+            expert_input,
+            shared_input,
+            router_input,
+        )
+
+        assert bias is None
+        torch.testing.assert_close(output, torch.tensor(8.0))
+        if expected_checkpoint == "te":
+            assert calls == [("te", False, tensor_parallel.random.get_cuda_rng_tracker, "tp-group")]
+        else:
+            assert calls == [("tensor_parallel", False)]
 
     def test_install_tied_kv_marks_only_global_attention_layers(self):
         local_attn = SimpleNamespace()

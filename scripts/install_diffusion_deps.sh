@@ -24,4 +24,4 @@
 # neutralize the install.
 set -euo pipefail
 
-uv pip install --no-config imageio imageio-ffmpeg av
+uv pip install --no-config imageio imageio-ffmpeg av easydict

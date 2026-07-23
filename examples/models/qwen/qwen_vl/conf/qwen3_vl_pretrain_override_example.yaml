@@ -74,8 +74,9 @@ logger:
   wandb_exp_name: null
 
 dataset:
-  sequence_length: 4096
-  # maker_name: make_cv17_dataset
+  seq_length: 4096
+  # source:
+  #   dataset_name: cord_v2
   enable_in_batch_packing: true
 
 rng:
@@ -95,4 +96,3 @@ profiling:
   record_shapes: false
   use_nsys_profiler: false
   use_pytorch_profiler: false
-

@@ -19,14 +19,19 @@ from typing import Callable
 import pytest
 import torch
 
-from megatron.bridge.data.energon.energon_provider import EnergonProvider
-from megatron.bridge.data.energon.nemotron_omni_task_encoder import NemotronOmniTaskEncoder
-from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
-from megatron.bridge.data.vlm_datasets.collate import nemotron_omni_collate_fn
+from megatron.bridge.data.builders import (
+    DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
+    NemotronOmniEnergonTaskEncoderConfig,
+)
+from megatron.bridge.data.collators.registry import resolve_model_collate
+from megatron.bridge.models.nemotron_omni.data.collate_fn import nemotron_omni_collate_fn
 from megatron.bridge.training.config import ConfigContainer
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.nemotron_omni")
+_h100_recipe_module = importlib.import_module("megatron.bridge.recipes.nemotron_omni.h100.nemotron_omni")
 
 _PUBLIC_HF_ID = "nvidia/Nemotron-3-Nano-Omni-30B-A3B-Reasoning-BF16"
 _TEST_HF_ID = "unit-test/nemotron-omni"
@@ -40,6 +45,8 @@ _RECIPE_FUNCS = [
 
 
 class _FakeModelCfg:
+    dynamic_resolution = True
+
     def finalize(self):
         return None
 
@@ -64,18 +71,23 @@ class _FakeAutoBridge:
 def fake_processor(monkeypatch: pytest.MonkeyPatch):
     processor = SimpleNamespace(
         tokenizer=SimpleNamespace(pad_token_id=0, eos_token_id=11),
-        image_processor=SimpleNamespace(max_num_tiles=12),
+        image_processor=SimpleNamespace(max_num_patches=13312),
     )
 
     import transformers
 
-    monkeypatch.setattr(_recipe_module, "AutoBridge", _FakeAutoBridge)
-    monkeypatch.setattr(transformers.AutoProcessor, "from_pretrained", lambda *_, **__: processor)
+    patch_recipe_module_global(monkeypatch, _recipe_module, "AutoBridge", _FakeAutoBridge)
+    monkeypatch.setattr(_h100_recipe_module, "_DEFAULT_HF_PATH", _TEST_HF_ID)
+    monkeypatch.setattr(
+        transformers.AutoProcessor,
+        "from_pretrained",
+        lambda *_, **__: pytest.fail("recipe construction loaded a processor"),
+    )
     return processor
 
 
 def _build_config(recipe_func: Callable, fake_processor) -> ConfigContainer:
-    return recipe_func(hf_path=_TEST_HF_ID)
+    return recipe_func()
 
 
 def _assert_common_config(cfg: ConfigContainer):
@@ -127,14 +139,14 @@ def test_each_nemotron_omni_recipe_builds_valid_config(recipe_func: Callable, fa
     assert cfg.dataset.seq_length == 4096
 
 
-def test_cord_v2_sft_recipe_uses_hf_dataset_provider(fake_processor):
+def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_sft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.dataset.hf_processor_path == _TEST_HF_ID
-    assert cfg.dataset.maker_name == "cord_v2"
-    assert cfg.dataset.collate_impl is nemotron_omni_collate_fn
+    assert cfg.dataset.source.dataset_name == "cord_v2"
+    assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.model.temporal_patch_dim == 1
     assert cfg.model.freeze_sound_projection is False
@@ -145,9 +157,16 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_cord_v2_peft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
     assert cfg.peft is not None
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
@@ -155,15 +174,15 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.model.freeze_sound_projection is True
 
 
-def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder(fake_processor):
+def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_valor32k_sft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, EnergonProvider)
-    assert cfg.dataset.path == ""
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert cfg.dataset.path is None
     assert cfg.dataset.enable_in_batch_packing is False
-    assert isinstance(cfg.dataset.task_encoder, NemotronOmniTaskEncoder)
-    assert cfg.dataset.task_encoder.processor is fake_processor
+    assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
+    assert cfg.dataset.task_encoder.hf_processor_path == _TEST_HF_ID
     assert cfg.dataset.task_encoder.max_audio_duration == 10.0
     assert cfg.dataset.task_encoder.num_mel_bins == 128
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
@@ -179,11 +198,18 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     cfg = _build_config(_recipe_module.nemotron_omni_valor32k_peft_config, fake_processor)
 
     _assert_common_config(cfg)
-    assert isinstance(cfg.dataset, EnergonProvider)
-    assert isinstance(cfg.dataset.task_encoder, NemotronOmniTaskEncoder)
+    assert isinstance(cfg.dataset, EnergonDatasetConfig)
+    assert isinstance(cfg.dataset.task_encoder, NemotronOmniEnergonTaskEncoderConfig)
     assert cfg.dataset.task_encoder.use_temporal_video_embedder is True
     assert cfg.peft is not None
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "in_proj", "out_proj"]
+    assert cfg.peft.target_modules == [
+        "linear_qkv",
+        "linear_proj",
+        "in_proj",
+        "out_proj",
+        "linear_fc1",
+        "linear_fc2",
+    ]
     assert cfg.peft.dim == 16
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None

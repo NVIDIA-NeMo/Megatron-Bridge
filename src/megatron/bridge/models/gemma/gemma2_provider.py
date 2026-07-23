@@ -125,7 +125,7 @@ class Gemma2DotProductAttention(MegatronModule):
         self.layer_number = max(1, layer_number)
 
         self.window_size = None
-        if self.layer_number % 2 == 0:
+        if self.layer_number % 2 == 1:
             self.window_size = config.window_size
 
         self.attention_type = attention_type  # unused for now
@@ -134,7 +134,7 @@ class Gemma2DotProductAttention(MegatronModule):
         # triangular causal kernel (ScaledUpperTriangMaskedSoftmax) which never reads
         # the mask argument, silently dropping the SWA mask. Switching to arbitrary
         # for SWA layers routes through ScaledMaskedSoftmax, which applies the mask.
-        # Odd-numbered layers remain causal and keep the fast fused causal path.
+        # Even-numbered layers remain causal and keep the fast fused causal path.
         self.attn_mask_type = AttnMaskType.arbitrary if self.window_size is not None else attn_mask_type
 
         projection_size = self.config.kv_channels * self.config.num_attention_heads

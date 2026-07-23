@@ -101,7 +101,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.ernie_vl.ernie45_vl_provider import Ernie45VLModelProvider
 from megatron.bridge.models.ernie_vl.modeling_ernie45_vl.model import Ernie45VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.utils.common_utils import extract_expert_number_from_param
 
 
@@ -419,7 +419,7 @@ class Ernie45VLBridge(MegatronModelBridge):
             return raw[0]
         return raw
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Ernie45VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Ernie45VLModelProvider:
         """
         Create an Ernie45VLModelProvider from a HuggingFace pretrained model.
 

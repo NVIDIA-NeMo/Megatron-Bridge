@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import signal
+import threading
 from typing import Any, Optional
 
 import torch
@@ -105,6 +106,7 @@ class DistributedSignalHandler:
         self._signal_received = False
         self.released = False
         self.original_handler = None
+        self._installed = False
 
     def signals_received(self) -> list[bool]:
         """Check if any rank in the default group received the signal.
@@ -121,14 +123,16 @@ class DistributedSignalHandler:
     def __enter__(self) -> "DistributedSignalHandler":
         self._signal_received = False
         self.released = False
+        self._installed = False
         self.original_handler = signal.getsignal(self.sig)
 
         def handler(signum: int, frame: Optional[Any]) -> None:
             print_rank_0(f"Received signal {signum}, initiating graceful stop")
             self._signal_received = True
 
-        signal.signal(self.sig, handler)
-        print_rank_0(f"Signal handler installed for {self.sig}")
+        if threading.current_thread() is threading.main_thread():
+            signal.signal(self.sig, handler)
+            self._installed = True
 
         return self
 
@@ -145,6 +149,7 @@ class DistributedSignalHandler:
         if self.released:
             return False
 
-        signal.signal(self.sig, self.original_handler)
+        if self._installed:
+            signal.signal(self.sig, self.original_handler)
         self.released = True
         return True

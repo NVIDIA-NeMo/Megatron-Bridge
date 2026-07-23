@@ -63,7 +63,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-Next-80B-A3B-Instruct \
   --megatron-path /checkpoints/qwen3_next_80b_megatron
 ```
@@ -173,7 +173,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-30B-A3B \
   --megatron-path /checkpoints/qwen3_30b_a3b_megatron
 ```
@@ -218,9 +218,9 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 
 | Model | Mode | TP | PP | EP | Total GPUs | Use Case |
 |-------|------|----|----|----|-----------:|----------|
-| **Qwen3-30B-A3B** | Pretrain | 1 | 1 | 8 | 8 | Pre-training (single node) |
-| **Qwen3-30B-A3B** | Full SFT | 1 | 1 | 8 | 8 | Full supervised finetuning |
-| **Qwen3-30B-A3B** | LoRA/DoRA | 1 | 1 | 8 | 8 | PEFT finetuning (single node) |
+| **Qwen3-30B-A3B** | Pretrain | 1 | 1 | 16 | 16 | Pre-training (2 nodes) |
+| **Qwen3-30B-A3B** | Full SFT | 1 | 1 | 16 | 16 | Full supervised finetuning (2 nodes) |
+| **Qwen3-30B-A3B** | LoRA/DoRA | 4 | 1 | 4 | 4 | PEFT finetuning |
 | **Qwen3-235B-A22B** | Pretrain | 2 | 8 | 32 | 512 | Pre-training (64 nodes) |
 | **Qwen3-235B-A22B** | Full SFT | 2 | 8 | 32 | 512 | Full supervised finetuning (64 nodes) |
 | **Qwen3-235B-A22B** | LoRA/DoRA | 2 | 8 | 32 | 512 | PEFT finetuning (64 nodes) |
@@ -239,7 +239,7 @@ config = qwen3_30b_a3b_pretrain_config(
     train_iters=500_000,
     global_batch_size=2048,
     seq_length=4096,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
+    # Uses TP=1, PP=1, EP=16 (16 GPUs) automatically
 )
 ```
 
@@ -272,7 +272,7 @@ config = qwen3_30b_a3b_sft_config(
     train_iters=1000,
     global_batch_size=64,
     finetune_lr=5e-6,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
+    # Uses TP=1, PP=1, EP=16 (16 GPUs) automatically
 )
 ```
 
@@ -288,7 +288,7 @@ config = qwen3_30b_a3b_peft_config(
     train_iters=1000,
     global_batch_size=128,
     finetune_lr=1e-4,
-    # Uses TP=1, PP=1, EP=8 (8 GPUs) automatically
+    # Uses TP=4, PP=1, EP=4 (4 GPUs) automatically
 )
 ```
 
@@ -322,7 +322,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-8B \
   --megatron-path /checkpoints/qwen3_8b_megatron
 ```
@@ -452,7 +452,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 #### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen2.5-7B \
   --megatron-path /checkpoints/qwen25_7b_megatron
 ```

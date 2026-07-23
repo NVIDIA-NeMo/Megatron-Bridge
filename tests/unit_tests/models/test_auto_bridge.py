@@ -23,7 +23,15 @@ from unittest.mock import Mock, PropertyMock, patch
 
 import pytest
 import torch
-from transformers import LlamaConfig
+from tokenizers import Tokenizer, models, pre_tokenizers
+from transformers import (
+    AutoProcessor,
+    AutoTokenizer,
+    CLIPImageProcessor,
+    LlamaConfig,
+    LlavaProcessor,
+    PreTrainedTokenizerFast,
+)
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import (
@@ -32,10 +40,12 @@ from megatron.bridge.models.conversion.auto_bridge import (
     _drop_readonly_config_properties,
     _model_omits_mtp,
     _mtp_source_key_prefixes,
+    _resolve_pretrained_wrapper_cls,
     _saved_config_disables_mtp,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 
 
@@ -47,6 +57,31 @@ def create_mock_pretrained_causal_lm():
             pass  # Skip actual initialization
 
     return MockPreTrainedCausalLM()
+
+
+def _save_minimal_fast_tokenizer(path: Path) -> PreTrainedTokenizerFast:
+    backend = Tokenizer(
+        models.WordLevel(
+            {
+                "<unk>": 0,
+                "<bos>": 1,
+                "<eos>": 2,
+                "<pad>": 3,
+                "hello": 4,
+            },
+            unk_token="<unk>",
+        )
+    )
+    backend.pre_tokenizer = pre_tokenizers.Whitespace()
+    tokenizer = PreTrainedTokenizerFast(
+        tokenizer_object=backend,
+        unk_token="<unk>",
+        bos_token="<bos>",
+        eos_token="<eos>",
+        pad_token="<pad>",
+    )
+    tokenizer.save_pretrained(path)
+    return tokenizer
 
 
 def _make_fake_source(present):
@@ -119,14 +154,24 @@ class TestAutoBridge:
         config.hidden_size = 2048
         config.num_hidden_layers = 16
         config.num_attention_heads = 32
+        config.auto_map = None
         return config
 
     @pytest.fixture
     def bert_config(self):
-        """Create a mock BERT configuration (unsupported)."""
+        """Create a mock BERT configuration with no supported task head (unsupported)."""
+        config = Mock()
+        config.architectures = ["BertModel"]
+        config.model_type = "bert"
+        return config
+
+    @pytest.fixture
+    def bert_masked_lm_config(self):
+        """Create a mock BERT masked-LM configuration (supported via PreTrainedMaskedLM)."""
         config = Mock()
         config.architectures = ["BertForMaskedLM"]
         config.model_type = "bert"
+        config.auto_map = None
         return config
 
     @pytest.fixture
@@ -150,6 +195,21 @@ class TestAutoBridge:
                 AutoBridge.from_hf_pretrained("bert-base-uncased")
 
             assert "Model architecture not supported by AutoBridge" in str(exc_info.value)
+            assert "BertModel" in str(exc_info.value)
+
+    def test_from_hf_pretrained_with_masked_lm_architecture_and_no_registered_bridge(self, bert_masked_lm_config):
+        """A '*ForMaskedLM' architecture passes the allowlist but still needs a registered bridge."""
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
+            mock_safe_load_config.return_value = bert_masked_lm_config
+
+            with pytest.raises(ValueError) as exc_info:
+                AutoBridge.from_hf_pretrained("bert-base-uncased")
+
+            # Distinguish from the "not supported by AutoBridge" allowlist failure above:
+            # the architecture is allowlisted, but no MegatronModelBridge is registered for it.
+            assert "is not yet supported" in str(exc_info.value)
             assert "BertForMaskedLM" in str(exc_info.value)
 
     def test_drop_readonly_config_properties(self):
@@ -299,7 +359,7 @@ class TestAutoBridge:
             ),
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_bridge,
             patch.object(AutoBridge, "_get_model_instance", return_value=model_instance),
-            patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+            patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
         ):
             mock_bridge.return_value = fake_model_bridge
             bridge_obj.save_hf_weights([Mock()], tmp_path, show_progress=False)
@@ -320,6 +380,21 @@ class TestAutoBridge:
             "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
         ) as mock_safe_load_config:
             mock_safe_load_config.return_value = bert_config
+
+            assert AutoBridge.can_handle("bert-base-uncased") is False
+
+    def test_can_handle_masked_lm_architecture_and_no_registered_bridge(self, bert_masked_lm_config):
+        """'*ForMaskedLM' passes the allowlist, but can_handle still returns False without a registered bridge.
+
+        BERT has no registered MegatronModelBridge yet, so even though the architecture is
+        allowlisted (see SUPPORTED_HF_ARCHITECTURES), can_handle must not report True for a model
+        that from_hf_pretrained would then fail to load. Once a BERT bridge is registered, this
+        should be updated to assert True.
+        """
+        with patch(
+            "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+        ) as mock_safe_load_config:
+            mock_safe_load_config.return_value = bert_masked_lm_config
 
             assert AutoBridge.can_handle("bert-base-uncased") is False
 
@@ -363,6 +438,99 @@ class TestAutoBridge:
                 assert isinstance(result, AutoBridge)
                 assert result.hf_pretrained == mock_model
                 mock_from_pretrained.assert_called_once_with(model_id, trust_remote_code=True)
+
+    def test_from_hf_pretrained_dispatches_masked_lm_architecture_to_pretrained_masked_lm(self):
+        """'*ForMaskedLM' architectures are loaded via PreTrainedMaskedLM, not PreTrainedCausalLM."""
+        mock_model = Mock(spec=PreTrainedMaskedLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_config.architectures = ["BertForMaskedLM"]
+        mock_model.config = mock_config
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedMaskedLM.from_pretrained"
+            ) as mock_masked_lm_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+            ) as mock_causal_lm_from_pretrained,
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry"
+            ) as mock_safe_load_config,
+            patch.object(AutoBridge, "_validate_config"),
+        ):
+            mock_masked_lm_from_pretrained.return_value = mock_model
+            mock_safe_load_config.return_value = mock_config
+
+            result = AutoBridge.from_hf_pretrained("bert-base-uncased")
+
+            assert isinstance(result, AutoBridge)
+            assert result.hf_pretrained == mock_model
+            mock_masked_lm_from_pretrained.assert_called_once_with("bert-base-uncased")
+            mock_causal_lm_from_pretrained.assert_not_called()
+
+    def test_resolve_pretrained_wrapper_cls(self):
+        """_resolve_pretrained_wrapper_cls selects PreTrainedMaskedLM only for '*ForMaskedLM'."""
+        masked_lm_config = SimpleNamespace(architectures=["BertForMaskedLM"])
+        assert _resolve_pretrained_wrapper_cls(masked_lm_config) is PreTrainedMaskedLM
+
+        causal_lm_config = SimpleNamespace(architectures=["LlamaForCausalLM"])
+        assert _resolve_pretrained_wrapper_cls(causal_lm_config) is PreTrainedCausalLM
+
+        no_arch_config = SimpleNamespace(architectures=[])
+        assert _resolve_pretrained_wrapper_cls(no_arch_config) is PreTrainedCausalLM
+
+    def test_from_hf_pretrained_passes_causal_wrapper_to_vlm_provider_bridge(self):
+        """Test VLM provider construction receives the actual AutoBridge wrapper type."""
+        model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
+        vlm_config = Mock(spec=PretrainedConfig)
+        vlm_config.architectures = ["Qwen2_5_VLForConditionalGeneration"]
+        wrapper = PreTrainedCausalLM(model_name_or_path=model_id)
+        wrapper.config = vlm_config
+
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with (
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.safe_load_config_with_retry",
+                return_value=vlm_config,
+            ),
+            patch(
+                "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained",
+                return_value=wrapper,
+            ),
+            patch.object(AutoBridge, "_model_bridge", mock_model_bridge),
+        ):
+            bridge = AutoBridge.from_hf_pretrained(model_id)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        assert provider is mock_provider
+        assert isinstance(bridge.hf_pretrained, PreTrainedCausalLM)
+        assert bridge.hf_pretrained.config is vlm_config
+        mock_model_bridge.provider_bridge.assert_called_once_with(wrapper)
+
+    def test_from_hf_config_passes_causal_wrapper_to_vlm_provider_bridge(self):
+        """Test config-only VLM provider construction receives a config-backed causal wrapper."""
+        model_id = "Qwen/Qwen2.5-VL-3B-Instruct"
+        vlm_config = PretrainedConfig(name_or_path=model_id)
+        vlm_config.architectures = ["Qwen2_5_VLForConditionalGeneration"]
+
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge.from_hf_config(vlm_config)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        provider_input = mock_model_bridge.provider_bridge.call_args.args[0]
+        assert provider is mock_provider
+        assert isinstance(provider_input, PreTrainedCausalLM)
+        assert not provider_input.has_model
+        assert not hasattr(provider_input, "state")
+        assert provider_input.config is vlm_config
+        assert provider_input.model_name_or_path == model_id
 
     def test_from_pretrained_with_additional_kwargs(self):
         """Test from_pretrained with various kwargs."""
@@ -494,6 +662,23 @@ class TestAutoBridge:
 
         assert provider.hf_model_id == "hf/model-id"
 
+    def test_to_megatron_provider_persists_hf_model_revision(self):
+        """to_megatron_provider records the immutable revision used for config loading."""
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        mock_hf_model = PreTrainedCausalLM(model_name_or_path="hf/model-id", revision=revision)
+        mock_model_bridge = Mock()
+        mock_provider = Mock(spec=GPTModelProvider)
+        mock_provider.hf_model_id = None
+        mock_provider.hf_model_revision = None
+        mock_model_bridge.provider_bridge.return_value = mock_provider
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+            provider = bridge.to_megatron_provider(load_weights=False)
+
+        assert provider.hf_model_id == "hf/model-id"
+        assert provider.hf_model_revision == revision
+
     def test_get_hf_model_id_from_checkpoint_delegates(self):
         """AutoBridge helper delegates to checkpoint utilities."""
         with patch(
@@ -541,10 +726,15 @@ class TestAutoBridge:
         bridge_config = AutoBridge(mock_config)
         assert bridge_config.hf_pretrained == mock_config
 
+        # Test with PreTrainedMaskedLM
+        mock_masked_lm = Mock(spec=PreTrainedMaskedLM)
+        bridge_masked_lm = AutoBridge(mock_masked_lm)
+        assert bridge_masked_lm.hf_pretrained == mock_masked_lm
+
         # Test with invalid type
         with pytest.raises(
             ValueError,
-            match="hf_pretrained must be a PreTrainedCausalLM or PretrainedConfig instance",
+            match="hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance",
         ):
             AutoBridge("invalid")
 
@@ -552,6 +742,29 @@ class TestAutoBridge:
         import inspect
 
         assert inspect.ismethod(AutoBridge.from_hf_pretrained)
+
+    def test_pretrained_wrapper_cls_property(self):
+        """Test _pretrained_wrapper_cls resolves the wrapper class for each hf_pretrained kind."""
+        # A PreTrainedMaskedLM instance resolves directly, regardless of its config.
+        mock_masked_lm = Mock(spec=PreTrainedMaskedLM)
+        bridge = AutoBridge(mock_masked_lm)
+        assert bridge._pretrained_wrapper_cls is PreTrainedMaskedLM
+
+        # A PreTrainedCausalLM instance resolves directly, regardless of its config.
+        mock_causal_lm = Mock(spec=PreTrainedCausalLM)
+        bridge = AutoBridge(mock_causal_lm)
+        assert bridge._pretrained_wrapper_cls is PreTrainedCausalLM
+
+        # A bare PretrainedConfig falls back to resolving from the config's architectures.
+        masked_lm_config = Mock(spec=PretrainedConfig)
+        masked_lm_config.architectures = ["BertForMaskedLM"]
+        bridge = AutoBridge(masked_lm_config)
+        assert bridge._pretrained_wrapper_cls is PreTrainedMaskedLM
+
+        causal_lm_config = Mock(spec=PretrainedConfig)
+        causal_lm_config.architectures = ["LlamaForCausalLM"]
+        bridge = AutoBridge(causal_lm_config)
+        assert bridge._pretrained_wrapper_cls is PreTrainedCausalLM
 
     def test_from_hf_config(self):
         """Test creating bridge from config only."""
@@ -568,7 +781,7 @@ class TestAutoBridge:
     def test_from_hf_config_invalid_architecture(self):
         """Test from_hf_config with unsupported architecture."""
         config = Mock(spec=PretrainedConfig)
-        config.architectures = ["BertForMaskedLM"]  # Not a CausalLM
+        config.architectures = ["BertModel"]  # No supported task-head suffix
 
         with pytest.raises(ValueError, match="Model architecture not supported by AutoBridge"):
             AutoBridge.from_hf_config(config)
@@ -660,8 +873,12 @@ class TestAutoBridge:
         config.architectures = ["LlamaModel", "LlamaForCausalLM"]
         assert AutoBridge.supports(config) is True
 
-        # No CausalLM architecture
+        # '*ForMaskedLM' is an allowlisted non-causal architecture
         config.architectures = ["BertForMaskedLM"]
+        assert AutoBridge.supports(config) is True
+
+        # Bare encoder with no supported task head
+        config.architectures = ["BertModel"]
         assert AutoBridge.supports(config) is False
 
         # No architectures
@@ -757,6 +974,41 @@ class TestAutoBridge:
                     allowed_mismatched_params=None,
                 )
 
+    def test_load_hf_weights_from_path_with_masked_lm(self):
+        """Test loading weights from a path dispatches to PreTrainedMaskedLM when hf_pretrained is one."""
+        mock_hf_model = Mock(spec=PreTrainedMaskedLM)
+        mock_config = Mock(spec=PretrainedConfig)
+        mock_hf_model.config = mock_config
+
+        mock_megatron_model = [Mock()]
+
+        mock_model_bridge = Mock()
+        mock_model_bridge.load_weights_hf_to_megatron = Mock()
+
+        with patch.object(AutoBridge, "_model_bridge", mock_model_bridge):
+            bridge = AutoBridge(mock_hf_model)
+
+            with (
+                patch(
+                    "megatron.bridge.models.conversion.auto_bridge.PreTrainedMaskedLM.from_pretrained"
+                ) as mock_masked_lm_from_pretrained,
+                patch(
+                    "megatron.bridge.models.conversion.auto_bridge.PreTrainedCausalLM.from_pretrained"
+                ) as mock_causal_lm_from_pretrained,
+            ):
+                mock_loaded_model = Mock(spec=PreTrainedMaskedLM)
+                mock_masked_lm_from_pretrained.return_value = mock_loaded_model
+
+                bridge.load_hf_weights(mock_megatron_model, "./custom_model")
+
+                mock_masked_lm_from_pretrained.assert_called_once_with("./custom_model", trust_remote_code=False)
+                mock_causal_lm_from_pretrained.assert_not_called()
+                mock_model_bridge.load_weights_hf_to_megatron.assert_called_once_with(
+                    mock_loaded_model,
+                    mock_megatron_model,
+                    allowed_mismatched_params=None,
+                )
+
     def test_load_hf_weights_no_path_config_only(self):
         """Test load_hf_weights fails when bridge has config only and no path provided."""
         mock_config = Mock(spec=PretrainedConfig)
@@ -816,18 +1068,104 @@ class TestAutoBridge:
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
     def test_save_hf_pretrained_config_only(self, _mock_dist_avail, _mock_dist_init, tmp_path):
-        """Config-only save writes config.json, calls save_hf_weights, and tolerates missing hub files."""
+        """Config-only save without a reference writes config.json and calls save_hf_weights."""
         bridge = AutoBridge(PretrainedConfig())
-        bridge.hf_model_id = "some-org/some-model"
 
         with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
-            with patch("huggingface_hub.list_repo_files", return_value=["config.json", "README.md"]):
-                with patch("huggingface_hub.hf_hub_download") as mock_download:
-                    bridge.save_hf_pretrained([Mock()], str(tmp_path))
+            bridge.save_hf_pretrained([Mock()], str(tmp_path))
 
         assert (tmp_path / "config.json").exists()
-        mock_download.assert_not_called()
         mock_save_hf_weights.assert_called_once()
+
+    @pytest.mark.parametrize("artifact_source", ["hf_model_id", "source_path"])
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_saves_reference_artifacts(
+        self, _mock_dist_avail, _mock_dist_init, tmp_path, artifact_source
+    ):
+        """Config-only save preserves processor artifacts without loading reference weights."""
+        source_path = tmp_path / "source"
+        output_path = tmp_path / "output"
+        source_path.mkdir()
+
+        source_config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            max_position_embeddings=2048,
+            vocab_size=5,
+        )
+        source_config.save_pretrained(source_path)
+        tokenizer = _save_minimal_fast_tokenizer(source_path)
+        processor = LlavaProcessor(image_processor=CLIPImageProcessor(), tokenizer=tokenizer)
+        processor.save_pretrained(source_path)
+
+        synthesized_config = LlamaConfig(
+            architectures=["LlamaForCausalLM"],
+            max_position_embeddings=4096,
+            vocab_size=5,
+        )
+        bridge = AutoBridge(synthesized_config)
+        save_kwargs = {}
+        if artifact_source == "hf_model_id":
+            bridge.hf_model_id = str(source_path)
+        else:
+            save_kwargs["source_path"] = source_path
+
+        with patch(
+            "megatron.bridge.models.hf_pretrained.causal_lm.AutoModelForCausalLM.from_pretrained"
+        ) as mock_load_weights:
+            with patch.object(AutoBridge, "save_hf_weights") as mock_save_hf_weights:
+                bridge.save_hf_pretrained([Mock()], output_path, **save_kwargs)
+
+        exported_tokenizer = AutoTokenizer.from_pretrained(output_path, local_files_only=True)
+        exported_processor = AutoProcessor.from_pretrained(output_path, local_files_only=True)
+        assert exported_tokenizer("hello")["input_ids"] == [4]
+        assert isinstance(exported_processor, LlavaProcessor)
+        assert (output_path / "tokenizer.json").is_file()
+        assert (output_path / "processor_config.json").is_file()
+        assert json.loads((output_path / "config.json").read_text())["max_position_embeddings"] == 4096
+        mock_load_weights.assert_not_called()
+        mock_save_hf_weights.assert_called_once()
+
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("torch.distributed.is_available", return_value=False)
+    def test_save_hf_pretrained_config_only_uses_reference_artifact_saver(self, _mock_dist_avail, _mock_dist_init):
+        """Config-only save delegates all artifacts and model-specific options to the lazy HF wrapper."""
+        config = LlamaConfig(architectures=["LlamaForCausalLM"])
+        bridge = AutoBridge(config)
+        bridge.hf_model_id = "some-org/some-model"
+
+        mock_artifact_source = Mock(spec=PreTrainedCausalLM)
+        mock_model_bridge = Mock(ADDITIONAL_FILE_PATTERNS=["chat_template.jinja"])
+        mock_model_bridge.get_hf_tokenizer_kwargs.return_value = {"use_fast": True}
+
+        with patch.object(
+            type(bridge),
+            "_model_bridge",
+            PropertyMock(return_value=mock_model_bridge),
+        ):
+            with patch.object(
+                PreTrainedCausalLM,
+                "from_pretrained",
+                return_value=mock_artifact_source,
+            ) as mock_from_pretrained:
+                with patch.object(AutoBridge, "save_hf_weights"):
+                    bridge.save_hf_pretrained(
+                        [Mock()],
+                        "./output_dir",
+                        source_path="./custom_files",
+                    )
+
+        mock_from_pretrained.assert_called_once_with(
+            "some-org/some-model",
+            use_fast=True,
+            trust_remote_code=False,
+        )
+        assert mock_artifact_source.config is config
+        mock_artifact_source.save_artifacts.assert_called_once_with(
+            "./output_dir",
+            original_source_path="./custom_files",
+            additional_files=["chat_template.jinja"],
+        )
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
@@ -835,21 +1173,18 @@ class TestAutoBridge:
         self, _mock_dist_avail, _mock_dist_init, tmp_path
     ):
         """Config-only save omits stale remote-code metadata when remote code is not preserved."""
-        config = PretrainedConfig()
+        config = LlamaConfig(architectures=["LlamaForCausalLM"])
         config.auto_map = {
             "AutoConfig": "configuration_custom.CustomConfig",
             "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
         }
         bridge = AutoBridge(config)
-        bridge.hf_model_id = "some-org/some-model"
 
         with patch.object(AutoBridge, "save_hf_weights"):
-            with patch("huggingface_hub.list_repo_files") as mock_list_repo_files:
-                bridge.save_hf_pretrained([Mock()], str(tmp_path))
+            bridge.save_hf_pretrained([Mock()], str(tmp_path))
 
         saved_config = json.loads((tmp_path / "config.json").read_text())
         assert "auto_map" not in saved_config
-        mock_list_repo_files.assert_not_called()
 
     @patch("torch.distributed.is_initialized", return_value=False)
     @patch("torch.distributed.is_available", return_value=False)
@@ -857,40 +1192,38 @@ class TestAutoBridge:
         self, _mock_dist_avail, _mock_dist_init, tmp_path
     ):
         """Config-only save keeps auto_map and copies code when remote code is preserved."""
-        config = PretrainedConfig()
+        source_path = tmp_path / "source"
+        output_path = tmp_path / "output"
+        source_path.mkdir()
+        _save_minimal_fast_tokenizer(source_path)
+        (source_path / "modeling_custom.py").write_text("# custom modeling code\n")
+
+        config = LlamaConfig(architectures=["LlamaForCausalLM"])
         config.auto_map = {
             "AutoConfig": "configuration_custom.CustomConfig",
             "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
         }
         bridge = AutoBridge(config)
-        bridge.hf_model_id = "some-org/some-model"
+        bridge.hf_model_id = str(source_path)
         bridge.trust_remote_code = True
 
-        def fake_hf_hub_download(repo_id, filename, local_dir):
-            del repo_id
-            local_dir = Path(local_dir)
-            (local_dir / filename).write_text("# custom modeling code")
-            metadata_dir = local_dir / ".cache" / "huggingface" / "download"
-            metadata_dir.mkdir(parents=True)
-            (metadata_dir / f"{filename}.metadata").write_text("metadata")
+        mock_model_bridge = Mock(ADDITIONAL_FILE_PATTERNS=None)
+        mock_model_bridge.get_hf_tokenizer_kwargs.return_value = {}
+        with patch.object(
+            type(bridge),
+            "_model_bridge",
+            PropertyMock(return_value=mock_model_bridge),
+        ):
+            with patch.object(AutoBridge, "save_hf_weights"):
+                bridge.save_hf_pretrained([Mock()], output_path)
 
-        with patch.object(AutoBridge, "save_hf_weights"):
-            with patch("huggingface_hub.list_repo_files", return_value=["modeling_custom.py", "README.md"]):
-                with patch("huggingface_hub.hf_hub_download", side_effect=fake_hf_hub_download) as mock_download:
-                    bridge.save_hf_pretrained([Mock()], str(tmp_path))
-
-        saved_config = json.loads((tmp_path / "config.json").read_text())
+        saved_config = json.loads((output_path / "config.json").read_text())
         assert saved_config["auto_map"] == {
             "AutoConfig": "configuration_custom.CustomConfig",
             "AutoModelForCausalLM": "modeling_custom.CustomForCausalLM",
         }
-        assert (tmp_path / "modeling_custom.py").exists()
-        assert not (tmp_path / ".cache").exists()
-        mock_download.assert_called_once_with(
-            repo_id="some-org/some-model",
-            filename="modeling_custom.py",
-            local_dir=str(tmp_path),
-        )
+        assert (output_path / "modeling_custom.py").exists()
+        assert not (output_path / ".cache").exists()
 
     @patch("torch.distributed.get_rank", return_value=1)
     @patch("torch.distributed.is_initialized", return_value=True)
@@ -1024,6 +1357,23 @@ class TestAutoBridge:
             arch = bridge._causal_lm_architecture
             assert arch == mock_arch_class
 
+    def test_get_causal_lm_architecture_with_masked_lm_wrapper(self):
+        """Test _causal_lm_architecture reads config off a PreTrainedMaskedLM wrapper too."""
+        mock_hf_model = Mock(spec=PreTrainedMaskedLM)
+        mock_hf_model.config = Mock()
+        mock_hf_model.config.architectures = ["BertForMaskedLM"]
+        mock_hf_model.config.auto_map = None
+
+        with patch("megatron.bridge.models.conversion.auto_bridge.transformers") as mock_transformers:
+            mock_arch_class = Mock()
+            mock_transformers.BertForMaskedLM = mock_arch_class
+
+            bridge = AutoBridge.__new__(AutoBridge)
+            bridge.hf_pretrained = mock_hf_model
+
+            arch = bridge._causal_lm_architecture
+            assert arch == mock_arch_class
+
     def test_get_causal_lm_architecture_no_architectures(self):
         """Test error when no architectures found."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
@@ -1037,15 +1387,15 @@ class TestAutoBridge:
             bridge._causal_lm_architecture
 
     def test_get_causal_lm_architecture_no_causal_lm(self):
-        """Test error when no CausalLM architecture found."""
+        """Test error when no supported architecture is found."""
         mock_hf_model = Mock(spec=PreTrainedCausalLM)
         mock_hf_model.config = Mock()
-        mock_hf_model.config.architectures = ["BertForMaskedLM"]
+        mock_hf_model.config.architectures = ["BertModel"]
         mock_hf_model.config.auto_map = None
 
         bridge = AutoBridge.__new__(AutoBridge)
         bridge.hf_pretrained = mock_hf_model
-        with pytest.raises(ValueError, match="No CausalLM architecture found"):
+        with pytest.raises(ValueError, match="No supported architecture found"):
             bridge._causal_lm_architecture
 
     def test_get_causal_lm_architecture_not_in_transformers(self):
@@ -1206,6 +1556,7 @@ class TestAutoBridge:
         mock_megatron_model = [Mock()]
         mock_bridge.to_megatron_model.return_value = mock_megatron_model
         mock_bridge.save_megatron_model = Mock()
+        mock_bridge._model_bridge.get_hf_tokenizer_kwargs.return_value = {}
 
         # Test import_ckpt with kwargs
         AutoBridge.import_ckpt(
@@ -1213,16 +1564,22 @@ class TestAutoBridge:
             "./megatron_checkpoint",
             torch_dtype=torch.float16,
             device_map="auto",
+            revision="0123456789abcdef",  # pragma: allowlist secret
         )
 
         # Assertions
-        mock_from_hf_pretrained.assert_called_once_with("./local_model", torch_dtype=torch.float16, device_map="auto")
+        mock_from_hf_pretrained.assert_called_once_with(
+            "./local_model",
+            torch_dtype=torch.float16,
+            device_map="auto",
+            revision="0123456789abcdef",  # pragma: allowlist secret
+        )
         mock_bridge.to_megatron_model.assert_called_once_with(wrap_with_ddp=False, use_cpu_initialization=True)
         mock_bridge.save_megatron_model.assert_called_once_with(
             mock_megatron_model,
             "./megatron_checkpoint",
             hf_tokenizer_path="./local_model",
-            hf_tokenizer_kwargs=mock_bridge._model_bridge.get_hf_tokenizer_kwargs(),
+            hf_tokenizer_kwargs={"revision": "0123456789abcdef"},  # pragma: allowlist secret
             low_memory_save=True,
         )
 
@@ -1599,7 +1956,7 @@ class TestAutoBridge:
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
-                "megatron.bridge.models.conversion.auto_bridge.is_quantized",
+                "modelopt.torch.quantization.utils.is_quantized",
                 return_value=True,
             ),
             patch("torch.save") as mock_torch_save,
@@ -1667,7 +2024,7 @@ class TestAutoBridge:
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
             patch(
-                "megatron.bridge.models.conversion.auto_bridge.is_quantized",
+                "modelopt.torch.quantization.utils.is_quantized",
                 return_value=False,
             ),
             patch("torch.save") as mock_torch_save,
@@ -1725,7 +2082,7 @@ class TestAutoBridge:
 
         with (
             patch.object(AutoBridge, "_model_bridge", new_callable=PropertyMock) as mock_model_bridge_prop,
-            patch("megatron.bridge.models.conversion.auto_bridge.is_quantized", return_value=False),
+            patch("modelopt.torch.quantization.utils.is_quantized", return_value=False),
         ):
             mock_model_bridge_prop.return_value = mock_model_bridge
             bridge.save_hf_weights([wrapper], tmp_path)

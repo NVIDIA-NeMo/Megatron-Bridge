@@ -36,12 +36,12 @@ logger = logging.getLogger(__name__)
 )
 class GLM5Bridge(MegatronModelBridge):
     """
-    Megatron Bridge for GLM-5 / GLM-5.1 (MoE + MLA + DSA).
+    Megatron Bridge for the GLM-5 family (MoE + MLA + DSA).
 
     This bridge handles conversion between HuggingFace GlmMoeDsaForCausalLM
-    and Megatron-Core GPTModel formats. GLM-5 and GLM-5.1 share the same
-    architecture and configuration shape, so both ``zai-org/GLM-5`` and
-    ``zai-org/GLM-5.1`` are auto-detected through this bridge.
+    and Megatron-Core GPTModel formats. ``zai-org/GLM-5``,
+    ``zai-org/GLM-5.1``, and ``zai-org/GLM-5.2`` are auto-detected through
+    this bridge, with version-specific DSA settings read from the HF config.
 
     The architecture uses Multi-Latent Attention (MLA), Dynamic Sparse Attention
     (DSA) indexer layers, and Mixture-of-Experts (MoE).
@@ -105,12 +105,18 @@ class GLM5Bridge(MegatronModelBridge):
         provider.rotary_scaling_factor = 1.0
         provider.mscale = 1.0
         provider.mscale_all_dim = 1.0
+        provider.cp_comm_type = "allgather"
 
         # DSA indexer params
         provider.experimental_attention_variant = "dsa"
         provider.dsa_indexer_head_dim = hf_config.index_head_dim
         provider.dsa_indexer_n_heads = hf_config.index_n_heads
         provider.dsa_indexer_topk = hf_config.index_topk
+        provider.dsa_indexer_rope_interleaved = hf_config.indexer_rope_interleave
+        provider.dsa_indexer_topk_freq = getattr(hf_config, "index_topk_freq", 1)
+        provider.dsa_indexer_skip_topk_offset = getattr(hf_config, "index_skip_topk_offset", 0)
+        provider.dsa_indexer_rotate_activation = False
+        provider.dsa_indexer_k_norm_epsilon = 1e-6
         provider.dsa_indexer_loss_coeff = 0.001
         provider.dsa_indexer_use_sparse_loss = True
 

@@ -32,6 +32,7 @@ from megatron.bridge.recipes.deepseek import (
     deepseek_v4_flash_no_mtp_sft_config,
     deepseek_v4_flash_sft_config,
 )
+from megatron.bridge.recipes.deepseek.h100 import deepseek_v4 as deepseek_v4_h100_module
 
 
 DEEPSEEK_V4_TEST_MODEL_ENV = "DEEPSEEK_V4_TOY_HF_PATH"
@@ -103,7 +104,9 @@ class TestDeepSeekV4FinetuneRecipes:
             pytest.skip("DeepSeek-V4 MXFP8 recipe requires Blackwell GPUs.")
 
         hf_path = _deepseek_v4_toy_model_path()
-        config = config_func(hf_path=hf_path)
+        with pytest.MonkeyPatch.context() as monkeypatch:
+            monkeypatch.setattr(deepseek_v4_h100_module, "DEEPSEEK_V4_FLASH_HF_PATH", hf_path)
+            config = config_func()
 
         # Swap the shipped SQuAD config for a mock dataset (forward path is identical;
         # this keeps CI fast and offline).

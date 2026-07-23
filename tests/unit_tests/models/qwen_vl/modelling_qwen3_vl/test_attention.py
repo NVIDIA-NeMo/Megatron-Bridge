@@ -89,6 +89,62 @@ class TestQwen3VLSelfAttention:
         """Teardown Megatron parallel state after each test method."""
         parallel_state.destroy_model_parallel()
 
+    def test_local_causal_attention_matches_reference_with_gqa(self):
+        query = torch.tensor(
+            [
+                [[[1.0, 0.0], [0.0, 1.0], [1.0, 1.0], [1.0, -1.0]]],
+                [[[0.5, 0.5], [1.0, 0.0], [0.5, -0.5], [0.0, 1.0]]],
+                [[[1.5, -0.5], [0.5, 1.0], [1.0, 0.0], [-0.5, 1.5]]],
+            ]
+        )
+        key = torch.tensor(
+            [
+                [[[1.0, 0.0], [0.0, 1.0]]],
+                [[[0.0, 1.0], [1.0, 0.0]]],
+                [[[1.0, 1.0], [1.0, -1.0]]],
+            ]
+        )
+        value = torch.tensor(
+            [
+                [[[1.0, 2.0], [3.0, 4.0]]],
+                [[[5.0, 6.0], [7.0, 8.0]]],
+                [[[9.0, 10.0], [11.0, 12.0]]],
+            ]
+        )
+        scale = 0.5
+
+        repeated_key = key.repeat_interleave(2, dim=2)
+        repeated_value = value.repeat_interleave(2, dim=2)
+        scores = torch.einsum("sbhd,tbhd->bhst", query.float(), repeated_key.float()) * scale
+        causal_mask = torch.ones((query.shape[0], key.shape[0]), dtype=torch.bool).triu(
+            1 + key.shape[0] - query.shape[0]
+        )
+        scores = scores.masked_fill(causal_mask, torch.finfo(scores.dtype).min)
+        probs = torch.softmax(scores, dim=-1)
+        expected = torch.einsum("bhst,tbhd->sbhd", probs, repeated_value).reshape(query.shape[0], 1, -1)
+
+        actual = Qwen3VLSelfAttention._local_causal_attention(query, key, value, scale)
+
+        assert actual.shape == (3, 1, 8)
+        torch.testing.assert_close(actual, expected)
+
+    def test_local_causal_attention_aligns_static_cache_mask(self):
+        query = torch.tensor([[[[1.0, 0.0]]], [[[0.0, 1.0]]]])
+        key = torch.tensor([[[[1.0, 0.0]]], [[[0.0, 1.0]]], [[[1.0, 1.0]]]])
+        value = torch.tensor([[[[1.0, 2.0]]], [[[3.0, 4.0]]], [[[5.0, 6.0]]]])
+        scale = 1.0
+
+        scores = torch.einsum("sbhd,tbhd->bhst", query.float(), key.float()) * scale
+        causal_mask = torch.tensor([[False, False, True], [False, False, False]])
+        scores = scores.masked_fill(causal_mask, torch.finfo(scores.dtype).min)
+        probs = torch.softmax(scores, dim=-1)
+        expected = torch.einsum("bhst,tbhd->sbhd", probs, value).reshape(query.shape[0], 1, -1)
+
+        actual = Qwen3VLSelfAttention._local_causal_attention(query, key, value, scale)
+
+        assert actual.shape == (2, 1, 2)
+        torch.testing.assert_close(actual, expected)
+
     def run_self_attention(self, pg_collection):
         tensor_model_parallel_size = torch.distributed.get_world_size(pg_collection.tp)
         self.transformer_config = TransformerConfig(
