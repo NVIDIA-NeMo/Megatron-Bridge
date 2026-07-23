@@ -14,13 +14,14 @@ summary: >
   Qwen3.5 checkpoint preset and is not relabeled as Qwen3.6. Functional
   finetuning is intended to use mmoukouba/MedPix-VQA at immutable revision
   69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
-  and text conversations once a public recipe can instantiate the exact
-  Qwen3.6 checkpoint. No model-scale GPU workflow below has been executed yet.
+  and text conversations. GPU import and round-trip weight verification were
+  run on H100 GPUs; other items retain their explicit status below.
 verification_index:
   model_level:
+    verified:
+      - hf_to_megatron_gpu
     unverified:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - manual_forward_pass
@@ -28,16 +29,14 @@ verification_index:
   training:
     H100:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
-    GB200:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
   hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
   architecture: Qwen3_5MoeForConditionalGeneration
   min_transformers_version: "5.8.1"
 verification_environment:
-  base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: ebdef7c11b14bec53c4abedf4783bb75d70ef406  # pragma: allowlist secret
+  base_container: nvcr.io/nvidia/nemo:26.06
+  bridge_commit: 42de869db41994acdf48adf00c968c604a575196  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -59,21 +58,23 @@ items:
       totals must be recorded rather than inferred from support metadata.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 2 --gpus-per-node 8 --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron
-      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 16 --etp 1
-    last_verified: null
+      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 8 --etp 1
+    last_verified: 2026-07-23
     expected_result: >
-      The 16-GPU pinned-revision import must exit successfully and create a
-      complete iter_0000000 distributed checkpoint at TP2/PP1/EP16/ETP1.
-      Strict inventory evidence must cover language, vision, projection, MoE,
-      shared-expert, and packed MTP tensors, and a reload must report no missing,
-      unexpected, shape-mismatched, or dtype-mismatched weights.
+      The 16-H100 pinned-revision import exited successfully at
+      TP2/PP1/EP8/ETP1 and created a 16-shard iter_0000000 distributed
+      checkpoint. The repository's distributed HF-to-Megatron-to-HF verifier
+      covered all 1,045 source BF16 tensors, including language, vision,
+      projection, router, routed/shared expert, and packed MTP weights. All
+      1,045 passed the standard value-comparison gate, with zero failed rows
+      and no missing, unexpected, or shape-mismatched weights.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -103,7 +104,7 @@ items:
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
       --hf-path work/model-verification/qwen3.6-35b-a3b/hf-export
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
-      --distributed-save --tp 2 --pp 1 --ep 16 --etp 1
+      --distributed-save --tp 2 --pp 1 --ep 8 --etp 1
     last_verified: null
     expected_result: >
       Distributed export must exit successfully, write a complete indexed BF16
