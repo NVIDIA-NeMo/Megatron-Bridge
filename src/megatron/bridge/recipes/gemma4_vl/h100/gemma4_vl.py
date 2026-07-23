@@ -162,6 +162,26 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return an 8K in-batch-packed full-SFT config with CP=2 on eight H100 GPUs.
+
+    The two examples in each microbatch are packed into THD layout. CP=2 keeps
+    the per-rank language-token footprint comparable to the 4K/MBS=1 baseline,
+    while EP=8 continues to shard the MoE experts across all eight ranks.
+    """
+    cfg = gemma4_vl_26b_sft_8gpu_h100_bf16_config()
+
+    cfg.model.seq_length = 8192
+    cfg.model.context_parallel_size = 2
+    cfg.model.calculate_per_token_loss = True
+    cfg.dataset.seq_length = 8192
+    cfg.dataset.enable_in_batch_packing = True
+    cfg.train.micro_batch_size = 2
+    cfg.ddp.average_in_collective = False
+
+    return cfg
+
+
 # =============================================================================
 # Gemma 4 VL 26B-A4B PEFT Configuration
 # =============================================================================
@@ -224,4 +244,5 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
 __all__ = [
     "gemma4_vl_26b_peft_4gpu_h100_bf16_config",
     "gemma4_vl_26b_sft_8gpu_h100_bf16_config",
+    "gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config",
 ]

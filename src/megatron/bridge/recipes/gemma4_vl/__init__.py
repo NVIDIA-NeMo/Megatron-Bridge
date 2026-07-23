@@ -15,10 +15,12 @@
 from megatron.bridge.recipes.gemma4_vl.gemma4_vl import (
     gemma4_vl_26b_peft_config,
     gemma4_vl_26b_sft_config,
+    gemma4_vl_26b_sft_long_context_config,
 )
 
 
 __all__ = [
     "gemma4_vl_26b_sft_config",
+    "gemma4_vl_26b_sft_long_context_config",
     "gemma4_vl_26b_peft_config",
 ]

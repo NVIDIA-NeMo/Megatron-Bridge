@@ -68,3 +68,24 @@ def test_gemma4_vl_sft_canonical_recipe_requires_8_gpu_topology(monkeypatch: pyt
         cfg.model.expert_model_parallel_size * cfg.model.expert_tensor_parallel_size,
     )
     assert required_world_size == 8
+
+
+def test_gemma4_vl_long_context_sft_uses_packing_and_cp(monkeypatch: pytest.MonkeyPatch):
+    """The long-context recipe should own a valid 8K packed CP=2 workload."""
+    patch_recipe_module_global(monkeypatch, _gemma4_vl_h100_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = _gemma4_vl_h100_module.gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config()
+    cfg.model.finalize()
+
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.model.calculate_per_token_loss is True
+    assert cfg.dataset.enable_in_batch_packing is True
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.ddp.average_in_collective is False
+    required_world_size = cfg.model.pipeline_model_parallel_size * max(
+        cfg.model.tensor_model_parallel_size * cfg.model.context_parallel_size,
+        cfg.model.expert_model_parallel_size * cfg.model.expert_tensor_parallel_size,
+    )
+    assert required_world_size == 8

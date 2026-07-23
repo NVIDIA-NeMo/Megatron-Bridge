@@ -18,4 +18,5 @@ from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import *  # noqa: F403
 __all__ = [
     "gemma4_vl_26b_peft_4gpu_h100_bf16_config",
     "gemma4_vl_26b_sft_8gpu_h100_bf16_config",
+    "gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config",
 ]

@@ -26,9 +26,13 @@ from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
 from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
     gemma4_vl_26b_sft_8gpu_h100_bf16_config as gemma4_vl_26b_sft_config,
 )
+from megatron.bridge.recipes.gemma4_vl.h100.gemma4_vl import (
+    gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config as gemma4_vl_26b_sft_long_context_config,
+)
 
 
 __all__ = [
     "gemma4_vl_26b_peft_config",
     "gemma4_vl_26b_sft_config",
+    "gemma4_vl_26b_sft_long_context_config",
 ]
