@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import pytest
 import torch
 import torch.nn as nn
 from megatron.core import parallel_state
@@ -21,10 +22,19 @@ from megatron.bridge.diffusion.models.wan.wan_model import WanModel
 from megatron.bridge.diffusion.models.wan.wan_provider import WanModelProvider
 
 
-def test_wan_model_provider_provide_returns_model(monkeypatch):
+@pytest.mark.parametrize(
+    ("is_first_stage", "is_last_stage"),
+    [
+        pytest.param(True, True, id="single-stage"),
+        pytest.param(True, False, id="first-stage"),
+        pytest.param(False, False, id="middle-stage"),
+        pytest.param(False, True, id="last-stage"),
+    ],
+)
+def test_wan_model_provider_constructs_pipeline_stage(monkeypatch, is_first_stage, is_last_stage):
     # Force pipeline stage booleans to avoid dependency on initialized model parallel
-    monkeypatch.setattr(parallel_state, "is_pipeline_first_stage", lambda: True, raising=False)
-    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda: True, raising=False)
+    monkeypatch.setattr(parallel_state, "is_pipeline_first_stage", lambda: is_first_stage, raising=False)
+    monkeypatch.setattr(parallel_state, "is_pipeline_last_stage", lambda: is_last_stage, raising=False)
     # Avoid querying uninitialized PP groups
     monkeypatch.setattr(parallel_state, "get_pipeline_model_parallel_world_size", lambda: 1, raising=False)
 
@@ -78,6 +88,8 @@ def test_wan_model_provider_provide_returns_model(monkeypatch):
     provider.num_query_groups = provider.num_attention_heads
     model = provider.provide()
     assert isinstance(model, WanModel)
+    assert hasattr(model, "patch_embedding") is is_first_stage
+    assert hasattr(model, "head") is is_last_stage
     # Sanity check key config properties were plumbed
     assert model.config.hidden_size == 64
     assert model.config.num_attention_heads == 4

@@ -11,7 +11,7 @@ Mock the HF config and pretrained model, then verify `provider_bridge()` and `ma
 ```python
 import pytest
 from unittest.mock import Mock
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM  # or .causal_lm
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 def _make_mock_config():
     """Create a mock HF config with model-specific attributes."""
@@ -32,7 +32,7 @@ def _make_mock_config():
     return config
 
 def _make_mock_pretrained(config):
-    pretrained = Mock(spec=PreTrainedVLM)  # or PreTrainedCausalLM
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = config
     return pretrained
 

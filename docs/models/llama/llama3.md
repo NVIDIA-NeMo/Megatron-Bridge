@@ -43,7 +43,7 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model meta-llama/Meta-Llama-3.1-8B \
   --megatron-path /checkpoints/llama31_8b_megatron
 ```
@@ -86,7 +86,7 @@ See: [bridge.recipes.llama.llama3](../../apidocs/bridge/bridge.recipes.llama.lla
   - `llama32_1b_pretrain_config`, `llama32_3b_pretrain_config`: Llama 3.2 (1B, 3B)
   - `llama3_8b_pretrain_config`: Llama 3 8B with 8K context
   - `llama3_8b_16k_pretrain_config`, `llama3_8b_64k_pretrain_config`, `llama3_8b_128k_pretrain_config`: Llama 3 8B with extended context (16K/64K/128K)
-  - `llama3_8b_low_precision_pretrain_config`: Llama 3 8B with low precision (FP8/MXFP8/NVFP4)
+  - `llama3_8b_pretrain_2gpu_h100_fp8cs_config`, `llama3_8b_pretrain_2gpu_h100_fp8mx_config`, `llama3_8b_pretrain_2gpu_h100_nvfp4_config`: Llama 3 8B H100 low precision (FP8/MXFP8/NVFP4)
   - `llama3_70b_pretrain_config`, `llama3_70b_16k_pretrain_config`, `llama3_70b_64k_pretrain_config`: Llama 3 70B (8K/16K/64K context)
   - `llama31_8b_pretrain_config`, `llama31_70b_pretrain_config`, `llama31_405b_pretrain_config`: Llama 3.1 (8B/70B/405B, 128K context)
 

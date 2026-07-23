@@ -22,7 +22,7 @@ The same bridge can auto-detect compatible Llama 2 causal language model checkpo
 Llama 2 uses the common conversion and generation entry points:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model meta-llama/Llama-2-7b-hf \
   --megatron-path /checkpoints/llama2_7b_megatron
 ```

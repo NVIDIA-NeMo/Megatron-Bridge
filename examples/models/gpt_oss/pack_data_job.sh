@@ -45,9 +45,11 @@ CONTAINER_IMAGE=""
 CONTAINER_MOUNTS=""
 # CONTAINER_MOUNTS="/data:/data,/workspace:/workspace"
 
-# HuggingFace / NeMo cache directories (set to avoid re-downloading)
+# HuggingFace / NeMo cache directories. NEMO_DATASETS_CACHE, or the datasets
+# directory under NEMO_HOME, must match the shared path used by training.
 # export HF_HOME="/path/to/shared/HF_HOME"
 # export NEMO_HOME="/path/to/shared/NEMO_HOME"
+# export NEMO_DATASETS_CACHE="/path/to/shared/NEMO_DATASETS_CACHE"
 
 mkdir -p logs
 
@@ -56,12 +58,19 @@ if [ -z "$CONTAINER_IMAGE" ]; then
     exit 1
 fi
 
+EFFECTIVE_NEMO_DATASETS_CACHE="${NEMO_DATASETS_CACHE:-${NEMO_HOME:+${NEMO_HOME}/datasets}}"
+if [ -z "$EFFECTIVE_NEMO_DATASETS_CACHE" ]; then
+    echo "ERROR: NEMO_DATASETS_CACHE or NEMO_HOME must point to shared storage used by packing and training."
+    exit 1
+fi
+echo "NeMo datasets cache: $EFFECTIVE_NEMO_DATASETS_CACHE"
+
 SRUN_CMD="srun --mpi=pmix --container-image=$CONTAINER_IMAGE"
 if [ -n "$CONTAINER_MOUNTS" ]; then
     SRUN_CMD="$SRUN_CMD --container-mounts=$CONTAINER_MOUNTS"
 fi
 
 $SRUN_CMD bash -c "
-    uv run --no-sync python /opt/Megatron-Bridge/scripts/training/pack_sft_data.py \
+    uv run --no-sync python /opt/Megatron-Bridge/scripts/training/prepare_gpt_sft_packed_data.py \
         --recipe gpt_oss_20b_sft_openmathinstruct2_thinking_packed_config
 "

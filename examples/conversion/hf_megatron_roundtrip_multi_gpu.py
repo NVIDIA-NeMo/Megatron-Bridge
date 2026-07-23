@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -33,10 +33,13 @@ The process is as follows:
     in Megatron's native checkpoint format by specifying the `--megatron-save-path` argument.
 
 Usage:
-    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B
+    uv run python -m torch.distributed.run --nproc_per_node=8 \
+      examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id meta-llama/Llama-3.2-1B
 
-    uv run python examples/conversion/hf_megatron_roundtrip_multi_gpu.py --hf-model-id meta-llama/Llama-3.2-1B \
-       --megatron-save-path ./megatron_checkpoint
+    srun --nodes=1 --ntasks-per-node=8 uv run python \
+      examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
+      --hf-model-id meta-llama/Llama-3.2-1B --megatron-save-path ./megatron_checkpoint
 
     uv run python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
       --hf-model-id Qwen/Qwen3-30B-A3B --tp 1 --pp 8
@@ -53,6 +56,7 @@ from rich.table import Table
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.decorators import torchrun_main
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
+from megatron.bridge.utils.slurm_utils import resolve_slurm_master_addr, resolve_slurm_master_port
 
 
 HF_MODEL_ID = "meta-llama/Llama-3.2-1B"
@@ -80,6 +84,21 @@ IGNORE_PRECISION_PARAMS = [
 _FP8_DTYPES = {torch.float8_e4m3fn, torch.float8_e5m2}
 
 
+def _configure_slurm_distributed_environment() -> None:
+    """Translate native Slurm task variables into PyTorch distributed variables."""
+    if os.environ.get("WORLD_SIZE") is not None or os.environ.get("SLURM_NTASKS") is None:
+        return
+    os.environ["RANK"] = os.environ["SLURM_PROCID"]
+    os.environ["WORLD_SIZE"] = os.environ["SLURM_NTASKS"]
+    os.environ["LOCAL_RANK"] = os.environ["SLURM_LOCALID"]
+    master_addr = resolve_slurm_master_addr()
+    master_port = resolve_slurm_master_port()
+    if master_addr is not None:
+        os.environ["MASTER_ADDR"] = master_addr
+    if master_port is not None:
+        os.environ["MASTER_PORT"] = str(master_port)
+
+
 @torchrun_main
 def main(
     hf_model_id: str = HF_MODEL_ID,
@@ -93,11 +112,14 @@ def main(
     trust_remote_code: bool | None = None,
     strict: bool = False,
     skip_save: bool = False,
+    atol: float = 1e-1,
+    rtol: float = 1e-5,
 ) -> None:
     """Perform round-trip conversion between HuggingFace and Megatron-LM models on multiple GPUs."""
+    _configure_slurm_distributed_environment()
     if os.environ.get("WORLD_SIZE") is None:
-        console.print("This script must be launched with torchrun. Please run:")
-        console.print(f"torchrun --nproc_per_node <gpus> {sys.argv[0]}")
+        console.print("This script must be launched with torch.distributed.run or as native Slurm tasks. Please run:")
+        console.print(f"uv run python -m torch.distributed.run --nproc_per_node=<gpus> {sys.argv[0]}")
         sys.exit(1)
 
     model_name = hf_model_id.split("/")[-1]
@@ -209,11 +231,21 @@ def main(
             elif compare_param.dtype != compare_original.dtype or any(p in name for p in IGNORE_PRECISION_PARAMS):
                 compare_param = param.float()
                 compare_original = original_param.float()
-                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+                match = torch.allclose(
+                    compare_param,
+                    compare_original.to(compare_param.device),
+                    atol=atol,
+                    rtol=rtol,
+                )
 
             # --- Case 3: regular param → direct allclose ---
             else:
-                match = torch.allclose(compare_param, compare_original.to(compare_param.device), atol=1e-1)
+                match = torch.allclose(
+                    compare_param,
+                    compare_original.to(compare_param.device),
+                    atol=atol,
+                    rtol=rtol,
+                )
 
             all_match = all_match and match
             table.add_row(
@@ -253,7 +285,8 @@ def main(
             bridge.save_megatron_model(megatron_model, megatron_save_path)
 
 
-if __name__ == "__main__":
+def _build_parser() -> argparse.ArgumentParser:
+    """Build the standalone round-trip example argument parser."""
     parser = argparse.ArgumentParser(
         description="Convert between HuggingFace and Megatron-LM model formats on multiple GPUs"
     )
@@ -282,11 +315,24 @@ if __name__ == "__main__":
         help="Path to load the model in Megatron checkpoint format. If provided, model will not start from HF checkpoint.",
     )
     parser.add_argument("--trust-remote-code", action="store_true", help="if trust_remote_code")
-    parser.add_argument("--not-strict", action="store_true", help="Perform loose validation during weight export")
+    strictness = parser.add_mutually_exclusive_group()
+    strictness.add_argument(
+        "--strict",
+        action="store_true",
+        help="Require every source checkpoint tensor to be written during weight export",
+    )
+    strictness.add_argument("--not-strict", dest="strict", action="store_false", help=argparse.SUPPRESS)
+    parser.set_defaults(strict=False)
     parser.add_argument(
         "--skip-save", action="store_true", help="Skip saving the model after comparison (verification only)"
     )
-    args = parser.parse_args()
+    parser.add_argument("--atol", type=float, default=1e-1, help="Absolute tolerance for tensor comparison")
+    parser.add_argument("--rtol", type=float, default=1e-5, help="Relative tolerance for tensor comparison")
+    return parser
+
+
+if __name__ == "__main__":
+    args = _build_parser().parse_args()
     main(
         args.hf_model_id,
         args.output_dir,
@@ -297,7 +343,10 @@ if __name__ == "__main__":
         args.megatron_save_path,
         args.megatron_load_path,
         args.trust_remote_code,
+        strict=args.strict,
         skip_save=args.skip_save,
+        atol=args.atol,
+        rtol=args.rtol,
     )
 
     if torch.distributed.is_initialized():

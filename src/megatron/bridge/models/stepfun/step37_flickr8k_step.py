@@ -43,7 +43,7 @@ from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.pipeline_parallel.utils import is_pp_last_stage
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.data.vlm_datasets.step37_flickr8k.preprocess import preprocess_packed_batch
+from megatron.bridge.models.stepfun.data.flickr8k.preprocess import preprocess_packed_batch
 from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )

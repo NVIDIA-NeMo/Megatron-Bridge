@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Mapping
+from copy import copy
 from functools import partial
 from inspect import Parameter, signature
 from typing import Any, Iterable
@@ -27,11 +28,12 @@ from megatron.bridge.training.losses import (
     create_masked_next_token_loss_function as _create_loss_function,
 )
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
 from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
+_VISUAL_PAYLOAD_FIELDS = frozenset(("pixel_values", "pixel_values_videos"))
 _PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
 _PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
 _PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS, "total_tokens")
@@ -82,6 +84,18 @@ def _filter_visual_kwargs_for_model(model: Any, visual_kwargs: Mapping[str, torc
     return {key: value for key, value in visual_kwargs.items() if key in supported_kwargs}
 
 
+def _project_visual_inputs_for_pp_stage(visual_inputs: Any, *, is_first_pp_stage: bool) -> Any:
+    """Drop visual payload tensors from PP stages that only need visual metadata."""
+    if visual_inputs is None or is_first_pp_stage:
+        return visual_inputs
+
+    projected = copy(visual_inputs)
+    for field_name in _VISUAL_PAYLOAD_FIELDS:
+        if hasattr(projected, field_name):
+            setattr(projected, field_name, None)
+    return projected
+
+
 def get_batch_from_iterator(
     data_iterator: Iterable,
     use_mtp: bool = False,
@@ -108,7 +122,8 @@ def get_batch_from_iterator(
     if not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
 
-    # Instead of raw tensors, expect a single 'visual_inputs' object in batch
+    # Instead of raw tensors, expect a single 'visual_inputs' object in batch.
+    # Middle PP ranks still need visual metadata for MRoPE, but not image/video payload tensors.
     required_device_keys.add("visual_inputs")
 
     if "cu_seqlens_q" in batch:
@@ -126,9 +141,12 @@ def get_batch_from_iterator(
                 if val is None:
                     _batch_required_keys[key] = None
                 else:
-                    _batch_required_keys[key] = val
+                    _batch_required_keys[key] = _project_visual_inputs_for_pp_stage(
+                        val,
+                        is_first_pp_stage=is_first_pp_stage,
+                    )
                     # Move all visual inputs contained tensors to CUDA
-                    for k, v in val.__dict__.items():
+                    for k, v in _batch_required_keys[key].__dict__.items():
                         _batch_required_keys[key].__dict__[k] = v.cuda(non_blocking=True) if v is not None else None
             else:
                 _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
@@ -197,6 +215,11 @@ def forward_step(
 
     config = get_model_config(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
+    dataset_cfg = state.cfg.dataset
+    if getattr(dataset_cfg, "enable_in_batch_packing", False) and getattr(
+        dataset_cfg, "defer_in_batch_packing_to_step", False
+    ):
+        raise ValueError("vlm_step requires collate-time in-batch packing; set defer_in_batch_packing_to_step=False")
 
     timers("batch-generator", log_level=2).start()
     pg_collection = get_pg_collection(model)
@@ -246,6 +269,7 @@ def forward_step(
     accumulate_flops_metadata(
         state,
         tokens,
+        vp_stage=get_model_chunk_vp_stage(model),
         cu_seqlens=cu_seqlens,
         cu_seqlens_unpadded=cu_seqlens_unpadded,
         num_vision_patches=num_vision_patches,

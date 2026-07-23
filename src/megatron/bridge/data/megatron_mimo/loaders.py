@@ -7,9 +7,9 @@ from typing import TYPE_CHECKING, Optional, Tuple
 
 from torch.utils.data import DataLoader
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
 from megatron.bridge.data.megatron_mimo.dp_utils import get_megatron_mimo_sampling_info
 from megatron.bridge.data.samplers import build_pretraining_data_loader
-from megatron.bridge.training.config import DatasetBuildContext, DatasetProvider
 from megatron.bridge.utils.common_utils import print_rank_0
 
 

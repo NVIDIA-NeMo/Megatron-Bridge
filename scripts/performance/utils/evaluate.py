@@ -654,6 +654,18 @@ def merge_golden_values(prior: Optional[Dict[str, Any]], segment: Dict[str, Any]
     return {**prior, **segment}
 
 
+def _unwrap_golden_values(values: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the step mapping from a flat or snapshot-wrapped golden file."""
+    for snapshot_key in ("baseline", "current"):
+        if snapshot_key not in values:
+            continue
+        snapshot = values[snapshot_key]
+        if not isinstance(snapshot, dict):
+            raise ValueError(f"Golden values snapshot {snapshot_key!r} must be a mapping.")
+        return snapshot
+    return values
+
+
 def calc_convergence_and_performance(
     model_family_name: str,
     model_recipe_name: str,
@@ -773,9 +785,7 @@ def calc_convergence_and_performance(
     with open(expected_golden_values_path, "r") as f:
         expected_golden_values = json.load(f)
 
-    # Normalize: new format stores baseline data under a "baseline" key.
-    if "baseline" in expected_golden_values:
-        expected_golden_values = expected_golden_values["baseline"]
+    expected_golden_values = _unwrap_golden_values(expected_golden_values)
 
     steps = []
     golden_train_loss = {}

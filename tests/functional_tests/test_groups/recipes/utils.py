@@ -243,7 +243,7 @@ def run_pretrain_vl_recipe_test(
         model_overrides: Optional mapping of model attribute overrides to apply
         dataset_overrides: Optional mapping of dataset attribute overrides to apply
     """
-    from megatron.bridge.data.vlm_datasets.mock_provider import MockVLMConversationProvider
+    from megatron.bridge.data.builders import MockVLMSFTDatasetConfig
 
     if forward_step_func is None:
         # Import locally to avoid loading VLM stack for non-VL tests
@@ -287,9 +287,9 @@ def run_pretrain_vl_recipe_test(
         in_batch_packing_pad_to_multiple_of = getattr(config.dataset, "in_batch_packing_pad_to_multiple_of", 1)
 
         # Replace the real dataset with a mock dataset provider for tests
-        # MockVLMConversationProvider generates synthetic data and doesn't need a split attribute
+        # MockVLMSFTDatasetConfig generates synthetic data and doesn't need a split attribute.
         # since the DatasetBuildContext calculates sample counts from training configuration
-        config.dataset = MockVLMConversationProvider(
+        config.dataset = MockVLMSFTDatasetConfig(
             seq_length=test_seq_length,
             hf_processor_path=hf_processor_path,
             enable_in_batch_packing=enable_in_batch_packing,

@@ -14,12 +14,12 @@
 
 import logging
 from functools import partial
-from typing import Iterable
+from typing import Any, Iterable
 
 import torch
 from megatron.core.models.gpt import GPTModel
 from megatron.core.pipeline_parallel.utils import is_pp_first_stage, is_pp_last_stage
-from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config
+from megatron.core.utils import get_batch_on_this_cp_rank, get_model_config, get_pg_size, unwrap_model
 
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.gpt_step import (
@@ -33,13 +33,79 @@ from megatron.bridge.training.utils.pg_utils import get_pg_collection
 logger = logging.getLogger(__name__)
 
 
+_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
+_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
+_PACKED_SEQ_PARAM_KEYS = (*_PACKED_SEQ_DEVICE_KEYS, *_PACKED_SEQ_HOST_KEYS)
+
+
+def _expand_packed_metadata_for_visual_embeddings(
+    packed_metadata: dict[str, Any], input_ids: torch.Tensor, model: GPTModel
+) -> None:
+    """Adjust packed row boundaries for image placeholders expanded by LLaVA."""
+    if "cu_seqlens_q" not in packed_metadata:
+        return
+
+    unwrapped_model = unwrap_model(model)
+    llava_model = getattr(unwrapped_model, "llava_model", unwrapped_model)
+    image_token_index = getattr(llava_model, "image_token_index", None)
+    image_sequence_length = getattr(llava_model, "img_seq_len", None)
+    language_max_sequence_length = getattr(llava_model, "_language_max_sequence_length", None)
+
+    cu_seqlens = packed_metadata["cu_seqlens_q"].squeeze()
+    cu_seqlens_padded = packed_metadata.get("cu_seqlens_q_padded")
+    physical_boundaries = cu_seqlens_padded.squeeze() if cu_seqlens_padded is not None else cu_seqlens
+    expansion = torch.zeros(cu_seqlens.numel() - 1, dtype=cu_seqlens.dtype, device=cu_seqlens.device)
+    if image_token_index is not None and image_sequence_length is not None and image_sequence_length > 1:
+        image_positions = torch.nonzero(input_ids.squeeze(0) == image_token_index, as_tuple=True)[0]
+        if image_positions.numel() > 0:
+            sequence_indices = torch.bucketize(image_positions, physical_boundaries[1:], right=True)
+            image_counts = torch.bincount(sequence_indices, minlength=cu_seqlens.numel() - 1).to(cu_seqlens.dtype)
+            expansion = image_counts * (image_sequence_length - 1)
+
+    sequence_lengths = cu_seqlens[1:] - cu_seqlens[:-1] + expansion
+    physical_lengths = physical_boundaries[1:] - physical_boundaries[:-1] + expansion
+
+    if language_max_sequence_length is not None:
+        physical_ends = torch.cumsum(physical_lengths, dim=0, dtype=physical_lengths.dtype)
+        physical_ends = physical_ends.clamp(max=int(language_max_sequence_length))
+        retained_physical_lengths = torch.diff(torch.cat((physical_boundaries[:1], physical_ends)))
+        retained_rows = retained_physical_lengths > 0
+        physical_lengths = retained_physical_lengths[retained_rows]
+        sequence_lengths = torch.minimum(sequence_lengths[retained_rows], physical_lengths)
+
+    expanded_cu_seqlens = torch.cat((cu_seqlens[:1], torch.cumsum(sequence_lengths, dim=0, dtype=cu_seqlens.dtype)))
+    packed_metadata["cu_seqlens_q"] = expanded_cu_seqlens
+    packed_metadata["cu_seqlens_kv"] = expanded_cu_seqlens
+
+    if cu_seqlens_padded is not None:
+        expanded_padded_cu_seqlens = torch.cat(
+            (physical_boundaries[:1], torch.cumsum(physical_lengths, dim=0, dtype=physical_boundaries.dtype))
+        )
+        packed_metadata["cu_seqlens_q_padded"] = expanded_padded_cu_seqlens
+        packed_metadata["cu_seqlens_kv_padded"] = expanded_padded_cu_seqlens
+
+    max_sequence_length = int(physical_lengths.max().item())
+    packed_metadata["max_seqlen_q"] = max_sequence_length
+    packed_metadata["max_seqlen_kv"] = max_sequence_length
+
+
+def _validate_packed_parallelism(*, pg_collection) -> None:
+    """Reject packed LLaVA layouts whose data ownership is not implemented."""
+    pp_size = get_pg_size(pg_collection.pp)
+    cp_size = get_pg_size(pg_collection.cp)
+    if pp_size > 1 or cp_size > 1:
+        raise ValueError(
+            "llava_step packed sequences currently require pipeline_model_parallel_size=1 and context_parallel_size=1"
+        )
+
+
 def get_batch_from_iterator(
     data_iterator: Iterable,
     skip_getting_attention_mask_from_dataset: bool = True,
     *,
     is_first_pp_stage: bool,
     is_last_pp_stage: bool,
-) -> dict[str, torch.Tensor]:
+) -> dict[str, Any]:
     """Get a batch of data from the iterator.
 
     Args:
@@ -57,13 +123,18 @@ def get_batch_from_iterator(
 
     if not skip_getting_attention_mask_from_dataset:
         required_device_keys.add("attention_mask")
-    # Optionally include vision inputs if present in the batch
-    if "pixel_values" in batch:
+    # Prefer the unified visual-input container, while retaining the legacy raw-tensor path.
+    if "visual_inputs" in batch:
+        required_device_keys.add("visual_inputs")
+    elif "pixel_values" in batch:
         required_device_keys.add("pixel_values")
     if "num_patches" in batch:
         required_device_keys.add("num_patches")
 
-    if "cu_seqlens" in batch:
+    if "cu_seqlens_q" in batch:
+        required_device_keys.update(key for key in _PACKED_SEQ_DEVICE_KEYS if key in batch)
+        required_host_keys.update(key for key in _PACKED_SEQ_HOST_KEYS if key in batch)
+    elif "cu_seqlens" in batch:
         required_device_keys.add("cu_seqlens")
         required_host_keys.add("cu_seqlens_argmin")
         required_host_keys.add("max_seqlen")
@@ -76,7 +147,12 @@ def get_batch_from_iterator(
     _batch_required_keys = {}
     for key, val in batch.items():
         if key in required_device_keys:
-            _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
+            if key == "visual_inputs" and val is not None:
+                _batch_required_keys[key] = val
+                for field_name, field_value in val.__dict__.items():
+                    val.__dict__[field_name] = field_value.cuda(non_blocking=True) if field_value is not None else None
+            else:
+                _batch_required_keys[key] = val.cuda(non_blocking=True) if val is not None else None
         elif key in required_host_keys:
             _batch_required_keys[key] = val.cpu() if val is not None else None
         else:
@@ -88,16 +164,14 @@ def get_batch_from_iterator(
 def get_batch(
     data_iterator: Iterable, cfg: ConfigContainer, *, pg_collection
 ) -> tuple[
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
-    torch.Tensor,
     torch.Tensor | None,
     torch.Tensor | None,
     torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    torch.Tensor | None,
+    dict[str, Any] | None,
 ]:
     """Generate a batch.
 
@@ -114,7 +188,7 @@ def get_batch(
     is_first = is_pp_first_stage(pg_collection.pp)
     is_last = is_pp_last_stage(pg_collection.pp)
     if (not is_first) and (not is_last):
-        return None, None, None, None, None, None, None, None, None, None
+        return None, None, None, None, None, None, None, None
     batch = get_batch_from_iterator(
         data_iterator,
         getattr(cfg.dataset, "skip_getting_attention_mask_from_dataset", True),
@@ -122,26 +196,39 @@ def get_batch(
         is_last_pp_stage=is_last,
     )
 
-    # Keep optional vision tensors aside to avoid being dropped by CP slicing util
+    # Keep non-sequence visual tensors and packed metadata out of the CP slicing utility.
+    visual_inputs = batch.pop("visual_inputs", None)
     images = batch.get("pixel_values")
+    if images is None and visual_inputs is not None:
+        images = visual_inputs.pixel_values
+        if images is None:
+            images = visual_inputs.pixel_values_videos
+
+    packed_metadata = {key: batch.pop(key) for key in _PACKED_SEQ_PARAM_KEYS if batch.get(key) is not None}
+    if not packed_metadata and batch.get("cu_seqlens") is not None:
+        packed_metadata = {
+            key: batch.pop(key)
+            for key in ("cu_seqlens", "cu_seqlens_argmin", "max_seqlen")
+            if batch.get(key) is not None
+        }
+    if packed_metadata:
+        _validate_packed_parallelism(pg_collection=pg_collection)
 
     # slice batch along sequence dimension for context parallelism
     batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
-    if images is not None:
-        batch["images"] = images
-
     assert batch.get("tokens") is not None or batch.get("input_ids") is not None, "tokens or input_ids must be present"
+    input_ids = batch.get("tokens")
+    if input_ids is None:
+        input_ids = batch.get("input_ids")
     return (
-        batch["images"],
-        batch["num_patches"],
-        batch.get("tokens") or batch.get("input_ids"),
-        batch["labels"],
-        batch["loss_mask"],
-        batch["attention_mask"],
-        batch["position_ids"],
-        batch.get("cu_seqlens"),
-        batch.get("cu_seqlens_argmin"),
-        batch.get("max_seqlen"),
+        images,
+        batch.get("num_patches"),
+        input_ids,
+        batch.get("labels"),
+        batch.get("loss_mask"),
+        batch.get("attention_mask"),
+        batch.get("position_ids"),
+        packed_metadata or None,
     )
 
 
@@ -170,15 +257,13 @@ def forward_step(
     with straggler_timer(bdata=True):
         (
             images,
-            num_patches,
+            num_image_tiles,
             input_ids,
             labels,
             loss_mask,
             attention_mask,
             position_ids,
-            cu_seqlens,
-            cu_seqlens_argmin,
-            max_seqlen,
+            packed_metadata,
         ) = get_batch(data_iterator, state.cfg, pg_collection=pg_collection)
 
     timers("batch-generator").stop()
@@ -191,20 +276,23 @@ def forward_step(
         "labels": labels,
         "loss_mask": loss_mask,
     }
+    if num_image_tiles is not None:
+        forward_args["num_image_tiles"] = num_image_tiles
 
     # Add packed sequence support
-    if cu_seqlens is not None:
-        packed_seq_params = {
-            "cu_seqlens": cu_seqlens,
-            "cu_seqlens_argmin": cu_seqlens_argmin,
-            "max_seqlen": max_seqlen,
-        }
+    if packed_metadata is not None:
+        if input_ids is not None:
+            _expand_packed_metadata_for_visual_embeddings(packed_metadata, input_ids, model)
         # total_tokens drives seq_idx computation in PackedSeqParams.__post_init__,
         # which is only needed for Mamba/hybrid SSM layers. Skip it for pure
         # transformer models to avoid per-step CUDA overhead.
         if getattr(config, "is_hybrid_model", False):
-            packed_seq_params["total_tokens"] = input_ids.size(1) if input_ids is not None else labels.size(1)
-        forward_args["packed_seq_params"] = get_packed_seq_params(packed_seq_params)
+            if input_ids is not None and "cu_seqlens_q" in packed_metadata:
+                physical_boundaries = packed_metadata.get("cu_seqlens_q_padded", packed_metadata["cu_seqlens_q"])
+                packed_metadata["total_tokens"] = int(physical_boundaries[-1].item())
+            else:
+                packed_metadata["total_tokens"] = input_ids.size(1) if input_ids is not None else labels.size(1)
+        forward_args["packed_seq_params"] = get_packed_seq_params(packed_metadata)
 
     check_for_nan_in_loss = state.cfg.rerun_state_machine.check_for_nan_in_loss
     check_for_spiky_loss = state.cfg.rerun_state_machine.check_for_spiky_loss

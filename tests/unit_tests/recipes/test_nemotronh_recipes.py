@@ -15,16 +15,17 @@
 #
 # Test purpose:
 # - Parametrize over all exported NemotronH recipe functions in `megatron.bridge.recipes.nemotronh`.
-# - For each recipe, monkeypatch `AutoBridge` with a lightweight fake to avoid I/O.
-# - Build a config with small, safe overrides and assert it forms a valid `ConfigContainer`.
-# - Verify tokenizer selection: pretrain recipes honor `use_null_tokenizer`, finetune recipes always use HF tokenizer.
-# - Sanity-check parallelism fields and finetuning-specific requirements.
+# - Build each config without I/O and assert its batch, sequence, parallelism, tokenizer, and task contracts.
+# - Verify stale CLI override fields fail without creating phantom config attributes.
 #
 
 import importlib
 from typing import Callable
 
 import pytest
+
+from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
@@ -35,13 +36,45 @@ _NEMOTRONH_RECIPE_FUNCS = [
 ]
 
 
+class _FakeModelProvider:
+    """Lightweight mutable provider for recipe construction without HF Hub access."""
+
+    def __init__(self) -> None:
+        self.vocab_size = 256
+
+    def finalize(self) -> None:
+        return None
+
+
+class _FakeAutoBridge:
+    """Return a local model provider without loading a Hugging Face config."""
+
+    @classmethod
+    def from_hf_pretrained(cls, *args, **kwargs):
+        return cls()
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _FakeModelProvider()
+
+
+@pytest.fixture(autouse=True)
+def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep Super and Ultra recipe construction deterministic and offline."""
+    for module_name in (
+        "megatron.bridge.recipes.nemotronh.nemotron_3_super",
+        "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
+    ):
+        module = importlib.import_module(module_name)
+        patch_recipe_module_global(monkeypatch, module, "AutoBridge", _FakeAutoBridge)
+
+
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 
     assert isinstance(cfg, ConfigContainer)
-    # Required top-level sections
     assert cfg.model is not None
     assert cfg.train is not None
+    assert cfg.validation is not None
     assert cfg.optimizer is not None
     assert cfg.scheduler is not None
     assert cfg.dataset is not None
@@ -49,27 +82,24 @@ def _assert_basic_config(cfg):
     assert cfg.tokenizer is not None
     assert cfg.checkpoint is not None
     assert cfg.rng is not None
+    assert cfg.ddp is not None
+    assert cfg.mixed_precision is not None
 
-    # A few critical fields
-    assert cfg.train.global_batch_size >= 1
     assert cfg.train.micro_batch_size >= 1
+    assert cfg.train.global_batch_size >= cfg.train.micro_batch_size
+    assert cfg.train.global_batch_size % cfg.train.micro_batch_size == 0
 
-    # Check sequence length (different attribute names for different dataset types)
-    if hasattr(cfg.dataset, "sequence_length"):
-        assert cfg.dataset.sequence_length >= 1  # GPTDatasetConfig legacy
-    elif hasattr(cfg.dataset, "seq_length"):
-        assert cfg.dataset.seq_length >= 1  # FinetuningDatasetConfig / DatasetProvider
-    else:
-        # Some other dataset type
-        assert cfg.dataset is not None
+    assert 1 <= cfg.dataset.seq_length <= cfg.model.seq_length
+
+    assert cfg.model.tensor_model_parallel_size >= 1
+    assert cfg.model.pipeline_model_parallel_size >= 1
+    assert cfg.model.context_parallel_size >= 1
+    assert cfg.model.expert_model_parallel_size >= 1
 
 
 @pytest.mark.parametrize("recipe_func", _NEMOTRONH_RECIPE_FUNCS)
 def test_each_nemotronh_recipe_builds_config(recipe_func: Callable):
     """Test that each NemotronH recipe builds a valid config."""
-    # Note: NemotronH recipes don't use AutoBridge, so no patching needed
-    # They directly instantiate model providers
-
     # All configs use parameterless API (peft configs have optional peft_scheme)
     cfg = recipe_func()
 
@@ -92,114 +122,20 @@ def test_each_nemotronh_recipe_builds_config(recipe_func: Callable):
             assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
             assert cfg.tokenizer.tokenizer_model is not None
 
-    # Parallelism and shaping
-    assert getattr(cfg.model, "tensor_model_parallel_size", 1) >= 1
-    assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
-
-    # Finetuning-specific assertions
-    if is_finetune:
-        # Should have PEFT config (or None if SFT)
-        assert hasattr(cfg, "peft")  # peft field should exist
-        # Dataset should be configured (SQuAD by default)
-        assert cfg.dataset is not None
+    if is_peft:
+        assert cfg.peft is not None
+    else:
+        assert cfg.peft is None
 
 
-# NemotronH SFT-specific tests (all model sizes)
-_NEMOTRONH_SFT_FUNCS = [
-    getattr(_nemotronh_module, name)
-    for name in [
-        "nemotronh_4b_sft_config",
-        "nemotronh_8b_sft_config",
-        "nemotronh_47b_sft_config",
-        "nemotronh_56b_sft_config",
-    ]
-    if callable(getattr(_nemotronh_module, name, None))
-]
+def test_nemotronh_recipe_rejects_unknown_cli_override():
+    """A stale recipe override must fail instead of creating a phantom field."""
+    cfg = _nemotronh_module.nemotron_3_nano_pretrain_config()
 
-_NEMOTRONH_PEFT_FUNCS = [
-    getattr(_nemotronh_module, name)
-    for name in [
-        "nemotronh_4b_peft_config",
-        "nemotronh_8b_peft_config",
-        "nemotronh_47b_peft_config",
-        "nemotronh_56b_peft_config",
-    ]
-    if callable(getattr(_nemotronh_module, name, None))
-]
+    with pytest.raises(OverridesError, match="Failed to parse Hydra overrides"):
+        process_config_with_overrides(cfg, cli_overrides=["model.not_a_real_field=true"])
 
-
-@pytest.mark.parametrize("recipe_func", _NEMOTRONH_SFT_FUNCS)
-def test_nemotronh_sft_config(recipe_func: Callable):
-    """Test that SFT configurations are correctly applied for NemotronH models."""
-    # Note: NemotronH recipes don't use AutoBridge, so no patching needed
-
-    cfg = recipe_func()
-
-    _assert_basic_config(cfg)
-
-    # SFT should have no PEFT config
-    assert cfg.peft is None
-
-
-@pytest.mark.parametrize("recipe_func", _NEMOTRONH_PEFT_FUNCS)
-@pytest.mark.parametrize("peft_scheme", ["lora"])
-def test_nemotronh_peft_config(recipe_func: Callable, peft_scheme: str):
-    """Test that PEFT configurations are correctly applied for NemotronH models."""
-    # Note: NemotronH recipes don't use AutoBridge, so no patching needed
-
-    cfg = recipe_func(peft_scheme=peft_scheme)
-
-    _assert_basic_config(cfg)
-
-    # PEFT config should be present
-    assert cfg.peft is not None
-
-
-# Nemotron Nano v2 SFT and PEFT-specific tests (9B and 12B models)
-_NEMOTRON_NANO_V2_SFT_FUNCS = [
-    getattr(_nemotronh_module, name)
-    for name in [
-        "nemotron_nano_9b_v2_sft_config",
-        "nemotron_nano_12b_v2_sft_config",
-    ]
-    if callable(getattr(_nemotronh_module, name, None))
-]
-
-_NEMOTRON_NANO_V2_PEFT_FUNCS = [
-    getattr(_nemotronh_module, name)
-    for name in [
-        "nemotron_nano_9b_v2_peft_config",
-        "nemotron_nano_12b_v2_peft_config",
-    ]
-    if callable(getattr(_nemotronh_module, name, None))
-]
-
-
-@pytest.mark.parametrize("recipe_func", _NEMOTRON_NANO_V2_SFT_FUNCS)
-def test_nemotron_nano_v2_sft_config(recipe_func: Callable):
-    """Test that SFT configurations are correctly applied for Nemotron Nano v2 models."""
-    # Note: Nemotron Nano v2 recipes don't use AutoBridge, so no patching needed
-
-    cfg = recipe_func()
-
-    _assert_basic_config(cfg)
-
-    # SFT should have no PEFT config
-    assert cfg.peft is None
-
-
-@pytest.mark.parametrize("recipe_func", _NEMOTRON_NANO_V2_PEFT_FUNCS)
-@pytest.mark.parametrize("peft_scheme", ["lora"])
-def test_nemotron_nano_v2_peft_config(recipe_func: Callable, peft_scheme: str):
-    """Test that PEFT configurations are correctly applied for Nemotron Nano v2 models."""
-    # Note: Nemotron Nano v2 recipes don't use AutoBridge, so no patching needed
-
-    cfg = recipe_func(peft_scheme=peft_scheme)
-
-    _assert_basic_config(cfg)
-
-    # PEFT config should be present
-    assert cfg.peft is not None
+    assert not hasattr(cfg.model, "not_a_real_field")
 
 
 def test_nemotron_nano_9b_v2_lora_defaults():

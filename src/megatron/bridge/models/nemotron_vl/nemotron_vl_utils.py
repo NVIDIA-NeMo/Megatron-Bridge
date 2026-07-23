@@ -17,7 +17,7 @@ import io
 import logging
 import mimetypes
 import os
-from typing import Dict, List
+from collections.abc import Mapping
 
 import torch
 from PIL import Image
@@ -219,14 +219,22 @@ def pil_image_from_base64(b64_str: str) -> Image.Image:
 
 
 def adjust_image_tokens(
-    input_ids: torch.Tensor | Dict[str, torch.Tensor],
-    num_tiles: int | List[int],
+    input_ids: torch.Tensor | dict[str, torch.Tensor],
+    num_tiles: int | list[int] | torch.Tensor,
     img_start_token_id: int,
     img_end_token_id: int,
-) -> torch.Tensor | Dict[str, torch.Tensor]:
-    """
-    Ensures the input_ids tensor contains the correct number of <image> tokens as specified by num_tiles.
-    This adjustment is necessary to bridge the gap between from HF processor to Megatron LLaVAModel.
+    *,
+    padding_values: Mapping[str, int | float] | None = None,
+) -> torch.Tensor | dict[str, torch.Tensor]:
+    """Adjust each image placeholder without merging samples in the batch.
+
+    ``num_tiles`` contains one desired media-token count per image, flattened
+    in row-major sample order. A text-only row consumes no entry, while a row
+    with multiple images consumes one entry for each ``<img>...</img>`` region.
+    Every tensor in an input dictionary is adjusted at the same positions and
+    rows are right-padded back to a common length. If the dictionary contains
+    ``attention_mask``, trailing masked positions are discarded before the
+    adjustment so stale processor padding cannot pin the adjusted batch width.
 
     Example:
         input_ids decoded may look like this
@@ -238,69 +246,112 @@ def adjust_image_tokens(
         etc
 
     Args:
-        input_ids: The input_ids tensor (output of HF processor)
-            or a dictionary of tensors, one of the keys of which must be "input_ids",
-            and other tensors must have the same shape as input_ids
-        num_tiles: The number of <image> tokens to ensure, either a single int or a list of ints
-        img_start_token_id: The token id of <img>
-        img_end_token_id: The token id of </img>
+        input_ids: A 2D token tensor, or a dictionary containing ``input_ids``
+            and other sequence-aligned 2D tensors with the same shape.
+        num_tiles: Desired media-token counts for all images in row-major order.
+        img_start_token_id: Token ID for ``<img>``.
+        img_end_token_id: Token ID for ``</img>``.
+        padding_values: Per-tensor values used when adjusted rows have different
+            lengths. Unspecified tensors default to zero.
 
     Returns:
-        The input_ids tensor with the correct number of <image> tokens
-        or a dictionary of tensors each with the same shape as input_ids
+        The adjusted tensor or dictionary, preserving the input batch size.
+
+    Raises:
+        ValueError: If tensors are not aligned, image boundaries are malformed,
+            or the number of tile counts does not match the number of images.
     """
-    if isinstance(num_tiles, int):
-        num_tiles = [num_tiles]
-    if isinstance(input_ids, dict):
-        assert "input_ids" in input_ids, "input_ids must be a dictionary with 'input_ids' as one of the keys"
-        other_tensors = {key: value for key, value in input_ids.items() if key != "input_ids"}
-        input_ids = input_ids["input_ids"]
+    input_is_dict = isinstance(input_ids, dict)
+    if input_is_dict:
+        if "input_ids" not in input_ids:
+            raise ValueError("input_ids must be a dictionary containing an 'input_ids' tensor.")
+        aligned_tensors = dict(input_ids)
     else:
-        other_tensors = None
+        aligned_tensors = {"input_ids": input_ids}
 
-    for i, num_tile in enumerate(num_tiles):
-        image_start_pos = (input_ids[0] == img_start_token_id).nonzero(as_tuple=True)[0][i].item()
-        image_end_pos = (input_ids[0] == img_end_token_id).nonzero(as_tuple=True)[0][i].item()
-        media_token_id = input_ids[0, image_start_pos + 1]  # this can be <image> or <video> token
-        existing = image_end_pos - image_start_pos + 1
-
-        if num_tile > existing:
-            # Need to add tokens
-            repeat = num_tile + 2 - existing  # +2 for <img> and </img> tokens
-            repeat_tokens = torch.full((1, repeat), media_token_id, dtype=input_ids.dtype, device=input_ids.device)
-            if other_tensors is not None:
-                for key, tensor in other_tensors.items():
-                    assert other_tensors[key].shape == input_ids.shape, (
-                        f"Tensor {key} has shape {other_tensors[key].shape} but input_ids has shape {input_ids.shape}"
-                    )
-                    other_tensors[key] = torch.cat(
-                        [tensor[:, : image_start_pos + 1], repeat_tokens, tensor[:, image_start_pos + 1 :]], dim=1
-                    )
-            input_ids = torch.cat(
-                [input_ids[:, : image_start_pos + 1], repeat_tokens, input_ids[:, image_start_pos + 1 :]], dim=1
+    token_ids = aligned_tensors["input_ids"]
+    if token_ids.dim() != 2:
+        raise ValueError(f"input_ids must be 2D, got shape {tuple(token_ids.shape)}.")
+    for key, tensor in aligned_tensors.items():
+        if tensor.shape != token_ids.shape:
+            raise ValueError(
+                f"Tensor {key} has shape {tuple(tensor.shape)} but input_ids has shape {tuple(token_ids.shape)}."
             )
 
-        elif num_tile < existing:
-            # Need to remove tokens (keep only the first `num_tile` occurrences)
-            keep_tokens_mask = torch.ones_like(input_ids, dtype=torch.bool)
-            positions = (input_ids[0][image_start_pos : image_end_pos + 1] == media_token_id).nonzero(as_tuple=True)[
-                0
-            ] + image_start_pos
-            # positions to drop are after the first num_tile occurrences
-            drop_positions = positions[num_tile:].tolist()
-            keep_tokens_mask[0, drop_positions] = False
-            if other_tensors is not None:
-                for key, tensor in other_tensors.items():
-                    assert other_tensors[key].shape == input_ids.shape, (
-                        f"Tensor {key} has shape {other_tensors[key].shape} but input_ids has shape {input_ids.shape}"
-                    )
-                    other_tensors[key] = tensor[keep_tokens_mask].unsqueeze(0)
-            input_ids = input_ids[keep_tokens_mask].unsqueeze(0)
+    valid_lengths = [token_ids.shape[1]] * token_ids.shape[0]
+    attention_mask = aligned_tensors.get("attention_mask")
+    if attention_mask is not None:
+        valid_lengths = []
+        for row in attention_mask:
+            valid_positions = torch.where(row != 0)[0]
+            valid_lengths.append(int(valid_positions[-1].item()) + 1 if valid_positions.numel() else 0)
 
-    if other_tensors is not None:
-        return {
-            "input_ids": input_ids,
-            **other_tensors,
-        }
+    if isinstance(num_tiles, int):
+        tile_counts = [num_tiles]
+    elif isinstance(num_tiles, torch.Tensor):
+        tile_counts = [int(count) for count in num_tiles.detach().cpu().reshape(-1).tolist()]
     else:
-        return input_ids
+        tile_counts = [int(count) for count in num_tiles]
+    if any(count < 0 for count in tile_counts):
+        raise ValueError(f"num_tiles values must be non-negative, got {tile_counts}.")
+
+    boundaries_by_row: list[list[tuple[int, int]]] = []
+    total_images = 0
+    for row_index, row in enumerate(token_ids):
+        row = row[: valid_lengths[row_index]]
+        starts = (row == img_start_token_id).nonzero(as_tuple=True)[0].tolist()
+        ends = (row == img_end_token_id).nonzero(as_tuple=True)[0].tolist()
+        if len(starts) != len(ends):
+            raise ValueError(f"Mismatched image boundaries: found {len(starts)} starts and {len(ends)} ends.")
+
+        boundaries: list[tuple[int, int]] = []
+        previous_end = -1
+        for start, end in zip(starts, ends, strict=True):
+            if start <= previous_end or end <= start:
+                raise ValueError(f"Malformed image boundaries at positions {start} and {end}.")
+            media_tokens = row[start + 1 : end]
+            if media_tokens.numel() == 0:
+                raise ValueError(f"Image boundary at position {start} does not contain a media token.")
+            if not torch.all(media_tokens == media_tokens[0]):
+                raise ValueError(f"Image boundary at position {start} contains mixed media token IDs.")
+            boundaries.append((start, end))
+            previous_end = end
+
+        boundaries_by_row.append(boundaries)
+        total_images += len(boundaries)
+
+    if len(tile_counts) != total_images:
+        raise ValueError(f"Received {len(tile_counts)} tile counts for {total_images} image regions.")
+
+    adjusted_rows: dict[str, list[torch.Tensor]] = {key: [] for key in aligned_tensors}
+    tile_offset = 0
+    for row_index, boundaries in enumerate(boundaries_by_row):
+        row_tile_counts = tile_counts[tile_offset : tile_offset + len(boundaries)]
+        tile_offset += len(boundaries)
+        for key, tensor in aligned_tensors.items():
+            row = tensor[row_index, : valid_lengths[row_index]]
+            pieces: list[torch.Tensor] = []
+            cursor = 0
+            for (start, end), count in zip(boundaries, row_tile_counts, strict=True):
+                pieces.append(row[cursor : start + 1])
+                if count > 0:
+                    pieces.append(row[start + 1 : start + 2].expand(count))
+                pieces.append(row[end : end + 1])
+                cursor = end + 1
+            pieces.append(row[cursor:])
+            adjusted_rows[key].append(torch.cat(pieces))
+
+    max_length = max(row.numel() for row in adjusted_rows["input_ids"])
+    padding_values = padding_values or {}
+    adjusted_tensors: dict[str, torch.Tensor] = {}
+    for key, rows in adjusted_rows.items():
+        pad_value = padding_values.get(key, 0)
+        padded_rows = [
+            torch.cat([row, row.new_full((max_length - row.numel(),), pad_value)]) if row.numel() < max_length else row
+            for row in rows
+        ]
+        adjusted_tensors[key] = torch.stack(padded_rows).contiguous()
+
+    if input_is_dict:
+        return adjusted_tensors
+    return adjusted_tensors["input_ids"]

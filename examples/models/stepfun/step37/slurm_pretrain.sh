@@ -109,6 +109,8 @@ CLI_OVERRIDES="\
     model.freeze_vision_projection=False \
     dataset.sample_count=${SAMPLE_COUNT} \
     dataset.max_packing_seqlen=${SEQ_LENGTH} \
+    dataset.seq_length=${SEQ_LENGTH} \
+    dataset.tokenizer_path=${HF_MODEL} \
     train.micro_batch_size=1 \
     train.global_batch_size=${GLOBAL_BATCH_SIZE} \
     train.train_iters=${TRAIN_ITERS} \
@@ -135,7 +137,6 @@ cd "${MEGATRON_BRIDGE_PATH}"
 uv run --no-sync python scripts/training/run_recipe.py \
     --recipe step37_flickr8k_sft_smoke_config \
     --step_func step37_flickr8k_step \
-    --hf_path "${HF_MODEL}" \
     ${CLI_OVERRIDES}
 EOF
 

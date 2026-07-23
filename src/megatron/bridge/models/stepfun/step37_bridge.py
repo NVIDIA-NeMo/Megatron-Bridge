@@ -54,7 +54,7 @@ from megatron.bridge.models.stepfun.step35_bridge import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
     Step35Bridge,
-    _build_step35_layer_spec,
+    build_step35_layer_spec,
 )
 from megatron.bridge.models.stepfun.step37_provider import Step37ModelProvider
 
@@ -278,7 +278,7 @@ class Step37Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            provider.transformer_layer_spec = _build_step35_layer_spec
+            provider.transformer_layer_spec = build_step35_layer_spec
 
         # Per-layer hybrid full/sliding attention schedule.
         layer_types = getattr(text_config, "layer_types", None)

@@ -22,7 +22,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen3_asr.modeling_qwen3_asr.model import Qwen3ASRModel
 from megatron.bridge.models.qwen3_asr.qwen3_asr_provider import Qwen3ASRModelProvider
 
@@ -45,7 +45,7 @@ class Qwen3ASRBridge(MegatronModelBridge):
     - QK layernorm weight mappings (q_layernorm, k_layernorm)
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3ASRModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3ASRModelProvider:
         """Create a Qwen3ASRModelProvider from a HuggingFace pretrained model."""
         hf_config = hf_pretrained.config
         thinker_config = hf_config.thinker_config

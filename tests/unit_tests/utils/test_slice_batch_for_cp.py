@@ -204,8 +204,8 @@ class TestSliceBatchForContextParallelBSHD:
 class TestSliceBatchForContextParallelTHD:
     """Tests for slice_batch_for_context_parallel with THD (packed) format."""
 
-    def test_thd_format_uses_tex_partitioned_indices(self):
-        """Test that THD format triggers TransformerEngine's thd_get_partitioned_indices."""
+    def test_thd_format_uses_mcore_partitioned_indices(self):
+        """Test that THD format uses the centralized MCore partition helper."""
         batch_size, seq_len, hidden = 1, 16, 64
         cp_size = 2
         cp_rank = 0
@@ -225,15 +225,12 @@ class TestSliceBatchForContextParallelTHD:
 
         pg_collection = MockPGCollection(cp_size=cp_size, cp_rank=cp_rank)
 
-        # Mock tex.thd_get_partitioned_indices
         mock_indices = torch.tensor([0, 1, 2, 3, 8, 9, 10, 11])  # First half of each sequence
 
-        with patch.dict("sys.modules", {"transformer_engine_torch": MagicMock()}):
-            import sys
-
-            mock_tex = sys.modules["transformer_engine_torch"]
-            mock_tex.thd_get_partitioned_indices.return_value = mock_indices
-
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ) as mock_get_indices:
             result = slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
                 labels=labels,
@@ -246,8 +243,7 @@ class TestSliceBatchForContextParallelTHD:
 
         out_embeds, out_labels, out_loss_mask, out_pos_ids, out_attn_mask = result
 
-        # Verify tex.thd_get_partitioned_indices was called
-        mock_tex.thd_get_partitioned_indices.assert_called_once()
+        mock_get_indices.assert_called_once()
 
         # Check output shapes match the indices
         assert out_embeds.shape[0] == len(mock_indices)  # T dimension
@@ -279,12 +275,10 @@ class TestSliceBatchForContextParallelTHD:
 
         mock_indices = torch.tensor([5, 6, 7, 8, 9, 15, 16, 17, 18, 19])  # Second half
 
-        with patch.dict("sys.modules", {"transformer_engine_torch": MagicMock()}):
-            import sys
-
-            mock_tex = sys.modules["transformer_engine_torch"]
-            mock_tex.thd_get_partitioned_indices.return_value = mock_indices
-
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ) as mock_get_indices:
             result = slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
                 labels=labels,
@@ -298,8 +292,8 @@ class TestSliceBatchForContextParallelTHD:
         out_embeds, out_labels, out_loss_mask, out_pos_ids, out_attn_mask = result
 
         # Verify padded cu_seqlens was used
-        call_args = mock_tex.thd_get_partitioned_indices.call_args
-        assert torch.equal(call_args[0][0], cu_seqlens_padded)
+        call_args = mock_get_indices.call_args
+        assert torch.equal(call_args.args[0], cu_seqlens_padded)
 
     def test_thd_format_without_padded_cu_seqlens_fallback(self):
         """Test THD format falls back to cu_seqlens_q when padded version is None."""
@@ -325,12 +319,10 @@ class TestSliceBatchForContextParallelTHD:
 
         mock_indices = torch.tensor([0, 1, 2, 6, 7, 8])
 
-        with patch.dict("sys.modules", {"transformer_engine_torch": MagicMock()}):
-            import sys
-
-            mock_tex = sys.modules["transformer_engine_torch"]
-            mock_tex.thd_get_partitioned_indices.return_value = mock_indices
-
+        with patch(
+            "megatron.bridge.training.utils.packed_seq_utils.get_thd_cp_partition_indices",
+            return_value=mock_indices,
+        ) as mock_get_indices:
             slice_batch_for_context_parallel(
                 inputs_embeds=inputs_embeds,
                 labels=labels,
@@ -342,8 +334,8 @@ class TestSliceBatchForContextParallelTHD:
             )
 
         # Verify cu_seqlens_q was used as fallback
-        call_args = mock_tex.thd_get_partitioned_indices.call_args
-        assert torch.equal(call_args[0][0], cu_seqlens)
+        call_args = mock_get_indices.call_args
+        assert torch.equal(call_args.args[0], cu_seqlens)
 
 
 class TestSliceBatchForContextParallelTranspose:

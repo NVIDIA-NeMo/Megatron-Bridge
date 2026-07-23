@@ -28,9 +28,9 @@ from megatron.core.optimizer_param_scheduler import OptimizerParamScheduler
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.rerun_state_machine import RerunDataIterator
 from megatron.core.transformer import MegatronModule
-
-from megatron.bridge.data.loaders import setup_data_iterators
 from megatron.training.models.base import ModelConfig
+
+from megatron.bridge.data.loaders import build_train_valid_test_datasets_for_num_epochs, setup_data_iterators
 from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.model_provider import ModelProviderMixin
@@ -40,12 +40,18 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointManager,
+    _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
-from megatron.bridge.training.optim import setup_optimizer, sync_hybrid_device_optimizer_fp32_master_copies
+from megatron.bridge.training.optim import (
+    memory_efficient_fp32_optimizer_state_loading,
+    setup_optimizer,
+    sync_hybrid_device_optimizer_fp32_master_copies,
+)
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
     finalize_tensor_inspect_post_model_initialization,
@@ -84,6 +90,59 @@ class SetupOutput(NamedTuple):
     test_data_iterator: Optional[RerunDataIterator | list[RerunDataIterator]]
     checkpoint_manager: CheckpointManager
     pg_collection: ProcessGroupCollection
+
+
+def _bind_dataset_provider_context(
+    provider: Callable,
+    *,
+    tokenizer: Any,
+    pg_collection: ProcessGroupCollection,
+) -> Callable:
+    signature_params = inspect.signature(provider).parameters
+    if "tokenizer" in signature_params:
+        provider = partial(provider, tokenizer=tokenizer)
+    if "pg_collection" in signature_params:
+        provider = partial(provider, pg_collection=pg_collection)
+    return provider
+
+
+def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: CheckpointManager) -> bool:
+    """Return whether setup has a checkpoint source to load."""
+    checkpointing_context = getattr(checkpoint_manager, "checkpointing_context", {})
+    has_local_checkpoint = (
+        "local_checkpoint_manager" in checkpointing_context
+        and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
+    )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
+        cfg.checkpoint.load, cfg.checkpoint
+    )
+
+    if cfg.peft is not None:
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
+            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+        )
+        return load_checkpoint_exists or has_global_non_persistent_checkpoint
+
+    load_checkpoint_exists = cfg.checkpoint.load is not None and (
+        checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
+    )
+    has_pretrained_checkpoint = cfg.checkpoint.pretrained_checkpoint is not None and (
+        checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
+        or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
+    )
+    should_load_checkpoint = (
+        load_checkpoint_exists
+        or has_pretrained_checkpoint
+        or has_local_checkpoint
+        or has_global_non_persistent_checkpoint
+    )
+
+    if cfg._checkpoint_load_required and not should_load_checkpoint:
+        raise FileNotFoundError(
+            "Finetuning requires loading from an available pretrained checkpoint or resuming from a checkpoint"
+        )
+
+    return should_load_checkpoint
 
 
 def setup(
@@ -191,7 +250,8 @@ def setup(
         tokenizer_vocab_size=tokenizer.vocab_size,
     )
 
-    cfg.dataset.tokenizer = tokenizer
+    if hasattr(cfg.dataset, "tokenizer"):
+        cfg.dataset.tokenizer = tokenizer
 
     # Compute token_dtype_code for sequences_per_dataset support.
     # Bridge skips MCoreGPTDatasetConfig.__post_init__() (tokenizer unavailable at
@@ -202,6 +262,22 @@ def setup(
             import numpy
 
             cfg.dataset.token_dtype_code = 4 if vocab_size > numpy.iinfo(numpy.uint16).max + 1 else 8
+
+    if cfg.train.num_epochs is not None:
+        if should_fire(callback_manager, "on_data_init_start"):
+            raise ValueError("num_epochs is not supported with on_data_init_start callbacks")
+        epoch_datasets_provider = _bind_dataset_provider_context(
+            train_valid_test_datasets_provider,
+            tokenizer=tokenizer,
+            pg_collection=pg_collection,
+        )
+        datasets = build_train_valid_test_datasets_for_num_epochs(cfg, epoch_datasets_provider)
+
+        def cached_datasets_provider(_train_val_test_num_samples, _dataset_config):
+            """Return datasets built before optimizer and scheduler initialization."""
+            return datasets
+
+        train_valid_test_datasets_provider = cached_datasets_provider
 
     timers("tokenizer-setup").stop()
     barrier_and_log("after tokenizer is built")
@@ -224,18 +300,26 @@ def setup(
         def modelopt_pre_wrap_hook(model):
             from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
-            # Check which checkpoint path has modelopt state
-            if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
-                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
-            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load):
+            has_resume_checkpoint = cfg.checkpoint.load is not None and (
+                checkpoint_exists(cfg.checkpoint.load)
+                or is_hf_checkpoint_dir(cfg.checkpoint.load)
+                or _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
+            )
+            if has_resume_checkpoint:
                 checkpoint_path = cfg.checkpoint.load
+                ckpt_step = cfg.checkpoint.ckpt_step
+            elif cfg.checkpoint.pretrained_checkpoint:
+                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
+                ckpt_step = None
             else:
                 raise RuntimeError(
-                    f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
-                    f"or load={cfg.checkpoint.load}"
+                    "No checkpoint source is available for ModelOpt state restoration"
                 )
 
-            load_modelopt_state(model, checkpoint_path)
+            if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
+                raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
+
+            load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
 
         _register_pre_wrap_hook(cfg.model, modelopt_pre_wrap_hook)
@@ -261,51 +345,27 @@ def setup(
     timers("model-and-optimizer-setup").stop()
     barrier_and_log("after model, optimizer, and learning rate scheduler are built")
 
-    # Check if a local (non-persistent) checkpoint is available.  Local
-    # checkpoints are independent of global ones — they don't write
-    # latest_train_state.pt to load_dir, so checkpoint_exists() won't
-    # find them.
-    _ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
-    has_local_checkpoint = (
-        "local_checkpoint_manager" in _ckpt_ctx and _ckpt_ctx["local_checkpoint_manager"].find_latest() != -1
-    )
-
     # For PEFT, the pretrained checkpoint is loaded in the pre-wrap hook
+    should_load_checkpoint = _should_load_checkpoint(cfg, checkpoint_manager)
     if cfg.peft is not None:
-        # HF full-model directories enter the load flow only to produce the
-        # targeted checkpoint.load error in checkpointing.
-        should_load_checkpoint = cfg.checkpoint.load is not None and (
-            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
-        )
         if should_load_checkpoint:
             # The finetune toggle is explicitly set to True in order to avoid loading optimizer and RNG states
             # This is switched off here in order to load these states from the checkpoint
             cfg.checkpoint.finetune = False
-    else:
-        # ``checkpoint.load`` resumes from native Megatron checkpoints. ``pretrained_checkpoint``
-        # may also point at a HuggingFace full-model directory for initialization.
-        # HF directories are included in load detection only to route to the
-        # targeted checkpoint.load error in checkpointing.
-        load_checkpoint_exists = cfg.checkpoint.load is not None and (
-            checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
-        )
-        has_pretrained_checkpoint = cfg.checkpoint.pretrained_checkpoint is not None and (
-            checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
-            or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
-        )
-        should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_manager.load(
-            CheckpointLoadContext(
-                state=state,
-                model=model,
-                optimizer=optimizer,
-                opt_param_scheduler=scheduler,
-                skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
+        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
+            checkpoint_manager.load(
+                CheckpointLoadContext(
+                    state=state,
+                    model=model,
+                    optimizer=optimizer,
+                    opt_param_scheduler=scheduler,
+                    skip_load_to_model_and_opt=cfg.dist.use_torch_fsdp2,
+                )
             )
-        )
         # Workaround for upstream mcore: reload_model_params() only refreshes the
         # level-1 FP32 GPU shards of HybridDeviceOptimizer, so the level-2 CPU
         # clones and level-3 FP32 working copies retain their random init.  Without
@@ -350,20 +410,39 @@ def setup(
 
     # Data stuff.
     timers("train/valid/test-data-iterators-setup", log_level=0).start(barrier=True)
-    if "tokenizer" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, tokenizer=tokenizer)
-    if "pg_collection" in inspect.signature(train_valid_test_datasets_provider).parameters:
-        train_valid_test_datasets_provider = partial(train_valid_test_datasets_provider, pg_collection=pg_collection)
-
+    train_valid_test_datasets_provider = _bind_dataset_provider_context(
+        train_valid_test_datasets_provider,
+        tokenizer=tokenizer,
+        pg_collection=pg_collection,
+    )
     train_data_iterator, valid_data_iterator, test_data_iterator = setup_data_iterators(
         cfg=cfg,
         train_state=state.train_state,
         model_length=len(model),
         train_valid_test_datasets_provider=train_valid_test_datasets_provider,
         dp_group=pg_collection.dp,
+        eval_dp_group=state._eval_pgs.dp if state._eval_pgs is not None else None,
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the dataloader stream position so a resumed run continues over the same data (currently
+    # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
+    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
+    # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
+    # pretrained-init runs (step reset to 0) start the data stream from the beginning.
+    if state.train_state.step > 0:
+        dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
+        if dataloader_load_path is None:
+            ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+            dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            dataloader_load_path,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()

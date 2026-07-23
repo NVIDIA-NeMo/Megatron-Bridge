@@ -84,6 +84,24 @@ def test_get_batch_from_iterator_moves_omni_tensors_to_cuda():
     assert out["pixel_values"] is not None
     assert out["input_features"] is not None
     assert out["video_second_per_grid"] is not None
+    assert out["attention_mask"] is not None
+
+
+def test_get_batch_from_iterator_drops_attention_mask_when_skipped():
+    batch = _make_batch()
+    for key, value in list(batch.items()):
+        if isinstance(value, torch.Tensor):
+            batch[key] = _as_nocuda(value)
+
+    out = get_batch_from_iterator(
+        _Iterator(batch),
+        use_mtp=False,
+        skip_getting_attention_mask_from_dataset=True,
+        is_first_pp_stage=True,
+        is_last_pp_stage=True,
+    )
+
+    assert "attention_mask" not in out
 
 
 def test_normalize_multimodal_inputs_flattens_expected_shapes():
@@ -316,8 +334,9 @@ def test_forward_step_supports_dense_context_parallel(monkeypatch, cp_rank, loca
         ),
     )
 
-    def _mock_get_batch_on_this_cp_rank(batch, cp_group):
+    def _mock_get_batch_on_this_cp_rank(batch, is_hybrid_cp, cp_group):
         slice_calls.append((batch, cp_group))
+        assert is_hybrid_cp is False
         assert cp_group.rank() == cp_rank
         assert "attention_mask" not in batch
         assert "_attention_mask_2d" in batch
@@ -445,7 +464,8 @@ def test_forward_step_schedule_plan_uses_dense_context_parallel_batch(monkeypatc
         ),
     )
 
-    def _mock_get_batch_on_this_cp_rank(batch, cp_group):  # noqa: ARG001
+    def _mock_get_batch_on_this_cp_rank(batch, is_hybrid_cp, cp_group):  # noqa: ARG001
+        assert is_hybrid_cp is False
         return {
             "input_ids": batch["input_ids"][:, :4],
             "position_ids": batch["position_ids"][:, :4],

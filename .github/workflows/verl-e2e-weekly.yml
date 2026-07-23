@@ -1,0 +1,156 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+name: verl e2e (weekly)
+
+on:
+  schedule:
+    - cron: "0 6 * * 1" # Mondays 06:00 UTC
+  workflow_dispatch:
+    inputs:
+      script:
+        description: "Run a single script (basename without .sh); empty = all run_*.sh"
+        required: false
+        type: string
+      verl_ref:
+        description: "verl git ref to check out"
+        required: false
+        type: string
+        default: main
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.scan.outputs.matrix }}
+      has_scripts: ${{ steps.scan.outputs.has_scripts }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Scan verl_ci/run_*.sh into a matrix
+        id: scan
+        shell: bash -x -e -u -o pipefail {0}
+        env:
+          RUNNER_PREFIX: ${{ vars.DEFAULT_RUNNER_PREFIX }}
+          SINGLE: ${{ github.event.inputs.script }}
+        run: |
+          get_header() {
+            grep -m1 "^# $1=" "$2" | cut -d= -f2
+          }
+
+          entries=""
+          for f in .github/workflows/verl_ci/run_*.sh; do
+            [ -f "$f" ] || continue
+            name=$(basename "$f" .sh)
+            if [ -n "${SINGLE:-}" ] && [ "$name" != "$SINGLE" ]; then
+              continue
+            fi
+            timeout=$(get_header CI_TIMEOUT "$f"); timeout=${timeout:-60}
+            gpu_count=$(get_header GPU_COUNT "$f"); gpu_count=${gpu_count:-8}
+            # shellcheck disable=SC2001 # regex quantifier not expressible via ${var//}
+            runner=$(echo "${RUNNER_PREFIX}" | sed "s/gpu-x[0-9]*/gpu-x${gpu_count}/")
+            entries="${entries}{\"script\":\"${name}\",\"timeout\":${timeout},\"runner\":\"${runner}\"},"
+          done
+
+          matrix="{\"include\":[${entries%,}]}"
+          echo "matrix=${matrix}" | tee -a "$GITHUB_OUTPUT"
+          if [ -n "$entries" ]; then
+            echo "has_scripts=true" | tee -a "$GITHUB_OUTPUT"
+          else
+            echo "has_scripts=false" | tee -a "$GITHUB_OUTPUT"
+          fi
+
+  verl-e2e:
+    needs: [discover]
+    if: needs.discover.outputs.has_scripts == 'true'
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJSON(needs.discover.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    name: ${{ matrix.script }}
+    timeout-minutes: ${{ matrix.timeout }}
+    env:
+      CONTAINER: verl_${{ github.run_id }}_${{ matrix.script }}
+      VERL_IMAGE: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}/dockerhub/verlai/verl:vllm020.dev1
+      VERL_REF: ${{ github.event.inputs.verl_ref || 'main' }}
+      TEST_DATA_PATH: ${{ vars.DEFAULT_TEST_DATA_PATH }}
+      VERL_DATA_ROOT: /home/TestData/verl_ci
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Start verl container
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          docker rm -f "$CONTAINER" || true
+          docker run \
+            --rm -d \
+            --name "$CONTAINER" \
+            --runtime=nvidia --gpus all \
+            --shm-size=64g \
+            --env HF_HUB_OFFLINE=1 \
+            --env VERL_DATA_ROOT="$VERL_DATA_ROOT" \
+            --volume "${TEST_DATA_PATH}:/home/TestData" \
+            --volume "${GITHUB_WORKSPACE}:/opt/Megatron-Bridge" \
+            --workdir /workspace \
+            "$VERL_IMAGE" \
+            bash -c "sleep $(( ${{ matrix.timeout }} * 60 + 300 ))"
+
+      - name: Run ${{ matrix.script }}
+        shell: bash -x -e -u -o pipefail {0}
+        run: |
+          docker exec \
+            -e SCRIPT_PATH="/opt/Megatron-Bridge/.github/workflows/verl_ci/${{ matrix.script }}.sh" \
+            -e VERL_REF="$VERL_REF" \
+            -e VERL_DATA_ROOT="$VERL_DATA_ROOT" \
+            "$CONTAINER" bash -euxo pipefail -c '
+              export HOME=/tmp/verl_home
+              mkdir -p "$HOME"
+              # Reproduce verl runner layout: $HOME/models/<org>/<name> + $HOME/models/hf_data/gsm8k
+              ln -sfn "$VERL_DATA_ROOT/models" "$HOME/models"
+              git clone https://github.com/verl-project/verl.git /workspace/verl
+              cd /workspace/verl
+              git checkout "$VERL_REF"
+              git rev-parse HEAD
+              bash "$SCRIPT_PATH"
+            '
+
+      - name: Cleanup container
+        if: always()
+        shell: bash
+        run: docker rm -f "$CONTAINER" || true
+
+  notify:
+    needs: [discover, verl-e2e]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Notify Slack on failure
+        env:
+          SLACK_WEBHOOK: ${{ secrets.SLACK_CI_CHANNEL_WEBHOOK }}
+          SLACK_WEBHOOK_ADMIN: <!subteam^${{ secrets.SLACK_TEAM_GROUP_ID }}>
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          curl -X POST \
+            -H 'Content-type: application/json' \
+            --data "{\"text\":\":rotating_light: <https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}|verl e2e (weekly)> has failing leg(s). Please review.\n\ncc ${SLACK_WEBHOOK_ADMIN}\"}" \
+            "$SLACK_WEBHOOK"

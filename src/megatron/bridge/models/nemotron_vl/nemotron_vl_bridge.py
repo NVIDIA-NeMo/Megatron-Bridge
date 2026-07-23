@@ -24,7 +24,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     MambaInProjMapping,
     QKVMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
@@ -48,7 +48,7 @@ class NemotronVLBridge(MegatronModelBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronVLModelProvider:  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronVLModelProvider:  # type: ignore[override]
         hf_config = hf_pretrained.config
         llm_config = hf_config.llm_config
 

@@ -39,7 +39,7 @@ Examples:
 
   # Bridge → MLM: recipe + overrides (most common)
   python scripts/translate_mlm_to_bridge.py --reverse \\
-      --recipe llama32_1b_pretrain_config \\
+      --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \\
       --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
 
   # Bridge → MLM: recipe only (all defaults)
@@ -55,6 +55,9 @@ from __future__ import annotations
 
 import argparse
 import ast
+import importlib
+import json
+import pkgutil
 import shlex
 import sys
 import textwrap
@@ -184,7 +187,7 @@ ARG_MAP: dict[str, tuple[str, Any]] = {
     "skip-train":                        ("train.skip_train",                    "flag"),
     "manual-gc":                         ("train.manual_gc",                     "flag"),
     "manual-gc-interval":                ("train.manual_gc_interval",            None),
-    "seq-length":                        ("dataset.sequence_length",             "seq_length"),
+    "seq-length":                        ("dataset.seq_length",                  "seq_length"),
     "dataloader-type":                   ("dataset.dataloader_type",             None),
     "num-dataset-builder-threads":       ("dataset.num_dataset_builder_threads", None),
 
@@ -367,7 +370,7 @@ def _try_parse_value(val: str) -> Any:
     return _try_numeric(val)
 
 
-def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str | int | float | bool]]:
     """Parse a Megatron-LM style YAML into a flat arg dict.
 
     Expected YAML structure:
@@ -385,7 +388,7 @@ def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
         data = yaml.safe_load(f)
 
     model_args = data.get("MODEL_ARGS", data)
-    env_vars = data.get("ENV_VARS", {})
+    env_vars = data.get("ENV_VARS") or {}
 
     parsed: dict[str, Any] = {}
     for key, val in model_args.items():
@@ -401,7 +404,7 @@ def parse_yaml_config(path: str) -> tuple[dict[str, Any], dict[str, str]]:
     return parsed, env_vars
 
 
-def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str]]:
+def parse_raw_args(args_str: str) -> tuple[dict[str, Any], dict[str, str | int | float | bool]]:
     """Parse a raw MLM CLI string into a flat arg dict."""
     tokens = shlex.split(args_str)
     parsed: dict[str, Any] = {}
@@ -445,7 +448,7 @@ class TranslationResult:
         self.skipped: list[tuple[str, Any]] = []
         self.unknown: list[tuple[str, Any]] = []
         self.notes: list[str] = []
-        self.env_vars: dict[str, str] = {}
+        self.env_vars: dict[str, str | int | float | bool] = {}
         self.uses_mla = False
         self.uses_moe = False
         self.raw_args: dict[str, Any] = {}
@@ -457,7 +460,7 @@ class TranslationResult:
         self.notes.append(note)
 
 
-def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> TranslationResult:
+def translate(args: dict[str, Any], env_vars: dict[str, str | int | float | bool] | None = None) -> TranslationResult:
     """Translate parsed MLM args into Bridge overrides."""
     result = TranslationResult()
     result.raw_args = args
@@ -504,7 +507,7 @@ def translate(args: dict[str, Any], env_vars: dict[str, str] | None = None) -> T
                 split_str = str(arg_val)
             result.add_override(bridge_path, split_str)
         elif transform == "seq_length":
-            result.add_override("dataset.sequence_length", arg_val)
+            result.add_override("dataset.seq_length", arg_val)
             result.add_override("model.seq_length", arg_val)
         elif transform == "vpp_from_layers":
             layers_per_vpp_stage = int(arg_val)
@@ -592,6 +595,11 @@ def emit_overrides(result: TranslationResult) -> str:
         for note in result.notes:
             lines.append(f"# NOTE: {note}")
         lines.append("#")
+
+    if result.env_vars:
+        env_vars_override = ",".join(f"{name}:{json.dumps(value)}" for name, value in result.env_vars.items())
+        lines.append("\n# ── Environment Variables ─────────────────────────────")
+        lines.append(f"  '++env_vars={{{env_vars_override}}}' \\")
 
     # Group overrides by section
     sections: dict[str, list[tuple[str, Any]]] = OrderedDict()
@@ -876,6 +884,7 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     # Dataset blend
     seq_len = dataset_fields.get("seq_length", 4096)
     lines.append("    cfg = ConfigContainer(")
+    lines.append(f"        env_vars={result.env_vars!r},")
     lines.append("        model=model_config(),")
     lines.append("        train=TrainingConfig(")
     for k in [
@@ -929,11 +938,11 @@ def emit_recipe(result: TranslationResult, recipe_name: str = "custom_model") ->
     ds_merged = {**ds_defaults}
     for k, v in dataset_fields.items():
         if k == "seq_length":
-            ds_merged["sequence_length"] = v
+            ds_merged["seq_length"] = v
         else:
             ds_merged[k] = v
-    if "sequence_length" not in ds_merged:
-        ds_merged["sequence_length"] = seq_len
+    if "seq_length" not in ds_merged:
+        ds_merged["seq_length"] = seq_len
     for k, v in ds_merged.items():
         lines.append(f"            {k}={_fmt_val(v)},")
     lines.append("            skip_getting_attention_mask_from_dataset=True,")
@@ -1269,13 +1278,29 @@ def _load_recipe_to_flat_dict(recipe_name: str) -> dict[str, Any]:
     except ImportError:
         _act_to_str = None
 
-    if not hasattr(recipes, recipe_name):
+    recipe_builder = getattr(recipes, recipe_name, None)
+    if recipe_builder is None:
+        for module_info in pkgutil.iter_modules(recipes.__path__):
+            if not module_info.ispkg or module_info.name.startswith("_") or module_info.name == "utils":
+                continue
+            try:
+                h100_module_name = f"{recipes.__name__}.{module_info.name}.h100"
+                h100_module = importlib.import_module(h100_module_name)
+            except ModuleNotFoundError as exc:
+                if exc.name != h100_module_name:
+                    raise
+                continue
+            recipe_builder = getattr(h100_module, recipe_name, None)
+            if recipe_builder is not None:
+                break
+
+    if recipe_builder is None:
         available = [n for n in dir(recipes) if "config" in n]
         raise ValueError(
             f"Recipe '{recipe_name}' not found in megatron.bridge.recipes.\nAvailable (sample): {available[:20]}"
         )
 
-    cfg = getattr(recipes, recipe_name)()
+    cfg = recipe_builder()
 
     def _flatten(obj: Any, prefix: str = "") -> dict[str, Any]:
         out: dict[str, Any] = {}
@@ -1490,11 +1515,11 @@ def translate_bridge_to_mlm(overrides: dict[str, Any]) -> ReverseTranslationResu
         consumed.add("model.cuda_graph_impl")
         result.add_arg("cuda-graph-impl", cuda_impl)
 
-    # --- Special: model.seq_length / dataset.sequence_length → --seq-length
-    seq_len = overrides.get("model.seq_length", overrides.get("dataset.sequence_length"))
+    # --- Special: model.seq_length / dataset.seq_length → --seq-length
+    seq_len = overrides.get("model.seq_length", overrides.get("dataset.seq_length"))
     if seq_len is not None:
         consumed.add("model.seq_length")
-        consumed.add("dataset.sequence_length")
+        consumed.add("dataset.seq_length")
         result.add_arg("seq-length", seq_len)
 
     # --- Special: model.max_position_embeddings → --max-position-embeddings
@@ -1630,8 +1655,8 @@ def main():
           python scripts/translate_mlm_to_bridge.py --yaml DeepSeek-V3.yaml --emit recipe --recipe-name deepseek_v3
 
         Examples (Bridge → MLM, --reverse):
-          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config
-          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_config \\
+          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_1gpu_h100_bf16_config
+          python scripts/translate_mlm_to_bridge.py --reverse --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \\
               --args "train.train_iters=1000 model.tensor_model_parallel_size=2"
           python scripts/translate_mlm_to_bridge.py --reverse --args "model.num_layers=32 model.hidden_size=4096"
         """),
@@ -1641,7 +1666,7 @@ def main():
     parser.add_argument(
         "--recipe",
         type=str,
-        help="Bridge recipe name for --reverse (e.g., llama32_1b_pretrain_config). "
+        help="Bridge recipe name for --reverse (e.g., llama32_1b_pretrain_1gpu_h100_bf16_config). "
         "Loads recipe defaults; combine with --args to add overrides on top.",
     )
 

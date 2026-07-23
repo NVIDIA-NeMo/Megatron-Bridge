@@ -53,7 +53,7 @@ set -euo pipefail
 cd "$WORKDIR"
 export PYTHONPATH="$WORKDIR/src:$WORKDIR/3rdparty/Megatron-LM:${PYTHONPATH:-}"
 
-uv run --no-sync python scripts/training/pack_sft_data.py \
+uv run --no-sync python scripts/training/prepare_gpt_sft_packed_data.py \
     --recipe "$RECIPE_NAME" \
     --seq-length "$SEQ_LENGTH" \
     --hf-path "$HF_MODEL_PATH"

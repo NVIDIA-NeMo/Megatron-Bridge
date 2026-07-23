@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen_omni.modeling_qwen3_omni.model import Qwen3OmniModel
 from megatron.bridge.models.qwen_omni.qwen3_omni_provider import Qwen3OmniModelProvider
 
@@ -42,7 +42,7 @@ logger = logging.getLogger(__name__)
 class Qwen3OmniBridge(MegatronModelBridge):
     """Bridge for Qwen3-Omni."""
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Qwen3OmniModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Qwen3OmniModelProvider:
         hf_config = hf_pretrained.config
         if getattr(hf_config, "enable_audio_output", False):
             logger.warning(

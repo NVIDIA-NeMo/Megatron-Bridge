@@ -29,12 +29,10 @@ from megatron.core.pipeline_parallel.utils import (
 from megatron.core.transformer.enums import LayerType
 from megatron.core.transformer.pipeline_parallel_layer_layout import PipelineParallelLayerLayout
 from megatron.core.utils import (
-    get_attr_wrapped_model,
     get_batch_on_this_cp_rank,
     get_model_config,
     get_pg_rank,
     get_pg_size,
-    is_te_min_version,
     unwrap_model,
 )
 
@@ -42,8 +40,8 @@ from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.losses import masked_next_token_loss
 from megatron.bridge.training.post_training.distillation import loss_func_kd
 from megatron.bridge.training.state import GlobalState
-from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata
-from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params
+from megatron.bridge.training.utils.flop_utils import accumulate_flops_metadata, get_model_chunk_vp_stage
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_params, get_thd_cp_partition_indices
 from megatron.bridge.training.utils.pg_utils import get_pg_collection
 
 
@@ -173,35 +171,14 @@ def _current_stage_needs_mtp_inputs_from_layout(
     return _current_stage_has_mtp_from_layout(cfg, pg_collection=pg_collection, vp_stage=vp_stage)
 
 
-def _model_chunk_vp_stage(model: GPTModel) -> int | None:
-    """Return the virtual pipeline stage owned by the current model chunk."""
-    try:
-        vp_stage = get_attr_wrapped_model(model, "vp_stage", allow_none=False)
-    except RuntimeError:
-        return None
-    return vp_stage if isinstance(vp_stage, int) else None
-
-
-def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int) -> dict[str, torch.Tensor]:
+def _partition_packed_batch_for_cp(
+    batch: dict[str, torch.Tensor], cp_group: torch.distributed.ProcessGroup
+) -> dict[str, torch.Tensor]:
     """Partition THD/packed batches across context-parallel ranks.
 
-    Uses transformer_engine's `thd_get_partitioned_indices` to slice sequence
-    dimension aligned with packed cu_seqlens. This avoids the generic
-    `get_batch_on_this_cp_rank` slicing which assumes contiguous sequence tokens.
+    Uses MCore's packed-sequence partitioning to slice sequence dimensions
+    aligned with packed cu_seqlens.
     """
-
-    err_msg = "Please update Transformer Engine to >= 1.10 to use Context Parallel with THD format data"
-    try:
-        import transformer_engine_torch as tex
-
-        if not is_te_min_version("1.10.0"):
-            logger.error(err_msg)
-            raise RuntimeError(err_msg)
-    except ModuleNotFoundError as e:
-        logger.error(err_msg)
-        raise e
-
-    cp_rank = parallel_state.get_context_parallel_rank()
     cu_seqlens = _cu_seqlens_for_cp_partition(batch)
 
     skip_keys = {
@@ -217,13 +194,25 @@ def _partition_packed_batch_for_cp(batch: dict[str, torch.Tensor], cp_size: int)
         "max_seqlen_q",
         "max_seqlen_kv",
         "token_count",
+        # THD/packed attention is driven by cu_seqlens (PackedSeqParams), so the dense
+        # attention_mask is unused here. It is also not sequence-partitionable: it is
+        # either None or a degenerate placeholder without a slice-able seq dim at index 1.
+        "attention_mask",
     }
 
+    indices: dict[tuple[int, torch.device], torch.Tensor] = {}
     for key, val in batch.items():
         if val is None or key in skip_keys:
             continue
-        index = tex.thd_get_partitioned_indices(cu_seqlens, val.size(1), cp_size, cp_rank)
-        batch[key] = val.index_select(1, index)
+        index_key = (val.size(1), val.device)
+        if index_key not in indices:
+            indices[index_key] = get_thd_cp_partition_indices(
+                cu_seqlens,
+                total_tokens=val.size(1),
+                cp_group=cp_group,
+                device=val.device,
+            )
+        batch[key] = val.index_select(1, indices[index_key])
 
     return batch
 
@@ -341,7 +330,7 @@ def get_batch(
     cp_size = pg_collection.cp.size()
     has_packed = _has_packed_sequence_metadata(batch)
     if has_packed and cp_size > 1:
-        batch = _partition_packed_batch_for_cp(batch, cp_size)
+        batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
     else:
         # slice batch along sequence dimension for context parallelism
         batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
@@ -378,6 +367,7 @@ def _forward_step_common(
     config = get_model_config(model)
     pg_collection = get_pg_collection(model)
     use_mtp = (getattr(config, "mtp_num_layers", None) or 0) > 0
+    vp_stage = get_model_chunk_vp_stage(model)
 
     timers("batch-generator", log_level=2).start()
     with straggler_timer(bdata=True):
@@ -393,7 +383,7 @@ def _forward_step_common(
             state.cfg,
             use_mtp,
             pg_collection=pg_collection,
-            vp_stage=_model_chunk_vp_stage(model),
+            vp_stage=vp_stage,
         )
     timers("batch-generator").stop()
 
@@ -426,6 +416,7 @@ def _forward_step_common(
     accumulate_flops_metadata(
         state,
         tokens,
+        vp_stage=vp_stage,
         config_seq_len=getattr(config, "seq_length", None),
         cu_seqlens=cu_seqlens if cp_use_thd else None,
         cu_seqlens_argmin=cu_seqlens_argmin if cp_use_thd else None,

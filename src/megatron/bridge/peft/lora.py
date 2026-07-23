@@ -18,7 +18,6 @@ from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
-import transformer_engine.pytorch as te
 from megatron.core import parallel_state
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
@@ -29,8 +28,6 @@ from megatron.bridge.peft.lora_layers import (
     LoRALinear,
     LoRATopKRouter,
     TEFusedLoRALinear,
-    TELinearAdapter,
-    patch_linear_module,
 )
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
@@ -47,13 +44,6 @@ from megatron.bridge.peft.utils import (
 
 
 logger = logging.getLogger(__name__)
-
-try:
-    import bitsandbytes
-
-    HAVE_BNB = True
-except ImportError:
-    HAVE_BNB = False
 
 
 @dataclass
@@ -83,6 +73,13 @@ class LoRA(PEFT, ModuleMatcher):
         dropout (float): Dropout rate for the low-rank projection. Defaults to 0.0.
         dropout_position (Literal['pre', 'post'], optional): Position for applying dropout.
             Can be 'pre' (before the low-rank projection) or 'post' (after). Defaults to 'pre'.
+        sequence_parallel_input_regather (bool): Reduce retained activation memory for eligible
+            column-parallel LoRA-A projections. The full LayerNorm output consumed by LoRA-A is
+            gathered temporarily in forward, released after the LoRA-A computation, and gathered
+            again during backward for the LoRA-A weight gradient. MCore overlaps the backward
+            all-gather with dgrad computation when possible. This has no effect when sequence
+            parallelism is disabled and falls back for unsupported adapters or overlapping
+            activation recompute. Defaults to False.
         a2a_experimental (bool): Enables the experimental All-to-All (A2A) communication strategy. Defaults to False.
         lora_A_init_method (str): Initialization method for the low-rank matrix A. Defaults to "xavier".
         lora_B_init_method (str): Initialization method for the low-rank matrix B. Defaults to "zero".
@@ -108,6 +105,7 @@ class LoRA(PEFT, ModuleMatcher):
     alpha: int = 32
     dropout: float = 0.0
     dropout_position: Literal["pre", "post"] = "pre"
+    sequence_parallel_input_regather: bool = False
     lora_A_init_method: str = "xavier"
     lora_B_init_method: str = "zero"
     a2a_experimental: bool = False
@@ -129,29 +127,14 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter, TELinearAdapter)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         if isinstance(module, adapter_types):
             return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
-            if (isinstance(module, nn.Linear) or (module.__class__ == te.Linear)) and not is_modelopt_linear(module):
-                # Will use the `patch_linear_module` function if:
-                # - is FSDP v1
-                # - is DTensor (has _local_tensor attribute)
-                # - has quant_state attribute
-                if hasattr(module.weight.data, "_local_tensor") or (
-                    HAVE_BNB
-                    and getattr(module, "quant_state", None) is not None
-                    and module.quant_state.__class__ == bitsandbytes.functional.QuantState
-                ):
-                    lora_cls = patch_linear_module
-                elif module.__class__ == te.Linear:
-                    lora_cls = TELinearAdapter
-                else:
-                    lora_cls = LinearAdapter
-
-                return lora_cls(
+            if isinstance(module, nn.Linear) and not is_modelopt_linear(module):
+                return LinearAdapter(
                     module,
                     dim=self.dim,
                     alpha=self.alpha,
@@ -161,7 +144,11 @@ class LoRA(PEFT, ModuleMatcher):
                 )
 
             is_expert = is_expert_linear(full_name)
-            attrs = get_adapter_attributes_from_linear(module, is_expert=is_expert)
+            attrs = get_adapter_attributes_from_linear(
+                module,
+                is_expert=is_expert,
+                sequence_parallel_input_regather=self.sequence_parallel_input_regather and not is_expert,
+            )
 
             dim = get_effective_lora_dim(
                 module, dim=self.dim, normalize_moe_lora=self.normalize_moe_lora, is_expert=is_expert
@@ -218,6 +205,7 @@ class LoRA(PEFT, ModuleMatcher):
                 adapter_kwargs.update(
                     is_expert=is_expert,
                     a2a_experimental=self.a2a_experimental,
+                    sequence_parallel_input_regather=self.sequence_parallel_input_regather,
                     disable_tensor_parallel_comm=attrs.disable_tensor_parallel_comm,
                     disable_sequence_parallel_comm=attrs.disable_sequence_parallel_comm,
                 )

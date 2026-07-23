@@ -141,9 +141,8 @@ fi
 
 uv run --no-sync python scripts/training/run_recipe.py \
     --recipe "$RECIPE_NAME" \
-    --dataset llm-pretrain \
-    --seq_length "$SEQ_LENGTH" \
-    --hf_path "$HF_MODEL_PATH" \
+    --dataset megatron-indexed \
+    dataset.seq_length="$SEQ_LENGTH" \
     checkpoint.save="$SAVE_DIR" \
     checkpoint.save_interval="$SAVE_INTERVAL" \
     train.train_iters="$TRAIN_ITERS" \
@@ -164,7 +163,7 @@ uv run --no-sync python scripts/training/run_recipe.py \
     model.sequence_parallel="$SP" \
     model.context_parallel_size="$CP" \
     model.seq_length="$SEQ_LENGTH" \
-    dataset.sequence_length="$SEQ_LENGTH" \
+    dataset.seq_length="$SEQ_LENGTH" \
     model.recompute_granularity="$RECOMPUTE_GRANULARITY" \
     "${OPTIONAL_OVERRIDES[@]}" \
     dist.distributed_timeout_minutes=90 \

@@ -129,12 +129,12 @@ cfg.mixed_precision = "bf16_with_nvfp4_mixed"
 cfg.checkpoint.pretrained_checkpoint = "/checkpoints/base_model"
 ```
 
-Some model families expose tuned NVFP4 recipes. For example, Llama 3 8B has a low-precision pretraining helper:
+Some model families expose tuned NVFP4 recipes. For example, Llama 3 8B has a hardware-specific low-precision pretraining recipe:
 
 ```python
-from megatron.bridge.recipes.llama import llama3_8b_low_precision_pretrain_config
+from megatron.bridge.recipes.llama.h100 import llama3_8b_pretrain_2gpu_h100_nvfp4_config
 
-cfg = llama3_8b_low_precision_pretrain_config("bf16_with_nvfp4_mixed")
+cfg = llama3_8b_pretrain_2gpu_h100_nvfp4_config()
 ```
 
 NVFP4 is related to FP8 in that both use Transformer Engine low-precision kernels and BF16 fallback for non-quantized state, but the configuration knobs are separate. Use FP8 recipes on Hopper or Blackwell when FP8 is the target precision; use NVFP4 recipes on Blackwell when the model and hardware have been validated for 4-bit training.

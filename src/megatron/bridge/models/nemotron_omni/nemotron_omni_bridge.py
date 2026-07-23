@@ -40,7 +40,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     ReplicatedMapping,
 )
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import NemotronOmniModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NemotronOmniModelProvider,
@@ -87,7 +87,7 @@ class NemotronOmniBridge(NemotronVLBridge):
     # Provider translation
     # ------------------------------------------------------------------
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> NemotronOmniModelProvider:  # type: ignore[override]
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> NemotronOmniModelProvider:  # type: ignore[override]
         """Create a NemotronOmniModelProvider from the HF Omni config.
 
         Always returns an Omni provider (MoE language model + RADIO ViT
@@ -122,8 +122,12 @@ class NemotronOmniBridge(NemotronVLBridge):
         provider_kwargs["img_end_token_id"] = 22
         provider_kwargs["tokenizer_type"] = "nemotron6-moe"
         provider_kwargs["use_vision_backbone_fp8_arch"] = False
-        provider_kwargs["dynamic_resolution"] = True
         provider_kwargs["vision_class_token_len"] = 10
+        # Match C-RADIO's eval-time position embedding behavior: interpolate
+        # to a square grid covering the longest image dimension, then crop to
+        # the requested aspect ratio. Keep the provider's historical default
+        # unchanged for serialized configurations that explicitly select it.
+        provider_kwargs["radio_interpolate_only_cpe"] = False
 
         # NemotronH uses squared_relu for MLP layers (HF config: mlp_hidden_act="relu2").
         # The base hf_config_to_provider_kwargs reads "hidden_act" which doesn't exist on

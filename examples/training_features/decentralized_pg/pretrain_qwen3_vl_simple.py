@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -39,21 +39,16 @@ from megatron.bridge.training.vlm_step import forward_step
 
 def main() -> None:
     """Run Qwen3 pretraining with decentralized process groups enabled."""
-    # Get the standard Qwen3 4B pretrain config with overrides
-    cfg = qwen3_vl_30b_a3b_pretrain_mock_config(
-        # Use mock data for demo
-        mock=True,
-        # Parallelism
-        expert_model_parallel_size=8,
-        # Training settings (small for demo)
-        train_iters=100,
-        seq_length=1024,
-        global_batch_size=32,
-        micro_batch_size=1,
-        # LR schedule (must fit within train_iters)
-        lr_warmup_iters=10,
-        lr_decay_iters=100,
-    )
+    # Library recipes are parameterless; apply example-specific values to the returned config.
+    cfg = qwen3_vl_30b_a3b_pretrain_mock_config()
+    cfg.model.expert_model_parallel_size = 8
+    cfg.model.seq_length = 1024
+    cfg.dataset.seq_length = 1024
+    cfg.train.train_iters = 100
+    cfg.train.global_batch_size = 32
+    cfg.train.micro_batch_size = 1
+    cfg.scheduler.lr_warmup_iters = 10
+    cfg.scheduler.lr_decay_iters = 100
     # known issue with share_embeddings_and_output_weights
     cfg.model.share_embeddings_and_output_weights = False
 

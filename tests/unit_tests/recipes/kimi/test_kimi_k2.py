@@ -17,9 +17,14 @@ import importlib
 import pytest
 import torch
 
-from megatron.bridge.recipes.kimi.kimi_k2 import _get_kimi_k2_pipeline_layout, kimi_k2_pretrain_config
+from megatron.bridge.recipes.kimi.kimi_k2 import (
+    _apply_kimi_k2_optimizer,
+    _get_kimi_k2_pipeline_layout,
+    kimi_k2_pretrain_config,
+)
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import MixedPrecisionConfig
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 class _FakeKimiK2Provider:
@@ -50,7 +55,7 @@ class _FakeAutoBridge:
 def _patch_autobridge(monkeypatch):
     """Monkeypatch AutoBridge in the kimi_k2 recipe module to avoid HF Hub access."""
     mod = importlib.import_module("megatron.bridge.recipes.kimi.kimi_k2")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeAutoBridge)
 
 
 class TestKimiK2PipelineLayout:
@@ -160,7 +165,7 @@ class TestKimiK2PretrainConfig:
         """Test dataset configuration."""
         cfg = kimi_k2_pretrain_config()
 
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.dataset.num_workers == 8
         assert cfg.dataset.data_sharding is True
         assert cfg.dataset.split == "9999,8,2"
@@ -243,8 +248,9 @@ class TestKimiK2PretrainConfig:
         assert cfg.checkpoint.async_save is False
 
     def test_pretrain_config_adam_optimizer(self):
-        """Test config with Adam optimizer has correct DDP and precision settings."""
-        cfg = kimi_k2_pretrain_config(optimizer_type="adam")
+        """Test applying Adam optimizer has correct DDP and precision settings."""
+        cfg = kimi_k2_pretrain_config()
+        _apply_kimi_k2_optimizer(cfg, "adam")
 
         assert isinstance(cfg, ConfigContainer)
         assert cfg.ddp.use_distributed_optimizer is True
@@ -253,9 +259,10 @@ class TestKimiK2PretrainConfig:
         assert cfg.mixed_precision.grad_reduce_in_fp32 is False
 
     def test_pretrain_config_invalid_optimizer_raises(self):
-        """Test that an invalid optimizer_type raises ValueError."""
+        """Test that an invalid optimizer type raises ValueError."""
+        cfg = kimi_k2_pretrain_config()
         with pytest.raises(ValueError, match="Invalid optimizer type"):
-            kimi_k2_pretrain_config(optimizer_type="invalid")
+            _apply_kimi_k2_optimizer(cfg, "invalid")
 
     def test_pretrain_config_pipeline_layout(self):
         """Test pipeline layout is configured."""
@@ -264,3 +271,4 @@ class TestKimiK2PretrainConfig:
         # Default PP=16, VP=None (1), should have a layout
         expected_layout = _get_kimi_k2_pipeline_layout(16, 1)
         assert cfg.model.pipeline_model_parallel_layout == expected_layout
+        assert cfg.model._pipeline_model_parallel_layout_builder is _get_kimi_k2_pipeline_layout

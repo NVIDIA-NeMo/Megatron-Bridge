@@ -488,6 +488,7 @@ def main() -> None:
         model_length=len(model),
         train_valid_test_datasets_provider=dataset_provider,
         dp_group=train_pgs.dp,  # train iterator sharded by train DP
+        eval_dp_group=eval_pgs.dp,
     )
 
     # =========================================================================

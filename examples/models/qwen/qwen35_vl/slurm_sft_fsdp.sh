@@ -109,7 +109,7 @@ CLI_OVERRIDES="\
     logger.log_interval=$LOG_INTERVAL \
     logger.wandb_project=$WANDB_PROJECT \
     logger.wandb_exp_name=${RECIPE}_${DATASET_NAME}_sft \
-    dataset.maker_name=make_${DATASET_NAME}_dataset \
+    dataset.source.dataset_name=${DATASET_NAME} \
     dataset.seq_length=$SEQ_LENGTH"
 
 CMD="cd /opt/Megatron-Bridge && uv run --no-sync python scripts/training/run_recipe.py \

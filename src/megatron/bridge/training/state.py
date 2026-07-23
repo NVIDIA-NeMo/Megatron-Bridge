@@ -200,7 +200,9 @@ class GlobalState:
 
                 import wandb
 
-                save_dir = self.cfg.logger.wandb_save_dir or os.path.join(self.cfg.checkpoint.save, "wandb")
+                save_dir = self.cfg.logger.wandb_save_dir
+                if not save_dir:
+                    save_dir = os.path.join(self.cfg.checkpoint.save, "wandb") if self.cfg.checkpoint.save else None
 
                 config_dict = self.cfg.to_dict()
                 sanitized_config = json.loads(json.dumps(config_dict, default=safe_serialize))
@@ -471,8 +473,25 @@ class GlobalState:
         This cleans up all stateful components that need to be reinitialized between restart iterations.
         The async calls queue for checkpointing is handled separately in aborting in order to clean up persistent workers.
         """
+        from megatron.bridge.training.utils.checkpoint_utils import read_train_state
+
+        # The top-level tracker is overwritten after every checkpoint. A restart must
+        # not reuse the iteration cached by an earlier invocation in this process.
+        read_train_state.cache_clear()
+        if self.cfg is not None:
+            model_config = getattr(self.cfg.model, "transformer", self.cfg.model)
+            for callback_name in (
+                "finalize_model_grads_func",
+                "grad_scale_func",
+                "no_sync_func",
+                "grad_sync_func",
+                "param_sync_func",
+            ):
+                setattr(model_config, callback_name, None)
         self._timers = None
         self._train_state = None
+        if self._tensorboard_logger is not None:
+            self._tensorboard_logger.close()
         self._tensorboard_logger = None
         self._wandb_logger = None
         self._mlflow_logger = None

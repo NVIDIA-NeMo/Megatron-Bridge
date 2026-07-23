@@ -16,19 +16,15 @@
 
 import torch
 
-from megatron.bridge.data.datasets.utils import IGNORE_INDEX
-from megatron.bridge.data.hf_datasets.token_utils import extract_skipped_token_ids
-from megatron.bridge.data.sequence_batching import (
-    build_mcore_thd_sequence_batch_from_rows,
-    prepare_padded_or_packed_sequence_batch,
-    use_processor_right_padding,
-)
-from megatron.bridge.data.vlm_processing import (
+from megatron.bridge.data.collators.sequence import prepare_sequence_batch
+from megatron.bridge.data.collators.sequence_padding import use_processor_right_padding
+from megatron.bridge.data.conversation_processing import (
     build_assistant_loss_mask,
-    chat_template_kwargs_from_example,
     infer_assistant_mask_boundary_config,
     shared_chat_template_kwargs_from_examples,
 )
+from megatron.bridge.data.datasets.utils import IGNORE_INDEX
+from megatron.bridge.data.token_utils import extract_skipped_token_ids
 from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
@@ -54,8 +50,11 @@ def nemotron_nano_v2_vl_collate_fn(
     # The video processor only accepts one example, while in-batch packing
     # requires a multi-example microbatch.
     is_video = examples[0]["conversation"][0]["content"][0]["type"] == "video"
-    if is_video and enable_in_batch_packing:
-        raise ValueError("Nemotron-VL video collation does not support in-batch packing.")
+    if enable_in_batch_packing:
+        raise ValueError(
+            "Nemotron-VL collation does not support in-batch packing because image embeddings expand "
+            "after packed-sequence boundaries are built."
+        )
 
     skipped_tokens = extract_skipped_token_ids(processor)
     boundary_config = infer_assistant_mask_boundary_config(processor)
@@ -96,66 +95,6 @@ def nemotron_nano_v2_vl_collate_fn(
         # Ensure a pad_token is set so padding can produce uniform-length tensors.
         if processor.tokenizer.pad_token is None:
             processor.tokenizer.pad_token = processor.tokenizer.eos_token
-        if enable_in_batch_packing:
-            sequence_rows = []
-            pixel_values = []
-            with use_processor_right_padding(processor):
-                for example in examples:
-                    sample_batch = processor.apply_chat_template(
-                        [example["conversation"]],
-                        tokenize=True,
-                        padding=False,
-                        truncation=True,
-                        return_tensors="pt",
-                        return_dict=True,
-                        **chat_template_kwargs_from_example(example),
-                    )
-                    input_ids = sample_batch["input_ids"]
-                    loss_mask = build_assistant_loss_mask(
-                        example,
-                        input_ids[0],
-                        processor,
-                        skipped_tokens,
-                        boundary_config=boundary_config,
-                    ).to(dtype=torch.int)
-                    adjusted_sample = adjust_image_tokens(
-                        {"input_ids": input_ids, "loss_mask": loss_mask.unsqueeze(0)},
-                        sample_batch["num_patches"],
-                        131073,
-                        131074,
-                    )
-                    row_input_ids = adjusted_sample["input_ids"][0]
-                    row_loss_mask = adjusted_sample["loss_mask"][0].to(
-                        device=row_input_ids.device, dtype=torch.float32
-                    )
-                    labels = torch.cat([row_input_ids[1:], row_input_ids.new_full((1,), IGNORE_INDEX)])
-                    if skipped_tokens.numel() > 0:
-                        labels = labels.masked_fill(
-                            torch.isin(labels, skipped_tokens.to(device=labels.device)), IGNORE_INDEX
-                        )
-                    shifted_loss_mask = torch.cat([row_loss_mask[1:], row_loss_mask.new_zeros(1)])
-                    sequence_rows.append(
-                        {
-                            "input_ids": row_input_ids,
-                            "attention_mask": torch.ones_like(row_input_ids),
-                            "position_ids": torch.arange(
-                                row_input_ids.numel(), device=row_input_ids.device, dtype=torch.long
-                            ),
-                            "labels": labels.masked_fill(shifted_loss_mask == 0, IGNORE_INDEX),
-                            "loss_mask": shifted_loss_mask,
-                        }
-                    )
-                    pixel_values.append(sample_batch["pixel_values"].to(torch.bfloat16))
-
-            packed_batch = build_mcore_thd_sequence_batch_from_rows(
-                sequence_rows,
-                sequence_length=sequence_length,
-                pad_token_id=int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
-                ignore_index=IGNORE_INDEX,
-                pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
-            )
-            packed_batch["visual_inputs"] = GenericVisualInputs(pixel_values=torch.cat(pixel_values, dim=0))
-            return packed_batch
         with use_processor_right_padding(processor):
             batch = processor.apply_chat_template(
                 [example["conversation"] for example in examples],
@@ -181,14 +120,19 @@ def nemotron_nano_v2_vl_collate_fn(
 
     img_start_token_id = 131073  # tokenizer.convert_tokens_to_ids("<img>")
     img_end_token_id = 131074  # tokenizer.convert_tokens_to_ids("</img>")
+    aligned_batch = {"input_ids": batch["input_ids"], "loss_mask": loss_mask}
+    if "attention_mask" in batch:
+        aligned_batch["attention_mask"] = batch["attention_mask"]
     adjusted_batch = adjust_image_tokens(
-        {
-            "input_ids": batch["input_ids"],
-            "loss_mask": loss_mask,
-        },
+        aligned_batch,
         batch["num_patches"],
         img_start_token_id,
         img_end_token_id,
+        padding_values={
+            "input_ids": int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
+            "loss_mask": 0,
+            "attention_mask": 0,
+        },
     )
 
     if is_video:
@@ -200,12 +144,11 @@ def nemotron_nano_v2_vl_collate_fn(
 
     batch["input_ids"] = adjusted_batch["input_ids"]
     loss_mask = adjusted_batch["loss_mask"]
+    if "attention_mask" in adjusted_batch:
+        batch["attention_mask"] = adjusted_batch["attention_mask"]
 
-    if "position_ids" not in batch:
-        batch_size, seq_len = batch["input_ids"].shape
-        batch["position_ids"] = (
-            torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
-        )
+    batch_size, seq_len = batch["input_ids"].shape
+    batch["position_ids"] = torch.arange(seq_len, device=batch["input_ids"].device).unsqueeze(0).expand(batch_size, -1)
 
     key = "pixel_values_videos" if is_video else "pixel_values"
     pv = batch[key].to(torch.bfloat16)
@@ -222,13 +165,14 @@ def nemotron_nano_v2_vl_collate_fn(
     loss_mask_t = torch.cat([loss_mask_t[:, 1:], torch.zeros_like(loss_mask_t[:, :1])], dim=1)
     batch["labels"] = batch["labels"].masked_fill(loss_mask_t == 0, IGNORE_INDEX)
     batch["loss_mask"] = loss_mask_t
-    prepare_padded_or_packed_sequence_batch(
+    prepare_sequence_batch(
         batch,
         sequence_length=sequence_length,
         pad_to_max_length=pad_to_max_length,
         pad_to_multiple_of=pad_to_multiple_of,
         enable_in_batch_packing=enable_in_batch_packing,
         in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
+        pad_token_id=int(getattr(processor.tokenizer, "pad_token_id", 0) or 0),
         ignore_index=IGNORE_INDEX,
     )
     return batch

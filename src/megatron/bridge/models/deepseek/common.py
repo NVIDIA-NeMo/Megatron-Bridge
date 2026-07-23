@@ -44,6 +44,7 @@ def get_common_mapping_list(hf_config=None) -> list:
         "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
         # MoE
         "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
+        "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
         "decoder.layers.*.mlp.experts.linear_fc2.weight*": "model.layers.*.mlp.experts.*.down_proj.weight",
         "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight": "model.layers.*.mlp.experts.*.down_proj.weight",
         "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": "model.layers.*.mlp.shared_experts.down_proj.weight",
@@ -125,10 +126,6 @@ def get_common_mapping_list(hf_config=None) -> list:
                         AutoMapping(
                             megatron_param=f"mtp.layers.{mtp_layer}.final_layernorm.weight",
                             hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.shared_head.norm.weight",
-                        ),
-                        AutoMapping(
-                            megatron_param=f"mtp.layers.{mtp_layer}.mtp_model_layer.mlp.router.expert_bias",
-                            hf_param=f"model.layers.{mtp_layer + num_transformer_layers}.mlp.gate.e_score_correction_bias",
                         ),
                     ]
                 )

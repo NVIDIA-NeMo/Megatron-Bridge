@@ -6,7 +6,7 @@
   <a href="https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://codecov.io/github/NVIDIA-NeMo/Megatron-Bridge/graph/badge.svg?token=4NMKZVOW2Z" alt="codecov" style={{ display: "block", margin: 0 }} /></a>
   <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/actions/workflows/cicd-main.yml" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://github.com/NVIDIA-NeMo/Megatron-Bridge/actions/workflows/cicd-main.yml/badge.svg" alt="CICD NeMo" style={{ display: "block", margin: 0 }} /></a>
   <a href="https://www.python.org/downloads/release/python-3100/" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://img.shields.io/badge/python-3.10+-blue.svg" alt="Python 3.10+" style={{ display: "block", margin: 0 }} /></a>
-  <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/stargazers/" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://img.shields.io/github/stars/NVIDIA-NeMo/Megatron-Bridge.svg?style=social&label=Star&cacheSeconds=14400" alt="GitHub Stars" style={{ display: "block", margin: 0 }} /></a>
+  <a href="https://github.com/NVIDIA-NeMo/Megatron-Bridge/stargazers" target="_blank" rel="noreferrer" style={{ display: "inline-flex", lineHeight: 0 }}><img src="https://img.shields.io/github/stars/NVIDIA-NeMo/Megatron-Bridge.svg?style=social&label=Star&cacheSeconds=14400" alt="GitHub Stars" style={{ display: "block", margin: 0 }} /></a>
 </div>
 
 [Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) | [Supported Models](#supported-models) | [Examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples) | [Contributing](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/CONTRIBUTING.md)
@@ -178,10 +178,10 @@ For runnable recipe, data preparation, and training examples, see the repository
 More examples:
 
 - [Conversion scripts overview](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/README.md)
-- [Import/Export checkpoints](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/convert_checkpoints.py)
+- [Import/Export checkpoints](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/scripts/conversion/convert.sh)
 - [Generation with bridge](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
 - [Multi-GPU loading from HF](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_megatron_roundtrip_multi_gpu.py)
-- [Compare HF vs Megatron outputs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/compare_models.py)
+- [Compare HF vs Megatron outputs](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/compare_hf_and_megatron/compare.py)
 - [Toy RLHF with Bridge (HF inference + Megatron training)](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/rl/rlhf_with_bridge.py)
 
 For a deeper dive into conversion design and advanced usage, see the [models README](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/README.md).
@@ -195,7 +195,7 @@ For a deeper dive into conversion design and advanced usage, see the [models REA
   - Simple high-level `AutoBridge` API with architecture auto-detection
   - Optimized paths when Transformer Engine is available
 - **Flexible to Customize**: Lightweight custom training loop making it easy to configure custom logic in data loading, distributed training, checkpointing, evaluation and logging ([training framework](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/training), [training utilities](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/training/utils))
-- **Supervised & Parameter-Efficient Finetuning**: SFT & PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods ([PEFT implementations](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/peft), [finetune module](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/finetune.py), [SFT dataset](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/data/datasets/sft.py))
+- **Supervised & Parameter-Efficient Finetuning**: SFT & PEFT implementation tailored for Megatron-based models that supports LoRA, DoRA, and user-defined PEFT methods ([PEFT implementations](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/peft), [finetune module](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/finetune.py), [SFT dataset](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/data/datasets/gpt_sft.py))
 - **SOTA Training Recipes**: Pre-configured production-ready training recipes for popular models like Llama 3, with optimized hyperparameters and distributed training configuration ([Llama recipes](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/src/megatron/bridge/recipes/llama), [recipe examples](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models))
 - **Performance Optimization**: Built-in support for FP8 training, model parallelism, and memory-efficient techniques to offer high utilization and near-linear scalability to thousands of nodes. ([mixed precision](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/mixed_precision.py), [communication overlap](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/training/comm_overlap.py), [optimizer utilities](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/recipes/utils/optimizer_utils.py))
 
@@ -225,7 +225,7 @@ Megatron Bridge provides out-of-the-box bridges and training recipes for a wide 
 
 ### Launching Recipes
 
-For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](https://docs.nvidia.com/nemo/megatron-bridge/latest/recipe-usage.html).
+For a conceptual overview of how recipes are structured, overridden, and launched with either `torchrun` or NeMo-Run, read the [Using Recipes guide](recipe-usage.md).
 
 Runnable tutorials live in `tutorials/recipes/llama` that covers:
 
@@ -235,7 +235,7 @@ Runnable tutorials live in `tutorials/recipes/llama` that covers:
 
 ## Performance Benchmarks
 
-For detailed performance benchmarks including throughput metrics across different GPU systems (DGX-GB200, DGX-B200, DGX-H100) and model configurations, see the [Performance Summary](https://docs.nvidia.com/nemo/megatron-bridge/latest/performance-summary.html) in our documentation.
+For detailed performance benchmarks including throughput metrics across different GPU systems (DGX-GB200, DGX-B200, DGX-H100) and model configurations, see the [Performance Summary](performance-summary.md) in our documentation.
 
 ## Project Structure
 

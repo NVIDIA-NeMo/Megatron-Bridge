@@ -25,22 +25,32 @@ For each exported recipe function in ``megatron.bridge.recipes.gpt_oss``:
 """
 
 import importlib
-from typing import Callable
+from collections.abc import Callable
 
 import pytest
 
 
 _gpt_oss_module = importlib.import_module("megatron.bridge.recipes.gpt_oss")
-_ALL_RECIPE_FUNCS = [
-    getattr(_gpt_oss_module, name)
+_ALL_RECIPE_CASES = [
+    (name, getattr(_gpt_oss_module, name))
     for name in getattr(_gpt_oss_module, "__all__", [])
     if callable(getattr(_gpt_oss_module, name, None))
 ]
 
-_MXFP8_RECIPE_FUNCS = [f for f in _ALL_RECIPE_FUNCS if "mxfp8" in f.__name__]
-_HOPPER_FP8_RECIPE_FUNCS = [f for f in _ALL_RECIPE_FUNCS if "fp8_current_scaling" in f.__name__]
-_ALL_FP8_RECIPE_FUNCS = _MXFP8_RECIPE_FUNCS + _HOPPER_FP8_RECIPE_FUNCS
-_BASE_RECIPE_FUNCS = [f for f in _ALL_RECIPE_FUNCS if "fp8" not in f.__name__]
+_MXFP8_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "mxfp8" in name]
+_HOPPER_FP8_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "fp8_current_scaling" in name]
+_ALL_FP8_RECIPE_CASES = _MXFP8_RECIPE_CASES + _HOPPER_FP8_RECIPE_CASES
+_BASE_RECIPE_CASES = [(name, f) for name, f in _ALL_RECIPE_CASES if "fp8" not in name]
+
+
+def _recipe_ids(recipe_cases):
+    return [name for name, _ in recipe_cases]
+
+
+def _build_recipe_config(recipe_name: str, recipe_func: Callable):
+    if "peft" in recipe_name:
+        return recipe_func(peft_scheme="lora")
+    return recipe_func()
 
 
 def _assert_basic_config(cfg):
@@ -61,63 +71,49 @@ def _assert_basic_config(cfg):
     assert cfg.dataset.seq_length >= 1
 
 
-@pytest.mark.parametrize("recipe_func", _BASE_RECIPE_FUNCS, ids=lambda f: f.__name__)
-def test_base_recipe_builds_valid_config(recipe_func: Callable):
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _BASE_RECIPE_CASES, ids=_recipe_ids(_BASE_RECIPE_CASES))
+def test_base_recipe_builds_valid_config(recipe_name: str, recipe_func: Callable):
     """Each base GPT-OSS recipe should return a valid ConfigContainer."""
-    if "peft" in recipe_func.__name__:
-        cfg = recipe_func(peft_scheme="lora")
-    else:
-        cfg = recipe_func()
+    cfg = _build_recipe_config(recipe_name, recipe_func)
     _assert_basic_config(cfg)
 
 
-@pytest.mark.parametrize("recipe_func", _ALL_FP8_RECIPE_FUNCS, ids=lambda f: f.__name__)
-def test_fp8_recipe_builds_valid_config(recipe_func: Callable):
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _ALL_FP8_RECIPE_CASES, ids=_recipe_ids(_ALL_FP8_RECIPE_CASES))
+def test_fp8_recipe_builds_valid_config(recipe_name: str, recipe_func: Callable):
     """Each FP8 GPT-OSS recipe should return a valid ConfigContainer."""
-    if "peft" in recipe_func.__name__:
-        cfg = recipe_func(peft_scheme="lora")
-    else:
-        cfg = recipe_func()
+    cfg = _build_recipe_config(recipe_name, recipe_func)
     _assert_basic_config(cfg)
 
 
-@pytest.mark.parametrize("recipe_func", _HOPPER_FP8_RECIPE_FUNCS, ids=lambda f: f.__name__)
-def test_hopper_fp8_recipe_enables_fp8_mixed_precision(recipe_func: Callable):
+@pytest.mark.parametrize(
+    ("recipe_name", "recipe_func"),
+    _HOPPER_FP8_RECIPE_CASES,
+    ids=_recipe_ids(_HOPPER_FP8_RECIPE_CASES),
+)
+def test_hopper_fp8_recipe_enables_fp8_mixed_precision(recipe_name: str, recipe_func: Callable):
     """Hopper FP8 variants must set the bf16_with_fp8_current_scaling_mixed preset."""
-    if "peft" in recipe_func.__name__:
-        cfg = recipe_func(peft_scheme="lora")
-    else:
-        cfg = recipe_func()
+    cfg = _build_recipe_config(recipe_name, recipe_func)
     assert cfg.mixed_precision == "bf16_with_fp8_current_scaling_mixed", (
-        f"{recipe_func.__name__}: expected mixed_precision=bf16_with_fp8_current_scaling_mixed, "
-        f"got {cfg.mixed_precision!r}"
+        f"{recipe_name}: expected mixed_precision=bf16_with_fp8_current_scaling_mixed, got {cfg.mixed_precision!r}"
     )
 
 
-@pytest.mark.parametrize("recipe_func", _MXFP8_RECIPE_FUNCS, ids=lambda f: f.__name__)
-def test_mxfp8_recipe_enables_mxfp8_mixed_precision(recipe_func: Callable):
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _MXFP8_RECIPE_CASES, ids=_recipe_ids(_MXFP8_RECIPE_CASES))
+def test_mxfp8_recipe_enables_mxfp8_mixed_precision(recipe_name: str, recipe_func: Callable):
     """Blackwell MXFP8 variants must use mxfp8 fp8_recipe with e4m3 fp8."""
-    if "peft" in recipe_func.__name__:
-        cfg = recipe_func(peft_scheme="lora")
-    else:
-        cfg = recipe_func()
+    cfg = _build_recipe_config(recipe_name, recipe_func)
     assert cfg.mixed_precision.fp8_recipe == "mxfp8", (
-        f"{recipe_func.__name__}: expected fp8_recipe=mxfp8, got {cfg.mixed_precision.fp8_recipe!r}"
+        f"{recipe_name}: expected fp8_recipe=mxfp8, got {cfg.mixed_precision.fp8_recipe!r}"
     )
-    assert cfg.mixed_precision.fp8 == "e4m3", (
-        f"{recipe_func.__name__}: expected fp8=e4m3, got {cfg.mixed_precision.fp8!r}"
-    )
+    assert cfg.mixed_precision.fp8 == "e4m3", f"{recipe_name}: expected fp8=e4m3, got {cfg.mixed_precision.fp8!r}"
 
 
-@pytest.mark.parametrize("recipe_func", _ALL_FP8_RECIPE_FUNCS, ids=lambda f: f.__name__)
-def test_fp8_recipe_enables_moe_router_padding(recipe_func: Callable):
+@pytest.mark.parametrize(("recipe_name", "recipe_func"), _ALL_FP8_RECIPE_CASES, ids=_recipe_ids(_ALL_FP8_RECIPE_CASES))
+def test_fp8_recipe_enables_moe_router_padding(recipe_name: str, recipe_func: Callable):
     """All FP8 variants must enable moe_router_padding_for_fp8 on the model config."""
-    if "peft" in recipe_func.__name__:
-        cfg = recipe_func(peft_scheme="lora")
-    else:
-        cfg = recipe_func()
+    cfg = _build_recipe_config(recipe_name, recipe_func)
     assert getattr(cfg.model, "moe_router_padding_for_fp8", False) is True, (
-        f"{recipe_func.__name__}: expected moe_router_padding_for_fp8=True"
+        f"{recipe_name}: expected moe_router_padding_for_fp8=True"
     )
 
 

@@ -26,6 +26,8 @@ from typing import Callable
 import pytest
 import torch
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _gemma3_vl_module = importlib.import_module("megatron.bridge.recipes.gemma3_vl.gemma3_vl")
 
@@ -104,7 +106,7 @@ def _assert_basic_config(cfg):
 def test_each_gemma3_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Gemma3-VL SFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()
 
@@ -131,7 +133,7 @@ def test_each_gemma3_vl_sft_recipe_builds_config(recipe_func: Callable, monkeypa
 def test_each_gemma3_vl_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Gemma3-VL PEFT recipe function builds a valid configuration."""
     # Monkeypatch AutoBridge to return a fake model config
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func()  # Default peft_scheme="lora"
 
@@ -161,7 +163,7 @@ def test_each_gemma3_vl_peft_recipe_builds_config(recipe_func: Callable, monkeyp
 def test_gemma3_vl_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatch: pytest.MonkeyPatch):
     """Test that different PEFT schemes are correctly applied for Gemma3-VL models."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
 
@@ -177,7 +179,7 @@ def test_gemma3_vl_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeyp
 def test_gemma3_vl_4b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 4B SFT has correct default parallelism and learning rate."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
 
@@ -192,7 +194,7 @@ def test_gemma3_vl_4b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_4b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 4B LoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config(peft_scheme="lora")
 
@@ -211,7 +213,7 @@ def test_gemma3_vl_4b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_4b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 4B DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config(peft_scheme="dora")
 
@@ -230,7 +232,7 @@ def test_gemma3_vl_4b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_12b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 12B SFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_12b_sft_config()
 
@@ -245,7 +247,7 @@ def test_gemma3_vl_12b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 12B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_12b_peft_config()
 
@@ -262,7 +264,7 @@ def test_gemma3_vl_12b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_27b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 27B SFT has correct default parallelism and pipeline_dtype."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_27b_sft_config()
 
@@ -280,7 +282,7 @@ def test_gemma3_vl_27b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_27b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 27B PEFT has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_27b_peft_config()
 
@@ -300,7 +302,7 @@ def test_gemma3_vl_27b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_27b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 27B DoRA has correct default parallelism."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_27b_peft_config(peft_scheme="dora")
 
@@ -318,33 +320,33 @@ def test_gemma3_vl_27b_peft_dora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_gemma3_vl_sft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that SFT configs use HFConversationDatasetProvider by default."""
+    """Test that SFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_gemma3_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatch):
-    """Test that PEFT configs use HFConversationDatasetProvider by default."""
+    """Test that PEFT configs use DirectHFSFTDatasetConfig by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config()
 
-    from megatron.bridge.data.hf_datasets.provider import HFConversationDatasetProvider
+    from megatron.bridge.data.builders import DirectHFSFTDatasetConfig
 
-    assert isinstance(cfg.dataset, HFConversationDatasetProvider)
+    assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
 def test_gemma3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
 
@@ -357,7 +359,7 @@ def test_gemma3_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that PEFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_peft_config()
 
@@ -370,7 +372,7 @@ def test_gemma3_vl_peft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
     """Test that precision config is correctly set."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
 
@@ -383,7 +385,7 @@ def test_gemma3_vl_precision_config(monkeypatch: pytest.MonkeyPatch):
 def test_gemma3_vl_ddp_config(monkeypatch: pytest.MonkeyPatch):
     """Test that DDP config is correctly set for VLMs."""
     # Monkeypatch AutoBridge
-    monkeypatch.setattr(_gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
+    patch_recipe_module_global(monkeypatch, _gemma3_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _gemma3_vl_module.gemma3_vl_4b_sft_config()
 

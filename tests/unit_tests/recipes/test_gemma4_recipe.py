@@ -25,6 +25,7 @@ import pytest
 
 from megatron.bridge.models.gemma.gemma4_bridge import Gemma4Bridge
 from megatron.bridge.models.gemma.gemma4_provider import Gemma4DenseProvider
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
 def _minimal_pretrain_common():
@@ -131,7 +132,7 @@ def recipe_module():
 def fake_autobridge(recipe_module, hf_config_e4b, monkeypatch):
     provider = Gemma4Bridge()._build_dense_provider(hf_config_e4b)
     fake = _FakeAutoBridge(provider)
-    monkeypatch.setattr(recipe_module, "AutoBridge", fake)
+    patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", fake)
     return fake
 
 

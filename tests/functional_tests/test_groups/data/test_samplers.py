@@ -54,7 +54,7 @@ class TestDataSamplers:
         # Setup dataloader params (mock AutoBridge to avoid HF downloads)
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -98,7 +98,7 @@ class TestDataSamplers:
         # Setup dataloader params (mock AutoBridge to avoid HF downloads)
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -151,7 +151,7 @@ class TestDataSamplers:
         # Mock AutoBridge to avoid HF downloads
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -255,6 +255,7 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_rank=0,
             data_parallel_size=2,
             drop_last=True,
+            shuffle=False,
         )
 
         # Simulate rank 1
@@ -266,6 +267,7 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_rank=1,
             data_parallel_size=2,
             drop_last=True,
+            shuffle=False,
         )
 
         # Get indices from both ranks
@@ -296,6 +298,7 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_rank=0,
             data_parallel_size=2,
             drop_last=True,
+            shuffle=False,
         )
 
         batches = list(sampler)
@@ -319,6 +322,7 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_rank=0,
             data_parallel_size=2,
             drop_last=True,
+            shuffle=False,
         )
 
         batches = list(sampler)
@@ -345,6 +349,7 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_size=2,
             drop_last=False,
             pad_samples_to_global_batch_size=False,
+            shuffle=False,
         )
 
         batches = list(sampler)
@@ -372,6 +377,7 @@ class TestMegatronPretrainingBatchSampler:
             data_parallel_size=2,
             drop_last=False,
             pad_samples_to_global_batch_size=True,
+            shuffle=False,
         )
 
         batches = list(sampler)
@@ -438,15 +444,283 @@ class TestMegatronPretrainingBatchSampler:
         all_indices_sorted = sorted(all_indices)
         assert all_indices_sorted == list(range(32))
 
+    def test_batch_sampler_resume_serves_full_epoch_after_first_cycle(self):
+        """Resuming mid-epoch must serve the remaining tail first, then full epochs.
 
-class TestFinetuningUtilities:
-    """Tests for finetuning data handling utilities."""
+        Regression for the resume bug where the sampler froze ``consumed_samples`` and
+        re-applied the resume offset on every ``cyclic_iter`` re-iteration, permanently
+        skipping the head of each post-resume epoch and replaying only the tail (which
+        repeatedly re-trained the model on the same samples and depressed the loss).
+        """
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        # 32 samples, resume after consuming 8 (mid first epoch). global_batch_size=4.
+        sampler = MegatronPretrainingBatchSampler(
+            total_samples=32,
+            consumed_samples=8,
+            micro_batch_size=1,
+            global_batch_size=4,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+            drop_last=True,
+            shuffle=False,
+        )
+
+        first_cycle = [idx for batch in sampler for idx in batch]
+        second_cycle = [idx for batch in sampler for idx in batch]
+
+        # First (resumed) cycle serves only the remaining tail [8, 32).
+        assert sorted(first_cycle) == list(range(8, 32))
+        # Second cycle is a full epoch starting from 0 — the head is no longer skipped.
+        assert sorted(second_cycle) == list(range(32))
+        # And it is not a replay of the resumed tail.
+        assert second_cycle != first_cycle
+
+    def test_batch_sampler_len_stays_epoch_aware_after_non_divisible_epoch(self):
+        """Length should use the same active epoch size as iteration.
+
+        When ``total_samples`` is not divisible by ``global_batch_size``, the active
+        epoch for ``drop_last=True`` excludes the incomplete tail. After one full
+        active epoch, length should report the next full active epoch rather than the
+        stale tail from ``total_samples`` modulo arithmetic.
+        """
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        sampler = MegatronPretrainingBatchSampler(
+            total_samples=10,
+            consumed_samples=0,
+            micro_batch_size=1,
+            global_batch_size=4,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+            drop_last=True,
+            shuffle=False,
+        )
+
+        assert len(sampler) == 2
+        assert [idx for batch in sampler for idx in batch] == list(range(8))
+        assert len(sampler) == 2
+        assert [idx for batch in sampler for idx in batch] == list(range(8))
+
+    def test_batch_sampler_drop_last_false_resume_serves_partial_then_full_epoch(self):
+        """Resuming before a padded partial batch should not skip that partial batch."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        sampler = MegatronPretrainingBatchSampler(
+            total_samples=10,
+            consumed_samples=8,
+            micro_batch_size=1,
+            global_batch_size=4,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+            drop_last=False,
+            pad_samples_to_global_batch_size=True,
+            shuffle=False,
+        )
+
+        first_cycle = [batch for batch in sampler]
+        second_cycle = [batch for batch in sampler]
+
+        assert first_cycle == [[8, 9, -1, -1]]
+        assert second_cycle == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9, -1, -1]]
+
+    def test_batch_sampler_drop_last_false_small_dataset_cycles_after_padding(self):
+        """A padded epoch smaller than one global batch should restart cleanly."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        sampler = MegatronPretrainingBatchSampler(
+            total_samples=3,
+            consumed_samples=0,
+            micro_batch_size=1,
+            global_batch_size=4,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+            drop_last=False,
+            pad_samples_to_global_batch_size=True,
+            shuffle=False,
+        )
+
+        assert [batch for batch in sampler] == [[0, 1, 2, -1]]
+        assert [batch for batch in sampler] == [[0, 1, 2, -1]]
+
+    def test_batch_sampler_drop_last_false_unpadded_partial_advances_epoch(self):
+        """Unpadded direct users should not replay the partial tail on re-iteration."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        def make(consumed):
+            return MegatronPretrainingBatchSampler(
+                total_samples=10,
+                consumed_samples=consumed,
+                micro_batch_size=1,
+                global_batch_size=4,
+                data_parallel_rank=0,
+                data_parallel_size=1,
+                drop_last=False,
+                pad_samples_to_global_batch_size=False,
+                shuffle=False,
+            )
+
+        sampler = make(0)
+        assert [batch for batch in sampler] == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+        assert [batch for batch in sampler] == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+        assert [batch for batch in make(10)] == [[0, 1, 2, 3], [4, 5, 6, 7], [8, 9]]
+
+    def test_batch_sampler_epoch_boundary_resume_serves_full_epoch(self):
+        """Resuming exactly on an epoch boundary serves full epochs (offset 0)."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        sampler = MegatronPretrainingBatchSampler(
+            total_samples=32,
+            consumed_samples=32,  # exactly one epoch consumed
+            micro_batch_size=1,
+            global_batch_size=4,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+            drop_last=True,
+        )
+
+        assert sorted(idx for batch in sampler for idx in batch) == list(range(32))
+
+    def test_batch_sampler_shuffle_reshuffles_each_epoch(self):
+        """With shuffle enabled, each epoch is a distinct permutation of all samples."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        sampler = MegatronPretrainingBatchSampler(
+            total_samples=16,
+            consumed_samples=0,
+            micro_batch_size=1,
+            global_batch_size=4,
+            data_parallel_rank=0,
+            data_parallel_size=1,
+            drop_last=True,
+            shuffle=True,
+            seed=1234,
+        )
+
+        epoch0 = [idx for batch in sampler for idx in batch]
+        epoch1 = [idx for batch in sampler for idx in batch]
+
+        # Each epoch covers every sample exactly once...
+        assert sorted(epoch0) == list(range(16))
+        assert sorted(epoch1) == list(range(16))
+        # ...but the order differs between epochs (reshuffled).
+        assert epoch0 != epoch1
+
+    def test_batch_sampler_shuffle_is_deterministic_for_seed(self):
+        """A given (seed, epoch) yields a reproducible order (resume-safe)."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        def first_epoch(seed):
+            sampler = MegatronPretrainingBatchSampler(
+                total_samples=16,
+                consumed_samples=0,
+                micro_batch_size=1,
+                global_batch_size=4,
+                data_parallel_rank=0,
+                data_parallel_size=1,
+                drop_last=True,
+                shuffle=True,
+                seed=seed,
+            )
+            return [idx for batch in sampler for idx in batch]
+
+        assert first_epoch(1234) == first_epoch(1234)
+        assert first_epoch(1234) != first_epoch(5678)
+
+    def test_batch_sampler_shuffle_resume_parity(self):
+        """A shuffled resume reproduces the same per-epoch order as an uninterrupted run."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        def make(consumed):
+            return MegatronPretrainingBatchSampler(
+                total_samples=16,
+                consumed_samples=consumed,
+                micro_batch_size=1,
+                global_batch_size=4,
+                data_parallel_rank=0,
+                data_parallel_size=1,
+                drop_last=True,
+                shuffle=True,
+                seed=1234,
+            )
+
+        # Uninterrupted: collect epoch 0 then epoch 1.
+        uninterrupted = make(0)
+        _ = [idx for batch in uninterrupted for idx in batch]  # epoch 0
+        epoch1 = [idx for batch in uninterrupted for idx in batch]  # epoch 1
+
+        # Resume after consuming all of epoch 0 (16) plus 8 of epoch 1.
+        resumed = make(24)
+        resumed_indices = [idx for batch in resumed for idx in batch]
+
+        # The resumed run serves exactly the not-yet-consumed tail of epoch 1.
+        assert resumed_indices == epoch1[8:]
+
+    def test_batch_sampler_shuffle_resume_parity_non_divisible_drop_last(self):
+        """Shuffle resume parity should use the active full-batch epoch size."""
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        def make(consumed):
+            return MegatronPretrainingBatchSampler(
+                total_samples=10,
+                consumed_samples=consumed,
+                micro_batch_size=1,
+                global_batch_size=4,
+                data_parallel_rank=0,
+                data_parallel_size=1,
+                drop_last=True,
+                shuffle=True,
+                seed=1234,
+            )
+
+        uninterrupted = make(0)
+        epoch0 = [idx for batch in uninterrupted for idx in batch]
+        epoch1 = [idx for batch in uninterrupted for idx in batch]
+
+        assert len(epoch0) == 8
+        assert sorted(epoch0) == sorted(set(epoch0))
+        assert len(epoch1) == 8
+        assert sorted(epoch1) == sorted(set(epoch1))
+
+        resumed_epoch0 = [idx for batch in make(4) for idx in batch]
+        resumed_epoch1 = [idx for batch in make(12) for idx in batch]
+
+        assert resumed_epoch0 == epoch0[4:]
+        assert resumed_epoch1 == epoch1[4:]
+
+    def test_batch_sampler_shuffle_enabled_by_default_uses_global_seed(self):
+        """Default batch-sampler behavior reshuffles deterministically from the global seed."""
+        import torch
+
+        from megatron.bridge.data.samplers import MegatronPretrainingBatchSampler
+
+        def first_epoch():
+            torch.manual_seed(1234)
+            sampler = MegatronPretrainingBatchSampler(
+                total_samples=16,
+                consumed_samples=0,
+                micro_batch_size=1,
+                global_batch_size=4,
+                data_parallel_rank=0,
+                data_parallel_size=1,
+                drop_last=True,
+            )
+            return [idx for batch in sampler for idx in batch]
+
+        epoch = first_epoch()
+        assert epoch == first_epoch()
+        assert sorted(epoch) == list(range(16))
+        assert epoch != list(range(16))
+
+
+class TestBatchUtilities:
+    """Tests for batch handling utilities."""
 
     def test_split_batch_into_microbatches_basic(self):
         """Test basic batch splitting functionality."""
         import torch
 
-        from megatron.bridge.data.finetuning import split_batch_into_microbatches
+        from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 
         batch = {
             "tokens": torch.randint(0, 1000, (16, 240)),
@@ -466,7 +740,7 @@ class TestFinetuningUtilities:
         """Test that splitting preserves data integrity."""
         import torch
 
-        from megatron.bridge.data.finetuning import split_batch_into_microbatches
+        from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 
         batch = {
             "tokens": torch.arange(16 * 10).reshape(16, 10),
@@ -486,7 +760,7 @@ class TestFinetuningUtilities:
         """Test splitting with mixed tensor and non-tensor items."""
         import torch
 
-        from megatron.bridge.data.finetuning import split_batch_into_microbatches
+        from megatron.bridge.data.batch_utils import split_batch_into_microbatches
 
         batch = {
             "tokens": torch.randint(0, 1000, (16, 240)),
@@ -507,7 +781,7 @@ class TestFinetuningUtilities:
         """Test prepare_finetuning_batch function."""
         import torch
 
-        from megatron.bridge.data.finetuning import prepare_finetuning_batch
+        from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
         # Create mock dataloader that yields global batches
         def mock_dataloader():
@@ -544,7 +818,7 @@ class TestFinetuningUtilities:
         """Test with different seq_lengths across global batches."""
         import torch
 
-        from megatron.bridge.data.finetuning import prepare_finetuning_batch
+        from megatron.bridge.data.batch_utils import prepare_finetuning_batch
 
         # Mock dataloader with variable seq_lengths
         def mock_dataloader():
@@ -571,11 +845,31 @@ class TestFinetuningUtilities:
 class TestBatchDataloaderIntegration:
     """Integration tests for batch dataloader type."""
 
+    def test_build_batch_dataloader_explicit_seed_is_independent_of_model_rng(self):
+        """Pipeline-stage model seeds must not change the fine-tuning sample order."""
+        import torch
+
+        def first_global_batch(model_seed: int) -> list[int]:
+            torch.manual_seed(model_seed)
+            dataloader = build_pretraining_data_loader(
+                dataset=list(range(64)),
+                consumed_samples=0,
+                dataloader_type="batch",
+                micro_batch_size=1,
+                num_workers=0,
+                data_sharding=False,
+                global_batch_size=8,
+                seed=1234,
+            )
+            return next(iter(dataloader.batch_sampler))
+
+        assert first_global_batch(5678) == first_global_batch(5778)
+
     def test_build_batch_dataloader_basic(self):
         """Test building a dataloader with dataloader_type='batch'."""
         from unittest import mock as _mock
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):
@@ -613,7 +907,7 @@ class TestBatchDataloaderIntegration:
 
         import pytest
 
-        with _mock.patch("megatron.bridge.recipes.llama.llama3.AutoBridge.from_hf_pretrained") as mock_from:
+        with _mock.patch("megatron.bridge.recipes.llama.h100.llama3.AutoBridge.from_hf_pretrained") as mock_from:
 
             class _DummyBridge:
                 def to_megatron_provider(self, load_weights=False):

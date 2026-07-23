@@ -105,10 +105,21 @@ _DSV4_COMPRESS_RATIO_TO_LAYER_TYPE = {
 def deepseek_v4_supports_blackwell_fused_kernels() -> bool:
     """Return whether DSv4 Blackwell-only fused kernels should default on."""
     if not torch.cuda.is_available():
-        return True
+        return False
 
     major, _minor = torch.cuda.get_device_capability()
     return major >= 10
+
+
+def deepseek_v4_supports_fused_dsa_kernels() -> bool:
+    """Return whether DSv4 fused DSA kernels can be enabled."""
+    try:
+        from cudnn import DSA  # noqa: F401
+        from flash_mla import flash_mla_sparse_fwd  # noqa: F401
+    except ImportError:
+        return False
+
+    return True
 
 
 def set_deepseek_v4_pipeline_model_parallel_layout(model_cfg: MLAModelProvider) -> None:
@@ -380,6 +391,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider = super().provider_bridge(hf_pretrained)
         hf_config = hf_pretrained.config
         use_blackwell_fused_kernels = deepseek_v4_supports_blackwell_fused_kernels()
+        use_dsa_kernel_fusion = use_blackwell_fused_kernels and deepseek_v4_supports_fused_dsa_kernels()
 
         # ---- Attention ----
         provider.experimental_attention_variant = "dsv4_hybrid"
@@ -424,7 +436,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             compress_rope_params = rope_params
         provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
         provider.csa_compress_rotary_base = float(
-            compress_rope_params.get("rope_theta", getattr(hf_config, "compress_rope_theta", provider.rotary_base))
+            getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", provider.rotary_base))
         )  # 160000
         provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
         provider.original_max_position_embeddings = int(
@@ -457,7 +469,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         provider.dsa_indexer_n_heads = hf_config.index_n_heads  # 64
         provider.dsa_indexer_head_dim = hf_config.index_head_dim  # 128
         provider.dsa_indexer_topk = hf_config.index_topk  # 512
-        provider.apply_dsa_kernel_fusion = use_blackwell_fused_kernels
+        provider.apply_dsa_kernel_fusion = use_dsa_kernel_fusion
 
         # ---- Hyper-Connections (mHC) ----
         provider.enable_hyper_connections = True

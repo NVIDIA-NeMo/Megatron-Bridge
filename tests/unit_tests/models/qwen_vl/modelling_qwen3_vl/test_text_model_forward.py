@@ -17,8 +17,14 @@
 from types import SimpleNamespace
 
 import torch
+from megatron.core.models.gpt.gpt_model import GPTModel
+from megatron.core.packed_seq_params import PackedSeqParams
+from megatron.core.transformer.multi_token_prediction import roll_tensor
 
-from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import Qwen3VLGPTModel
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.text_model import (
+    Qwen3VLGPTModel,
+    _get_mtp_packed_seq_params,
+)
 
 
 class _DummyDecoder:
@@ -124,3 +130,124 @@ def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
 
     assert output == "ok"
     assert calls["group"] is expected_group
+
+
+def test_mtp_uses_padded_boundaries_for_packed_token_rolling():
+    """MTP rolls within physical padded segments instead of crossing alignment gaps."""
+    cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+    )
+
+    mtp_packed_seq_params = _get_mtp_packed_seq_params(packed_seq_params)
+    tokens = torch.tensor([[1, 2, 3, 0, 4, 5, 6, 0]])
+    rolled_tokens, _ = roll_tensor(tokens, packed_seq_params=mtp_packed_seq_params)
+
+    assert mtp_packed_seq_params is not packed_seq_params
+    assert mtp_packed_seq_params.cu_seqlens_q is cu_seqlens_padded
+    assert packed_seq_params.cu_seqlens_q is cu_seqlens
+    assert rolled_tokens.tolist() == [[2, 3, 0, 0, 5, 6, 0, 0]]
+
+
+def test_mtp_postprocess_receives_padded_boundaries():
+    """Qwen keeps original metadata for attention and padded offsets for MTP postprocessing."""
+
+    class _DummyMTPModel(_DummyModel):
+        def __init__(self):
+            super().__init__()
+            self.config = SimpleNamespace(sequence_parallel=False)
+            self.mtp_process = True
+
+    dummy = _DummyMTPModel()
+    cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
+    cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
+    packed_seq_params = PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        cu_seqlens_kv=cu_seqlens,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+        max_seqlen_q=4,
+        max_seqlen_kv=4,
+    )
+
+    output = Qwen3VLGPTModel.forward(
+        dummy,
+        input_ids=torch.zeros((1, 8), dtype=torch.long),
+        position_ids=torch.zeros((3, 1, 8), dtype=torch.long),
+        attention_mask=None,
+        packed_seq_params=packed_seq_params,
+    )
+
+    assert output == "ok"
+    assert dummy.decoder.called_with["packed_seq_params"] is packed_seq_params
+    assert dummy.postprocess_args["packed_seq_params"] is not packed_seq_params
+    assert dummy.postprocess_args["packed_seq_params"].cu_seqlens_q is cu_seqlens_padded
+    assert packed_seq_params.cu_seqlens_q is cu_seqlens
+
+
+def test_tied_mtp_state_dict_drops_redundant_output_weight():
+    """MTP ranks keep the duplicated embedding as the canonical tied weight."""
+    dummy = Qwen3VLGPTModel.__new__(Qwen3VLGPTModel)
+    dummy.mtp_process = True
+    dummy.pre_process = False
+    sharded_state_dict = {
+        "language_model.output_layer.weight": object(),
+        "language_model.embedding.word_embeddings.weight": object(),
+    }
+
+    Qwen3VLGPTModel.tie_embeddings_and_output_weights_state_dict(
+        dummy,
+        sharded_state_dict,
+        "language_model.output_layer.weight",
+        "language_model.embedding.word_embeddings.weight",
+        {},
+    )
+
+    assert "language_model.output_layer.weight" not in sharded_state_dict
+    assert "language_model.embedding.word_embeddings.weight" in sharded_state_dict
+
+
+def test_tied_non_mtp_state_dict_delegates_to_gpt_model(monkeypatch):
+    """Non-MTP tied-output handling stays on the upstream GPTModel path."""
+    calls = {}
+
+    def fake_tie_embeddings(
+        self,
+        sharded_state_dict,
+        output_layer_weight_key,
+        first_stage_word_emb_key,
+        metadata,
+    ):
+        calls["args"] = (self, sharded_state_dict, output_layer_weight_key, first_stage_word_emb_key, metadata)
+
+    monkeypatch.setattr(GPTModel, "tie_embeddings_and_output_weights_state_dict", fake_tie_embeddings)
+
+    dummy = Qwen3VLGPTModel.__new__(Qwen3VLGPTModel)
+    dummy.mtp_process = False
+    dummy.pre_process = False
+    sharded_state_dict = {"language_model.output_layer.weight": object()}
+    metadata = {"dp_cp_group": object()}
+
+    Qwen3VLGPTModel.tie_embeddings_and_output_weights_state_dict(
+        dummy,
+        sharded_state_dict,
+        "language_model.output_layer.weight",
+        "language_model.embedding.word_embeddings.weight",
+        metadata,
+    )
+
+    assert calls["args"] == (
+        dummy,
+        sharded_state_dict,
+        "language_model.output_layer.weight",
+        "language_model.embedding.word_embeddings.weight",
+        metadata,
+    )

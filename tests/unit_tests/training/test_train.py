@@ -145,15 +145,17 @@ class TestPostTrainingStepHelpers:
         mock_print,
     ):
         model = [Mock()]
+        optimizer = Mock()
 
         maybe_check_weight_hash_across_dp_replicas(
             model,
+            optimizer,
             3,
             iteration=6,
             should_toggle_forward_pre_hook=True,
         )
 
-        mock_disable.assert_called_once_with(model)
+        mock_disable.assert_called_once_with(model, optimizer=optimizer)
         mock_check.assert_called_once_with(model, cross_check=True)
         mock_barrier.assert_called_once()
         mock_enable.assert_called_once_with(model)
@@ -171,9 +173,11 @@ class TestPostTrainingStepHelpers:
         mock_check,
     ):
         model = [Mock()]
+        optimizer = Mock()
 
         maybe_check_weight_hash_across_dp_replicas(
             model,
+            optimizer,
             None,
             iteration=4,
             should_toggle_forward_pre_hook=False,
@@ -516,19 +520,20 @@ class TestSaveCheckpointAndTime:
     ):
         state, _ = self._make_state()
         model = [Mock()]
+        optimizer = Mock()
         mock_checkpoint_manager = Mock()
 
         save_checkpoint_and_time(
             state=state,
             model=model,
-            optimizer=Mock(),
+            optimizer=optimizer,
             opt_param_scheduler=Mock(),
             num_floating_point_operations_so_far=123.0,
             checkpoint_manager=mock_checkpoint_manager,
         )
 
         mock_should_disable.assert_called_once_with(False, True, True)
-        mock_force_param_sync.assert_called_once_with(model)
+        mock_force_param_sync.assert_called_once_with(model, optimizer=optimizer)
         mock_checkpoint_manager.save.assert_called_once()
 
     @patch("megatron.bridge.training.train.force_param_sync")

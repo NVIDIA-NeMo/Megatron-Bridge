@@ -40,6 +40,7 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     AllGatherVisionEmbeddings,
     PatchMergerSubmodules,
     collapse_thw,
+    ensure_requires_grad_for_cp_collective,
     get_dist_train_vision_dp_data,
     get_vision_cp_data,
     pack_dist_train_vision_module_output,
@@ -50,6 +51,38 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_deepstack_embs,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
+
+
+def _is_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
+    """Return whether ``position_ids`` is explicit Qwen MRoPE metadata."""
+    return isinstance(position_ids, torch.Tensor) and position_ids.dim() == 3 and position_ids.size(0) == 3
+
+
+def _select_sequence(
+    val: torch.Tensor | None,
+    index: torch.Tensor,
+    *,
+    seq_dim: int,
+) -> torch.Tensor | None:
+    """Index-select one sequence dimension and keep the result contiguous."""
+    if val is None:
+        return None
+    return val.index_select(seq_dim, index).contiguous()
+
+
+def _split_if_full_sequence(
+    val: torch.Tensor | None,
+    *,
+    cp_size: int,
+    seq_dim: int,
+    cp_rank: int,
+    full_sequence_length: int | None,
+) -> tuple[torch.Tensor | None, bool]:
+    """CP-split ``val`` only when it still carries the full sequence length."""
+    if val is None or full_sequence_length is None or val.shape[seq_dim] != full_sequence_length:
+        return val, False
+    return split_data_cp_rank(val, cp_size, seq_dim, cp_rank), True
 
 
 class Qwen3VLModel(MegatronModule):
@@ -332,7 +365,7 @@ class Qwen3VLModel(MegatronModule):
 
     def forward(
         self,
-        input_ids: torch.Tensor,
+        input_ids: torch.Tensor | None,
         position_ids: torch.Tensor = None,  # can set at dataset
         attention_mask: torch.Tensor = None,
         labels: torch.Tensor = None,
@@ -356,26 +389,26 @@ class Qwen3VLModel(MegatronModule):
     ) -> torch.Tensor:
         """Forward function of the Qwen3VL model.
         # there is a workaround for supporting sequence packing with context parallelism
-        # cp split with sequence packing will make model lose vision token information, so we need to keep
-        # the original input_ids and pack them after vision embedding is calculated,
-        # cooporate with verl's models/mcore/model_forward.py
-        # pack the combined_embeddings to thd here, we check if packed_seq_params is None to determine if we need to pack the combined_embeddings to thd
-        # this function needs the position_ids and attention_mask in BSHD format, no matter use packed_seq or not
+        # Packed batches already arrive in MCore THD layout from the collator. The
+        # model only applies rank-local CP indices after merging vision embeddings.
 
         Args:
             image_data (torch.Tensor): input image of shape [total_thw_size, n_features].
             input_ids (torch.Tensor): input text ids [batch, text_seq_len].
-            position_ids (torch.Tensor): input text position ids [batch, text_seq_len].
+            position_ids (torch.Tensor): Optional explicit Qwen MRoPE position ids [3, batch, text_seq_len].
+                Ordinary 2D text position ids are ignored and MRoPE is computed from ``input_ids`` and visual grids.
             attention_mask (torch.Tensor): attention mask for the language model [batch, 1, combined_seq_len,
                 combined_seq_len].
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
             inference_params (InferenceParams): Inference-time parameters including KV cache.
             mm_token_type_ids (torch.Tensor): Token type IDs from transformers >= 5.3.0 processors.
-                Not used by Qwen3VL (which computes its own rope positions).
+                Not used by Qwen3VL.
 
         Returns:
-            output (torch.Tensor): Loss of shape [b, s] if labels are provided, otherwise logits of shape
-                [b, s, vocab_size].
+            torch.Tensor | tuple[torch.Tensor, torch.Tensor] | dict[str, torch.Tensor]: Language-model loss of shape
+                [b, s] when labels are provided, otherwise logits of shape [b, s, vocab_size]. CP paths that slice
+                the supervision mask return ``(output, loss_mask)``. Non-last distributed-training stages return
+                ``{"language_module": output}``.
         """
         del inference_context, mm_token_type_ids  # Unused, kept for API compatibility
         assert inference_params is None, "not support inference"
@@ -386,19 +419,37 @@ class Qwen3VLModel(MegatronModule):
         vision_embeds = None
         deepstack_feature_lists = None
 
-        # position ids is computed within the model
-        position_ids = None
+        if not _is_mrope_position_ids(position_ids):
+            position_ids = None
 
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.pre_process")
 
         cp_rank = self.pg_collection.cp.rank()
         cp_size = self.pg_collection.cp.size()
+        legacy_packed_bshd = (
+            packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
+        )
+        packed_cp_index = (
+            get_packed_seq_cp_partition_indices(
+                packed_seq_params,
+                total_tokens=input_ids.size(1),
+                cp_size=cp_size,
+                cp_rank=cp_rank,
+                device=input_ids.device,
+                cp_group=self.pg_collection.cp,
+            )
+            if packed_seq_params is not None and cp_size > 1 and input_ids is not None and not legacy_packed_bshd
+            else None
+        )
 
         # input_ids to pass to the language model for MTP (Multi-Token Prediction).
         # MTP's _get_embeddings rolls input_ids to generate future-token embeddings,
-        # so it must be a real tensor. For packed sequences we use the THD-format
-        # input_ids_thd (updated below); for regular sequences we use input_ids as-is.
+        # so it must be a real tensor. Packed input IDs already use THD layout and
+        # are indexed below only when CP is enabled.
         lm_input_ids = input_ids
+        full_sequence_length = input_ids.size(1) if input_ids is not None else None
+        if self.language_model is not None:
+            self.language_model.rotary_pos_emb.is_thd_format = False
 
         if self.pre_process:
             # can reorganize_inputs at dataset
@@ -467,7 +518,7 @@ class Qwen3VLModel(MegatronModule):
                     vision_embeds = torch.zeros(
                         (0, self.config.hidden_size),
                         device=vision_data.device,
-                        dtype=torch.bfloat16,
+                        dtype=self.config.params_dtype,
                     )
                     deepstack_feature_lists = []
                     for _ in self.vision_transformer_config.deepstack_visual_indexes:
@@ -475,20 +526,21 @@ class Qwen3VLModel(MegatronModule):
                             torch.zeros(
                                 (0, self.language_model.config.hidden_size),
                                 device=vision_data.device,
-                                dtype=torch.bfloat16,
+                                dtype=self.config.params_dtype,
                             )
                         )
                 if cp_size > 1 and self.config.vision_dp_when_cp:
+                    ensure_requires_grad_for_cp_collective((vision_embeds, *deepstack_feature_lists))
                     vision_embeds = AllGatherVisionEmbeddings.apply(
                         vision_embeds,
                         seqlen_on_cp_ranks,
-                        cp_group=self.pg_collection.cp,
+                        self.pg_collection.cp,
                     )
                     for i in range(len(deepstack_feature_lists)):
                         deepstack_feature_lists[i] = AllGatherVisionEmbeddings.apply(
                             deepstack_feature_lists[i],
                             seqlen_on_cp_ranks,
-                            cp_group=self.pg_collection.cp,
+                            self.pg_collection.cp,
                         )
 
             combined_embeddings = self.language_model.embedding(
@@ -501,55 +553,72 @@ class Qwen3VLModel(MegatronModule):
                 combined_embeddings[vision_mask] = vision_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
-            if combined_embeddings is not None and cp_size > 1 and packed_seq_params is None:
-                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
             if packed_seq_params is not None:
-                if attention_mask is None:
-                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
-                input_ids_thd, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
-                )
-                lm_input_ids = input_ids_thd
-                _, _, vision_mask_thd = reorganize_inputs(
-                    input_ids=input_ids_thd,
-                    pixel_values=pixel_values,
-                    pixel_values_videos=pixel_values_videos,
-                    image_grid_thw=image_grid_thw,
-                    video_grid_thw=video_grid_thw,
-                    image_input_mask=image_input_mask,
-                    video_input_mask=video_input_mask,
-                    image_token_id=self.image_token_id,
-                    video_token_id=self.video_token_id,
-                    square_merge_size=self.square_merge_size,
-                )
-
-                if deepstack_feature_lists is not None:
-                    tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
-                    new_deepstack_feature_lists = []
-                    for deepstack_visual_embed in deepstack_feature_lists:
-                        tmp_embeddings[vision_mask] = deepstack_visual_embed
-                        tmp_embeddings_thd = preprocess_packed_seqs(
-                            tmp_embeddings.contiguous(),
-                            attention_mask,
-                            pre_process=True,
-                            pg_collection=self.pg_collection,
-                        )[0]
-                        new_deepstack_feature_lists.append(tmp_embeddings_thd[vision_mask_thd].contiguous())
-
-                    deepstack_feature_lists = new_deepstack_feature_lists
-
-                vision_mask = vision_mask_thd
-                combined_embeddings_thd = (
-                    preprocess_packed_seqs(
-                        combined_embeddings.transpose(0, 1).contiguous(),
+                if legacy_packed_bshd:
+                    if attention_mask is None:
+                        attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                    lm_input_ids = preprocess_packed_seqs(
+                        input_ids,
                         attention_mask,
                         pre_process=True,
                         pg_collection=self.pg_collection,
                     )[0]
-                    .transpose(0, 1)
-                    .contiguous()
-                )
-                combined_embeddings = combined_embeddings_thd
+                    _, _, vision_mask_thd = reorganize_inputs(
+                        input_ids=lm_input_ids,
+                        pixel_values=pixel_values,
+                        pixel_values_videos=pixel_values_videos,
+                        image_grid_thw=image_grid_thw,
+                        video_grid_thw=video_grid_thw,
+                        image_input_mask=image_input_mask,
+                        video_input_mask=video_input_mask,
+                        image_token_id=self.image_token_id,
+                        video_token_id=self.video_token_id,
+                        square_merge_size=self.square_merge_size,
+                    )
+
+                    if deepstack_feature_lists is not None:
+                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        new_deepstack_feature_lists = []
+                        for deepstack_visual_embed in deepstack_feature_lists:
+                            tmp_embeddings[vision_mask] = deepstack_visual_embed
+                            tmp_embeddings_thd = preprocess_packed_seqs(
+                                tmp_embeddings.contiguous(),
+                                attention_mask,
+                                pre_process=True,
+                                pg_collection=self.pg_collection,
+                            )[0]
+                            new_deepstack_feature_lists.append(tmp_embeddings_thd[vision_mask_thd].contiguous())
+                        deepstack_feature_lists = new_deepstack_feature_lists
+
+                    vision_mask = vision_mask_thd
+                    combined_embeddings = (
+                        preprocess_packed_seqs(
+                            combined_embeddings.transpose(0, 1).contiguous(),
+                            attention_mask,
+                            pre_process=True,
+                            pg_collection=self.pg_collection,
+                        )[0]
+                        .transpose(0, 1)
+                        .contiguous()
+                    )
+                elif cp_size > 1 and packed_cp_index is None:
+                    raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
+                elif packed_cp_index is not None:
+                    lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
+                    vision_mask_local = _select_sequence(vision_mask, packed_cp_index, seq_dim=1)
+                    if deepstack_feature_lists is not None:
+                        tmp_embeddings = torch.zeros_like(combined_embeddings.transpose(0, 1))
+                        new_deepstack_feature_lists = []
+                        for deepstack_visual_embed in deepstack_feature_lists:
+                            tmp_embeddings[vision_mask] = deepstack_visual_embed
+                            tmp_embeddings_local = _select_sequence(tmp_embeddings, packed_cp_index, seq_dim=1)
+                            new_deepstack_feature_lists.append(tmp_embeddings_local[vision_mask_local].contiguous())
+                        deepstack_feature_lists = new_deepstack_feature_lists
+
+                    vision_mask = vision_mask_local
+                    combined_embeddings = _select_sequence(combined_embeddings, packed_cp_index, seq_dim=0)
+            elif combined_embeddings is not None and cp_size > 1:
+                combined_embeddings = split_data_cp_rank(combined_embeddings, cp_size, 0, cp_rank)
 
             if self.config.sequence_parallel:
                 combined_embeddings = tensor_parallel.scatter_to_sequence_parallel_region(
@@ -559,14 +628,17 @@ class Qwen3VLModel(MegatronModule):
 
         else:
             combined_embeddings = None
-            # On non-pre_process PP stages (e.g. the last stage where MTP runs),
-            # convert lm_input_ids to THD format so it matches position_ids.
-            if packed_seq_params is not None:
+            if legacy_packed_bshd:
                 if attention_mask is None:
-                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool, device=input_ids.device)
-                lm_input_ids, _ = preprocess_packed_seqs(
-                    input_ids, attention_mask, pre_process=True, pg_collection=self.pg_collection
-                )
+                    attention_mask = torch.ones_like(input_ids, dtype=torch.bool)
+                lm_input_ids = preprocess_packed_seqs(
+                    input_ids,
+                    attention_mask,
+                    pre_process=True,
+                    pg_collection=self.pg_collection,
+                )[0]
+            elif packed_cp_index is not None:
+                lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)
 
         visual_pos_masks = vision_mask
         deepstack_visual_embeds = deepstack_feature_lists
@@ -593,6 +665,10 @@ class Qwen3VLModel(MegatronModule):
                 )
 
         if position_ids is None:
+            if input_ids is None:
+                raise ValueError(
+                    "Qwen3VLModel requires input_ids when explicit 3D MRoPE position_ids are not provided"
+                )
             # BSHD
             # Megatron uses 4D bool masks ([B|1,1,S,S], True=masked); HF uses 2D keep masks ([B,S], 1=keep)
             # For simplicity, we set hf_attention_mask to None.
@@ -606,9 +682,10 @@ class Qwen3VLModel(MegatronModule):
                 image_grid_thw=image_grid_thw,
                 video_grid_thw=video_grid_thw,
                 attention_mask=hf_attention_mask,
+                packed_seq_params=None if legacy_packed_bshd else packed_seq_params,
             )  #  [3*b*s]
-            if packed_seq_params is not None:
-                # convert position_ids to THD format
+        if packed_seq_params is not None:
+            if legacy_packed_bshd:
                 position_ids = (
                     preprocess_packed_seqs(
                         position_ids.permute(1, 2, 0),
@@ -619,11 +696,55 @@ class Qwen3VLModel(MegatronModule):
                     .permute(2, 0, 1)
                     .contiguous()
                 )
-                attention_mask = None
+            elif packed_cp_index is not None:
+                position_ids = _select_sequence(position_ids, packed_cp_index, seq_dim=2)
+            attention_mask = None
+            if self.language_model is not None:
+                self.language_model.rotary_pos_emb.is_thd_format = True
+        elif cp_size > 1:
+            lm_input_ids, _ = _split_if_full_sequence(
+                lm_input_ids,
+                cp_size=cp_size,
+                seq_dim=1,
+                cp_rank=cp_rank,
+                full_sequence_length=full_sequence_length,
+            )
+            position_ids, position_ids_were_split = _split_if_full_sequence(
+                position_ids,
+                cp_size=cp_size,
+                seq_dim=2,
+                cp_rank=cp_rank,
+                full_sequence_length=full_sequence_length,
+            )
+            if position_ids_were_split and self.language_model is not None:
                 self.language_model.rotary_pos_emb.is_thd_format = True
 
         torch.cuda.nvtx.range_pop()
         torch.cuda.nvtx.range_push("Qwen3VLModel.forward.language_model")
+
+        return_sliced_loss_mask = False
+        if packed_seq_params is not None:
+            if packed_cp_index is not None:
+                labels = _select_sequence(labels, packed_cp_index, seq_dim=1)
+                if loss_mask is not None:
+                    loss_mask = _select_sequence(loss_mask, packed_cp_index, seq_dim=1)
+                    return_sliced_loss_mask = True
+        elif cp_size > 1:
+            labels, _ = _split_if_full_sequence(
+                labels,
+                cp_size=cp_size,
+                seq_dim=1,
+                cp_rank=cp_rank,
+                full_sequence_length=full_sequence_length,
+            )
+            if loss_mask is not None:
+                loss_mask, return_sliced_loss_mask = _split_if_full_sequence(
+                    loss_mask,
+                    cp_size=cp_size,
+                    seq_dim=1,
+                    cp_rank=cp_rank,
+                    full_sequence_length=full_sequence_length,
+                )
 
         output = self.language_model(
             input_ids=lm_input_ids,
@@ -633,7 +754,7 @@ class Qwen3VLModel(MegatronModule):
             labels=labels,  # only not None in the last decoder PP stage
             loss_mask=loss_mask,  # Added for THD training compatibility
             inference_params=inference_params,  # currently always None
-            packed_seq_params=packed_seq_params,  # currently always None
+            packed_seq_params=packed_seq_params,
             runtime_gather_output=runtime_gather_output,
             visual_pos_masks=visual_pos_masks,
             deepstack_visual_embeds=deepstack_visual_embeds,
@@ -644,4 +765,6 @@ class Qwen3VLModel(MegatronModule):
         if self.use_dist_train:
             if not is_pp_last_stage(self.pg_collection.pp):
                 return {"language_module": output}
+        if return_sliced_loss_mask:
+            return output, loss_mask
         return output

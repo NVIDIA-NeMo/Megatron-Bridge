@@ -6,7 +6,6 @@ This module provides the setup logic for MegatronMIMO training, mirroring the st
 
 Key components:
 - setup_megatron_mimo(): MegatronMIMO-specific setup helper (analogous to setup())
-- _set_megatron_mimo_random_seeds(): Per-module TP/PP seed initialization
 - _update_megatron_mimo_model_config_funcs(): Model config hooks (analogous to _update_model_config_funcs)
 - MegatronMIMOSetupOutput: Dataclass containing all setup outputs
 """
@@ -21,7 +20,7 @@ import torch.distributed as dist
 from megatron.core.pipeline_parallel.multimodule_communicator import MultiModulePipelineCommunicator
 from megatron.core.utils import get_model_config
 
-from megatron.bridge.training.checkpointing import CheckpointManager, create_checkpoint_manager, load_checkpoint
+from megatron.bridge.training.checkpointing import CheckpointLoadContext, CheckpointManager, create_checkpoint_manager
 from megatron.bridge.training.megatron_mimo_parallel_utils import (
     build_pg_collection_for_schedule,
     get_active_module_pg,
@@ -260,7 +259,7 @@ def setup_megatron_mimo(
     # ``parallel_state`` globals from this rank's pg_collection.
     active_module_name, local_pg_collection = get_active_module_pg(megatron_mimo_infra)
 
-    # Initialize checkpoint manager (owns checkpointing_context internally).
+    # Initialize checkpoint manager.
     checkpoint_manager = create_checkpoint_manager(cfg.checkpoint)
 
     # Load checkpoint if one exists (persistent, pretrained, or non-persistent).
@@ -281,14 +280,15 @@ def setup_megatron_mimo(
     if should_load:
         timers = global_state.timers
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        load_checkpoint(
-            global_state,
-            model=[model],
-            optimizer=optimizer,
-            opt_param_scheduler=first_scheduler,
-            checkpointing_context=checkpoint_manager.checkpointing_context,
-            pg_collection=local_pg_collection,
-            module_name=active_module_name,
+        checkpoint_manager.load(
+            CheckpointLoadContext(
+                state=global_state,
+                model=[model],
+                optimizer=optimizer,
+                opt_param_scheduler=first_scheduler,
+                pg_collection=local_pg_collection,
+                module_name=active_module_name,
+            )
         )
         timers("load-checkpoint").stop(barrier=True)
         timers.log(["load-checkpoint"])

@@ -48,7 +48,7 @@ MEGATRON_CKPT_DIR=${WORKSPACE}/megatron_ckpts/${MODEL_NAME}
 # Convert HF checkpoint to Megatron format if not already done
 if [ ! -d "${MEGATRON_CKPT_DIR}/iter_0000000" ]; then
     echo "Converting HF model to Megatron format..."
-    uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+    ./scripts/conversion/convert.sh import \
         --hf-model ${HF_MODEL} \
         --megatron-path ${MEGATRON_CKPT_DIR}
 fi
@@ -77,13 +77,13 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
     echo "  run_recipe.py | TP=${TP}, PP=${PP}"
     echo "============================================================"
     uv run --no-sync python -m torch.distributed.run --nproc_per_node=${NPROC} scripts/training/run_recipe.py \
-        --recipe qwen2_audio_7b_finetune_config \
+        --recipe qwen2_audio_7b_sft_config \
         --step_func audio_lm_step \
-        --hf_path ${HF_MODEL} \
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         checkpoint.save=${WORKSPACE}/exp/${MODEL_NAME}_sft_tp${TP}_pp${PP} \
         checkpoint.save_interval=$SAVE_INTERVAL \
         checkpoint.save_optim=False \
+        dataset.hf_processor_path=$HF_MODEL \
         model.seq_length=$SEQ_LENGTH \
         model.tensor_model_parallel_size=$TP \
         model.pipeline_model_parallel_size=$PP \
@@ -101,10 +101,10 @@ for par_config in "${PARALLELISM_CONFIGS[@]}"; do
         logger.log_interval=$LOG_INTERVAL \
         logger.wandb_project=$WANDB_PROJECT \
         logger.wandb_exp_name=${MODEL_NAME}_asr_tp${TP}_pp${PP} \
-        dataset.maker_name=make_cv17_dataset \
-        "dataset.maker_kwargs.path_or_dataset=ysdede/commonvoice_17_tr_fixed" \
-        "dataset.maker_kwargs.split=train" \
-        "dataset.val_maker_kwargs.split=validation" \
+        dataset.source.dataset_name=cv17 \
+        dataset.source.split=train \
+        dataset.validation_source.dataset_name=cv17 \
+        dataset.validation_source.split=validation \
         dataset.do_test=false \
         dataset.enable_in_batch_packing=true \
         rng.seed=42 \

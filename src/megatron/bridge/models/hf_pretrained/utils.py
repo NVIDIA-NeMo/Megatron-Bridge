@@ -18,22 +18,6 @@ import logging
 logger = logging.getLogger(__name__)
 
 
-SAFE_REPOS: list[str] = [
-    "deepseek-ai",
-    "gpt2",
-    "google",
-    "llava-hf",
-    "meta-llama",
-    "MiniMaxAI",
-    "mistralai",
-    "moonshotai",
-    "nvidia",
-    "openai",
-    "Qwen",
-    "zai-org",
-]
-
-
 def is_safe_repo(hf_path: str, trust_remote_code: bool | None) -> bool:
     """
     Decide whether remote code execution should be enabled for a Hugging Face

@@ -167,7 +167,7 @@ class TestSafeLoadNpyObjectArrays:
     """Object arrays (packed SFT datasets) should load through the restricted unpickler."""
 
     def test_packed_dataset_round_trip(self):
-        """The exact dict-of-lists shape produced by packed_sequence.py should survive a save/load cycle."""
+        """The exact dict-of-lists shape produced by offline packing should survive a save/load cycle."""
         output_data = [
             {"input_ids": [1, 2, 3], "loss_mask": [True, False, True], "seq_start_id": [0, 3]},
             {"input_ids": [4, 5, 6, 7], "loss_mask": [True, True, True, False], "seq_start_id": [0, 4]},

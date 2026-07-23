@@ -4,6 +4,64 @@ This directory contains example scripts that demonstrate how to use the Megatron
 
 ## Available Scripts
 
+### `create_hf_toy_model.py` - Preserve Weights in a Shallow Test Checkpoint
+
+Creates a smaller checkpoint by retaining the first transformer layers from an
+existing Hugging Face safetensors checkpoint. Unlike a randomly initialized toy
+model, the retained tensors are byte-for-byte identical to the source, which is
+useful for conversion, checkpoint, and numerical-parity tests.
+
+The tool accepts either a local checkpoint directory or a Hugging Face model ID,
+supports sharded checkpoints, updates the safetensors index, and copies tokenizer
+and model metadata. It streams tensor bytes instead of loading the checkpoint into
+CPU or GPU memory.
+
+```bash
+# Qwen3 example: retain the first four layers
+uv run python examples/conversion/create_hf_toy_model.py \
+  Qwen/Qwen3-0.6B \
+  /tmp/qwen3-0.6b-4layers \
+  --num-hidden-layers 4
+
+# Verify that Megatron Bridge can import and export the result
+uv run python examples/conversion/hf_megatron_roundtrip.py \
+  --hf-model-id /tmp/qwen3-0.6b-4layers \
+  --output-dir /tmp/qwen3-roundtrip
+```
+
+This utility currently targets decoder-only checkpoints with a top-level
+`num_hidden_layers` config field and tensor names containing `layers.<index>`.
+
+### `repair_hf_embedding_rows.py` - Repair Near-Zero Input Embedding Rows
+
+Creates a repaired copy of a local Hugging Face safetensors checkpoint by
+rewriting diagnosed near-zero input embedding rows. It is intended for one-off
+continued-pretraining cleanup when rare token IDs in the base checkpoint can
+produce extreme embedding gradients.
+
+The script scans the input embedding row norms, replaces rows whose L2 norm is
+non-finite or at/below `--min-norm` with the matching `lm_head.weight` direction
+scaled to the RMS norm of healthy input rows, and writes a manifest with the
+affected token IDs. It preserves the HF checkpoint layout and safetensors index.
+
+```bash
+uv run python examples/conversion/repair_hf_embedding_rows.py \
+  --input-hf-path /models/NVIDIA-Nemotron-3-Nano-4B-BF16 \
+  --output-hf-path /models/NVIDIA-Nemotron-3-Nano-4B-BF16-repaired \
+  --min-norm 1.0e-4 \
+  --max-rows 256
+
+# Diagnose only, without writing an output checkpoint
+uv run python examples/conversion/repair_hf_embedding_rows.py \
+  --input-hf-path /models/NVIDIA-Nemotron-3-Nano-4B-BF16 \
+  --dry-run
+```
+
+By default the tool infers common tensor names such as
+`backbone.embeddings.weight` and `lm_head.weight`. Use
+`--input-embedding-name` and `--output-embedding-name` if a checkpoint uses
+different names.
+
 ### 1. `hf_megatron_roundtrip.py` - Two-Way Model Conversion
 
 Demonstrates round-trip conversion between HuggingFace and Megatron-LM model formats.
@@ -44,60 +102,37 @@ Converting to HuggingFace ━━━━━━━━━━━━━━━━━━
 Saving HF-ckpt in Llama-3.2-1B...
 ```
 
-### 2. `convert_checkpoints.py` - Checkpoint Conversion
+### 2. Stable Checkpoint Conversion CLI
 
-A tool for importing/exporting models between HuggingFace and Megatron checkpoint formats.
+Production checkpoint import, export, and round-trip validation use
+[`scripts/conversion/convert.sh`](../../scripts/conversion/README.md). The CLI
+supports local or Slurm execution and selects a single-process CPU backend or a
+distributed GPU backend without requiring users to invoke Python, `torchrun`,
+`srun`, or `sbatch` directly.
 
-**Features:**
-- Import HuggingFace models to Megatron checkpoint format
-- Export Megatron checkpoints to HuggingFace format
-- Configurable model settings (dtype, device mapping)
-- Progress tracking and validation
-
-**Usage:**
-
-**Import HF to Megatron:**
 ```bash
-# Basic import
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
+  --executor local --device cpu \
   --hf-model meta-llama/Llama-3.2-1B \
   --megatron-path ./checkpoints/llama3_2_1b
 
-# Import with custom settings
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh export \
+  --executor local --device cpu \
   --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b \
-  --torch-dtype bfloat16 \
-  --device-map auto
-```
-
-**Export Megatron to HF:**
-```bash
-# Basic export
-uv run python examples/conversion/convert_checkpoints.py export \
-  --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b \
+  --megatron-path ./checkpoints/llama3_2_1b/iter_0000000 \
   --hf-path ./exports/llama3_2_1b_hf
 
-# Export without progress bar
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh roundtrip \
+  --executor local --device gpu --gpus-per-node 2 \
   --hf-model meta-llama/Llama-3.2-1B \
-  --megatron-path ./checkpoints/llama3_2_1b \
-  --hf-path ./exports/llama3_2_1b_hf \
-  --no-progress
+  --tp 2
 ```
 
-**Example Output:**
-```
-🔄 Starting import: meta-llama/Llama-3.2-1B -> ./checkpoints/llama3_2_1b
-📥 Loading HuggingFace model: meta-llama/Llama-3.2-1B
-...
-  successfully saved checkpoint from iteration       0 to ./checkpoints/llama3_2_1b [ t 1/1, p 1/1 ]
-✅ Successfully imported model to: ./checkpoints/llama3_2_1b
-📁 Checkpoint structure:
-   📂 iter_0000000/
-   📄 latest_train_state.pt
-```
+Use `--executor slurm` with the required account, partition, container, mount,
+and resource arguments for multi-node round-trip validation. The launcher
+compares the in-memory HF → Megatron → HF result and does not write a
+checkpoint. The scripts in this directory remain standalone examples for direct
+`torch.distributed.run`, generation, benchmarking, and model comparison.
 
 ### 3. `hf_to_megatron_generate_text.py` - Text Generation
 
@@ -317,6 +352,10 @@ uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf
   --tp 2 --pp 2
 ```
 
+Hugging Face checkpoint export uses loose key validation by default for
+backward compatibility. Add `--strict` to require every source checkpoint
+tensor to be written.
+
 **Save in Megatron format:**
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=2 examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
@@ -472,4 +511,3 @@ uv run python examples/conversion/adapter/verify_adapter.py \
     --hf-model-id meta-llama/Llama-3.2-1B \
     --hf-adapter-path ./my_adapter
 ```
-

@@ -17,6 +17,8 @@ from typing import Callable
 
 import pytest
 
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
+
 
 _llama_module = importlib.import_module("megatron.bridge.recipes.llama")
 _LLAMA_RECIPE_FUNCS = [
@@ -69,14 +71,7 @@ def _safe_overrides_for(name: str) -> dict:
 
     Pretrain configs use the new parameterless API (return empty dict).
     SFT/PEFT configs also use parameterless API now.
-    Special case: low_precision pretrain configs still require mixed_precision_recipe.
     """
-    lname = name.lower()
-
-    # Exception: low_precision recipes still require mixed_precision_recipe argument
-    if "low_precision" in lname:
-        return {"mixed_precision_recipe": "bf16_with_fp8_current_scaling_mixed"}
-
     return {}
 
 
@@ -99,6 +94,19 @@ class _FakeBridge:
     @staticmethod
     def from_hf_pretrained(hf_path: str, **kwargs):
         return _FakeBridge()
+
+
+@pytest.fixture(autouse=True)
+def _patch_llama_autobridge(monkeypatch: pytest.MonkeyPatch):
+    for module_name in [
+        "megatron.bridge.recipes.llama.llama2",
+        "megatron.bridge.recipes.llama.llama3",
+        "megatron.bridge.recipes.llama.h100.llama2",
+        "megatron.bridge.recipes.llama.h100.llama3",
+    ]:
+        mod = importlib.import_module(module_name)
+        if hasattr(mod, "AutoBridge"):
+            patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
 
 def _apply_test_overrides(cfg, name: str):
@@ -150,12 +158,12 @@ def _assert_basic_config(cfg):
 def test_each_llama_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     # Always patch AutoBridge in the base llama3 module (where base configs call it)
     llama3_mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(llama3_mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, llama3_mod, "AutoBridge", _FakeBridge)
     # Also patch in the recipe's own module if it directly imports AutoBridge
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
     if hasattr(mod, "AutoBridge"):
-        monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+        patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     func_name = recipe_func.__name__
     is_peft = "peft" in func_name.lower()
@@ -203,7 +211,7 @@ def test_llama3_sft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mon
     """Test that each Llama3 SFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func()
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -227,7 +235,7 @@ def test_llama3_peft_config_builds(recipe_func: Callable, monkeypatch: pytest.Mo
     """Test that each Llama3 PEFT recipe builds a valid config."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme="lora")
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -252,7 +260,7 @@ def test_llama3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     """Test that PEFT configurations are correctly applied with different schemes."""
     module_name = recipe_func.__module__
     mod = importlib.import_module(module_name)
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = recipe_func(peft_scheme=peft_scheme)
     _apply_test_overrides(cfg, recipe_func.__name__)
@@ -263,21 +271,19 @@ def test_llama3_peft_schemes(recipe_func: Callable, peft_scheme: str, monkeypatc
     assert cfg.peft is not None
 
 
-@pytest.mark.parametrize("packed", [True, False])
-def test_llama3_8b_sft_packed_sequence(packed: bool, monkeypatch: pytest.MonkeyPatch):
-    """Test that packed sequence configuration works correctly."""
+def test_llama3_8b_sft_offline_packing_defaults(monkeypatch: pytest.MonkeyPatch):
+    """Test that offline packing is configured through real dataset fields."""
     from megatron.bridge.recipes.llama import llama3_8b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_8b_sft_config()
     _apply_test_overrides(cfg, "llama3_8b_sft_config")
 
-    # Modify packed_sequence after creation
-    cfg.dataset.packed_sequence = packed
-
     _assert_basic_config(cfg)
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs is not None
 
 
 def test_llama31_405b_has_account_for_settings(monkeypatch: pytest.MonkeyPatch):
@@ -285,7 +291,7 @@ def test_llama31_405b_has_account_for_settings(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama31_405b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama31_405b_sft_config()
     _apply_test_overrides(cfg, "llama31_405b_sft_config")
@@ -302,7 +308,7 @@ def test_llama31_405b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama31_405b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama31_405b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "llama31_405b_peft_config")
@@ -320,7 +326,7 @@ def test_llama31_405b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama31_405b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama31_405b_sft_config()
     _apply_test_overrides(cfg, "llama31_405b_sft_config")
@@ -338,7 +344,7 @@ def test_llama3_8b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_8b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_8b_sft_config()
     _apply_test_overrides(cfg, "llama3_8b_sft_config")
@@ -358,7 +364,7 @@ def test_llama3_8b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_8b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_8b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "llama3_8b_peft_config")
@@ -383,7 +389,7 @@ def test_llama3_70b_full_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_70b_sft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_70b_sft_config()
     _apply_test_overrides(cfg, "llama3_70b_sft_config")
@@ -400,7 +406,7 @@ def test_llama3_70b_lora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_70b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_70b_peft_config(peft_scheme="lora")
     _apply_test_overrides(cfg, "llama3_70b_peft_config")
@@ -416,7 +422,7 @@ def test_llama3_8b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_8b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_8b_peft_config(peft_scheme="dora")
     _apply_test_overrides(cfg, "llama3_8b_peft_config")
@@ -441,7 +447,7 @@ def test_llama3_70b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_70b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama3_70b_peft_config(peft_scheme="dora")
     _apply_test_overrides(cfg, "llama3_70b_peft_config")
@@ -457,7 +463,7 @@ def test_llama31_405b_dora_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama31_405b_peft_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     cfg = llama31_405b_peft_config(peft_scheme="dora")
     _apply_test_overrides(cfg, "llama31_405b_peft_config")
@@ -476,11 +482,9 @@ def test_llama3_8b_low_precision_defaults(monkeypatch: pytest.MonkeyPatch):
     from megatron.bridge.recipes.llama import llama3_8b_low_precision_pretrain_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("llama3_8b_low_precision_pretrain_config")
-
-    cfg = llama3_8b_low_precision_pretrain_config(**overrides)
+    cfg = llama3_8b_low_precision_pretrain_config()
 
     _assert_basic_config(cfg)
 
@@ -494,16 +498,12 @@ def test_llama3_8b_low_precision_defaults(monkeypatch: pytest.MonkeyPatch):
 
 def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that 8B low precision NVFP4 has correct default BF16 layer configuration."""
-    from megatron.bridge.recipes.llama import llama3_8b_low_precision_pretrain_config
+    from megatron.bridge.recipes.llama.h100 import llama3_8b_pretrain_2gpu_h100_nvfp4_config
 
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
-    overrides = _safe_overrides_for("llama3_8b_low_precision_pretrain_config")
-    # change the mixed precision recipe to NVFP4
-    overrides["mixed_precision_recipe"] = "bf16_with_nvfp4_mixed"
-
-    cfg = llama3_8b_low_precision_pretrain_config(**overrides)
+    cfg = llama3_8b_pretrain_2gpu_h100_nvfp4_config()
 
     _assert_basic_config(cfg)
 
@@ -515,11 +515,33 @@ def test_llama3_8b_low_precision_nvfp4_defaults(monkeypatch: pytest.MonkeyPatch)
 
 @pytest.mark.parametrize(
     "recipe_name",
+    [
+        "llama3_8b_pretrain_2gpu_h100_fp8cs_config",
+        "llama3_8b_pretrain_2gpu_h100_fp8mx_config",
+        "llama3_8b_pretrain_2gpu_h100_nvfp4_config",
+    ],
+)
+def test_llama3_8b_h100_low_precision_defaults(recipe_name: str):
+    h100_module = importlib.import_module("megatron.bridge.recipes.llama.h100")
+    recipe_func = getattr(h100_module, recipe_name)
+
+    assert recipe_name in h100_module.__all__
+
+    cfg = recipe_func()
+
+    _assert_basic_config(cfg)
+    assert cfg.model.context_parallel_size == 2
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size == 768
+
+
+@pytest.mark.parametrize(
+    "recipe_name",
     ["llama3_70b_pretrain_deterministic_config", "llama31_405b_pretrain_deterministic_config"],
 )
 def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeypatch: pytest.MonkeyPatch):
     mod = importlib.import_module("megatron.bridge.recipes.llama.llama3")
-    monkeypatch.setattr(mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
 
     recipe_func = getattr(_llama_module, recipe_name)
     cfg = recipe_func()
@@ -528,3 +550,6 @@ def test_llama_deterministic_wrapper_applies_overrides(recipe_name: str, monkeyp
     assert cfg.model.deterministic_mode is True
     assert cfg.model.cross_entropy_loss_fusion is False
     assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.env_vars["CUBLAS_WORKSPACE_CONFIG"] == ":4096:8"
+    assert cfg.env_vars["NCCL_ALGO"] == "Ring"
+    assert cfg.env_vars["NVTE_ALLOW_NONDETERMINISTIC_ALGO"] == 0

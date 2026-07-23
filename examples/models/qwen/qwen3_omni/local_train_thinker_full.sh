@@ -42,7 +42,7 @@ if [[ -z "${TRAIN_JSONL}" ]]; then
   exit 1
 fi
 
-RECIPE=${RECIPE:-qwen3_omni_30b_a3b_sft_preloaded_config}
+RECIPE=${RECIPE:-qwen3_omni_30b_a3b_sft_hf_json_config}
 STEP_FUNC=${STEP_FUNC:-qwen3_omni_step}
 SEQ_LENGTH=${SEQ_LENGTH:-4096}
 TRAIN_ITERS=${TRAIN_ITERS:-20}
@@ -55,7 +55,7 @@ SAVE_INTERVAL=${SAVE_INTERVAL:-0}
 TENSOR_PARALLEL_SIZE=${TENSOR_PARALLEL_SIZE:-1}
 PIPELINE_PARALLEL_SIZE=${PIPELINE_PARALLEL_SIZE:-1}
 CONTEXT_PARALLEL_SIZE=${CONTEXT_PARALLEL_SIZE:-1}
-EXPERT_MODEL_PARALLEL_SIZE=${EXPERT_MODEL_PARALLEL_SIZE:-1}
+EXPERT_MODEL_PARALLEL_SIZE=${EXPERT_MODEL_PARALLEL_SIZE:-8}
 EXPERT_TENSOR_PARALLEL_SIZE=${EXPERT_TENSOR_PARALLEL_SIZE:-1}
 SEQUENCE_PARALLEL=${SEQUENCE_PARALLEL:-False}
 VIT_GRADIENT_CHECKPOINTING=${VIT_GRADIENT_CHECKPOINTING:-False}
@@ -68,8 +68,9 @@ RECOMPUTE_MODULES=${RECOMPUTE_MODULES:-}
 FREEZE_LANGUAGE_MODEL=${FREEZE_LANGUAGE_MODEL:-False}
 FREEZE_VISION_MODEL=${FREEZE_VISION_MODEL:-False}
 FREEZE_AUDIO_MODEL=${FREEZE_AUDIO_MODEL:-False}
-OPTIMIZER_CPU_OFFLOAD=${OPTIMIZER_CPU_OFFLOAD:-}
-OPTIMIZER_OFFLOAD_FRACTION=${OPTIMIZER_OFFLOAD_FRACTION:-}
+OPTIMIZER_CPU_OFFLOAD=${OPTIMIZER_CPU_OFFLOAD:-True}
+OPTIMIZER_OFFLOAD_FRACTION=${OPTIMIZER_OFFLOAD_FRACTION:-1.0}
+OVERLAP_CPU_OPTIMIZER_D2H_H2D=${OVERLAP_CPU_OPTIMIZER_D2H_H2D:-True}
 USE_PRECISION_AWARE_OPTIMIZER=${USE_PRECISION_AWARE_OPTIMIZER:-}
 OVERLAP_GRAD_REDUCE=${OVERLAP_GRAD_REDUCE:-}
 OVERLAP_PARAM_GATHER=${OVERLAP_PARAM_GATHER:-}
@@ -131,6 +132,7 @@ if [[ "${PRESET}" == "4node_tp2_ep8_sp" ]]; then
     RECOMPUTE_MODULES=core_attn
     OPTIMIZER_CPU_OFFLOAD=False
     OPTIMIZER_OFFLOAD_FRACTION=0.0
+    OVERLAP_CPU_OPTIMIZER_D2H_H2D=False
     USE_PRECISION_AWARE_OPTIMIZER=False
     TRAIN_ITERS=${TRAIN_ITERS:-20}
     LOG_INTERVAL=${LOG_INTERVAL:-5}
@@ -262,10 +264,8 @@ CMD=(
     --master_addr="${MASTER_ADDR}"
     --master_port="${MASTER_PORT}"
     "${ROOT_DIR}/scripts/training/run_recipe.py"
-    --mode finetune
     --recipe "${RECIPE}"
     --step_func "${STEP_FUNC}"
-    --hf_path "${EFFECTIVE_HF_MODEL_PATH}"
     checkpoint.pretrained_checkpoint="${EFFECTIVE_HF_MODEL_PATH}"
     checkpoint.save="${RESULTS_DIR}/${RUN_NAME}"
     checkpoint.save_interval="${SAVE_INTERVAL}"
@@ -295,13 +295,22 @@ CMD=(
     logger.wandb_exp_name="${RUN_NAME}"
     dataset.seq_length="${SEQ_LENGTH}"
     dataset.hf_processor_path="${EFFECTIVE_HF_MODEL_PATH}"
-    dataset.train_data_path="${TRAIN_JSONL}"
-    dataset.valid_data_path="${VALID_JSONL}"
-    dataset.test_data_path="${TEST_JSONL}"
+    "dataset.source.load_kwargs={data_files:{train:${TRAIN_JSONL}}}"
     dataset.num_workers="${DATASET_NUM_WORKERS}"
     dataset.persistent_workers="${DATASET_PERSISTENT_WORKERS}"
     dataset.enable_in_batch_packing=False
 )
+
+if [[ -n "${VALID_JSONL}" ]]; then
+    CMD+=("dataset.validation_source.load_kwargs={data_files:{validation:${VALID_JSONL}}}")
+else
+    CMD+=(dataset.do_validation=False dataset.validation_source=null)
+fi
+if [[ -n "${TEST_JSONL}" ]]; then
+    CMD+=("dataset.test_source.load_kwargs={data_files:{test:${TEST_JSONL}}}")
+else
+    CMD+=(dataset.do_test=False dataset.test_source=null)
+fi
 
 if [[ -n "${RECOMPUTE_GRANULARITY}" ]]; then
     CMD+=(model.recompute_granularity="${RECOMPUTE_GRANULARITY}")
@@ -320,6 +329,9 @@ if [[ -n "${OPTIMIZER_CPU_OFFLOAD}" ]]; then
 fi
 if [[ -n "${OPTIMIZER_OFFLOAD_FRACTION}" ]]; then
     CMD+=(optimizer.optimizer_offload_fraction="${OPTIMIZER_OFFLOAD_FRACTION}")
+fi
+if [[ -n "${OVERLAP_CPU_OPTIMIZER_D2H_H2D}" ]]; then
+    CMD+=(optimizer.overlap_cpu_optimizer_d2h_h2d="${OVERLAP_CPU_OPTIMIZER_D2H_H2D}")
 fi
 if [[ -n "${USE_PRECISION_AWARE_OPTIMIZER}" ]]; then
     CMD+=(optimizer.use_precision_aware_optimizer="${USE_PRECISION_AWARE_OPTIMIZER}")
@@ -394,6 +406,7 @@ echo "[info] RECOMPUTE_NUM_LAYERS=${RECOMPUTE_NUM_LAYERS}"
 echo "[info] RECOMPUTE_MODULES=${RECOMPUTE_MODULES}"
 echo "[info] OPTIMIZER_CPU_OFFLOAD=${OPTIMIZER_CPU_OFFLOAD}"
 echo "[info] OPTIMIZER_OFFLOAD_FRACTION=${OPTIMIZER_OFFLOAD_FRACTION}"
+echo "[info] OVERLAP_CPU_OPTIMIZER_D2H_H2D=${OVERLAP_CPU_OPTIMIZER_D2H_H2D}"
 echo "[info] USE_PRECISION_AWARE_OPTIMIZER=${USE_PRECISION_AWARE_OPTIMIZER}"
 echo "[info] OVERLAP_GRAD_REDUCE=${OVERLAP_GRAD_REDUCE}"
 echo "[info] OVERLAP_PARAM_GATHER=${OVERLAP_PARAM_GATHER}"

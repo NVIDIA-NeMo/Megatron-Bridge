@@ -12,17 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for scripts/performance/utils/evaluate.py golden-value downsampling."""
+"""Tests for scripts/performance/utils/evaluate.py golden-value handling."""
 
+import json
 import sys
 from pathlib import Path
+
+import pytest
 
 
 _PERF_SCRIPTS_DIR = Path(__file__).resolve().parents[4] / "scripts" / "performance"
 if str(_PERF_SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(_PERF_SCRIPTS_DIR))
 
-from utils.evaluate import downsample_golden_values  # noqa: E402
+from utils import evaluate  # noqa: E402
+from utils.evaluate import _unwrap_golden_values, downsample_golden_values  # noqa: E402
 
 
 def _make_values(n_steps: int) -> dict:
@@ -34,6 +38,86 @@ def _make_values(n_steps: int) -> dict:
 
 def _step_keys(values: dict) -> list:
     return sorted((int(k) for k in values if k.lstrip("-").isdigit()))
+
+
+def test_unwrap_golden_values_supports_flat_and_snapshot_formats():
+    step_values = {"0": {"lm loss": 1.0}, "alloc": 2.0}
+
+    assert _unwrap_golden_values(step_values) is step_values
+    assert _unwrap_golden_values({"baseline": step_values}) is step_values
+    assert _unwrap_golden_values({"current": step_values}) is step_values
+
+
+def test_unwrap_golden_values_prefers_baseline_snapshot():
+    baseline = {"0": {"lm loss": 1.0}}
+    current = {"0": {"lm loss": 2.0}}
+
+    assert _unwrap_golden_values({"current": current, "baseline": baseline}) is baseline
+
+
+def test_calc_convergence_supports_current_snapshot_file(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    golden_path = tmp_path / "golden.json"
+    golden_path.write_text(
+        json.dumps(
+            {
+                "current": {
+                    "0": {
+                        "lm loss": 1.0,
+                        "elapsed time per iteration (ms)": 2.0,
+                        "GPU utilization": 3.0,
+                    },
+                    "alloc": 4.0,
+                    "max_alloc": 5.0,
+                    "max_reserved": 6.0,
+                }
+            }
+        )
+    )
+    metrics = {
+        "lm loss": {"0": 1.0},
+        "elapsed time per iteration (ms)": {"0": 2.0},
+        "GPU utilization": {"0": 3.0},
+        "grad norm": {"0": 0.5},
+        "alloc": 4.0,
+        "max_alloc": 5.0,
+        "max_reserved": 6.0,
+    }
+    monkeypatch.setattr(evaluate, "get_metrics_from_logfiles", lambda _paths, metric: metrics[metric])
+    monkeypatch.setattr(evaluate, "write_golden_values_to_disk", lambda **_kwargs: None)
+    monkeypatch.setattr(
+        evaluate,
+        "validate_convergence",
+        lambda **_kwargs: {"passed": True, "failed_metrics": [], "summary": ""},
+    )
+    monkeypatch.setattr(
+        evaluate,
+        "validate_performance",
+        lambda **_kwargs: {"passed": True, "failed_metrics": [], "summary": "", "metrics": {}},
+    )
+    monkeypatch.setattr(
+        evaluate,
+        "validate_memory",
+        lambda **_kwargs: {"passed": True, "failed_metrics": [], "summary": "", "metrics": {}},
+    )
+
+    passed, error_message, _current_values = evaluate.calc_convergence_and_performance(
+        model_family_name="llama",
+        model_recipe_name="llama3_8b",
+        assets_dir=str(tmp_path / "assets"),
+        log_paths=[],
+        loss_metric="lm loss",
+        timing_metric="elapsed time per iteration (ms)",
+        alloc_metric="alloc",
+        max_alloc_metric="max_alloc",
+        max_reserved_metric="max_reserved",
+        golden_values_path=str(golden_path),
+        convergence_config={},
+        performance_config={"eval_time_start_step": 0, "eval_time_end_step": 1},
+        memory_config={"memory_threshold": 0.1},
+    )
+
+    assert passed is True
+    assert error_message == ""
 
 
 def test_downsample_noop_when_under_cap():

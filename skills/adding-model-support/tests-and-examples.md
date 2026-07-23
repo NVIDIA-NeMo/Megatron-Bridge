@@ -11,7 +11,7 @@ Mock the HF config and pretrained model, then verify `provider_bridge()` and `ma
 ```python
 import pytest
 from unittest.mock import Mock
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM  # or .causal_lm
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 def _make_mock_config():
     """Create a mock HF config with model-specific attributes."""
@@ -32,7 +32,7 @@ def _make_mock_config():
     return config
 
 def _make_mock_pretrained(config):
-    pretrained = Mock(spec=PreTrainedVLM)  # or PreTrainedCausalLM
+    pretrained = Mock(spec=PreTrainedCausalLM)
     pretrained.config = config
     return pretrained
 
@@ -214,21 +214,25 @@ Example scripts target **real published models** (e.g. `Qwen/Qwen3-8B`), not toy
 The inference script must produce reasonable output — a coherent text completion for LLMs,
 a plausible image description for VLMs. This is the acceptance bar for the deliverable.
 
-### Conversion example (`examples/models/<family>/<model>/conversion.sh`)
+### Conversion example (`examples/models/<family>/<model>/README.md`)
+
+Document real-model import and export with the stable conversion CLI. Use the GPU backend when
+the model requires distributed conversion; omit the execution and device flags for local CPU
+conversion. Add a model-specific shell wrapper only when the shared CLI cannot express required
+model preparation or verification.
 
 ```bash
-#!/usr/bin/env bash
-set -e
-
 WORKSPACE=${WORKSPACE:-/workspace}
 MODEL_NAME=<default-model-name>
 HF_MODEL=<org>/${MODEL_NAME}
 TP=1; PP=8; EP=1  # Adjust per model
 
 # Import HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
+    --executor local --device gpu --gpus-per-node 8 \
     --hf-model ${HF_MODEL} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME} \
+    --tp ${TP} --pp ${PP} --ep ${EP} \
     --torch-dtype bfloat16
 
 # Compare logits
@@ -240,10 +244,12 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
     --tp ${TP} --pp ${PP} --ep ${EP}
 
 # Export Megatron → HF
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
+    --executor local --device gpu --gpus-per-node 8 \
     --hf-model ${HF_MODEL} \
     --megatron-path ${WORKSPACE}/${MODEL_NAME}/iter_0000000 \
-    --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export
+    --hf-path ${WORKSPACE}/${MODEL_NAME}-hf-export \
+    --tp ${TP} --pp ${PP} --ep ${EP}
 
 # Roundtrip validation
 uv run python -m torch.distributed.run --nproc_per_node=8 \
@@ -317,7 +323,7 @@ Create `docs/models/<type>/<model>.md`:
 
 \`\`\`bash
 # HF → Megatron
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model <org>/<model> --megatron-path /workspace/<model>
 \`\`\`
 

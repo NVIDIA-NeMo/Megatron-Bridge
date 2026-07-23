@@ -12,10 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import inspect
 import logging
 import math
 import re
+from contextlib import nullcontext
 from dataclasses import dataclass, fields
+from functools import cache
 from importlib import import_module
 from importlib.metadata import version
 from pathlib import Path
@@ -32,6 +35,7 @@ from megatron.core.tensor_parallel.mappings import (
     gather_from_sequence_parallel_region,
     scatter_to_sequence_parallel_region,
 )
+from megatron.core.tensor_parallel.random import is_checkpointing
 from megatron.core.transformer.mlp import apply_swiglu_sharded_factory
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.moe.router import TopKRouter
@@ -60,11 +64,17 @@ TELayerNormColumnParallelLinear, HAVE_TE_LN_COL_LINEAR = safe_import_from(
 TEColumnParallelGroupedLinear, HAVE_TE_COL_GRP_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TEColumnParallelGroupedLinear"
 )
+TEFP8GlobalStateManager, HAVE_TE_FP8_GLOBAL_STATE_MANAGER = safe_import_from(
+    "megatron.core.extensions.transformer_engine", "FP8GlobalStateManager"
+)
 TEPytorchGroupedLinear, HAVE_TE_PYTORCH_GROUPED_LINEAR = safe_import_from(
-    "transformer_engine.pytorch.module.grouped_linear", "GroupedLinear"
+    "transformer_engine.pytorch", "GroupedLinear"
 )
 TEPytorchGroupedLinearAutograd, HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD = safe_import_from(
     "transformer_engine.pytorch.module.grouped_linear", "_GroupedLinear"
+)
+TEPytorchIsCPUOffloadEnabled, HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS = safe_import_from(
+    "transformer_engine.pytorch.cpu_offload", "is_cpu_offload_enabled"
 )
 TERowParallelLinear, HAVE_TE_ROW_LINEAR = safe_import_from(
     "megatron.core.extensions.transformer_engine", "TERowParallelLinear"
@@ -83,6 +93,15 @@ HAVE_TE = all(
         HAVE_TE_ROW_GRP_LINEAR,
     )
 )
+
+
+@cache
+def _te_grouped_linear_uses_explicit_m_splits(
+    autograd_function: type[torch.autograd.Function],
+) -> bool:
+    """Return whether TE's grouped-linear autograd takes a separate splits tensor."""
+
+    return "m_splits" in inspect.signature(autograd_function.forward).parameters
 
 
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
@@ -372,8 +391,8 @@ def load_peft_adapter_checkpoint(
 ) -> None:
     """Load a PEFT adapter checkpoint into an already transformed model."""
     from megatron.core import dist_checkpointing
-    from megatron.core.dist_checkpointing.serialization import get_default_load_sharded_strategy
     from megatron.core.dist_checkpointing.strategies.fully_parallel import FullyParallelLoadStrategyWrapper
+    from megatron.core.dist_checkpointing.strategies.torch import TorchDistLoadShardedStrategy
 
     from megatron.bridge.training.checkpointing import apply_peft_adapter_filter_to_state_dict
 
@@ -388,7 +407,7 @@ def load_peft_adapter_checkpoint(
 
     checkpoint_path = str(adapter_checkpoint_path)
     if load_strategy is None:
-        load_strategy = get_default_load_sharded_strategy(checkpoint_path)
+        load_strategy = TorchDistLoadShardedStrategy()
         if pg_collection is None and fully_parallel_load:
             try:
                 pg_collection = ProcessGroupCollection.use_mpu_process_groups(required_pgs=["dp_cp"])
@@ -494,6 +513,7 @@ def get_adapter_attributes_from_linear(
     m: nn.Module,
     is_expert: bool = False,
     pg_collection: ProcessGroupCollection | None = None,
+    sequence_parallel_input_regather: bool = False,
 ) -> AdapterAttributes:
     """Returns attributes from the base layer as an AdapterAttributes dataclass.
 
@@ -505,6 +525,9 @@ def get_adapter_attributes_from_linear(
 
     Args:
         m: The linear module to analyze (should have a config attribute).
+        is_expert: Whether the linear belongs to an expert module.
+        pg_collection: Optional process-group collection associated with the module.
+        sequence_parallel_input_regather: Whether LoRA-A should re-gather its sequence-parallel input in backward.
 
     Returns:
         AdapterAttributes containing:
@@ -573,11 +596,17 @@ def get_adapter_attributes_from_linear(
             else:
                 ub_overlap_ag = False
             if hasattr(m, "config") and m.config.sequence_parallel and not ub_overlap_ag:
-                m.return_layernorm_output_gathered = True
+                # The adapter's MCore SP linear must own the gather so it can retain the local shard.
+                # Preserve the existing TE optimization for the default path.
+                m.return_layernorm_output_gathered = not sequence_parallel_input_regather
                 te_version = packaging.version.Version(version("transformer-engine"))
-                if te_version >= packaging.version.Version("1.5.0dev") and (
-                    not getattr(m.config, "tp_comm_overlap", False)
-                    or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
+                if (
+                    not sequence_parallel_input_regather
+                    and te_version >= packaging.version.Version("1.5.0dev")
+                    and (
+                        not getattr(m.config, "tp_comm_overlap", False)
+                        or getattr(m.config, "tp_comm_overlap_disable_qkv", False)
+                    )
                 ):
                     # TE 1.5 introduces the option `return_layernorm_output_gathered`, so the all gather
                     # in the forward method is not needed, so disable sp communications
@@ -771,9 +800,7 @@ def pad_seq_to_mult(x: torch.Tensor, mult: int) -> Tuple[torch.Tensor, int]:
     if x.shape[0] % mult == 0:
         return x, 0
     pad_len = mult - (x.shape[0] % mult)
-    with torch.no_grad():
-        # pad at the tail
-        x = nn.functional.pad(x, (0, 0, 0, pad_len))
+    x = nn.functional.pad(x, (0, 0, 0, pad_len))
     return x, pad_len
 
 
@@ -789,9 +816,7 @@ def unpad_seq_to_mult(x: torch.Tensor, pad_len: int) -> torch.Tensor:
     """
     if pad_len <= 0:
         return x
-    with torch.no_grad():
-        # prune tail padding
-        return x[:-pad_len, :]
+    return x[:-pad_len, :]
 
 
 class _All2AllHp2Sp(torch.autograd.Function):
@@ -885,6 +910,8 @@ class ParallelLinearAdapter(nn.Module):
         is_expert: Whether this adapter is for expert layers in MoE (default: False).
         disable_sequence_parallel_comm: Whether to disable sequence parallel communication (default: True).
         base_linear_is_parallel: Whether the base linear layer uses parallelization (default: True).
+        sequence_parallel_input_regather: Whether eligible LoRA-A projections retain the sequence-local input and
+            re-gather it in backward using MCore's sequence-parallel linear path (default: False).
     """
 
     def __init__(
@@ -907,6 +934,7 @@ class ParallelLinearAdapter(nn.Module):
         disable_sequence_parallel_comm: bool = True,
         base_linear_is_parallel: bool = True,
         pg_collection: ProcessGroupCollection | None = None,
+        sequence_parallel_input_regather: bool = False,
     ) -> None:
         """Initialize the ParallelLinearAdapter.
 
@@ -927,7 +955,7 @@ class ParallelLinearAdapter(nn.Module):
             is_expert: Whether for expert layers in MoE.
             disable_tensor_parallel_comm: Disable tensor parallel communication.
             disable_sequence_parallel_comm: Disable sequence parallel communication.
-            dropout_recompute: Use recomputation for dropout.
+            sequence_parallel_input_regather: Re-gather eligible LoRA-A sequence-parallel inputs in backward.
         """
         super().__init__()
         self.base_linear_name = base_linear_name
@@ -939,6 +967,8 @@ class ParallelLinearAdapter(nn.Module):
         self.use_a2a = a2a_experimental
         self.is_expert = is_expert
         self.base_linear_is_parallel = base_linear_is_parallel
+        self.sequence_parallel_input_regather = sequence_parallel_input_regather
+        self._sequence_parallel_input_regather_fallback_logged = False
         self.use_legacy_shared_expert_adapter_checkpoint = False
 
         # megatron_gpt_peft_models will provide this arg, but deprecated ones do not.
@@ -1038,6 +1068,58 @@ class ParallelLinearAdapter(nn.Module):
         if not base_linear_is_parallel:
             self.disable_sequence_parallel_comm = True
 
+    def _sequence_parallel_input_regather_eligibility(self, x: torch.Tensor) -> tuple[bool, str | None]:
+        """Return whether the targeted sequence-parallel linear path is safe."""
+        if not self.sequence_parallel_input_regather:
+            return False, None
+        if not self.training or not torch.is_grad_enabled():
+            return False, None
+        if is_checkpointing():
+            return False, None
+        if not self.linear_in.weight.requires_grad:
+            return False, "the LoRA-A weight is frozen"
+        if self.input_is_parallel:
+            return False, "the adapter is row-parallel"
+        if self.disable_sequence_parallel_comm:
+            return False, "sequence-parallel communication is disabled"
+        if _process_group_size(self.tp_group, self.config.tensor_model_parallel_size or 1) <= 1:
+            return False, "tensor parallel size is one"
+        if self.is_expert:
+            return False, "expert adapters use a separate path"
+        if self.use_a2a:
+            return False, "all-to-all adapters use a separate path"
+        if not isinstance(self.activation, nn.Identity):
+            return False, "the adapter activation is not identity"
+        if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+            return False, "CPU activation offload is enabled"
+
+        surface = self.base_linear_name.rsplit(".", maxsplit=1)[-1]
+        if surface not in {"linear_qkv", "linear_fc1"}:
+            return False, f"{surface} is not an eligible column-parallel LoRA surface"
+
+        cuda_graph_impl = getattr(self.config, "cuda_graph_impl", "none")
+        if cuda_graph_impl not in (None, "none"):
+            return False, "CUDA graphs are enabled"
+
+        recompute_granularity = getattr(self.config, "recompute_granularity", None)
+        if recompute_granularity == "full":
+            return False, "full-layer activation recompute already covers the adapter"
+        recompute_modules = getattr(self.config, "recompute_modules", None) or []
+        if recompute_granularity == "selective" and surface == "linear_fc1" and "mlp" in recompute_modules:
+            return False, "selective MLP recompute already covers linear_fc1"
+        return True, None
+
+    def _log_sequence_parallel_input_regather_fallback(self, reason: str | None) -> None:
+        """Log the first static fallback reason at debug level."""
+        if reason is None or self._sequence_parallel_input_regather_fallback_logged:
+            return
+        logger.debug(
+            "LoRA sequence-parallel input re-gather requested for %s but using the existing path: %s",
+            self.base_linear_name,
+            reason,
+        )
+        self._sequence_parallel_input_regather_fallback_logged = True
+
     def _get_activation_fn(self, activation: str) -> nn.Module:
         """Get activation function by name.
 
@@ -1106,16 +1188,28 @@ class ParallelLinearAdapter(nn.Module):
         if self.is_expert:
             x, pad_len = pad_seq_to_mult(x, self.config.expert_tensor_parallel_size)
 
-        if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
-            # for attention_qkv and linear_fc1
-            # layernorm before lora is impacted by sequence parallel,
-            # hence seq dim need to be gathered right before lora linear layers
-            # this function also handles the backward pass correctly
-            x = gather_from_sequence_parallel_region(x, group=self.tp_group)
+        use_sequence_parallel_input_regather, fallback_reason = self._sequence_parallel_input_regather_eligibility(x)
+        if not self.input_is_parallel:
+            # MCore's SP linear keeps the local input in ctx, launches the
+            # backward all-gather asynchronously before dgrad, and waits only
+            # before wgrad. The baseline path keeps communication external.
+            self.linear_in.sequence_parallel = use_sequence_parallel_input_regather
+        if use_sequence_parallel_input_regather:
+            # ColumnParallelLinear returns output and bias; adapters do not use the bias.
+            x, _ = self.linear_in(x)
+        else:
+            self._log_sequence_parallel_input_regather_fallback(fallback_reason)
+            if not self.disable_sequence_parallel_comm and not self.input_is_parallel and not self.is_expert:
+                # for attention_qkv and linear_fc1
+                # layernorm before lora is impacted by sequence parallel,
+                # hence seq dim need to be gathered right before lora linear layers
+                # this function also handles the backward pass correctly
+                x = gather_from_sequence_parallel_region(x, group=self.tp_group)
 
-        if self.config.cpu_offloading and self.config.cpu_offloading_activations:
-            x.activation_offloading = True
-        x, _ = self.linear_in(x)  # (@adithyare) ColumnLinear returns output and bias, we are ignoring the bias term.
+            if self.config.cpu_offloading and self.config.cpu_offloading_activations:
+                x.activation_offloading = True
+            # ColumnParallelLinear returns output and bias; adapters do not use the bias.
+            x, _ = self.linear_in(x)
 
         x = self.activation(x)
 
@@ -1677,10 +1771,9 @@ class GroupedExpertLinearAdapter(nn.Module):
         self.base_linear_is_parallel = base_linear_is_parallel
         self.is_expert = True
         self.num_local_experts = num_local_experts
-        # Cache meta-device TE helpers outside the module tree so they do not
-        # appear in the adapter state dict.
-        self._te_grouped_linear_helpers: Dict[Tuple[int, int, int, torch.dtype], nn.Module] = {}
-
+        # Keep TE helpers outside the module tree so their meta parameters do not
+        # appear in adapter state dicts or optimizer parameter groups.
+        self._te_grouped_linear_helpers: Dict[Tuple[str, int, int, int, torch.dtype, torch.device], nn.Module] = {}
         if model_parallel_config is None:
             model_parallel_config = ModelParallelConfig()
         self.config = model_parallel_config
@@ -1813,51 +1906,61 @@ class GroupedExpertLinearAdapter(nn.Module):
             return False
         if self.linear_in.weight.dtype != torch.bfloat16 or self.linear_out.weight.dtype != torch.bfloat16:
             return False
-        # grouped_mm on this stack requires the shared K dimension to have a
-        # 16-byte stride. For the adapter's second projection that means the
-        # LoRA rank must be divisible by 8 in bf16/fp16.
-        if self.linear_out.weight.shape[-1] % 8 != 0:
+        if (
+            not x.is_contiguous()
+            or not self.linear_in.weight.is_contiguous()
+            or not self.linear_out.weight.is_contiguous()
+        ):
+            return False
+        # grouped_mm forward and weight-gradient kernels require matrix strides
+        # to be multiples of 16 bytes, so every local matrix dimension in both
+        # projections must be divisible by eight for BF16 tensors.
+        grouped_mm_dimensions = self.linear_in.weight.shape[-2:] + self.linear_out.weight.shape[-2:]
+        if any(dimension % 8 != 0 for dimension in grouped_mm_dimensions):
             return False
         return torch.cuda.get_device_capability(x.device) >= (8, 0)
 
-    def _is_te_grouped_mlp_call(self, args: Tuple, kwargs: Dict) -> bool:
-        """Return whether the wrapped base layer is being invoked from TEGroupedMLP.
+    def _is_te_fp8_enabled(self) -> bool:
+        """Return whether Transformer Engine's FP8 autocast context is active."""
 
-        TEGroupedMLP forwards ``tokens_per_expert`` positionally into grouped
-        linears after converting it to a Python list, while grouped-GEMM callers
-        use ``m_splits``.
-        """
+        return HAVE_TE_FP8_GLOBAL_STATE_MANAGER and TEFP8GlobalStateManager.is_fp8_enabled()
 
-        if kwargs.get("tokens_per_expert") is not None:
-            return True
-        if kwargs.get("m_splits") is not None:
+    def _can_use_te_grouped_linear_fp8(self, x: torch.Tensor) -> bool:
+        """Return whether TE can run the grouped adapter weights through FP8."""
+
+        if not (
+            HAVE_TE_PYTORCH_GROUPED_LINEAR
+            and HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD
+            and HAVE_TE_PYTORCH_CPU_OFFLOAD_STATUS
+        ):
             return False
-        return bool(args) and isinstance(args[0], (torch.Tensor, list, tuple))
-
-    def _can_use_te_grouped_linear(self, x: torch.Tensor) -> bool:
-        """Return whether the TEGroupedMLP fast path is supported for this input."""
-
-        if not (HAVE_TE_PYTORCH_GROUPED_LINEAR and HAVE_TE_PYTORCH_GROUPED_LINEAR_AUTOGRAD):
+        if not x.is_cuda or x.dtype not in (torch.bfloat16, torch.float16):
             return False
-        if not x.is_cuda:
-            return False
-        if x.dtype not in (torch.bfloat16, torch.float16):
+        # TE binds FP8 autocast state to the current CUDA device before this
+        # module runs. An input on another device must use the safe fallback.
+        if x.device.index != torch.cuda.current_device():
             return False
         if self.linear_in.weight.dtype != x.dtype or self.linear_out.weight.dtype != x.dtype:
             return False
-        return True
+        fp8_grouped_dimensions = self.linear_in.weight.shape[-2:] + self.linear_out.weight.shape[-2:]
+        return all(dimension % 16 == 0 for dimension in fp8_grouped_dimensions)
 
     def _get_te_grouped_linear_helper(
         self,
         *,
+        projection: str,
         num_gemms: int,
         in_features: int,
         out_features: int,
         params_dtype: torch.dtype,
+        device: torch.device,
     ) -> nn.Module:
-        """Create or reuse a lightweight TE GroupedLinear helper for the requested shape."""
+        """Create or reuse a meta-device TE helper that owns FP8 runtime state."""
 
-        key = (num_gemms, in_features, out_features, params_dtype)
+        # Each helper owns delayed-scaling state per GEMM slot. Keep one fixed
+        # slot per local expert and logical projection so routing changes cannot
+        # transfer FP8 history between weights or grow the helper cache.
+        key = (projection, num_gemms, in_features, out_features, params_dtype, device)
         helper = self._te_grouped_linear_helpers.get(key)
         if helper is None:
             helper = TEPytorchGroupedLinear(
@@ -1878,23 +1981,49 @@ class GroupedExpertLinearAdapter(nn.Module):
         helper.train(self.training)
         return helper
 
-    def _forward_te_grouped_linear(
+    def _forward_te_grouped_linear_fp8(
         self,
         x: torch.Tensor,
         *,
         weight: torch.Tensor,
         m_splits: List[int],
+        projection: str,
+        active_expert_indices: Tuple[int, ...],
     ) -> torch.Tensor:
-        """Apply a grouped expert projection with TE's grouped-linear autograd kernel."""
+        """Apply externally owned grouped adapter weights through TE's FP8 kernel."""
+
+        device_context = torch.cuda.device(x.device) if x.is_cuda else nullcontext()
+        with device_context:
+            return self._forward_te_grouped_linear_fp8_on_current_device(
+                x,
+                weight=weight,
+                m_splits=m_splits,
+                projection=projection,
+                active_expert_indices=active_expert_indices,
+            )
+
+    def _forward_te_grouped_linear_fp8_on_current_device(
+        self,
+        x: torch.Tensor,
+        *,
+        weight: torch.Tensor,
+        m_splits: List[int],
+        projection: str,
+        active_expert_indices: Tuple[int, ...],
+    ) -> torch.Tensor:
+        """Run TE FP8 grouped linear after selecting the input tensor's CUDA device."""
 
         helper = self._get_te_grouped_linear_helper(
-            num_gemms=weight.shape[0],
+            projection=projection,
+            num_gemms=self.num_local_experts,
             in_features=weight.shape[-1],
             out_features=weight.shape[-2],
             params_dtype=weight.dtype,
+            device=x.device,
         )
-        x = helper.prepare_forward(x, num_gemms=weight.shape[0])
+        x = helper.prepare_forward(x, num_gemms=self.num_local_experts)
         try:
+            quantizer_groups = helper._get_quantizers()
             (
                 input_quantizers,
                 weight_quantizers,
@@ -1902,9 +2031,8 @@ class GroupedExpertLinearAdapter(nn.Module):
                 grad_input_quantizers,
                 grad_weight_quantizers,
                 grad_output_quantizers,
-            ) = helper._get_quantizers()
-            non_tensor_args = (
-                m_splits,
+            ) = ([quantizers[expert_idx] for expert_idx in active_expert_indices] for quantizers in quantizer_groups)
+            common_non_tensor_args = (
                 helper.apply_bias,
                 None,
                 helper.fp8,
@@ -1917,30 +2045,34 @@ class GroupedExpertLinearAdapter(nn.Module):
                 grad_weight_quantizers,
                 grad_output_quantizers,
                 helper.fuse_wgrad_accumulation,
-                False,
+                TEPytorchIsCPUOffloadEnabled(),
                 helper.sequence_parallel,
                 helper.activation_dtype,
                 torch.is_grad_enabled(),
-                helper,
+                [None] * weight.shape[0],
+                False,
                 None,
                 helper.save_original_input,
                 False,
             )
             empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
+            weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
+
+            # TODO: Replace this private FP8 dispatch once Transformer Engine exposes
+            # a public functional grouped-linear API for externally owned weights
+            # (NVIDIA/TransformerEngine#3191).
+            if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
+                te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
+                autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
+            else:
+                non_tensor_args = (m_splits, *common_non_tensor_args)
+                autograd_args = (x, non_tensor_args, *weights_and_biases)
+
             if torch.is_grad_enabled():
-                return TEPytorchGroupedLinearAutograd.apply(
-                    x,
-                    non_tensor_args,
-                    *[weight[i] for i in range(weight.shape[0])],
-                    *empty_biases,
-                )
-            return TEPytorchGroupedLinearAutograd.forward(
-                None,
-                x,
-                non_tensor_args,
-                *[weight[i] for i in range(weight.shape[0])],
-                *empty_biases,
-            )
+                output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
+            else:
+                output, _ = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
+            return output
         finally:
             helper.end_forward()
 
@@ -1955,13 +2087,21 @@ class GroupedExpertLinearAdapter(nn.Module):
         *,
         weight: torch.Tensor,
         m_splits: List[int],
-        use_te_grouped_linear: bool,
+        use_te_fp8: bool,
+        projection: str,
+        active_expert_indices: Tuple[int, ...],
         offs: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """Apply one grouped expert projection through the selected fast-path backend."""
+        """Apply one grouped expert projection through the selected grouped backend."""
 
-        if use_te_grouped_linear:
-            return self._forward_te_grouped_linear(x, weight=weight, m_splits=m_splits)
+        if use_te_fp8:
+            return self._forward_te_grouped_linear_fp8(
+                x,
+                weight=weight,
+                m_splits=m_splits,
+                projection=projection,
+                active_expert_indices=active_expert_indices,
+            )
         if offs is None:
             offs = self._build_grouped_mm_offsets(m_splits, device=x.device)
         return nn.functional.grouped_mm(x, weight.transpose(1, 2), offs=offs)
@@ -2013,9 +2153,6 @@ class GroupedExpertLinearAdapter(nn.Module):
 
         expert_splits = self._extract_expert_splits(args, kwargs)
         total_tokens = sum(expert_splits)
-        # Keep TEGroupedMLP on TE's grouped-linear path when both fast paths are
-        # available so the adapter follows the base module's backend.
-        use_te_grouped_linear = self._is_te_grouped_mlp_call(args, kwargs) and self._can_use_te_grouped_linear(x)
         if total_tokens != x.shape[0]:
             raise ValueError(
                 f"Expert splits for {self.base_linear_name} sum to {total_tokens}, but received {x.shape[0]} tokens"
@@ -2033,7 +2170,10 @@ class GroupedExpertLinearAdapter(nn.Module):
             grad_anchor = linear_in_weight.reshape(-1)[0] + linear_out_weight.reshape(-1)[0]
             return (x.new_empty((0, output_features)) + grad_anchor * 0.0) * (self.alpha / self.dim)
 
-        if not use_te_grouped_linear and not self._can_use_grouped_mm(x):
+        fp8_enabled = self._is_te_fp8_enabled()
+        use_te_fp8 = fp8_enabled and self._can_use_te_grouped_linear_fp8(x)
+        use_grouped_mm = not fp8_enabled and self._can_use_grouped_mm(x)
+        if not use_te_fp8 and not use_grouped_mm:
             return self._forward_per_expert(x, expert_splits=expert_splits, expert_tp_size=expert_tp_size) * (
                 self.alpha / self.dim
             )
@@ -2042,13 +2182,14 @@ class GroupedExpertLinearAdapter(nn.Module):
         grouped_inputs = []
         padded_splits = []
         pad_lengths = []
+        grouped_padding_multiple = math.lcm(expert_tp_size, 16) if use_te_fp8 else expert_tp_size
         start = 0
         for expert_idx, split_size in enumerate(expert_splits):
             if split_size == 0:
                 continue
             expert_input = x.narrow(0, start, split_size)
             start += split_size
-            expert_input, pad_len = pad_seq_to_mult(expert_input, expert_tp_size)
+            expert_input, pad_len = pad_seq_to_mult(expert_input, grouped_padding_multiple)
             active_expert_indices.append(expert_idx)
             grouped_inputs.append(expert_input)
             padded_splits.append(expert_input.shape[0])
@@ -2058,16 +2199,17 @@ class GroupedExpertLinearAdapter(nn.Module):
         if self.config.cpu_offloading and self.config.cpu_offloading_activations:
             grouped_input.activation_offloading = True
 
-        offs = None
-        if not use_te_grouped_linear:
-            offs = self._build_grouped_mm_offsets(padded_splits, device=x.device)
+        offs = None if use_te_fp8 else self._build_grouped_mm_offsets(padded_splits, device=x.device)
 
         active_linear_in = self.linear_in(active_expert_indices)
+        active_expert_tuple = tuple(active_expert_indices)
         hidden = self._forward_grouped_projection(
             grouped_input,
             weight=active_linear_in,
             m_splits=padded_splits,
-            use_te_grouped_linear=use_te_grouped_linear,
+            use_te_fp8=use_te_fp8,
+            projection="linear_in",
+            active_expert_indices=active_expert_tuple,
             offs=offs,
         )
         if not self.input_is_parallel:
@@ -2081,7 +2223,9 @@ class GroupedExpertLinearAdapter(nn.Module):
             hidden,
             weight=active_linear_out,
             m_splits=padded_splits,
-            use_te_grouped_linear=use_te_grouped_linear,
+            use_te_fp8=use_te_fp8,
+            projection="linear_out",
+            active_expert_indices=active_expert_tuple,
             offs=offs,
         )
         if self.input_is_parallel:

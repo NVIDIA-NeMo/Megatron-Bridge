@@ -16,6 +16,10 @@ Megatron Bridge uses Megatron Core's distributed checkpointing system, which is 
 
 **Parallelism Flexibility**: The system provides flexibility to resume training using different parallelism strategies. You can change tensor parallelism, pipeline parallelism, or data parallelism sizes between checkpoint save and load operations.
 
+```{note}
+This flexibility applies to the model and optimizer checkpoint. Restoring **Energon dataloader state** (see [Dataloader State (Energon)](#dataloader-state-energon) below) is saved per data-parallel rank, so it requires the **same data-parallel size** at load. Tensor, pipeline, and context parallelism may still change freely.
+```
+
 **Scalability**: Handles all types of parallelism including:
 - **Data Parallelism (DP)**: Replicates the model across multiple GPUs with different data batches
 - **Tensor Parallelism (TP)**: Distributes individual layer parameters across GPUs  
@@ -203,7 +207,7 @@ The checkpoint includes the following components when using the `torch_dist` che
 - **Training state**: Captures the current iteration count, number of consumed samples, and the state of the learning rate scheduler.
 - **Configuration**: Serialized as a YAML file (`run_config.yaml`) containing the complete `ConfigContainer`.
 - **Tokenizer files**: All tokenizer artifacts (vocabulary, special tokens, config) for self-contained checkpoints.
-- **Dataloader states**: Ensures deterministic resumption of data iteration.
+- **Dataloader state (Energon only)**: Saved in a sibling `energon/` tree for deterministic data resumption; see [Dataloader State (Energon)](#dataloader-state-energon).
 - **Metadata**: Used for validating and correctly loading the checkpoint.
 
 Megatron Bridge creates checkpoints with the following directory structure:
@@ -227,11 +231,11 @@ checkpoint_dir/
 │   │   ├── tokenizer_config.json            # Tokenizer configuration
 │   │   ├── special_tokens_map.json          # Special token definitions
 │   │   └── ...                              # Other tokenizer artifacts
-│   ├── dataloader_state/                     # Data iterator states
-│   │   ├── train_dataloader_dprank000.pt    # DP rank 0 dataloader state
-│   │   ├── train_dataloader_dprank001.pt    # DP rank 1 dataloader state
-│   │   ├── train_dataloader_dprank002.pt    # DP rank 2 dataloader state
-│   │   └── ...                              # One file per DP rank
+├── energon/                                   # Energon dataloader state
+│   └── iter_N/                                # Keyed by iteration, matching the model checkpoint step
+│       ├── train_dataloader_dprank000.pt    # DP rank 0 dataloader stream position
+│       ├── train_dataloader_dprank001.pt    # DP rank 1 dataloader stream position
+│       └── ...                              # One file per data-parallel rank
 ```
 
 ### Tokenizer Assets
@@ -265,6 +269,63 @@ Or in YAML:
 checkpoint:
   save_tokenizer_assets: false
 ```
+
+## Dataloader State (Energon)
+
+For [Megatron Energon](https://github.com/NVIDIA/Megatron-Energon) dataloaders, Megatron Bridge saves and restores the dataloader's stream position alongside the model checkpoint, so a resumed run continues over the **same sample stream** rather than restarting from an arbitrary position. This is what makes a resumed run reproduce the original losses one-to-one.
+
+### How It Works
+
+- **Save.** On every checkpoint, `save_state` is called on the train iterator's underlying `SavableDataLoader` and written to one file per data-parallel rank: `{dataloader_save}/iter_{step:07d}/train_dataloader_dprank{dp_rank:03d}.pt`. Only a single tensor/pipeline/context rank per DP replica writes, since the per-DP-rank state is identical across model-parallel ranks.
+- **Restore.** On resume, after the data iterators are built, `restore_state` is called on **every** rank, keyed by the pure data-parallel rank. Energon's saved state is a periodic full snapshot (RNG + dataset state) at or before the consumed position, **plus an offset** of samples to skip forward from it. Restore rewinds each worker to that snapshot and replays the offset by re-running the data pipeline, landing exactly at the save-time position. (The snapshot-plus-offset form, rather than a single counter, is because the worker processes prefetch ahead of the main process.)
+
+### Why Save and Restore Are Not Symmetric
+
+Save writes **one file per DP replica**, while restore runs on **every** rank — this asymmetry is intentional.
+
+Model-parallel ranks within a DP replica obtain the same data in one of two ways:
+
+- **Broadcast** — one rank (tensor-parallel rank 0) reads from the dataloader and broadcasts the batch to its peers; only that rank advances an iterator. This is the classic GPT path.
+- **Independent identical reads** — every rank holds its *own* dataloader instance (they are separate processes and cannot share one iterator object), seeded and sharded identically by DP rank, so each `next()` yields the same sample with no broadcast. The Qwen VL step function uses this so each pipeline stage can recompute MRoPE position IDs locally.
+
+In the second pattern every rank advances its own iterator, so restoring only on one rank per replica would leave the others at stream position 0 — they would then read un-restored samples and diverge from the restored rank. Restore therefore runs on all ranks. Because the per-DP-rank state is identical across model-parallel ranks, save only needs to persist one copy (dedup to a single writer); restore fans that one file back out to every rank that shares the DP rank. Restoring on a rank that does *not* read from its iterator (the broadcast pattern) is harmless — it loads state it never consumes — so the restore path does not need to know which pattern a given model uses.
+
+Keying by the **pure** data-parallel rank (excluding context parallelism) means context-parallel ranks within a replica share a file and restore to the same position; each then slices its own shard of the sequence locally afterward.
+
+### Configuration
+
+The save path defaults to an `energon/` subdirectory of `checkpoint.save`. The load path defaults to the `energon/` subdirectory of whichever checkpoint is actually restored (see below). So no configuration is needed for the common case: saving model checkpoints implies saving and restoring dataloader state.
+
+```python
+from megatron.bridge.data.energon.energon_provider import EnergonProvider  # or a subclass
+
+dataset = EnergonProvider(
+    ...,
+    # dataloader_save defaults to "{checkpoint.save}/energon"
+    # dataloader_load defaults to the "energon" subdir of the checkpoint actually loaded:
+    #   checkpoint.save for a non-persistent or local checkpoint, checkpoint.load for a
+    #   persistent one, or the parent of a directly specified iter_N directory.
+)
+```
+
+The load default follows the actual source because the checkpoint restored on resume is not always rooted at `checkpoint.load`: a non-persistent or local checkpoint is selected from `checkpoint.save`, and a directly specified `iter_N` directory holds its `energon/` state one level up. Set `dataset.dataloader_save` / `dataset.dataloader_load` explicitly to override the destination. The fields have no effect for non-Energon dataloaders.
+
+### Restore Behavior and Failure Modes
+
+- If the dataloader state directory is **absent** (e.g. a checkpoint saved before this feature existed), the dataloader starts from the beginning and a message is logged.
+- If the directory **exists** but the current rank's per-DP-rank file is **missing**, restore **raises**. This almost always means the data-parallel size changed since the checkpoint was saved; resuming would silently change the data order, so it fails loudly instead.
+
+### Determinism Requirement
+
+Energon checkpoints its workers periodically and, on restore, rewinds to the last checkpoint and *replays* the gap by re-running the data pipeline (decode → task encoder → packing) over the samples emitted since. It counts emitted samples to land on the right position (and, for sample packing, re-fetches the buffered samples by `restore_key`). So replay must be **deterministic per sample**: if re-encoding changes which samples are filtered out (`SkipSample`), the count desyncs and restore fails with `Unexpected skip sample during restoration` when a buffered packed sample can no longer be reproduced. Decorate stateless task encoders with `restore_seeds=True` so per-sample RNGs replay identically:
+
+```python
+@stateless(restore_seeds=True)
+def encode_sample(self, sample):
+    ...
+```
+
+See the Megatron-Energon source — [`SavableDataLoader.save_state_rank` / `restore_state_rank`](https://github.com/NVIDIA/Megatron-Energon/blob/bef8be243505959973cc07ee740432e7a2454cf1/src/megatron/energon/savable_loader.py#L924) and the periodic-checkpoint/skip-forward logic in `SavableDatasetWrapper` (`_store_checkpoint`, `get_checkpoint`), plus the `stateless` decorator's `restore_seeds`.
 
 ## Local Checkpointing
 

@@ -48,7 +48,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
         uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
             --recipe ${MODEL_NAME}_peft_config \
             --step_func qwen3_vl_step \
-            --peft_scheme lora \
+            --mode lora \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
             model.seq_length=$SEQ_LENGTH \
             train.train_iters=$TRAIN_ITERS \
@@ -63,7 +63,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
             logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_seq_pack_${pack_config}_cp${CP} \
-            dataset.maker_name=make_${DATASET_NAME}_dataset \
+            dataset.source.dataset_name=${DATASET_NAME} \
             dataset.seq_length=$SEQ_LENGTH \
             dataset.enable_in_batch_packing=$pack_config \
             model.expert_model_parallel_size=$EP \
@@ -105,7 +105,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
         uv run python -m torch.distributed.run --nproc_per_node=8 scripts/training/run_recipe.py \
             --recipe ${MODEL_NAME}_peft_config \
             --step_func qwen3_vl_step \
-            --peft_scheme lora \
+            --mode lora \
             checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
             model.seq_length=$SEQ_LENGTH \
             train.train_iters=$TRAIN_ITERS \
@@ -120,7 +120,7 @@ for pack_config in "${SEQ_PACKING_CONFIGS[@]}"; do
             logger.log_interval=$LOG_INTERVAL \
             logger.wandb_project=$WANDB_PROJECT \
             logger.wandb_exp_name=${MODEL_NAME}_${DATASET_NAME}_lora_seq_pack_${pack_config}_ep${EP}_cp${CP} \
-            dataset.maker_name=make_${DATASET_NAME}_dataset \
+            dataset.source.dataset_name=${DATASET_NAME} \
             dataset.seq_length=$SEQ_LENGTH \
             dataset.enable_in_batch_packing=$pack_config \
             model.expert_model_parallel_size=$EP \

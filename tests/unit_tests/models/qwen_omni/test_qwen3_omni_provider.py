@@ -15,11 +15,15 @@
 from unittest.mock import patch
 
 import pytest
+from megatron.core.transformer.dot_product_attention import DotProductAttention
+from megatron.core.transformer.enums import AttnBackend
 from transformers.models.qwen3_omni_moe.configuration_qwen3_omni_moe import (
     Qwen3OmniMoeThinkerConfig,
 )
 
+import megatron.bridge.models.qwen_omni.qwen3_omni_provider as qwen3_omni_provider
 from megatron.bridge.models.qwen_omni import Qwen3OmniModelProvider
+from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.attention import Qwen3VLSelfAttention
 
 
 pytestmark = pytest.mark.unit
@@ -39,6 +43,8 @@ class TestQwen3OmniModelProvider:
         assert provider.position_embedding_type == "mrope"
         assert provider.scatter_embedding_sequence_parallel is False
         assert provider.qk_layernorm is True
+        assert provider.masked_softmax_fusion is False
+        assert provider.apply_rotary_pos_emb_in_fp32 is False
         assert provider.image_token_id == 151655
         assert provider.video_token_id == 151656
         assert provider.audio_token_id == 151646
@@ -102,3 +108,99 @@ class TestQwen3OmniModelProvider:
         _, kwargs = mock_model_cls.call_args
         assert kwargs["pre_process"] is True
         assert kwargs["post_process"] is True
+
+    def test_provide_uses_qwen3_vl_attention_with_local_backend(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+            attention_backend=AttnBackend.local,
+        )
+
+        with patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.Qwen3OmniModel") as mock_model_cls:
+            provider.provide()
+
+        _, kwargs = mock_model_cls.call_args
+        language_spec = kwargs["language_transformer_layer_spec"]
+        self_attention_spec = language_spec.submodules.self_attention
+        assert self_attention_spec.module is Qwen3VLSelfAttention
+        assert self_attention_spec.submodules.core_attention is DotProductAttention
+
+    def test_string_local_backend_uses_local_spec_when_te_is_available(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+            attention_backend="local",
+        )
+
+        with (
+            patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.HAVE_TE", True),
+            patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.Qwen3OmniModel") as mock_model_cls,
+        ):
+            provider.provide()
+
+        _, kwargs = mock_model_cls.call_args
+        self_attention_spec = kwargs["language_transformer_layer_spec"].submodules.self_attention
+        assert self_attention_spec.module is Qwen3VLSelfAttention
+        assert self_attention_spec.submodules.core_attention is DotProductAttention
+
+    def test_default_backend_keeps_te_core_attention_when_available(self):
+        if not qwen3_omni_provider.HAVE_TE:
+            pytest.skip("Transformer Engine is not available")
+
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+        )
+
+        with patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.Qwen3OmniModel") as mock_model_cls:
+            provider.provide()
+
+        _, kwargs = mock_model_cls.call_args
+        self_attention_spec = kwargs["language_transformer_layer_spec"].submodules.self_attention
+        assert self_attention_spec.module is Qwen3VLSelfAttention
+        assert self_attention_spec.submodules.core_attention.__name__ == "TEDotProductAttention"
+
+    def test_default_backend_falls_back_to_local_spec_without_te(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+        )
+
+        with (
+            patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.HAVE_TE", False),
+            patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.Qwen3OmniModel") as mock_model_cls,
+        ):
+            provider.provide()
+
+        _, kwargs = mock_model_cls.call_args
+        self_attention_spec = kwargs["language_transformer_layer_spec"].submodules.self_attention
+        assert self_attention_spec.module is Qwen3VLSelfAttention
+        assert self_attention_spec.submodules.core_attention is DotProductAttention

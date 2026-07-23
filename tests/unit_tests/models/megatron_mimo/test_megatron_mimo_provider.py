@@ -25,6 +25,7 @@ class FakeStandardProvider:
         self.tensor_model_parallel_size = 1
         self.pipeline_model_parallel_size = 1
         self.context_parallel_size = 1
+        self.expert_model_parallel_size = 1
         self.expert_tensor_parallel_size = 1
         self.build_language_model_spec_calls = []
 
@@ -79,7 +80,7 @@ class TestMegatronMIMOProvider:
         assert provider.freeze_modality_encoders == {"images": True}
 
     def test_from_standard_provider_applies_language_parallelism(self):
-        """Test standard-provider specs inherit language component TP/PP."""
+        """Test standard-provider specs inherit language component parallelism."""
         standard_provider = FakeStandardProvider()
         megatron_mimo_parallelism_config = MegatronMIMOParallelismConfig(
             module_parallelisms={
@@ -87,7 +88,8 @@ class TestMegatronMIMOProvider:
                     tensor_model_parallel_size=2,
                     pipeline_model_parallel_size=3,
                     context_parallel_size=4,
-                    expert_tensor_parallel_size=1,
+                    expert_model_parallel_size=5,
+                    expert_tensor_parallel_size=6,
                     data_parallel_size=1,
                 ),
             },
@@ -101,6 +103,8 @@ class TestMegatronMIMOProvider:
         assert standard_provider.tensor_model_parallel_size == 2
         assert standard_provider.pipeline_model_parallel_size == 3
         assert standard_provider.context_parallel_size == 4
+        assert standard_provider.expert_model_parallel_size == 5
+        assert standard_provider.expert_tensor_parallel_size == 6
         assert standard_provider.build_language_model_spec_calls == [0]
 
         spec = provider._build_standard_language_model_spec(pp_rank=2)
@@ -133,7 +137,7 @@ class TestMegatronMIMOProvider:
         pp_group = MagicMock(name="pp_group")
         mock_grid = MagicMock()
         mock_grid.is_current_rank_in_grid.return_value = True
-        mock_grid.get_pg.side_effect = lambda dims: pp_group if dims == ["pp"] else MagicMock()
+        mock_grid.get_pg.side_effect = lambda dims, *, view=None: pp_group if dims == ["pp"] else MagicMock()
         mock_build_grids.return_value = {"language": mock_grid}
 
         provider = MegatronMIMOProvider.from_standard_provider(
@@ -522,7 +526,8 @@ class TestMegatronMIMOProvider:
         mock_get_config.return_value = mock_config
 
         # No parallelism config means no DDP wrapping needed
-        provider.provide_distributed_model(wrap_with_ddp=False)
+        with patch("torch.cuda.current_device", return_value=0):
+            provider.provide_distributed_model(wrap_with_ddp=False)
 
         # Should have set variable_seq_lengths=True
         assert mock_config.variable_seq_lengths is True
@@ -554,19 +559,20 @@ class TestMegatronMIMOInfra:
 class TestEmbeddingGroupHelpers:
     """Test cases for embedding group helper functions."""
 
+    @patch("torch.distributed.get_rank")
     @patch("torch.distributed.new_group")
-    @patch("torch.distributed.get_process_group_ranks")
-    def test_populate_embedding_groups_single_pp_rank(self, mock_get_ranks, mock_new_group):
+    def test_populate_embedding_groups_single_pp_rank(self, mock_new_group, mock_get_rank):
         """Test embedding groups with single PP rank (PP=1)."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
             populate_embedding_and_position_groups,
         )
 
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0]  # Single PP rank
-        mock_new_group.return_value = MagicMock()
+        mock_get_rank.return_value = 0
+        mock_pos_embd = MagicMock()
+        mock_embd = MagicMock()
+        mock_new_group.side_effect = [mock_pos_embd, mock_embd]
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0]])
 
         # Should create groups for both position and word embeddings
         assert mock_new_group.call_count == 2
@@ -574,28 +580,33 @@ class TestEmbeddingGroupHelpers:
         calls = mock_new_group.call_args_list
         assert calls[0].kwargs["ranks"] == [0]
         assert calls[1].kwargs["ranks"] == [0]
+        assert pos_embd_pg is mock_pos_embd
+        assert embd_pg is mock_embd
 
+    @patch("torch.distributed.get_rank")
     @patch("torch.distributed.new_group")
-    @patch("torch.distributed.get_process_group_ranks")
-    def test_populate_embedding_groups_multiple_pp_ranks(self, mock_get_ranks, mock_new_group):
-        """Test embedding groups with multiple PP ranks (PP>1)."""
+    @patch("torch.distributed.get_process_group_ranks", return_value=[0, 4])
+    def test_populate_embedding_groups_multiple_pp_groups(self, _mock_get_ranks, mock_new_group, mock_get_rank):
+        """Test every PP subgroup is created in one global order."""
         from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import (
             populate_embedding_and_position_groups,
         )
 
-        mock_pp_group = MagicMock()
-        mock_get_ranks.return_value = [0, 4, 8, 12]  # PP=4
-        mock_new_group.return_value = MagicMock()
+        mock_get_rank.return_value = 0
+        created_groups = [MagicMock() for _ in range(4)]
+        mock_new_group.side_effect = created_groups
 
-        populate_embedding_and_position_groups(mock_pp_group)
+        pos_embd_pg, embd_pg = populate_embedding_and_position_groups([[0, 4], [1, 5]])
 
-        # Should create two groups
-        assert mock_new_group.call_count == 2
+        # Every rank makes the same calls for every PP subgroup, not just its local subgroup.
+        assert mock_new_group.call_count == 4
         calls = mock_new_group.call_args_list
-        # pos_embd only on first rank
         assert calls[0].kwargs["ranks"] == [0]
-        # embd on first and last ranks
-        assert calls[1].kwargs["ranks"] == [0, 12]
+        assert calls[1].kwargs["ranks"] == [0, 4]
+        assert calls[2].kwargs["ranks"] == [1]
+        assert calls[3].kwargs["ranks"] == [1, 5]
+        assert pos_embd_pg is created_groups[0]
+        assert embd_pg is created_groups[1]
 
     def test_populate_embedding_groups_none_pp_group(self):
         """Test embedding groups with None PP group."""
@@ -754,8 +765,10 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.is_pp_first_stage")
     @patch("megatron.bridge.models.megatron_mimo.megatron_mimo_provider.populate_embedding_and_position_groups")
     @patch("torch.distributed.get_rank")
-    def test_pg_collection_includes_composite_groups(self, mock_get_rank, mock_populate, mock_is_first, mock_is_last):
-        """Test that pg_collection includes mp, tp_ep_pp, and expt_dp composite groups."""
+    def test_pg_collection_preserves_dense_and_expert_view_contracts(
+        self, mock_get_rank, mock_populate, mock_is_first, mock_is_last
+    ):
+        """Test that each PGC field is sourced from the matching grid view and dimension."""
         mock_get_rank.return_value = 0
         mock_populate.return_value = (MagicMock(), MagicMock())
         mock_is_first.return_value = True
@@ -773,25 +786,39 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         mock_pp = MagicMock(name="pp_pg")
         mock_cp = MagicMock(name="cp_pg")
         mock_ep = MagicMock(name="ep_pg")
+        mock_expt_tp = MagicMock(name="expt_tp_pg")
+        mock_expt_dp = MagicMock(name="expt_dp_pg")
         mock_dp_cp = MagicMock(name="dp_cp_pg")
+        mock_tp_cp = MagicMock(name="tp_cp_pg")
+        mock_tp_dp_cp = MagicMock(name="tp_dp_cp_pg")
         mock_mp = MagicMock(name="mp_pg")
+        mock_tp_ep = MagicMock(name="tp_ep_pg")
         mock_tp_ep_pp = MagicMock(name="tp_ep_pp_pg")
+        mock_intra_dist_opt = MagicMock(name="intra_dist_opt_pg")
 
+        # Key by both view and dimensions so an expert group cannot silently come from the
+        # base view or from a different expert dimension.
         pg_map = {
-            ("tp",): mock_tp,
-            ("dp",): mock_dp,
-            ("pp",): mock_pp,
-            ("cp",): mock_cp,
-            ("ep",): mock_ep,
-            ("dp", "cp"): mock_dp_cp,
-            ("tp", "pp"): mock_mp,
-            ("tp", "ep", "pp"): mock_tp_ep_pp,
+            (None, ("tp",)): mock_tp,
+            (None, ("dp",)): mock_dp,
+            (None, ("pp",)): mock_pp,
+            (None, ("cp",)): mock_cp,
+            (None, ("dp", "cp")): mock_dp_cp,
+            (None, ("tp", "cp")): mock_tp_cp,
+            (None, ("tp", "dp", "cp")): mock_tp_dp_cp,
+            (None, ("tp", "pp")): mock_mp,
+            (None, ("tp", "cp", "dp", "pp")): mock_intra_dist_opt,
+            ("expert", ("ep",)): mock_ep,
+            ("expert", ("expt_tp",)): mock_expt_tp,
+            ("expert", ("expt_dp",)): mock_expt_dp,
+            ("expert", ("expt_tp", "ep")): mock_tp_ep,
+            ("expert", ("expt_tp", "ep", "pp")): mock_tp_ep_pp,
         }
 
         mock_grid = MagicMock()
         mock_grid.rank_offset = 0
         mock_grid.size = 4
-        mock_grid.get_pg.side_effect = lambda dims: pg_map[tuple(dims)]
+        mock_grid.get_pg.side_effect = lambda dims, view=None: pg_map[(view, tuple(dims))]
 
         provider = MegatronMIMOProvider(
             language_model_spec=language_spec,
@@ -806,6 +833,14 @@ class TestProcessGroupCollectionWithEmbeddingGroups:
         assert pgc.pp == mock_pp
         assert pgc.cp == mock_cp
         assert pgc.ep == mock_ep
+        assert pgc.expt_tp == mock_expt_tp
+        assert pgc.expt_dp == mock_expt_dp
         assert pgc.dp_cp == mock_dp_cp
+        assert pgc.intra_dp_cp == mock_dp_cp
+        assert pgc.tp_cp == mock_tp_cp
+        assert pgc.tp_dp_cp == mock_tp_dp_cp
         assert pgc.mp == mock_mp
+        assert pgc.tp_ep == mock_tp_ep
         assert pgc.tp_ep_pp == mock_tp_ep_pp
+        assert pgc.intra_expt_dp == mock_expt_dp
+        assert pgc.intra_dist_opt == mock_intra_dist_opt

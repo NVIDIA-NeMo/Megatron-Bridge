@@ -18,6 +18,7 @@ import torch
 from megatron.core.inference.engines.static_engine import StaticInferenceEngine
 from megatron.core.inference.inference_request import InferenceRequest
 from megatron.core.inference.sampling_params import SamplingParams
+from megatron.core.inference.text_generation_controllers.text_generation_controller import TextGenerationController
 from PIL.Image import Image
 
 from ._mcore_compat import InferenceMode
@@ -25,6 +26,23 @@ from ._mcore_compat import InferenceMode
 
 class VLMEngine(StaticInferenceEngine):
     """VLM inference engine extending MCoreEngine with image support."""
+
+    def __init__(
+        self,
+        text_generation_controller: TextGenerationController,
+        max_batch_size: int | None = None,
+        random_seed: int | None = None,
+        legacy: bool = False,
+        buffer_size_gb: float | None = 40,
+    ) -> None:
+        super().__init__(
+            text_generation_controller=text_generation_controller,
+            max_batch_size=max_batch_size,
+            random_seed=random_seed,
+            legacy=legacy,
+            buffer_size_gb=buffer_size_gb,
+        )
+        self._sampling_random_seed = random_seed
 
     # pylint: disable=C0115,C0116
     def generate(
@@ -40,6 +58,8 @@ class VLMEngine(StaticInferenceEngine):
 
             if self.random_seed:
                 torch.random.manual_seed(self.random_seed)
+            if self._sampling_random_seed is not None:
+                self.controller.sampling_rng.manual_seed(self._sampling_random_seed)
 
             if images is not None and len(images) != len(prompts):
                 raise ValueError(f"Number of images ({len(images)}) must match number of prompts ({len(prompts)})")

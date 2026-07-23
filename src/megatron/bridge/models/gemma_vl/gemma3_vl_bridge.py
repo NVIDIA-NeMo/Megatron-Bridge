@@ -32,7 +32,7 @@ from megatron.bridge.models.conversion.transformers_compat import (
 )
 from megatron.bridge.models.gemma_vl.gemma3_vl_provider import Gemma3VLModelProvider
 from megatron.bridge.models.gemma_vl.modeling_gemma3_vl import Gemma3VLModel
-from megatron.bridge.models.hf_pretrained.vlm import PreTrainedVLM
+from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
 
 @MegatronModelBridge.register_bridge(
@@ -55,7 +55,7 @@ class Gemma3VLBridge(MegatronModelBridge):
         >>> provider = bridge.to_megatron_provider()
     """
 
-    def provider_bridge(self, hf_pretrained: PreTrainedVLM) -> Gemma3VLModelProvider:
+    def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> Gemma3VLModelProvider:
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
         vision_config = hf_config.vision_config

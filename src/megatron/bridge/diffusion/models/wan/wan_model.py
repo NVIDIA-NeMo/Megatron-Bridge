@@ -167,15 +167,12 @@ class WanModel(VisionModule):
 
         # set attributes "average_gradients_across_tp_domain" for nn.Parameter objects
         # this is used for gradient averaging across TP domain with sequence parallelism
-        self._mark_trainable_params_for_tp_grad_avg(
-            [
-                self.patch_embedding,
-                self.text_embedding,
-                self.time_embedder,
-                self.time_proj,
-                self.head,
-            ]
-        )
+        tp_grad_avg_modules = [self.text_embedding, self.time_embedder, self.time_proj]
+        if self.pre_process:
+            tp_grad_avg_modules.append(self.patch_embedding)
+        if self.post_process:
+            tp_grad_avg_modules.append(self.head)
+        self._mark_trainable_params_for_tp_grad_avg(tp_grad_avg_modules)
 
     def forward(
         self,

@@ -132,7 +132,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     echo "Config $CONFIG_INDEX/${#PARALLELISM_CONFIGS[@]}: TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP"
     echo "======================================"
 
-    # Build CLI overrides for this config (full SFT: --peft_scheme none)
+    # Build CLI overrides for this config (full SFT: --mode sft)
     CLI_OVERRIDES="\
         checkpoint.pretrained_checkpoint=$PRETRAINED_CHECKPOINT \
         train.train_iters=$TRAIN_ITERS \
@@ -159,7 +159,7 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
 
     CMD="uv run --no-sync python scripts/training/run_recipe.py"
     CMD="$CMD --recipe ${MODEL_NAME}_sft_config"
-    CMD="$CMD --peft_scheme none"
+    CMD="$CMD --mode sft"
     CMD="$CMD $CLI_OVERRIDES"
 
     echo "Executing command..."

@@ -90,6 +90,8 @@ navigation:
   - contents:
     - page: MiniMax-M2
       path: ./nightly/pages/models/minimax/minimax-m2.mdx
+    - page: MiniMax-M3
+      path: ./nightly/pages/models/minimax/minimax-m3.mdx
     section: MiniMax
   - contents:
     - page: Mistral

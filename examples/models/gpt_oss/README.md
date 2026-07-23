@@ -28,7 +28,7 @@ See the [conversion.sh](conversion.sh) script for checkpoint conversion examples
 To import the HF model to your desired Megatron path:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model openai/gpt-oss-20b \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b \
     --trust-remote-code
@@ -39,7 +39,7 @@ uv run python examples/conversion/convert_checkpoints.py import \
 The export uses `unsloth/gpt-oss-20b-BF16` as the reference so the saved HF checkpoint matches that unquantized format:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model unsloth/gpt-oss-20b-BF16 \
     --megatron-path ${WORKSPACE}/models/gpt-oss-20b/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gpt-oss-20b-hf-export
@@ -81,6 +81,7 @@ Before training, ensure the following are configured:
 3. **Environment Variables**:
    - `HF_TOKEN`: to download models from HF Hub (if required)
    - `HF_HOME`: (optional) to avoid re-downloading models and datasets
+   - `NEMO_DATASETS_CACHE` or `NEMO_HOME`: for multi-node SFT/PEFT, point the default dataset root to shared storage mounted at the same path on every node
    - `WANDB_API_KEY`: (optional) to enable WandB logging
 
 All training scripts use SLURM for containerized multi-node training.
@@ -131,11 +132,22 @@ sbatch pack_data_job.sh   # pre-pack once; skipped automatically on subsequent r
 sbatch slurm_sft.sh
 ```
 
-Squad and other datasets that do not use packed sequences do not require this step.
+Dataset preparation runs only on global rank 0. This is safe when the prepared
+JSONL and packed files are visible at the same paths on every rank. Packing and
+training must therefore use the same shared dataset cache (or an explicitly
+configured shared `dataset_root`). Set `NEMO_DATASETS_CACHE` directly, or set
+`NEMO_HOME` to its parent cache directory. The default
+`/root/.cache/nemo/datasets` is container-local, so it is not suitable for
+multi-node jobs unless that directory is backed by a shared mount.
+
+Squad and other datasets that do not use packed sequences do not require the
+separate pre-pack job. Multi-node training still requires the JSONL prepared by
+global rank 0 to be visible at the same path on every rank.
 
 ### Parameter-Efficient Fine-Tuning (PEFT) with LoRA
 
-See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default.
+See the [slurm_peft.sh](slurm_peft.sh) script for LoRA fine-tuning. The recipe uses sequence packing by default,
+so multi-node jobs require the same shared dataset-cache configuration described above.
 
 ### Expected Training Dynamics
 We provide a [Weights & Biases report](https://api.wandb.ai/links/nvidia-nemo-fw-public/xs3rmk4t) for the expected loss curves and grad norms.
@@ -195,7 +207,7 @@ Findings from hyperparameter tuning on GPT-OSS 20B × OpenMathInstruct-2:
 - **Analysis channel format**: Use `generated_solution` from OpenMathInstruct-2 as the `analysis` channel and put only the final answer in `final`, rather than mixing both in `final`. This should be better theoretically since it matches what the channel architecture is designed for — the model reasons freely in `analysis` and commits to the final answer in `final`.
   - Plain: `<|start|>assistant<|channel|>final<|message|>{CoT} #### N<|end|>`
   - Analysis: `<|start|>assistant<|channel|>analysis<|message|>{CoT}<|end|>` + `<|start|>assistant<|channel|>final<|message|>#### N<|end|>`
-- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `pack_sft_data.py`).
+- **Packed sequences**: Eliminates padding waste; reduced a 1-epoch run from ~17 h to within 4 h on 2 nodes × 8 H100. Pre-pack before submitting (see `prepare_gpt_sft_packed_data.py`).
 - **Hyperparameters** — strict-match improved **86.05% → 93.6%** by:
   - `global_batch_size`: 8 → 128
   - `train_iters`: 1 full epoch

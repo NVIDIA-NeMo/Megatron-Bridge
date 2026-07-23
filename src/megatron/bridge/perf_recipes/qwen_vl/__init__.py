@@ -80,3 +80,14 @@ from megatron.bridge.perf_recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_397b_a17b_pretrain_256gpu_h100_bf16_config,
     qwen35_vl_397b_a17b_pretrain_256gpu_h100_fp8cs_config,
 )
+from megatron.bridge.perf_recipes.qwen_vl.vr200.qwen35_vl import (
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_bf16_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8cs_config,
+    qwen35_vl_35b_a3b_pretrain_8gpu_vr200_fp8mx_config,
+    qwen35_vl_122b_a10b_pretrain_32gpu_vr200_bf16_config,
+    qwen35_vl_122b_a10b_pretrain_32gpu_vr200_fp8cs_config,
+    qwen35_vl_122b_a10b_pretrain_32gpu_vr200_fp8mx_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_bf16_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8cs_config,
+    qwen35_vl_397b_a17b_pretrain_64gpu_vr200_fp8mx_config,
+)

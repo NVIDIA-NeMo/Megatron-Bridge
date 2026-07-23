@@ -188,6 +188,7 @@ def test_megatron_to_hf_config_preserves_falcon_fields(falcon_h1_pretrained):
 def test_mapping_registry_contains_falcon_h1_weight_families():
     registry = FalconH1Bridge().mapping_registry()
     megatron_params = [str(mapping.megatron_param) for mapping in registry]
+    hf_params = [str(mapping.hf_param) for mapping in registry]
 
     assert "embedding.word_embeddings.weight" in megatron_params
     assert "output_layer.weight" in megatron_params
@@ -197,6 +198,10 @@ def test_mapping_registry_contains_falcon_h1_weight_families():
     assert "decoder.layers.*.mamba_mixer.conv1d_bias" in megatron_params
     assert "decoder.layers.*.mamba_mixer.conv1d.weight" in megatron_params
     assert "decoder.layers.*.mamba_mixer.conv1d.bias" in megatron_params
+    assert megatron_params.count("decoder.layers.*.norm.weight") == 1
+    assert hf_params.count("model.layers.*.input_layernorm.weight") == 1
+    assert "decoder.layers.*.mamba_mixer.in_proj.layer_norm_weight" not in megatron_params
+    assert "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight" not in megatron_params
     assert "decoder.layers.*.self_attention.linear_qkv.weight" in megatron_params
     assert "decoder.layers.*.mlp.linear_fc1.weight" in megatron_params
     assert "decoder.layers.*.mlp.linear_fc2.weight" in megatron_params

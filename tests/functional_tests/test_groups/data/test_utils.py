@@ -18,15 +18,11 @@ from unittest.mock import MagicMock
 import pytest
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig
 
+from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
+from megatron.bridge.data.builders import GPTSFTDatasetConfig
 from megatron.bridge.data.utils import (
-    finetuning_train_valid_test_datasets_provider,
     get_dataset_provider,
     pretrain_train_valid_test_datasets_provider,
-)
-from megatron.bridge.training.config import (
-    DatasetBuildContext,
-    DatasetProvider,
-    FinetuningDatasetConfig,
 )
 from megatron.bridge.training.tokenizers.config import TokenizerConfig
 from megatron.bridge.training.tokenizers.tokenizer import MegatronTokenizer, build_tokenizer
@@ -54,7 +50,7 @@ class TestDataUtils:
             blend=[[data_path, data_path], [0.3, 0.7]],
         )
 
-        # Get datasets
+        # Resolve builder adapter and get datasets
         train_ds, valid_ds, test_ds = pretrain_train_valid_test_datasets_provider(
             train_val_test_num_samples=[1000, 100, 10],
             dataset_config=dataset_config,
@@ -63,10 +59,10 @@ class TestDataUtils:
         assert train_ds.weights == [0.3, 0.7]
         assert (train_ds.size, valid_ds.size, test_ds.size) == (1000, 100, 10)
 
-    def test_finetuning_train_valid_test_datasets_provider(self, ensure_test_data):
+    def test_gpt_sft_dataset_config_builder(self, ensure_test_data):
         # Configure dataset
         data_path = ensure_test_data
-        dataset_config = FinetuningDatasetConfig(
+        dataset_config = GPTSFTDatasetConfig(
             dataset_root=f"{data_path}/datasets/finetune_train",
             seq_length=8192,
         )
@@ -78,28 +74,22 @@ class TestDataUtils:
             tensor_model_parallel_size=1,
         )
 
-        # Get datasets
-        train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
-            train_val_test_num_samples=[1000, 100, 10],
-            dataset_config=dataset_config,
-            tokenizer=tokenizer,
-        )
+        # Resolve builder adapter and get datasets
+        provider = get_dataset_provider(dataset_config)
+        train_ds, valid_ds, test_ds = provider([1000, 100, 10], dataset_config, tokenizer=tokenizer)
 
         assert (valid_ds, test_ds) == (None, None)
 
         # Configure dataset
         data_path = ensure_test_data
-        dataset_config = FinetuningDatasetConfig(
+        dataset_config = GPTSFTDatasetConfig(
             dataset_root=f"{data_path}/datasets/finetune",
             seq_length=8192,
         )
 
-        # Get datasets
-        train_ds, valid_ds, test_ds = finetuning_train_valid_test_datasets_provider(
-            train_val_test_num_samples=[1000, 100, 10],
-            dataset_config=dataset_config,
-            tokenizer=tokenizer,
-        )
+        # Resolve builder adapter and get datasets
+        provider = get_dataset_provider(dataset_config)
+        train_ds, valid_ds, test_ds = provider([1000, 100, 10], dataset_config, tokenizer=tokenizer)
 
         assert (valid_ds, test_ds) != (None, None)
         assert train_ds.max_seq_length == 8192

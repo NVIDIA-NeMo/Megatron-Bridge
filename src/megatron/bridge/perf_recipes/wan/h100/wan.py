@@ -13,6 +13,7 @@
 # limitations under the License.
 """H100 performance recipes for Wan."""
 
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.wan.common import (
     ConfigContainer,
     _benchmark_common,
@@ -42,4 +43,19 @@ def wan_14b_pretrain_32gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.model.cuda_graph_scope = []
     cfg.model.moe_token_dispatcher_type = "alltoall"
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
     return cfg

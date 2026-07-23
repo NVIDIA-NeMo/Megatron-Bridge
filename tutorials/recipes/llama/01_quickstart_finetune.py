@@ -28,7 +28,7 @@ Usage:
 Prerequisites:
     You need a checkpoint in Megatron format. You can either:
     1. Convert HF checkpoint to Megatron format:
-       python examples/conversion/convert_checkpoints.py import \
+       ./scripts/conversion/convert.sh import \
            --hf-model meta-llama/Llama-3.2-1B \
            --megatron-path ./checkpoints/llama32_1b
     2. Use a checkpoint from pretraining (see 00_quickstart_pretrain.py)
@@ -83,15 +83,17 @@ def main() -> None:
     # Uncomment and modify as needed:
 
     # === Use your own dataset ===
-    # Replace SQuAD with your custom dataset
-    # Option 1: Simple path override
-    # config.dataset.dataset_root = "/path/to/your/dataset"
+    # Keep the recipe's SQuAD source but select its local materialization directory:
+    # config.dataset.hf_output_root = "/path/to/materialized/squad"
 
-    # Or replace the dataset with FinetuningDatasetConfig for JSONL data
-    # from megatron.bridge.training.config import FinetuningDatasetConfig
-    # config.dataset = FinetuningDatasetConfig(
+    # Or replace the entire dataset config for custom local JSONL data:
+    # from megatron.bridge.data.builders import GPTSFTDatasetConfig, PromptCompletionSFTPreprocessingConfig
+    # config.dataset = GPTSFTDatasetConfig(
     #     dataset_root="/path/to/your/dataset_dir",  # expects training/validation/test jsonl files
     #     seq_length=config.model.seq_length,
+    #     preprocessing=PromptCompletionSFTPreprocessingConfig(
+    #         prompt_column="input", completion_column="output", separator=" "
+    #     ),
     # )
 
     # === Adjust learning rate ===

@@ -223,6 +223,26 @@ def load_tokenizer(checkpoint_path: str, **kwargs) -> MegatronTokenizer:
     return build_tokenizer(cfg)
 
 
+def _normalize_moe_dispatcher_sm_config(model_dict: dict[str, Any]) -> None:
+    """Migrate legacy per-backend MoE SM counts when MCore supports the unified field."""
+    unified_key = "moe_flex_dispatcher_num_sms"
+    if not hasattr(TransformerConfig, unified_key):
+        return
+
+    # TODO: remove this guard when MCore dev includes commit 2d7060f44fc9 and Bridge no longer
+    # supports checkpoints saved with the legacy per-backend SM-count fields.
+    if model_dict.get(unified_key) is None:
+        backend = model_dict.get("moe_flex_dispatcher_backend", "deepep")
+        legacy_key = "moe_hybridep_num_sms" if backend == "hybridep" else "moe_deepep_num_sms"
+        legacy_value = model_dict.get(legacy_key)
+        if legacy_value is not None:
+            model_dict[unified_key] = legacy_value
+
+    for legacy_key in ("moe_deepep_num_sms", "moe_hybridep_num_sms"):
+        if legacy_key in model_dict:
+            model_dict[legacy_key] = None
+
+
 def load_model_config(
     checkpoint_path: str,
 ) -> tuple[TransformerConfig | ModelConfig, Optional[argparse.Namespace]]:
@@ -261,6 +281,7 @@ def load_model_config(
             model_dict["hybrid_layer_pattern"] = model_dict.pop("hybrid_override_pattern")
         if isinstance(model_dict.get("pipeline_model_parallel_layout"), dict):
             model_dict["pipeline_model_parallel_layout"] = None
+        _normalize_moe_dispatcher_sm_config(model_dict)
     else:
         try:
             mlm_args = _load_args_from_checkpoint(checkpoint_path)
@@ -463,6 +484,11 @@ def load_megatron_model(
         for key, value in mp_overrides.items():
             if hasattr(model_cfg, key) and value is not None:
                 setattr(model_cfg, key, value)
+
+    # A saved flexible layout describes PP/VPP stage ownership. It must not be
+    # reinterpreted as virtual pipeline chunks after collapsing to one rank.
+    if model_cfg.pipeline_model_parallel_size == 1 and model_cfg.virtual_pipeline_model_parallel_size is None:
+        model_cfg.pipeline_model_parallel_layout = None
 
     # Flex dispatcher requires TPxEP > 1; fall back to allgather for single-rank export
     if getattr(model_cfg, "moe_token_dispatcher_type", None) == "flex":

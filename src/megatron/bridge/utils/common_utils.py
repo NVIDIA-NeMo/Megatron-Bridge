@@ -28,6 +28,7 @@ from megatron.core.transformer.module import Float16Module
 from megatron.core.utils import get_batch_on_this_cp_rank
 from megatron.training.utils.common_utils import get_local_rank_preinit  # noqa: F401
 
+from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
 from megatron.bridge.utils.slurm_utils import (
     resolve_slurm_master_addr,
     resolve_slurm_master_port,
@@ -260,7 +261,7 @@ def slice_batch_for_context_parallel(
 
     This function handles CP slicing AFTER vision-text embedding merge, ensuring
     image token positions are correctly preserved. It supports both:
-    - THD format (packed sequences): Uses TransformerEngine's thd_get_partitioned_indices
+    - THD format (packed sequences): Uses MCore's packed-sequence CP partitioning
     - BSHD format: Uses Megatron's get_batch_on_this_cp_rank with zigzag pattern
 
     Args:
@@ -286,21 +287,20 @@ def slice_batch_for_context_parallel(
     if inputs_embeds is not None:
         inputs_embeds = inputs_embeds.transpose(0, 1).contiguous()
 
-    # For THD (packed) format, use TE's thd_get_partitioned_indices
-    # This properly slices WITHIN each packed sequence, not across them
+    # MCore's THD path slices within each packed sequence rather than across them.
     if packed_seq_params is not None and packed_seq_params.qkv_format == "thd":
-        import transformer_engine_torch as tex
-
         if inputs_embeds is None:
             raise ValueError("inputs_embeds is required for THD CP slicing")
 
-        cu_seqlens = packed_seq_params.cu_seqlens_q
-        cu_seqlens_padded = (
-            packed_seq_params.cu_seqlens_q_padded if packed_seq_params.cu_seqlens_q_padded is not None else cu_seqlens
-        )
         seq_len = inputs_embeds.size(1)
-
-        index = tex.thd_get_partitioned_indices(cu_seqlens_padded, seq_len, cp_size, cp_rank)
+        index = get_packed_seq_cp_partition_indices(
+            packed_seq_params,
+            total_tokens=seq_len,
+            cp_size=cp_size,
+            cp_rank=cp_rank,
+            device=inputs_embeds.device,
+            cp_group=pg_collection.cp,
+        )
 
         # Slice all tensors using THD indices
         if inputs_embeds is not None:

@@ -110,6 +110,42 @@ class TestCreatePgCollectionFunction:
         mock_hyper_grid.assert_called()
         call_kwargs = mock_hyper_grid.call_args[1]
         assert call_kwargs["shape"][0] == 2  # TP size
+        assert mock_model_config.expert_tensor_parallel_size is None
+        assert mock_hyper_grid.call_args_list[1].kwargs["shape"][0] == 2
+
+    @pytest.mark.parametrize(
+        ("expert_tensor_parallel_size", "expected_expert_shape"),
+        [(None, [1, 4, 2, 1]), (2, [2, 4, 1, 1])],
+    )
+    @patch("megatron.bridge.training.initialize.HyperCommGrid")
+    @patch("torch.distributed.get_world_size", return_value=8)
+    @patch("torch.distributed.new_subgroups_by_enumeration")
+    def test_create_pg_collection_with_expert_parallelism(
+        self,
+        mock_subgroups,
+        mock_world_size,
+        mock_hyper_grid,
+        expert_tensor_parallel_size,
+        expected_expert_shape,
+        mock_model_config,
+    ):
+        """Test Bridge's ETP default and explicit override in decentralized process groups."""
+        from megatron.bridge.training.initialize import _create_pg_collection
+
+        mock_model_config.tensor_model_parallel_size = 2
+        mock_model_config.expert_model_parallel_size = 4
+        mock_model_config.expert_tensor_parallel_size = expert_tensor_parallel_size
+
+        mock_grid_instance = MagicMock()
+        mock_grid_instance.create_pg.return_value = MagicMock()
+        mock_grid_instance._gen_rank_enum.return_value = [[0, 1, 2, 3, 4, 5, 6, 7]]
+        mock_hyper_grid.return_value = mock_grid_instance
+        mock_subgroups.return_value = (MagicMock(), [])
+
+        _create_pg_collection(mock_model_config, num_distributed_optimizer_instances=1)
+
+        assert mock_model_config.expert_tensor_parallel_size == (expert_tensor_parallel_size or 1)
+        assert mock_hyper_grid.call_args_list[1].kwargs["shape"] == expected_expert_shape
 
     @patch("megatron.bridge.training.initialize.HyperCommGrid")
     @patch("torch.distributed.get_world_size", return_value=8)
@@ -438,6 +474,10 @@ class TestInitializeDistributedBranching:
         # Verify the result is the pg_collection from _create_pg_collection
         assert result == mock_pg_collection
 
+    @pytest.mark.parametrize(
+        ("expert_tensor_parallel_size", "expected_expert_tensor_parallel_size"),
+        [(None, 1), (2, 2)],
+    )
     @patch("megatron.bridge.training.initialize.ProcessGroupCollection")
     @patch("megatron.bridge.training.initialize._create_pg_collection")
     @patch("megatron.bridge.training.initialize.parallel_state")
@@ -452,19 +492,21 @@ class TestInitializeDistributedBranching:
         mock_parallel_state,
         mock_create_pg_collection,
         mock_pg_collection_class,
+        expert_tensor_parallel_size,
+        expected_expert_tensor_parallel_size,
     ):
         """Test that _initialize_distributed uses mpu when use_decentralized_pg=False."""
         from megatron.bridge.training.initialize import _initialize_distributed
 
         mock_model_config = MagicMock()
-        mock_model_config.tensor_model_parallel_size = 1
+        mock_model_config.tensor_model_parallel_size = 2
         mock_model_config.pipeline_model_parallel_size = 1
         mock_model_config.context_parallel_size = 1
         mock_model_config.virtual_pipeline_model_parallel_size = None
         mock_model_config.pipeline_model_parallel_comm_backend = "nccl"
         mock_model_config.hierarchical_context_parallel_sizes = None
-        mock_model_config.expert_model_parallel_size = 1
-        mock_model_config.expert_tensor_parallel_size = None
+        mock_model_config.expert_model_parallel_size = 4
+        mock_model_config.expert_tensor_parallel_size = expert_tensor_parallel_size
 
         mock_dist_config = MagicMock()
         mock_dist_config.use_decentralized_pg = False
@@ -492,6 +534,10 @@ class TestInitializeDistributedBranching:
         mock_create_pg_collection.assert_not_called()
         # Verify parallel_state.initialize_model_parallel WAS called
         mock_parallel_state.initialize_model_parallel.assert_called_once()
+        assert (
+            mock_parallel_state.initialize_model_parallel.call_args.kwargs["expert_tensor_parallel_size"]
+            == expected_expert_tensor_parallel_size
+        )
 
 
 class TestSetupUsesDecentralizedPg:

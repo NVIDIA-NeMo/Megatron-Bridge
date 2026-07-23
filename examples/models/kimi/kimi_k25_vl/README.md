@@ -23,36 +23,42 @@ Directory structure:
 
 The full model requires multi-node Slurm for conversion.
 
-**Import** the full HF checkpoint into Megatron format (multi-GPU):
+**Import** the full HF checkpoint into Megatron format with NeMo Run. This
+example uses the same 96-GPU parallelism as the conversion verification job:
 
 ```bash
-srun --mpi=pmix -A <YOUR_ACCOUNT> \
-    --partition batch \
-    -N4 \
-    -t 4:00:00 \
-    --container-image=<CONTAINER_IMAGE> \
-    --container-mounts=<YOUR_MOUNT> \
-    --no-container-entrypoint \
-    --no-container-remap-root \
-    --exclusive \
-    --gres=gpu:8 \
-    --ntasks-per-node=8 \
-    python examples/conversion/convert_checkpoints_multi_gpu.py import \
-        --hf-model moonshotai/Kimi-K2.5 \
-        --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron \
-        --tp 8 --ep 8 --pp 4
+./scripts/conversion/convert.sh import \
+    --executor slurm --device gpu \
+    --nodes 12 --gpus-per-node 8 \
+    --account <YOUR_ACCOUNT> --partition batch --time 4:00:00 \
+    --container-image <CONTAINER_IMAGE> \
+    --mount <HOST_WORKSPACE>:${WORKSPACE} \
+    --mount <BRIDGE_CHECKOUT>:/opt/Megatron-Bridge \
+    --env HF_TOKEN \
+    --hf-model moonshotai/Kimi-K2.5 \
+    --megatron-path ${WORKSPACE}/models/Kimi-K2.5-megatron \
+    --tp 2 --pp 1 --ep 48
 ```
 
 ### Round-Trip Verification
 
-Use [slurm_conversion.sh](slurm_conversion.sh) to sweep multiple parallelism
-configs (TP, PP, EP) and verify HF ↔ Megatron round-trip conversion:
+Use [slurm_conversion.sh](slurm_conversion.sh) to run the recommended
+parallelism config through `convert.sh roundtrip` and verify HF ↔ Megatron
+round-trip conversion. Run it from a Slurm login node; the wrapper submits and
+waits for the job by default. Validation stays in memory and does not write
+another copy of the approximately 1T-parameter checkpoint:
 
 ```bash
-sbatch examples/models/kimi/kimi_k25_vl/slurm_conversion.sh
+export CONTAINER_IMAGE=/path/to/container.sqsh
+export SLURM_ACCOUNT=your_account
+export CONTAINER_MOUNTS=/host/workspace:${WORKSPACE}
+bash examples/models/kimi/kimi_k25_vl/slurm_conversion.sh
 ```
 
-Default configs: `TP=2,EP=48` | `TP=2,PP=2,EP=24` | `TP=4,EP=24`.
+The script uses 12 nodes (96 GPUs) with `TP=2`, `PP=1`, and `EP=48`.
+The current checkout is mounted automatically at `/opt/Megatron-Bridge` and
+must be visible from the compute nodes. Extra launcher arguments are forwarded;
+for example, add `--srun-arg=--mpi=pmix` only if your cluster requires it.
 
 ## Inference
 

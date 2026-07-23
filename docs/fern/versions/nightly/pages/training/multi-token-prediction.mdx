@@ -194,7 +194,7 @@ The following features are not yet supported with MTP:
 | Feature | Status | Workaround |
 |---------|--------|------------|
 | **HuggingFace ↔ Megatron Checkpoint Conversion** | ⚠️ Model-specific | Conversion support varies by model; check model-specific documentation |
-| **Sequence Packing (Fine-Tuning)** | ❌ Not supported | For pre-training, no issues. For fine-tuning, set `packed_sequence_specs=None` |
+| **Sequence Packing (Fine-Tuning)** | ❌ Not supported | For pre-training, no issues. For fine-tuning, set `enable_offline_packing=False` and `offline_packing_specs=None` |
 | **Cross-Attention** | ❌ Not supported | MTP only works with decoder-only models (GPT, Llama, etc.) |
 | **Learned Absolute Position Embeddings** | ❌ Not supported | Use RoPE (rotary position embeddings) or no position embeddings |
 | **Block-Based Activation Recomputation** | ❌ Not supported | Use `recompute_granularity="selective"` or `"uniform"` |

@@ -13,6 +13,7 @@
 # limitations under the License.
 """B300 performance recipes for Kimi K2."""
 
+from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.kimi.b200.kimi_k2 import (
     kimi_k2_pretrain_256gpu_b200_bf16_config,
     kimi_k2_pretrain_256gpu_b200_fp8cs_config,
@@ -28,6 +29,23 @@ def kimi_k2_pretrain_256gpu_b300_bf16_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_256gpu_b200_bf16_config()
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 2
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
@@ -36,6 +54,23 @@ def kimi_k2_pretrain_256gpu_b300_fp8cs_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_256gpu_b200_fp8cs_config()
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 2
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg
 
 
@@ -44,4 +79,21 @@ def kimi_k2_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     cfg = kimi_k2_pretrain_256gpu_b200_fp8mx_config()
     cfg.train.global_batch_size = 4096
     cfg.train.micro_batch_size = 2
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        # CUDA stream scheduling for this model and parallel layout.
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        # CUDA graph and allocator behavior for this recipe.
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        # NCCL user-buffer and launch settings.
+        "NCCL_NVLS_ENABLE": 0,
+        # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        # B300 CPU-affinity behavior.
+        "NCCL_IGNORE_CPU_AFFINITY": 1,
+    }
     return cfg

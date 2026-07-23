@@ -35,8 +35,8 @@ from megatron.bridge.models.stepfun.step35_bridge import (
     Step35Bridge,
     Step35DecoderLayer,
     Step35SharedExpertMLP,
-    _build_step35_layer_spec,
     _MTPDenseLayerSpecsList,
+    build_step35_layer_spec,
 )
 
 
@@ -65,6 +65,7 @@ def _make_hf_config(**overrides) -> SimpleNamespace:
         moe_intermediate_size=64,
         share_expert_dim=64,
         use_head_wise_attn_gate=True,
+        attention_output_gate=True,
         attention_other_setting={
             "attention_type": "sliding_attention",
             "num_attention_heads": 96,
@@ -195,6 +196,7 @@ class TestStep35BridgeProviderBridge:
         provider.moe_router_topk = hf_config.moe_top_k
         provider.moe_shared_expert_intermediate_size = hf_config.share_expert_dim
         provider.head_wise_attn_gate = hf_config.use_head_wise_attn_gate
+        provider.attention_output_gate = hf_config.attention_output_gate
         provider.layer_types = hf_config.layer_types
         provider.kv_channels = hf_config.head_dim
         for k, v in (provider_overrides or {}).items():
@@ -227,17 +229,16 @@ class TestStep35BridgeProviderBridge:
         assert kwargs["layer_types"] == hf_config.layer_types
 
     def test_attention_output_gate_mapped_by_base_bridge_path(self):
-        # HF Step-3.5-Flash carries ``attention_output_gate`` verbatim into the
-        # Megatron provider (same field name on both sides). It's the MCore
-        # switch that drives ``merge_qkvg_weights`` to splice g_proj into linear_qkv.
+        # HF Step-3.5-Flash can carry ``attention_output_gate`` verbatim into
+        # the base provider kwargs. Step35Bridge.provider_bridge normalizes it
+        # later when ``head_wise_attn_gate`` is also enabled.
         hf_config = _make_hf_config(attention_output_gate=True)
         kwargs = Step35Bridge().hf_config_to_provider_kwargs(hf_config)
         assert kwargs["attention_output_gate"] is True
 
     def test_attention_output_gate_entry_in_config_mapping(self):
-        # Regression guard: removing this CONFIG_MAPPING entry silently breaks
-        # ckpt conversion because the provider's ``attention_output_gate`` then
-        # defaults to False and QKVG fusion drops the g_proj rows.
+        # Regression guard for non-head-wise-gate configs that still request
+        # MCore's full output-gate layout.
         assert ("attention_output_gate", "attention_output_gate") in Step35Bridge.CONFIG_MAPPING
 
     def test_head_wise_attn_gate_preserved_through_step35_provider_bridge(self):
@@ -249,6 +250,69 @@ class TestStep35BridgeProviderBridge:
         """
         _, p = self._run()
         assert p.head_wise_attn_gate is True
+
+    def test_native_head_wise_gate_disables_attention_output_gate(self, monkeypatch):
+        """MCore versions with native scalar gates do not need the fallback."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": True,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is False
+
+    def test_attention_output_gate_preserved_as_legacy_mcore_fallback(self, monkeypatch):
+        """MCore versions without native scalar gates need expanded gate rows."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": True,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
+
+    def test_head_wise_gate_without_native_support_enables_output_gate_fallback(self, monkeypatch):
+        """The published Step-3.5-Flash config carries no ``attention_output_gate``."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": None,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
+
+    def test_head_wise_gate_with_native_support_keeps_output_gate_off(self, monkeypatch):
+        """With native scalar gates, no fallback is enabled for the published config."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": None,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is False
+
+    def test_attention_output_gate_preserved_without_head_wise_gate(self):
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": True,
+                "use_head_wise_attn_gate": False,
+            },
+        )
+
+        assert p.head_wise_attn_gate is False
+        assert p.attention_output_gate is True
 
     def test_sliding_attention_setting_populated_from_hf_config(self):
         """Shape fields are pulled out of HF's ``attention_other_setting`` and
@@ -408,16 +472,27 @@ class TestStep35BridgeProviderBridge:
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         _, p = self._run()
-        assert p.transformer_layer_spec is _build_step35_layer_spec
+        assert p.transformer_layer_spec is build_step35_layer_spec
+
+    def test_transformer_layer_spec_target_passes_checkpoint_load_validation(self):
+        """The serialized spec target must be loadable by the checkpoint instantiate path."""
+        from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+
+        _, p = self._run()
+        spec = p.transformer_layer_spec
+        target = f"{spec.__module__}.{spec.__qualname__}"
+        # Raises InstantiationException for private path segments — the exact
+        # gate that rejects a converted checkpoint's run_config on load.
+        _validate_target_prefix(target=target, full_key="transformer_layer_spec")
 
 
 # ---------------------------------------------------------------------------
-# _build_step35_layer_spec
+# build_step35_layer_spec
 # ---------------------------------------------------------------------------
 
 
 class TestBuildStep35LayerSpec:
-    """Cover the per-spec rewrite loop in ``_build_step35_layer_spec``.
+    """Cover the per-spec rewrite loop in ``build_step35_layer_spec``.
 
     Mocks out the two Megatron-Core spec builders so the test can run without
     a real backend, and feeds them a hand-rolled mix of MoE and dense layer
@@ -458,7 +533,7 @@ class TestBuildStep35LayerSpec:
                 return_value=fake_dense_mtp,
             ) as mock_dense,
         ):
-            out = _build_step35_layer_spec(cfg)
+            out = build_step35_layer_spec(cfg)
         return out, fake_dense_mtp, mock_block, mock_dense, cfg
 
     def test_moe_shared_experts_rebound_to_step35_shared_expert_mlp(self):
@@ -718,7 +793,7 @@ class TestStackedExpertGatedMLPMapping:
 
 
 class TestQKVGMappingHelpers:
-    def test_head_wise_scalar_gate_expands_for_mcore_attention_output_gate(self):
+    def test_scalar_gate_expands_for_mcore_attention_output_gate_layout(self):
         provider = SimpleNamespace(
             attention_output_gate=True,
             num_attention_heads=4,

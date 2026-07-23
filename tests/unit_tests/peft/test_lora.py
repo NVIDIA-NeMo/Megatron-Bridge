@@ -213,6 +213,7 @@ class TestLoRA:
         assert lora.alpha == 32
         assert lora.dropout == 0.0
         assert lora.dropout_position == "pre"
+        assert lora.sequence_parallel_input_regather is False
         assert lora.lora_A_init_method == "xavier"
         assert lora.lora_B_init_method == "zero"
         assert lora.share_expert_adapters is True
@@ -224,6 +225,7 @@ class TestLoRA:
             alpha=16,
             dropout=0.1,
             dropout_position="post",
+            sequence_parallel_input_regather=True,
             lora_A_init_method="uniform",
             share_expert_adapters=False,
         )
@@ -232,6 +234,7 @@ class TestLoRA:
         assert custom_lora.alpha == 16
         assert custom_lora.dropout == 0.1
         assert custom_lora.dropout_position == "post"
+        assert custom_lora.sequence_parallel_input_regather is True
         assert custom_lora.lora_A_init_method == "uniform"
         assert custom_lora.share_expert_adapters is False
 
@@ -300,7 +303,8 @@ class TestLoRA:
         model = GroupedExpertModel()
         lora = LoRA(target_modules=["linear_fc2"])
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=True,
                 in_features=module.in_features,
@@ -328,7 +332,8 @@ class TestLoRA:
         model = GroupedExpertModel()
         lora = LoRA(target_modules=["linear_fc2"], share_expert_adapters=False)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=True,
                 in_features=module.in_features,
@@ -478,56 +483,6 @@ class TestLoRA:
         inference_model = lora(model, training=False)
         assert not inference_model.training
 
-    @patch("megatron.bridge.peft.lora.te")
-    def test_lora_te_linear_support(self, mock_te):
-        """Test LoRA support for Transformer Engine Linear layers."""
-
-        # Create the TE Linear type and an actual instance
-        class MockTELinear(nn.Module):
-            def __init__(self):
-                super().__init__()
-
-                # Create a simple weight mock that doesn't have _local_tensor
-                class MockWeightData:
-                    pass
-
-                class MockWeight:
-                    def __init__(self):
-                        self.data = MockWeightData()
-
-                self.weight = MockWeight()
-                self.quant_state = None
-
-        # Set the mock_te.Linear to our MockTELinear class
-        mock_te.Linear = MockTELinear
-
-        # Create an actual instance of our mock TE Linear
-        te_linear_instance = MockTELinear()
-
-        # Create model with mock TE linear
-        model = nn.Module()
-        model.te_linear = te_linear_instance
-
-        lora = LoRA(target_modules=["te_linear"])
-
-        # Create a mock class for TELinearAdapter to works with the isinstance() check
-        class MockTELinearAdapter(nn.Module):
-            def __init__(self, module, **kwargs):
-                super().__init__()
-                self.module = module
-
-        # Import the module to patch the specific import
-        from megatron.bridge.peft import lora as lora_module
-
-        # Use patch.object to handle cases where TELinearAdapter might not exist
-        # by creating it if necessary.
-        with patch.object(lora_module, "TELinearAdapter", MockTELinearAdapter, create=True):
-            # Should create TELinearAdapter
-            result = lora(model, training=True)
-
-            # Verify that te_linear was transformed to our mock adapter
-            assert isinstance(result.te_linear, MockTELinearAdapter)
-
     @pytest.mark.timeout(10)
     def test_lora_list_model_support(self):
         """Test LoRA support for list of model chunks (pipeline parallelism)."""
@@ -591,7 +546,12 @@ class TestModelOptLinear:
     def test_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
         parallel_adapter = nn.Identity()
-        lora = LoRA(target_modules=["linear_proj"], dim=2, alpha=4)
+        lora = LoRA(
+            target_modules=["linear_proj"],
+            dim=2,
+            alpha=4,
+            sequence_parallel_input_regather=True,
+        )
 
         with (
             patch.object(lora_module, "LinearAdapter", _UnexpectedLinearAdapter),
@@ -607,6 +567,7 @@ class TestModelOptLinear:
         mock_adapter.assert_called_once()
         assert mock_adapter.call_args.args[:3] == (5, 7, 2)
         assert mock_adapter.call_args.kwargs["base_linear_is_parallel"] is False
+        assert mock_adapter.call_args.kwargs["sequence_parallel_input_regather"] is True
 
     def test_canonical_lora_wraps_modelopt_linear_with_parallel_adapter(self) -> None:
         linear = ModelOptLinear(in_features=5, out_features=7)
@@ -640,7 +601,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=2)
         lora = LoRA(target_modules=["linear_fc1", "linear_fc2", "linear_proj"], dim=32, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -679,7 +641,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=2)
         lora = LoRA(target_modules=["linear_fc1", "linear_fc2"], dim=32, normalize_moe_lora=False)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -703,7 +666,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=3)
         lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -724,7 +688,8 @@ class TestLoRANormalizeMoE:
         model = MoEModel(moe_router_topk=2)
         lora = LoRA(target_modules=["linear_fc1"], dim=32, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -753,7 +718,8 @@ class TestLoRANormalizeMoE:
                 module.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc1"], dim=8, normalize_moe_lora=True)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,
@@ -788,7 +754,8 @@ class TestLoRANormalizeMoE:
         model.decoder.layers[0].mlp.experts.linear_fc2.config.expert_tensor_parallel_size = 2
         lora = LoRA(target_modules=["linear_fc2"], dim=8, normalize_moe_lora=True, share_expert_adapters=False)
 
-        def mock_get_attrs(module, is_expert=False):
+        def mock_get_attrs(module, is_expert=False, sequence_parallel_input_regather=False):
+            assert sequence_parallel_input_regather is False
             return AdapterAttributes(
                 input_is_parallel=False,
                 in_features=module.in_features,

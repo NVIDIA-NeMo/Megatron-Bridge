@@ -34,7 +34,6 @@ class EnergonMultiModalDataModule:
     Attributes:
     path (str): Path to the energon dataset.
     tokenizer (Tokenizer): The tokenizer used for processing text.
-    image_processor (ImageProcessor): The image processor used for preprocessing images.
     seq_length (int): The maximum sequence length for tokenized text.
     micro_batch_size (int): The batch size for training and validation.
     num_workers (int): Number of workers for data loading.
@@ -50,10 +49,8 @@ class EnergonMultiModalDataModule:
         self,
         path: str,
         tokenizer,
-        image_processor,
         seq_length: int = 2048,
         micro_batch_size: int = 1,
-        global_batch_size: int = 1,
         num_workers: int = 1,
         num_val_workers: int | None = None,
         pin_memory: bool = True,
@@ -73,7 +70,6 @@ class EnergonMultiModalDataModule:
         Parameters:
         path (str): Path to the dataset.
         tokenizer (Tokenizer): The tokenizer used for processing text.
-        image_processor (ImageProcessor): The image processor used for preprocessing images.
         seq_length (int, optional): The maximum sequence length for tokenized text. Defaults to 2048.
         micro_batch_size (int, optional): The batch size for training and validation. Defaults to 1.
         num_workers (int, optional): Number of workers for data loading. Defaults to 1.
@@ -98,11 +94,9 @@ class EnergonMultiModalDataModule:
         super().__init__()
         self.path = path
         self.tokenizer = tokenizer
-        self.image_processor = image_processor
         self.seq_length = seq_length
         self.decoder_seq_length = decoder_seq_length
         self.micro_batch_size = micro_batch_size
-        self.global_batch_size = global_batch_size
         self.num_workers = num_workers
         self.pin_memory = pin_memory
         self.multimodal_sample_config = multimodal_sample_config
@@ -114,7 +108,7 @@ class EnergonMultiModalDataModule:
         self.val_dataloader_object = None
         self.packing_buffer_size = packing_buffer_size
         self.validation_task_encoder = validation_task_encoder or self.task_encoder
-        self.num_val_workers = num_val_workers or self.num_workers
+        self.num_val_workers = self.num_workers if num_val_workers is None else num_val_workers
         self.pg_collection = pg_collection
         self.kwargs = kwargs
 
@@ -261,6 +255,15 @@ class EnergonDataloader:
 
     def save_state(self):
         return self._dataloader.save_state_rank()
+
+    def restore_state(self, state):
+        """Restore the underlying Energon loader to a saved stream position and rebuild the iterator.
+
+        Must run before iteration starts (no workers spawned yet), which holds when called right
+        after dataloader construction on resume.
+        """
+        self._dataloader.restore_state_rank(state)
+        self._iter = iter(cyclic_iter(self._dataloader))
 
 
 def cyclic_iter(iter):
