@@ -135,10 +135,17 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     hybrid_layer_pattern: str | None = None
     seq_length: int = 8192
     # HybridModel with no attention has no need for position embeddings, so none is default.
-    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: float | None = None
+    yarn_rotary_scaling_factor: float | None = None
+    yarn_original_max_position_embeddings: int | None = None
+    yarn_beta_fast: float | None = None
+    yarn_beta_slow: float | None = None
+    yarn_mscale: float | None = None
+    yarn_mscale_all_dim: float | None = None
+    yarn_correction_range_round_to_int: bool | None = None
     apply_rope_fusion: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False

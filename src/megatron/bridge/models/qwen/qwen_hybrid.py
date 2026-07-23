@@ -26,23 +26,27 @@ def qwen_pipeline_layer_pattern(
     hybrid_layer_pattern: str,
     pipeline_model_parallel_size: int,
     *,
+    virtual_pipeline_model_parallel_size: int | None = None,
     account_for_embedding: bool = False,
     account_for_loss: bool = False,
 ) -> str:
-    """Split a Qwen Hybrid pattern across PP stages without separating logical blocks."""
+    """Split a Qwen Hybrid pattern across PP and VPP stages without separating logical blocks."""
     if pipeline_model_parallel_size <= 0:
         raise ValueError("pipeline_model_parallel_size must be positive")
+    if virtual_pipeline_model_parallel_size is not None and virtual_pipeline_model_parallel_size <= 0:
+        raise ValueError("virtual_pipeline_model_parallel_size must be positive")
 
     main_pattern, separator, mtp_pattern = hybrid_layer_pattern.partition(Symbols.MTP_SEPARATOR)
+    pipeline_segment_count = pipeline_model_parallel_size * (virtual_pipeline_model_parallel_size or 1)
     if Symbols.PIPE in main_pattern:
         segment_count = main_pattern.count(Symbols.PIPE) + 1
-        if segment_count != pipeline_model_parallel_size:
+        if segment_count != pipeline_segment_count:
             raise ValueError(
                 f"Qwen hybrid_layer_pattern defines {segment_count} pipeline segments, "
-                f"but pipeline_model_parallel_size is {pipeline_model_parallel_size}."
+                f"but the PP/VPP configuration requires {pipeline_segment_count}."
             )
         return hybrid_layer_pattern
-    if pipeline_model_parallel_size == 1:
+    if pipeline_segment_count == 1:
         return hybrid_layer_pattern
     if len(main_pattern) % 2:
         raise ValueError("Qwen Hybrid patterns must contain two physical layers per logical block.")
@@ -57,9 +61,9 @@ def qwen_pipeline_layer_pattern(
         raise ValueError(f"Unsupported Qwen logical blocks in hybrid_layer_pattern: {invalid_blocks}")
 
     total_pipeline_units = len(logical_blocks) + int(account_for_embedding) + int(account_for_loss)
-    units_per_stage, extra_units = divmod(total_pipeline_units, pipeline_model_parallel_size)
+    units_per_stage, extra_units = divmod(total_pipeline_units, pipeline_segment_count)
     logical_blocks_per_stage = [
-        units_per_stage + int(stage_index < extra_units) for stage_index in range(pipeline_model_parallel_size)
+        units_per_stage + int(stage_index < extra_units) for stage_index in range(pipeline_segment_count)
     ]
     logical_blocks_per_stage[0] -= int(account_for_embedding)
     logical_blocks_per_stage[-1] -= int(account_for_loss)
@@ -87,7 +91,7 @@ class QwenHybridModelProvider(HybridModelProvider):
     def finalize(self) -> None:
         if (
             self.hybrid_layer_pattern is not None
-            and self.pipeline_model_parallel_size > 1
+            and self.pipeline_model_parallel_size * (self.virtual_pipeline_model_parallel_size or 1) > 1
             and self.pipeline_model_parallel_layout is None
             and self.num_layers_in_first_pipeline_stage is None
             and self.num_layers_in_last_pipeline_stage is None
@@ -95,6 +99,7 @@ class QwenHybridModelProvider(HybridModelProvider):
             segmented_pattern = qwen_pipeline_layer_pattern(
                 self.hybrid_layer_pattern,
                 self.pipeline_model_parallel_size,
+                virtual_pipeline_model_parallel_size=self.virtual_pipeline_model_parallel_size,
                 account_for_embedding=bool(self.account_for_embedding_in_pipeline_split),
                 account_for_loss=bool(self.account_for_loss_in_pipeline_split),
             )
