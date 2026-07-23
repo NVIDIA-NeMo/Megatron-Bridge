@@ -2508,7 +2508,10 @@ class TestCalcParamsL2Norm:
             def __init__(self):
                 # Minimal set of groups used by calc_params_l2_norm
                 self.dp_cp = object()
+                self.expt_dp = object()
+                self.expt_tp = object()
                 self.mp = object()
+                self.tp = object()
                 self.tp_ep_pp = object()
                 self.pp = object()
 
@@ -2519,11 +2522,13 @@ class TestCalcParamsL2Norm:
 
                 self.dp = _DP()
 
+        pg_collection = _PG()
         monkeypatch.setattr(
             "megatron.bridge.training.utils.train_utils.get_pg_collection",
-            lambda model: _PG(),
+            lambda model: pg_collection,
             raising=True,
         )
+        return pg_collection
 
     @pytest.fixture
     def simple_model(self):
@@ -2730,8 +2735,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with sharded main params (distributed optimizer)."""
+        """Test dense sharded main params reduce over ordinary DP/CP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -2748,7 +2754,14 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(13.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(0.0)
         assert isinstance(result, float)
         assert result > 0
 
@@ -2874,13 +2887,14 @@ class TestCalcParamsL2Norm:
 
     @mock.patch("megatron.bridge.training.utils.train_utils.get_data_parallel_group_if_dtensor")
     @mock.patch("megatron.bridge.training.utils.train_utils.param_is_not_tensor_parallel_duplicate")
-    def test_tp_duplicate_params(
+    def test_duplicate_filter_receives_tp_and_expert_tp_groups(
         self,
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_fp32,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm skips TP duplicate parameters."""
+        """Test duplicate filtering receives both tensor-parallel groups."""
         model = torch.nn.Linear(5, 5, bias=False).cuda()
 
         # Setup mocks
@@ -2901,6 +2915,60 @@ class TestCalcParamsL2Norm:
 
             # Should be 0 since all params are TP duplicates
             assert result == pytest.approx(0.0, abs=1e-5)
+            mock_is_not_tp_dup.assert_called_once_with(
+                model.weight,
+                tp_group=_patch_pg_collection.tp,
+                expert_tp_group=_patch_pg_collection.expt_tp,
+            )
+
+    def test_moe_param_norm_counts_logical_parameter_when_tp_ranks_differ(
+        self,
+        monkeypatch,
+        mock_model_config_fp32,
+    ):
+        """Expert parameters use the expert-TP rank when it differs from regular TP."""
+
+        class _RankGroup:
+            def __init__(self, rank):
+                self._rank = rank
+
+            def rank(self):
+                return self._rank
+
+        class _MixedModel(torch.nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.dense = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert = torch.nn.Parameter(torch.ones(4, device="cuda"))
+                self.expert.allreduce = False
+
+        regular_tp_group = _RankGroup(rank=1)
+        expert_tp_group = _RankGroup(rank=0)
+        reduce_group = _RankGroup(rank=0)
+        pg_collection = SimpleNamespace(
+            tp=regular_tp_group,
+            expt_tp=expert_tp_group,
+            dp_cp=reduce_group,
+            expt_dp=reduce_group,
+            mp=reduce_group,
+            tp_ep_pp=reduce_group,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.utils.train_utils.get_pg_collection",
+            lambda model: pg_collection,
+        )
+
+        with (
+            mock.patch(
+                "megatron.core.tensor_parallel.layers.get_tensor_model_parallel_rank",
+                return_value=regular_tp_group.rank(),
+            ),
+            mock.patch("torch.distributed.get_process_group_ranks", return_value=[0]),
+            mock.patch("torch.distributed.all_reduce"),
+        ):
+            actual_norm = calc_params_l2_norm(_MixedModel(), mock_model_config_fp32)
+
+        assert actual_norm == pytest.approx(2.0)
 
     @mock.patch("megatron.bridge.training.utils.train_utils.calc_dtensor_params_l2_norm")
     def test_megatron_fsdp_path(self, mock_calc_dtensor_norm, mock_model_config_fp32):
@@ -3230,12 +3298,9 @@ class TestCalcParamsL2Norm:
         mock_is_not_tp_dup,
         mock_get_dp_group_if_dtensor,
         mock_model_config_bf16,
+        _patch_pg_collection,
     ):
-        """Test calc_params_l2_norm with MoE params using sharded main_param (distributed optimizer).
-
-        When MoE params have main_param_sharded=True, they should be added to
-        sharded_params_data for proper all-reduce across DP groups.
-        """
+        """Test expert sharded main params reduce over expert DP."""
         model = torch.nn.Linear(5, 5, bias=False, dtype=torch.bfloat16).cuda()
 
         # Setup mocks
@@ -3253,7 +3318,14 @@ class TestCalcParamsL2Norm:
 
         result = calc_params_l2_norm(model, mock_model_config_bf16, force_create_fp32_copy=False)
 
-        # Should use sharded params path and call all_reduce
+        dense_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.dp_cp
+        )
+        expert_sharded_reduce = next(
+            call for call in mock_all_reduce.call_args_list if call.kwargs["group"] is _patch_pg_collection.expt_dp
+        )
+        assert dense_sharded_reduce.args[0].item() == pytest.approx(0.0)
+        assert expert_sharded_reduce.args[0].item() == pytest.approx(13.0)
         assert isinstance(result, float)
         assert result > 0
 
