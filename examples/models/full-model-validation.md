@@ -32,15 +32,15 @@ forward-logit parity.
 | Diffusion | Nemotron-Labs Diffusion | `nvidia/Nemotron-Labs-Diffusion-3B` | `0d51902da1f8869f83413ce642fab402fa5641e0` | 3.8B | text diffusion | `examples/models/nemotron_labs_diffusion` | TODO |
 | Diffusion | WAN 2.1 | `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` | `0fad780a534b6463e45facd96134c9f345acfa5b` | 1.3B | text-to-video | `examples/models/wan` | TODO |
 | Ernie | Ernie 4.5 MoE | `baidu/ERNIE-4.5-21B-A3B-PT` | `87db95487941cb39592ee0abca3b9155a6d19c5c` | 21.9B | text | `examples/models/ernie/ernie45` | PASS |
-| Ernie | Ernie 4.5 VL MoE | `baidu/ERNIE-4.5-VL-28B-A3B-PT` | `e3815e65c607ea211bfe21b46ab0cd264b76731c` | 29.4B | vision-language | `examples/models/vlm/ernie_vl` | BLOCKED |
+| Ernie | Ernie 4.5 VL MoE | `baidu/ERNIE-4.5-VL-28B-A3B-PT` | `e3815e65c607ea211bfe21b46ab0cd264b76731c` | 29.4B | vision-language | `examples/models/vlm/ernie_vl` | PARTIAL |
 | Falcon | Falcon H1 | `tiiuae/Falcon-H1-0.5B-Instruct` | `8f2587ca06bff78d8fa1adfccbe8c24d5f86b368` | 0.5B | text | `examples/models/falcon_h1` | PASS |
 | Gemma | Gemma | `google/gemma-2b` | `9cf48e52b224239de00d483ec8eb84fb8d0f3a3a` | 2.5B | text | `examples/conversion` | PASS |
 | Gemma | Gemma 2 | `google/gemma-2-2b` | `c5ebcd40d208330abc697524c919956e692655cf` | 2.6B | text | `examples/conversion` | PASS |
 | Gemma | Gemma 3 | `google/gemma-3-1b-it` | `dcc83ea841ab6100d6b47a070329e1ba4cf78752` | 1.0B | text | `examples/conversion` | PASS |
 | Gemma | Gemma 3-VL | `google/gemma-3-4b-it` | `093f9f388b31de276ce2de164bdc2081324b9767` | 4.3B | vision-language | `examples/models/gemma/gemma3_vl` | PASS |
-| Gemma | Gemma 4 26B-A4B MoE | `google/gemma-4-26B-A4B` | `6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb` | 26.5B | text | `examples/models/gemma/gemma4` | BLOCKED |
-| Gemma | Gemma 4 31B dense | `google/gemma-4-31B` | `d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3` | 32.7B | text | `examples/models/gemma/gemma4` | BLOCKED |
-| Gemma | Gemma 4-VL 26B-A4B MoE | `google/gemma-4-26B-A4B-it` | `5305c1e72ea29c01f31a81230d52b375ba88b409` | 26.5B | vision-language | `examples/models/gemma/gemma4_vl` | BLOCKED |
+| Gemma | Gemma 4 26B-A4B MoE | `google/gemma-4-26B-A4B` | `6b556d30bb65a6ee0bdaec99bab0afc7bf1494fb` | 26.5B | text | `examples/models/gemma/gemma4` | PASS |
+| Gemma | Gemma 4 31B dense | `google/gemma-4-31B` | `d77cb0be8ad40327cc1c6b70eff4b3f0be35bee3` | 32.7B | text | `examples/models/gemma/gemma4` | PASS |
+| Gemma | Gemma 4-VL 26B-A4B MoE | `google/gemma-4-26B-A4B-it` | `5305c1e72ea29c01f31a81230d52b375ba88b409` | 26.5B | vision-language | `examples/models/gemma/gemma4_vl` | PASS |
 | GLM | GLM-4.5 | `zai-org/GLM-4.5` | `cbb2c7cfb52fa128a9660cb1a7a78e017899e115` | 358.3B | text | `examples/conversion` | TODO |
 | GLM | GLM-4.7 | `zai-org/GLM-4.7` | `602d01efcdd332c5238ca4bcede555defbe83eb7` | 358.3B | text | `examples/models/glm47` | TODO |
 | GLM | GLM-4.7-Flash | `zai-org/GLM-4.7-Flash` | `7dd20894a642a0aa287e9827cb1a1f7f91386b67` | 31.2B | text | `examples/models/glm47` | PASS |
@@ -75,7 +75,7 @@ forward-logit parity.
 | Qwen | Qwen2.5 | `Qwen/Qwen2.5-7B` | `d149729398750b98c0af14eb82c78cfe92750796` | 7.6B | text | `examples/conversion` | PASS |
 | Qwen | Qwen3 | `Qwen/Qwen3-8B` | `b968826d9c46dd6066d109eabc6255188de91218` | 8.2B | text | `examples/conversion` | PASS |
 | Qwen | Qwen3-MoE | `Qwen/Qwen3-30B-A3B` | `ad44e777bcd18fa416d9da3bd8f70d33ebb85d39` | 30.5B | text | `examples/conversion` | PASS |
-| Qwen | Qwen3 Next | `Qwen/Qwen3-Next-80B-A3B-Instruct` | `9c7f2fbe84465e40164a94cc16cd30b6999b0cc7` | 81.3B | text | `examples/models/qwen/qwen3_next` | BLOCKED |
+| Qwen | Qwen3 Next | `Qwen/Qwen3-Next-80B-A3B-Instruct` | `9c7f2fbe84465e40164a94cc16cd30b6999b0cc7` | 81.3B | text | `examples/models/qwen/qwen3_next` | PASS |
 | Qwen | Qwen3.5 dense | `Qwen/Qwen3.5-27B` | `fc05daec18b0a78c049392ed2e771dde82bdf654` | 27.8B | vision-language | `examples/models/qwen/qwen35_vl` | PASS |
 | Qwen | Qwen3.5 MoE | `Qwen/Qwen3.5-35B-A3B` | `59d61f3ce65a6d9863b86d2e96597125219dc754` | 36.0B | vision-language | `examples/models/qwen/qwen35_vl` | PASS |
 | Qwen | Qwen2.5-VL | `Qwen/Qwen2.5-VL-3B-Instruct` | `66285546d2b821cf421d4f5eb2576359d3770cd3` | 3.8B | vision-language | `examples/models/qwen/qwen_vl` | PASS |
@@ -84,7 +84,7 @@ forward-logit parity.
 | Qwen | Qwen3.6-VL | `Qwen/Qwen3.6-35B-A3B` | `995ad96eacd98c81ed38be0c5b274b04031597b0` | 36.0B | vision-language | `examples/models/qwen/qwen35_vl` | PASS |
 | Qwen | Qwen2 Audio | `Qwen/Qwen2-Audio-7B-Instruct` | `0a095220c30b7b31434169c3086508ef3ea5bf0a` | 8.4B | audio-text | `examples/models/qwen/qwen2_audio` | PASS |
 | Qwen | Qwen2.5-Omni | `Qwen/Qwen2.5-Omni-7B` | `ae9e1690543ffd5c0221dc27f79834d0294cba00` | 10.7B | vision-audio-text | `examples/models/qwen/qwen25_omni` | PARTIAL |
-| Qwen | Qwen3-Omni | `Qwen/Qwen3-Omni-30B-A3B-Instruct` | `26291f793822fb6be9555850f06dfe95f2d7e695` | 35.3B | vision-audio-text | `examples/models/qwen/qwen3_omni` | BLOCKED |
+| Qwen | Qwen3-Omni | `Qwen/Qwen3-Omni-30B-A3B-Instruct` | `26291f793822fb6be9555850f06dfe95f2d7e695` | 35.3B | vision-audio-text | `examples/models/qwen/qwen3_omni` | PARTIAL |
 | Qwen | Qwen3-ASR | `Qwen/Qwen3-ASR-1.7B` | `7278e1e70fe206f11671096ffdd38061171dd6e5` | 2.3B | audio-text | `examples/models/qwen/qwen3_asr` | PASS |
 | Sarvam | Sarvam | `sarvamai/sarvam-30b` | `071ae95e933605ca1104a6b4524a36a98488efa4` | 32.2B | text | `examples/models/sarvam` | PASS |
 | StepFun | Step-3.5-Flash | `stepfun-ai/Step-3.5-Flash` | `ab446a3de5e171ea341227e24bb1f090e1b771f7` | 199.4B | text | `examples/models/stepfun/step35` | TODO |
