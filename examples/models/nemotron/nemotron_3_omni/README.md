@@ -213,7 +213,7 @@ The two task flavors below are orthogonal — pick whichever dataset/modality
 combo matches your target task and either full-parameter (SFT) or LoRA
 (PEFT).
 
-## Vision Input Modes
+### Vision Input Modes
 
 Nemotron-3 Nano Omni has two mutually exclusive vision-input modes. Which
 modes are reachable depends on the data path:
