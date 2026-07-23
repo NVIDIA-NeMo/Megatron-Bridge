@@ -248,7 +248,7 @@ def setup(
     cfg.model.vocab_size, cfg.model.should_pad_vocab = _validate_and_set_vocab_size(
         model_vocab_size=cfg.model.vocab_size,
         tokenizer_vocab_size=tokenizer.vocab_size,
-        use_tokenizer_vocab_size=cfg.tokenizer.use_tokenizer_vocab_size,
+        use_tokenizer_vocab_size=getattr(cfg.tokenizer, "use_tokenizer_vocab_size", False),
     )
 
     if hasattr(cfg.dataset, "tokenizer"):
