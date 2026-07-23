@@ -63,6 +63,13 @@ WANDB_PROJECT="${WANDB_PROJECT:-mbridge-dev}"
 # Cap each run at a fixed step count (clean stop instead of running to walltime).
 # Must exceed NSYS_STOP and the bit-wise sample points (…,40,50).
 TRAIN_ITERS="${TRAIN_ITERS:-50}"
+# Recipe selection knobs (default: the gb200/bf16 3D-parallel baseline).
+# For the PR#4911 gb300/MXFP8 FSDP recipe set GPU_TYPE=gb300 COMPUTE_DTYPE=fp8mx
+# NVTE_CPU_OFFLOAD_V1=1 KEEP_RECIPE_DISPATCHER=1 (keep HybridEP instead of forcing alltoall).
+GPU_TYPE="${GPU_TYPE:-gb200}"
+COMPUTE_DTYPE="${COMPUTE_DTYPE:-bf16}"
+NVTE_CPU_OFFLOAD_V1_VAL="${NVTE_CPU_OFFLOAD_V1:-0}"
+KEEP_RECIPE_DISPATCHER="${KEEP_RECIPE_DISPATCHER:-0}"
 OUT_DIR="${OUT_DIR:-./nsys-compare}"
 NSYS_START="${NSYS_START:-15}"
 NSYS_STOP="${NSYS_STOP:-18}"
@@ -197,6 +204,11 @@ submit_run() {
     local SLURM_EXTRA_ARG=()
     [ -n "$_extra" ] && SLURM_EXTRA_ARG=(--additional_slurm_params "$_extra")
 
+    # Force alltoall (gb200/bf16 baseline default) unless KEEP_RECIPE_DISPATCHER=1,
+    # in which case the recipe's own dispatcher (e.g. HybridEP for gb300/MXFP8) stands.
+    local DISPATCHER_OVERRIDE=(model.moe_token_dispatcher_type=alltoall model.moe_flex_dispatcher_backend=null)
+    [ "$KEEP_RECIPE_DISPATCHER" = "1" ] && DISPATCHER_OVERRIDE=()
+
     # --- Positional override block: mirrors launch_nemotron_3_ultra_deterministic.sh ---
     # The two ``false → true`` last-wins DDP overlap toggles are kept verbatim so
     # this run is the bit-exact-proven recipe + optional nsys instrumentation.
@@ -205,9 +217,9 @@ submit_run() {
     "$PYTHON" scripts/performance/setup_experiment.py \
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
-        --gpu gb200 \
+        --gpu "$GPU_TYPE" \
         --time_limit 00:30:00 \
-        -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 \
+        -m nemotronh -mr nemotron_3_ultra -c "$COMPUTE_DTYPE" -cv v1 \
         -ng "$NGPUS" -gn "$GN" \
         "${GRES_ARG[@]}" \
         "${SLURM_EXTRA_ARG[@]}" \
@@ -222,6 +234,7 @@ submit_run() {
         "${DET_ENVS[@]}" \
         -E NCCL_NVLS_ENABLE=0 \
         -E NCCL_CUMEM_ENABLE=0 \
+        -E NVTE_CPU_OFFLOAD_V1="$NVTE_CPU_OFFLOAD_V1_VAL" \
         -E TRITON_CACHE_AUTOTUNING=1 \
         -E HF_HOME="$HF_CACHE" \
         -E HF_DATASETS_CACHE="$HF_CACHE/datasets" \
@@ -233,8 +246,7 @@ submit_run() {
         model.deterministic_mode="$DET_MODE" \
         model.cross_entropy_loss_fusion="$CE_FUSION" \
         model.moe_router_fusion=true \
-        model.moe_token_dispatcher_type=alltoall \
-        model.moe_flex_dispatcher_backend=null \
+        "${DISPATCHER_OVERRIDE[@]}" \
         ddp.overlap_grad_reduce=false \
         ddp.overlap_param_gather=false \
         logger.tensorboard_dir=/nemo_run/tensorboard \
