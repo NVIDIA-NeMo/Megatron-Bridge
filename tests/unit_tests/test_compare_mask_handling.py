@@ -386,3 +386,18 @@ class TestCompareMaskHandling:
             "torch_dtype": torch.float32,
             "device_map": "auto",
         }
+
+    def test_distributed_timeout_is_configurable_for_slow_reference_loading(self):
+        """Test large FP32 references can extend the process-group timeout."""
+        args = compare.build_parser().parse_args(
+            [
+                "--hf_model_path",
+                "org/model",
+                "--prompt",
+                "Hello",
+                "--distributed-timeout-minutes",
+                "90",
+            ]
+        )
+
+        assert args.distributed_timeout_minutes == 90

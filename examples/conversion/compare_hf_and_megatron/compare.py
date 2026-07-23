@@ -125,7 +125,12 @@ from PIL import Image
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
+from megatron.bridge.utils.common_utils import (
+    disable_mtp_for_inference,
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+)
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
@@ -839,6 +844,7 @@ def compare_models_one_step(args) -> None:
     print_rank_0("=== STARTING MODEL COMPARISON (1-STEP) ===")
 
     if torch.cuda.is_available():
+        maybe_initialize_distributed(timeout_minutes=args.distributed_timeout_minutes)
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)
         print_rank_0(f"Set CUDA device to: {torch.cuda.current_device()}")
@@ -1078,6 +1084,12 @@ def build_parser() -> argparse.ArgumentParser:
         choices=("cuda", "auto", "cpu"),
         default="cuda",
         help="Transformers device_map for the Hugging Face reference model.",
+    )
+    parser.add_argument(
+        "--distributed-timeout-minutes",
+        type=int,
+        default=60,
+        help="Process-group timeout for slow reference-model loading.",
     )
     parser.add_argument(
         "--enable_debug_hooks",
