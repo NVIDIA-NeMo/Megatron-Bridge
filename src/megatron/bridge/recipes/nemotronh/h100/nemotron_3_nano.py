@@ -13,11 +13,12 @@
 # limitations under the License.
 
 
-from dataclasses import fields
+from typing import cast
 
 import torch
 from megatron.core.activations import squared_relu
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
@@ -26,33 +27,30 @@ from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.model_load_save import load_model_config
 
 
-class _Nemotron3NanoFinetuneConfig(ConfigContainer):
-    """Nano finetuning config that derives MTP architecture from its checkpoint."""
+def _nemotron_3_nano_finetune_model(hf_model_id: str) -> HybridModelProvider:
+    """Build the finetuning provider from the selected Hugging Face model config."""
+    model = cast(
+        HybridModelProvider,
+        AutoBridge.from_hf_pretrained(hf_model_id).to_megatron_provider(load_weights=False),
+    )
 
-    def validate(self) -> None:
-        if self.checkpoint.pretrained_checkpoint:
-            checkpoint_model, _ = load_model_config(self.checkpoint.pretrained_checkpoint)
-            mtp_num_layers = int(getattr(checkpoint_model, "mtp_num_layers", 0) or 0)
-            mtp_pattern = getattr(checkpoint_model, "mtp_hybrid_override_pattern", None)
-            if mtp_num_layers > 0 and not mtp_pattern:
-                raise ValueError(
-                    "The pretrained checkpoint enables MTP but does not define mtp_hybrid_override_pattern."
-                )
-
-            self.model.mtp_num_layers = mtp_num_layers
-            self.model.mtp_hybrid_override_pattern = mtp_pattern if mtp_num_layers > 0 else None
-            self.model.mtp_use_repeated_layer = bool(
-                mtp_num_layers and getattr(checkpoint_model, "mtp_use_repeated_layer", False)
-            )
-            self.model.keep_mtp_spec_in_bf16 = bool(
-                mtp_num_layers and getattr(checkpoint_model, "keep_mtp_spec_in_bf16", False)
-            )
-            if mtp_num_layers > 0:
-                self.model.mtp_loss_scaling_factor = getattr(checkpoint_model, "mtp_loss_scaling_factor", 0.3)
-        super().validate()
+    model.seq_length = 2048
+    model.apply_rope_fusion = False
+    model.attention_backend = "fused"
+    model.init_method_std = 0.0173
+    model.use_fused_weighted_squared_relu = True
+    model.calculate_per_token_loss = True
+    model.tensor_model_parallel_size = 1
+    model.pipeline_model_parallel_size = 1
+    model.pipeline_dtype = torch.bfloat16
+    model.virtual_pipeline_model_parallel_size = None
+    model.context_parallel_size = 1
+    model.sequence_parallel = False
+    model.expert_tensor_parallel_size = 1
+    model.expert_model_parallel_size = 8
+    return model
 
 
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) -> ConfigContainer:
@@ -240,80 +238,23 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) 
 # =============================================================================
 
 
-def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_nano_sft_8gpu_h100_bf16_config(
+    *,
+    hf_model_id: str = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
+) -> ConfigContainer:
     """Return a full SFT config for Nemotron 3 Nano (30B-A3B MoE).
 
     Default parallelism: TP=1, PP=1, EP=8, SP=False
 
+    Args:
+        hf_model_id: Hugging Face model identifier or path used to derive the model architecture.
+
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3 Nano SFT.
     """
-    base_cfg = _sft_common()
-    cfg = _Nemotron3NanoFinetuneConfig(
-        **{
-            config_field.name: getattr(base_cfg, config_field.name)
-            for config_field in fields(base_cfg)
-            if config_field.init
-        }
-    )
+    cfg = _sft_common()
 
-    # Model config - Nemotron 3 Nano
-    cfg.model = HybridModelProvider(
-        # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
-        num_layers=52,
-        hidden_size=2688,
-        mamba_num_heads=64,
-        kv_channels=128,
-        mamba_state_dim=128,
-        ffn_hidden_size=1856,
-        num_attention_heads=32,
-        mamba_head_dim=64,
-        seq_length=2048,
-        num_query_groups=2,
-        # MoE
-        num_moe_experts=128,
-        moe_ffn_hidden_size=1856,
-        moe_shared_expert_intermediate_size=3712,
-        moe_router_topk=6,
-        moe_router_topk_scaling_factor=2.5,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        # NemotronH base
-        mamba_num_groups=8,
-        make_vocab_size_divisible_by=128,
-        activation_func=squared_relu,
-        masked_softmax_fusion=True,
-        apply_query_key_layer_scaling=False,
-        persist_layer_norm=True,
-        attention_softmax_in_fp32=False,
-        first_last_layers_bf16=True,
-        is_hybrid_model=True,
-        moe_aux_loss_coeff=0.0001,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        moe_router_load_balancing_type="seq_aux_loss",
-        moe_router_dtype="fp32",
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
-        # Extra config
-        apply_rope_fusion=False,
-        attention_backend="fused",
-        init_method_std=0.0173,
-        use_fused_weighted_squared_relu=True,
-        calculate_per_token_loss=True,
-        # Parallelism
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
-    )
+    cfg.model = _nemotron_3_nano_finetune_model(hf_model_id)
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -391,7 +332,7 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    cfg.tokenizer.tokenizer_model = hf_model_id
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -437,6 +378,8 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
 def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
+    *,
+    hf_model_id: str = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16",
 ) -> ConfigContainer:
     """Return a PEFT config for Nemotron 3 Nano (30B-A3B MoE).
 
@@ -444,76 +387,14 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
 
     Args:
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        hf_model_id: Hugging Face model identifier or path used to derive the model architecture.
 
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3 Nano PEFT.
     """
-    base_cfg = _peft_common()
-    cfg = _Nemotron3NanoFinetuneConfig(
-        **{
-            config_field.name: getattr(base_cfg, config_field.name)
-            for config_field in fields(base_cfg)
-            if config_field.init
-        }
-    )
+    cfg = _peft_common()
 
-    # Model config - PEFT uses same parallelism as SFT
-    cfg.model = HybridModelProvider(
-        # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
-        num_layers=52,
-        hidden_size=2688,
-        mamba_num_heads=64,
-        kv_channels=128,
-        mamba_state_dim=128,
-        ffn_hidden_size=1856,
-        num_attention_heads=32,
-        mamba_head_dim=64,
-        seq_length=2048,
-        num_query_groups=2,
-        # MoE
-        num_moe_experts=128,
-        moe_ffn_hidden_size=1856,
-        moe_shared_expert_intermediate_size=3712,
-        moe_router_topk=6,
-        moe_router_topk_scaling_factor=2.5,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        # NemotronH base
-        mamba_num_groups=8,
-        make_vocab_size_divisible_by=128,
-        activation_func=squared_relu,
-        masked_softmax_fusion=True,
-        apply_query_key_layer_scaling=False,
-        persist_layer_norm=True,
-        attention_softmax_in_fp32=False,
-        first_last_layers_bf16=True,
-        is_hybrid_model=True,
-        moe_aux_loss_coeff=0.0001,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        moe_router_load_balancing_type="seq_aux_loss",
-        moe_router_dtype="fp32",
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
-        # Extra config
-        apply_rope_fusion=False,
-        attention_backend="fused",
-        init_method_std=0.0173,
-        use_fused_weighted_squared_relu=True,
-        calculate_per_token_loss=True,
-        # Parallelism
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
-    )
+    cfg.model = _nemotron_3_nano_finetune_model(hf_model_id)
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -608,7 +489,7 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    cfg.tokenizer.tokenizer_model = hf_model_id
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200

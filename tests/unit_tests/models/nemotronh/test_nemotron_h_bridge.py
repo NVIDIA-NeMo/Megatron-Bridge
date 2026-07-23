@@ -361,7 +361,9 @@ class TestNemotronHBridge:
         # Check MTP configuration mappings
         assert result.mtp_num_layers == 2
         assert result.mtp_hybrid_override_pattern == "*E"
+        assert result.mtp_use_repeated_layer is True
         assert result.keep_mtp_spec_in_bf16 is True
+        assert result.mtp_loss_scaling_factor == 0.3
 
     @pytest.mark.parametrize("num_nextn_predict_layers", [None, 0])
     def test_provider_bridge_disables_mtp_naturally(
@@ -388,6 +390,7 @@ class TestNemotronHBridge:
 
         assert result.mtp_num_layers == 0
         assert result.mtp_hybrid_override_pattern is None
+        assert result.mtp_use_repeated_layer is False
         assert result.keep_mtp_spec_in_bf16 is False
 
     def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotron_nano_v2_config_dict):

@@ -314,7 +314,10 @@ class NemotronHBridge(MegatronModelBridge):
         mtp_num_layers, mtp_pattern = self._hf_mtp_config(hf_config)
         provider.mtp_num_layers = mtp_num_layers
         provider.mtp_hybrid_override_pattern = mtp_pattern
-        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", False))
+        provider.mtp_use_repeated_layer = bool(mtp_num_layers and getattr(hf_config, "mtp_use_repeated_layer", True))
+        provider.keep_mtp_spec_in_bf16 = bool(mtp_num_layers and getattr(hf_config, "keep_mtp_spec_in_bf16", True))
+        if mtp_num_layers:
+            provider.mtp_loss_scaling_factor = getattr(hf_config, "mtp_loss_scaling_factor", 0.3)
 
         return provider
 

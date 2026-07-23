@@ -17,16 +17,15 @@ Unit tests for Nemotron 3 Nano recipe configuration builders.
 
 Tests cover:
 - Pretrain configuration defaults and optional MTP
-- SFT configuration (parameterless API for full supervised fine-tuning)
-- PEFT configuration with LoRA and DoRA (peft_scheme parameter)
+- SFT configuration with Hugging Face-derived model architecture
+- PEFT configuration with Hugging Face-derived model architecture, LoRA, and DoRA
 - MoE-specific settings (DeepEP, expert parallelism)
 - Parallelism and tokenizer configurations
 """
 
 import os
 import tempfile
-from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 import pytest
 
@@ -38,7 +37,6 @@ from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
     nemotron_3_nano_sft_config,
 )
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.utils.omegaconf_utils import process_config_with_overrides
 
 
 @pytest.mark.unit
@@ -152,8 +150,8 @@ class TestNemotron3NanoPretrain:
 class TestNemotron3NanoSft:
     """Test cases for Nemotron 3 Nano SFT recipe.
 
-    Note: SFT config uses the parameterless API and returns fixed defaults.
-    Customization is done by modifying the returned ConfigContainer after creation.
+    The default Hugging Face model can be replaced to derive a matching model
+    architecture before applying finetuning policy.
     """
 
     def test_sft_config_default_parameters(self):
@@ -238,55 +236,30 @@ class TestNemotron3NanoSft:
         assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
 
     @pytest.mark.parametrize("recipe_factory", [nemotron_3_nano_sft_config, nemotron_3_nano_peft_config])
-    def test_finetuning_inherits_mtp_from_checkpoint(self, recipe_factory):
-        """SFT and PEFT derive their MTP architecture from checkpoint metadata."""
-        config = recipe_factory()
-        config = process_config_with_overrides(
-            config,
-            cli_overrides=['checkpoint.pretrained_checkpoint="/path/to/checkpoint"'],
+    @pytest.mark.parametrize("mtp_num_layers", [0, 2])
+    def test_finetuning_derives_mtp_from_hf_model(self, recipe_factory, mtp_num_layers):
+        """SFT and PEFT preserve the MTP architecture selected by AutoBridge."""
+        provider = HybridModelProvider(
+            mtp_num_layers=mtp_num_layers,
+            mtp_hybrid_override_pattern="*E" if mtp_num_layers else None,
+            mtp_use_repeated_layer=bool(mtp_num_layers),
+            keep_mtp_spec_in_bf16=bool(mtp_num_layers),
+            mtp_loss_scaling_factor=0.3 if mtp_num_layers else 0.1,
         )
-        config.model.use_te_rng_tracker = False
-        checkpoint_model = SimpleNamespace(
-            mtp_num_layers=2,
-            mtp_hybrid_override_pattern="*E",
-            mtp_use_repeated_layer=True,
-            keep_mtp_spec_in_bf16=True,
-            mtp_loss_scaling_factor=0.3,
-            use_te_rng_tracker=True,
-        )
+        bridge = Mock()
+        bridge.to_megatron_provider.return_value = provider
 
-        with (
-            patch.object(recipe_module, "load_model_config", return_value=(checkpoint_model, None)),
-            patch.object(ConfigContainer, "validate"),
-        ):
-            config.validate()
+        with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
+            config = recipe_factory(hf_model_id="example/model")
 
-        assert config.model.mtp_num_layers == 2
-        assert config.model.mtp_hybrid_override_pattern == "*E"
-        assert config.model.mtp_use_repeated_layer is True
-        assert config.model.keep_mtp_spec_in_bf16 is True
-        assert config.model.mtp_loss_scaling_factor == 0.3
-        assert config.model.use_te_rng_tracker is False
-
-    def test_sft_disables_mtp_for_non_mtp_checkpoint(self):
-        """A non-MTP checkpoint keeps SFT on the non-MTP architecture."""
-        config = nemotron_3_nano_sft_config()
-        config.checkpoint.pretrained_checkpoint = "/path/to/checkpoint"
-        config.model.mtp_num_layers = 2
-        config.model.mtp_hybrid_override_pattern = "*E"
-        config.model.mtp_use_repeated_layer = True
-        checkpoint_model = SimpleNamespace(mtp_num_layers=0)
-
-        with (
-            patch.object(recipe_module, "load_model_config", return_value=(checkpoint_model, None)),
-            patch.object(ConfigContainer, "validate"),
-        ):
-            config.validate()
-
-        assert config.model.mtp_num_layers == 0
-        assert config.model.mtp_hybrid_override_pattern is None
-        assert config.model.mtp_use_repeated_layer is False
-        assert config.model.keep_mtp_spec_in_bf16 is False
+        from_hf.assert_called_once_with("example/model")
+        bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
+        assert config.model is provider
+        assert config.model.mtp_num_layers == mtp_num_layers
+        assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
+        assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
+        assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
+        assert config.tokenizer.tokenizer_model == "example/model"
 
     def test_sft_config_with_custom_directory(self):
         """Test custom directory configuration for SFT."""
@@ -454,7 +427,6 @@ class TestNemotron3NanoCommon:
     )
     def test_config_container_structure(self, recipe_fn):
         """Test that all configs return proper ConfigContainer with correct model provider."""
-        # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
         assert isinstance(config, ConfigContainer)
@@ -482,7 +454,6 @@ class TestNemotron3NanoCommon:
     )
     def test_ddp_configuration(self, recipe_fn):
         """Test distributed data parallel configuration."""
-        # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
         assert config.ddp.check_for_nan_in_grad is True
@@ -500,7 +471,6 @@ class TestNemotron3NanoCommon:
     )
     def test_moe_model_configuration(self, recipe_fn):
         """Test MoE-specific model configuration from provider."""
-        # All configs use parameterless API (peft_config has optional peft_scheme)
         config = recipe_fn()
 
         # Check MoE settings from HybridModelProvider
