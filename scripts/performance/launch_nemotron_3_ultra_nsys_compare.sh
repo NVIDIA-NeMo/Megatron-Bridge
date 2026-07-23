@@ -60,6 +60,9 @@ CONTAINER_IMAGE="${CONTAINER_IMAGE:-/lustre/fs1/portfolios/llmservice/projects/l
 : "${HF_CACHE:?set HF_CACHE (shared HF cache dir)}"
 
 WANDB_PROJECT="${WANDB_PROJECT:-mbridge-dev}"
+# Cap each run at a fixed step count (clean stop instead of running to walltime).
+# Must exceed NSYS_STOP and the bit-wise sample points (…,40,50).
+TRAIN_ITERS="${TRAIN_ITERS:-50}"
 OUT_DIR="${OUT_DIR:-./nsys-compare}"
 NSYS_START="${NSYS_START:-15}"
 NSYS_STOP="${NSYS_STOP:-18}"
@@ -223,6 +226,7 @@ submit_run() {
         -E TRANSFORMERS_CACHE="$HF_CACHE" \
         -E HF_HUB_OFFLINE="$HF_HUB_OFFLINE" \
         -E TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE" \
+        -E WANDB_MODE=online \
         model.attention_backend=fused \
         model.deterministic_mode="$DET_MODE" \
         model.cross_entropy_loss_fusion="$CE_FUSION" \
@@ -243,6 +247,7 @@ submit_run() {
         train.manual_gc=true \
         train.manual_gc_interval=100 \
         train.fill_uninitialized_memory=false \
+        train.train_iters="$TRAIN_ITERS" \
         "${NSYS_HYDRA_OVERRIDES[@]}" 2>&1 | tee "$OUT_DIR/submit-${MODE}.log"
 
     # Capture the jobid once; reuse it for the file, the log line, and the next run's
