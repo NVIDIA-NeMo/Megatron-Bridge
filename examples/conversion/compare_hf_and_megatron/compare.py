@@ -448,7 +448,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
+        Tuple of (input_ids, pixel_values, image_grid_thw, mm_token_type_ids, messages)
     """
     if is_vl_model and image_path:
         if not QWEN_VL_UTILS_AVAILABLE:
@@ -481,7 +481,10 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         )
 
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
+        mm_token_type_ids = getattr(inputs, "mm_token_type_ids", None)
+        if mm_token_type_ids is not None:
+            mm_token_type_ids = pad_input_ids_to_tp_multiple(mm_token_type_ids, tp_size)
+        return input_ids, inputs.pixel_values, inputs.image_grid_thw, mm_token_type_ids, messages
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -491,7 +494,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None, None
+        return input_ids, None, None, None, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -575,7 +578,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
+def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, mm_token_type_ids=None):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -584,6 +587,7 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
+        mm_token_type_ids: Multimodal token types used to compute M-RoPE (optional).
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -602,6 +606,8 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             hf_inputs["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw
+        if mm_token_type_ids is not None:
+            hf_inputs["mm_token_type_ids"] = mm_token_type_ids
 
         hf_output = hf_model(**hf_inputs)
 
@@ -806,7 +812,7 @@ def compare_models_one_step(args) -> None:
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, messages = process_inputs(
+    input_ids, pixel_values, image_grid_thw, mm_token_type_ids, messages = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
@@ -816,13 +822,20 @@ def compare_models_one_step(args) -> None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
+    if mm_token_type_ids is not None:
+        mm_token_type_ids = mm_token_type_ids.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
+        hf_model,
+        input_ids,
+        pixel_values,
+        image_grid_thw,
+        tokenizer,
+        mm_token_type_ids,
     )
 
     del hf_model

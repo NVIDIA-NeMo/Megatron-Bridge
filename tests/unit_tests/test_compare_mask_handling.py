@@ -223,6 +223,29 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
+    def test_hf_path_forwards_multimodal_token_types(self):
+        """Qwen3.5/3.6 needs processor-produced token types for multimodal RoPE."""
+        mock_hf_model = MagicMock()
+        mock_output = MagicMock()
+        mock_output.logits = torch.randn(1, 3, 100)
+        mock_hf_model.return_value = mock_output
+        mm_token_type_ids = torch.tensor([[0, 1, 0]])
+
+        with (
+            patch.object(compare, "_is_rank_0", return_value=True),
+            patch.object(compare, "print_rank_0"),
+        ):
+            _run_hf_inference(
+                mock_hf_model,
+                torch.tensor([[1, 2, 3]]),
+                pixel_values=torch.randn(2, 4),
+                image_grid_thw=torch.tensor([[1, 2, 2]]),
+                tokenizer=MagicMock(),
+                mm_token_type_ids=mm_token_type_ids,
+            )
+
+        assert mock_hf_model.call_args.kwargs["mm_token_type_ids"] is mm_token_type_ids
+
     def test_hf_model_is_released_before_megatron_model_load(self):
         """The normal comparison path must avoid co-resident full model weights."""
         events = []
@@ -248,7 +271,7 @@ class TestCompareMaskHandling:
             patch.object(compare, "is_vision_language_model", return_value=False),
             patch.object(compare, "_load_hf_model", side_effect=lambda *_: events.append("hf_load") or object()),
             patch.object(compare, "_setup_tokenizer_and_processor", return_value=(MagicMock(), None)),
-            patch.object(compare, "process_inputs", return_value=(input_ids, None, None, None)),
+            patch.object(compare, "process_inputs", return_value=(input_ids, None, None, None, None)),
             patch.object(
                 compare,
                 "_run_hf_inference",
