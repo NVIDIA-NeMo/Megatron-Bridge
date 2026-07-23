@@ -16,7 +16,7 @@
 Unit tests for Nemotron 3 Nano recipe configuration builders.
 
 Tests cover:
-- Pretrain configuration defaults and optional MTP
+- Separate standard and MTP pretrain configurations
 - SFT configuration with Hugging Face-derived model architecture
 - PEFT configuration with Hugging Face-derived model architecture, LoRA, and DoRA
 - MoE-specific settings (DeepEP, expert parallelism)
@@ -25,6 +25,7 @@ Tests cover:
 
 import os
 import tempfile
+from inspect import signature
 from unittest.mock import Mock, patch
 
 import pytest
@@ -32,6 +33,7 @@ import pytest
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.h100 import nemotron_3_nano as recipe_module
 from megatron.bridge.recipes.nemotronh.nemotron_3_nano import (
+    nemotron_3_nano_mtp_pretrain_config,
     nemotron_3_nano_peft_config,
     nemotron_3_nano_pretrain_config,
     nemotron_3_nano_sft_config,
@@ -44,7 +46,7 @@ class TestNemotron3NanoPretrain:
     """Test cases for Nemotron 3 Nano pretrain recipe.
 
     Most customization is done by modifying the returned ConfigContainer after
-    creation; MTP is selected through the recipe's explicit flag.
+    creation; MTP uses a separate recipe.
     """
 
     def test_pretrain_config_default_parameters(self):
@@ -87,10 +89,10 @@ class TestNemotron3NanoPretrain:
         assert config.model.mtp_num_layers == 0
         assert config.model.mtp_hybrid_override_pattern is None
 
-    def test_pretrain_config_enables_mtp_explicitly(self):
-        """The pretraining flag enables the repeated Nano MTP head."""
+    def test_mtp_pretrain_config(self):
+        """The dedicated MTP recipe enables the repeated Nano MTP head."""
         base_config = nemotron_3_nano_pretrain_config()
-        config = nemotron_3_nano_pretrain_config(enable_mtp=True)
+        config = nemotron_3_nano_mtp_pretrain_config()
 
         assert config.model.mtp_num_layers == 2
         assert config.model.mtp_hybrid_override_pattern == "*E"
@@ -99,6 +101,11 @@ class TestNemotron3NanoPretrain:
         assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
         assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
+
+    def test_pretrain_recipes_do_not_expose_mtp_flag(self):
+        """Standard and MTP pretraining use distinct parameterless factories."""
+        assert "enable_mtp" not in signature(nemotron_3_nano_pretrain_config).parameters
+        assert "enable_mtp" not in signature(nemotron_3_nano_mtp_pretrain_config).parameters
 
     def test_pretrain_config_deepep_enabled(self):
         """Test that DeepEP is enabled by default for MoE pretrain."""

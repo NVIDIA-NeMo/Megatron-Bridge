@@ -53,15 +53,12 @@ def _nemotron_3_nano_finetune_model(hf_model_id: str) -> HybridModelProvider:
     return model
 
 
-def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) -> ConfigContainer:
+def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for Nemotron 3 Nano (30B-A3B MoE).
 
     This is a MoE (Mixture of Experts) model with the following default parallelism:
     - TP=4, PP=1, EP=8, SP=True
     - DeepEP enabled for MoE token dispatch
-
-    Args:
-        enable_mtp: Enable the two-depth repeated MTP head when True.
 
     Returns:
         ConfigContainer: Pre-training configuration for Nemotron 3 Nano.
@@ -119,13 +116,6 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) 
         expert_tensor_parallel_size=1,
         expert_model_parallel_size=8,
     )
-    cfg.model.mtp_num_layers = 2 if enable_mtp else 0
-    cfg.model.mtp_hybrid_override_pattern = "*E" if enable_mtp else None
-    cfg.model.mtp_use_repeated_layer = enable_mtp
-    cfg.model.keep_mtp_spec_in_bf16 = enable_mtp
-    if enable_mtp:
-        cfg.model.mtp_loss_scaling_factor = 0.3
-
     # Tokenizer (--tokenizer-model)
     cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
 
@@ -230,6 +220,17 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config(*, enable_mtp: bool = False) 
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for Nemotron 3 Nano with MTP."""
+    cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
     return cfg
 
 
@@ -529,6 +530,7 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
 
 
 __all__ = [
+    "nemotron_3_nano_mtp_pretrain_8gpu_h100_bf16_config",
     "nemotron_3_nano_peft_8gpu_h100_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_h100_bf16_config",
     "nemotron_3_nano_sft_8gpu_h100_bf16_config",

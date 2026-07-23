@@ -17,6 +17,9 @@
 from __future__ import annotations
 
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
+    nemotron_3_nano_mtp_pretrain_8gpu_h100_bf16_config as nemotron_3_nano_mtp_pretrain_config,
+)
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
     nemotron_3_nano_peft_8gpu_h100_bf16_config as nemotron_3_nano_peft_config,
 )
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
@@ -28,6 +31,7 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
 
 
 __all__ = [
+    "nemotron_3_nano_mtp_pretrain_config",
     "nemotron_3_nano_pretrain_config",
     "nemotron_3_nano_sft_config",
     "nemotron_3_nano_peft_config",
