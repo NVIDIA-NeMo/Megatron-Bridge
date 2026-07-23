@@ -213,6 +213,49 @@ The two task flavors below are orthogonal — pick whichever dataset/modality
 combo matches your target task and either full-parameter (SFT) or LoRA
 (PEFT).
 
+## Vision Input Modes
+
+Nemotron-3 Nano Omni has two mutually exclusive vision-input modes. Which
+modes are reachable depends on the data path:
+
+- **HF (`DirectHFSFTDatasetConfig`) path — dynamic resolution only.** The
+  `use_temporal_video_embedder` dataset flag is not plumbed through the HF
+  collate; feeding videos here raises. Use images with the dynamic column.
+- **Energon path — both modes supported.** Pick the column via the
+  `dataset.task_encoder.use_temporal_video_embedder` task-encoder flag and flip the three
+  `model.*` flags to match.
+
+Consistency rule (Energon): the four flags below must move together — a
+mismatched set produces shape or checkpoint-load errors. HF-path runs must
+sit in the dynamic column and leave the three `model.*` flags at their
+dynamic defaults.
+
+| Field                                              | Dynamic resolution (variable H×W) | Temporal video (fused pairs, 512²) |
+|----------------------------------------------------|-----------------------------------|------------------------------------|
+| `dataset.task_encoder.use_temporal_video_embedder` | `False`                           | `True`                             |
+| `model.temporal_patch_dim`                         | `1`                               | `2`                                |
+| `model.separate_video_embedder`                    | `False`                           | `True`                             |
+| `model.temporal_ckpt_compat`                       | `False`                           | `True`                             |
+
+**Rules**
+
+- **Videos require the temporal-video column.** The dynamic path does not
+  support videos — `nemotron_omni_collate_fn` raises with
+  `"Nemotron Omni video collation requires use_temporal_video_embedder=True."`
+- **Images work in either column.** Dynamic preserves native H×W; the
+  temporal column resizes standalone images onto the 512² compatibility
+  canvas.
+- **`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.**
+  The three `model.*` flags always apply; the dataset-side flag is only
+  consumed by the Energon task encoder.
+
+The pre-built recipes are already in one column each:
+
+| Recipe family                     | Column             |
+|-----------------------------------|--------------------|
+| `nemotron_omni_cord_v2_*_config`  | Dynamic resolution |
+| `nemotron_omni_valor32k_*_config` | Temporal video     |
+
 ### Image-Text — CORD-V2
 
 [CORD-V2](https://huggingface.co/datasets/naver-clova-ix/cord-v2) is a
