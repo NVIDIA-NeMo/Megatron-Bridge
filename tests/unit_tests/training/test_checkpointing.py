@@ -171,6 +171,36 @@ class TestCheckpointUtilities:
         bridge.export_hf_weights.assert_not_called()
         bridge.hf_pretrained.save_artifacts.assert_not_called()
 
+    @patch("torch.distributed.is_initialized", return_value=False)
+    @patch("megatron.bridge.training.checkpointing.ensure_directory_exists")
+    @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
+    def test_save_hf_weights_prepends_source_passthrough(
+        self,
+        mock_build_bridge,
+        _mock_ensure_dir,
+        _mock_dist_initialized,
+    ):
+        state = Mock()
+        state.cfg.peft = None
+        state.cfg.checkpoint.hf_source_path = "/hf/source"
+        state.cfg.checkpoint.hf_distributed_save = False
+        state.cfg.checkpoint.hf_save_every_n_ranks = 1
+
+        bridge = mock_build_bridge.return_value
+        model_bridge = bridge._model_bridge
+        model_bridge.SUPPORTS_HF_PRETRAINED_EXPORT = True
+        model_bridge.stream_hf_export_passthrough.return_value = iter([("indexer.weight", torch.zeros(1))])
+        bridge.export_hf_weights.return_value = iter([("language.weight", torch.ones(1))])
+
+        saved_pairs = []
+        state_source = bridge.hf_pretrained.state.source
+        state_source.save_generator.side_effect = lambda generator, *_args, **_kwargs: saved_pairs.extend(generator)
+
+        _save_hf_weights(state, [Mock()], "/checkpoints/iter_0000001/hf")
+
+        assert [name for name, _tensor in saved_pairs] == ["indexer.weight", "language.weight"]
+        model_bridge.stream_hf_export_passthrough.assert_called_once_with(bridge.hf_pretrained, cpu=True)
+
     @patch("torch.distributed.is_initialized")
     @patch("torch.distributed.get_rank")
     @patch("torch.distributed.all_reduce")

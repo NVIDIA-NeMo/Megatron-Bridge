@@ -2,8 +2,20 @@
 
 This directory contains real-checkpoint conversion and inference examples for
 [MiniMax-M3](https://huggingface.co/MiniMaxAI/MiniMax-M3). The bridge imports
-the language backbone from the multimodal checkpoint; the vision tower,
-projector, lightning-indexer weights, and MTP modules are not converted.
+the vision tower, both multimodal projectors, and the sparse-MoE language
+backbone. The vision stack is replicated across tensor-parallel ranks.
+
+MiniMax-M3's Lightning Indexer is not yet executed by Megatron: the text model
+uses full causal attention. When saving back to Hugging Face, the original
+checkpoint is required so those 228 source-only indexer tensors can be
+preserved byte-for-byte alongside the converted VLM weights. These tensors are
+not updated during Megatron training, so a post-training HF export keeps the
+source indexer rather than a trained sparse-attention indexer.
+
+The bundled H100 pretraining and SQuAD SFT recipes remain text-only and freeze
+the unused vision tower and projectors. VLM training requires a multimodal
+dataset and the VLM training step; this change targets complete VLM checkpoint
+import and source-backed export.
 
 ## Hardware requirements
 
@@ -46,12 +58,13 @@ writing a second 869 GB copy.
 bash examples/models/minimax/minimax_m3/slurm_conversion.sh
 ```
 
-Success is reported only when all bridged language-model parameters match
-within the round-trip script's standard tolerances. This is an in-memory
-verification; standalone Hugging Face checkpoint export is not supported
-because the bridge intentionally omits the multimodal modules. Pass optional
-launcher settings after the wrapper, such as `--srun-arg=--mpi=pmix` when the
-cluster requires it.
+Success is reported only when all bridged language, vision, and projector
+parameters match within the round-trip script's standard tolerances. This is
+an in-memory verification and does not include the passthrough Lightning
+Indexer tensors. Persisted Hugging Face export is supported only from a bridge
+created with the original HF checkpoint; config-only CPU export cannot
+reconstruct the unsupported indexer. Pass optional launcher settings after
+the wrapper, such as `--srun-arg=--mpi=pmix` when the cluster requires it.
 
 ## Inference
 
@@ -69,11 +82,13 @@ errors and the generated answer is coherent for the prompt.
 
 ## Validated configuration
 
-The real `MiniMaxAI/MiniMax-M3` checkpoint was validated on 32 H100 80 GB
-GPUs with `TP=1`, `PP=1`, `EP=32`, and `ETP=1`. All 1,053 mapped parameter
-tasks passed the in-memory HF → Megatron → HF round-trip check within the
-script's standard tolerances. With the chat template enabled, Megatron
-generated a coherent continuation beginning:
+The text-only surface of the real `MiniMaxAI/MiniMax-M3` checkpoint was
+validated on 32 H100 80 GB GPUs with `TP=1`, `PP=1`, `EP=32`, and `ETP=1`.
+All 1,053 mapped text parameter tasks passed the in-memory HF → Megatron → HF
+round-trip check within the script's standard tolerances. The new VLM
+conversion surface still requires the same real-checkpoint validation. With
+the chat template enabled, Megatron generated a coherent continuation
+beginning:
 
 > The sky appears blue because of Rayleigh scattering, where sunlight
 > interacts with Earth's atmosphere.

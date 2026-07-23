@@ -40,6 +40,11 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
         load_weights=False
     )
+    # This remains a text-only pretraining recipe. Freeze the replicated
+    # multimodal modules so DDP does not wait for gradients from an unused
+    # vision path.
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = True
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2
@@ -143,6 +148,9 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
         load_weights=False
     )
+    # SQuAD is text-only, so keep the VLM wrapper's unused vision path frozen.
+    cfg.model.freeze_vision_model = True
+    cfg.model.freeze_vision_projection = True
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2
