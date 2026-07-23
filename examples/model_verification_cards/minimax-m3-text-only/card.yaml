@@ -14,31 +14,32 @@ summary: >
   gate computation when BF16 hidden states reach Transformer Engine. Two clean,
   independent 32-H100 Megatron executions reloaded the persisted checkpoint,
   completed exactly 64 greedy generation steps apiece, and produced
-  byte-identical decoded completions. The bridge now targets a standalone stock
-  Transformers MiniMaxM3VLForCausalLM checkpoint containing only native text
-  weights and tokenizer artifacts; it does not preserve vision, projector,
-  lightning-indexer, MTP, processor, or custom-code artifacts. This standalone
-  export format has not yet been rerun on the full checkpoint, so both CPU and
-  GPU Megatron-to-HF export remain unverified. The previous 32-H100
-  source-overlay export audit is historical evidence for the mapped text values,
-  but it does not verify the new standalone output layout.
+  byte-identical decoded completions. Standalone Hugging Face export remains
+  unsupported because the public checkpoint is multimodal while the Bridge maps
+  only its language_model.* tensors. The text-only card name describes the
+  supported Bridge surface, not a standalone Hugging Face checkpoint format. At
+  the inference commit, all 29 focused MiniMax-M3 bridge tests and the repository
+  pre-commit checks pass.
 verification_index:
   model_level:
     verified: [hf_to_megatron_gpu, inference]
-    unverified: [hf_to_megatron_cpu, megatron_to_hf_cpu, megatron_to_hf_gpu, manual_forward_pass]
+    unverified: [hf_to_megatron_cpu, manual_forward_pass]
+    unsupported: [megatron_to_hf_cpu, megatron_to_hf_gpu]
   training:
     H100:
-      unverified: all
+      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unsupported: [sft_export_inference]
     GB200:
-      unverified: all
+      unverified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unsupported: [sft_export_inference]
 model:
   hf_id: MiniMaxAI/MiniMax-M3
   hf_revision: 50942730318c7943fe83db7ec8e9f9177ecb1cf8  # pragma: allowlist secret
-  architecture: MiniMaxM3VLForCausalLM
-  min_transformers_version: "5.12.1"
+  architecture: MiniMaxM3SparseForConditionalGeneration
+  min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 2863ff4ca17d8fd0a848683ef9b8550acc6ee73c  # pragma: allowlist secret
+  bridge_commit: 58f72364644ea83f3c683a0cbe9fa6c0f9f3f525  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -73,42 +74,24 @@ items:
       supported Bridge surface.
 
   megatron_to_hf_cpu:
-    status: unverified
-    precision: bf16
+    status: unsupported
+    precision: null
     command: null
     last_verified: null
     expected_result: >
-      With sufficient host memory, CPU export must write a source-independent,
-      text-only MiniMaxM3VLForCausalLM checkpoint using bounded-memory
-      destination sharding. The output must load through stock Transformers
-      without trust_remote_code and contain no vision, projector,
-      lightning-indexer, or MTP weights. This approximately 428B-parameter model
-      has not been exercised through the single-process CPU path and may exceed
-      the available host-memory capacity.
+      Standalone Hugging Face export is intentionally unsupported because the
+      Bridge converts only the language backbone and omits the checkpoint's
+      vision tower, projector, lightning indexer, and multimodal configuration.
 
   megatron_to_hf_gpu:
-    status: unverified
-    precision: bf16
-    command: >
-      ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 4 --gpus-per-node 8 --hf-model MiniMaxAI/MiniMax-M3
-      --hf-revision 50942730318c7943fe83db7ec8e9f9177ecb1cf8
-      --megatron-path work/model-verification/minimax-m3-text-only/imported-megatron/iter_0000000
-      --hf-path work/model-verification/minimax-m3-text-only/exported-hf
-      --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
-      --trust-remote-code --distributed-save --save-every-n-ranks 1
-      --distributed-timeout-minutes 120 --no-progress
+    status: unsupported
+    precision: null
+    command: null
     last_verified: null
     expected_result: >
-      The pinned 32-H100 BF16 export must produce a source-independent
-      MiniMaxM3VLForCausalLM checkpoint with the native model.* and lm_head.*
-      layout, fused routed-expert tensors, and a flat minimax_m3_vl_text config.
-      A strict persisted-output audit must find no duplicate, missing,
-      unexpected, shard, index, shape, dtype, or mapped-value mismatches. The
-      output must contain no vision, projector, lightning-indexer, or MTP
-      tensors or custom modeling code, and must load through stock
-      AutoModelForCausalLM without trust_remote_code for fixed-prompt text
-      generation.
+      Distributed standalone Hugging Face export is intentionally unsupported
+      because the Bridge cannot reconstruct the omitted multimodal modules and
+      configuration into a complete MiniMax-M3 checkpoint.
 
   manual_forward_pass:
     status: unverified
@@ -179,17 +162,16 @@ items:
         all four metrics, and a reloadable final checkpoint.
 
   sft_export_inference:
-    H100:
-      status: unverified
-      precision: bf16
+    all:
+      status: unsupported
+      precision: null
       depends_on: sft
       commands: null
       last_verified: null
       expected_result: >
-        Export the verified H100 full-SFT checkpoint as a standalone native
-        MiniMaxM3VLForCausalLM text checkpoint, reload it with stock Transformers
-        without trust_remote_code, and require two greedy fixed-length text
-        generations to be byte-identical.
+        Post-SFT Hugging Face export and native Hugging Face inference are
+        unsupported on every hardware target because standalone Hugging Face
+        export cannot reconstruct the complete multimodal checkpoint.
 
   sft_long_context:
     H100:

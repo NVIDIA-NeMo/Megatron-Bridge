@@ -27,10 +27,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
-    FusedExpertMapping,
-    FusedGatedExpertMapping,
     GatedMLPMapping,
-    MegatronParamMapping,
     QKVMapping,
 )
 from megatron.bridge.models.gpt_provider import GPTModelProvider
@@ -116,11 +113,6 @@ def _promote_router_weights_to_float32(model: list[torch.nn.Module]) -> list[tor
 class MiniMaxM3ModelProvider(GPTModelProvider):
     """GPT provider that preserves MiniMax-M3's FP32 router parameters."""
 
-    hf_max_position_embeddings: int | None = None
-    hf_bos_token_id: int | None = None
-    hf_eos_token_id: int | list[int] | None = None
-    hf_pad_token_id: int | None = None
-
     def __post_init__(self) -> None:
         """Install MiniMax-M3 router behavior on fresh and deserialized providers."""
         super().__post_init__()
@@ -136,52 +128,6 @@ class MiniMaxM3ModelProvider(GPTModelProvider):
 
         if not hasattr(self, "_pre_wrap_hooks") or _promote_router_weights_to_float32 not in self._pre_wrap_hooks:
             self.register_pre_wrap_hook(_promote_router_weights_to_float32, prepend=True)
-
-
-class _FusedGateUpMapping(MegatronParamMapping[torch.Tensor]):
-    """Map one fused HF gate/up tensor to Megatron's TP-aware fused MLP weight."""
-
-    def __init__(self, megatron_param: str, hf_param: str):
-        """Initialize the fused gate/up mapping."""
-        super().__init__(megatron_param, hf_param)
-        self._gated_mapping = GatedMLPMapping(
-            megatron_param=megatron_param,
-            gate=f"{hf_param}.gate",
-            up=f"{hf_param}.up",
-        )
-
-    def hf_to_megatron(
-        self,
-        hf_weights: torch.Tensor,
-        megatron_module: torch.nn.Module,
-    ) -> torch.Tensor:
-        """Split the native HF tensor and delegate TP distribution."""
-        if hf_weights.shape[0] % 2 != 0:
-            raise ValueError(
-                f"Expected an even gate/up dimension for {self.hf_param}, got shape {tuple(hf_weights.shape)}."
-            )
-        gate, up = torch.chunk(hf_weights, 2, dim=0)
-        return self._gated_mapping.hf_to_megatron({"gate": gate, "up": up}, megatron_module)
-
-    def megatron_to_hf(
-        self,
-        megatron_weights: torch.Tensor | None,
-        megatron_module: torch.nn.Module | None,
-    ) -> dict[str, torch.Tensor]:
-        """Gather Megatron TP shards and fuse the native HF gate/up tensor."""
-        converted = self._gated_mapping.megatron_to_hf(megatron_weights, megatron_module)
-        if not converted:
-            return {}
-        gate = converted[f"{self.hf_param}.gate"]
-        up = converted[f"{self.hf_param}.up"]
-        return {str(self.hf_param): torch.cat((gate, up), dim=0)}
-
-    def resolve(self, captures: tuple[str, ...]) -> MegatronParamMapping:
-        """Return a mapping with all layer wildcards resolved."""
-        resolved_megatron_param, resolved_hf_param = self._resolve_names(captures)
-        if not isinstance(resolved_hf_param, str):
-            raise TypeError("Fused gate/up HF parameter must resolve to one tensor name.")
-        return type(self)(resolved_megatron_param, resolved_hf_param)
 
 
 @MegatronModelBridge.register_bridge(
@@ -227,9 +173,10 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         - MTP (Multi-Token Prediction) modules are not mapped. The released
           checkpoint advertises ``num_nextn_predict_layers`` in its config but
           ships no ``mtp.*`` weights, so ``mtp_num_layers`` is forced to None.
-        - This bridge imports the text backbone from the public multimodal
-          checkpoint. Standalone Hugging Face export is handled by
-          :class:`MiniMaxM3TextBridge` using the native Transformers text layout.
+        - Standalone Hugging Face checkpoint export is not supported. The HF
+          checkpoint is multimodal, while this bridge maps only its
+          ``language_model.*`` tensors. In-memory HF-to-Megatron-to-HF weight
+          verification remains supported.
 
     Example:
         >>> from megatron.bridge import AutoBridge
@@ -238,16 +185,6 @@ class MiniMaxM3Bridge(MegatronModelBridge):
     """
 
     SUPPORTS_HF_PRETRAINED_EXPORT = False
-
-    # AutoTokenizer.save_pretrained() consolidates these artifacts. Preserve the
-    # pinned source tokenizer files in standalone text exports.
-    ADDITIONAL_FILE_PATTERNS = [
-        "added_tokens.json",
-        "merges.txt",
-        "special_tokens_map.json",
-        "tokenizer_config.json",
-        "vocab.json",
-    ]
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):
@@ -267,11 +204,7 @@ class MiniMaxM3Bridge(MegatronModelBridge):
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> MiniMaxM3ModelProvider:
         """Convert the HuggingFace MiniMax-M3 config to a GPTModelProvider."""
         hf_config = hf_pretrained.config
-        text_config = (
-            hf_config
-            if getattr(hf_config, "model_type", None) == "minimax_m3_vl_text"
-            else getattr(hf_config, "text_config", hf_config)
-        )
+        text_config = getattr(hf_config, "text_config", hf_config)
 
         provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
         provider_kwargs.pop("_mla_rope_params", None)
@@ -297,10 +230,6 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         provider.share_embeddings_and_output_weights = bool(
             getattr(text_config, "tie_word_embeddings", getattr(hf_config, "tie_word_embeddings", False))
         )
-        provider.hf_max_position_embeddings = getattr(text_config, "max_position_embeddings", None)
-        provider.hf_bos_token_id = getattr(text_config, "bos_token_id", None)
-        provider.hf_eos_token_id = getattr(text_config, "eos_token_id", None)
-        provider.hf_pad_token_id = getattr(text_config, "pad_token_id", None)
 
         # SwiGLU-OAI activation (same as GPT-OSS, but non-interleaved weights):
         # gate = clamp(gate, max=limit); up = clamp(up, +-limit)
@@ -342,10 +271,8 @@ class MiniMaxM3Bridge(MegatronModelBridge):
         # the shared expert uses MiniMax-M3's clamped (up + 1) SwiGLU-OAI math.
         provider.moe_shared_expert_overlap = False
 
-        n_shared_experts = getattr(text_config, "n_shared_experts", None)
+        n_shared_experts = getattr(text_config, "n_shared_experts", 0) or 0
         shared_intermediate_size = getattr(text_config, "shared_intermediate_size", 0) or 0
-        if n_shared_experts is None:
-            n_shared_experts = 1 if shared_intermediate_size else 0
         provider.moe_shared_expert_intermediate_size = (n_shared_experts * shared_intermediate_size) or None
 
         # Per-layer dense/MoE pattern. The checkpoint config carries a 0/1
@@ -386,53 +313,12 @@ class MiniMaxM3Bridge(MegatronModelBridge):
 
     @classmethod
     def megatron_to_hf_config(cls, provider: GPTModelProvider) -> dict:
-        """Convert the Megatron provider to the native standalone text config."""
-        text_config = super().megatron_to_hf_config(provider)
-        text_config["architectures"] = ["MiniMaxM3VLForCausalLM"]
-        text_config["model_type"] = "minimax_m3_vl_text"
-        text_config.pop("num_nextn_predict_layers", None)
-        text_config.pop("mtp_num_hidden_layers", None)
-        text_config.update(
-            {
-                "intermediate_size": provider.moe_ffn_hidden_size,
-                "dense_intermediate_size": provider.ffn_hidden_size,
-                "shared_intermediate_size": provider.moe_shared_expert_intermediate_size,
-                "head_dim": provider.kv_channels,
-                "hidden_act": "silu",
-                "max_position_embeddings": (
-                    provider.hf_max_position_embeddings
-                    if isinstance(provider, MiniMaxM3ModelProvider) and provider.hf_max_position_embeddings is not None
-                    else provider.seq_length
-                ),
-                "bos_token_id": (provider.hf_bos_token_id if isinstance(provider, MiniMaxM3ModelProvider) else None),
-                "eos_token_id": (provider.hf_eos_token_id if isinstance(provider, MiniMaxM3ModelProvider) else None),
-                "pad_token_id": (provider.hf_pad_token_id if isinstance(provider, MiniMaxM3ModelProvider) else None),
-                "rotary_dim": round(provider.rotary_percent * provider.kv_channels),
-                "partial_rotary_factor": provider.rotary_percent,
-                "rope_parameters": {
-                    "rope_theta": provider.rotary_base,
-                    "partial_rotary_factor": provider.rotary_percent,
-                    "rope_type": "default",
-                },
-                "use_gemma_norm": provider.layernorm_zero_centered_gamma,
-                "use_qk_norm": provider.qk_layernorm,
-                "qk_norm_type": "per_head",
-                "num_local_experts": provider.num_moe_experts,
-                "num_experts_per_tok": provider.moe_router_topk,
-                "scoring_func": provider.moe_router_score_function,
-                "use_routing_bias": provider.moe_router_enable_expert_bias,
-                "routed_scaling_factor": provider.moe_router_topk_scaling_factor,
-                "router_aux_loss_coef": provider.moe_aux_loss_coeff,
-                "mlp_layer_types": ["sparse" if int(is_moe) else "dense" for is_moe in provider.moe_layer_freq],
-                # The Bridge text model intentionally omits the lightning
-                # indexer, so the native HF model must instantiate full
-                # attention on every layer as well.
-                "layer_types": ["full_attention"] * provider.num_layers,
-                "swiglu_alpha": 1.702,
-                "swiglu_limit": provider.activation_func_clamp_value,
-            }
+        """Reject standalone HF export until the full multimodal contract is mapped."""
+        raise NotImplementedError(
+            "MiniMax-M3 standalone Hugging Face export is not supported: the source checkpoint is multimodal, "
+            "but this bridge maps only language_model.* tensors. Use HF import, native Megatron checkpoints, "
+            "or in-memory round-trip verification."
         )
-        return text_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Return the parameter mappings for the MiniMax-M3 language model.
@@ -507,96 +393,4 @@ class MiniMaxM3Bridge(MegatronModelBridge):
             ]
         )
 
-        return MegatronMappingRegistry(*mapping_list)
-
-
-@MegatronModelBridge.register_bridge(
-    source="MiniMaxM3VLForCausalLM",
-    target=GPTModel,
-    model_type="minimax_m3_vl_text",
-)
-class MiniMaxM3TextBridge(MiniMaxM3Bridge):
-    """Bidirectional bridge for a standalone native Transformers MiniMax-M3 text model.
-
-    The public checkpoint is multimodal and uses a legacy on-disk layout. After
-    its language backbone is imported through :class:`MiniMaxM3Bridge`, this
-    bridge exports a stock ``MiniMaxM3VLForCausalLM`` checkpoint containing only
-    text weights. The exported model uses full causal attention on every layer,
-    matching the Megatron representation that intentionally omits the lightning
-    indexer.
-    """
-
-    SUPPORTS_HF_PRETRAINED_EXPORT = True
-    HF_EXPORT_OPTIONAL_ARTIFACTS = ("generation_config",)
-    HF_EXPORT_TRUST_REMOTE_CODE = False
-
-    def get_expected_hf_export_keys(self, hf_config: object) -> set[str]:
-        """Return the exact stock Transformers state keys for strict export."""
-        try:
-            from transformers import MiniMaxM3VLForCausalLM
-        except ImportError as error:
-            raise RuntimeError("Standalone MiniMax-M3 text export requires Transformers 5.12.1 or newer.") from error
-
-        with torch.device("meta"):
-            hf_model = MiniMaxM3VLForCausalLM(hf_config)
-        return set(hf_model.state_dict())
-
-    def mapping_registry(self) -> MegatronMappingRegistry:
-        """Return mappings for the native standalone MiniMax-M3 text layout."""
-        param_mappings = {
-            "embedding.word_embeddings.weight": "model.embed_tokens.weight",
-            "output_layer.weight": "lm_head.weight",
-            "decoder.final_layernorm.weight": "model.norm.weight",
-            "decoder.layers.*.input_layernorm.weight": "model.layers.*.input_layernorm.weight",
-            "decoder.layers.*.self_attention.linear_qkv.layer_norm_weight": ("model.layers.*.input_layernorm.weight"),
-            "decoder.layers.*.pre_mlp_layernorm.weight": "model.layers.*.post_attention_layernorm.weight",
-            "decoder.layers.*.mlp.linear_fc1.layer_norm_weight": ("model.layers.*.post_attention_layernorm.weight"),
-            "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
-            "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
-            "decoder.layers.*.mlp.linear_fc2.weight": "model.layers.*.mlp.down_proj.weight",
-            "decoder.layers.*.mlp.router.weight": "model.layers.*.mlp.gate.weight",
-            "decoder.layers.*.mlp.router.expert_bias": "model.layers.*.mlp.gate.e_score_correction_bias",
-            "decoder.layers.*.mlp.shared_experts.linear_fc2.weight": (
-                "model.layers.*.mlp.shared_experts.down_proj.weight"
-            ),
-        }
-        mapping_list: list[MegatronParamMapping] = [
-            AutoMapping(megatron_param=megatron_param, hf_param=hf_param)
-            for megatron_param, hf_param in param_mappings.items()
-        ]
-        mapping_list.extend(
-            [
-                QKVMapping(
-                    megatron_param="decoder.layers.*.self_attention.linear_qkv.weight",
-                    q="model.layers.*.self_attn.q_proj.weight",
-                    k="model.layers.*.self_attn.k_proj.weight",
-                    v="model.layers.*.self_attn.v_proj.weight",
-                ),
-                _FusedGateUpMapping(
-                    megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-                    hf_param="model.layers.*.mlp.gate_up_proj.weight",
-                ),
-                _FusedGateUpMapping(
-                    megatron_param="decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                    hf_param="model.layers.*.mlp.shared_experts.gate_up_proj.weight",
-                ),
-                FusedGatedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                    hf_param="model.layers.*.mlp.experts.down_proj",
-                ),
-                FusedGatedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
-                    hf_param="model.layers.*.mlp.experts.gate_up_proj",
-                ),
-                FusedExpertMapping(
-                    megatron_param="decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
-                    hf_param="model.layers.*.mlp.experts.down_proj",
-                ),
-            ]
-        )
         return MegatronMappingRegistry(*mapping_list)

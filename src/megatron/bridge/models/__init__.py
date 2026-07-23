@@ -109,7 +109,6 @@ from megatron.bridge.models.minimax_m2 import (
 )
 from megatron.bridge.models.minimax_m3 import (
     MiniMaxM3Bridge,
-    MiniMaxM3TextBridge,
 )
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
@@ -238,7 +237,6 @@ __all__ = [
     "Ministral3ModelProvider",
     "MiniMaxM2Bridge",
     "MiniMaxM3Bridge",
-    "MiniMaxM3TextBridge",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",

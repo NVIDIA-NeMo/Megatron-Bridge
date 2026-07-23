@@ -23,37 +23,23 @@ from unittest.mock import Mock
 import pytest
 import torch
 from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec
-from transformers import GenerationConfig
+from transformers import GenerationConfig, PretrainedConfig
 
+from megatron.bridge.models.conversion.auto_bridge import AutoBridge
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.conversion.param_mapping import (
-    AutoMapping,
-    FusedExpertMapping,
-    FusedGatedExpertMapping,
-)
+from megatron.bridge.models.conversion.param_mapping import AutoMapping
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (
     MiniMaxM3Bridge,
     MiniMaxM3ModelProvider,
-    MiniMaxM3TextBridge,
     MiniMaxM3TopKRouter,
     TopKRouter,
-    _FusedGateUpMapping,
     _promote_router_weights_to_float32,
     minimax_m3_block_spec,
     quick_gelu,
 )
 from megatron.bridge.models.model_provider import _apply_mixed_precision_wrapper
 from megatron.bridge.utils.instantiate_utils import instantiate
-
-
-pytestmark = pytest.mark.unit
-
-try:
-    from transformers import MiniMaxM3VLForCausalLM, MiniMaxM3VLTextConfig
-except ImportError:
-    MiniMaxM3VLForCausalLM = None
-    MiniMaxM3VLTextConfig = None
 
 
 # Toy text-backbone config (mirrors the shape of MiniMaxAI/MiniMax-M3 text_config)
@@ -91,9 +77,6 @@ _MINIMAX_M3_TEXT_CONFIG = {
     "swiglu_alpha": 1.702,
     "swiglu_limit": 7.0,
     "torch_dtype": "bfloat16",
-    "bos_token_id": 1000,
-    "eos_token_id": 1001,
-    "pad_token_id": None,
 }
 
 _MINIMAX_M3_VL_CONFIG = {
@@ -145,7 +128,6 @@ class TestMiniMaxM3Bridge:
 
     def test_registration(self):
         assert issubclass(MiniMaxM3Bridge, MegatronModelBridge)
-        assert issubclass(MiniMaxM3TextBridge, MiniMaxM3Bridge)
 
     def test_provider_bridge_maps_core_config(self, mock_pretrained):
         bridge = MiniMaxM3Bridge()
@@ -262,22 +244,14 @@ class TestMiniMaxM3Bridge:
 
     def test_provider_bridge_flat_text_config(self):
         """A flat (non-nested) text config is accepted for text-only checkpoints."""
-        text_cfg = _make_text_config(
-            {
-                "model_type": "minimax_m3_vl_text",
-                "architectures": ["MiniMaxM3VLForCausalLM"],
-                "n_shared_experts": _DELETE,
-            }
-        )
+        text_cfg = _make_text_config()
         m = Mock(spec=PreTrainedCausalLM)
         m.config = text_cfg
         m.generation_config = Mock(spec=GenerationConfig)
 
-        bridge = MiniMaxM3TextBridge()
+        bridge = MiniMaxM3Bridge()
         provider = bridge.provider_bridge(m)
         assert provider.hidden_size == text_cfg.hidden_size
-        assert provider.moe_shared_expert_intermediate_size == text_cfg.shared_intermediate_size
-        assert provider.hf_max_position_embeddings == text_cfg.max_position_embeddings
 
     def test_mapping_registry_contains_critical_weights(self):
         bridge = MiniMaxM3Bridge()
@@ -465,161 +439,21 @@ class TestMiniMaxM3Bridge:
                 assert "index_" not in str(p)
                 assert "vision_tower" not in str(p)
 
-    def test_megatron_to_hf_config_builds_standalone_text_config(self, mock_pretrained):
+    def test_megatron_to_hf_config_rejects_incomplete_multimodal_export(self, mock_pretrained):
         bridge = MiniMaxM3Bridge()
         provider = bridge.provider_bridge(mock_pretrained)
-        config = MiniMaxM3Bridge.megatron_to_hf_config(provider)
 
-        assert config["architectures"] == ["MiniMaxM3VLForCausalLM"]
-        assert config["model_type"] == "minimax_m3_vl_text"
-        assert config["torch_dtype"] == "bfloat16"
-        assert "text_config" not in config
-        assert "vision_config" not in config
-        assert config["hidden_size"] == 64
-        assert config["intermediate_size"] == 32
-        assert config["dense_intermediate_size"] == 128
-        assert config["shared_intermediate_size"] == 32
-        assert config["head_dim"] == 16
-        assert config["rotary_dim"] == 8
-        assert config["hidden_act"] == "silu"
-        assert config["max_position_embeddings"] == 4096
-        assert config["mlp_layer_types"] == ["dense", "sparse", "sparse", "sparse"]
-        assert config["layer_types"] == ["full_attention"] * 4
-        assert config["rope_parameters"] == {
-            "rope_theta": 5000000.0,
-            "partial_rotary_factor": 0.5,
-            "rope_type": "default",
-        }
-        assert config["bos_token_id"] == 1000
-        assert config["eos_token_id"] == 1001
-        assert config["pad_token_id"] is None
-        assert "num_nextn_predict_layers" not in config
-        assert "mtp_num_hidden_layers" not in config
+        with pytest.raises(NotImplementedError, match="multimodal"):
+            MiniMaxM3Bridge.megatron_to_hf_config(provider)
 
-    def test_exported_config_instantiates_native_text_model_without_indexer(self, mock_pretrained):
-        if MiniMaxM3VLForCausalLM is None or MiniMaxM3VLTextConfig is None:
-            pytest.skip("Native MiniMax-M3 text model requires Transformers 5.12.1 or newer.")
+    def test_public_hf_save_rejects_before_creating_output(self, tmp_path):
+        hf_config = PretrainedConfig()
+        hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
+        hf_config.model_type = "minimax_m3_vl"
+        auto_bridge = AutoBridge(hf_config)
+        output_path = tmp_path / "incomplete-hf-export"
 
-        provider = MiniMaxM3Bridge().provider_bridge(mock_pretrained)
-        exported = MiniMaxM3TextBridge.megatron_to_hf_config(provider)
-        config_kwargs = dict(exported)
-        config_kwargs.pop("model_type")
-        config_kwargs.pop("torch_dtype")
+        with pytest.raises(NotImplementedError, match="standalone Hugging Face"):
+            auto_bridge.save_hf_pretrained([], output_path)
 
-        text_config = MiniMaxM3VLTextConfig(**config_kwargs)
-        model = MiniMaxM3VLForCausalLM(text_config)
-        state_keys = set(model.state_dict())
-
-        assert text_config.model_type == "minimax_m3_vl_text"
-        assert text_config.layer_types == ["full_attention"] * 4
-        assert all(layer.self_attn.indexer is None for layer in model.model.layers)
-        assert "model.layers.0.mlp.gate_up_proj.weight" in state_keys
-        assert "model.layers.1.mlp.experts.gate_up_proj" in state_keys
-        assert "model.layers.1.mlp.experts.down_proj" in state_keys
-        assert all("index_" not in name for name in state_keys)
-        assert MiniMaxM3TextBridge().get_expected_hf_export_keys(text_config) == state_keys
-
-    def test_megatron_to_hf_config_preserves_text_semantics(self, mock_pretrained):
-        bridge = MiniMaxM3Bridge()
-        original = bridge.provider_bridge(mock_pretrained)
-        exported = MiniMaxM3Bridge.megatron_to_hf_config(original)
-        roundtrip_pretrained = Mock(spec=PreTrainedCausalLM)
-        roundtrip_pretrained.config = SimpleNamespace(**exported)
-        restored = MiniMaxM3TextBridge().provider_bridge(roundtrip_pretrained)
-
-        for field in (
-            "hidden_size",
-            "num_layers",
-            "num_attention_heads",
-            "num_query_groups",
-            "kv_channels",
-            "vocab_size",
-            "ffn_hidden_size",
-            "moe_ffn_hidden_size",
-            "num_moe_experts",
-            "moe_router_topk",
-            "moe_router_score_function",
-            "moe_router_enable_expert_bias",
-            "moe_router_topk_scaling_factor",
-            "moe_shared_expert_intermediate_size",
-            "moe_layer_freq",
-            "rotary_percent",
-            "layernorm_zero_centered_gamma",
-            "qk_layernorm",
-            "share_embeddings_and_output_weights",
-            "hf_max_position_embeddings",
-            "hf_bos_token_id",
-            "hf_eos_token_id",
-            "hf_pad_token_id",
-        ):
-            assert getattr(restored, field) == getattr(original, field)
-        assert restored.activation_func is quick_gelu
-        assert restored.activation_func_clamp_value == original.activation_func_clamp_value
-
-    def test_text_mapping_registry_uses_native_transformers_layout(self):
-        registry = MiniMaxM3TextBridge().mapping_registry()
-        mappings = list(registry)
-        hf_params = [
-            value
-            for mapping in mappings
-            for value in (mapping.hf_param.values() if isinstance(mapping.hf_param, dict) else [mapping.hf_param])
-        ]
-
-        assert "model.embed_tokens.weight" in hf_params
-        assert "lm_head.weight" in hf_params
-        assert "model.layers.*.mlp.gate_up_proj.weight" in hf_params
-        assert "model.layers.*.mlp.shared_experts.gate_up_proj.weight" in hf_params
-        assert "model.layers.*.mlp.experts.gate_up_proj" in hf_params
-        assert "model.layers.*.mlp.experts.down_proj" in hf_params
-        assert all(not str(name).startswith("language_model.") for name in hf_params)
-        assert all("block_sparse_moe" not in str(name) for name in hf_params)
-        assert any(isinstance(mapping, FusedGatedExpertMapping) for mapping in mappings)
-        assert any(isinstance(mapping, FusedExpertMapping) for mapping in mappings)
-
-    def test_fused_gate_up_mapping_roundtrip_tp1(self):
-        mapping = _FusedGateUpMapping(
-            megatron_param="decoder.layers.2.mlp.linear_fc1.weight",
-            hf_param="model.layers.2.mlp.gate_up_proj.weight",
-        )
-        hf_weight = torch.arange(60, dtype=torch.float32).reshape(10, 6)
-
-        megatron_weight = mapping.hf_to_megatron(hf_weight, torch.nn.Module())
-        restored = mapping.megatron_to_hf(megatron_weight, torch.nn.Module())
-
-        assert torch.equal(megatron_weight, hf_weight)
-        assert torch.equal(restored["model.layers.2.mlp.gate_up_proj.weight"], hf_weight)
-
-    def test_fused_gate_up_mapping_rejects_odd_fused_dimension(self):
-        mapping = _FusedGateUpMapping(
-            megatron_param="decoder.layers.2.mlp.linear_fc1.weight",
-            hf_param="model.layers.2.mlp.gate_up_proj.weight",
-        )
-
-        with pytest.raises(ValueError, match="even gate/up dimension"):
-            mapping.hf_to_megatron(torch.zeros(9, 6), torch.nn.Module())
-
-    def test_fused_gate_up_mapping_resolves_layer_wildcard(self):
-        mapping = _FusedGateUpMapping(
-            megatron_param="decoder.layers.*.mlp.linear_fc1.weight",
-            hf_param="model.layers.*.mlp.gate_up_proj.weight",
-        )
-
-        resolved = mapping.resolve(("17",))
-
-        assert resolved.megatron_param == "decoder.layers.17.mlp.linear_fc1.weight"
-        assert resolved.hf_param == "model.layers.17.mlp.gate_up_proj.weight"
-
-    def test_hf_export_uses_standalone_text_bridge(self):
-        assert MiniMaxM3Bridge.SUPPORTS_HF_PRETRAINED_EXPORT is False
-        assert MiniMaxM3TextBridge.SUPPORTS_HF_PRETRAINED_EXPORT is True
-
-    def test_hf_export_preserves_source_tokenizer_artifacts(self):
-        assert MiniMaxM3TextBridge.ADDITIONAL_FILE_PATTERNS == [
-            "added_tokens.json",
-            "merges.txt",
-            "special_tokens_map.json",
-            "tokenizer_config.json",
-            "vocab.json",
-        ]
-        assert MiniMaxM3TextBridge.HF_EXPORT_OPTIONAL_ARTIFACTS == ("generation_config",)
-        assert MiniMaxM3TextBridge.HF_EXPORT_TRUST_REMOTE_CODE is False
+        assert not output_path.exists()

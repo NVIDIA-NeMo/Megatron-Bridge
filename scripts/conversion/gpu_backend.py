@@ -363,7 +363,7 @@ def export_checkpoint(
     print_rank_0(f"GPU export: {megatron_path} -> {hf_path}")
     print_rank_0(f"Parallelism: TP={tp} PP={pp} EP={ep} ETP={etp}; dtype={torch_dtype}")
     trusted = is_safe_repo(trust_remote_code=trust_remote_code, hf_path=hf_model)
-    reference_bridge = AutoBridge.from_hf_pretrained(
+    bridge = AutoBridge.from_hf_pretrained(
         hf_model,
         trust_remote_code=trusted,
         torch_dtype=dtype,
@@ -373,20 +373,9 @@ def export_checkpoint(
         hf_model,
         trust_remote_code=trusted,
     )
-    if type(reference_bridge._model_bridge) is type(checkpoint_config_bridge._model_bridge):
-        # Preserve the reference wrapper's streaming source shard map for the
-        # usual same-architecture export path.
-        bridge = reference_bridge
-        bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
-    else:
-        # A component bridge may export a different standalone architecture
-        # with different parameter names. Such exports must use the synthesized
-        # config and destination-defined sharding rather than the source map.
-        bridge = checkpoint_config_bridge
-        print_rank_0(
-            f"Export target differs from reference architecture: "
-            f"{type(reference_bridge._model_bridge).__name__} -> {type(bridge._model_bridge).__name__}"
-        )
+    # Preserve the reference wrapper's streaming state source and shard map while
+    # exporting the checkpoint-derived architecture and vocabulary configuration.
+    bridge.hf_pretrained.config = checkpoint_config_bridge.hf_pretrained
     model_provider = bridge.to_megatron_provider(load_weights=False)
     _configure_model_provider(model_provider, tp=tp, pp=pp, ep=ep, etp=etp, dtype=dtype)
     _maybe_restore_pipeline_layout(bridge, model_provider, megatron_path, pp)

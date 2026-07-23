@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.transformer_config import MLATransformerConfig, TransformerConfig
+from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
@@ -46,7 +47,7 @@ from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM, _ConfigOnlyPretrainedShim
 from megatron.bridge.models.hf_pretrained.masked_lm import PreTrainedMaskedLM
 from megatron.bridge.models.hf_pretrained.safe_config_loader import safe_load_config_with_retry
-from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, save_generator_to_safetensors
+from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource
 from megatron.bridge.models.model_provider import GetModelKwargs, ModelParallelKwargs, ModelProviderMixin
 
 
@@ -383,20 +384,10 @@ class AutoBridge(Generic[MegatronModelT]):
         # 2. Translate Megatron config -> HF, conforming to reference config
         bridge = cls.from_hf_config(hf_cfg)
         megatron_hf_cfg_dict = bridge._model_bridge.megatron_to_hf_config(megatron_cfg)
-        export_model_type = megatron_hf_cfg_dict.get("model_type")
-        reference_model_type = getattr(hf_cfg, "model_type", None)
-        if isinstance(export_model_type, str) and export_model_type != reference_model_type:
-            # Some bridges import one component from a composite checkpoint but
-            # export a different standalone HF architecture. In that case the
-            # source config is not a valid schema/reference for the destination.
-            export_config_dict = dict(megatron_hf_cfg_dict)
-            export_config_dict.pop("model_type")
-            synthesized_config = AutoConfig.for_model(export_model_type, **export_config_dict)
-        else:
-            megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
-            megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
-            synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
+        megatron_hf_cfg_dict = conform_config_to_reference(megatron_hf_cfg_dict, hf_cfg.to_dict())
+        megatron_hf_cfg_dict = _drop_readonly_config_properties(megatron_hf_cfg_dict, type(hf_cfg))
         # 3. Build final bridge from the synthesized config
+        synthesized_config = type(hf_cfg)(**megatron_hf_cfg_dict)
         bridge = cls.from_hf_config(synthesized_config)
         bridge.hf_model_id = hf_model_id
         bridge.trust_remote_code = trust_remote_code
@@ -996,18 +987,11 @@ class AutoBridge(Generic[MegatronModelT]):
                     artifact_kwargs = {}
                     if hasattr(model_bridge_instance, "get_hf_tokenizer_kwargs"):
                         artifact_kwargs.update(model_bridge_instance.get_hf_tokenizer_kwargs() or {})
-                    artifact_kwargs["trust_remote_code"] = getattr(
-                        type(model_bridge_instance),
-                        "HF_EXPORT_TRUST_REMOTE_CODE",
-                        self.trust_remote_code,
-                    )
+                    artifact_kwargs["trust_remote_code"] = self.trust_remote_code
 
                     # This wrapper loads artifacts lazily; model weights are never materialized here.
                     artifact_source = PreTrainedCausalLM.from_pretrained(artifact_source_path, **artifact_kwargs)
                     artifact_source.config = self.hf_pretrained
-                    optional_artifacts = getattr(type(model_bridge_instance), "HF_EXPORT_OPTIONAL_ARTIFACTS", None)
-                    if optional_artifacts is not None:
-                        artifact_source.OPTIONAL_ARTIFACTS = list(optional_artifacts)
                     additional_files = getattr(model_bridge_instance, "ADDITIONAL_FILE_PATTERNS", None) or None
                     artifact_source.save_artifacts(
                         path,
@@ -1158,17 +1142,33 @@ class AutoBridge(Generic[MegatronModelT]):
                 ignored_source_key_prefixes=ignored_source_key_prefixes,
             )
         else:
-            expected_keys = None
-            expected_keys_hook = getattr(type(bridge), "get_expected_hf_export_keys", None)
-            if strict and expected_keys_hook is not None:
-                expected_keys = expected_keys_hook(bridge, self.hf_pretrained)
-            save_generator_to_safetensors(
-                generator,
-                path,
-                distributed_save=distributed_save,
-                save_every_n_ranks=save_every_n_ranks,
-                expected_keys=expected_keys,
-            )
+            # Config-only path: shard and write safetensors directly
+            import json
+
+            from huggingface_hub import split_torch_state_dict_into_shards
+
+            # NOTE: Collects the full state dict into CPU memory before sharding.
+            # For very large models (>70B), this may require significant host RAM.
+            rank = dist.get_rank() if is_distributed else 0
+
+            if rank == 0:
+                state_dict = {name: tensor.contiguous().cpu() for name, tensor in generator}
+            else:
+                for _ in generator:
+                    pass
+                state_dict = None
+
+            if rank == 0:
+                plan = split_torch_state_dict_into_shards(state_dict)
+                safe_dir = Path(path)
+                safe_dir.mkdir(parents=True, exist_ok=True)
+                for filename, tensors in plan.filename_to_tensors.items():
+                    shard = {k: state_dict[k] for k in tensors}
+                    save_file(shard, safe_dir / filename)
+                if plan.is_sharded:
+                    index = {"metadata": plan.metadata, "weight_map": plan.tensor_to_filename}
+                    with open(safe_dir / "model.safetensors.index.json", "w") as f:
+                        json.dump(index, f, indent=2)
 
         # Save quantizer/amax sidecar after the main generator is consumed (rank 0 only).
         if quant_tensors:

@@ -217,10 +217,7 @@ class TestExportMegatronToHf:
 
         def fake_from_auto_config(*args, **kwargs):
             calls.append(("from_auto_config", args, kwargs))
-            return types.SimpleNamespace(
-                _model_bridge=FakeStateBackedBridge._model_bridge,
-                hf_pretrained=checkpoint_config,
-            )
+            return types.SimpleNamespace(hf_pretrained=checkpoint_config)
 
         monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
         monkeypatch.setattr(
@@ -276,69 +273,6 @@ class TestExportMegatronToHf:
         assert prepared_outputs == [
             (("/hf-export",), {"overwrite": False, "source_paths": [str(checkpoint_path), "hf"]})
         ]
-
-    def test_export_switches_to_destination_bridge_when_architecture_changes(self, cli, monkeypatch, tmp_path):
-        calls = []
-
-        class SourceModelBridge:
-            pass
-
-        class DestinationModelBridge:
-            pass
-
-        class ReferenceBridge:
-            _model_bridge = SourceModelBridge()
-            hf_pretrained = _FakeHfPretrained()
-
-            def to_megatron_provider(self, *args, **kwargs):
-                raise AssertionError("source-layout bridge must not build the export model")
-
-        class DestinationBridge:
-            _model_bridge = DestinationModelBridge()
-            hf_pretrained = types.SimpleNamespace(num_hidden_layers=2, num_nextn_predict_layers=0)
-
-            def to_megatron_provider(self, *args, **kwargs):
-                calls.append(("to_megatron_provider", args, kwargs))
-                return _FakeProvider(calls)
-
-            def load_megatron_model(self, *args, **kwargs):
-                calls.append(("load_megatron_model", args, kwargs))
-                return ["destination-model"]
-
-            def save_hf_pretrained(self, *args, **kwargs):
-                calls.append(("save_hf_pretrained", args, kwargs))
-
-        monkeypatch.setattr(cli, "_ensure_distributed_initialized", lambda timeout_minutes: None)
-        monkeypatch.setattr(cli, "_prepare_distributed_output", lambda *args, **kwargs: None)
-        monkeypatch.setattr(cli, "is_safe_repo", lambda *, trust_remote_code, hf_path: False)
-        monkeypatch.setattr(cli.AutoBridge, "from_hf_pretrained", lambda *args, **kwargs: ReferenceBridge())
-        monkeypatch.setattr(cli.AutoBridge, "from_auto_config", lambda *args, **kwargs: DestinationBridge())
-
-        checkpoint_path = tmp_path / "iter_0000000"
-        checkpoint_path.mkdir()
-        cli.export_checkpoint.__wrapped__(
-            hf_model="hf",
-            megatron_path=str(checkpoint_path),
-            hf_path="/hf-export",
-            tp=1,
-            pp=1,
-            ep=2,
-            etp=1,
-            torch_dtype="bfloat16",
-            trust_remote_code=False,
-            strict=True,
-            show_progress=False,
-            distributed_save=True,
-            save_every_n_ranks=1,
-            distributed_timeout_minutes=None,
-            export_weight_dtype=None,
-            overwrite=False,
-        )
-
-        assert any(call[0] == "to_megatron_provider" for call in calls)
-        assert any(call[0] == "load_megatron_model" for call in calls)
-        save_call = next(call for call in calls if call[0] == "save_hf_pretrained")
-        assert save_call[1] == (["destination-model"], "/hf-export")
 
 
 class TestPipelineLayout:

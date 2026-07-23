@@ -13,12 +13,11 @@
 # limitations under the License.
 
 import fnmatch
-import hashlib
 import json
 import logging
 from abc import ABC, abstractmethod
 from collections import defaultdict
-from collections.abc import Collection, Mapping
+from collections.abc import Mapping
 from functools import lru_cache
 from pathlib import Path, PureWindowsPath
 from typing import (
@@ -37,8 +36,6 @@ import torch
 
 
 logger = logging.getLogger(__name__)
-
-_DEFAULT_HF_SHARD_SIZE_BYTES = 5_000_000_000
 
 
 def _validate_safetensors_shard_filename(filename: object, *, tensor_key: str, index_file: Path) -> str:
@@ -81,183 +78,6 @@ def _resolve_output_shard_path(output_path: Path, filename: str) -> Path:
     except ValueError:
         raise ValueError(f"Shard filename {filename!r} escapes output directory {output_root}.") from None
     return output_file_path
-
-
-def save_generator_to_safetensors(
-    generator: Iterable[Tuple[str, torch.Tensor]],
-    output_path: Union[str, Path],
-    *,
-    distributed_save: bool = False,
-    save_every_n_ranks: int = 1,
-    max_shard_size_bytes: int = _DEFAULT_HF_SHARD_SIZE_BYTES,
-    expected_keys: Collection[str] | None = None,
-) -> None:
-    """Stream destination-defined Hugging Face safetensors shards.
-
-    Unlike :meth:`SafeTensorsStateSource.save_generator`, this writer does not
-    require a source checkpoint or reuse a source shard map. Every rank drains
-    the same collective conversion generator and computes identical shard
-    boundaries; saver ranks retain and write only the shards assigned to them.
-
-    Args:
-        generator: Iterable of destination tensor names and tensors.
-        output_path: Directory in which to write the Hugging Face checkpoint.
-        distributed_save: Whether to distribute shards across saver ranks.
-        save_every_n_ranks: Use every Nth rank as a saver when distributed save
-            is enabled.
-        max_shard_size_bytes: Target maximum shard size. A single tensor larger
-            than this limit is written to its own shard.
-        expected_keys: Optional exact destination key set for strict validation.
-
-    Raises:
-        KeyError: If yielded names do not match ``expected_keys``.
-        RuntimeError: If ranks observe different generator contents.
-        TypeError: If the generator yields a non-tensor value.
-        ValueError: If the generator is empty, contains duplicate names, or an
-            argument is invalid.
-    """
-    if save_every_n_ranks < 1:
-        raise ValueError(f"save_every_n_ranks must be at least 1, got {save_every_n_ranks}.")
-    if max_shard_size_bytes < 1:
-        raise ValueError(f"max_shard_size_bytes must be positive, got {max_shard_size_bytes}.")
-
-    is_distributed = torch.distributed.is_available() and torch.distributed.is_initialized()
-    rank = torch.distributed.get_rank() if is_distributed else 0
-    world_size = torch.distributed.get_world_size() if is_distributed else 1
-    saver_ranks = list(range(0, world_size, save_every_n_ranks)) if distributed_save and is_distributed else [0]
-
-    destination = Path(output_path)
-    if rank == 0:
-        destination.mkdir(parents=True, exist_ok=True)
-    if is_distributed:
-        torch.distributed.barrier()
-
-    from safetensors.torch import save_file
-
-    seen_names: set[str] = set()
-    shard_by_name: dict[str, int] = {}
-    current_names: list[str] = []
-    current_tensors: dict[str, torch.Tensor] = {}
-    current_size = 0
-    shard_index = 1
-    total_size = 0
-    content_digest = hashlib.sha256()
-    pending_owned_shards: dict[int, dict[str, torch.Tensor]] = {}
-
-    def _owner(shard_number: int) -> int:
-        return saver_ranks[(shard_number - 1) % len(saver_ranks)]
-
-    def _write_pending_wave() -> None:
-        for pending_index, pending_tensors in pending_owned_shards.items():
-            temporary_name = f".model-{pending_index:05d}.safetensors.tmp"
-            save_file(pending_tensors, destination / temporary_name)
-        pending_owned_shards.clear()
-        if is_distributed:
-            torch.distributed.barrier()
-
-    def _flush_current_shard() -> None:
-        nonlocal current_names, current_size, current_tensors, shard_index
-        if not current_names:
-            return
-
-        completed_shard = shard_index
-        for tensor_name in current_names:
-            shard_by_name[tensor_name] = completed_shard
-
-        if rank == _owner(completed_shard):
-            pending_owned_shards[completed_shard] = current_tensors
-
-        current_names = []
-        current_tensors = {}
-        current_size = 0
-        shard_index += 1
-        if completed_shard % len(saver_ranks) == 0:
-            # Each saver owns at most one shard in a wave. All owners write
-            # concurrently before conversion advances to the next wave.
-            _write_pending_wave()
-
-    for name, tensor in generator:
-        if not isinstance(name, str) or not name:
-            raise ValueError(f"Safetensors names must be non-empty strings, got {name!r}.")
-        if name in seen_names:
-            raise ValueError(f"Generator yielded duplicate tensor name: {name}.")
-        if not isinstance(tensor, torch.Tensor):
-            raise TypeError(f"Generator value for {name} must be a torch.Tensor, got {type(tensor).__name__}.")
-
-        tensor_size = tensor.numel() * tensor.element_size()
-        if current_names and current_size + tensor_size > max_shard_size_bytes:
-            _flush_current_shard()
-
-        seen_names.add(name)
-        current_names.append(name)
-        current_size += tensor_size
-        total_size += tensor_size
-        content_digest.update(name.encode("utf-8"))
-        content_digest.update(b"\0")
-        content_digest.update(str(tensor_size).encode("ascii"))
-        content_digest.update(b"\0")
-        content_digest.update(str(tensor.dtype).encode("ascii"))
-        content_digest.update(b"\0")
-        content_digest.update(str(tuple(tensor.shape)).encode("ascii"))
-        content_digest.update(b"\0")
-        if rank == _owner(shard_index):
-            current_tensors[name] = tensor.contiguous().cpu()
-
-        if current_size >= max_shard_size_bytes:
-            _flush_current_shard()
-
-    _flush_current_shard()
-    shard_count = shard_index - 1
-    if shard_count % len(saver_ranks):
-        _write_pending_wave()
-    if not seen_names:
-        raise ValueError("Cannot save an empty Hugging Face weight generator.")
-
-    local_signature = (len(seen_names), total_size, shard_count, content_digest.hexdigest())
-    if is_distributed:
-        gathered_signatures: list[tuple[int, int, int, str] | None] = [None] * world_size
-        torch.distributed.all_gather_object(gathered_signatures, local_signature)
-        if any(signature != local_signature for signature in gathered_signatures):
-            raise RuntimeError("Ranks observed different destination tensors while writing Hugging Face shards.")
-        torch.distributed.barrier()
-
-    if expected_keys is not None:
-        expected_names = set(expected_keys)
-        missing_names = sorted(expected_names - seen_names)
-        unexpected_names = sorted(seen_names - expected_names)
-        if missing_names or unexpected_names:
-            for index in range(1, shard_count + 1):
-                if rank == _owner(index):
-                    (destination / f".model-{index:05d}.safetensors.tmp").unlink(missing_ok=True)
-            if is_distributed:
-                torch.distributed.barrier()
-            raise KeyError(
-                "Destination Hugging Face key mismatch: "
-                f"missing={missing_names[:20]}, unexpected={unexpected_names[:20]}."
-            )
-
-    def _final_name(shard_number: int) -> str:
-        if shard_count == 1:
-            return "model.safetensors"
-        return f"model-{shard_number:05d}-of-{shard_count:05d}.safetensors"
-
-    for index in range(1, shard_count + 1):
-        if rank != _owner(index):
-            continue
-        temporary_path = destination / f".model-{index:05d}.safetensors.tmp"
-        temporary_path.replace(destination / _final_name(index))
-
-    if is_distributed:
-        torch.distributed.barrier()
-
-    if rank == 0 and shard_count > 1:
-        weight_map = {name: _final_name(index) for name, index in shard_by_name.items()}
-        index_data = {"metadata": {"total_size": total_size}, "weight_map": weight_map}
-        with open(destination / "model.safetensors.index.json", "w") as index_file:
-            json.dump(index_data, index_file, indent=2, sort_keys=True)
-
-    if is_distributed:
-        torch.distributed.barrier()
 
 
 class StateDict(Mapping[str, torch.Tensor]):
