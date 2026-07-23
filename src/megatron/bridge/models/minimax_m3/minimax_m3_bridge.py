@@ -187,6 +187,15 @@ class MiniMaxM3Bridge(MegatronModelBridge):
     """
 
     REQUIRES_HF_SOURCE_FOR_EXPORT = True
+    # AutoTokenizer.save_pretrained() consolidates these artifacts. Preserve the
+    # pinned source files so the source-overlay checkpoint remains self-contained.
+    ADDITIONAL_FILE_PATTERNS = [
+        "added_tokens.json",
+        "merges.txt",
+        "special_tokens_map.json",
+        "tokenizer_config.json",
+        "vocab.json",
+    ]
 
     @classmethod
     def hf_to_megatron_activation(cls, hidden_act: str):

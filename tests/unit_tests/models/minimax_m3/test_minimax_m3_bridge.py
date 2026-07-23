@@ -529,6 +529,15 @@ class TestMiniMaxM3Bridge:
         assert MiniMaxM3Bridge.SUPPORTS_HF_PRETRAINED_EXPORT is True
         assert MiniMaxM3Bridge.REQUIRES_HF_SOURCE_FOR_EXPORT is True
 
+    def test_hf_export_preserves_source_tokenizer_artifacts(self):
+        assert MiniMaxM3Bridge.ADDITIONAL_FILE_PATTERNS == [
+            "added_tokens.json",
+            "merges.txt",
+            "special_tokens_map.json",
+            "tokenizer_config.json",
+            "vocab.json",
+        ]
+
     def test_config_only_hf_export_rejects_before_creating_output(self, tmp_path):
         hf_config = PretrainedConfig()
         hf_config.architectures = ["MiniMaxM3SparseForConditionalGeneration"]
