@@ -266,21 +266,21 @@ def _restore_derived_spec_fields(provider: "MegatronMIMOProvider", saved: dict) 
 
 
 def _resolve_iter_folder(path: Path) -> Path:
-    """Resolve ``path`` to an ``iter_*`` folder, or pick the latest under it."""
-    if path.name.startswith("iter_"):
+    """Resolve ``path`` to the checkpoint iteration selected for loading."""
+    from megatron.bridge.training.checkpointing import (
+        _DIRECT_ITERATION_DIR_SENTINEL,
+        _resolve_checkpoint_iteration,
+    )
+    from megatron.bridge.training.utils.checkpoint_utils import get_checkpoint_name
+
+    iteration, release = _resolve_checkpoint_iteration(str(path), None)
+    if iteration == _DIRECT_ITERATION_DIR_SENTINEL:
         return path
 
-    iter_folders = [f for f in path.iterdir() if f.is_dir() and f.name.startswith("iter_")]
-    if not iter_folders:
-        raise FileNotFoundError(
-            f"No iter_* folder found under {path}; expected either a MIMO "
-            f"dist-checkpoint parent directory or an iter folder directly."
-        )
+    if iteration >= 0 or release:
+        return Path(get_checkpoint_name(str(path), iteration, release))
 
-    def _iter_number(folder: Path) -> int:
-        try:
-            return int(folder.name.removeprefix("iter_"))
-        except ValueError:
-            return -1
-
-    return max(iter_folders, key=_iter_number)
+    raise FileNotFoundError(
+        f"No checkpoint tracker found under {path}; expected either a MIMO "
+        f"dist-checkpoint parent directory or an iter folder directly."
+    )
