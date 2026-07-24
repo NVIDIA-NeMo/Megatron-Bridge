@@ -20,25 +20,26 @@ from megatron.bridge.recipes.nemotronh._nemotron_3_nano import (
     _nemotron_3_nano_pretrain_reference_config,
     _nemotron_3_nano_sft_reference_config,
 )
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
 
 
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return the Nemotron 3 Nano pre-training config for 8 H100 GPUs.
+    """Return the Nemotron 3 Nano pretraining config for eight H100 GPUs.
 
-    TP=8 keeps the perf recipe's PP=1, CP=1, EP=8, ETP=1, HybridEP dispatcher,
+    TP8 retains the perf recipe's PP1/CP1/EP8/ETP1 HybridEP topology,
     selective recompute, and native vocab-parallel cross entropy. TP
     communication overlap is disabled because its persistent userbuffers
-    exhaust checkpoint restore headroom on 80 GB H100s. The compiled native
+    exhaust checkpoint-restore headroom on 80 GB H100s. The compiled native
     cross-entropy wrapper is disabled because its temporary workspace does not
-    fit after FP32 optimizer state allocation; the underlying native loss is
+    fit after FP32 optimizer-state allocation; the underlying native loss is
     unchanged. Unused CUDA cache is released after each optimizer step so the
-    first lazy MoE metric collective has allocation headroom after checkpoint
-    resume. Validation uses microbatch one without changing its global batch.
-    CUDA graphs remain disabled to preserve general-training headroom.
+    first lazy MoE metric collective can allocate after checkpoint resume.
+    Validation uses microbatch one without changing its global batch. CUDA
+    graphs remain disabled to preserve general-training headroom.
 
     Returns:
-        ConfigContainer: H100 BF16 pre-training configuration.
+        H100 BF16 pretraining configuration.
     """
     cfg = _nemotron_3_nano_pretrain_reference_config()
 
@@ -66,6 +67,9 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.train.empty_unused_memory_level = 2
     cfg.validation.eval_micro_batch_size = 1
 
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -79,7 +83,6 @@ def _apply_h100_finetune_execution_config(cfg: ConfigContainer) -> None:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
 
-    # No H100 packed-finetuning perf reference currently validates HybridEP.
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_shared_expert_overlap = False
@@ -89,36 +92,42 @@ def _apply_h100_finetune_execution_config(cfg: ConfigContainer) -> None:
 
 
 def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return the Nemotron 3 Nano SFT config for 8 H100 GPUs.
+    """Return the Nemotron 3 Nano SFT config for eight H100 GPUs.
 
-    Packed SFT retains the established DeepEP dispatcher and eager execution;
-    no H100 packed-finetuning perf reference currently proves HybridEP or CUDA
-    graphs for this workload.
+    Packed SFT retains the established DeepEP dispatcher and eager execution.
+    TP4 leaves room for full optimizer state and checkpointing.
 
     Returns:
-        ConfigContainer: H100 BF16 SFT configuration.
+        H100 BF16 SFT configuration.
     """
     cfg = _nemotron_3_nano_sft_reference_config()
     _apply_h100_finetune_execution_config(cfg)
-    # Full SFT needs TP=4 to leave room for optimizer state and checkpointing.
     cfg.model.tensor_model_parallel_size = 4
     cfg.model.sequence_parallel = True
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
 def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
-    """Return the Nemotron 3 Nano PEFT config for 8 H100 GPUs.
+    """Return the Nemotron 3 Nano PEFT config for eight H100 GPUs.
 
     Args:
-        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        peft_scheme: PEFT scheme, or a custom PEFT instance.
 
     Returns:
-        ConfigContainer: H100 BF16 PEFT configuration.
+        H100 BF16 PEFT configuration.
     """
     cfg = _nemotron_3_nano_peft_reference_config(peft_scheme=peft_scheme)
     _apply_h100_finetune_execution_config(cfg)
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

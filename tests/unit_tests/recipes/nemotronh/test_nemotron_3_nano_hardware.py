@@ -14,18 +14,21 @@
 
 """Hardware parity and convergence-safety tests for Nemotron 3 Nano recipes."""
 
+import importlib
 from collections.abc import Callable
 
 import pytest
 import torch
 
 import megatron.bridge.recipes as recipes
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config as gb200_perf_config,
 )
 from megatron.bridge.perf_recipes.nemotronh.h100.nemotronh import (
     nemotron_3_nano_pretrain_16gpu_h100_bf16_config as h100_perf_config,
 )
+from megatron.bridge.recipes.nemotronh._nemotron_3_nano import _nemotron_3_nano_pretrain_reference_config
 from megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano import (
     nemotron_3_nano_peft_8gpu_gb200_bf16_config,
     nemotron_3_nano_pretrain_8gpu_gb200_bf16_config,
@@ -38,9 +41,35 @@ from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
 
 
-_APPROVED_PERF_FIELDS = (
+class _OfflineAutoBridge:
+    """Build the reference provider without reading a Hugging Face config."""
+
+    @classmethod
+    def from_hf_pretrained(cls, *args: object, **kwargs: object) -> "_OfflineAutoBridge":
+        del args, kwargs
+        return cls()
+
+    def to_megatron_provider(self, *args: object, **kwargs: object) -> HybridModelProvider:
+        del args, kwargs
+        model = _nemotron_3_nano_pretrain_reference_config().model
+        assert isinstance(model, HybridModelProvider)
+        return model
+
+
+@pytest.fixture(autouse=True)
+def _patch_gb200_auto_bridge(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the GB200 public recipe checks deterministic and offline."""
+    monkeypatch.setenv("HF_DATASETS_OFFLINE", "1")
+    monkeypatch.setenv("HF_HUB_OFFLINE", "1")
+    monkeypatch.setenv("TRANSFORMERS_OFFLINE", "1")
+    module = importlib.import_module("megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano")
+    patch_recipe_module_global(monkeypatch, module, "AutoBridge", _OfflineAutoBridge)
+
+
+_APPROVED_PRETRAIN_PERF_FIELDS = (
     "model.pipeline_model_parallel_size",
     "model.virtual_pipeline_model_parallel_size",
     "model.context_parallel_size",
@@ -73,8 +102,8 @@ _APPROVED_PERF_FIELDS = (
 )
 
 
-def _get_field(config: ConfigContainer, path: str):
-    value = config
+def _get_field(config: ConfigContainer, path: str) -> object:
+    value: object = config
     for part in path.split("."):
         value = getattr(value, part)
     return value
@@ -117,30 +146,30 @@ def _assert_convergence_sensitive_model_contract(config: ConfigContainer) -> Non
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("library_factory", "perf_factory"),
-    [
-        (nemotron_3_nano_pretrain_8gpu_h100_bf16_config, h100_perf_config),
-        (nemotron_3_nano_pretrain_8gpu_gb200_bf16_config, gb200_perf_config),
-    ],
-    ids=["h100", "gb200"],
-)
-def test_pretrain_approved_fields_match_perf_reference(
-    library_factory: Callable[[], ConfigContainer],
-    perf_factory: Callable[[], ConfigContainer],
-) -> None:
-    """Approved execution fields should stay aligned with the perf references."""
-    library_config = library_factory()
-    perf_config = perf_factory()
+def test_h100_pretrain_approved_fields_match_perf_reference() -> None:
+    """Approved execution fields should stay aligned with the H100 perf reference."""
+    library_config = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    perf_config = h100_perf_config()
 
-    for field in _APPROVED_PERF_FIELDS:
+    for field in _APPROVED_PRETRAIN_PERF_FIELDS:
+        assert _get_field(library_config, field) == _get_field(perf_config, field), field
+    assert _flex_dispatcher_num_sms(library_config) == _flex_dispatcher_num_sms(perf_config) == 16
+
+
+@pytest.mark.unit
+def test_gb200_pretrain_approved_fields_match_perf_reference() -> None:
+    """Approved execution fields should stay aligned with the GB200 perf reference."""
+    library_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    perf_config = gb200_perf_config()
+
+    for field in _APPROVED_PRETRAIN_PERF_FIELDS:
         assert _get_field(library_config, field) == _get_field(perf_config, field), field
     assert _flex_dispatcher_num_sms(library_config) == _flex_dispatcher_num_sms(perf_config) == 16
 
 
 @pytest.mark.unit
 def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
-    """The 8-GPU library needs TP and memory-safe overlap beyond its perf reference."""
+    """The 8-GPU library uses the validated memory-safe execution exceptions."""
     library_config = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
     perf_config = h100_perf_config()
 
@@ -148,12 +177,14 @@ def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
     assert perf_config.model.sequence_parallel is False
     assert perf_config.model.recompute_granularity == "selective"
     assert perf_config.model.recompute_modules == ["moe", "layernorm"]
+
     assert library_config.model.tensor_model_parallel_size == 8
     assert library_config.model.sequence_parallel is True
     assert library_config.model.recompute_granularity == perf_config.model.recompute_granularity == "selective"
     assert library_config.model.recompute_method is perf_config.model.recompute_method is None
     assert library_config.model.recompute_num_layers is perf_config.model.recompute_num_layers is None
     assert library_config.model.recompute_modules == perf_config.model.recompute_modules == ["moe", "layernorm"]
+
     assert library_config.model.cross_entropy_loss_fusion is False
     assert perf_config.model.cross_entropy_loss_fusion is True
     assert library_config.model.cross_entropy_fusion_impl == "native"
@@ -165,6 +196,7 @@ def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
     assert library_config.optimizer.optimizer_cpu_offload is perf_config.optimizer.optimizer_cpu_offload is False
     assert library_config.comm_overlap.tp_comm_overlap is False
     assert perf_config.comm_overlap.tp_comm_overlap is True
+
     assert perf_config.model.cuda_graph_impl == "transformer_engine"
     assert cuda_graph_module_names(perf_config.model) == ["attn", "mamba"]
     assert perf_config.model.use_te_rng_tracker is True
@@ -176,56 +208,58 @@ def test_h100_pretrain_uses_8gpu_memory_execution_config() -> None:
 
 
 @pytest.mark.unit
-def test_gb200_pretrain_uses_memory_safe_execution_config() -> None:
-    """The 8-GPU GB200 library retains topology but excludes graph memory."""
+def test_gb200_pretrain_retains_validated_execution_contract() -> None:
+    """The GB200 library should retain the converged 4K graph-enabled contract."""
     library_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
     perf_config = gb200_perf_config()
 
     assert library_config.model.tensor_model_parallel_size == perf_config.model.tensor_model_parallel_size == 1
     assert library_config.model.sequence_parallel is perf_config.model.sequence_parallel is False
+    assert library_config.model.expert_tensor_parallel_size == perf_config.model.expert_tensor_parallel_size == 1
+    assert library_config.model.expert_model_parallel_size == perf_config.model.expert_model_parallel_size == 8
     assert library_config.model.recompute_granularity is perf_config.model.recompute_granularity is None
     assert library_config.model.recompute_method is perf_config.model.recompute_method is None
     assert library_config.model.recompute_num_layers is perf_config.model.recompute_num_layers is None
     assert library_config.model.recompute_modules == perf_config.model.recompute_modules is None
+
+    assert library_config.model.cuda_graph_impl == perf_config.model.cuda_graph_impl == "transformer_engine"
+    assert (
+        cuda_graph_module_names(library_config.model)
+        == cuda_graph_module_names(perf_config.model)
+        == [
+            "attn",
+            "mamba",
+            "moe_router",
+            "moe_preprocess",
+        ]
+    )
+    assert library_config.model.cuda_graph_warmup_steps == perf_config.model.cuda_graph_warmup_steps == 3
+    assert library_config.model.use_te_rng_tracker is perf_config.model.use_te_rng_tracker is True
+    assert library_config.rng.te_rng_tracker is perf_config.rng.te_rng_tracker is True
+
     assert library_config.model.cross_entropy_loss_fusion is perf_config.model.cross_entropy_loss_fusion is True
     assert library_config.model.cross_entropy_fusion_impl == "native"
-    assert library_config.train.empty_unused_memory_level is perf_config.train.empty_unused_memory_level == 0
-    assert library_config.validation.eval_micro_batch_size is perf_config.validation.eval_micro_batch_size is None
-    assert library_config.optimizer.optimizer_cpu_offload is False
+    assert library_config.model.apply_rope_fusion is True
+    assert library_config.model.seq_length == library_config.dataset.seq_length == 4096
+    assert library_config.train.train_iters == 39735
+    assert library_config.train.global_batch_size == 3072
+    assert library_config.train.micro_batch_size == 2
+
+    assert library_config.mixed_precision.bf16 is True
+    assert library_config.mixed_precision.fp8 is None
+    assert library_config.mixed_precision.grad_reduce_in_fp32 is False
+    assert library_config.ddp.grad_reduce_in_fp32 is False
+    assert library_config.ddp.check_for_nan_in_grad is False
+    assert library_config.rerun_state_machine.check_for_nan_in_loss is False
     assert library_config.comm_overlap.tp_comm_overlap is False
     assert perf_config.comm_overlap.tp_comm_overlap is True
-    assert perf_config.model.cuda_graph_impl == "transformer_engine"
-    assert cuda_graph_module_names(perf_config.model) == [
-        "attn",
-        "mamba",
-        "moe_router",
-        "moe_preprocess",
-    ]
-    assert perf_config.model.use_te_rng_tracker is True
-    assert perf_config.rng.te_rng_tracker is True
-    assert perf_config.model.cuda_graph_warmup_steps == 3
-    assert library_config.model.cuda_graph_impl == "none"
-    assert cuda_graph_module_names(library_config.model) == []
-    assert library_config.model.use_te_rng_tracker is False
-    assert library_config.rng.te_rng_tracker is False
 
 
 @pytest.mark.unit
-@pytest.mark.parametrize(
-    ("library_factory", "perf_factory"),
-    [
-        (nemotron_3_nano_pretrain_8gpu_h100_bf16_config, h100_perf_config),
-        (nemotron_3_nano_pretrain_8gpu_gb200_bf16_config, gb200_perf_config),
-    ],
-    ids=["h100", "gb200"],
-)
-def test_pretrain_excludes_benchmark_and_convergence_sensitive_overrides(
-    library_factory: Callable[[], ConfigContainer],
-    perf_factory: Callable[[], ConfigContainer],
-) -> None:
-    """Library recipes must not inherit benchmark-only or convergence-sensitive settings."""
-    library_config = library_factory()
-    perf_config = perf_factory()
+def test_h100_pretrain_excludes_benchmark_and_convergence_sensitive_overrides() -> None:
+    """The H100 library must not inherit benchmark-only or semantic settings."""
+    library_config = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    perf_config = h100_perf_config()
 
     _assert_convergence_sensitive_model_contract(library_config)
     assert perf_config.model.moe_router_force_load_balancing is True
@@ -259,6 +293,27 @@ def test_pretrain_excludes_benchmark_and_convergence_sensitive_overrides(
     assert library_config.rerun_state_machine.check_for_nan_in_loss is True
     assert perf_config.ddp.check_for_nan_in_grad is False
     assert perf_config.rerun_state_machine.check_for_nan_in_loss is False
+
+
+@pytest.mark.unit
+def test_gb200_pretrain_excludes_convergence_sensitive_overrides() -> None:
+    """The GB200 library must preserve learned routing and optimizer semantics."""
+    library_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    perf_config = gb200_perf_config()
+
+    _assert_convergence_sensitive_model_contract(library_config)
+    assert perf_config.model.moe_router_force_load_balancing is True
+    assert library_config.model.moe_router_padding_for_fp8 is False
+    assert library_config.model.calculate_per_token_loss is False
+
+    assert library_config.optimizer.lr == 1.6e-3
+    assert library_config.optimizer.min_lr == 1.6e-5
+    assert library_config.scheduler.lr_warmup_iters == 333
+    assert library_config.optimizer.main_grads_dtype == torch.float32
+    assert library_config.optimizer.main_params_dtype == torch.float32
+    assert library_config.optimizer.exp_avg_dtype == torch.float32
+    assert library_config.optimizer.exp_avg_sq_dtype == torch.float32
+    assert library_config.optimizer.optimizer_cpu_offload is False
 
 
 @pytest.mark.unit
@@ -299,6 +354,7 @@ def test_finetune_recipes_retain_safe_execution_defaults(
     _assert_convergence_sensitive_model_contract(config)
 
     assert config.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(config.model) == []
     assert config.model.recompute_granularity is None
     assert config.model.recompute_modules is None
     assert config.dataset.enable_offline_packing is True
@@ -314,6 +370,10 @@ def test_finetune_recipes_retain_safe_execution_defaults(
     assert config.optimizer.min_lr == 0.0
     assert config.scheduler.lr_warmup_iters == 50
     assert config.optimizer.optimizer_cpu_offload is False
+    assert config.optimizer.main_grads_dtype == torch.float32
+    assert config.optimizer.main_params_dtype == torch.float32
+    assert config.optimizer.exp_avg_dtype == torch.float32
+    assert config.optimizer.exp_avg_sq_dtype == torch.float32
 
     assert config.ddp.overlap_grad_reduce is True
     assert config.ddp.overlap_param_gather is True

@@ -49,25 +49,26 @@ docker run --rm -it \
 ## Conversion with 🤗 Hugging Face
 
 ### Import HF → Megatron
-To import the HF model to your desired `$MEGATRON_MODEL_PATH`, use the distributed
-conversion script because this model uses expert parallelism. The single-process
-`examples/conversion/convert_checkpoints.py` script is limited to single-GPU conversion
-without model parallelism.
+To import the HF model to your desired `$MEGATRON_MODEL_PATH`, use the
+distributed GPU backend because this model uses expert parallelism.
 
 ```bash
 HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/output/megatron/ckpt
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py import \
---hf-model $HF_MODEL \
---megatron-path $MEGATRON_PATH \
---tp 1 \
---ep 8
+./scripts/conversion/convert.sh import \
+    --executor local \
+    --device gpu \
+    --gpus-per-node 8 \
+    --hf-model $HF_MODEL \
+    --megatron-path $MEGATRON_PATH \
+    --tp 1 \
+    --ep 8
 ```
 
 Notes:
 - The default parallelism is TP=1, EP=8 (Expert Parallel)
-- Adjust `--nproc-per-node` based on your available GPUs
+- Adjust `--gpus-per-node` based on your available GPUs
 
 ### Export Megatron → HF
 ```bash
@@ -75,12 +76,15 @@ HF_MODEL=/path/to/hf/model
 MEGATRON_PATH=/path/to/trained/megatron/ckpt
 OUTPUT_PATH=/path/to/output/hf/ckpt
 
-uv run python -m torch.distributed.run --nproc-per-node=8 examples/conversion/convert_checkpoints_multi_gpu.py export \
---hf-model $HF_MODEL \
---megatron-path $MEGATRON_PATH \
---hf-path $OUTPUT_PATH \
---tp 1 \
---ep 8
+./scripts/conversion/convert.sh export \
+    --executor local \
+    --device gpu \
+    --gpus-per-node 8 \
+    --hf-model $HF_MODEL \
+    --megatron-path $MEGATRON_PATH \
+    --hf-path $OUTPUT_PATH \
+    --tp 1 \
+    --ep 8
 ```
 
 ### Roundtrip Testing

@@ -99,22 +99,6 @@ def gemma3_vl_bridge():
     return Gemma3VLBridge()
 
 
-class TestGemma3VLBridgeInitialization:
-    """Test Gemma3VLBridge initialization and basic functionality."""
-
-    def test_bridge_initialization(self, gemma3_vl_bridge):
-        """Test that bridge can be initialized."""
-        assert isinstance(gemma3_vl_bridge, Gemma3VLBridge)
-
-    def test_bridge_has_required_methods(self, gemma3_vl_bridge):
-        """Test that bridge has required methods."""
-        assert hasattr(gemma3_vl_bridge, "provider_bridge")
-        assert callable(gemma3_vl_bridge.provider_bridge)
-
-        assert hasattr(gemma3_vl_bridge, "mapping_registry")
-        assert callable(gemma3_vl_bridge.mapping_registry)
-
-
 class TestGemma3VLBridgeProviderBridge:
     """Test provider_bridge method functionality."""
 
@@ -289,6 +273,20 @@ class TestGemma3VLBridgeMappingRegistry:
         assert mapping is not None
         assert str(mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
         assert str(mapping.hf_param) == "vision_tower.embeddings.patch_embedding.bias"
+
+    def test_mapping_registry_accepts_legacy_checkpoint_vision_tower_keys(self, gemma3_vl_bridge):
+        """Test mapping_registry preserves the nested namespace in legacy Gemma3 checkpoints."""
+        gemma3_vl_bridge.hf_pretrained = Mock()
+        gemma3_vl_bridge.hf_pretrained.state.source.get_all_keys.return_value = {
+            "vision_tower.vision_model.embeddings.patch_embedding.bias",
+        }
+
+        registry = gemma3_vl_bridge.mapping_registry()
+        mapping = registry.hf_to_megatron_lookup("vision_tower.vision_model.embeddings.patch_embedding.bias")
+
+        assert mapping is not None
+        assert str(mapping.megatron_param) == "vision_tower.embeddings.patch_embedding.bias"
+        assert str(mapping.hf_param) == "vision_tower.vision_model.embeddings.patch_embedding.bias"
 
     def test_mapping_registry_multimodal_projector_params(self, gemma3_vl_bridge):
         """Test mapping_registry handles multimodal projector parameters correctly."""

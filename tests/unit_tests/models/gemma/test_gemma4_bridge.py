@@ -19,6 +19,7 @@ from unittest.mock import Mock
 
 import pytest
 import torch
+from transformers import Gemma4TextConfig
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
@@ -130,15 +131,6 @@ def bridge():
 class TestGemma4BridgeRegistration:
     def test_is_subclass_of_model_bridge(self):
         assert issubclass(Gemma4Bridge, MegatronModelBridge)
-
-    def test_initialization(self, bridge):
-        assert isinstance(bridge, Gemma4Bridge)
-
-    def test_has_required_methods(self, bridge):
-        assert callable(getattr(bridge, "provider_bridge", None))
-        assert callable(getattr(bridge, "mapping_registry", None))
-        assert callable(getattr(bridge, "maybe_modify_loaded_hf_weight", None))
-        assert callable(getattr(bridge, "maybe_modify_converted_hf_weight", None))
 
 
 # ===========================================================================
@@ -293,6 +285,15 @@ class TestGemma4BridgeConfigExport:
         assert config["num_kv_shared_layers"] == 20
         assert config["rope_parameters"]["full_attention"]["partial_rotary_factor"] == 0.25
         assert config["use_double_wide_mlp"] is True
+
+    def test_dense_architecture_fields_after_checkpoint_config_reload(self):
+        """Checkpoint YAML reloads MCore's window tuple as a list."""
+        provider = Gemma4DenseProvider(window_size=[511, 0])
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        assert config["sliding_window"] == 512
+        Gemma4TextConfig(**config)
 
     def test_moe_architecture_fields(self):
         provider = Gemma4ModelProvider(

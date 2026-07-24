@@ -14,18 +14,135 @@
 
 """GB200 library recipes for Nemotron 3 Nano."""
 
+import torch
+
+from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
+from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.nemotronh._nemotron_3_nano import (
     _nemotron_3_nano_peft_reference_config,
-    _nemotron_3_nano_pretrain_reference_config,
     _nemotron_3_nano_sft_reference_config,
 )
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import get_mixed_precision_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
-def _apply_gb200_topology(cfg: ConfigContainer) -> None:
-    """Apply the GB200 model-parallel topology without changing training semantics."""
+_NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+
+
+def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the Nemotron 3 Nano BF16 pretraining config for eight GB200 GPUs.
+
+    The recipe retains the established optimizer, scheduler, routing, and BF16
+    contracts. It applies the validated GB200 TP1/EP8 HybridEP topology and
+    uses a 4,096-token sequence length for the paired NeMo-CI convergence
+    workload.
+
+    Returns:
+        GB200 BF16 pretraining configuration.
+    """
+    cfg = _pretrain_common()
+
+    cfg.model = AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).to_megatron_provider(load_weights=False)
+    # Pretraining may use a tokenizer other than the HF checkpoint tokenizer.
+    # Defer the model vocabulary size to the runtime tokenizer, matching the
+    # pre-migration MambaModelProvider recipe behavior.
+    cfg.model.vocab_size = None
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MODEL_ID
+
+    cfg.model.seq_length = 4096
+    cfg.dataset.seq_length = 4096
+    cfg.dataset.blend = None
+    cfg.dataset.num_workers = 8
+    cfg.dataset.mmap_bin_files = False
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+
+    cfg.model.moe_token_dispatcher_type = "flex"
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_router_force_load_balancing = False
+
+    cfg.train.train_iters = 39735
+    cfg.train.global_batch_size = 3072
+    cfg.train.micro_batch_size = 2
+    cfg.train.manual_gc = False
+    cfg.train.manual_gc_interval = 0
+
+    cfg.model.transformer_impl = "transformer_engine"
+
+    # Match the validated GB200 performance recipe's TE-scoped graph set.
+    cfg.model.cuda_graph_impl = "transformer_engine"
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba", "moe_router", "moe_preprocess"])
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.model.use_te_rng_tracker = True
+    cfg.rng.te_rng_tracker = True
+
+    cfg.model.attention_backend = "fused"
+    cfg.model.moe_router_fusion = False
+    cfg.model.moe_permute_fusion = True
+    cfg.model.moe_grouped_gemm = True
+    cfg.model.cross_entropy_loss_fusion = True
+    cfg.model.apply_rope_fusion = True
+    cfg.model.cross_entropy_fusion_impl = "native"
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.fine_grained_activation_offloading = False
+    cfg.model.offload_modules = None
+    cfg.model.moe_router_padding_for_fp8 = False
+    cfg.rerun_state_machine.check_for_nan_in_loss = False
+
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.lr = 1.6e-3
+    cfg.optimizer.weight_decay = 0.1
+    cfg.optimizer.min_lr = 1.6e-5
+    cfg.scheduler.lr_warmup_iters = 333
+
+    # Keep BF16 compute while reducing gradients in BF16 instead of FP32.
+    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_bootstrap_backend="nccl",
+        tp_comm_overlap=False,
+    )
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+
+    cfg.checkpoint.save_interval = 200
+    cfg.checkpoint.ckpt_assume_constant_structure = True
+    cfg.checkpoint.dist_ckpt_strictness = "log_all"
+
+    cfg.ddp.overlap_grad_reduce = True
+    cfg.ddp.overlap_param_gather = True
+    cfg.ddp.check_for_nan_in_grad = False
+    cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+
+    cfg.model.init_method_std = 0.0173
+    cfg.model.use_fused_weighted_squared_relu = True
+
+    return cfg
+
+
+def _apply_gb200_finetune_execution_config(cfg: ConfigContainer) -> None:
+    """Apply safe GB200 packed-finetuning execution settings."""
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
@@ -34,62 +151,24 @@ def _apply_gb200_topology(cfg: ConfigContainer) -> None:
     cfg.model.expert_tensor_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
 
-    cfg.model.moe_router_force_load_balancing = False
-
-    # TP communication overlap requires TP > 1 and sequence parallelism.
-    if cfg.comm_overlap is not None:
-        cfg.comm_overlap.tp_comm_overlap = False
-
-
-def _apply_gb200_finetune_execution_config(cfg: ConfigContainer) -> None:
-    """Apply safe GB200 packed-finetuning execution settings."""
-    _apply_gb200_topology(cfg)
-
-    # The GB200 perf reference covers fixed-shape pretraining only, while
-    # DeepEP is unsupported on compute capability 10. Use the correctness-first
-    # fallback until HybridEP is validated with packed finetuning.
+    # DeepEP is unsupported on compute capability 10, while packed HybridEP
+    # lacks matching workload evidence. Use the correctness-first fallback.
     cfg.model.moe_token_dispatcher_type = "alltoall"
     cfg.model.moe_flex_dispatcher_backend = None
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_hybridep_num_sms = None
     cfg.model.moe_flex_dispatcher_num_sms = None
-
-
-def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return the Nemotron 3 Nano pre-training config for 8 GB200 GPUs.
-
-    The perf recipe's scoped CUDA graphs retain too much memory for the
-    library recipe's native cross-entropy workspace at micro-batch size two,
-    so the general-training recipe remains in eager mode.
-
-    Returns:
-        ConfigContainer: GB200 BF16 pre-training configuration.
-    """
-    cfg = _nemotron_3_nano_pretrain_reference_config()
-    _apply_gb200_topology(cfg)
-
-    cfg.model.moe_token_dispatcher_type = "flex"
-    cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_hybridep_num_sms = None
-    cfg.model.moe_flex_dispatcher_num_sms = 16
-    cfg.model.moe_shared_expert_overlap = False
-
-    cfg.model.cuda_graph_impl = "none"
-    set_cuda_graph_modules(cfg.model, [])
-    cfg.model.use_te_rng_tracker = False
-    cfg.rng.te_rng_tracker = False
-
-    return cfg
+    cfg.model.moe_router_force_load_balancing = False
 
 
 def nemotron_3_nano_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return the Nemotron 3 Nano SFT config for 8 GB200 GPUs.
+    """Return the Nemotron 3 Nano SFT config for eight GB200 GPUs.
 
-    Packed SFT remains in eager mode because CUDA graphs require static input
-    shapes. The optimizer, schedule, data, and routing policy remain unchanged.
+    Packed SFT remains eager because CUDA graphs require static input shapes.
+    Optimizer, schedule, data, and routing semantics remain unchanged.
 
     Returns:
-        ConfigContainer: GB200 BF16 SFT configuration.
+        GB200 BF16 SFT configuration.
     """
     cfg = _nemotron_3_nano_sft_reference_config()
     _apply_gb200_finetune_execution_config(cfg)
@@ -99,20 +178,27 @@ def nemotron_3_nano_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
 def nemotron_3_nano_peft_8gpu_gb200_bf16_config(
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
-    """Return the Nemotron 3 Nano PEFT config for 8 GB200 GPUs.
+    """Return the Nemotron 3 Nano PEFT config for eight GB200 GPUs.
 
     Args:
-        peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
+        peft_scheme: PEFT scheme, or a custom PEFT instance.
 
     Returns:
-        ConfigContainer: GB200 BF16 PEFT configuration.
+        GB200 BF16 PEFT configuration.
     """
     cfg = _nemotron_3_nano_peft_reference_config(peft_scheme=peft_scheme)
     _apply_gb200_finetune_execution_config(cfg)
     return cfg
 
 
+# NeMo-CI appends ``_pretrain_config`` to MODEL_RECIPE_NAME. This explicit
+# alias lets the GB200 release case select the hardware recipe without changing
+# the legacy ``nemotron_3_nano_pretrain_config`` default.
+nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config
+
+
 __all__ = [
+    "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_peft_8gpu_gb200_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
     "nemotron_3_nano_sft_8gpu_gb200_bf16_config",

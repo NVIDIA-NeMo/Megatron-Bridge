@@ -16,6 +16,8 @@ pytestmark = pytest.mark.unit
         "megatron.bridge.data.datasets.sft",
         "megatron.bridge.data.hf_datasets",
         "megatron.bridge.data.hf_source",
+        "megatron.bridge.data.sources.local_conversation",
+        "megatron.bridge.data.vlm_datasets",
     ],
 )
 def test_removed_internal_data_modules_have_no_compatibility_shims(module_name):

@@ -267,8 +267,13 @@ def prepare_gpt_sft_packed_data(
     )
     sequences, histogram = create_hist(dataset, max_seq_length)
 
-    assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)
-    output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
+    random_state = np.random.get_state()
+    np.random.seed(seed)
+    try:
+        assignments, packing_metadata = create_packing_strategy(histogram, packed_sequence_size, packing_algorithm)
+        output_data = fill_packing_strategy(assignments, sequences, packed_sequence_size, tokenizer.eos_id)
+    finally:
+        np.random.set_state(random_state)
 
     # save output data
     output_path_str = str(output_path)

@@ -300,7 +300,7 @@ class TestNemotron3NanoPeft:
         """Test that PEFT config has correct MoE dispatcher settings."""
         config = nemotron_3_nano_peft_config()
 
-        # Check MoE dispatcher settings exist
+        # Check MoE dispatcher settings
         assert config.model.moe_token_dispatcher_type == "flex"
         assert config.model.moe_flex_dispatcher_backend == "deepep"
 

@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import logging
+
 import torch.distributed as dist
 from nvidia_resiliency_ext.inprocess import CallWrapper
 
@@ -20,12 +22,16 @@ from megatron.bridge.training.callbacks import Callback, CallbackManager, normal
 from megatron.bridge.training.config import ConfigContainer, runtime_config_update
 from megatron.bridge.training.eval import evaluate_and_print_results
 from megatron.bridge.training.forward_step_func_types import ForwardStepCallable
+from megatron.bridge.training.initialize import destroy_global_state
 from megatron.bridge.training.setup import setup
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.train import _finish_train, train
 from megatron.bridge.training.utils.log_utils import barrier_and_log
 from megatron.bridge.utils.common_utils import print_rank_0
 from megatron.bridge.utils.decorators import experimental_fn
+
+
+logger = logging.getLogger(__name__)
 
 
 @experimental_fn
@@ -125,79 +131,100 @@ def _pretrain(
 
     config = state.cfg
     dataset_provider = get_dataset_provider(config.dataset)
-    setup_output = setup(state, dataset_provider, restart_store=store, callback_manager=callback_manager)
-    state = setup_output.state
-    model = setup_output.model
-    optimizer = setup_output.optimizer
-    scheduler = setup_output.scheduler
-    train_data_iterator = setup_output.train_data_iterator
-    valid_data_iterator = setup_output.valid_data_iterator
-    test_data_iterator = setup_output.test_data_iterator
-    checkpoint_manager = setup_output.checkpoint_manager
-    pg_collection = setup_output.pg_collection
+    try:
+        setup_output = setup(state, dataset_provider, restart_store=store, callback_manager=callback_manager)
+        state = setup_output.state
+        model = setup_output.model
+        optimizer = setup_output.optimizer
+        scheduler = setup_output.scheduler
+        train_data_iterator = setup_output.train_data_iterator
+        valid_data_iterator = setup_output.valid_data_iterator
+        test_data_iterator = setup_output.test_data_iterator
+        checkpoint_manager = setup_output.checkpoint_manager
+        pg_collection = setup_output.pg_collection
 
-    # TRAINING
-    if not config.validation.skip_train:
-        if state.train_state.do_train and config.train.train_iters > 0:
-            train(
-                forward_step_func,
-                model,
-                optimizer,
-                scheduler,
-                train_data_iterator,
-                valid_data_iterator,
+        # TRAINING
+        if not config.validation.skip_train:
+            if state.train_state.do_train and config.train.train_iters > 0:
+                train(
+                    forward_step_func,
+                    model,
+                    optimizer,
+                    scheduler,
+                    train_data_iterator,
+                    valid_data_iterator,
+                    state,
+                    checkpoint_manager,
+                    pg_collection,
+                    callback_manager=callback_manager,
+                )
+
+            barrier_and_log("after training is done")
+
+        else:
+            print_rank_0("skipping training ...")
+
+        iteration = state.train_state.step
+
+        # VALIDATION
+        if state.train_state.do_valid:
+            prefix = f"iteration {iteration} on validation set"
+            evaluate_and_print_results(
                 state,
-                checkpoint_manager,
-                pg_collection,
+                prefix,
+                forward_step_func,
+                valid_data_iterator,
+                model,
+                config.model,
+                verbose=True,
+                write_to_tensorboard=not config.validation.skip_train,
                 callback_manager=callback_manager,
             )
+        if state.train_state.do_test:
+            prefix = f"iteration {iteration} on test set"
+            evaluate_and_print_results(
+                state,
+                prefix,
+                forward_step_func,
+                test_data_iterator,
+                model,
+                config.model,
+                verbose=True,
+                write_to_tensorboard=not config.validation.skip_train,
+                callback_manager=callback_manager,
+                is_test=True,
+            )
 
-        barrier_and_log("after training is done")
+        _finish_train(state, checkpoint_manager)
+    except BaseException:
+        if inprocess_call_wrapper is None:
+            _cleanup_after_pretrain_failure(should_destroy_process_group)
+        raise
 
-    else:
-        print_rank_0("skipping training ...")
-
-    iteration = state.train_state.step
-
-    # VALIDATION
-    if state.train_state.do_valid:
-        prefix = f"iteration {iteration} on validation set"
-        evaluate_and_print_results(
-            state,
-            prefix,
-            forward_step_func,
-            valid_data_iterator,
-            model,
-            config.model,
-            verbose=True,
-            write_to_tensorboard=not config.validation.skip_train,
-            callback_manager=callback_manager,
-        )
-    if state.train_state.do_test:
-        prefix = f"iteration {iteration} on test set"
-        evaluate_and_print_results(
-            state,
-            prefix,
-            forward_step_func,
-            test_data_iterator,
-            model,
-            config.model,
-            verbose=True,
-            write_to_tensorboard=not config.validation.skip_train,
-            callback_manager=callback_manager,
-            is_test=True,
-        )
-
-    _finish_train(state, checkpoint_manager)
     _maybe_destroy_process_group(should_destroy_process_group)
 
 
-def _maybe_destroy_process_group(should_destroy: bool) -> None:
+def _cleanup_after_pretrain_failure(should_destroy_process_group: bool) -> None:
+    """Clean up framework-owned state after ordinary pretrain execution fails."""
+    try:
+        destroy_global_state()
+    except Exception:
+        logger.exception("Failed to destroy Megatron global state after pretrain failure")
+
+    try:
+        _maybe_destroy_process_group(should_destroy_process_group, synchronize=False)
+    except Exception:
+        logger.exception("Failed to destroy the process group after pretrain failure")
+
+
+def _maybe_destroy_process_group(should_destroy: bool, *, synchronize: bool = True) -> None:
     """Destroy the process group if it was created by this training session.
 
     Args:
         should_destroy: Whether the process group should be destroyed
+        synchronize: Whether to synchronize ranks before destruction
     """
     if should_destroy and dist.is_initialized():
-        dist.barrier()
+        if synchronize:
+            dist.barrier()
         dist.destroy_process_group()

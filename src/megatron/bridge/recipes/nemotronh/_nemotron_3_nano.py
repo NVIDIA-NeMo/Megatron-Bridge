@@ -21,20 +21,20 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
-from megatron.bridge.recipes.utils.finetune_utils import default_peft_config
+from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.utils.cuda_graph import clear_cuda_graph_modules
 
 
 def _nemotron_3_nano_pretrain_reference_config() -> ConfigContainer:
-    """Build the shared Nemotron 3 Nano pre-training contract.
+    """Build the shared Nemotron 3 Nano pretraining contract.
 
-    Hardware-specific library and performance recipes apply their execution
-    settings to this config without changing its training semantics.
+    Hardware-specific library and performance recipes apply execution settings
+    to this config without changing its training semantics.
 
     Returns:
-        ConfigContainer: Pre-training configuration for Nemotron 3 Nano.
+        Pretraining configuration for Nemotron 3 Nano.
     """
     cfg = _pretrain_common()
 
@@ -93,7 +93,6 @@ def _nemotron_3_nano_pretrain_reference_config() -> ConfigContainer:
     cfg.dataset.mmap_bin_files = False
 
     cfg.model.pipeline_model_parallel_layout = None
-
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_hybridep_num_sms = 16
@@ -105,7 +104,6 @@ def _nemotron_3_nano_pretrain_reference_config() -> ConfigContainer:
     cfg.train.manual_gc_interval = 0
 
     cfg.model.transformer_impl = "transformer_engine"
-
     cfg.model.cuda_graph_impl = "none"
     cfg.model.cuda_graph_scope = "full"
     cfg.model.cuda_graph_warmup_steps = 3
@@ -121,7 +119,6 @@ def _nemotron_3_nano_pretrain_reference_config() -> ConfigContainer:
     cfg.model.recompute_modules = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
-
     cfg.model.moe_router_padding_for_fp8 = False
 
     cfg.optimizer.use_precision_aware_optimizer = False
@@ -129,7 +126,6 @@ def _nemotron_3_nano_pretrain_reference_config() -> ConfigContainer:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
-
     cfg.optimizer.lr = 1.6e-3
     cfg.optimizer.weight_decay = 0.1
     cfg.optimizer.min_lr = 1.6e-5
@@ -153,7 +149,6 @@ def _nemotron_3_nano_pretrain_reference_config() -> ConfigContainer:
     cfg.ddp.use_distributed_optimizer = True
 
     cfg.model.moe_router_force_load_balancing = False
-
     cfg.model.init_method_std = 0.0173
     cfg.model.apply_rope_fusion = False
     cfg.model.use_fused_weighted_squared_relu = True
@@ -221,8 +216,6 @@ def _apply_nemotron_3_nano_finetune_defaults(cfg: ConfigContainer) -> None:
     cfg.model = _nemotron_3_nano_finetune_model()
     cfg.model.pipeline_model_parallel_layout = None
 
-    # DeepEP is the established packed-finetuning backend. Hardware wrappers
-    # may override it only when a matching packed-workload reference is proven.
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "deepep"
     cfg.model.moe_shared_expert_overlap = False

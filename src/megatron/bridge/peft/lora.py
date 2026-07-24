@@ -18,7 +18,6 @@ from typing import List, Literal, Optional
 
 import torch
 import torch.nn as nn
-import transformer_engine.pytorch as te
 from megatron.core import parallel_state
 from megatron.core.transformer.moe.router import TopKRouter
 from megatron.core.utils import unwrap_model
@@ -29,8 +28,6 @@ from megatron.bridge.peft.lora_layers import (
     LoRALinear,
     LoRATopKRouter,
     TEFusedLoRALinear,
-    TELinearAdapter,
-    patch_linear_module,
 )
 from megatron.bridge.peft.module_matcher import ModuleMatcher
 from megatron.bridge.peft.utils import (
@@ -47,13 +44,6 @@ from megatron.bridge.peft.utils import (
 
 
 logger = logging.getLogger(__name__)
-
-try:
-    import bitsandbytes
-
-    HAVE_BNB = True
-except ImportError:
-    HAVE_BNB = False
 
 
 @dataclass
@@ -137,29 +127,14 @@ class LoRA(PEFT, ModuleMatcher):
             nn.Module: The modified module with LoRA applied, or the original module if not a target.
         """
         # Skip already transformed modules
-        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter, TELinearAdapter)
+        adapter_types = (LinearAdapter, LoRALinear, LoRATopKRouter)
         if isinstance(module, adapter_types):
             return module
 
         if (ans := self.match(module, name, prefix)) is not None:
             _, full_name = ans
-            if (isinstance(module, nn.Linear) or (module.__class__ == te.Linear)) and not is_modelopt_linear(module):
-                # Will use the `patch_linear_module` function if:
-                # - is FSDP v1
-                # - is DTensor (has _local_tensor attribute)
-                # - has quant_state attribute
-                if hasattr(module.weight.data, "_local_tensor") or (
-                    HAVE_BNB
-                    and getattr(module, "quant_state", None) is not None
-                    and module.quant_state.__class__ == bitsandbytes.functional.QuantState
-                ):
-                    lora_cls = patch_linear_module
-                elif module.__class__ == te.Linear:
-                    lora_cls = TELinearAdapter
-                else:
-                    lora_cls = LinearAdapter
-
-                return lora_cls(
+            if isinstance(module, nn.Linear) and not is_modelopt_linear(module):
+                return LinearAdapter(
                     module,
                     dim=self.dim,
                     alpha=self.alpha,

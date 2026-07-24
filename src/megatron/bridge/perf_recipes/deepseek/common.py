@@ -14,6 +14,8 @@
 # ruff: noqa: F401
 """Common helpers for deepseek performance recipes."""
 
+import torch
+
 from megatron.bridge.perf_recipes._common import (
     _benchmark_common,
     _enable_overlap_param_gather_with_optimizer_step,
@@ -33,6 +35,15 @@ def _deepseek_v3_common(cfg: ConfigContainer) -> None:
     cfg.model.recompute_granularity = "selective"
     cfg.dist.enable_megatron_core_experimental = True
     cfg.model.moe_router_force_load_balancing = True
+
+
+def _enable_deepseek_precision_aware_optimizer(cfg: ConfigContainer) -> None:
+    """Enable the optimizer precision settings used by tuned DeepSeek recipes."""
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.main_params_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
 
 
 def _enable_deepseek_full_iteration_mxfp8(

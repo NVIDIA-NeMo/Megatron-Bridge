@@ -1,0 +1,62 @@
+# Copyright (c) 2025, NVIDIA CORPORATION.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+name: Link check
+
+# Checks external (http/https) links in the docs so broken cross-repo / published
+# links (NVBug 6421302 class) are caught before merge and on a weekly cadence.
+#
+# Scope note: this job checks http/https URLs only (`--scheme`). Internal
+# cross-page links in the Fern docs use a `.md` extension while the source files
+# are `.mdx`, so filesystem-level checking of relative links would report ~600
+# false positives; that convention is out of scope here. GitHub links are NOT
+# excluded (GITHUB_TOKEN is supplied to avoid rate limits).
+
+on:
+  pull_request:
+  schedule:
+    # Weekly, Mondays 06:00 UTC
+    - cron: "0 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check links
+        uses: lycheeverse/lychee-action@v2
+        with:
+          fail: true
+          args: >-
+            --no-progress
+            --max-retries 3
+            --retry-wait-time 10
+            --scheme https
+            --scheme http
+            --accept '200..=299,401,403,429'
+            --root-dir docs/fern
+            --exclude 'github\.com/deepseek-ai/DeepSeek-V4'
+            --exclude 'github\.com/NVIDIA-NeMo/Megatron-Bridge/stargazers'
+            --exclude 'sched\.com'
+            --exclude 'llama\.com'
+            "docs/fern/**/*.mdx"
+            "docs/**/*.md"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

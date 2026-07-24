@@ -4,15 +4,17 @@ Megatron Bridge uses different dataset config objects for pretraining, text fine
 
 ## Data Formats by Workflow
 
-| Workflow | Data format | Config or provider | Required path fields |
-|----------|-------------|--------------------|----------------------|
-| LLM pretraining | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` | `data_path`, `blend`, or `blend_per_split` |
-| LLM SFT or PEFT from local files | JSONL split files | `GPTSFTDatasetConfig` | `dataset_root` |
-| LLM SFT or PEFT from Hugging Face datasets | Hugging Face rows converted to SFT JSONL, optionally packed | `GPTSFTDatasetConfig` | `hf_dataset.dataset_name` preset or custom `path_or_dataset`; optional `hf_output_root` |
-| Direct Hugging Face SFT for text, vision, or audio | Source rows processed at runtime | `DirectHFSFTDatasetConfig` | `source.dataset_name` preset or custom `path_or_dataset`; optional `hf_processor_path` |
-| VLM SFT or PEFT | Energon/WebDataset, Hugging Face VLM dataset, or preloaded JSON | `DirectHFSFTDatasetConfig`, Energon, or a specialized provider | HF source and processor fields, or provider-specific storage fields |
+| Workflow | Status | Data format | Config or provider |
+|----------|--------|-------------|--------------------|
+| LLM pretraining | Recommended | Megatron binary `.bin`/`.idx` prefixes | `GPTDatasetConfig` |
+| Text SFT or PEFT, processed at runtime | Recommended | Hosted Hugging Face rows or local JSON/JSONL loaded through Hugging Face datasets | [Hugging Face text-only](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-text-only/README.md) through `DirectHFSFTDatasetConfig` + builder |
+| Text SFT or PEFT, prepared data | Planned; not available yet | Pretokenized `.bin`/`.idx` | Future Issue #4664 prepared-SFT builder |
+| Text SFT or PEFT, transitional prepared data | Supported until `.bin`/`.idx` replacement | Local/materialized JSONL and optional packed Parquet | `GPTSFTDatasetConfig` |
+| Multimodal SFT or PEFT | Recommended | Hosted Hugging Face rows or local conversation JSON/JSONL | [Hugging Face multimodal](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) through `DirectHFSFTDatasetConfig` + builder |
+| Large sharded multimodal training | Recommended | WebDataset/Energon | [Multimodal Energon](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md) through `EnergonDatasetConfig` + builder |
 
-Use `seq_length` in Bridge examples and CLI overrides. `GPTDatasetConfig` also stores this value as Megatron Core's inherited `sequence_length` field internally, while `GPTSFTDatasetConfig` exposes `seq_length` directly.
+All canonical dataset configs expose `seq_length` in Python and through CLI overrides. During finalization,
+`GPTDatasetConfig` copies that value to Megatron Core's internal `sequence_length` field.
 
 ## LLM Pretraining Data
 
@@ -44,7 +46,7 @@ The CLI-friendly `data_path` field is converted to Megatron Core's `blend` field
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_pretrain_1gpu_h100_bf16_config \
-    --dataset llm-pretrain \
+    --mode pretrain --dataset megatron-indexed \
     dataset.data_path=/data/dclm/preprocessed_text_document \
     dataset.seq_length=8192
 ```
@@ -85,12 +87,13 @@ dataset = GPTSFTDatasetConfig(
 )
 ```
 
-Launch the generic recipe runner with the preloaded local JSONL dataset type:
+To use local JSONL, select the public `local-jsonl` dataset. This replaces the recipe's dataset object with a
+`GPTSFTDatasetConfig` configured for prompt-completion JSONL:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_sft_1gpu_h100_bf16_config \
-    --dataset llm-finetune-preloaded \
+    --mode sft --dataset local-jsonl \
     dataset.dataset_root=/data/sft_jsonl \
     dataset.seq_length=4096 \
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
@@ -130,22 +133,25 @@ If `hf_output_root` is omitted, the generated JSONL is cached under the NeMo dat
 
 > **Deprecated compatibility APIs:** `FinetuningDatasetConfig` and `FinetuningDatasetBuilder` remain only for existing callers. New code must use `GPTSFTDatasetConfig` with `GPTSFTDatasetBuilder`; runtime objects such as tokenizers belong to the builder, not the serialized config.
 
-The generic launcher provides preset Hugging Face text datasets through `--dataset llm-finetune`:
+The generic launcher accepts public Hugging Face dataset names directly:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe llama32_1b_peft_1gpu_h100_bf16_config \
-    --dataset llm-finetune \
-    dataset.hf_dataset.dataset_name=gsm8k \
+    --mode lora --dataset gsm8k \
     checkpoint.pretrained_checkpoint=/checkpoints/base_model
 ```
 
 ## Direct Hugging Face SFT Data
 
-`DirectHFSFTDatasetConfig` is the direct source path shared by text, VLM, and audio/omni recipes. Unlike the materialized text-only SFT source above, it does not write reusable SFT JSONL. `DirectHFSFTDatasetBuilder` loads and adapts the source, binds the processor/tokenizer and collator, and repeats examples to the sample counts requested by the iteration schedule. Both backends use the same `ChatSFTPreprocessingConfig` or `PromptCompletionSFTPreprocessingConfig`; only their storage and packing lifecycle differs.
+`DirectHFSFTDatasetConfig` is the direct source path shared by text, VLM, and audio/omni recipes. Every source uses `HFDatasetSourceConfig`: select a Hub dataset, a custom Hugging Face dataset, or the Hugging Face `json` loader for JSON/JSONL files. `DirectHFSFTDatasetBuilder` binds the processor/tokenizer and collator and repeats examples to the sample counts requested by the iteration schedule. The source config remains serializable; Hugging Face datasets owns source loading, while processors, collators, and runtime datasets remain builder responsibilities.
 
 ```python
-from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, HFDatasetSourceConfig, DirectHFSFTDatasetConfig
+from megatron.bridge.data.builders import (
+    ChatSFTPreprocessingConfig,
+    DirectHFSFTDatasetConfig,
+    HFDatasetSourceConfig,
+)
 
 dataset = DirectHFSFTDatasetConfig(
     seq_length=4096,
@@ -153,6 +159,7 @@ dataset = DirectHFSFTDatasetConfig(
     hf_processor_path="meta-llama/Llama-3.2-1B-Instruct",
     source=HFDatasetSourceConfig(
         path_or_dataset="json",
+        split="train",
         load_kwargs={"data_files": {"train": "/data/chat/training.jsonl"}},
     ),
     validation_source=HFDatasetSourceConfig(
@@ -165,7 +172,7 @@ dataset = DirectHFSFTDatasetConfig(
 )
 ```
 
-Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Collator callables are runtime builder inputs, not serializable config fields.
+Set `hf_processor_path` for multimodal or audio models and use the corresponding training step. Media references in JSON rows must be resolvable by every worker; for large local media collections that need managed sharding and asset loading, use Energon. Collator callables are runtime builder inputs, not serializable config fields.
 
 For paired text that must not use a model chat template, select prompt-completion preprocessing instead. The prompt and completion are tokenized separately, and `loss_mode="completion"` masks the prompt:
 
@@ -201,42 +208,47 @@ The package structure separates declarative construction, runtime storage, sourc
 
 The direct runtime dataset is named `DirectSFTDataset` because it receives normalized examples and has no Hugging Face loading responsibility. Source-specific work remains in the builder and source modules.
 
-For hosted datasets, text and multimodal schemas, split sources, in-batch packing, processor selection, and all available knobs, see the [direct Hugging Face SFT dataset tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/direct-hf-sft/README.md).
+For focused walkthroughs, use the [Hugging Face text-only tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-text-only/README.md) for chat and prompt-completion rows, or the [Hugging Face multimodal tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) for hosted and local media conversations.
 
 ## VLM Fine-Tuning Data
 
-VLM recipes use either the canonical HF SFT Config + Builder path, Energon, or a specialized compatibility provider. The runtime builder or provider owns the processor needed to turn image, video, audio, and text records into batches.
+VLM recipes use either the canonical Direct Hugging Face SFT Config + Builder path or Energon. No separate preloaded/local conversation provider is supported.
 
-For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to the recipe provider:
+For Energon/WebDataset data, create tar shards plus `.nv-meta` metadata and pass the dataset root to a recipe that already defines `EnergonDatasetConfig` with the appropriate task-encoder config:
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_energon_config \
-    --dataset vlm-energon \
-    --step_func qwen3_vl_step \
+    --mode lora --step-func vlm_step \
     dataset.path=/data/vlm_energon \
+    dataset.defer_in_batch_packing_to_step=False \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-For preloaded VLM JSON or JSONL, use records with `messages` or `conversations` plus media paths. Relative image and video paths are resolved against `dataset.image_folder` by `PreloadedVLMConversationProvider`:
+`EnergonDatasetConfig` contains only serializable data settings. `EnergonDatasetBuilder` loads the HF processor/tokenizer and constructs the model-specific task encoder at runtime. Shipped Qwen-VL and Nemotron Omni recipes use `QwenVLEnergonTaskEncoderConfig` and `NemotronOmniEnergonTaskEncoderConfig`; custom model integrations can use `HFEnergonTaskEncoderConfig`. Override encoder-specific values through the nested config, for example `dataset.task_encoder.max_num_images=4`. Set `dataset.trust_remote_code` for the configured HF assets; an explicit `dataset.task_encoder.trust_remote_code` value takes precedence. Select a recipe that already contains the required Energon task-encoder config; the launcher does not create one for an unrelated recipe.
+
+For JSON or JSONL accepted by the Hugging Face `json` loader, use records with `messages`, `conversation`, or legacy `conversations`. Multimodal content must follow the selected model processor's schema; for example, Qwen-VL accepts an inline typed image with a worker-resolvable path:
 
 ```json
-{"messages": [{"role": "user", "content": "<image>Describe the image."}, {"role": "assistant", "content": "A receipt."}], "images": ["receipt_0001.jpg"]}
+{"messages": [{"role": "user", "content": [{"type": "image", "image": "/data/vlm/receipt_0001.jpg"}, {"type": "text", "text": "Describe the image."}]}, {"role": "assistant", "content": [{"type": "text", "text": "A receipt."}]}]}
 ```
 
 ```bash
 uv run python -m torch.distributed.run --nproc_per_node=1 scripts/training/run_recipe.py \
     --recipe qwen3_vl_8b_peft_1gpu_h100_bf16_config \
-    --dataset vlm-preloaded \
-    --step_func qwen3_vl_step \
-    dataset.train_data_path=/data/vlm/train.jsonl \
-    dataset.valid_data_path=/data/vlm/validation.jsonl \
-    dataset.image_folder=/data/vlm/images \
+    --mode lora --step-func vlm_step \
+    --dataset local-vlm \
+    dataset.source.load_kwargs.data_files.train=/data/vlm/train.jsonl \
+    dataset.validation_source.load_kwargs.data_files.validation=/data/vlm/validation.jsonl \
+    dataset.do_validation=true \
     dataset.hf_processor_path=Qwen/Qwen3-VL-8B-Instruct \
+    dataset.defer_in_batch_packing_to_step=False \
     checkpoint.pretrained_checkpoint=/checkpoints/qwen3_vl_base
 ```
 
-For a complete WebDataset/Energon preparation example, see [VALOR32K-AVQA Dataset Preparation Guide](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md).
+The `local-vlm` preset supplies override-ready `HFDatasetSourceConfig(path_or_dataset="json", load_kwargs={"data_files": ...})` objects; it does not restore the removed `vlm-preloaded` provider. Validation and test are disabled by default. Set their source path together with `dataset.do_validation=true` or `dataset.do_test=true` to enable them. There is no `image_folder` compatibility field and the old placeholder plus top-level media-list schema is not rewritten: encode media using the selected processor's supported conversation schema, use an adapter-owned root where available, or use Energon.
+
+For complete Qwen3-VL preparation and launch commands, see the [Hugging Face multimodal tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/hf-multimodal/README.md) or the [multimodal Energon tutorial](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/energon/README.md). [VALOR32K-AVQA](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/tutorials/data/valor32k-avqa/data-preparation.md) is the larger audio-video example.
 
 ## Checkpoint Conversion Reminder
 

@@ -22,12 +22,12 @@ WORKSPACE=${WORKSPACE:-/workspace}
 export GEMMA4_CONVERSION_MODE=text
 
 # Import HF → Megatron (Dense E4B base model)
-uv run --no-sync python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
     --hf-model google/gemma-4-E4B-it \
     --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it
 
 # Export Megatron → HF
-uv run --no-sync python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
     --hf-model google/gemma-4-E4B-it \
     --megatron-path ${WORKSPACE}/models/gemma-4-E4B-it/iter_0000000 \
     --hf-path ${WORKSPACE}/models/gemma-4-E4B-it-hf-export

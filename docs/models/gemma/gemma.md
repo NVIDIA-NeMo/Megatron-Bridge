@@ -1,5 +1,9 @@
 # Gemma
 
+> **Deprecation notice:** Gemma 1 support (2B and 7B) is no longer actively
+> maintained or tested against current upstream checkpoints and will be removed
+> in Megatron Bridge 0.7.0.
+
 [Gemma](https://huggingface.co/collections/google/gemma-release-65d5efbccdbb8c4202ec078b) is Google's original lightweight open model family. Megatron Bridge supports Gemma causal language models through the `GemmaBridge` implementation for the Hugging Face `GemmaForCausalLM` architecture.
 
 ## Supported Variants
@@ -22,7 +26,7 @@ Megatron Bridge supports Hugging Face Gemma checkpoints that use the `gemma` mod
 Gemma uses the common conversion and generation entry points:
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model google/gemma-2b \
   --megatron-path /checkpoints/gemma_2b_megatron
 ```
@@ -38,4 +42,3 @@ uv run python examples/conversion/hf_to_megatron_generate_text.py \
 
 - Bridge implementation: [`src/megatron/bridge/models/gemma/gemma_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/gemma/gemma_bridge.py)
 - Conversion examples: [`examples/conversion`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/conversion)
-

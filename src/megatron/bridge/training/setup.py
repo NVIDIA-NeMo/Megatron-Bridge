@@ -40,15 +40,17 @@ from megatron.bridge.training.callbacks import CallbackContext, CallbackManager,
 from megatron.bridge.training.checkpointing import (
     CheckpointLoadContext,
     CheckpointManager,
+    _has_global_non_persistent_checkpoint,
     _load_checkpoint_from_path,
     create_checkpoint_manager,
+    maybe_load_dataloader_state,
 )
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.initialize import initialize_megatron, set_jit_fusion_options
 from megatron.bridge.training.optim import (
+    memory_efficient_fp32_optimizer_state_loading,
     setup_optimizer,
     sync_hybrid_device_optimizer_fp32_master_copies,
-    use_memory_efficient_fp32_optimizer_state_loading,
 )
 from megatron.bridge.training.state import GlobalState
 from megatron.bridge.training.tensor_inspect import (
@@ -111,11 +113,15 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         "local_checkpoint_manager" in checkpointing_context
         and checkpointing_context["local_checkpoint_manager"].find_latest() != -1
     )
+    has_global_non_persistent_checkpoint = _has_global_non_persistent_checkpoint(
+        cfg.checkpoint.load, cfg.checkpoint
+    )
 
     if cfg.peft is not None:
-        return cfg.checkpoint.load is not None and (
+        load_checkpoint_exists = cfg.checkpoint.load is not None and (
             checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
         )
+        return load_checkpoint_exists or has_global_non_persistent_checkpoint
 
     load_checkpoint_exists = cfg.checkpoint.load is not None and (
         checkpoint_exists(cfg.checkpoint.load) or is_hf_checkpoint_dir(cfg.checkpoint.load)
@@ -124,7 +130,12 @@ def _should_load_checkpoint(cfg: ConfigContainer, checkpoint_manager: Checkpoint
         checkpoint_exists(cfg.checkpoint.pretrained_checkpoint)
         or is_hf_checkpoint_dir(cfg.checkpoint.pretrained_checkpoint)
     )
-    should_load_checkpoint = load_checkpoint_exists or has_pretrained_checkpoint or has_local_checkpoint
+    should_load_checkpoint = (
+        load_checkpoint_exists
+        or has_pretrained_checkpoint
+        or has_local_checkpoint
+        or has_global_non_persistent_checkpoint
+    )
 
     if cfg._checkpoint_load_required and not should_load_checkpoint:
         raise FileNotFoundError(
@@ -289,18 +300,24 @@ def setup(
         def modelopt_pre_wrap_hook(model):
             from megatron.bridge.training.post_training.checkpointing import has_modelopt_state
 
-            # Check which checkpoint path has modelopt state
-            if cfg.checkpoint.pretrained_checkpoint and has_modelopt_state(cfg.checkpoint.pretrained_checkpoint):
-                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
-                ckpt_step = None
-            elif cfg.checkpoint.load and has_modelopt_state(cfg.checkpoint.load, ckpt_step=cfg.checkpoint.ckpt_step):
+            has_resume_checkpoint = cfg.checkpoint.load is not None and (
+                checkpoint_exists(cfg.checkpoint.load)
+                or is_hf_checkpoint_dir(cfg.checkpoint.load)
+                or _has_global_non_persistent_checkpoint(cfg.checkpoint.load, cfg.checkpoint)
+            )
+            if has_resume_checkpoint:
                 checkpoint_path = cfg.checkpoint.load
                 ckpt_step = cfg.checkpoint.ckpt_step
+            elif cfg.checkpoint.pretrained_checkpoint:
+                checkpoint_path = cfg.checkpoint.pretrained_checkpoint
+                ckpt_step = None
             else:
                 raise RuntimeError(
-                    f"No modelopt_state found in pretrained_checkpoint={cfg.checkpoint.pretrained_checkpoint} "
-                    f"or load={cfg.checkpoint.load}"
+                    "No checkpoint source is available for ModelOpt state restoration"
                 )
+
+            if not has_modelopt_state(checkpoint_path, ckpt_step=ckpt_step):
+                raise RuntimeError(f"No modelopt_state found in selected checkpoint={checkpoint_path}")
 
             load_modelopt_state(model, checkpoint_path, ckpt_step=ckpt_step)
             return model
@@ -338,8 +355,8 @@ def setup(
 
     if should_load_checkpoint:
         timers("load-checkpoint", log_level=0).start(barrier=True)
-        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim else None
-        with use_memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
+        checkpoint_optimizer = optimizer if cfg.checkpoint.load_optim and not cfg.checkpoint.finetune else None
+        with memory_efficient_fp32_optimizer_state_loading(checkpoint_optimizer):
             checkpoint_manager.load(
                 CheckpointLoadContext(
                     state=state,
@@ -408,6 +425,24 @@ def setup(
     )
     timers("train/valid/test-data-iterators-setup").stop()
     barrier_and_log("after dataloaders are built")
+
+    # Resume the dataloader stream position so a resumed run continues over the same data (currently
+    # only Megatron Energon). Runs after the iterator is built and the model checkpoint load restored
+    # state.train_state.step. The default source is resolved by load_checkpoint from the checkpoint
+    # actually selected (recorded as "dataloader_state_dir"); an explicit dataset.dataloader_load
+    # overrides. Gated on step > 0 so only a real resume restores -- fresh, finetune, and
+    # pretrained-init runs (step reset to 0) start the data stream from the beginning.
+    if state.train_state.step > 0:
+        dataloader_load_path = getattr(cfg.dataset, "dataloader_load", None)
+        if dataloader_load_path is None:
+            ckpt_ctx = getattr(checkpoint_manager, "checkpointing_context", {})
+            dataloader_load_path = ckpt_ctx.get("dataloader_state_dir")
+        maybe_load_dataloader_state(
+            train_data_iterator,
+            state.train_state.step,
+            dataloader_load_path,
+            pg_collection=pg_collection,
+        )
 
     # if args.enable_ft_package and ft_integration.get_rank_monitor_client() is not None:
     #     ft_integration.get_rank_monitor_client().init_workload_monitoring()
