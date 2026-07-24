@@ -230,6 +230,43 @@ def test_perf_runner_environment_rejects_invalid_values(env_vars):
         bootstrap._apply_recipe_environment(SimpleNamespace(env_vars=env_vars))
 
 
+@pytest.mark.parametrize("model_recipe_name", ["deepseek_v3", "qwen3_235b_a22b"])
+def test_flat_environment_preparation_defaults_missing_recipe_environment(model_recipe_name, monkeypatch, caplog):
+    recipe = SimpleNamespace(
+        model=SimpleNamespace(
+            tensor_model_parallel_size=1,
+            pipeline_model_parallel_size=1,
+            context_parallel_size=1,
+            expert_model_parallel_size=1,
+            moe_flex_dispatcher_backend=None,
+        ),
+        comm_overlap=None,
+    )
+    args = SimpleNamespace(
+        gpu="vr200",
+        moe_a2a_overlap=None,
+        tensor_model_parallel_size=None,
+        pipeline_model_parallel_size=None,
+        context_parallel_size=None,
+        expert_model_parallel_size=None,
+        nccl_ub=None,
+        model_family_name="deepseek" if model_recipe_name == "deepseek_v3" else "qwen",
+        model_recipe_name=model_recipe_name,
+        task="pretrain",
+    )
+    from utils import overrides as override_utils
+
+    monkeypatch.setattr(override_utils, "set_cli_overrides", lambda config, _overrides: config)
+    monkeypatch.setattr(override_utils, "set_user_overrides", lambda config, _args: config)
+
+    result = run_script._apply_perf_recipe_overrides(recipe, [], args)
+
+    assert result is recipe
+    assert result.env_vars == {}
+    assert "No environment variables are set explicitly" in caplog.text
+    assert "Performance might be degraded" in caplog.text
+
+
 def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):
     """Hydra env overrides must be reflected in the bootstrap recipe."""
     args = SimpleNamespace(

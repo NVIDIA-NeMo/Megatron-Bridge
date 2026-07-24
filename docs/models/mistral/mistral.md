@@ -34,8 +34,8 @@ Additional Mistral models (including MoE variants like Mixtral) may be supported
 ```python
 from megatron.bridge import AutoBridge
 
-# Example: Mistral Small 3 24B
-bridge = AutoBridge.from_hf_pretrained("mistralai/Mistral-Small-24B-Base-2501")
+# Example: Mistral 7B
+bridge = AutoBridge.from_hf_pretrained("mistralai/Mistral-7B-v0.1")
 provider = bridge.to_megatron_provider()
 
 # Optionally configure parallelism before instantiating the model
@@ -49,8 +49,8 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 
 ```bash
 ./scripts/conversion/convert.sh import \
-  --hf-model mistralai/Mistral-Small-24B-Base-2501 \
-  --megatron-path /checkpoints/mistral_small_24b_megatron
+  --hf-model mistralai/Mistral-7B-v0.1 \
+  --megatron-path /checkpoints/mistral_7b_megatron
 ```
 
 ### Export Megatron → HF
@@ -59,12 +59,12 @@ model = provider.provide_distributed_model(wrap_with_ddp=False)
 from megatron.bridge import AutoBridge
 
 # Load the bridge from HF model ID
-bridge = AutoBridge.from_hf_pretrained("mistralai/Mistral-Small-24B-Base-2501")
+bridge = AutoBridge.from_hf_pretrained("mistralai/Mistral-7B-v0.1")
 
 # Export a trained Megatron checkpoint to HF format
 bridge.export_ckpt(
-    megatron_path="/results/mistral_small_24b/checkpoints/iter_0000500",
-    hf_path="/exports/mistral_small_24b_hf",
+    megatron_path="/results/mistral_7b/checkpoints/iter_0000500",
+    hf_path="/exports/mistral_7b_hf",
 )
 ```
 
@@ -72,14 +72,16 @@ bridge.export_ckpt(
 
 ```bash
 uv run python examples/conversion/hf_to_megatron_generate_text.py \
-  --hf_model_path mistralai/Mistral-Small-24B-Base-2501 \
-  --megatron_model_path /checkpoints/mistral_small_24b_megatron \
+  --hf_model_path mistralai/Mistral-7B-v0.1 \
+  --megatron_model_path /checkpoints/mistral_7b_megatron \
   --prompt "What is artificial intelligence?" \
   --max_new_tokens 100 \
   --tp 2
 ```
 
-For more details, see [examples/conversion/hf_to_megatron_generate_text.py](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/examples/conversion/hf_to_megatron_generate_text.py)
+For the complete import, export, round-trip, and three-source generation
+workflow, see
+[`examples/models/mistral/mistral`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/6a706b1c3afab4d21a6f5dd88aa6a75296d33fe2/examples/models/mistral/mistral/README.md).
 
 ## Recipes
 
