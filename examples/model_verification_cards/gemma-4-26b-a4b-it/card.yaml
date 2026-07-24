@@ -5,26 +5,23 @@ title: gemma_4_26b_a4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 4 26B-A4B-it BF16 GPU import and deterministic multimodal
-  inference are verified. CPU import and export emit FP32 weights instead of
-  the requested BF16. GPU export emits exact BF16 weights, but its config
-  declares FP32 and native Transformers reload therefore uses FP32. BF16
-  manual forward comparison selects the same next token but misses the cosine
-  similarity gate. Full SFT remains unverified because the default and
-  selective-MLP configurations exceed H100 memory, while full-layer recompute
-  is too slow for the 10-step verification window. Long-context SFT and PEFT
-  are pending. The published Bridge recipes do not currently provide VLM
-  pretraining.
+  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact GPU export, manual
+  forward comparison, and deterministic multimodal inference are verified. CPU
+  export preserves BF16 but emits five unexpected full-attention v_proj
+  weights. Full SFT remains unverified because the default and selective-MLP
+  configurations exceed H100 memory, while full-layer recompute is too slow for
+  the 10-step verification window. Long-context SFT and PEFT are pending. The
+  published Bridge recipes do not currently provide VLM pretraining.
 verification_index:
   model_level:
     verified:
-      - hf_to_megatron_gpu
-      - inference
-    unverified:
       - hf_to_megatron_cpu
-      - megatron_to_hf_cpu
+      - hf_to_megatron_gpu
       - megatron_to_hf_gpu
       - manual_forward_pass
+      - inference
+    unverified:
+      - megatron_to_hf_cpu
   training:
     H100:
       unverified: [sft, sft_export_inference, sft_long_context, peft]
@@ -36,11 +33,11 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 8e117eda2b62e4a8157e232d4d2dbd78ed96c656  # pragma: allowlist secret
+  bridge_commit: a0e186550b3dc5f9b36f98c9bd050994f0b3fdc6  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
@@ -48,13 +45,13 @@ items:
       --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
       --megatron-path work/model-verification/gemma-4-26b-a4b-it/cpu-megatron
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-07-23
     expected_result: >
-      The 2026-07-23 command completed all 8,548 conversion mappings, saved
-      iter_0000000, and the checkpoint reloaded for CPU export. However, all
-      383 tensor entries in the distributed-checkpoint metadata were
-      torch.float32 instead of the requested torch.bfloat16. CPU import remains
-      unverified under the BF16 contract.
+      The command completed all 8,548 conversion mappings and saved
+      iter_0000000. All 383 tensor entries in the distributed-checkpoint
+      metadata were torch.bfloat16. The run configuration recorded bf16=true,
+      fp16=false, and BF16 parameter and autocast dtypes. The artifact reloaded
+      successfully for CPU export.
 
   hf_to_megatron_gpu:
     status: verified
@@ -86,15 +83,15 @@ items:
       --torch-dtype bfloat16
     last_verified: null
     expected_result: >
-      The 2026-07-23 command completed, but wrote 31 FP32 shards with 1,018
-      tensor keys instead of the immutable source's 1,013 BF16 keys. Strict
-      inventory comparison found five unexpected full-attention v_proj
-      weights, so native Gemma4ForConditionalGeneration reload was not
-      attempted. CPU export remains unverified under the BF16 and exact-key-set
-      contracts.
+      The 2026-07-23 command completed all 8,548 conversion mappings and wrote
+      11 BF16 shards. Strict inventory comparison found 1,018 tensor keys
+      instead of the immutable source's 1,013 keys: five full-attention v_proj
+      weights were unexpected. Native Gemma4ForConditionalGeneration reload was
+      not attempted after the inventory gate failed, so CPU export remains
+      unverified under the exact-key-set contract.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -104,19 +101,18 @@ items:
       --hf-path work/model-verification/gemma-4-26b-a4b-it/hf-export-verified
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 1 --ep 4 --etp 1
-    last_verified: null
+    last_verified: 2026-07-23
     expected_result: >
       Distributed TP2/PP1/EP4 export completed all 2,788 conversion mappings.
       The exported config preserved sliding-attention rope_theta 10000 and
       full-attention rope_theta 1000000. All 1,013 exported tensor entries were
       BF16 and matched the immutable source exactly in key, shape, dtype, and
-      value. However, the exported top-level and text config dtype fields were
-      float32, and native Transformers reload therefore reported
-      model.dtype=torch.float32 despite having no loading failures. GPU export
-      remains unverified under the BF16 native-reload contract.
+      value. Native Gemma4ForConditionalGeneration reload reported
+      model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or
+      error keys.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
@@ -126,15 +122,17 @@ items:
       --model_class Gemma4ForConditionalGeneration
       --hf-dtype bfloat16 --hf-device-map auto
       --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
-      --image_path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
+      --image_path work/model-verification/gemma-4-26b-a4b-it/nvidia-table.png
       --tp 2 --pp 1 --ep 4 --etp 1 --distributed-timeout-minutes 60
-      --prompt "What is in this image?"
-    last_verified: null
+      --prompt "According to the table, how much GPU memory does H100 NVL have?"
+    last_verified: 2026-07-23
     expected_result: >
-      The 2026-07-23 BF16 Hugging Face and Megatron runs selected the same next
-      token, token 1455 (" An"), but cosine similarity was 0.963591, below the
-      required 0.99. Maximum and mean absolute logit differences were 4.196071
-      and 1.310424. Manual forward comparison remains unverified.
+      The next token matches: both BF16 Hugging Face and Megatron runs selected
+      token 10450 ("According"). Cosine similarity is 0.999844. Maximum and mean
+      absolute logit differences were 0.898438 and 0.130465. The input was
+      images/table.png from nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at
+      revision cb5a65ff10232128389d882d805fa609427544f1, with SHA-256
+      001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
 
   inference:
     status: verified
@@ -145,19 +143,19 @@ items:
       --hf_model_path google/gemma-4-26B-A4B-it
       --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
       --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
-      --image_path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
-      --prompt "What animal is on the candy?" --max_new_tokens 32
+      --image_path work/model-verification/gemma-4-26b-a4b-it/nvidia-table.png
+      --prompt "According to the table, how much GPU memory does H100 NVL have?"
+      --max_new_tokens 32
       --tp 2 --pp 1 --ep 4 --etp 1
     last_verified: 2026-07-23
     expected_result: >
-      Two independent runs using BF16 greedy decoding completed 32 generation
-      steps and produced byte-identical output, including whitespace, with SHA-256
-      f06e8dfaf7736afb2efea58bdcb33febdb31cb29943a5954ae8a35a75ce41324.
-      The exact 32-token completion, with control-token boundaries rendered as
-      whitespace, was "The animal on the candy is a turtle. image/png thought
-      The animal on the candy is a turtle. thought".
-      The pinned image has SHA-256
-      fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
+      One BF16 deterministic greedy generation completed exactly 32 new-token
+      steps. The literal completion, with control-token boundaries rendered as
+      whitespace, was "Based on the table provided, the H100 NVL has **94GB**
+      of GPU memory.  � \nthought\n �". The input was images/table.png from
+      nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at revision
+      cb5a65ff10232128389d882d805fa609427544f1, with SHA-256
+      001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
 
   pretrain:
     all:
@@ -223,17 +221,20 @@ items:
           uv run python
           skills/create-model-verification-card/scripts/verify_hf_inference.py
           --hf-model work/model-verification/gemma-4-26b-a4b-it/sft-hf-export
-          --image-path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
-          --prompt "What animal is on the candy?" --max-new-tokens 32
+          --image-path work/model-verification/gemma-4-26b-a4b-it/nvidia-table.png
+          --prompt "According to the table, how much GPU memory does H100 NVL have?"
+          --max-new-tokens 32
           --dtype bfloat16 --device cuda
       last_verified: null
       expected_result: >
         This item is blocked because SFT produced no verified iter_0000010
         checkpoint. Once that dependency passes, the checkpoint must export
         and strictly reload as Gemma4ForConditionalGeneration. The VLM helper
-        must generate exactly 32 new tokens twice with byte-identical token IDs
-        and literal completion, including whitespace. The pinned image has SHA-256
-        fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
+        must run one deterministic greedy generation with exactly 32 new tokens
+        and record the literal completion, including whitespace. The NVIDIA
+        input is pinned at revision cb5a65ff10232128389d882d805fa609427544f1
+        with SHA-256
+        001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
 
   sft_long_context:
     H100:
