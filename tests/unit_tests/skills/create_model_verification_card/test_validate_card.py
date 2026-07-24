@@ -3,9 +3,12 @@
 import importlib.util
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[4]
 VALIDATOR_PATH = REPO_ROOT / "skills" / "create-model-verification-card" / "scripts" / "validate_card.py"
+pytestmark = pytest.mark.unit
 
 
 def _load_validator():
@@ -24,7 +27,7 @@ def test_manual_forward_accepts_inference_launcher():
     validator._validate_manual_forward_pass(
         {
             "command": (
-                "./scripts/inference/infer.sh --task model-comparison "
+                "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task model-comparison "
                 "--hf_model_path hf/model --megatron_model_path work/checkpoint "
                 f"--hf-revision {revision} --prompt 'Describe the image'"
             ),
@@ -49,10 +52,11 @@ def test_inference_accepts_vlm_generation_launcher():
     validator._validate_inference(
         {
             "command": (
-                "./scripts/inference/infer.sh --task vlm-generation --prompt 'Describe the image' --max_new_tokens 32"
+                "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task vlm-generation "
+                "--prompt 'Describe the image' --max_new_tokens 32"
             ),
             "expected_result": (
-                "Two independent runs produced byte-identical 32-token output. "
+                "One greedy run produced an exact 32-token output. "
                 'The exact completion was "The image contains a sufficiently long deterministic description."'
             ),
         },
@@ -74,7 +78,7 @@ def test_base_inference_rejects_hf_export_launcher():
                 "./scripts/inference/infer.sh --task hf-inference --prompt 'Describe the image' --max-new-tokens 32"
             ),
             "expected_result": (
-                "Two independent runs produced byte-identical 32-token output. "
+                "One greedy run produced an exact 32-token output. "
                 'The exact completion was "The image contains a sufficiently long deterministic description."'
             ),
         },
@@ -84,6 +88,84 @@ def test_base_inference_rejects_hf_export_launcher():
     )
 
     assert errors == ["/items/inference/command: inference must use uv run"]
+
+
+def test_inference_accepts_natural_eos_before_maximum():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_inference(
+        {
+            "command": (
+                "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task vlm-generation "
+                "--prompt 'Describe the image' --max_new_tokens 2"
+            ),
+            "expected_result": (
+                "One greedy run stopped at EOS after exactly 1 generated token under the 2-token maximum. "
+                'The literal completion was "image".'
+            ),
+        },
+        item_name="inference",
+        status="verified",
+        errors=errors,
+    )
+
+    assert errors == []
+
+
+@pytest.mark.parametrize("nonblocking_flag", ["--detach", "--dry-run", "--submission-dry-run"])
+def test_inference_launcher_rejects_nonblocking_modes(nonblocking_flag):
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_inference(
+        {
+            "command": (
+                "./scripts/inference/infer.sh --nodes 1 --gpus-per-node 8 --task vlm-generation "
+                f"--prompt 'Describe the image' --max_new_tokens 2 {nonblocking_flag}"
+            ),
+            "expected_result": (
+                'One greedy run produced an exact 2-token output. The exact completion was "The image".'
+            ),
+        },
+        item_name="inference",
+        status="verified",
+        errors=errors,
+    )
+
+    assert errors == ["/items/inference/command: verified inference must wait for completion"]
+
+
+@pytest.mark.parametrize(
+    "resources",
+    [
+        "--gpus-per-node 8",
+        "--nodes 1",
+        "--nodes 0 --gpus-per-node 8",
+        "--nodes 1 --gpus-per-node 0",
+    ],
+)
+def test_inference_launcher_requires_positive_resources(resources):
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_inference(
+        {
+            "command": (
+                f"./scripts/inference/infer.sh {resources} --task vlm-generation "
+                "--prompt 'Describe the image' --max_new_tokens 2"
+            ),
+            "expected_result": (
+                'One greedy run produced an exact 2-token output. The exact completion was "The image".'
+            ),
+        },
+        item_name="inference",
+        status="verified",
+        errors=errors,
+    )
+
+    assert len(errors) == 1
+    assert "requires exactly one positive integer" in errors[0]
 
 
 def test_cpu_conversion_accepts_one_runtime_gpu():
@@ -131,8 +213,8 @@ def test_sft_export_inference_accepts_hf_inference_launcher():
                 "--hf-model work/hf --prompt 'Describe the image' --max-new-tokens 2",
             ],
             "expected_result": (
-                "Transformers reloaded the export and two independent runs produced "
-                'the exact byte-identical 2-token completion "The image".'
+                "Transformers reloaded the export and one greedy run produced "
+                'the exact 2-token completion "The image".'
             ),
         },
         {

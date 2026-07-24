@@ -39,12 +39,10 @@ EXPECTED_REGISTRATIONS = {
     "Ernie4_5_VLMoeForConditionalGeneration": ("megatron.bridge.models.ernie_vl.ernie45_vl_bridge.Ernie45VLBridge"),
     "Exaone4ForCausalLM": "megatron.bridge.models.exaone.exaone4_bridge.Exaone4Bridge",
     "FalconH1ForCausalLM": "megatron.bridge.models.falcon_h1.falconh1_bridge.FalconH1Bridge",
-    "Gemma2ForCausalLM": "megatron.bridge.models.gemma.gemma2_bridge.Gemma2Bridge",
     "Gemma3ForCausalLM": "megatron.bridge.models.gemma.gemma3_bridge.Gemma3ModelBridge",
     "Gemma3ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma3_vl_bridge.Gemma3VLBridge",
     "Gemma4ForCausalLM": "megatron.bridge.models.gemma.gemma4_bridge.Gemma4Bridge",
     "Gemma4ForConditionalGeneration": "megatron.bridge.models.gemma_vl.gemma4_vl_bridge.Gemma4VLBridge",
-    "GemmaForCausalLM": "megatron.bridge.models.gemma.gemma_bridge.GemmaBridge",
     "Glm4MoeForCausalLM": "megatron.bridge.models.glm.glm45_bridge.GLM45Bridge",
     "Glm4MoeLiteForCausalLM": "megatron.bridge.models.glm.glm47_flash_bridge.GLM47FlashBridge",
     "Glm4vMoeForConditionalGeneration": "megatron.bridge.models.glm_vl.glm_45v_bridge.GLM45VBridge",
@@ -59,8 +57,6 @@ EXPECTED_REGISTRATIONS = {
     "MiniMaxM2ForCausalLM": "megatron.bridge.models.minimax_m2.minimax_m2_bridge.MiniMaxM2Bridge",
     "MiniMaxM3SparseForConditionalGeneration": ("megatron.bridge.models.minimax_m3.minimax_m3_bridge.MiniMaxM3Bridge"),
     "Mistral3ForConditionalGeneration": ("megatron.bridge.models.ministral3.ministral3_bridge.Ministral3Bridge"),
-    "MistralForCausalLM": "megatron.bridge.models.mistral.mistral_bridge.MistralBridge",
-    "NemotronForCausalLM": "megatron.bridge.models.nemotron.nemotron_bridge.NemotronBridge",
     "NemotronHForCausalLM": "megatron.bridge.models.nemotronh.nemotron_h_bridge.NemotronHBridge",
     "NemotronH_Nano_Omni_Reasoning_V3": (
         "megatron.bridge.models.nemotron_omni.nemotron_omni_bridge.NemotronOmniBridge"
@@ -127,6 +123,13 @@ STRING_REGISTRATIONS = {
     "Step3p7ForConditionalGeneration",
 }
 
+DEPRECATED_REGISTRATIONS = {
+    "Gemma2ForCausalLM",
+    "GemmaForCausalLM",
+    "MistralForCausalLM",
+    "NemotronForCausalLM",
+}
+
 
 def test_public_autobridge_import_registers_every_supported_model() -> None:
     """The public package import must install every expected bridge registration."""
@@ -136,6 +139,7 @@ def test_public_autobridge_import_registers_every_supported_model() -> None:
             str(REGISTRATION_CHECK_SCRIPT),
             json.dumps(EXPECTED_REGISTRATIONS, sort_keys=True),
             json.dumps(sorted(STRING_REGISTRATIONS)),
+            json.dumps(sorted(DEPRECATED_REGISTRATIONS)),
         ],
         capture_output=True,
         text=True,

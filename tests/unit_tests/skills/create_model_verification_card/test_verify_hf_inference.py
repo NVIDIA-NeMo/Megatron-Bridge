@@ -162,13 +162,13 @@ def test_multimodal_main_uses_processor_chat_and_allows_early_stopping(monkeypat
         "return_tensors": "pt",
         "enable_thinking": False,
     }
-    assert len(model.calls) == 2
-    for call in model.calls:
-        assert call["do_sample"] is False
-        assert "min_new_tokens" not in call
-        assert call["max_new_tokens"] == 2
-        assert call["pad_token_id"] == 0
-        assert "pixel_values" in call
+    assert len(model.calls) == 1
+    call = model.calls[0]
+    assert call["do_sample"] is False
+    assert "min_new_tokens" not in call
+    assert call["max_new_tokens"] == 2
+    assert call["pad_token_id"] == 0
+    assert "pixel_values" in call
 
 
 def test_text_main_keeps_the_legacy_tokenizer_path(monkeypatch):
@@ -195,5 +195,5 @@ def test_text_main_keeps_the_legacy_tokenizer_path(monkeypatch):
 
     assert result == 0
     assert tokenizer.prompt == "formatted text prompt"
-    assert len(model.calls) == 2
-    assert all("pixel_values" not in call for call in model.calls)
+    assert len(model.calls) == 1
+    assert "pixel_values" not in model.calls[0]

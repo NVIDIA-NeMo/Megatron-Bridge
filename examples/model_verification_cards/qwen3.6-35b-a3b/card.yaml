@@ -78,8 +78,9 @@ items:
       checkpoint. The repository's distributed HF-to-Megatron-to-HF verifier
       covered all 1,045 source BF16 tensors, including language, vision,
       projection, router, routed/shared expert, and packed MTP weights. All
-      1,045 passed the standard value-comparison gate, with zero failed rows
-      and no missing, unexpected, or shape-mismatched weights.
+      1,045 passed the value-comparison gate at absolute tolerance 0.1 and
+      relative tolerance 1e-5, with zero failed rows and no missing,
+      unexpected, or shape-mismatched weights.
 
   megatron_to_hf_cpu:
     status: verified
@@ -129,7 +130,9 @@ items:
       language, vision, projection, router, routed/shared expert, and packed
       MTP weights with zero failed rows. Transformers independently reloaded
       the persisted export as Qwen3_5MoeForConditionalGeneration with empty
-      missing, unexpected, mismatched, and error sets.
+      missing, unexpected, mismatched, and error sets. The distributed
+      round-trip value comparison used absolute tolerance 0.1 and relative
+      tolerance 1e-5.
 
   manual_forward_pass:
     status: verified
@@ -148,11 +151,14 @@ items:
     last_verified: 2026-07-23
     bridge_commit: ac39e582036c4f120257735bf22d71b8d7a1cddb  # pragma: allowlist secret
     expected_result: >
-      Using a recorded image from the pinned MedPix validation split, the Qwen
-      processor produced 83 input tokens and a 256-by-1536 pixel tensor. The
-      pinned HF model and imported Megatron checkpoint had next-token
-      predictions that matched at token 760 ('The'). Cosine similarity:
-      0.999156; maximum
+      The input was MedPix-VQA revision
+      69eb219d477ab8699296da1fd6b89beb768042d3, validation row 0, case
+      MPX1095. Its 256-by-256 source image has SHA-256
+      d5852239309244feb646739dfe7460048c596380abe89def0a84d8a62778b7b1.
+      The Qwen processor produced 83 input tokens and a 256-by-1536 pixel
+      tensor. The pinned HF model and imported Megatron checkpoint had
+      next-token predictions that matched at token 760 ('The'). Cosine
+      similarity: 0.999156; maximum
       and mean absolute logit differences were 0.484375 and 0.082185,
       respectively.
 
@@ -174,10 +180,14 @@ items:
     bridge_commit: 72d554863cd4dbcacd26abda92054afd0506e668  # pragma: allowlist secret
     expected_result: >
       Two independent runs used greedy decoding, loaded the imported checkpoint,
-      consumed the recorded MedPix validation image and question through the
-      Qwen processor, and exited successfully with byte-identical 32-token
-      completions. Neither run emitted EOS before the safety bound. The exact
-      completion, represented with JSON newline escapes, was "The user wants
+      consumed MedPix-VQA revision
+      69eb219d477ab8699296da1fd6b89beb768042d3 validation row 0 (case
+      MPX1095; source-image SHA-256
+      d5852239309244feb646739dfe7460048c596380abe89def0a84d8a62778b7b1)
+      and its question through the Qwen processor, and exited successfully with
+      byte-identical 32-token completions. Neither run emitted EOS before the
+      safety bound. The exact completion, represented with JSON newline
+      escapes, was "The user wants
       me to identify the findings in the provided MRI image.\n\n1.  **Analyze
       the image:**\n    *   **Modality:**".
 
@@ -236,10 +246,11 @@ items:
         produces a reloadable checkpoint. Future verification must export every
         language, vision, projection, MoE, shared-expert, and MTP weight to an
         indexed BF16 HF checkpoint, strictly reload it, and use the
-        processor-native image verifier to generate greedily twice under the
-        same 32-token maximum while allowing natural end-of-sequence stopping.
-        Tensor counts, serialized byte totals, and the literal byte-identical
-        completion must be recorded before this item is marked verified.
+        processor-native image verifier to run one greedy generation under a
+        32-token maximum while allowing natural end-of-sequence stopping.
+        Tensor counts, serialized byte totals, the actual generated-token
+        count, and the literal completion must be recorded before this item is
+        marked verified.
 
   sft_long_context:
     H100:

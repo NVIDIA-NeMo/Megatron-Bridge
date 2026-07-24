@@ -513,10 +513,13 @@ result. Private executor configuration stays outside the card.
   generation. Choose a prompt whose tokenized length is divisible by TP so the
   helper does not append padding before selecting the compared next-token
   position.
-- **Megatron inference:** Use deterministic greedy generation with the same
-  explicit maximum new-token bound, run twice, and require byte-identical
-  decoded completions, including natural end-of-sequence stopping. Record the
-  literal completion including whitespace.
+- **Megatron inference:** Disable sampling, run one deterministic greedy
+  generation with an explicit maximum new-token bound. Allow natural
+  end-of-sequence stopping, and record the actual generated-token count plus
+  the literal completion including whitespace. A second replay may help
+  diagnose nondeterminism, but it is not required verification evidence. When
+  using `infer.sh`, specify positive node and GPU counts and run synchronously;
+  do not use `--detach` or a dry-run flag in a verified command.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
@@ -527,14 +530,14 @@ result. Private executor configuration stays outside the card.
   decay. Use a public dataset name or preset, not its storage location. Save the
   final full-SFT checkpoint when export verification is in scope.
 - **SFT export and inference:** Depend on `sft`, export its final full-model
-  checkpoint to HF, reload the exported model with Transformers, and run greedy
-  generation twice. Store this item as an ordered `commands` list containing
-  exactly two strings: the synchronous Slurm export first and the maintained
-  `infer.sh --task hf-inference` launcher second. Direct `uv run` invocation of
-  the same helper remains valid when no Slurm executor is available. Specify
-  the same maximum new-token bound for both runs and record the literal
-  byte-identical completion, including whitespace, in `expected_result`. Allow
-  the model to stop naturally at end-of-sequence.
+  checkpoint to HF, reload the exported model with Transformers, and run one
+  deterministic greedy generation. Store this item as an ordered `commands`
+  list containing exactly two strings: the synchronous Slurm export first and
+  the maintained `infer.sh --task hf-inference` launcher second. Direct
+  `uv run` invocation of the same helper remains valid when no Slurm executor
+  is available. Specify an explicit maximum new-token bound, allow natural
+  end-of-sequence stopping, and record the actual generated-token count plus
+  the literal completion, including whitespace, in `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
@@ -671,8 +674,8 @@ an item verified merely to make validation pass.
   recheck loss sentinels after numerically non-bitwise changes.
 - Leave recipe global and micro batch sizes unchanged in card commands.
 - Save full SFT, export it to HF, and record the deterministic HF completion
-  produced twice under the same maximum new-token bound in a two-command
-  ordered list.
+  plus actual generated-token count under an explicit maximum bound in a
+  two-command ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.

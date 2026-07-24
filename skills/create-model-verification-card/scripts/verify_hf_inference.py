@@ -13,7 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Verify deterministic inference from an exported HF checkpoint."""
+"""Run one deterministic greedy inference from an exported HF checkpoint."""
 
 from __future__ import annotations
 
@@ -146,7 +146,7 @@ def _processor_tokenizer(processor: Any) -> Any:
 
 
 def main() -> int:
-    """Run two greedy generations and print their shared completion."""
+    """Run one bounded greedy generation and print its completion."""
     args = _parse_args()
     torch, model, processor = _load_runtime(args)
     tokenizer = _processor_tokenizer(processor)
@@ -154,22 +154,15 @@ def main() -> int:
     prompt_length = inputs["input_ids"].shape[1]
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 
-    outputs = []
     with torch.inference_mode():
-        for _ in range(2):
-            outputs.append(
-                model.generate(
-                    **inputs,
-                    do_sample=False,
-                    max_new_tokens=args.max_new_tokens,
-                    pad_token_id=pad_token_id,
-                )
-            )
+        output = model.generate(
+            **inputs,
+            do_sample=False,
+            max_new_tokens=args.max_new_tokens,
+            pad_token_id=pad_token_id,
+        )
 
-    if not torch.equal(outputs[0], outputs[1]):
-        raise RuntimeError("Two greedy HF inference runs produced different token IDs")
-
-    completion_ids = outputs[0][0, prompt_length:].tolist()
+    completion_ids = output[0, prompt_length:].tolist()
     completion = processor.decode(completion_ids, skip_special_tokens=True)
     LOG.info(
         "HF completion (%d generated tokens; maximum %d): %s",

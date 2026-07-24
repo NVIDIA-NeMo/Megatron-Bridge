@@ -77,6 +77,17 @@ def test_builder_auto_selects_shared_text_collate_for_all_chat_columns(monkeypat
     assert (validation, test) == (None, None)
 
 
+def test_config_defaults_to_cyclic_sampler():
+    config = DirectHFSFTDatasetConfig(
+        seq_length=16,
+        source=HFDatasetSourceConfig(path_or_dataset="org/chat"),
+        do_validation=False,
+        do_test=False,
+    )
+
+    assert config.dataloader_type == "cyclic"
+
+
 def test_config_validates_source_and_padding():
     config = DirectHFSFTDatasetConfig(
         seq_length=0,
@@ -430,6 +441,7 @@ def test_direct_hf_sft_config_round_trip_is_declarative():
     assert isinstance(restored, DirectHFSFTDatasetConfig)
     assert restored.preprocessing.loss_mode == "assistant"
     assert restored.source.load_kwargs == config.source.load_kwargs
+    assert restored.dataloader_type == "cyclic"
     assert "collate_impl" not in serialized
     assert "processor" not in serialized
     assert "tokenizer" not in serialized

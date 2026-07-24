@@ -7,25 +7,27 @@ Ministral 3 models support multimodal tasks including image captioning, visual q
 Ministral 3 models are supported via the Bridge system with auto-detected configuration and weight mapping.
 
 ```{important}
-Please upgrade to `transformers` v5 and upgrade `mistral-common` in order to use the Ministral 3 models.
+Ministral 3 requires `transformers` v5 and `mistral-common`; both are pinned by
+the Megatron Bridge project environment. Run commands through `uv run` so the
+compatible versions are used.
 ```
 
 ## Available Models
 
 ### Vision-Language Models
-- **Ministral 3 3B** (`mistralai/Ministral-3-3B-Base-2512`): 3.4B parameter vision-language model
+- **Ministral 3 3B** (`mistralai/Ministral-3-3B-Base-2512`): ~3.8B unique-parameter vision-language model
   - 26 layers, 3072 hidden size
   - 32 attention heads, 8 query groups (GQA)
   - Vision encoder: ~0.4B parameters
   - Recommended: 1 node, 8 GPUs
 
-- **Ministral 3 8B** (`mistralai/Ministral-3-8B-Base-2512`): 8.4B parameter vision-language model
+- **Ministral 3 8B** (`mistralai/Ministral-3-8B-Base-2512`): 8.9B parameter vision-language model
   - 34 layers, 4096 hidden size
   - 32 attention heads, 8 query groups (GQA)
   - Vision encoder: ~0.4B parameters
   - Recommended: 1 node, 8 GPUs
 
-- **Ministral 3 14B** (`mistralai/Ministral-3-14B-Base-2512`): ~14B parameter vision-language model
+- **Ministral 3 14B** (`mistralai/Ministral-3-14B-Base-2512`): 13.9B parameter vision-language model
   - 40 layers, 5120 hidden size
   - 32 attention heads, 8 query groups (GQA)
   - Vision encoder: ~0.4B parameters

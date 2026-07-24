@@ -2,7 +2,7 @@
 
 [Qwen3.5](https://huggingface.co/collections/Qwen/qwen35) is a family of vision-language models supporting multimodal understanding across text, images, and videos. Qwen3.5-VL includes both dense models and Mixture-of-Experts (MoE) variants for improved efficiency at scale.
 
-[Qwen3.6](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) shares the same architecture as Qwen3.5 VL MoE (`Qwen3_5MoeForConditionalGeneration`) and is supported through the same bridge with no code changes required.
+[Qwen3.6](https://huggingface.co/Qwen/Qwen3.6-35B-A3B) shares the same architecture as Qwen3.5 VL MoE (`Qwen3_5MoeForConditionalGeneration`) and is supported through the same bridge implementation.
 
 Qwen 3.5/3.6 models feature a hybrid architecture combining GDN (Gated DeltaNet) layers with standard attention layers, SwiGLU activations, and RMSNorm. MoE variants use top-k routing with shared experts for better quality.
 

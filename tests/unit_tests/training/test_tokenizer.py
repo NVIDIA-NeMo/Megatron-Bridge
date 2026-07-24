@@ -68,7 +68,7 @@ class TestTokenizers:
         metadata_path = {"library": "huggingface", "chat_template": chat_template}
         config = TokenizerConfig(
             tokenizer_type="HuggingFaceTokenizer",
-            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            tokenizer_model="meta-llama/Meta-Llama-3-8B-Instruct",
             metadata_path=metadata_path,
         )
 
@@ -152,28 +152,6 @@ class TestTokenizers:
 
         mock_snapshot_download.assert_not_called()
 
-    @patch("megatron.core.tokenizers.text.libraries.SentencePieceTokenizer")
-    @pytest.mark.parametrize("legacy", [True])
-    def test_build_sp_tokenizer(self, mock_sp_tokenizer, legacy):
-        # Setup
-        custom_kwargs = {
-            "legacy": legacy,
-        }
-
-        config = TokenizerConfig(
-            tokenizer_type="Llama2Tokenizer",
-            tokenizer_model="sp.model",
-            special_tokens=["<TEST_SPECIAL>"],
-            sp_tokenizer_kwargs=custom_kwargs,
-        )
-
-        # Execute
-        tokenizer = build_tokenizer(config)
-
-        # Verify
-        assert tokenizer.library == "sentencepiece"
-        assert tokenizer.additional_args["legacy"] == legacy
-
     @patch("megatron.core.tokenizers.text.libraries.TikTokenTokenizer")
     @pytest.mark.parametrize("pattern", ["v1"])
     @pytest.mark.parametrize("num_special_tokens", [2000])
@@ -239,3 +217,80 @@ class TestTokenizers:
         # verify that the directory actually contains files (sanity check)
         assert (local_model_path / "tokenizer_config.json").exists()
         assert (local_model_path / "tokenizer.json").exists()
+
+
+CHAT_TEMPLATE = "{% generation %}{{ messages }}{% endgeneration %}"
+
+
+class TestChatTemplatePathOverride:
+    """`TokenizerConfig.chat_template_path` loads a jinja template from a local or msc:// path."""
+
+    def test_resolve_from_local_file(self, tmp_path):
+        from megatron.bridge.training.tokenizers import tokenizer as tok_mod
+
+        template_file = tmp_path / "template.jinja"
+        template_file.write_text(CHAT_TEMPLATE)
+        config = TokenizerConfig(chat_template_path=str(template_file))
+
+        with patch.object(tok_mod.MultiStorageClientFeature, "is_enabled", return_value=False):
+            assert tok_mod._resolve_chat_template(config) == CHAT_TEMPLATE
+
+    def test_inline_chat_template_passthrough(self):
+        from megatron.bridge.training.tokenizers.tokenizer import _resolve_chat_template
+
+        config = TokenizerConfig(chat_template=CHAT_TEMPLATE)
+
+        assert _resolve_chat_template(config) == CHAT_TEMPLATE
+
+    def test_none_when_neither_set(self):
+        from megatron.bridge.training.tokenizers.tokenizer import _resolve_chat_template
+
+        assert _resolve_chat_template(TokenizerConfig()) is None
+
+    def test_inline_and_path_are_mutually_exclusive(self, tmp_path):
+        from megatron.bridge.training.tokenizers.tokenizer import _resolve_chat_template
+
+        template_file = tmp_path / "template.jinja"
+        template_file.write_text(CHAT_TEMPLATE)
+        config = TokenizerConfig(chat_template=CHAT_TEMPLATE, chat_template_path=str(template_file))
+
+        with pytest.raises(ValueError):
+            _resolve_chat_template(config)
+
+    def test_resolve_via_msc_when_enabled(self):
+        from unittest.mock import MagicMock
+
+        from megatron.bridge.training.tokenizers import tokenizer as tok_mod
+
+        fake_handle = MagicMock()
+        fake_handle.read.return_value = CHAT_TEMPLATE
+        fake_msc = MagicMock()
+        fake_msc.open.return_value.__enter__.return_value = fake_handle
+
+        config = TokenizerConfig(chat_template_path="msc://bucket/template.jinja")
+        with patch.object(tok_mod, "MultiStorageClientFeature") as msc_feat:
+            msc_feat.is_enabled.return_value = True
+            msc_feat.import_package.return_value = fake_msc
+            assert tok_mod._resolve_chat_template(config) == CHAT_TEMPLATE
+        fake_msc.open.assert_called_once_with("msc://bucket/template.jinja", "r")
+
+    def test_build_hf_tokenizer_passes_resolved_template(self, tmp_path):
+        from megatron.bridge.training.tokenizers import tokenizer as tok_mod
+
+        template_file = tmp_path / "template.jinja"
+        template_file.write_text(CHAT_TEMPLATE)
+        config = TokenizerConfig(
+            tokenizer_type="HuggingFaceTokenizer",
+            tokenizer_model="meta-llama/Llama-2-7b-chat-hf",
+            chat_template_path=str(template_file),
+        )
+
+        with (
+            patch.object(tok_mod.MultiStorageClientFeature, "is_enabled", return_value=False),
+            patch.object(tok_mod, "build_mcore_tokenizer") as mock_build_mcore,
+        ):
+            build_tokenizer(config)
+
+        (called_config,), _ = mock_build_mcore.call_args
+        assert called_config.chat_template == CHAT_TEMPLATE
+        assert called_config.chat_template_path is None
