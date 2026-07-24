@@ -23,8 +23,9 @@ import and export.
 
 ## Hardware requirements
 
-MiniMax-M3 has about 428B parameters stored in bf16 (the published checkpoint
-is about 869 GB). The supplied Slurm jobs use 32 GPUs with `TP=1`, `PP=1`, and
+MiniMax-M3 has about 428B parameters stored in bf16. The published index
+declares about 869 GB, while the safetensors headers contain about 854 GB of
+tensor payload. The supplied Slurm jobs use 32 GPUs with `TP=1`, `PP=1`, and
 `EP=32`, which is a conservative layout for 80 GB GPUs. Hardware with larger
 GPU memory can reduce `EP` and the node count as long as `EP` divides 128.
 
@@ -44,7 +45,7 @@ export SLURM_ACCOUNT=your_slurm_account
 The current checkout is mounted at `/opt/Megatron-Bridge` automatically and
 must be on storage visible from the compute nodes. Fully populate the shared
 model cache before starting either 45-minute compute job; the checkpoint
-download is about 869 GB:
+contains about 854 GB of safetensors payload:
 
 ```bash
 hf download MiniMaxAI/MiniMax-M3
@@ -56,7 +57,7 @@ Run [slurm_conversion.sh](slurm_conversion.sh) from a Slurm login node to
 submit the real HF checkpoint through `convert.sh roundtrip`. The job imports
 it into a distributed Megatron model and exports every bridged tensor back in
 memory. It compares those tensors with the original checkpoint and skips
-writing a second 869 GB copy.
+writing a second roughly 854 GB safetensors copy.
 
 ```bash
 bash examples/models/minimax/minimax_m3/slurm_conversion.sh
@@ -88,10 +89,14 @@ errors and the generated answer is coherent for the prompt.
 The complete real `MiniMaxAI/MiniMax-M3` VLM checkpoint completed GPU import
 to a native Megatron checkpoint and GPU export back to Hugging Face on 32 H100
 80 GB GPUs with `TP=1`, `PP=1`, `EP=32`, and `ETP=1`. The imported checkpoint
-passed an exact 23,416-tensor persisted-state audit. The strict exported-
-artifact key, shape, dtype, and value audit is still pending, so the export
-currently records successful end-to-end execution rather than final parity
-verification.
+passed an exact 23,416-tensor persisted-state audit. The exported checkpoint
+also passed strict persisted validation: its key-to-shard map and all 59
+safetensors shards are byte-for-byte identical to the pinned source, covering
+23,416 tensors and 854,172,958,720 bytes of tensor payload. Configuration,
+tokenizer probes, and multimodal processor inputs match the source.
+Transformers 5.12.1 natively reloads both source and export through its
+MiniMax-M3 checkpoint conversion mapping with zero missing, unexpected,
+mismatched, or error keys.
 
 One deterministic full-VLM greedy generation on the same 32-H100 layout
 processed `docs/images/tp1.png`, generated 33 tokens under a 64-token maximum,
