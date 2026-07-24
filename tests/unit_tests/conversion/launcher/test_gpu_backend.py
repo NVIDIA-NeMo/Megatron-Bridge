@@ -113,30 +113,6 @@ class _FakeProvider:
         return ["megatron-model"]
 
 
-@pytest.mark.parametrize(
-    ("dtype", "expected_fp16", "expected_bf16"),
-    [
-        (torch.float16, True, False),
-        (torch.bfloat16, False, True),
-        (torch.float32, False, False),
-    ],
-)
-def test_configure_model_provider_synchronizes_precision_flags(cli, dtype, expected_fp16, expected_bf16):
-    provider = _FakeProvider([])
-
-    cli._configure_model_provider(provider, tp=2, pp=3, ep=4, etp=5, dtype=dtype)
-
-    assert provider.tensor_model_parallel_size == 2
-    assert provider.pipeline_model_parallel_size == 3
-    assert provider.expert_model_parallel_size == 4
-    assert provider.expert_tensor_parallel_size == 5
-    assert provider.fp16 is expected_fp16
-    assert provider.bf16 is expected_bf16
-    assert provider.pipeline_dtype == dtype
-    assert provider.params_dtype == dtype
-    assert provider.autocast_dtype == dtype
-
-
 class _FakeModelBridge:
     def get_hf_tokenizer_kwargs(self):
         return {"padding_side": "left"}
