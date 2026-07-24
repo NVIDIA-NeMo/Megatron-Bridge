@@ -61,6 +61,8 @@ except (ImportError, ModuleNotFoundError):
     from .perf_plugins import NsysPlugin, PreemptionPlugin, PyTorchProfilerPlugin
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+REPO_ROOT = SCRIPT_DIR.parents[1]
+PERF_RECIPE_SOURCE_DIR = REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
 ENTRYPOINT_BOOTSTRAP = "bootstrap.py"
 
 logging.basicConfig(level=logging.DEBUG)
@@ -134,6 +136,13 @@ def _default_experiment_name(
     if config_variant and config_variant.lower() not in {"v1", "v2"}:
         fields.append(config_variant.lower())
     return "_".join(fields)
+
+
+def _perf_recipe_source_mount(in_container_script_dir: str) -> str:
+    """Build the source-to-container mount for the flat performance recipe package."""
+    in_container_repo_root = Path(in_container_script_dir).parents[1]
+    target = in_container_repo_root / "src" / "megatron" / "bridge" / "perf_recipes"
+    return f"{PERF_RECIPE_SOURCE_DIR}:{target}"
 
 
 def _build_nemorun_script(
@@ -631,6 +640,7 @@ def main(
         [
             f"{run_script_path}:{run_script_path}",
             f"{SCRIPT_DIR}:{SCRIPT_DIR}",
+            _perf_recipe_source_mount(in_container_script_dir),
         ]
     )
 

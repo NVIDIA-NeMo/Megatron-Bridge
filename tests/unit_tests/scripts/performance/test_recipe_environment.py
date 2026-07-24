@@ -230,76 +230,8 @@ def test_perf_runner_environment_rejects_invalid_values(env_vars):
         bootstrap._apply_recipe_environment(SimpleNamespace(env_vars=env_vars))
 
 
-_VR200_FP8_MX_ENV_VARS = {
-    "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-    "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
-    "NCCL_GRAPH_REGISTER": 0,
-    "NCCL_NVLS_ENABLE": 0,
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-    "NVLINK_DOMAIN_SIZE": 72,
-    "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-    "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
-    "TORCH_NCCL_HIGH_PRIORITY": 1,
-    "USE_MNNVL": 1,
-}
-
-
-@pytest.mark.parametrize(
-    ("recipe_key", "expected_env_vars"),
-    [
-        (
-            ("deepseek_v3", "pretrain", 256, "vr200", "fp8_mx"),
-            {**_VR200_FP8_MX_ENV_VARS, "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0},
-        ),
-        (("qwen3_235b_a22b", "pretrain", 256, "vr200", "fp8_mx"), _VR200_FP8_MX_ENV_VARS),
-    ],
-)
-def test_flat_environment_preparation_restores_vr200_fp8_mx_environment(
-    recipe_key, expected_env_vars, monkeypatch, caplog
-):
-    model_recipe_name, task, num_gpus, gpu, compute_dtype = recipe_key
-    recipe = SimpleNamespace(
-        model=SimpleNamespace(
-            tensor_model_parallel_size=1,
-            pipeline_model_parallel_size=1,
-            context_parallel_size=1,
-            expert_model_parallel_size=1,
-            moe_flex_dispatcher_backend=None,
-        ),
-        comm_overlap=None,
-    )
-    args = SimpleNamespace(
-        gpu=gpu,
-        compute_dtype=compute_dtype,
-        num_gpus=num_gpus,
-        moe_a2a_overlap=None,
-        tensor_model_parallel_size=None,
-        pipeline_model_parallel_size=None,
-        context_parallel_size=None,
-        expert_model_parallel_size=None,
-        nccl_ub=None,
-        model_family_name="deepseek" if model_recipe_name == "deepseek_v3" else "qwen",
-        model_recipe_name=model_recipe_name,
-        task=task,
-    )
-    from utils import overrides as override_utils
-
-    monkeypatch.setattr(override_utils, "set_cli_overrides", lambda config, _overrides: config)
-    monkeypatch.setattr(override_utils, "set_user_overrides", lambda config, _args: config)
-
-    result = run_script._apply_perf_recipe_overrides(recipe, [], args)
-
-    assert result is recipe
-    assert result.env_vars == expected_env_vars
-    assert result.env_vars is not expected_env_vars
-    assert f"Restoring the VR200 FP8-MX environment for {model_recipe_name}" in caplog.text
-
-
-def test_flat_environment_preparation_defaults_unknown_recipe_environment(monkeypatch, caplog):
+@pytest.mark.parametrize("model_recipe_name", ["deepseek_v3", "qwen3_235b_a22b"])
+def test_flat_environment_preparation_defaults_missing_recipe_environment(model_recipe_name, monkeypatch, caplog):
     recipe = SimpleNamespace(
         model=SimpleNamespace(
             tensor_model_parallel_size=1,
@@ -312,16 +244,14 @@ def test_flat_environment_preparation_defaults_unknown_recipe_environment(monkey
     )
     args = SimpleNamespace(
         gpu="vr200",
-        compute_dtype="fp8_mx",
-        num_gpus=128,
         moe_a2a_overlap=None,
         tensor_model_parallel_size=None,
         pipeline_model_parallel_size=None,
         context_parallel_size=None,
         expert_model_parallel_size=None,
         nccl_ub=None,
-        model_family_name="future",
-        model_recipe_name="future_model",
+        model_family_name="deepseek" if model_recipe_name == "deepseek_v3" else "qwen",
+        model_recipe_name=model_recipe_name,
         task="pretrain",
     )
     from utils import overrides as override_utils
@@ -331,8 +261,10 @@ def test_flat_environment_preparation_defaults_unknown_recipe_environment(monkey
 
     result = run_script._apply_perf_recipe_overrides(recipe, [], args)
 
+    assert result is recipe
     assert result.env_vars == {}
     assert "No environment variables are set explicitly" in caplog.text
+    assert "Performance might be degraded" in caplog.text
 
 
 def test_flat_environment_preparation_applies_cli_overrides(monkeypatch):

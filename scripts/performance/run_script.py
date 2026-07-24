@@ -24,29 +24,6 @@ from utils.utils import get_perf_recipe_by_name
 
 
 logger = logging.getLogger(__name__)
-VR200_FP8_MX_ENV_VARS = {
-    "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-    "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
-    "NCCL_GRAPH_REGISTER": 0,
-    "NCCL_NVLS_ENABLE": 0,
-    "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
-    "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
-    "NVLINK_DOMAIN_SIZE": 72,
-    "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
-    "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
-    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
-    "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-    "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
-    "TORCH_NCCL_HIGH_PRIORITY": 1,
-    "USE_MNNVL": 1,
-}
-MISSING_RECIPE_ENV_VAR_DEFAULTS = {
-    ("deepseek_v3", "pretrain", 256, "vr200", "fp8_mx"): {
-        **VR200_FP8_MX_ENV_VARS,
-        "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
-    },
-    ("qwen3_235b_a22b", "pretrain", 256, "vr200", "fp8_mx"): VR200_FP8_MX_ENV_VARS,
-}
 SENSITIVE_ENV_VAR_PATTERN = re.compile(
     r"(^|_)(TOKEN|SECRET|PASSWORD|PASSWD|API_KEY|ACCESS_KEY|SECRET_KEY|PRIVATE_KEY|AUTHORIZATION)(_|$)",
     re.IGNORECASE,
@@ -85,19 +62,11 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
     from utils.utils import explicit_environment_override_names
 
     if not hasattr(recipe, "env_vars"):
-        recipe_key = (args.model_recipe_name, args.task, args.num_gpus, args.gpu, args.compute_dtype)
-        fallback_env_vars = MISSING_RECIPE_ENV_VAR_DEFAULTS.get(recipe_key)
-        if fallback_env_vars is not None:
-            logger.warning(
-                "Restoring the VR200 FP8-MX environment for %s from the performance runner.", args.model_recipe_name
-            )
-            recipe.env_vars = fallback_env_vars.copy()
-        else:
-            logger.warning(
-                "No environment variables are set explicitly. We typically set "
-                "NVTE_BWD_LAYERNORM_SM_MARGIN, NVTE_FWD_LAYERNORM_SM_MARGIN, etc. Performance might be degraded."
-            )
-            recipe.env_vars = {}
+        logger.warning(
+            "No environment variables are set explicitly. We typically set "
+            "NVTE_BWD_LAYERNORM_SM_MARGIN, NVTE_FWD_LAYERNORM_SM_MARGIN, etc. Performance might be degraded."
+        )
+        recipe.env_vars = {}
     base_env_vars = dict(recipe.env_vars)
     base_dispatcher_backend = getattr(recipe.model, "moe_flex_dispatcher_backend", None)
     comm_overlap = getattr(recipe, "comm_overlap", None)

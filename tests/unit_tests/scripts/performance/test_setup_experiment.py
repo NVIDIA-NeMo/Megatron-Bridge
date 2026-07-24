@@ -61,6 +61,15 @@ def test_default_experiment_name_uses_only_cli_metadata() -> None:
     )
 
 
+def test_perf_recipe_source_overlay_is_scoped_to_recipe_package() -> None:
+    source = _REPO_ROOT / "src" / "megatron" / "bridge" / "perf_recipes"
+
+    assert setup_experiment.PERF_RECIPE_SOURCE_DIR == source
+    assert setup_experiment._perf_recipe_source_mount("/opt/Megatron-Bridge/scripts/performance") == (
+        f"{source}:/opt/Megatron-Bridge/src/megatron/bridge/perf_recipes"
+    )
+
+
 def test_recipe_arguments_are_forwarded_unchanged() -> None:
     recipe_args = [
         "--tensor_model_parallel_size",
