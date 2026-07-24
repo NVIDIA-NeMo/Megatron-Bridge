@@ -532,6 +532,23 @@ class TestMaybeModifyConvertedHFWeightCausal:
             atol=0,
         )
 
+    def test_config_only_vl_export_drops_tied_global_v_proj(self, vl_bridge, mock_hf_config_moe):
+        vl_bridge.hf_config = mock_hf_config_moe
+        converted = {
+            "model.language_model.layers.4.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.language_model.layers.5.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.language_model.layers.5.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.language_model.layers.5.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = vl_bridge.maybe_modify_converted_hf_weight(None, converted, {})
+
+        assert set(result) == {
+            "model.language_model.layers.4.self_attn.v_proj.weight",
+            "model.language_model.layers.5.self_attn.q_proj.weight",
+            "model.language_model.layers.5.self_attn.k_proj.weight",
+        }
+
     def test_empty_hf_state_dict_passthrough(self, causal_bridge):
         converted = {"some.weight": torch.randn(4, 4)}
         result = causal_bridge.maybe_modify_converted_hf_weight(None, converted, {})

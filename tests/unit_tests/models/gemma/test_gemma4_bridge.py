@@ -534,6 +534,41 @@ class TestMaybeModifyConvertedHFWeight:
             atol=0,
         )
 
+    def test_config_only_export_drops_tied_global_v_proj(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+        converted = {
+            "model.layers.4.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.layers.5.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.layers.5.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.layers.5.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, {})
+
+        assert set(result) == {
+            "model.layers.4.self_attn.v_proj.weight",
+            "model.layers.5.self_attn.q_proj.weight",
+            "model.layers.5.self_attn.k_proj.weight",
+        }
+
+    def test_config_only_export_drops_shared_kv_projections(self, bridge, mock_hf_config_dense):
+        bridge.hf_config = mock_hf_config_dense
+        converted = {
+            "model.layers.41.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.layers.41.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.layers.42.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.layers.42.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.layers.42.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, None)
+
+        assert set(result) == {
+            "model.layers.41.self_attn.k_proj.weight",
+            "model.layers.41.self_attn.v_proj.weight",
+            "model.layers.42.self_attn.q_proj.weight",
+        }
+
     def test_empty_hf_state_dict_passthrough(self, bridge):
         converted = {"some.weight": torch.randn(4, 4)}
         result = bridge.maybe_modify_converted_hf_weight(None, converted, {})
