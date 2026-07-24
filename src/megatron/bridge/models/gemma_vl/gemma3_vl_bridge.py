@@ -104,6 +104,18 @@ class Gemma3VLBridge(MegatronModelBridge):
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format
         # First create simple 1:1 parameter mappings using a dictionary for readability
 
+        # Gemma3 checkpoints exist with both the legacy SigLIP wrapper namespace
+        # (vision_tower.vision_model.*) and the current flattened namespace
+        # (vision_tower.*). Preserve the namespace exposed by the source state when
+        # it is available; config-only bridges continue to target the current form.
+        vision_hf_param = "vision_tower.**"
+        hf_state = getattr(getattr(self, "hf_pretrained", None), "state", None)
+        state_source = getattr(hf_state, "source", None)
+        if state_source is not None:
+            hf_keys = state_source.get_all_keys()
+            if any(key.startswith("vision_tower.vision_model.") for key in hf_keys):
+                vision_hf_param = "vision_tower.vision_model.**"
+
         # Dictionary maps Megatron parameter names -> HF parameter names
         # Supports wildcard (*) patterns for layer-specific parameters
         param_mappings = {
@@ -135,7 +147,7 @@ class Gemma3VLBridge(MegatronModelBridge):
             [
                 ReplicatedMapping(
                     megatron_param="vision_tower.**",
-                    hf_param="vision_tower.**",
+                    hf_param=vision_hf_param,
                 ),
                 AutoMapping(
                     megatron_param="multi_modal_projector.proj.weight",

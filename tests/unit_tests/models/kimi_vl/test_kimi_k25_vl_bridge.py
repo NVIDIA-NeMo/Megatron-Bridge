@@ -301,6 +301,49 @@ class TestKimiK25VLBridgeWeightConversion:
         assert kimi_bridge._is_quantized_expert_key("model.layers.5.self_attn.q_proj.weight") is False
         assert kimi_bridge._is_quantized_expert_key("model.embed_tokens.weight") is False
 
+    def test_plain_export_dtype_skips_int4_requantization(self, kimi_bridge):
+        """An explicit plain export dtype must preserve routed expert weights."""
+        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+
+        task = WeightConversionTask(
+            param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
+            global_param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
+            mapping=Mock(),
+            weight_dtype=torch.bfloat16,
+        )
+        weight_key = "language_model.model.layers.5.mlp.experts.0.gate_proj.weight"
+        weight = torch.ones((2, 32), dtype=torch.float32)
+
+        result = kimi_bridge.maybe_modify_converted_hf_weight(task, {weight_key: weight}, {})
+
+        assert set(result) == {weight_key}
+        assert result[weight_key] is weight
+
+    def test_default_export_requantizes_routed_expert_weights(self, kimi_bridge):
+        """Default export should continue recreating Kimi's INT4 source layout."""
+        from megatron.bridge.models.conversion.model_bridge import WeightConversionTask
+
+        task = WeightConversionTask(
+            param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
+            global_param_name="decoder.layers.5.mlp.experts.linear_fc1.weight0",
+            mapping=Mock(),
+        )
+        weight_key = "language_model.model.layers.5.mlp.experts.0.gate_proj.weight"
+
+        result = kimi_bridge.maybe_modify_converted_hf_weight(
+            task,
+            {weight_key: torch.ones((2, 32), dtype=torch.bfloat16)},
+            {},
+        )
+
+        base_key = weight_key.removesuffix(".weight")
+        assert set(result) == {
+            f"{base_key}.weight_packed",
+            f"{base_key}.weight_scale",
+            f"{base_key}.weight_shape",
+        }
+        assert result[f"{base_key}.weight_packed"].dtype == torch.int32
+
     @patch("megatron.bridge.models.kimi_vl.kimi_k25_vl_bridge.dequantize_int4")
     def test_load_and_dequantize_uses_source_tensor_device(self, mock_dequantize, kimi_bridge):
         """Quantized loads should dequantize on the source tensor device."""

@@ -611,6 +611,21 @@ def test_shared_chat_preprocessing_supports_all_declared_conversation_columns(co
     assert normalize_chat_conversation(row) == turns
 
 
+def test_shared_chat_preprocessing_normalizes_sharegpt_roles_before_templating():
+    tokenized = tokenize_chat_example(
+        {
+            "conversations": [
+                {"from": "human", "value": "question"},
+                {"from": "gpt", "value": "answer"},
+            ]
+        },
+        _LlamaPreprocessingTokenizer(),
+    )
+
+    assert [turn["role"] for turn in tokenized.conversation] == ["user", "assistant"]
+    assert tokenized.assistant_mask.any()
+
+
 def test_ultrachat_style_row_has_matching_gpt_sft_and_direct_hf_collation():
     tokenizer = _LlamaPreprocessingTokenizer()
     row = {
