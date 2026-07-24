@@ -41,7 +41,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 42de869db41994acdf48adf00c968c604a575196  # pragma: allowlist secret
+  bridge_commit: 1197eae74d1b912f5609efa5e8e58888f06e6dd3  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -78,6 +78,7 @@ items:
       --megatron-path work/model-verification/qwen3.6-35b-a3b/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 1 --ep 8 --etp 1
     last_verified: 2026-07-23
+    bridge_commit: 42de869db41994acdf48adf00c968c604a575196  # pragma: allowlist secret
     expected_result: >
       The 16-H100 pinned-revision import exited successfully at
       TP2/PP1/EP8/ETP1 and created a 16-shard iter_0000000 distributed
@@ -129,6 +130,7 @@ items:
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 1 --ep 8 --etp 1
     last_verified: 2026-07-23
+    bridge_commit: 42de869db41994acdf48adf00c968c604a575196  # pragma: allowlist secret
     expected_result: >
       The 16-H100 distributed export exited successfully and wrote 26 indexed
       shards containing 1,045 BF16 tensors and 71,903,645,408 serialized tensor
