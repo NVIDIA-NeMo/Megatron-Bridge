@@ -1,6 +1,6 @@
-# GLM-5 and GLM-5.1
+# GLM-5, GLM-5.1, and GLM-5.2
 
-[GLM-5](https://huggingface.co/zai-org/GLM-5) and [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1) are large sparse MoE language models with Multi-Latent Attention and Dynamic Sparse Attention. Megatron Bridge supports both checkpoints through the shared `GLM5Bridge`.
+[GLM-5](https://huggingface.co/zai-org/GLM-5), [GLM-5.1](https://huggingface.co/zai-org/GLM-5.1), and [GLM-5.2](https://huggingface.co/zai-org/GLM-5.2) are large sparse MoE language models with Multi-Latent Attention and Dynamic Sparse Attention. Megatron Bridge supports these checkpoints through the shared `GLM5Bridge`.
 
 ## Supported Variants
 
@@ -8,6 +8,7 @@
 |---------|-----------------|-------|
 | GLM-5 | `zai-org/GLM-5` | MoE + MLA + DSA architecture |
 | GLM-5.1 | `zai-org/GLM-5.1` | Same architecture and mapping shape as GLM-5 |
+| GLM-5.2 | `zai-org/GLM-5.2` | Adds IndexShare-style DSA index reuse settings |
 
 ## Architecture Notes
 
@@ -26,4 +27,3 @@ For conversion, inference, dependency notes, hardware requirements, and MCore pa
 
 - Bridge implementation: [`src/megatron/bridge/models/glm_moe_dsa/glm5_bridge.py`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/blob/main/src/megatron/bridge/models/glm_moe_dsa/glm5_bridge.py)
 - Examples: [`examples/models/glm/glm5`](https://github.com/NVIDIA-NeMo/Megatron-Bridge/tree/main/examples/models/glm/glm5)
-
