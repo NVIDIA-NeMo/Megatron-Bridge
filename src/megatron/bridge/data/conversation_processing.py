@@ -32,6 +32,7 @@ from megatron.bridge.training.utils.visual_inputs import GenericVisualInputs
 
 
 CHATML_ASSISTANT_ROLE = "assistant"
+_LEGACY_CHAT_ROLE_ALIASES = {"human": "user", "gpt": CHATML_ASSISTANT_ROLE}
 
 
 @dataclass(frozen=True)
@@ -494,7 +495,8 @@ def normalize_chat_conversation(
             normalized.append(turn)
             continue
         if "from" in turn and "value" in turn:
-            normalized.append({"role": str(turn["from"]).lower(), "content": turn["value"]})
+            role = str(turn["from"]).lower()
+            normalized.append({"role": _LEGACY_CHAT_ROLE_ALIASES.get(role, role), "content": turn["value"]})
             continue
         raise ValueError("Chat turns must contain role/content or legacy from/value fields.")
 

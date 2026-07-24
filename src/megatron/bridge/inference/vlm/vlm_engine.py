@@ -55,6 +55,7 @@ class VLMEngine(StaticInferenceEngine):
         InferenceMode.set_active()
         try:
             request_ids: List[str] = []
+            prepared_requests = []
 
             if self.random_seed:
                 torch.random.manual_seed(self.random_seed)
@@ -68,7 +69,14 @@ class VLMEngine(StaticInferenceEngine):
                 prompt = prompts[i]
                 image = images[i] if images is not None else None
                 prompt_tokens, image_dict = self.controller.tokenize_prompt(prompt, image)
+                prepared_requests.append((prompt, prompt_tokens, image_dict))
 
+            prompt_lengths = {len(prompt_tokens) for _, prompt_tokens, _ in prepared_requests}
+            serialize_requests = len(prompt_lengths) > 1 and any(
+                image_dict is not None for _, _, image_dict in prepared_requests
+            )
+
+            for prompt, prompt_tokens, image_dict in prepared_requests:
                 # Reuse encoder_prompt from scheduler to pass image
                 request_id = self.scheduler.add_request(
                     prompt=prompt,
@@ -77,8 +85,11 @@ class VLMEngine(StaticInferenceEngine):
                     sampling_params=sampling_params,
                 )
                 request_ids.append(request_id)
+                if serialize_requests:
+                    self.run_engine()
 
-            self.run_engine()
+            if not serialize_requests:
+                self.run_engine()
 
             result: List[InferenceRequest] = [
                 self.scheduler.completed_request_pool[request_id] for request_id in request_ids

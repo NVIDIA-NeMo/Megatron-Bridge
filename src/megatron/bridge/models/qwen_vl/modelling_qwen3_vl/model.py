@@ -51,7 +51,10 @@ from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.utils import (
     split_deepstack_embs,
 )
 from megatron.bridge.models.qwen_vl.modelling_qwen3_vl.vision_model import Qwen3VLVisionModel
-from megatron.bridge.training.utils.packed_seq_utils import get_packed_seq_cp_partition_indices
+from megatron.bridge.training.utils.packed_seq_utils import (
+    get_packed_seq_cp_partition_indices,
+    get_packed_seq_q_cu_seqlens,
+)
 
 
 def _is_mrope_position_ids(position_ids: torch.Tensor | None) -> bool:
@@ -83,6 +86,123 @@ def _split_if_full_sequence(
     if val is None or full_sequence_length is None or val.shape[seq_dim] != full_sequence_length:
         return val, False
     return split_data_cp_rank(val, cp_size, seq_dim, cp_rank), True
+
+
+def _is_packed_input_pre_sharded(
+    input_ids: torch.Tensor | None,
+    packed_seq_params: PackedSeqParams | None,
+    *,
+    cp_size: int,
+) -> bool:
+    """Return whether a THD input already uses MCore's zigzag CP layout."""
+    if (
+        input_ids is None
+        or packed_seq_params is None
+        or cp_size <= 1
+        or input_ids.dim() != 2
+        or input_ids.size(0) != 1
+        or packed_seq_params.qkv_format != "thd"
+    ):
+        return False
+
+    _, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if (
+        not isinstance(physical_cu_seqlens, torch.Tensor)
+        or physical_cu_seqlens.dim() != 1
+        or physical_cu_seqlens.numel() < 2
+    ):
+        return False
+
+    full_token_count = int(physical_cu_seqlens[-1].item())
+    if full_token_count != cp_size * input_ids.numel():
+        return False
+    if int(physical_cu_seqlens[0].item()) != 0:
+        raise ValueError("Pre-sharded packed CP metadata must start at token offset 0.")
+
+    chunk_count = 2 * cp_size
+    segment_lengths = physical_cu_seqlens[1:] - physical_cu_seqlens[:-1]
+    if bool(torch.any(segment_lengths % chunk_count != 0).item()):
+        raise ValueError(
+            "Pre-sharded packed CP inputs require every physical segment length to be divisible by 2 * cp_size."
+        )
+    return True
+
+
+def _get_cp_local_vision_embed_indices(
+    vision_mask: torch.Tensor,
+    packed_seq_params: PackedSeqParams,
+    *,
+    vision_embed_count: int,
+    cp_group: torch.distributed.ProcessGroup,
+    embed_device: torch.device,
+) -> torch.Tensor:
+    """Map full-sequence vision embeddings to one pre-sharded CP rank.
+
+    The local THD row contains two chunks from each packed segment: chunk
+    ``cp_rank`` and chunk ``2 * cp_size - 1 - cp_rank``. Gathering only the
+    per-chunk vision-token counts reconstructs offsets into the full, natural
+    vision-embedding order without communicating token IDs.
+    """
+    _, physical_cu_seqlens = get_packed_seq_q_cu_seqlens(packed_seq_params)
+    if not isinstance(physical_cu_seqlens, torch.Tensor):
+        raise ValueError("Pre-sharded packed CP vision selection requires physical cu_seqlens metadata.")
+
+    cp_size = cp_group.size()
+    cp_rank = cp_group.rank()
+    chunk_count = 2 * cp_size
+    cu_seqlens = physical_cu_seqlens.tolist()
+    local_vision_mask = vision_mask.reshape(-1)
+    expected_local_tokens = cu_seqlens[-1] // cp_size
+    if local_vision_mask.numel() != expected_local_tokens:
+        raise ValueError(
+            "Pre-sharded packed CP vision mask length does not match the global packed-sequence metadata."
+        )
+
+    segment_count = len(cu_seqlens) - 1
+    local_counts = torch.zeros(segment_count, 2, dtype=torch.long, device=local_vision_mask.device)
+    for segment_idx in range(segment_count):
+        segment_length = cu_seqlens[segment_idx + 1] - cu_seqlens[segment_idx]
+        chunk_length = segment_length // chunk_count
+        local_start = cu_seqlens[segment_idx] // cp_size
+        local_counts[segment_idx, 0] = local_vision_mask[local_start : local_start + chunk_length].sum()
+        local_counts[segment_idx, 1] = local_vision_mask[
+            local_start + chunk_length : local_start + 2 * chunk_length
+        ].sum()
+
+    gathered_counts = [torch.empty_like(local_counts) for _ in range(cp_size)]
+    torch.distributed.all_gather(gathered_counts, local_counts, group=cp_group)
+
+    full_counts = torch.zeros(
+        segment_count,
+        chunk_count,
+        dtype=torch.long,
+        device=local_vision_mask.device,
+    )
+    for rank, rank_counts in enumerate(gathered_counts):
+        full_counts[:, rank] = rank_counts[:, 0]
+        full_counts[:, chunk_count - 1 - rank] = rank_counts[:, 1]
+
+    gathered_vision_count = int(full_counts.sum().item())
+    if gathered_vision_count != vision_embed_count:
+        raise ValueError(
+            f"Packed CP ranks contain {gathered_vision_count} vision tokens, but the vision encoder produced "
+            f"{vision_embed_count} embeddings."
+        )
+
+    flattened_counts = full_counts.reshape(-1)
+    offsets = (torch.cumsum(flattened_counts, dim=0) - flattened_counts).reshape(segment_count, chunk_count)
+    index_parts = []
+    for segment_idx in range(segment_count):
+        for local_chunk_idx, full_chunk_idx in enumerate((cp_rank, chunk_count - 1 - cp_rank)):
+            count = int(local_counts[segment_idx, local_chunk_idx].item())
+            if count == 0:
+                continue
+            start = int(offsets[segment_idx, full_chunk_idx].item())
+            index_parts.append(torch.arange(start, start + count, dtype=torch.long, device=embed_device))
+
+    if not index_parts:
+        return torch.empty(0, dtype=torch.long, device=embed_device)
+    return torch.cat(index_parts)
 
 
 class Qwen3VLModel(MegatronModule):
@@ -397,6 +517,7 @@ class Qwen3VLModel(MegatronModule):
             input_ids (torch.Tensor): input text ids [batch, text_seq_len].
             position_ids (torch.Tensor): Optional explicit Qwen MRoPE position ids [3, batch, text_seq_len].
                 Ordinary 2D text position ids are ignored and MRoPE is computed from ``input_ids`` and visual grids.
+                Inputs that are already sharded across context-parallel ranks must provide rank-local MRoPE IDs.
             attention_mask (torch.Tensor): attention mask for the language model [batch, 1, combined_seq_len,
                 combined_seq_len].
             labels (torch.Tensor): Optional target text labels [batch, combined_seq_len].
@@ -429,6 +550,13 @@ class Qwen3VLModel(MegatronModule):
         legacy_packed_bshd = (
             packed_seq_params is not None and input_ids is not None and input_ids.dim() == 2 and input_ids.size(0) > 1
         )
+        packed_input_pre_sharded = _is_packed_input_pre_sharded(
+            input_ids,
+            packed_seq_params,
+            cp_size=cp_size,
+        )
+        if packed_input_pre_sharded and position_ids is None:
+            raise ValueError("Pre-sharded packed CP inputs require explicit rank-local 3D MRoPE position_ids.")
         packed_cp_index = (
             get_packed_seq_cp_partition_indices(
                 packed_seq_params,
@@ -438,7 +566,11 @@ class Qwen3VLModel(MegatronModule):
                 device=input_ids.device,
                 cp_group=self.pg_collection.cp,
             )
-            if packed_seq_params is not None and cp_size > 1 and input_ids is not None and not legacy_packed_bshd
+            if packed_seq_params is not None
+            and cp_size > 1
+            and input_ids is not None
+            and not legacy_packed_bshd
+            and not packed_input_pre_sharded
             else None
         )
 
@@ -550,6 +682,22 @@ class Qwen3VLModel(MegatronModule):
 
             if vision_embeds is not None:
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
+                if packed_input_pre_sharded:
+                    if vision_mask is None:
+                        raise ValueError("Pre-sharded packed CP vision inputs require a rank-local vision mask.")
+                    vision_embed_indices = _get_cp_local_vision_embed_indices(
+                        vision_mask,
+                        packed_seq_params,
+                        vision_embed_count=vision_embeds.size(0),
+                        cp_group=self.pg_collection.cp,
+                        embed_device=vision_embeds.device,
+                    )
+                    vision_embeds = vision_embeds.index_select(0, vision_embed_indices)
+                    if deepstack_feature_lists is not None:
+                        deepstack_feature_lists = [
+                            deepstack_embeds.index_select(0, vision_embed_indices)
+                            for deepstack_embeds in deepstack_feature_lists
+                        ]
                 combined_embeddings[vision_mask] = vision_embeds
                 combined_embeddings = combined_embeddings.transpose(0, 1).contiguous()
 
@@ -601,7 +749,7 @@ class Qwen3VLModel(MegatronModule):
                         .transpose(0, 1)
                         .contiguous()
                     )
-                elif cp_size > 1 and packed_cp_index is None:
+                elif cp_size > 1 and packed_cp_index is None and not packed_input_pre_sharded:
                     raise ValueError("Qwen3VLModel requires input_ids for packed CP slicing")
                 elif packed_cp_index is not None:
                     lm_input_ids = _select_sequence(input_ids, packed_cp_index, seq_dim=1)

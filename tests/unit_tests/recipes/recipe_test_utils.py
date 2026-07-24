@@ -145,6 +145,10 @@ class _OfflineModelProvider:
         self.vocab_size = 256000
         self.yarn_original_max_position_embeddings = 32768
 
+    def to_text_provider(self) -> "_OfflineModelProvider":
+        """Match multimodal provider conversion without initializing a model."""
+        return self
+
     def finalize(self) -> None:
         """Match the model-provider interface without initializing a model."""
 
@@ -219,6 +223,8 @@ def patch_recipe_construction_dependencies(monkeypatch: pytest.MonkeyPatch) -> N
 
     deepseek_v4_recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v4")
     monkeypatch.setattr(deepseek_v4_recipe_module, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
+    deepseek_v4_gb300_module = importlib.import_module("megatron.bridge.recipes.deepseek.gb300.deepseek_v4")
+    monkeypatch.setattr(deepseek_v4_gb300_module, "deepseek_v4_supports_blackwell_fused_kernels", lambda: False)
 
     from transformers import AutoConfig, AutoTokenizer
 

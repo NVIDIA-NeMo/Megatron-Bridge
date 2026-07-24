@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from megatron.bridge.models.minimax_m3.minimax_m3_bridge import (  # noqa: F401
-    MiniMaxM3Bridge,
-    MiniMaxM3VLModelProvider,
+"""GB300 recipes for DeepSeek models."""
+
+from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
+    deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config,
+    deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
 )
-from megatron.bridge.models.minimax_m3.modeling_minimax_m3_vl import MiniMaxM3VLModel  # noqa: F401
 
 
 __all__ = [
-    "MiniMaxM3Bridge",
-    "MiniMaxM3VLModel",
-    "MiniMaxM3VLModelProvider",
+    "deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config",
+    "deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config",
 ]

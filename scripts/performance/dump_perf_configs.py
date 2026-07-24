@@ -188,6 +188,7 @@ COMBOS = [
     ("deepseek", "deepseek_v3", "pretrain", 1024, "h100", "bf16"),
     ("deepseek", "deepseek_v3", "pretrain", 1024, "h100", "fp8_cs"),
     ("deepseek", "deepseek_v3", "pretrain", 1024, "h100", "fp8_sc"),
+    ("deepseek", "deepseek_v4_pro", "pretrain", 256, "gb300", "fp8_mx"),
     # Qwen3 MoE 30B-A3B
     ("qwen", "qwen3_30b_a3b", "pretrain", 8, "gb300", "bf16"),
     ("qwen", "qwen3_30b_a3b", "pretrain", 8, "gb300", "fp8_cs"),

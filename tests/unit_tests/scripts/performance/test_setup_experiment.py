@@ -61,6 +61,15 @@ def test_default_experiment_name_uses_only_cli_metadata() -> None:
     )
 
 
+def test_bridge_source_overlay_keeps_scripts_and_package_on_the_same_checkout() -> None:
+    source = _REPO_ROOT / "src" / "megatron" / "bridge"
+
+    assert setup_experiment.BRIDGE_SOURCE_DIR == source
+    assert setup_experiment._bridge_source_mount("/opt/Megatron-Bridge/scripts/performance") == (
+        f"{source}:/opt/Megatron-Bridge/src/megatron/bridge"
+    )
+
+
 def test_recipe_arguments_are_forwarded_unchanged() -> None:
     recipe_args = [
         "--tensor_model_parallel_size",
