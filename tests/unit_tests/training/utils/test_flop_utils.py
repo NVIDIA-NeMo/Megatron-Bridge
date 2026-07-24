@@ -22,6 +22,8 @@ import pytest
 import torch
 
 from megatron.bridge.training.utils.flop_utils import (
+    _lora_seq_stats_cache,
+    _packed_data_exists,
     accumulate_flops_metadata,
     num_floating_point_operations,
     resolve_global_flops_seqlen_stats,
@@ -2601,3 +2603,168 @@ class TestResolveGlobalFlopsSeqlenStats:
 
         all_reduce.assert_called_once()
         assert (seqlen_sum, seqlen_sq_sum, vision) == (40, 400, 0)
+
+
+@pytest.mark.unit
+class TestPackedDataExists:
+    """Unit tests for ``_packed_data_exists`` (parquet spec + npy fallback gate).
+
+    The helper decides whether the LoRA-aware FLOP branch fires. It must accept
+    the same specs the packed-parquet loader does -- a single file, a glob, or a
+    directory -- via ``resolve_packed_parquet_paths`` instead of a bare
+    ``Path.exists()`` (which silently disabled LoRA accounting for glob/dir specs),
+    while still recognising the deprecated single ``.npy`` file.
+    """
+
+    def test_none_or_empty_is_false(self):
+        assert _packed_data_exists(None) is False
+        assert _packed_data_exists("") is False
+
+    def test_parquet_single_file(self, tmp_path):
+        f = tmp_path / "training_4096.idx.parquet"
+        f.touch()
+        assert _packed_data_exists(str(f)) is True
+
+    def test_parquet_glob_spec(self, tmp_path):
+        (tmp_path / "shard_000.idx.parquet").touch()
+        (tmp_path / "shard_001.idx.parquet").touch()
+        assert _packed_data_exists(str(tmp_path / "shard_*.idx.parquet")) is True
+
+    def test_parquet_directory_spec(self, tmp_path):
+        (tmp_path / "shard_000.idx.parquet").touch()
+        assert _packed_data_exists(str(tmp_path)) is True
+
+    def test_missing_parquet_file_is_false(self, tmp_path):
+        # Nonexistent parquet spec: the resolver raises, and the helper must
+        # swallow it and report "not present" rather than propagate.
+        assert _packed_data_exists(str(tmp_path / "missing.idx.parquet")) is False
+
+    def test_legacy_npy_file(self, tmp_path):
+        f = tmp_path / "training_4096.npy"
+        f.touch()
+        assert _packed_data_exists(str(f)) is True
+
+    def test_missing_npy_file_is_false(self, tmp_path):
+        assert _packed_data_exists(str(tmp_path / "training_4096.npy")) is False
+
+
+@pytest.mark.unit
+class TestLoraSquadPackedFlopBranch:
+    """The LoRA + SQuAD + Llama-3-70B packed-dataset FLOP branch.
+
+    Exercises the packed-data-path discovery (prefer ``*.idx.parquet``, fall back
+    to the deprecated ``*.npy``) and confirms that when a packed dataset is found
+    the LoRA-aware (~4ND) branch fires -- i.e. ``calculate_avg_seqlen`` is consulted
+    -- instead of falling through to the full-model (6ND) accounting.
+    ``calculate_avg_seqlen`` itself is patched (its parquet/npy loading is covered
+    directly in tests/unit_tests/data/packing/test_algorithms.py); here we only
+    validate the branch selection and packed-path resolution.
+    """
+
+    @staticmethod
+    def _cfg(dataset_root, seq_len=512, packed_train_data_path=None):
+        model = MockModelConfig(
+            num_layers=2,
+            hidden_size=128,
+            seq_length=seq_len,
+            ffn_hidden_size=256,
+            num_attention_heads=8,
+            num_query_groups=4,
+            kv_channels=16,
+            vocab_size=1024,
+            make_vocab_size_divisible_by=128,
+            gated_linear_unit=False,
+        )
+        model.hf_model_id = "meta-llama/Meta-Llama-3-70B"
+        cfg = MockConfigContainer(model=model)
+        cfg.peft = LoRA()
+        cfg.dataset = SimpleNamespace(
+            dataset_name="squad",
+            enable_offline_packing=True,
+            offline_packing_specs=SimpleNamespace(
+                packed_train_data_path=packed_train_data_path,
+                packed_sequence_size=seq_len,
+            ),
+            dataset_root=str(dataset_root),
+        )
+        cfg.train = SimpleNamespace(global_batch_size=1)
+        return cfg
+
+    @pytest.fixture(autouse=True)
+    def _clear_cache(self):
+        _lora_seq_stats_cache.clear()
+        yield
+        _lora_seq_stats_cache.clear()
+
+    def test_prefers_parquet_and_takes_lora_branch(self, tmp_path):
+        # dataset_root discovery: a packed parquet shard exists, so the branch fires.
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            flops = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        # The resolved path must be the parquet shard, not the npy.
+        assert mock_calc.call_args.args[0].endswith("training_512.idx.parquet")
+        assert flops > 0
+
+    def test_falls_back_to_npy_when_no_parquet(self, tmp_path):
+        # No parquet present -> discovery must fall back to the deprecated .npy.
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.npy").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            flops = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        assert mock_calc.call_args.args[0].endswith("training_512.npy")
+        assert flops > 0
+
+    def test_lora_branch_differs_from_full_model_accounting(self, tmp_path):
+        # The LoRA-aware (~4ND) result must diverge from the 6ND full-model path,
+        # which is the whole point of the fix (parquet was being missed, silently
+        # falling through to 6ND).
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ):
+            lora_flops = num_floating_point_operations(cfg, batch_size=1)
+
+        # Same model config but without the LoRA peft -> full-model accounting.
+        full_cfg = MockConfigContainer(model=cfg.model)
+        full_flops = num_floating_point_operations(full_cfg, batch_size=1)
+        assert lora_flops != full_flops
+
+    def test_result_is_cached_across_calls(self, tmp_path):
+        # calculate_avg_seqlen is expensive; repeated calls with the same packed
+        # path/gbs/seq_len must hit the module cache and not recompute.
+        packed_dir = tmp_path / "packed" / "run0"
+        packed_dir.mkdir(parents=True)
+        (packed_dir / "training_512.idx.parquet").touch()
+        cfg = self._cfg(tmp_path, seq_len=512)
+
+        with patch(
+            "megatron.bridge.training.utils.flop_utils.calculate_avg_seqlen",
+            return_value=(2.0, 10.0, 5.0, 34.0),
+        ) as mock_calc:
+            first = num_floating_point_operations(cfg, batch_size=1)
+            second = num_floating_point_operations(cfg, batch_size=1)
+
+        mock_calc.assert_called_once()
+        assert first == second
