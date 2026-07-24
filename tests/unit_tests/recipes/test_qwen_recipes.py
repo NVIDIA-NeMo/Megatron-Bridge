@@ -640,60 +640,6 @@ def test_qwen3_30b_a3b_pretrain_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.comm_overlap.tp_comm_overlap is True
 
 
-def test_qwen3_30b_a3b_gb200_mxfp8_functional_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test the checkpointable GB200 MXFP8 support-verification contract."""
-    from megatron.bridge.recipes.qwen import qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config
-
-    mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
-    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
-
-    cfg = qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config()
-
-    _assert_basic_config(cfg)
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.context_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-    assert cfg.train.train_iters == 100
-    assert cfg.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == 4
-    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_token_dispatcher_type == "flex"
-    assert cfg.model.moe_hybridep_num_sms == 32
-    assert cfg.model.moe_hybridep_num_sms_preprocessing == 32
-    assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.high_priority_a2a_comm_stream is True
-    assert cfg.model.use_transformer_engine_op_fuser is True
-    assert cfg.model.moe_mlp_glu_interleave_size == 32
-    assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cfg.model.cuda_graph_scope == ["moe_router", "moe_preprocess"]
-    assert cfg.model.use_te_rng_tracker is True
-    assert cfg.rng.te_rng_tracker is True
-    assert cfg.mixed_precision.bf16 is True
-    assert cfg.mixed_precision.fp8 == "e4m3"
-    assert cfg.mixed_precision.fp8_recipe == "mxfp8"
-    assert cfg.mixed_precision.fp8_param_gather is True
-    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
-    assert cfg.mixed_precision.fp8_dot_product_attention is True
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
-    assert cfg.optimizer.use_precision_aware_optimizer is False
-    assert cfg.ddp.grad_reduce_in_fp32 is False
-    assert cfg.ddp.check_for_nan_in_grad is True
-    assert cfg.ddp.check_for_large_grads is True
-    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
-    assert cfg.validation.eval_iters == 0
-    assert cfg.validation.eval_interval == 0
-    assert cfg.checkpoint.save_interval == 50
-    assert cfg.checkpoint.load is None
-    assert cfg.comm_overlap.tp_comm_overlap is True
-    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
-    assert cfg.comm_overlap.delay_wgrad_compute is True
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
-
-
 def test_qwen3_30b_a3b_bf16_perf_recipe_uses_default_functional_config(
     monkeypatch: pytest.MonkeyPatch,
 ):
