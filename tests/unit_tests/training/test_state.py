@@ -12,14 +12,28 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import multiprocessing
 import os
 import signal
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 import torch
 
 from megatron.bridge.training.state import FaultToleranceState, GlobalState, TrainState
+
+
+def _send_sigterm_with_handler_disabled() -> None:
+    config = SimpleNamespace(
+        train=SimpleNamespace(
+            exit_signal_handler=False,
+            exit_signal=signal.SIGTERM,
+        )
+    )
+    state = GlobalState()
+    state.cfg = config
+    os.kill(os.getpid(), signal.SIGTERM)
 
 
 class TestTrainState:
@@ -696,6 +710,19 @@ class TestGlobalState:
 
             mock_dsh.assert_not_called()
             assert state._signal_handler is None
+
+    def test_disabled_signal_handler_does_not_intercept_sigterm(self):
+        """Disabling graceful signal handling preserves SIGTERM's default disposition."""
+        process = multiprocessing.get_context("fork").Process(target=_send_sigterm_with_handler_disabled)
+        process.start()
+        process.join(timeout=10)
+
+        if process.is_alive():
+            process.kill()
+            process.join()
+            pytest.fail("child process did not terminate after SIGTERM")
+
+        assert process.exitcode == -signal.SIGTERM
 
     @pytest.fixture
     def restore_sigterm_handler(self):
