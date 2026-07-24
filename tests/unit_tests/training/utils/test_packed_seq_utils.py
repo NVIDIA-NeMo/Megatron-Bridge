@@ -18,6 +18,7 @@ import torch
 from megatron.core.packed_seq_params import PackedSeqParams
 
 from megatron.bridge.training.utils.packed_seq_utils import (
+    build_uniform_packed_seq_params,
     get_packed_seq_cp_partition_indices,
     get_packed_seq_params,
     get_packed_seq_q_cu_seqlens,
@@ -429,3 +430,16 @@ class TestGetPackedSeqParams:
         # But cu_seqlens_q/kv should still be set
         assert result.cu_seqlens_q is not None
         assert result.cu_seqlens_kv is not None
+
+
+def test_build_uniform_packed_seq_params_uses_padded_batch_lengths():
+    result = build_uniform_packed_seq_params(batch_size=3, seq_length=8, device=torch.device("cpu"))
+
+    expected = torch.IntTensor([0, 8, 16, 24])
+    torch.testing.assert_close(result.cu_seqlens_q, expected)
+    torch.testing.assert_close(result.cu_seqlens_kv, expected)
+    torch.testing.assert_close(result.cu_seqlens_q_padded, expected)
+    torch.testing.assert_close(result.cu_seqlens_kv_padded, expected)
+    assert result.max_seqlen_q == 8
+    assert result.max_seqlen_kv == 8
+    assert result.qkv_format == "thd"

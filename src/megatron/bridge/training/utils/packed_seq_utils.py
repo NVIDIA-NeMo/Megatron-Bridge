@@ -142,6 +142,30 @@ def get_packed_seq_cp_partition_indices(
     )
 
 
+def build_uniform_packed_seq_params(batch_size: int, seq_length: int, device: torch.device) -> PackedSeqParams:
+    """Build THD packed sequence metadata for a uniformly padded raw batch.
+
+    This supports VLM-style paths that keep padded BSH tensors in the step
+    function and let the model convert them to THD later.
+    """
+
+    seqlens = torch.full((batch_size,), seq_length, dtype=torch.int32, device=device)
+    cu_seqlens = torch.zeros(batch_size + 1, dtype=torch.int32, device=device)
+    cu_seqlens[1:] = torch.cumsum(seqlens, dim=0)
+    cu_seqlens_padded = cu_seqlens.clone()
+    max_seqlen = int(seq_length)
+
+    return PackedSeqParams(
+        qkv_format="thd",
+        cu_seqlens_q=cu_seqlens,
+        max_seqlen_q=max_seqlen,
+        cu_seqlens_kv=cu_seqlens,
+        max_seqlen_kv=max_seqlen,
+        cu_seqlens_q_padded=cu_seqlens_padded,
+        cu_seqlens_kv_padded=cu_seqlens_padded,
+    )
+
+
 def unpack_mcore_thd_tensor_for_position_ids(
     tensor: torch.Tensor,
     packed_seq_params: PackedSeqParams,
