@@ -353,8 +353,8 @@ class TestNemotron3Super16GpuH100:
             nemotron_3_super_peft_16gpu_h100_bf16_config,
         ],
     )
-    def test_parallelism_and_batch_size(self, recipe_fn):
-        """The verification recipes own their 16-GPU layout and batch size."""
+    def test_parallelism_batch_size_and_checkpoint_safe_ddp(self, recipe_fn):
+        """The verification recipes own their 16-GPU layout and checkpoint-safe DDP settings."""
         config = recipe_fn()
 
         assert config.model.tensor_model_parallel_size == 8
@@ -362,6 +362,8 @@ class TestNemotron3Super16GpuH100:
         assert config.model.expert_model_parallel_size == 16
         assert config.train.global_batch_size == 16
         assert config.train.micro_batch_size == 1
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
 
     @pytest.mark.parametrize(
         "recipe_fn",
@@ -377,6 +379,8 @@ class TestNemotron3Super16GpuH100:
 
         assert config.mixed_precision.grad_reduce_in_fp32 is False
         assert config.ddp.grad_reduce_in_fp32 is False
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False
         assert config.optimizer.use_precision_aware_optimizer is True
         assert config.optimizer.main_params_dtype == torch.float16
         assert config.optimizer.exp_avg_dtype == torch.bfloat16
@@ -399,6 +403,9 @@ class TestNemotron3Super16GpuH100:
         assert config.dataset.seq_length == 32768
         assert config.train.global_batch_size == 2
         assert config.train.micro_batch_size == 1
+        assert config.comm_overlap.tp_comm_overlap is False
+        assert config.comm_overlap.batch_p2p_comm is False
+        assert config.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
         assert config.ddp.average_in_collective is False
         assert config.ddp.overlap_grad_reduce is False
         assert config.ddp.overlap_param_gather is False

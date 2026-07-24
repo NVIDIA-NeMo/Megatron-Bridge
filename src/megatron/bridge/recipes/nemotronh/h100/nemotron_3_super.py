@@ -21,6 +21,7 @@ from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_common
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import bf16_mixed
 
@@ -152,6 +153,9 @@ def nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config() -> ConfigContainer
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+    # Keep full-model checkpoint saves ordered after all DDP collectives.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
@@ -268,6 +272,9 @@ def nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config() -> ConfigContainer:
     cfg.mixed_precision = bf16_mixed()
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.ddp.grad_reduce_in_fp32 = False
+    # Keep full-model checkpoint saves ordered after all DDP collectives.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_params_dtype = torch.float16
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
@@ -293,6 +300,9 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config() -> ConfigContainer:
     cfg.model.calculate_per_token_loss = True
     cfg.dataset.seq_length = 32768
     cfg.train.global_batch_size = 2
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False, batch_p2p_comm=False)
+    # Keep PP sends/receives ordered for the long-context PP8 schedule.
+    cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] = 1
     cfg.ddp.average_in_collective = False
     # With uneven PP stages, asynchronous DDP collectives can race the
     # cross-stage tied-embedding reduction and PP send/recv operations.
@@ -431,6 +441,9 @@ def nemotron_3_super_peft_16gpu_h100_bf16_config(
     cfg.model.tensor_model_parallel_size = 8
     cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 16
+    # Keep checkpoint saves ordered after all DDP collectives.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = 8
     return cfg
 
