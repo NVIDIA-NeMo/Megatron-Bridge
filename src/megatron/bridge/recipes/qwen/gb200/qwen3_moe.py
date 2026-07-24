@@ -31,8 +31,8 @@ def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContain
     The Blackwell topology, compute precision, dispatcher, overlap, kernels,
     batch sizes, and environment follow the corresponding flat performance
     recipe. Functional verification keeps natural routing and safety checks
-    enabled, runs 100 optimizer steps, and uses BF16 parameter all-gather so
-    checkpoints resume without an MXFP8 grad-buffer restaging transient.
+    enabled, runs 100 optimizer steps, and uses BF16 parameter all-gather
+    while retaining MXFP8 forward and backward compute.
     """
     cfg = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config()
 
