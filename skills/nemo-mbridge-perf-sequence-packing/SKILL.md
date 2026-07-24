@@ -3,6 +3,7 @@ name: nemo-mbridge-perf-sequence-packing
 description: Validate and use packed sequences and long-context training in Megatron-Bridge, including equal-token offline pack-length sizing for LLM SFT and PEFT, the distinction from VLM in-batch packing, and CP constraints.
 license: Apache-2.0
 ---
+<!-- NVSkills signature refresh request: 2026-07-24T22:01:49Z. No instruction changes. -->
 
 # Sequence Packing Skill
 
