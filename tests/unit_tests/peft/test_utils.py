@@ -1693,6 +1693,8 @@ class TestGroupedExpertLinearAdapter:
         helper.sequence_parallel = False
         helper.activation_dtype = torch.float32
         helper.save_original_input = False
+        if te_version == "2.16":
+            helper._fp8_workspaces = {}
 
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
@@ -1728,10 +1730,17 @@ class TestGroupedExpertLinearAdapter:
             assert explicit_splits is None
             assert non_tensor_args[0] == [1, 2]
             common_non_tensor_args = non_tensor_args[1:17]
-            assert non_tensor_args[17] is helper
-            assert non_tensor_args[18] is None
-            assert non_tensor_args[19] is False
-            assert non_tensor_args[20] is False
+            if te_version == "2.14":
+                assert non_tensor_args[17] is helper
+                assert non_tensor_args[18] is None
+                assert non_tensor_args[19] is False
+                assert non_tensor_args[20] is False
+            else:
+                assert non_tensor_args[17] == [None, None]
+                assert non_tensor_args[18] is False
+                assert non_tensor_args[19] is None
+                assert non_tensor_args[20] is False
+                assert non_tensor_args[21] is False
         else:
             torch.testing.assert_close(explicit_splits, torch.tensor([1, 2], dtype=torch.int64))
             assert explicit_splits.device.type == "cpu"

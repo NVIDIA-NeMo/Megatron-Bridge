@@ -2069,11 +2069,19 @@ class GroupedExpertLinearAdapter(nn.Module):
                 )
                 autograd_args = (x, te_m_splits, te_non_tensor_args, *weights_and_biases)
             else:
+                if hasattr(helper, "_fp8_workspaces"):
+                    cache_weight = False
+                    workspace_args = (
+                        [None] * weight.shape[0],
+                        cache_weight,
+                        None,
+                    )
+                else:
+                    workspace_args = (helper, None)
                 te_non_tensor_args = (
                     m_splits,
                     *common_non_tensor_args,
-                    helper,
-                    None,
+                    *workspace_args,
                     helper.save_original_input,
                     False,
                 )
