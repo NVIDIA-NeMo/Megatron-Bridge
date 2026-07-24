@@ -200,9 +200,57 @@ class TestProcessImageInputs:
         """Do not apply the Ministral raw-prompt convention to other VLMs."""
         proc = mock.MagicMock()
         proc.chat_template = None
+        proc.tokenizer.chat_template = None
 
         with pytest.raises(ValueError, match="no model-specific raw-prompt fallback"):
             vlm_generate_utils.process_image_inputs(proc, "/image.png", "describe")
+
+    def test_processor_uses_tokenizer_chat_template_fallback(self):
+        """A VLM processor may delegate its published chat template to the tokenizer."""
+        inputs = mock.MagicMock()
+        inputs.input_ids = torch.tensor([[10, 20]])
+        inputs.get.return_value = None
+
+        proc = mock.MagicMock()
+        proc.chat_template = None
+        proc.tokenizer.chat_template = "published tokenizer template"
+        proc.tokenizer.apply_chat_template.return_value = "TOKENIZER_TEMPLATED"
+        proc.return_value = inputs
+        messages = [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "image": "/image.png"},
+                    {"type": "text", "text": "describe"},
+                ],
+            }
+        ]
+
+        with (
+            mock.patch.object(vlm_generate_utils, "_HAS_QWEN_VL_UTILS", True),
+            mock.patch.object(
+                vlm_generate_utils,
+                "process_vision_info",
+                return_value=("IMAGES", "VIDEOS"),
+                create=True,
+            ),
+        ):
+            result = vlm_generate_utils.process_image_inputs(proc, "/image.png", "describe")
+
+        proc.apply_chat_template.assert_not_called()
+        proc.tokenizer.apply_chat_template.assert_called_once_with(
+            messages,
+            tokenize=False,
+            add_generation_prompt=True,
+        )
+        proc.assert_called_once_with(
+            text=["TOKENIZER_TEMPLATED"],
+            images="IMAGES",
+            videos="VIDEOS",
+            padding=True,
+            return_tensors="pt",
+        )
+        torch.testing.assert_close(result[0], torch.tensor([[10, 20]]))
 
     def test_kimi_image_path_returns_full_six_field_contract(self):
         """Kimi image preprocessing must match the VLM generation unpack contract."""
