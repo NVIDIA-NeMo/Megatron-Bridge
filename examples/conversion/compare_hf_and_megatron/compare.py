@@ -510,7 +510,7 @@ def _load_hf_model(args, is_vl_model: bool):
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
-        device_map=args.hf_device,
+        device_map="cuda",
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
@@ -563,7 +563,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
         print_rank_0("Loading exported HF model for comparison...")
         model_class = get_model_class(args.model_class, is_vl_model)
         hf_model = model_class.from_pretrained(
-            save_path, torch_dtype=torch.bfloat16, device_map=args.hf_device, trust_remote_code=True
+            save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
         ).eval()
         if args.enable_debug_hooks:
             print_rank_0("Registering debug hooks for exported HF model...")
@@ -573,14 +573,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(
-    hf_model,
-    input_ids,
-    pixel_values,
-    image_grid_thw,
-    tokenizer,
-    hf_device: str | torch.device | None = None,
-):
+def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -589,8 +582,6 @@ def _run_hf_inference(
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
-        hf_device: Device on which to run the Hugging Face model. Defaults to
-            the input tensor device.
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -600,16 +591,15 @@ def _run_hf_inference(
     if not _is_rank_0() or hf_model is None:
         return None, None, None, None, None
 
-    target_device = torch.device(hf_device) if hf_device is not None else input_ids.device
     with torch.no_grad():
         hf_inputs = {
-            "input_ids": input_ids.to(target_device),
-            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool, device=target_device),
+            "input_ids": input_ids,
+            "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
         }
         if pixel_values is not None:
-            hf_inputs["pixel_values"] = pixel_values.to(target_device)
+            hf_inputs["pixel_values"] = pixel_values
         if image_grid_thw is not None:
-            hf_inputs["image_grid_thw"] = image_grid_thw.to(target_device)
+            hf_inputs["image_grid_thw"] = image_grid_thw
 
         hf_output = hf_model(**hf_inputs)
 
@@ -637,13 +627,7 @@ def _run_hf_inference(
         print_rank_0(f"HF next token: {hf_next_token.item()} ('{tokenizer.decode([hf_next_token.item()])}')")
         print_rank_0(f"HF Top 5: {hf_top5_info}")
 
-        return (
-            hf_logits.to(input_ids.device),
-            hf_next_token.to(input_ids.device),
-            hf_logits_stats,
-            hf_top5_info,
-            logits_shape,
-        )
+        return hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape
 
 
 def _load_megatron_model(args):
@@ -763,9 +747,7 @@ def _setup_tokenizer_and_processor(args, is_vl_model: bool):
 def _broadcast_hf_results(hf_logits, hf_next_token, device):
     """Broadcast rank-0 HF results using the model's actual output vocabulary size."""
     if hf_logits is not None:
-        hf_logits = hf_logits.float().to(device)
-    if hf_next_token is not None:
-        hf_next_token = hf_next_token.to(device)
+        hf_logits = hf_logits.float()
 
     hf_logits_size = torch.tensor(
         [hf_logits.numel() if hf_logits is not None else 0],
@@ -838,12 +820,7 @@ def compare_models_one_step(args) -> None:
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model,
-        input_ids,
-        pixel_values,
-        image_grid_thw,
-        tokenizer,
-        hf_device=args.hf_device,
+        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
     )
 
     del hf_model
@@ -995,12 +972,6 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-revision",
         help="Immutable Hugging Face Hub revision used for model, config, and tokenizer loading.",
-    )
-    parser.add_argument(
-        "--hf-device",
-        choices=("cpu", "cuda"),
-        default="cuda",
-        help="Device used for Hugging Face reference inference (default: cuda).",
     )
     parser.add_argument(
         "--prompt",

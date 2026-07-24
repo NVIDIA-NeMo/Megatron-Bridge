@@ -208,34 +208,6 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
 
-    def test_hf_path_accepts_explicit_cpu_device(self):
-        """Test that the HF path can run on CPU while returning results to the input device."""
-        mock_hf_model = MagicMock()
-        mock_output = MagicMock()
-        mock_output.logits = torch.randn(1, 3, 100)
-        mock_hf_model.return_value = mock_output
-        input_ids = torch.tensor([[1, 2, 3]])
-        mock_tokenizer = MagicMock()
-        mock_tokenizer.decode.return_value = "test"
-
-        with (
-            patch.object(compare, "_is_rank_0", return_value=True),
-            patch.object(compare, "print_rank_0"),
-        ):
-            hf_logits, hf_next_token, *_ = _run_hf_inference(
-                mock_hf_model,
-                input_ids,
-                pixel_values=None,
-                image_grid_thw=None,
-                tokenizer=mock_tokenizer,
-                hf_device="cpu",
-            )
-
-        assert mock_hf_model.call_args.kwargs["input_ids"].device.type == "cpu"
-        assert mock_hf_model.call_args.kwargs["attention_mask"].device.type == "cpu"
-        assert hf_logits.device == input_ids.device
-        assert hf_next_token.device == input_ids.device
-
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
         broadcast_shapes = []
@@ -288,27 +260,3 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
-
-    def test_hf_device_defaults_to_cuda_and_accepts_cpu(self):
-        """Test that HF reference inference defaults to CUDA and can opt into CPU."""
-        default_args = compare.build_parser().parse_args(
-            [
-                "--hf_model_path",
-                "org/model",
-                "--prompt",
-                "Hello",
-            ]
-        )
-        cpu_args = compare.build_parser().parse_args(
-            [
-                "--hf_model_path",
-                "org/model",
-                "--prompt",
-                "Hello",
-                "--hf-device",
-                "cpu",
-            ]
-        )
-
-        assert default_args.hf_device == "cuda"
-        assert cpu_args.hf_device == "cpu"
