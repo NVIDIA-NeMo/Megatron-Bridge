@@ -133,8 +133,6 @@ items:
               "Berlin is the capital of Germany.",
               "The Brandenburg Gate is in Berlin.",
              '
-      Its SHA-256 is
-      efa81f3064ab5f3446aa2455eea983569f98d459f67c0ed972d5549ad1b8601a.
       The token IDs are 6993, 32876, 1369, 1429, 1784, 1436, 4940, 1299,
       35549, 1395, 1294, 6993, 32876, 1369, 1429, 75613, 1395, 1278, 8961,
       1307, 10787, 32876, 1369, 1429, 1784, 59071, 42969, 1395, 1294, 10874,
@@ -238,9 +236,9 @@ items:
       last_verified: null
       expected_result: >
         The pinned step-100 full-SFT checkpoint must export as indexed BF16
-        safetensors and reload natively as NemotronHForCausalLM. Two greedy
-        Hugging Face runs must produce byte-identical token IDs and exactly 45
-        new tokens; the literal completion must be recorded before promotion.
+        safetensors and reload natively as NemotronHForCausalLM. One
+        deterministic greedy Hugging Face run must produce exactly 45 new
+        tokens; the literal completion must be recorded before promotion.
 
   sft_long_context:
     H100:

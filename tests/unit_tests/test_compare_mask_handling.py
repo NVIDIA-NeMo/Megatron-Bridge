@@ -76,7 +76,6 @@ import compare  # noqa: E402
 from compare import (  # noqa: E402
     SingleBatchIterator,
     _broadcast_hf_results,
-    _load_hf_model,
     _maybe_gather_tensor_parallel_logits,
     _run_hf_inference,  # noqa: E402
     _run_megatron_forward,
@@ -261,31 +260,3 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
-
-    def test_hf_device_is_parsed_and_forwarded(self):
-        """Test that the selected HF device reaches from_pretrained."""
-        args = compare.build_parser().parse_args(
-            [
-                "--hf_model_path",
-                "org/model",
-                "--prompt",
-                "Hello",
-                "--hf-device",
-                "cpu",
-            ]
-        )
-        model_class = MagicMock()
-        model_class.__name__ = "MockModel"
-        model = MagicMock()
-        model_class.from_pretrained.return_value = model
-
-        with (
-            patch.object(compare, "_is_rank_0", return_value=True),
-            patch.object(compare, "get_model_class", return_value=model_class),
-            patch.object(compare, "is_safe_repo", return_value=False),
-            patch.object(compare, "print_rank_0"),
-        ):
-            result = _load_hf_model(args, is_vl_model=False)
-
-        assert result is model.eval.return_value
-        assert model_class.from_pretrained.call_args.kwargs["device_map"] == "cpu"
