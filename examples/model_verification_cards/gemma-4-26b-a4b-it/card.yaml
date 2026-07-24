@@ -142,8 +142,8 @@ items:
       --tp 2 --pp 1 --ep 4 --etp 1
     last_verified: 2026-07-23
     expected_result: >
-      One BF16 deterministic greedy generation completed exactly 32 new-token
-      steps. The exact JSON-escaped completion was "Based on the table provided,
+      One BF16 deterministic greedy run generated exactly 32 tokens. The exact
+      JSON-escaped completion was "Based on the table provided,
       the H100 NVL has **94GB** of GPU memory.  � \nthought\n �". The input was
       images/table.png from nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at revision
       cb5a65ff10232128389d882d805fa609427544f1, with SHA-256
