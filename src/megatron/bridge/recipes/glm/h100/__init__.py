@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from megatron.bridge.recipes.glm.h100.glm5 import *  # noqa: F403
 from megatron.bridge.recipes.glm.h100.glm45 import *  # noqa: F403
 
 
@@ -22,4 +23,8 @@ __all__ = [
     "glm45_air_106b_peft_8gpu_h100_bf16_config",
     "glm45_air_106b_pretrain_32gpu_h100_bf16_config",
     "glm45_air_106b_sft_32gpu_h100_bf16_config",
+    "glm52_peft_208gpu_h100_bf16_config",
+    "glm52_pretrain_416gpu_h100_bf16_config",
+    "glm52_sft_functional_416gpu_h100_bf16_config",
+    "glm52_sft_long_context_608gpu_h100_bf16_config",
 ]

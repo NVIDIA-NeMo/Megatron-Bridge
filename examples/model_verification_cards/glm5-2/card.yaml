@@ -5,17 +5,17 @@ title: glm5_2
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. GLM-5.2 has landed Bridge support plus public H100 support and GB200
-  128K benchmark recipes. Earlier H100 synthetic long-context runs exercised BF16
-  TP1/PP13/CP32/EP32 with cuDNN DSA; the tested variants covered sparse indexer
-  loss and MTP-enabled execution, but the configured 500-step workloads did not
-  finish. Historical GB200 synthetic and benchmark results are recorded only as
-  unverified references; the current public benchmark runner does not reproduce
-  qualifying full-SFT or packed long-context SFT evidence. All card items remain
-  unverified under the model-verification completion gates.
+  results. GLM-5.2 H100 support verification currently covers exact GPU
+  checkpoint round-trip on CPU and GPU, deterministic Megatron inference,
+  HF-to-Megatron forward equivalence, bounded full SFT with export/reload
+  inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
+  a reloadable middle checkpoint and verified continuation. Historical GB200
+  synthetic and benchmark results remain recorded as unverified references
+  because the public benchmark runner does not reproduce qualifying full-SFT
+  or packed long-context SFT evidence.
 verification_index:
   model_level:
-    unverified:
+    verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
       - megatron_to_hf_cpu
@@ -26,7 +26,7 @@ verification_index:
     GB200:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: zai-org/GLM-5.2
   hf_revision: 4d67f66cc64d3219133b767c253b2ad1425c6c88  # pragma: allowlist secret
@@ -34,105 +34,155 @@ model:
   min_transformers_version: "5.12.1"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 40a49d83172b2f4d1d8becd6d426424836707eac  # pragma: allowlist secret
+  bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
       --megatron-path work/model-verification/glm5-2/cpu-megatron
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-07-22
     expected_result: >
-      Verification requires a successful import, checkpoint reload, and exact
-      key, shape, dtype, and value comparison against the pinned HF revision.
+      Import exits successfully and creates a reloadable CPU checkpoint. Its
+      strict round-trip comparison matches all 59,585 BF16 tensors and
+      753,329,940,480 elements bitwise against the immutable HF revision.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
-      --nodes 8 --gpus-per-node 8
+      --nodes 13 --gpus-per-node 8
       --hf-model zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
-      --megatron-path work/model-verification/glm5-2/imported-megatron
-      --torch-dtype bfloat16 --tp 2 --pp 1 --ep 32
-    last_verified: null
+      --megatron-path work/model-verification/glm5-2/gpu-megatron
+      --torch-dtype bfloat16 --tp 1 --pp 13 --ep 8 --etp 1
+    last_verified: 2026-07-22
     expected_result: >
-      Verification requires a successful distributed import, checkpoint reload,
-      and exact key, shape, dtype, and value comparison against the pinned HF
-      revision. Prior checkpoint creation did not include this full comparison.
+      Import exits successfully at TP1/PP13/EP8/ETP1 and creates a reloadable
+      iter_0000000 checkpoint. Its strict round-trip comparison matches all
+      59,585 BF16 tensors and 753,329,940,480 elements bitwise against the
+      immutable HF revision.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
-      --megatron-path work/model-verification/glm5-2/cpu-megatron/iter_0000000
+      --megatron-path work/model-verification/glm5-2/cpu-megatron
       --hf-path work/model-verification/glm5-2/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-07-22
     expected_result: >
-      Verification requires strict Transformers reload and exact exported key,
-      shape, dtype, and value comparison against the pinned HF revision.
+      Export exits successfully; all 59,585 BF16 tensors and
+      753,329,940,480 elements match the immutable HF revision bitwise.
+      Transformers 5.12.1 strictly reloads the output as
+      GlmMoeDsaForCausalLM with 743,377,000,704 parameters.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
-      --nodes 8 --gpus-per-node 8
+      --nodes 13 --gpus-per-node 8
       --hf-model zai-org/GLM-5.2
       --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
-      --megatron-path work/model-verification/glm5-2/imported-megatron/iter_0000000
-      --hf-path work/model-verification/glm5-2/hf-export
-      --torch-dtype bfloat16 --export-weight-dtype bfloat16
-      --distributed-save --tp 2 --pp 1 --ep 32
-    last_verified: null
+      --megatron-path work/model-verification/glm5-2/gpu-megatron
+      --hf-path work/model-verification/glm5-2/gpu-hf-export-exact
+      --torch-dtype bfloat16 --distributed-save
+      --tp 1 --pp 13 --ep 8 --etp 1
+    last_verified: 2026-07-22
     expected_result: >
-      Verification requires successful strict export, Transformers reload, and
-      exact key, shape, dtype, and value comparison against the pinned HF
-      revision.
+      Distributed export exits successfully; all 59,585 BF16 tensors and
+      753,329,940,480 elements match the immutable HF revision bitwise.
+      Transformers strictly reloads the output as GlmMoeDsaForCausalLM with
+      743,377,000,704 parameters.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
+    bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=52
+      examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path zai-org/GLM-5.2
+      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --hf-logits-input work/model-verification/glm5-2/hf-forward-reference.safetensors
+      --megatron-forward-mode standard
+      --megatron_model_path work/model-verification/glm5-2/gpu-megatron
+      --prompt "The capital of France is" --tp 1 --pp 13 --ep 4 --etp 1
+    last_verified: 2026-07-22
     expected_result: >
-      No completed pinned-revision HF and Megatron logit-correlation run is
-      recorded for GLM-5.2.
+      The pinned HF and Megatron next-token results match at token 12089 (`Paris`).
+      Cosine similarity is 0.999443, maximum absolute logit difference is
+      0.500000, and mean absolute logit difference is 0.063958.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
-    command: null
-    last_verified: null
-    expected_result: >
-      No completed deterministic Megatron generation run with an exact token
-      count and literal completion is recorded for GLM-5.2.
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=104
+      examples/conversion/hf_to_megatron_generate_text.py
+      --hf_model_path zai-org/GLM-5.2
+      --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+      --megatron_model_path work/model-verification/glm5-2/gpu-megatron
+      --prompt "Write one concise sentence explaining why deterministic tests matter:"
+      --apply-chat-template --thinking-mode disabled --max_new_tokens 16
+      --no-kv-cache --tp 1 --pp 13 --ep 8 --etp 1
+    last_verified: 2026-07-22
+    expected_result: |-
+      Two independent runs use greedy decoding, emit exactly 16 new tokens, and produce this
+      byte-identical completion:
+      "1.  **Analyze the Request:**
+          *   **Topic:**"
 
   pretrain:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
+      enabled_features:
+        moe_dispatcher: deepep
+      command: >
+        ./scripts/training/train.sh --nodes 44 --gpus-per-node 8
+        --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain
+        --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/wikitext103/wikitext103_glm52_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain
+        dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
+        model.pipeline_model_parallel_size=11
+        model.virtual_pipeline_model_parallel_size=null
+        model.microbatch_group_size_per_vp_stage=null
+        model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL'
+        --save_dir work/model-verification/glm5-2/pretrain-reference/checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-23
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 13.15907
+        final_loss: 6.385243
+        last_10_steps_step_time_ms_avg: 31204.920
+        last_10_steps_model_tflops_per_gpu_avg: 50.620
       expected_result: >
-        No bounded real-data GLM-5.2 pretraining run with a completed schedule,
-        persisted runtime config, and reloadable checkpoints is recorded.
+        The uninterrupted 352-H100 TP1/PP11/CP1/EP32/ETP1 run completed 100
+        real-data steps at GBS/MBS 1024/1 with cuDNN DSA, sparse indexer loss
+        coefficient 0.001, MTP1, and flex/DeepEP dispatch. Loss remained finite
+        from 13.15907 to 6.385243, final grad norm was 0.796, and every step
+        recorded zero skipped and NaN iterations. The final 10 steps averaged
+        31,204.920 ms and 50.620 TFLOPS/GPU; peak observed GPU memory was
+        80,999 MiB. The matching step-50 and step-100 checkpoints contain
+        model, optimizer, scheduler, data-order, and RNG state; the step-50
+        checkpoint reloads successfully.
     GB200:
       status: unverified
       precision: bf16
@@ -149,19 +199,38 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      enabled_features:
+        sequence_packing: offline
+        context_parallel_size: 2
+        moe_dispatcher: deepep
+      command: >
+        ./scripts/training/train.sh --nodes 52 --gpus-per-node 8
+        --recipe glm52_sft_functional_416gpu_h100_bf16_config --mode sft
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048
+        dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-pad32
+        model.context_parallel_size=2
+        model.virtual_pipeline_model_parallel_size=null
+        model.pipeline_model_parallel_layout='Etttttt|tttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|tttt|tttt|tttt|ttttmL'
+        --save_dir work/model-verification/glm5-2/sft-functional/checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.909875
+        final_loss: 0.6634203
+        last_10_steps_step_time_ms_avg: 4436.290
+        last_10_steps_model_tflops_per_gpu_avg: 9.450
       expected_result: >
-        The available runs used synthetic 128K data for long-context support and
-        performance testing; they do not verify bounded real-data full SFT.
+        The immutable-revision 416-H100 run completes exactly 100 full-SFT
+        steps at TP1/PP13/CP2/EP32/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse
+        indexer loss coefficient 0.001, MTP1, and natural routing. Pad-32
+        packing is 99.60% efficient and contains 4,097,215 supervised tokens.
+        Loss remains finite from 1.909875 to 0.6634203 with zero skipped or NaN
+        iterations; the final grad norm is 0.895 and the step-100 checkpoint
+        reloads for export.
     GB200:
       status: unverified
       precision: bf16
@@ -181,14 +250,31 @@ items:
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
-      commands: null
-      last_verified: null
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device gpu
+          --nodes 52 --gpus-per-node 8 --hf-model zai-org/GLM-5.2
+          --hf-revision 4d67f66cc64d3219133b767c253b2ad1425c6c88
+          --megatron-path work/model-verification/glm5-2/sft-functional/checkpoints/iter_0000100
+          --hf-path work/model-verification/glm5-2/sft-hf-export
+          --torch-dtype bfloat16 --distributed-save
+          --tp 1 --pp 13 --ep 32 --etp 1
+        - >
+          uv run python
+          skills/create-model-verification-card/scripts/verify_hf_inference.py
+          --hf-model work/model-verification/glm5-2/sft-hf-export
+          --prompt "Write one concise sentence explaining why deterministic tests matter:"
+          --max-new-tokens 8 --chat-template --disable-thinking
+          --device cpu --dtype bfloat16
+      last_verified: 2026-07-22
       expected_result: >
-        No completed full-SFT checkpoint export, strict Transformers reload, and
-        deterministic HF inference result is recorded.
+        The step-100 full-SFT checkpoint exports successfully and strictly
+        reloads with Transformers. One greedy run produces exactly 8 tokens
+        with the completion "Deterministic tests matter because they provide
+        consistent".
     GB200:
       status: unverified
       precision: bf16
@@ -201,29 +287,34 @@ items:
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 32
         moe_dispatcher: deepep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 76 --gpus-per-node 8
+        --recipe glm52_sft_long_context_608gpu_h100_bf16_config --mode sft
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --max_steps 20 --seq_length 200000
+        dataset.dataset_root=work/data/glm5-2/synthetic-200k-260
+        train.empty_unused_memory_level=2
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 8.283127
+        final_loss: 2.557671
+        last_10_steps_step_time_ms_avg: 36603.370
+        last_10_steps_model_tflops_per_gpu_avg: 210.650
       expected_result: >
-        A portable public command for the prior packed synthetic workload is not
-        yet recorded. Verification requires a bounded run on H100 with
-        TP1/PP13/VPP2/CP32/EP32/ETP1, GBS/MBS 520/1, offline packed 128K THD
-        sequences, cuDNN DSA, sparse indexer loss coefficient 0.001, and one MTP
-        layer. Loss must remain finite with no skipped or NaN iterations and all
-        four terminal-window metrics must be recorded. The sparse-loss-on
-        reference reached 16 of 500 steps, while the later MTP-enabled loss-off
-        reference reached 19 of 500; neither completed its configured workload,
-        so neither satisfies this gate.
+        The 608-H100 TP1/PP19/CP32/EP32/ETP1 run completed exactly 20 optimizer
+        steps over 200,000-token packed rows with cuDNN DSA, sparse indexer loss
+        coefficient 0.001, and MTP1. Loss remained finite from 8.283127 to
+        2.557671, final grad norm was 10838.703, and every step recorded zero
+        skipped and NaN iterations. The last 10 steps averaged 36,603.370 ms
+        and 210.650 TFLOPS/GPU; peak observed GPU memory was 81,005 MiB.
     GB200:
       status: unverified
       precision: bf16
@@ -247,19 +338,34 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      enabled_features:
+        sequence_packing: offline
+        moe_dispatcher: deepep
+      command: >
+        ./scripts/training/train.sh --nodes 26 --gpus-per-node 8
+        --recipe glm52_peft_208gpu_h100_bf16_config --mode lora
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048
+        dataset.hf_output_root=work/data/glm5-2/tulu3-peft-pad4
+        --save_dir work/model-verification/glm5-2/peft-lora/checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-22
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.909421
+        final_loss: 0.8835775
+        last_10_steps_step_time_ms_avg: 4638.550
+        last_10_steps_model_tflops_per_gpu_avg: 17.240
       expected_result: >
-        No bounded GLM-5.2 PEFT run with a verified trainable-parameter set,
-        completed schedule, and reloadable adapter checkpoint is recorded.
+        The immutable-revision 208-H100 run completes exactly 100 LoRA steps at
+        TP1/PP13/CP1/EP16/ETP1, GBS/MBS 32/1, with cuDNN DSA, sparse indexer
+        loss coefficient 0.001, MTP1, and natural routing. Pad-4 packing is
+        99.45% efficient and contains 4,251,129 supervised tokens. Loss remains
+        finite from 1.909421 to 0.8835775 with zero skipped or NaN iterations.
+        The final grad norm is 0.101; the checkpoint contains exactly 790 BF16
+        rank-8 adapter tensors and no base-model weights.
     GB200:
       status: unverified
       precision: bf16
@@ -276,26 +382,47 @@ items:
 
   checkpoint_resume:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
       depends_on: pretrain
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 44 --gpus-per-node 8
+        --recipe glm52_pretrain_416gpu_h100_bf16_config --mode pretrain
+        --dataset megatron-indexed --deterministic --seq_length 2048 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/wikitext103/wikitext103_glm52_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/wikitext-pretrain
+        dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
+        model.pipeline_model_parallel_size=11
+        model.virtual_pipeline_model_parallel_size=null
+        model.microbatch_group_size_per_vp_stage=null
+        model.pipeline_model_parallel_layout='Etttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttttttt|tttt|ttttmL'
+        --load_dir work/model-verification/glm5-2/pretrain-reference/checkpoints
+        --save_dir work/model-verification/glm5-2/pretrain-resume/checkpoints
+        --save_interval 0 checkpoint.ckpt_step=50
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+      last_verified: 2026-07-23
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 7.219822
+        final_loss: 6.372624
+        last_10_steps_step_time_ms_avg: 32002.290
+        last_10_steps_model_tflops_per_gpu_avg: 49.350
       resume_comparison:
         reference_item: pretrain
-        sentinel_steps: null
+        sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: false
+        sentinels_match: true
       expected_result: >
-        No direct continuation from a GLM-5.2 pretraining checkpoint has been
-        compared with an uninterrupted reference at the required loss
-        sentinels.
+        The run reloads the corrected reference's step-50 model, optimizer,
+        scheduler, data-order, and RNG state and completes steps 51-100 with
+        zero skipped or NaN iterations. Step 51 matches exactly at 7.219822.
+        Step 100 is 6.372624 versus the uninterrupted reference's 6.385243, an
+        absolute difference of 0.012619 within the allowed 0.063853. Final
+        grad norm is 2.169; the last 10 steps average 32,002.290 ms and 49.350
+        TFLOPS/GPU. Peak observed allocator memory is 65.230 GiB allocated and
+        69.684 GiB reserved.
     GB200:
       status: unverified
       precision: bf16
