@@ -396,7 +396,7 @@ Then render the maintained training submission without launching it:
   --container-image "$CONTAINER_IMAGE" \
   --mount "$DATACOMP_ROOT" \
   --mount "$BRIDGE_ROOT:/opt/Megatron-Bridge" \
-  --recipe qwen35_vl_35b_a3b_pretrain_alignment_config \
+  --recipe qwen35_vl_35b_a3b_pretrain_mock_config \
   --mode pretrain \
   --dataset qwen-vl-energon \
   --step-func qwen3_vl_step \
@@ -404,6 +404,8 @@ Then render the maintained training submission without launching it:
   --max_steps 1000 \
   --save_dir "$DATACOMP_ROOT/training/qwen3.6-35b-a3b/checkpoints" \
   --save_interval 500 \
+  train.global_batch_size=512 \
+  train.micro_batch_size=1 \
   dataset.path="$DATACOMP_ENERGON" \
   dataset.task_encoder.hf_processor_path="$QWEN_HF_ID" \
   dataset.task_encoder.hf_processor_revision="$QWEN_HF_REVISION" \
@@ -424,7 +426,7 @@ submission; it does not instantiate the training config. Inspect the rendered
 command, then remove `--dry-run` to execute the same maintained `train.sh`
 workflow. Confirm from the persisted runtime config that it resolved the
 dataset path, pinned model identity, TP4/PP2/EP4 topology, micro batch 1, global
-batch 512 from the shared recipe, 1,000 steps, checkpoint destination, and
+batch 512 from the explicit overrides, 1,000 steps, checkpoint destination, and
 validation cadence.
 
 ## Data responsibility

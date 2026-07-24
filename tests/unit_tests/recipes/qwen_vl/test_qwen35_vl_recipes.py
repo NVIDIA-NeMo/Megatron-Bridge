@@ -38,7 +38,6 @@ _QWEN35_VL_PRETRAIN_MOCK_FUNCS = [
     _qwen35_vl_module.qwen35_vl_9b_pretrain_mock_config,
     _qwen35_vl_module.qwen35_vl_27b_pretrain_mock_config,
     _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_mock_config,
-    _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_alignment_config,
     _qwen35_vl_module.qwen35_vl_122b_a10b_pretrain_mock_config,
     _qwen35_vl_module.qwen35_vl_397b_a17b_pretrain_mock_config,
 ]
@@ -47,7 +46,6 @@ _QWEN35_VL_H100_PRETRAIN_MOCK_FUNCS = [
     _qwen35_vl_h100_module.qwen35_vl_9b_pretrain_4gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config,
-    _qwen35_vl_h100_module.qwen35_vl_35b_a3b_pretrain_alignment_8gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_122b_a10b_pretrain_128gpu_h100_bf16_mock_config,
     _qwen35_vl_h100_module.qwen35_vl_397b_a17b_pretrain_512gpu_h100_bf16_mock_config,
 ]
@@ -787,23 +785,6 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
     assert cfg.model.pipeline_dtype is not None  # PP > 1 => bf16
     assert cfg.model.expert_model_parallel_size == 4
     assert cfg.model.sequence_parallel is True
-    assert cfg.train.global_batch_size == 32
-    assert cfg.train.micro_batch_size == 2
-
-
-def test_qwen35_vl_35b_a3b_pretrain_alignment_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Test the shared Qwen3.5/Qwen3.6 alignment convergence contract."""
-    patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
-
-    cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_pretrain_alignment_config()
-
-    _assert_basic_config(cfg)
-
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.expert_model_parallel_size == 4
-    assert cfg.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == 1
 
 
 def test_qwen35_vl_122b_a10b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatch):

@@ -141,13 +141,14 @@ The launcher does not infer the source corpus from the files. For one preprocess
 
 ### Qwen-VL Energon data
 
-Use `qwen-vl-energon` with the architecture-shared
-`qwen35_vl_35b_a3b_pretrain_alignment_config` recipe for MBS1/GBS512
-image-caption alignment, then set the prepared dataset directory and processor
-checkpoint explicitly:
+Use `qwen-vl-energon` with the existing
+`qwen35_vl_35b_a3b_pretrain_mock_config` recipe, then set the prepared dataset
+directory, processor checkpoint, and desired training batch sizes explicitly:
 
 ```bash
 --dataset qwen-vl-energon \
+train.global_batch_size=512 \
+train.micro_batch_size=1 \
 dataset.path=/data/qwen-vl-energon \
 dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B \
 dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0

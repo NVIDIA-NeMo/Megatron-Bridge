@@ -53,9 +53,6 @@ from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config as qwen35_vl_35b_a3b_pretrain_mock_config,
 )
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
-    qwen35_vl_35b_a3b_pretrain_alignment_8gpu_h100_bf16_mock_config as qwen35_vl_35b_a3b_pretrain_alignment_config,
-)
-from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
     qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config as qwen35_vl_35b_a3b_fsdp_sft_config,
 )
 from megatron.bridge.recipes.qwen_vl.h100.qwen35_vl import (
@@ -98,7 +95,6 @@ __all__ = [
     "qwen35_vl_2b_sft_config",
     "qwen35_vl_35b_a3b_fsdp_sft_config",
     "qwen35_vl_35b_a3b_peft_config",
-    "qwen35_vl_35b_a3b_pretrain_alignment_config",
     "qwen35_vl_35b_a3b_pretrain_mock_config",
     "qwen35_vl_35b_a3b_sft_config",
     "qwen35_vl_397b_a17b_peft_config",

@@ -747,7 +747,7 @@ def test_qwen_vl_energon_uses_pretrain_mode_and_qwen_step():
     module.main(
         [
             "--recipe",
-            "qwen35_vl_35b_a3b_pretrain_alignment_config",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
             "--mode",
             "pretrain",
             "--dataset",
@@ -789,7 +789,7 @@ def test_qwen_vl_energon_syncs_micro_batch_size_after_cli_overrides():
     module.main(
         [
             "--recipe",
-            "qwen35_vl_35b_a3b_pretrain_alignment_config",
+            "qwen35_vl_35b_a3b_pretrain_mock_config",
             "--mode",
             "pretrain",
             "--dataset",

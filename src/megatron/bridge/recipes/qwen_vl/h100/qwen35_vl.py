@@ -136,11 +136,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
-    """Return the shared 8-GPU pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B.
-
-    The recipe uses TP4/PP2/EP4, freezes the language and vision towers, and
-    trains the vision projection.
-    """
+    """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE)."""
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
@@ -186,19 +182,6 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
-    return cfg
-
-
-def qwen35_vl_35b_a3b_pretrain_alignment_8gpu_h100_bf16_mock_config() -> ConfigContainer:
-    """Return the shared Qwen3.5/Qwen3.6-VL 35B-A3B alignment config.
-
-    This preserves the general mock recipe's convergence contract while
-    providing the MBS1/GBS512 contract used for large image-caption datasets.
-    Select the real dataset separately through the public training launcher.
-    """
-    cfg = qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config()
-    cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
     return cfg
 
 
@@ -2128,7 +2111,6 @@ __all__ = [
     "qwen35_vl_2b_sft_1gpu_h100_bf16_config",
     "qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config",
     "qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config",
-    "qwen35_vl_35b_a3b_pretrain_alignment_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config",
     "qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config",
     "qwen35_vl_397b_a17b_peft_32gpu_h100_bf16_config",
