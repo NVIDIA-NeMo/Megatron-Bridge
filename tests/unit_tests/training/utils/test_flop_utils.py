@@ -21,6 +21,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 import torch
 
+from megatron.bridge.peft.lora import LoRA
 from megatron.bridge.training.utils.flop_utils import (
     _lora_seq_stats_cache,
     _packed_data_exists,
