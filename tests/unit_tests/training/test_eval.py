@@ -314,6 +314,65 @@ def test_evaluate_and_print_results_multiple_validation_sets_stops_on_timelimit(
     assert "validation-1" not in printed and "validation-2" not in printed
 
 
+def _tensor_on_cpu(*args, **kwargs):
+    kwargs.pop("device", None)
+    return torch.tensor(*args, **kwargs)
+
+
+@patch("megatron.bridge.training.eval.print_rank_last")
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_multiple_validation_sets_rank_count_agreement(mock_evaluate, mock_print_rank_last):
+    """When all ranks report the same set count, the guard passes and every set is evaluated."""
+    mock_evaluate.side_effect = [
+        ({"lm loss": torch.tensor(1.0)}, None, False),
+        ({"lm loss": torch.tensor(2.0)}, None, False),
+    ]
+
+    with (
+        patch("megatron.bridge.training.eval.torch.distributed.is_initialized", return_value=True),
+        patch("megatron.bridge.training.eval.torch.distributed.all_reduce"),
+        patch("megatron.bridge.training.eval.torch.tensor", side_effect=_tensor_on_cpu),
+    ):
+        result = evaluate_and_print_results(
+            state=_make_state(multiple_validation_sets=True),
+            prefix="iteration 7",
+            forward_step_func=MagicMock(),
+            data_iterator=[object(), object()],
+            model=[MagicMock()],
+            config=SimpleNamespace(),
+            write_to_tensorboard=False,
+        )
+
+    assert result is not None
+    assert mock_evaluate.call_count == 2
+
+
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_multiple_validation_sets_rank_count_mismatch(mock_evaluate):
+    """Ranks disagreeing on the set count fail loudly instead of deadlocking in collectives."""
+
+    def fake_all_reduce(tensor, op=None):
+        tensor[0] = 3  # max set count across ranks
+        tensor[1] = -2  # negated min set count across ranks
+
+    with (
+        patch("megatron.bridge.training.eval.torch.distributed.is_initialized", return_value=True),
+        patch("megatron.bridge.training.eval.torch.distributed.all_reduce", side_effect=fake_all_reduce),
+        patch("megatron.bridge.training.eval.torch.tensor", side_effect=_tensor_on_cpu),
+    ):
+        with pytest.raises(RuntimeError, match=r"min 2, max 3; this rank has 2"):
+            evaluate_and_print_results(
+                state=_make_state(multiple_validation_sets=True),
+                prefix="iteration 7",
+                forward_step_func=MagicMock(),
+                data_iterator=[object(), object()],
+                model=[MagicMock()],
+                config=SimpleNamespace(),
+                write_to_tensorboard=False,
+            )
+    mock_evaluate.assert_not_called()
+
+
 @patch("megatron.bridge.training.eval.print_rank_last")
 @patch("megatron.bridge.training.eval.evaluate")
 def test_evaluate_and_print_results_is_test_ignores_multiple_validation_sets(mock_evaluate, mock_print_rank_last):
