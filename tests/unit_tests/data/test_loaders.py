@@ -18,9 +18,13 @@ from unittest import mock
 
 import pytest
 import torch
+from megatron.core.rerun_state_machine import RerunDataIterator
 
 from megatron.bridge.data.base import DatasetBuildContext, DatasetProvider
-from megatron.bridge.data.loaders import build_train_valid_test_data_loaders
+from megatron.bridge.data.loaders import (
+    build_train_valid_test_data_iterators,
+    build_train_valid_test_data_loaders,
+)
 from megatron.bridge.data.utils import get_dataset_provider
 from megatron.bridge.training.state import TrainState
 
@@ -185,3 +189,20 @@ def test_multiple_validation_sets_build_one_dataloader_per_set(_mock_rank, _mock
     assert test_dataloader is None
     assert next(iter(valid_dataloader[0]))["sample_id"].item() == 100
     assert next(iter(valid_dataloader[1]))["sample_id"].item() == 200
+
+    # The iterator layer preserves the per-set structure: one RerunDataIterator
+    # per set, in blend order, while train stays a single iterator.
+    with mock.patch("megatron.bridge.data.loaders.torch.tensor", side_effect=tensor_on_cpu):
+        train_iter, valid_iters, test_iter = build_train_valid_test_data_iterators(
+            cfg=make_cfg(provider, multiple_validation_sets=True),
+            train_state=TrainState(),
+            build_train_valid_test_datasets_provider=get_dataset_provider(provider),
+            dp_group=object(),
+        )
+
+    assert isinstance(train_iter, RerunDataIterator)
+    assert test_iter is None
+    assert isinstance(valid_iters, list) and len(valid_iters) == 2
+    assert all(isinstance(it, RerunDataIterator) for it in valid_iters)
+    assert next(valid_iters[0])["sample_id"].item() == 100
+    assert next(valid_iters[1])["sample_id"].item() == 200
