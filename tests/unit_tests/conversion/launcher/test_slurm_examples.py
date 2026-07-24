@@ -84,6 +84,16 @@ WRAPPER_CASES = [
             "trust_remote_code": True,
         },
     ),
+    (
+        "examples/models/exaone/exaone_moe/slurm_conversion.sh",
+        {
+            "nodes": "2",
+            "time": "04:00:00",
+            "hf_model": "LGAI-EXAONE/K-EXAONE-236B-A23B",
+            "config": ("1", "1", "16", "1"),
+            "trust_remote_code": True,
+        },
+    ),
 ]
 
 

@@ -17,7 +17,7 @@ import torch.nn.functional as F
 from transformers import PretrainedConfig
 
 from megatron.bridge.models.conversion.auto_bridge import AutoBridge
-from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from tests.functional_tests.utils import compare_provider_configs
 

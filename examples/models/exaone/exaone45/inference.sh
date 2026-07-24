@@ -1,5 +1,4 @@
-# CI_TIMEOUT=15
-#!/bin/bash
+#!/usr/bin/env bash
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -14,12 +13,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -xeuo pipefail
+set -euo pipefail
 
-REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
-export CUDA_VISIBLE_DEVICES="0,1"
-
-uv run coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest \
-  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/models/exaone
-coverage combine -q
+# Inference with Hugging Face checkpoints
+uv run python -m torch.distributed.run --nproc_per_node=4 examples/conversion/hf_to_megatron_generate_vlm.py \
+    --hf_model_path LGAI-EXAONE/EXAONE-4.5-33B \
+    --image_path "https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/main/images/table.png" \
+    --prompt "Describe this image." \
+    --max_new_tokens 256 \
+    --tp 4 \
+    --pp 1 \
+    --ep 1 \
+    --trust_remote_code
