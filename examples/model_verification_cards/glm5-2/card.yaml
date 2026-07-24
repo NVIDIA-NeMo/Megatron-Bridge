@@ -11,8 +11,8 @@ summary: >
   inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
   a reloadable middle checkpoint and verified continuation. GB200 support
   verification currently covers bounded pretraining, bounded full SFT, 128K
-  packed long-context SFT, and bounded PEFT; post-SFT export/reload inference
-  and checkpoint resume remain pending.
+  packed long-context SFT, bounded PEFT, and bounded checkpoint resume;
+  post-SFT export/reload inference remains pending.
 verification_index:
   model_level:
     verified:
@@ -24,8 +24,8 @@ verification_index:
       - inference
   training:
     GB200:
-      verified: [pretrain, sft, sft_long_context, peft]
-      unverified: [sft_export_inference, checkpoint_resume]
+      verified: [pretrain, sft, sft_long_context, peft, checkpoint_resume]
+      unverified: [sft_export_inference]
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
@@ -532,22 +532,52 @@ items:
         TFLOPS/GPU. Peak observed allocator memory is 65.230 GiB allocated and
         69.684 GiB reserved.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: pretrain
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
+        --recipe glm52_pretrain_config --mode pretrain
+        --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/glm5-2/pretrain-tulu3-text-document/tulu3_glm52_text_document_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/pretrain-tulu3-gb200
+        dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
+        model.tensor_model_parallel_size=1 model.pipeline_model_parallel_size=6
+        model.context_parallel_size=1 model.expert_model_parallel_size=32
+        model.expert_tensor_parallel_size=1 model.sequence_parallel=false
+        model.virtual_pipeline_model_parallel_size=null
+        model.pipeline_model_parallel_layout=null
+        model.num_layers_in_first_pipeline_stage=14
+        model.num_layers_in_last_pipeline_stage=16
+        model.account_for_embedding_in_pipeline_split=false
+        model.account_for_loss_in_pipeline_split=false
+        model.microbatch_group_size_per_vp_stage=6
+        model.moe_token_dispatcher_type=alltoall
+        model.moe_flex_dispatcher_backend=null
+        model.dsa_kernel_backend=cudnn model.dsa_indexer_loss_coeff=0.001
+        model.dsa_indexer_use_sparse_loss=true model.apply_rope_fusion=false
+        --load_dir work/model-verification/glm5-2/pretrain-gb200-cudnn/checkpoints
+        --save_dir work/model-verification/glm5-2/pretrain-resume-gb200-cudnn/checkpoints
+        --save_interval 0 checkpoint.ckpt_step=50
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+      last_verified: 2026-07-24
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 8.581669
+        final_loss: 8.192354
+        last_10_steps_step_time_ms_avg: 67700.250
+        last_10_steps_model_tflops_per_gpu_avg: 90.710
       resume_comparison:
         reference_item: pretrain
         sentinel_steps: [51, 100]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
-        sentinels_match: null
+        sentinels_match: true
       expected_result: >
-        Checkpoint-resume verification depends on a completed GLM-5.2 pretrain
-        reference and has not been run for this card.
+        The run reloads the GB200 reference's step-50 model, optimizer,
+        scheduler, data-order, and RNG state and completes steps 51-100 with
+        zero skipped or NaN iterations. Step 51 matches exactly at 8.581669.
+        Step 100 is 8.192354 versus the uninterrupted reference's 8.171059, an
+        absolute difference of 0.021295 within the allowed 0.081712. Final grad
+        norm is 1.840; the last 10 steps average 67,700.250 ms and 90.710
+        TFLOPS/GPU.
