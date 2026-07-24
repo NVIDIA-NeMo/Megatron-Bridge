@@ -6,9 +6,10 @@ summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
   results. Gemma 3 4B Instruct exact-checkpoint verification is pending for
-  conversion, inference, SFT, and PEFT; pretraining and checkpoint resume are
-  unsupported because there is no public exact-model pretraining recipe.
-  Existing toy-model tests are not used as exact-model evidence.
+  conversion, manual forward comparison, inference, SFT, post-SFT
+  export/inference, long-context SFT, and PEFT; pretraining and checkpoint
+  resume are unsupported because there is no public exact-model pretraining
+  recipe. Existing toy-model tests are not used as exact-model evidence.
 verification_index:
   model_level:
     unverified:
@@ -29,13 +30,18 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: f858ebcdd81b0e9f28312e2a020411f513070dfa  # pragma: allowlist secret
+  bridge_commit: 0eb2580d7e2e701332227cd352214619514db78f  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
     status: unverified
-    precision: null
-    command: null
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model google/gemma-3-4b-it
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron
+      --torch-dtype bfloat16
     last_verified: null
     expected_result: >
       Pending exact-revision verification. The CPU import must create a
@@ -44,8 +50,13 @@ items:
 
   hf_to_megatron_gpu:
     status: unverified
-    precision: null
-    command: null
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 4 --hf-model google/gemma-3-4b-it
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron
+      --torch-dtype bfloat16 --tp 2 --pp 2 --ep 1 --etp 1
     last_verified: null
     expected_result: >
       Pending exact-revision verification. The distributed BF16 import must
@@ -54,8 +65,14 @@ items:
 
   megatron_to_hf_cpu:
     status: unverified
-    precision: null
-    command: null
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model google/gemma-3-4b-it
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/gemma-3-4b-it/cpu-hf-export
+      --torch-dtype bfloat16
     last_verified: null
     expected_result: >
       Pending exact-revision verification. CPU export must preserve every
@@ -64,8 +81,15 @@ items:
 
   megatron_to_hf_gpu:
     status: unverified
-    precision: null
-    command: null
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 4 --hf-model google/gemma-3-4b-it
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
+      --hf-path work/model-verification/gemma-3-4b-it/hf-export
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 2 --pp 2 --ep 1 --etp 1
     last_verified: null
     expected_result: >
       Pending exact-revision verification. TP2/PP2 distributed export must
@@ -75,23 +99,42 @@ items:
 
   manual_forward_pass:
     status: unverified
-    precision: null
-    command: null
+    precision: bf16
+    command: >
+      uv run python examples/conversion/compare_hf_and_megatron/compare.py
+      --hf_model_path google/gemma-3-4b-it
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --megatron_model_path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
+      --model_class Gemma3ForConditionalGeneration
+      --image_path work/model-verification/gemma-3-4b-it/candy.JPG
+      --prompt "What animal is on the candy?"
+      --tp 1 --pp 1 --ep 1 --etp 1
     last_verified: null
     expected_result: >
       Pending exact-revision image-and-text comparison. Hugging Face and
       Megatron must predict the same next token with cosine similarity at least
-      0.99; maximum and mean absolute logit differences must be recorded.
+      0.99. The prompt must not require TP padding; maximum and mean absolute
+      logit differences are recorded for diagnosis only and are not pass/fail
+      gates.
 
   inference:
     status: unverified
-    precision: null
-    command: null
+    precision: bf16
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=4
+      examples/conversion/hf_to_megatron_generate_vlm.py
+      --hf_model_path google/gemma-3-4b-it
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --megatron_model_path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
+      --image_path work/model-verification/gemma-3-4b-it/candy.JPG
+      --prompt "What animal is on the candy?"
+      --max_new_tokens 32
+      --tp 2 --pp 2 --ep 1 --etp 1
     last_verified: null
     expected_result: >
-      Pending exact-revision multimodal inference. Two greedy runs must consume
-      the same image and prompt, generate an exact positive token count, and
-      return byte-identical token IDs and completion text.
+      Pending one exact-revision deterministic BF16 greedy multimodal run. The
+      evidence must record the exact positive generated-token count, literal
+      completion text, and public input revision and content hash.
 
   pretrain:
     all:
@@ -113,9 +156,17 @@ items:
   sft:
     H100:
       status: unverified
-      precision: null
+      precision: bf16
       enabled_features: {}
-      command: null
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 1
+        --recipe gemma3_vl_4b_sft_config --mode sft --dataset cord-v2
+        --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
+        --max_steps 10 --seq_length 4096
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        --save_dir work/model-verification/gemma-3-4b-it/sft-checkpoints
+        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
       last_verified: null
       metrics:
         initial_loss: null
@@ -131,19 +182,20 @@ items:
   sft_export_inference:
     H100:
       status: unverified
-      precision: null
+      precision: bf16
       depends_on: sft
       commands: null
       last_verified: null
       expected_result: >
         Pending the full-SFT checkpoint. Export must reload natively with exact
-        keys, shapes, and dtypes, then two greedy multimodal Hugging Face runs
-        must produce the same exact-length token sequence and completion.
+        keys, shapes, and dtypes, then one deterministic greedy multimodal
+        Hugging Face generation must record its exact generated-token count and
+        literal completion.
 
   sft_long_context:
     H100:
       status: unverified
-      precision: null
+      precision: bf16
       enabled_features: {}
       command: null
       last_verified: null
@@ -160,9 +212,17 @@ items:
   peft:
     H100:
       status: unverified
-      precision: null
+      precision: bf16
       enabled_features: {}
-      command: null
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 1
+        --recipe gemma3_vl_4b_peft_config --mode lora --dataset cord-v2
+        --pretrained_checkpoint work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
+        --max_steps 10 --seq_length 4096
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        --save_dir work/model-verification/gemma-3-4b-it/peft-checkpoints
+        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
       last_verified: null
       metrics:
         initial_loss: null
