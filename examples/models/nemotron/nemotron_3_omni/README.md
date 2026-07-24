@@ -232,18 +232,12 @@ Set the four flags below as a matched column — a mismatched set produces incor
 | Field                                              | Dynamic resolution (images, variable H×W) | Temporal video (videos, fused pairs, 512²) |
 |----------------------------------------------------|-------------------------------------------|--------------------------------------------|
 | `dataset.task_encoder.use_temporal_video_embedder` | `False`                                   | `True`                                     |
-| `model.temporal_patch_dim`                         | `1`                                       | `2`                                        |
+| `model.temporal_patchrecipe_dim`                         | `1`                                       | `2`                                        |
 | `model.separate_video_embedder`                    | `False`                                   | `True`                                     |
 | `model.temporal_ckpt_compat`                       | `False`                                   | `True`                                     |
 
 Note:`dataset.task_encoder.use_temporal_video_embedder` only applies to the Energon data path.
 
-The pre-built recipes are already set to its respective input processing mode:
-
-| Recipe family                     | Column             |
-|-----------------------------------|--------------------|
-| `nemotron_omni_cord_v2_*_config` (images)  | Dynamic resolution |
-| `nemotron_omni_valor32k_*_config` (videos + audios) | Temporal video     |
 
 ### Image-Text — CORD-V2
 
