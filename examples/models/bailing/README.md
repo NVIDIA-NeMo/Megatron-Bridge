@@ -25,14 +25,20 @@ Directory structure:
 
 ## Checkpoint Conversion
 
-See [conversion.sh](conversion.sh) for checkpoint conversion examples.
+See [conversion.sh](conversion.sh) for checkpoint conversion examples. The
+script defaults to `inclusionAI/Ling-mini-2.0`, the 16B checkpoint, and accepts
+the other variants through `MODEL_NAME` or a complete `HF_MODEL_ID`:
+
+```bash
+MODEL_NAME=Ling-flash-2.0 bash examples/models/bailing/conversion.sh
+```
 
 ### Import HF → Megatron
 
 ```bash
 ./scripts/conversion/convert.sh import \
-    --hf-model inclusionAI/Ling-flash-2.0 \
-    --megatron-path ${WORKSPACE}/models/Ling-flash-2.0 \
+    --hf-model inclusionAI/Ling-mini-2.0 \
+    --megatron-path ${WORKSPACE}/models/Ling-mini-2.0 \
     --trust-remote-code
 ```
 
@@ -40,9 +46,9 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 
 ```bash
 ./scripts/conversion/convert.sh export \
-    --hf-model inclusionAI/Ling-flash-2.0 \
-    --megatron-path ${WORKSPACE}/models/Ling-flash-2.0/iter_0000000 \
-    --hf-path ${WORKSPACE}/models/Ling-flash-2.0-hf-export \
+    --hf-model inclusionAI/Ling-mini-2.0 \
+    --megatron-path ${WORKSPACE}/models/Ling-mini-2.0/iter_0000000 \
+    --hf-path ${WORKSPACE}/models/Ling-mini-2.0-hf-export \
     --trust-remote-code
 ```
 
@@ -51,20 +57,21 @@ See [conversion.sh](conversion.sh) for checkpoint conversion examples.
 ```bash
 python -m torch.distributed.run --nproc_per_node=8 \
     examples/conversion/hf_megatron_roundtrip_multi_gpu.py \
-    --hf-model-id inclusionAI/Ling-flash-2.0 \
-    --megatron-load-path ${WORKSPACE}/models/Ling-flash-2.0/iter_0000000 \
-    --tp 1 --ep 8 \
+    --hf-model-id inclusionAI/Ling-mini-2.0 \
+    --megatron-load-path ${WORKSPACE}/models/Ling-mini-2.0/iter_0000000 \
+    --tp 2 --ep 4 \
     --trust-remote-code
 ```
 
 ## Inference
 
 See [inference.sh](inference.sh) for text generation with:
-- Hugging Face checkpoint (`inclusionAI/Ling-flash-2.0`)
+- Hugging Face checkpoint (`inclusionAI/Ling-mini-2.0` by default)
 - Imported Megatron checkpoint (after [conversion.sh](conversion.sh) import)
 - Exported HF checkpoint (after conversion export)
 
-The default parallelism for 8 GPUs is `--tp 2 --ep 4`.
+Both scripts default to 8 GPUs with `--tp 2 --ep 4`. Override `TP`, `PP`,
+`EP`, `ETP`, and `NPROC_PER_NODE` together for another valid layout.
 TP×PP×EP must equal `--nproc_per_node`.
 
 > **Note**: `--tp 1 --ep 8` works for conversion round-trip but may cause issues during autoregressive inference with single-token batches (empty token dispatch to some EP ranks). Use `--tp 2 --ep 4` for inference.

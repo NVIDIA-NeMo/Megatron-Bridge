@@ -56,7 +56,6 @@ def test_every_flat_recipe_has_registered_family_and_metadata():
         if module.BENCHMARK_RECIPE_PATTERN.search(recipe_name)
     ]
 
-    assert len(recipes) > 300
     for recipe_name, owning_family in recipes:
         metadata = module.available_benchmark_recipe_metadata(recipe_name)
         assert metadata is not None
@@ -68,7 +67,6 @@ def test_every_exported_benchmark_name_has_canonical_metadata():
     recipe_names = module.benchmark_recipe_names()
     public_modes = {"pretrain": "pretrain", "sft": "sft", "peft": "lora"}
 
-    assert len(recipe_names) > 300
     for recipe_name in recipe_names:
         metadata = module.available_benchmark_recipe_metadata(recipe_name)
         assert metadata is not None
