@@ -28,16 +28,18 @@ from megatron.bridge.training.mixed_precision import bf16_with_mxfp8_mixed
 def qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_functional_config() -> ConfigContainer:
     """Return a checkpointable Qwen3-30B-A3B MXFP8 pretraining config for eight GB200 GPUs.
 
-    The Blackwell topology, precision, dispatcher, overlap, kernels, batch
-    sizes, and environment follow the corresponding flat performance recipe.
-    Functional verification keeps natural routing and safety checks enabled,
-    runs 100 optimizer steps, and uses scoped Transformer Engine CUDA graphs
-    because full-iteration graphs are incompatible with loss-NaN checking.
+    The Blackwell topology, compute precision, dispatcher, overlap, kernels,
+    batch sizes, and environment follow the corresponding flat performance
+    recipe. Functional verification keeps natural routing and safety checks
+    enabled, runs 100 optimizer steps, and uses BF16 parameter all-gather so
+    checkpoints resume without an MXFP8 grad-buffer restaging transient.
     """
     cfg = qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config()
 
     # Precision and eight-GPU GB200 topology.
     cfg.mixed_precision = bf16_with_mxfp8_mixed()
+    cfg.mixed_precision.fp8_param_gather = False
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
     cfg.mixed_precision.grad_reduce_in_fp32 = False
     cfg.optimizer.use_precision_aware_optimizer = False
     cfg.model.tensor_model_parallel_size = 1
