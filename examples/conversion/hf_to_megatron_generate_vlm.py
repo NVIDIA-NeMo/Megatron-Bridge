@@ -142,11 +142,6 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
-def _decode_completion(tokenizer, generated_ids: torch.Tensor, prompt_length: int) -> str:
-    """Decode generated tokens without echoing the prompt or special tokens."""
-    return tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
-
-
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
     maybe_initialize_distributed()
@@ -374,7 +369,7 @@ def main(args) -> None:
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
-    completion = _decode_completion(tokenizer, generated_ids, prompt_length)
+    completion = tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
@@ -384,8 +379,7 @@ def main(args) -> None:
     print_rank_0("=======================================")
 
 
-def build_parser() -> argparse.ArgumentParser:
-    """Build the VLM generation CLI parser."""
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="VLM Generation from HuggingFace Models")
     parser.add_argument("--hf_model_path", type=str, required=True, help="Path to the HuggingFace VL model.")
     parser.add_argument(
@@ -415,11 +409,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--video_fps", type=float, default=2.0, help="Frames per second to sample from the video (default: 2.0)."
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
-    return parser
-
-
-if __name__ == "__main__":
-    args = build_parser().parse_args()
+    args = parser.parse_args()
     main(args)
 
     if torch.distributed.is_initialized():
