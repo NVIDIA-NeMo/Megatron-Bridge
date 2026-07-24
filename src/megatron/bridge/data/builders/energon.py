@@ -59,12 +59,9 @@ class QwenVLEnergonTaskEncoderConfig:
 
     Qwen's visual output keys are model-owned. ``min_pixels`` and
     ``max_pixels`` instead bound processor preprocessing and visual-token cost.
-    ``hf_processor_revision`` optionally pins both tokenizer and processor
-    artifact loads.
     """
 
     hf_processor_path: str
-    hf_processor_revision: str | None = None
     temporal_patch_size: int = 2
     spatial_merge_size: int = 2
     patch_size: int = 14
@@ -78,10 +75,6 @@ class QwenVLEnergonTaskEncoderConfig:
     def validate(self) -> None:
         """Validate Qwen-VL task-encoder settings."""
         _validate_hf_path(self.hf_processor_path, field_name="hf_processor_path")
-        if self.hf_processor_revision is not None and (
-            not isinstance(self.hf_processor_revision, str) or not self.hf_processor_revision.strip()
-        ):
-            raise ValueError("hf_processor_revision must be a non-empty string when set.")
         for field_name in ("temporal_patch_size", "spatial_merge_size", "patch_size", "min_pixels", "max_pixels"):
             if getattr(self, field_name) <= 0:
                 raise ValueError(f"{field_name} must be greater than 0.")
@@ -239,12 +232,10 @@ def build_energon_task_encoder(config: EnergonDatasetConfig) -> Any:
 
         tokenizer = AutoTokenizer.from_pretrained(
             task_config.hf_processor_path,
-            revision=task_config.hf_processor_revision,
             trust_remote_code=trust_remote_code,
         )
         image_processor = Qwen3VLProcessor.from_pretrained(
             task_config.hf_processor_path,
-            revision=task_config.hf_processor_revision,
             trust_remote_code=trust_remote_code,
         )
         return QwenVLTaskEncoder(

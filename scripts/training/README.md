@@ -109,7 +109,6 @@ Benchmark recipes retain their recipe-owned dataset and reject `--dataset`.
 |---|---|---|---|
 | `mock` | Source selector | pretrain | In-memory generated GPT data |
 | `megatron-indexed` | Source selector | pretrain | Local Megatron `.bin/.idx` data; never falls back to mock |
-| `qwen-vl-energon` | Source selector | pretrain | Local Qwen-VL Energon data selected by `dataset.path` |
 | `local-jsonl` | Source selector | sft/lora/dora | Local prompt-completion JSONL selected by `dataset.dataset_root` |
 | `local-vlm` | Source selector | sft/lora/dora | Local VLM JSON/JSONL selected through `dataset.source` overrides |
 | `squad` | Named preset | sft/lora/dora | Hugging Face SQuAD preset |
@@ -138,26 +137,6 @@ the index cache.
 
 The launcher does not infer the source corpus from the files. For one preprocessing example, see
 [the DCLM tutorial](../../tutorials/data/dclm/README.md).
-
-### Qwen-VL Energon data
-
-Use `qwen-vl-energon` with the architecture-shared
-`qwen35_vl_35b_a3b_pretrain_alignment_config` recipe for MBS1/GBS512
-image-caption alignment, then set the prepared dataset directory and processor
-checkpoint explicitly:
-
-```bash
---dataset qwen-vl-energon \
-dataset.path=/data/qwen-vl-energon \
-dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B \
-dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
-```
-
-The dataset must use the repository's `ChatMLWebdataset` tar-member contract.
-The [DataComp tutorial](../../tutorials/data/datacomp/README.md) documents a
-complete image-caption preparation and pretraining flow; the
-[multimodal Energon tutorial](../../tutorials/data/energon/README.md) documents
-the general tar-member contract.
 
 ### OpenMathInstruct-2
 

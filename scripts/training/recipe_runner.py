@@ -456,25 +456,6 @@ def sync_model_dataset_sequence_length(config: ConfigContainer) -> ConfigContain
     return config
 
 
-def sync_energon_micro_batch_size(
-    config: ConfigContainer,
-    *,
-    cli_overrides: list[str],
-) -> ConfigContainer:
-    """Align Energon with train MBS unless the dataset value was explicit."""
-    from megatron.bridge.data.builders import EnergonDatasetConfig
-
-    override_fields = {override.lstrip("+~").split("=", 1)[0] for override in cli_overrides}
-    if override_fields.intersection({"dataset", "dataset.micro_batch_size"}):
-        return config
-
-    dataset = getattr(config, "dataset", None)
-    train = getattr(config, "train", None)
-    if isinstance(dataset, EnergonDatasetConfig) and train is not None:
-        dataset.micro_batch_size = train.micro_batch_size
-    return config
-
-
 def save_config(config: ConfigContainer, save_path: str) -> None:
     """Save and log a ConfigContainer YAML file."""
     os.makedirs(os.path.dirname(os.path.abspath(save_path)), exist_ok=True)
