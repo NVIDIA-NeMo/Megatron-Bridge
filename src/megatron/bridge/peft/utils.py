@@ -104,6 +104,16 @@ def _te_grouped_linear_uses_explicit_m_splits(
     return "m_splits" in inspect.signature(autograd_function.forward).parameters
 
 
+@cache
+def _te_grouped_linear_uses_output_buffers(
+    autograd_function: type[torch.autograd.Function],
+) -> bool:
+    """Return whether TE's grouped-linear autograd takes output buffer tensors."""
+
+    parameters = inspect.signature(autograd_function.forward).parameters
+    return "out" in parameters and "dgrad_out" in parameters
+
+
 def _get_pg_collection_from_module(module: object | None) -> ProcessGroupCollection | None:
     """Return the process-group collection attached to a module or its config."""
 
@@ -2061,12 +2071,21 @@ class GroupedExpertLinearAdapter(nn.Module):
             # TODO: Replace this private FP8 dispatch once Transformer Engine exposes
             # a public functional grouped-linear API for externally owned weights
             # (NVIDIA/TransformerEngine#3191).
+            output_buffers = (
+                (None, None) if _te_grouped_linear_uses_output_buffers(TEPytorchGroupedLinearAutograd) else ()
+            )
             if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
                 te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
-                autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
+                autograd_args = (
+                    x,
+                    te_m_splits,
+                    common_non_tensor_args,
+                    *output_buffers,
+                    *weights_and_biases,
+                )
             else:
                 non_tensor_args = (m_splits, *common_non_tensor_args)
-                autograd_args = (x, non_tensor_args, *weights_and_biases)
+                autograd_args = (x, non_tensor_args, *output_buffers, *weights_and_biases)
 
             if torch.is_grad_enabled():
                 output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
