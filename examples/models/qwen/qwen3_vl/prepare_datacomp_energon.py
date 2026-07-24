@@ -395,9 +395,13 @@ def prepare_energon_dataset(output_dir: Path, *, counts: Mapping[str, int], num_
     """
     from megatron.bridge.data.energon import prepare_webdataset
 
-    split_patterns = {"train": "train-shard-.*"}
+    split_patterns = {}
+    if counts["train"] > 0:
+        split_patterns["train"] = "train-shard-.*"
     if counts["val"] > 0:
         split_patterns["val"] = "val-shard-.*"
+    if not split_patterns:
+        raise ValueError("At least one converted split must contain samples.")
     prepare_webdataset(output_dir, split_patterns, num_workers=num_workers)
     metadata_dir = output_dir / ".nv-meta"
     metadata_dir.mkdir(parents=True, exist_ok=True)

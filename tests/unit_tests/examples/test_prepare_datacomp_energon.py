@@ -173,8 +173,15 @@ def test_prepare_energon_dataset_indexes_nonempty_splits(tmp_path: Path, monkeyp
     monkeypatch.setitem(sys.modules, "megatron.bridge.data.energon", prepare_module)
 
     prepare(tmp_path, counts={"train": 10, "val": 0}, num_workers=4)
+    prepare(tmp_path, counts={"train": 0, "val": 10}, num_workers=2)
 
-    assert calls == [(tmp_path, {"train": "train-shard-.*"}, 4)]
+    assert calls == [
+        (tmp_path, {"train": "train-shard-.*"}, 4),
+        (tmp_path, {"val": "val-shard-.*"}, 2),
+    ]
     dataset_yaml = (tmp_path / ".nv-meta" / "dataset.yaml").read_text(encoding="utf-8")
     assert "ChatMLWebdataset" in dataset_yaml
     assert "imgs: image.jpg" in dataset_yaml
+
+    with pytest.raises(ValueError, match="At least one converted split"):
+        prepare(tmp_path, counts={"train": 0, "val": 0}, num_workers=1)
