@@ -28,6 +28,12 @@ def _main_function() -> ast.FunctionDef:
     return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == "main")
 
 
+def test_cli_exposes_hf_revision():
+    tree = ast.parse(_SCRIPT.read_text(), filename=str(_SCRIPT))
+
+    assert any(isinstance(node, ast.Constant) and node.value == "--hf-revision" for node in ast.walk(tree))
+
+
 def test_main_initializes_distributed_before_model_parallel():
     executable_statements = [
         statement
