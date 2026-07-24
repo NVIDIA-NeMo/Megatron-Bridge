@@ -93,8 +93,7 @@ artifact key, shape, dtype, and value audit is still pending, so the export
 currently records successful end-to-end execution rather than final parity
 verification.
 
-A prior text-only generation smoke test with the chat template enabled produced
-a coherent continuation beginning:
-
-> The sky appears blue because of Rayleigh scattering, where sunlight
-> interacts with Earth's atmosphere.
+One deterministic full-VLM greedy generation on the same 32-H100 layout
+processed `docs/images/tp1.png`, generated 33 tokens under a 64-token maximum,
+reached EOS naturally, and included the image-only OCR target
+`Pre-LayerNorm`.
