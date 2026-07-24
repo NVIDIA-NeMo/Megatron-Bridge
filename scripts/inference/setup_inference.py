@@ -34,6 +34,7 @@ INFERENCE_TASKS = {
     "text-generation": Path("scripts/inference/text_generation.py"),
     "vlm-generation": Path("examples/conversion/hf_to_megatron_generate_vlm.py"),
     "model-comparison": Path("examples/conversion/compare_hf_and_megatron/compare.py"),
+    "hf-inference": Path("skills/create-model-verification-card/scripts/verify_hf_inference.py"),
 }
 
 
@@ -51,9 +52,11 @@ Example:
       --hf-model-path meta-llama/Llama-3.2-1B \\
       --prompt "Megatron Bridge inference is" --max_new_tokens 32
 
-Use --task vlm-generation for multimodal generation or --task model-comparison
-for a one-step Hugging Face/Megatron comparison. Arguments not owned by this
-launcher are forwarded unchanged to the selected repository entry point.
+Use --task vlm-generation for multimodal Megatron generation,
+--task model-comparison for a one-step Hugging Face/Megatron comparison, or
+--task hf-inference to verify deterministic output from an exported Hugging
+Face checkpoint. Arguments not owned by this launcher are forwarded unchanged
+to the selected repository entry point.
 """,
     )
     execution = parser.add_argument_group("Execution")

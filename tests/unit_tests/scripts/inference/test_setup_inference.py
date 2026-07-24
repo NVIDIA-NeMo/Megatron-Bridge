@@ -129,6 +129,10 @@ def test_parser_forwards_model_checkpoint_prompt_and_engine_args():
             "model-comparison",
             "/opt/Megatron-Bridge/examples/conversion/compare_hf_and_megatron/compare.py",
         ),
+        (
+            "hf-inference",
+            "/opt/Megatron-Bridge/skills/create-model-verification-card/scripts/verify_hf_inference.py",
+        ),
     ],
 )
 def test_parser_selects_repository_inference_task(task_name, expected_path):

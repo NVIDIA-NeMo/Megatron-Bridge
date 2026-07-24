@@ -1042,10 +1042,15 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
+    expected_launcher_task = {
+        "inference": "vlm-generation",
+        "sft_export_inference": "hf-inference",
+    }.get(item_name)
     uses_inference_launcher = (
         bool(command_tokens)
         and command_tokens[0].removeprefix("./") == "scripts/inference/infer.sh"
-        and _argument_values(command, "--task") == ["vlm-generation"]
+        and expected_launcher_task is not None
+        and _argument_values(command, "--task") == [expected_launcher_task]
     )
     if not uses_inference_launcher and command_tokens[:2] != ["uv", "run"]:
         errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
@@ -1251,9 +1256,6 @@ def _validate_sft_export_inference(
     ):
         if fragment not in export_command:
             errors.append(f"{_pointer(*export_path)}: missing {fragment}")
-    for fragment in ("uv run", "scripts/verify_hf_inference.py"):
-        if fragment not in inference_command:
-            errors.append(f"{_pointer(*inference_path)}: missing {fragment}")
     try:
         inference_tokens = shlex.split(inference_command)
     except ValueError:
@@ -1264,8 +1266,14 @@ def _validate_sft_export_inference(
         "python",
         "skills/create-model-verification-card/scripts/verify_hf_inference.py",
     ]
-    if inference_tokens[:4] != expected_inference_prefix:
-        errors.append(f"{_pointer(*inference_path)}: must directly run the HF inference verifier with uv")
+    uses_direct_helper = inference_tokens[:4] == expected_inference_prefix
+    uses_inference_launcher = (
+        bool(inference_tokens)
+        and inference_tokens[0].removeprefix("./") == "scripts/inference/infer.sh"
+        and _argument_values(inference_command, "--task") == ["hf-inference"]
+    )
+    if not uses_direct_helper and not uses_inference_launcher:
+        errors.append(f"{_pointer(*inference_path)}: must run the HF inference verifier through uv or infer.sh")
 
     export_devices = _argument_values(export_command, "--device")
     if len(export_devices) == 1 and export_devices[0] in {"cpu", "gpu"}:

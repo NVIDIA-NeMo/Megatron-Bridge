@@ -64,6 +64,28 @@ def test_inference_accepts_vlm_generation_launcher():
     assert errors == []
 
 
+def test_base_inference_rejects_hf_export_launcher():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_inference(
+        {
+            "command": (
+                "./scripts/inference/infer.sh --task hf-inference --prompt 'Describe the image' --max-new-tokens 32"
+            ),
+            "expected_result": (
+                "Two independent runs produced byte-identical 32-token output. "
+                'The exact completion was "The image contains a sufficiently long deterministic description."'
+            ),
+        },
+        item_name="inference",
+        status="verified",
+        errors=errors,
+    )
+
+    assert errors == ["/items/inference/command: inference must use uv run"]
+
+
 def test_cpu_conversion_accepts_one_runtime_gpu():
     validator = _load_validator()
     errors = []
@@ -92,3 +114,34 @@ def test_cpu_conversion_rejects_multiple_runtime_gpus():
     )
 
     assert errors == ["/items/megatron_to_hf_cpu/command: CPU conversion may request at most one shared runtime GPU"]
+
+
+def test_sft_export_inference_accepts_hf_inference_launcher():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_sft_export_inference(
+        {
+            "status": "verified",
+            "depends_on": "sft",
+            "commands": [
+                "./scripts/conversion/convert.sh export --executor slurm --device gpu "
+                "--nodes 1 --gpus-per-node 8 --megatron-path work/sft/iter_0000100 --hf-path work/hf",
+                "./scripts/inference/infer.sh --task hf-inference --nodes 1 --gpus-per-node 1 "
+                "--hf-model work/hf --prompt 'Describe the image' --max-new-tokens 2",
+            ],
+            "expected_result": (
+                "Transformers reloaded the export and two independent runs produced "
+                'the exact byte-identical 2-token completion "The image".'
+            ),
+        },
+        {
+            "status": "verified",
+            "command": "./scripts/training/train.sh --save_dir work/sft --max_steps 100",
+        },
+        item_path=("items", "sft_export_inference", "H100"),
+        sft_path=("items", "sft", "H100"),
+        errors=errors,
+    )
+
+    assert errors == []

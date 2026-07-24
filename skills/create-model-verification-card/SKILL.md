@@ -529,10 +529,12 @@ result. Private executor configuration stays outside the card.
 - **SFT export and inference:** Depend on `sft`, export its final full-model
   checkpoint to HF, reload the exported model with Transformers, and run greedy
   generation twice. Store this item as an ordered `commands` list containing
-  exactly two strings: the synchronous Slurm export first and the `uv run` HF
-  inference second. Specify the same maximum new-token bound for both runs and
-  record the literal byte-identical completion, including whitespace, in
-  `expected_result`. Allow the model to stop naturally at end-of-sequence.
+  exactly two strings: the synchronous Slurm export first and the maintained
+  `infer.sh --task hf-inference` launcher second. Direct `uv run` invocation of
+  the same helper remains valid when no Slurm executor is available. Specify
+  the same maximum new-token bound for both runs and record the literal
+  byte-identical completion, including whitespace, in `expected_result`. Allow
+  the model to stop naturally at end-of-sequence.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
 - **Checkpoint resume:** Depend on `pretrain`; load its middle checkpoint
