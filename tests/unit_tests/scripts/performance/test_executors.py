@@ -137,9 +137,7 @@ def test_build_nemorun_script_wraps_only_enabled_kubeflow_tasks():
         custom_env_vars={KUBEFLOW_NUMA_BINDING_ENV: "1"},
     )
 
-    expected_env = {
-        "PYTHONPATH": "/opt/Megatron-Bridge/scripts/performance:/opt/Megatron-Bridge/src:$PYTHONPATH"
-    }
+    expected_env = {"PYTHONPATH": "/opt/Megatron-Bridge/scripts/performance:/opt/Megatron-Bridge/src:$PYTHONPATH"}
     assert enabled.inline
     assert enabled.env == expected_env
     assert not disabled.inline
