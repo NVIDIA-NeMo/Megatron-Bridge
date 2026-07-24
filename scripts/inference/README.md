@@ -56,9 +56,8 @@ Megatron Bridge environment for the full model, checkpoint, prompt, sampling,
 parallelism, and engine CLI.
 
 Use `--task hf-inference` to reload an exported Hugging Face checkpoint and run
-the repository's deterministic two-run verifier. Its forwarded model argument
-is `--hf-model`, and multimodal verification additionally uses `--image` and
-`--chat-template`.
+one deterministic inference. Its forwarded model argument is `--hf-model`, and
+multimodal verification additionally uses `--image` and `--chat-template`.
 
 ## Environment and cluster options
 
