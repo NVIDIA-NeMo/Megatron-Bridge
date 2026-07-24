@@ -1533,6 +1533,10 @@ def _gemma4_block_spec(config, use_transformer_engine=True, **kwargs):
     return block_spec
 
 
+# Preserve checkpoint configs serialized with this public target name.
+gemma4_block_spec = _gemma4_block_spec
+
+
 class Gemma4SelfAttention(SelfAttention):
     """Gemma 4 MoE self attention with heterogeneous sliding/global layers."""
 

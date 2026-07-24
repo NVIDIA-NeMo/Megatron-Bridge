@@ -24,6 +24,7 @@ import pytest
 import torch
 from megatron.core import tensor_parallel
 from megatron.core.models.common.embeddings.rotary_pos_embedding import apply_rotary_pos_emb
+from megatron.training.config.instantiate_utils import instantiate
 
 from megatron.bridge.models.gemma.modeling_gemma4 import (
     Gemma4DenseMLP,
@@ -50,6 +51,7 @@ from megatron.bridge.models.gemma.modeling_gemma4 import (
     _is_gemma4_sliding_layer,
     _logit_softcapping,
     _patch_ple_block_threading,
+    gemma4_block_spec,
     get_gemma4_layer_spec,
     wire_gemma4_kv_sharing,
 )
@@ -1884,6 +1886,18 @@ class TestGemma4MoEHelpers:
         assert layer_spec.module is Gemma4TransformerLayer
         assert attn_submodules.core_attention is Gemma4TEDotProductAttention
         assert attn_submodules.linear_proj == "old_proj"
+
+    def test_public_gemma4_block_spec_checkpoint_target_is_instantiable(self):
+        restored = instantiate(
+            {
+                "_target_": "megatron.bridge.models.gemma.modeling_gemma4.gemma4_block_spec",
+                "_partial_": True,
+                "use_transformer_engine": False,
+            }
+        )
+
+        assert isinstance(restored, partial)
+        assert restored.func is gemma4_block_spec
 
     def test_transformer_layer_post_mlp_adds_bias_and_layer_scalar(self):
         layer = object.__new__(Gemma4TransformerLayer)

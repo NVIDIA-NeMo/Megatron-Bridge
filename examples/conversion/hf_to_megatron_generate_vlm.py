@@ -137,6 +137,11 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
 # ---------------------------------------------------------------------------
 
 
+def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
+    """Build keyword arguments for revision-pinned Hugging Face loads."""
+    return {"revision": revision} if revision is not None else {}
+
+
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
     tp = args.tp
@@ -150,7 +155,11 @@ def main(args) -> None:
     )
 
     # Detect model family for processor-specific handling
-    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    config = AutoConfig.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     model_type = getattr(config, "model_type", "")
     is_kimi = "kimi" in model_type
     image_token_id = getattr(config, "image_token_id", None)
@@ -162,7 +171,11 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Load model
     # ------------------------------------------------------------------
-    bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    bridge = AutoBridge.from_hf_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
 
     if args.megatron_model_path:
         print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
@@ -221,10 +234,18 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Tokenizer & processor
     # ------------------------------------------------------------------
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     if is_kimi:
         patch_kimi_vision_processor(args.hf_model_path)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path,
+        trust_remote_code=trust_remote,
+        **_hf_revision_kwargs(args.hf_revision),
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     pad_token_id = tokenizer.pad_token_id or 0
@@ -367,6 +388,12 @@ def main(args) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="VLM Generation from HuggingFace Models")
     parser.add_argument("--hf_model_path", type=str, required=True, help="Path to the HuggingFace VL model.")
+    parser.add_argument(
+        "--hf-revision",
+        dest="hf_revision",
+        default=None,
+        help="Hugging Face revision for reproducible model and processor loading.",
+    )
     parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")
     parser.add_argument("--max_new_tokens", type=int, default=20, help="Maximum number of new tokens to generate.")
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
