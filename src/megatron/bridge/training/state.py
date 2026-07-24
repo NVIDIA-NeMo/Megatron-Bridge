@@ -464,7 +464,7 @@ class GlobalState:
 
     def _set_signal_handler(self) -> None:
         """Initializes the distributed signal handler based on the configuration."""
-        if self.cfg.train is not None:
+        if self.cfg.train is not None and self.cfg.train.exit_signal_handler:
             self._signal_handler = DistributedSignalHandler(self.cfg.train.exit_signal).__enter__()
 
     def reset_for_restart(self) -> None:
