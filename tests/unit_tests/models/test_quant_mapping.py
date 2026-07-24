@@ -879,7 +879,9 @@ class TestEPRenumberRegexSkipsAmax:
         assert re.search(r"\.bias\d+$", name) is not None
         assert re.search(r"\.weight\d+$", name) is None
 
-    def _call_local_to_global(self, param_name, num_moe_experts=4, ep_size=2, ep_rank=0):
+    def _call_local_to_global(
+        self, param_name, num_moe_experts=4, ep_size=2, ep_rank=0, num_moe_experts_per_layer=None
+    ):
         """Invoke the real `_megatron_local_name_to_global` with parallel_state mocked.
 
         Mocks ``parallel_state.get_expert_model_parallel_group`` and
@@ -893,7 +895,7 @@ class TestEPRenumberRegexSkipsAmax:
         ep_group.rank.return_value = ep_rank
         pp_group = MagicMock()
 
-        config = SimpleNamespace(num_moe_experts=num_moe_experts)
+        config = SimpleNamespace(num_moe_experts=num_moe_experts, num_moe_experts_per_layer=num_moe_experts_per_layer)
 
         def _pg_size(group):
             if group is ep_group:
@@ -934,3 +936,85 @@ class TestEPRenumberRegexSkipsAmax:
             ep_rank=1,
         )
         assert out == "decoder.layers.0.mlp.experts.linear_fc1.bias3"
+
+
+class TestHeterogeneousExpertLayout(TestEPRenumberRegexSkipsAmax):
+    """The per-layer expert-count contract (`num_moe_experts_per_layer`).
+
+    Conversion must read the expert layout from the model config, not from an
+    instantiated module. Homogeneous models keep using the scalar
+    ``num_moe_experts``; heterogeneous models declare a per-decoder-layer list of
+    global expert counts and conversion renumbers each layer with its own count.
+    """
+
+    def test_homogeneous_falls_back_to_scalar(self):
+        """With the per-layer list unset, every layer uses the scalar count."""
+        out = self._call_local_to_global(
+            "decoder.layers.3.mlp.experts.linear_fc1.weight0",
+            num_moe_experts=4,
+            ep_size=2,
+            ep_rank=1,
+            num_moe_experts_per_layer=None,
+        )
+        assert out == "decoder.layers.3.mlp.experts.linear_fc1.weight2"
+
+    def test_heterogeneous_uses_per_layer_count(self):
+        """Different layers renumber with their own global expert count.
+
+        Layer 1 has 8 experts (4 per rank on EP=2); layer 2 has 4 experts (2 per
+        rank). The same local ``weight0`` therefore maps to different globals.
+        """
+        per_layer = [0, 8, 4, 8]  # layer 0 dense, others MoE with differing counts
+        out_layer1 = self._call_local_to_global(
+            "decoder.layers.1.mlp.experts.linear_fc1.weight0",
+            ep_size=2,
+            ep_rank=1,
+            num_moe_experts_per_layer=per_layer,
+        )
+        assert out_layer1 == "decoder.layers.1.mlp.experts.linear_fc1.weight4"
+
+        out_layer2 = self._call_local_to_global(
+            "decoder.layers.2.mlp.experts.linear_fc1.weight0",
+            ep_size=2,
+            ep_rank=1,
+            num_moe_experts_per_layer=per_layer,
+        )
+        assert out_layer2 == "decoder.layers.2.mlp.experts.linear_fc1.weight2"
+
+    def test_mtp_layer_uses_scalar_not_per_layer_list(self):
+        """MTP layers are outside the per-decoder-layer contract; they use the scalar."""
+        out = self._call_local_to_global(
+            "mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight0",
+            num_moe_experts=4,
+            ep_size=2,
+            ep_rank=1,
+            num_moe_experts_per_layer=[8, 8],
+        )
+        assert out == "mtp.layers.0.transformer_layer.mlp.experts.linear_fc1.weight2"
+
+    def test_per_layer_list_too_short_raises(self):
+        """A list that does not cover the resolved layer is a hard error."""
+        with pytest.raises(ValueError, match="must cover every decoder layer"):
+            self._call_local_to_global(
+                "decoder.layers.5.mlp.experts.linear_fc1.weight0",
+                ep_size=2,
+                num_moe_experts_per_layer=[8, 8],
+            )
+
+    def test_expert_param_on_dense_layer_raises(self):
+        """An expert parameter on a layer declared dense (count 0) is a hard error."""
+        with pytest.raises(ValueError, match="declared dense"):
+            self._call_local_to_global(
+                "decoder.layers.0.mlp.experts.linear_fc1.weight0",
+                ep_size=2,
+                num_moe_experts_per_layer=[0, 8],
+            )
+
+    def test_count_not_divisible_by_ep_raises(self):
+        """A global expert count not divisible by EP size is a hard error."""
+        with pytest.raises(ValueError, match="not divisible by expert-parallel size"):
+            self._call_local_to_global(
+                "decoder.layers.1.mlp.experts.linear_fc1.weight0",
+                ep_size=4,
+                num_moe_experts_per_layer=[0, 6],
+            )

@@ -279,6 +279,76 @@ def _get_ep_group(megatron_model: MegatronModule | List[MegatronModule] | None):
     return parallel_state.get_expert_model_parallel_group()
 
 
+def _resolve_num_local_experts(config: TransformerConfig, param_name: str, ep_size: int) -> int:
+    """Resolve the per-EP-rank expert count for an expert parameter.
+
+    Expert numbering during conversion must match how the model was built, so it
+    is driven entirely by the model config — never by traversing an instantiated
+    module. This keeps name mapping independent of runtime layout (PP/VPP, MTP,
+    custom MoE wrappers) and of whether a live model is available.
+
+    The expert layout is an explicit config contract:
+
+    * Homogeneous models leave ``num_moe_experts_per_layer`` unset and every MoE
+      layer uses the scalar ``config.num_moe_experts``.
+    * Heterogeneous models set ``config.num_moe_experts_per_layer`` to a list of
+      global expert counts indexed by global decoder-layer number (``0`` for
+      dense layers).
+
+    Args:
+        config: The Megatron model config (authoritative expert layout).
+        param_name: Expert parameter name, already in *global* layer numbering
+            (the PP branch of :func:`_megatron_local_name_to_global` runs first).
+        ep_size: Expert-parallel group size.
+
+    Returns:
+        The number of experts owned by each expert-parallel rank for the layer
+        that ``param_name`` belongs to.
+
+    Raises:
+        ValueError: If the configured layout is missing or inconsistent with the
+            parameter being renumbered (unset scalar, per-layer list too short,
+            an expert parameter on a layer declared dense, or a global count not
+            divisible by ``ep_size``).
+    """
+    per_layer = getattr(config, "num_moe_experts_per_layer", None)
+
+    # Multi-token-prediction layers (``mtp.layers.N``) are not decoder layers and
+    # are not covered by the per-decoder-layer contract; match only decoder
+    # layers so MTP experts fall through to the scalar count.
+    layer_match = re.search(r"(?:^|\.)decoder\.layers\.(\d+)(?=\.)", param_name)
+
+    if per_layer is not None and layer_match is not None:
+        global_layer_idx = int(layer_match.group(1))
+        if global_layer_idx >= len(per_layer):
+            raise ValueError(
+                f"num_moe_experts_per_layer has length {len(per_layer)} but expert parameter "
+                f"{param_name!r} resolves to global layer {global_layer_idx}; the list must "
+                "cover every decoder layer (length == num_layers)."
+            )
+        num_global_experts = per_layer[global_layer_idx]
+        if not num_global_experts:
+            raise ValueError(
+                f"num_moe_experts_per_layer[{global_layer_idx}] == {num_global_experts}, but "
+                f"expert parameter {param_name!r} exists on that layer; layers declared dense "
+                "must not carry expert parameters."
+            )
+    else:
+        num_global_experts = config.num_moe_experts
+
+    if num_global_experts is None:
+        raise ValueError(
+            f"Cannot renumber expert parameter {param_name!r}: num_moe_experts is None and no "
+            "per-layer expert layout (num_moe_experts_per_layer) is configured."
+        )
+    if num_global_experts % ep_size != 0:
+        raise ValueError(
+            f"Global expert count {num_global_experts} for {param_name!r} is not divisible by "
+            f"expert-parallel size {ep_size}."
+        )
+    return num_global_experts // ep_size
+
+
 def _megatron_local_name_to_global(
     models: MegatronModule | List[MegatronModule],
     config: TransformerConfig,
@@ -310,8 +380,13 @@ def _megatron_local_name_to_global(
     is_expert_param = (is_grouped_expert_param or is_local_expert_param) and ".adapter." not in param_name
     ep_group = _get_ep_group(models) if is_expert_param else None
     if is_expert_param and ep_group is not None and get_pg_size(ep_group) > 1:
-        num_experts = config.num_moe_experts
-        num_experts_per_rank = num_experts // ep_group.size()
+        # Expert numbering follows the explicit config contract (scalar
+        # ``num_moe_experts`` for homogeneous models, ``num_moe_experts_per_layer``
+        # for heterogeneous ones). ``param_name`` is already in global layer
+        # numbering because the PP branch above runs first. This is intentionally
+        # independent of the instantiated module so conversion does not depend on
+        # runtime layout (PP/VPP, MTP, custom MoE wrappers) or on a live model.
+        num_experts_per_rank = _resolve_num_local_experts(config, param_name, get_pg_size(ep_group))
 
         def _update_grouped_expert_number(param_name: str, param_type: str) -> str:
             """Update expert number from local to global for weight or bias parameters."""
