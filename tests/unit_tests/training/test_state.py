@@ -25,6 +25,9 @@ from megatron.bridge.training.state import FaultToleranceState, GlobalState, Tra
 
 
 def _send_sigterm_with_handler_disabled() -> None:
+    # Forked test processes inherit the runner's signal disposition. Establish
+    # the baseline that the disabled Bridge setting must preserve explicitly.
+    signal.signal(signal.SIGTERM, signal.SIG_DFL)
     config = SimpleNamespace(
         train=SimpleNamespace(
             exit_signal_handler=False,
