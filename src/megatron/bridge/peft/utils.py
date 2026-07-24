@@ -2049,11 +2049,6 @@ class GroupedExpertLinearAdapter(nn.Module):
                 helper.sequence_parallel,
                 helper.activation_dtype,
                 torch.is_grad_enabled(),
-                [None] * weight.shape[0],
-                False,
-                None,
-                helper.save_original_input,
-                False,
             )
             empty_biases = [x.new_empty(0) for _ in range(weight.shape[0])]
             weights_and_biases = (*[weight[i] for i in range(weight.shape[0])], *empty_biases)
@@ -2061,18 +2056,44 @@ class GroupedExpertLinearAdapter(nn.Module):
             # TODO: Replace this private FP8 dispatch once Transformer Engine exposes
             # a public functional grouped-linear API for externally owned weights
             # (NVIDIA/TransformerEngine#3191).
-            if _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd):
+            explicit_m_splits = _te_grouped_linear_uses_explicit_m_splits(TEPytorchGroupedLinearAutograd)
+            if explicit_m_splits:
                 te_m_splits = torch.tensor(m_splits, dtype=torch.int64, device="cpu")
-                autograd_args = (x, te_m_splits, common_non_tensor_args, *weights_and_biases)
+                te_non_tensor_args = (
+                    *common_non_tensor_args,
+                    [None] * weight.shape[0],
+                    False,
+                    None,
+                    helper.save_original_input,
+                    False,
+                )
+                autograd_args = (x, te_m_splits, te_non_tensor_args, *weights_and_biases)
             else:
-                non_tensor_args = (m_splits, *common_non_tensor_args)
-                autograd_args = (x, non_tensor_args, *weights_and_biases)
+                if "_fp8_workspaces" in vars(helper):
+                    cache_weight = False
+                    workspace_args = (
+                        [None] * weight.shape[0],
+                        cache_weight,
+                        None,
+                    )
+                else:
+                    workspace_args = (helper, None)
+                te_non_tensor_args = (
+                    m_splits,
+                    *common_non_tensor_args,
+                    *workspace_args,
+                    helper.save_original_input,
+                    False,
+                )
+                autograd_args = (x, te_non_tensor_args, *weights_and_biases)
 
             if torch.is_grad_enabled():
-                output, _ = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
+                result = TEPytorchGroupedLinearAutograd.apply(*autograd_args)
             else:
-                output, _ = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
-            return output
+                result = TEPytorchGroupedLinearAutograd.forward(None, *autograd_args)
+            if isinstance(result, tuple):
+                result, _ = result
+            return result
         finally:
             helper.end_forward()
 
