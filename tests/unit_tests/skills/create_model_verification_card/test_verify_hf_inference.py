@@ -98,6 +98,29 @@ def test_image_content_uses_processor_native_location_keys():
     }
 
 
+def test_loading_info_requires_strict_reload():
+    module = _load_module()
+
+    module._validate_loading_info(
+        {
+            "missing_keys": [],
+            "unexpected_keys": [],
+            "mismatched_keys": [],
+            "error_msgs": [],
+        }
+    )
+
+    with pytest.raises(RuntimeError, match="missing_keys=1, mismatched_keys=1"):
+        module._validate_loading_info(
+            {
+                "missing_keys": ["model.missing"],
+                "unexpected_keys": [],
+                "mismatched_keys": [("model.wrong_shape", (1,), (2,))],
+                "error_msgs": [],
+            }
+        )
+
+
 def test_image_requires_chat_template(monkeypatch):
     module = _load_module()
     monkeypatch.setattr(

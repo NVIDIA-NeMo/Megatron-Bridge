@@ -25,6 +25,7 @@ from urllib.parse import urlparse
 
 
 LOG = logging.getLogger(__name__)
+_LOADING_ISSUE_KEYS = ("missing_keys", "unexpected_keys", "mismatched_keys", "error_msgs")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -113,6 +114,14 @@ def _prepare_inputs(processor: Any, args: argparse.Namespace) -> Any:
     return processor(formatted_prompt, return_tensors="pt")
 
 
+def _validate_loading_info(loading_info: dict[str, Any]) -> None:
+    """Require the exported checkpoint to reload without weight issues."""
+    issue_counts = {key: len(loading_info.get(key, ())) for key in _LOADING_ISSUE_KEYS if loading_info.get(key)}
+    if issue_counts:
+        details = ", ".join(f"{key}={count}" for key, count in issue_counts.items())
+        raise RuntimeError(f"Exported Hugging Face checkpoint did not reload strictly: {details}")
+
+
 def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
     """Load torch, the selected HF auto-model, and its tokenizer or processor."""
     import torch
@@ -128,15 +137,14 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
 
         processor = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
         model_cls = AutoModelForCausalLM
-    model = (
-        model_cls.from_pretrained(
-            args.hf_model,
-            dtype=dtype,
-            trust_remote_code=args.trust_remote_code,
-        )
-        .to(args.device)
-        .eval()
+    model, loading_info = model_cls.from_pretrained(
+        args.hf_model,
+        dtype=dtype,
+        trust_remote_code=args.trust_remote_code,
+        output_loading_info=True,
     )
+    _validate_loading_info(loading_info)
+    model = model.to(args.device).eval()
     return torch, model, processor
 
 
