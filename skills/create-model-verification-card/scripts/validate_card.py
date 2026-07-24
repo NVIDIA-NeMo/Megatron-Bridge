@@ -797,8 +797,8 @@ def _validate_conversion_launcher(
     gpu_counts = _argument_values(command, "--gpus-per-node")
     if device == "gpu":
         _require_positive_integer_argument(command, "--gpus-per-node", path=path, errors=errors)
-    elif gpu_counts:
-        errors.append(f"{_pointer(*path)}: CPU conversion must not request GPUs")
+    elif gpu_counts != [] and gpu_counts != ["1"]:
+        errors.append(f"{_pointer(*path)}: CPU conversion may request at most one shared runtime GPU")
     if any(option in tokens for option in ("--detach", "--dry-run", "--submission-dry-run")):
         errors.append(f"{_pointer(*path)}: verified conversion must wait for completion")
 

@@ -214,6 +214,12 @@ model-verification workload:
   prefer aliases such as `work/data/<dataset>` and `work/cache/<model>` over
   reproducing a physical storage hierarchy.
 
+CPU conversion should omit `--gpus-per-node` when it is genuinely CPU-only.
+If runtime construction demonstrably requires CUDA even though model weights
+remain on CPU, request exactly one shared runtime GPU and explain the exception
+in the item's result. Never request a full GPU node merely to satisfy a
+launcher or monitor.
+
 The public launchers may read their required generic Slurm configuration from
 the caller's environment. Do not include `srun`, `sbatch`, concrete account or
 partition values, container image arguments, `--mount`, `--env`, shell exports,

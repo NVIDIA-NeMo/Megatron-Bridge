@@ -62,3 +62,33 @@ def test_inference_accepts_vlm_generation_launcher():
     )
 
     assert errors == []
+
+
+def test_cpu_conversion_accepts_one_runtime_gpu():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_conversion_launcher(
+        "./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1 --gpus-per-node 1",
+        operation="import",
+        device="cpu",
+        path=("items", "hf_to_megatron_cpu", "command"),
+        errors=errors,
+    )
+
+    assert errors == []
+
+
+def test_cpu_conversion_rejects_multiple_runtime_gpus():
+    validator = _load_validator()
+    errors = []
+
+    validator._validate_conversion_launcher(
+        "./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1 --gpus-per-node 2",
+        operation="export",
+        device="cpu",
+        path=("items", "megatron_to_hf_cpu", "command"),
+        errors=errors,
+    )
+
+    assert errors == ["/items/megatron_to_hf_cpu/command: CPU conversion may request at most one shared runtime GPU"]
