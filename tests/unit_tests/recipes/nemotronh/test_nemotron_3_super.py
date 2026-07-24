@@ -33,6 +33,7 @@ from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
     nemotron_3_super_peft_16gpu_h100_bf16_config,
     nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config,
     nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
 )
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
@@ -367,6 +368,7 @@ class TestNemotron3Super16GpuH100:
         [
             nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
             nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config,
         ],
     )
     def test_low_memory_optimizer_precision(self, recipe_fn):
@@ -379,3 +381,18 @@ class TestNemotron3Super16GpuH100:
         assert config.optimizer.main_params_dtype == torch.float16
         assert config.optimizer.exp_avg_dtype == torch.bfloat16
         assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
+
+    def test_long_context_parallelism_batch_size_and_sequence_length(self):
+        """The 32K recipe owns its memory-bounded layout and batch size."""
+        config = nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config()
+
+        assert config.model.tensor_model_parallel_size == 1
+        assert config.model.pipeline_model_parallel_size == 4
+        assert config.model.context_parallel_size == 2
+        assert config.model.expert_model_parallel_size == 4
+        assert config.model.sequence_parallel is True
+        assert config.model.cp_comm_type == "a2a"
+        assert config.model.seq_length == 32768
+        assert config.dataset.seq_length == 32768
+        assert config.train.global_batch_size == 4
+        assert config.train.micro_batch_size == 1

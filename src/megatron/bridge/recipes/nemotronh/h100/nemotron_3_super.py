@@ -275,6 +275,20 @@ def nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config() -> ConfigContainer:
+    """Return the 16-H100 low-memory BF16 32K full-SFT configuration."""
+    cfg = nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config()
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 4
+    cfg.model.context_parallel_size = 2
+    cfg.model.expert_model_parallel_size = 4
+    cfg.model.seq_length = 32768
+    cfg.model.cp_comm_type = "a2a"
+    cfg.dataset.seq_length = 32768
+    cfg.train.global_batch_size = 4
+    return cfg
+
+
 # =============================================================================
 # PEFT Config
 # =============================================================================
@@ -414,6 +428,7 @@ __all__ = [
     "nemotron_3_super_peft_16gpu_h100_bf16_config",
     "nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config",
     "nemotron_3_super_pretrain_8gpu_h100_bf16_config",
+    "nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config",
     "nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config",
     "nemotron_3_super_sft_8gpu_h100_bf16_config",
 ]
