@@ -1,5 +1,5 @@
 # Nemotron 3 Nano 
-[Nemotron 3 Nano](https://huggingface.co/collections/nvidia/nvidia-nemotron-v3) is a large language model (LLM) trained from scratch by NVIDIA, and designed as a unified model for both reasoning and non-reasoning tasks. The model employs a hybrid Mixture-of-Experts (MoE) architecture, consisting of 23 Mamba-2 and MoE layers, along with 6 Attention layers. Each MoE layer includes 128 experts plus 1 shared expert, with 5 experts activated per token. The model has 3.5B active parameters and 30B parameters in total. 
+[Nemotron 3 Nano](https://huggingface.co/collections/nvidia/nvidia-nemotron-v3) is a large language model (LLM) trained from scratch by NVIDIA, and designed as a unified model for both reasoning and non-reasoning tasks. The model employs a hybrid Mixture-of-Experts (MoE) architecture, consisting of 23 Mamba-2 and MoE layers, along with 6 Attention layers. Each MoE layer includes 128 experts plus 1 shared expert, with 6 experts activated per token. The model has 3.5B active parameters and 30B parameters in total. 
 
 NeMo Megatron Bridge supports pretraining, full parameters finetuning, and LoRA finetuning this model. The finetuned model can be converted back to the 🤗 Hugging Face format for downstream evaluation.
 

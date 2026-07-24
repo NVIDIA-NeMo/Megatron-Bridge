@@ -121,16 +121,16 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.context_parallel_size = 1
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.sequence_parallel = False
-    cfg.model.expert_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
     cfg.train.global_batch_size = 1024
     cfg.train.micro_batch_size = 1
 
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["mamba"]
+    cfg.model.cuda_graph_scope = ["attn", "mamba", "moe_router", "moe_preprocess"]
 
-    cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
+    cfg.model.recompute_modules = ["layernorm"]
 
     cfg.comm_overlap.tp_comm_overlap = True
 
