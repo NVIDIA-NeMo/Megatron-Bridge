@@ -16,8 +16,8 @@ summary: >
   69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
   and text conversations. CPU and GPU import/export, round-trip weight
   verification, forward-pass correlation, deterministic multimodal inference,
-  and a bounded 100-step MedPix SFT run with a reloadable checkpoint were run;
-  other items retain their explicit status below.
+  and bounded 100-step MedPix SFT and PEFT runs with reloadable checkpoints
+  were run; other items retain their explicit status below.
 verification_index:
   model_level:
     verified:
@@ -29,8 +29,8 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [sft]
-      unverified: [pretrain, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [sft, peft]
+      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
   hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
@@ -309,23 +309,57 @@ items:
 
   peft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+        --recipe qwen35_vl_35b_a3b_peft_config --mode lora --dataset medpix
+        --step-func qwen3_vl_step
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+        --max_steps 100 --lr 2e-4 --min_lr 3e-5 --warmup_iters 10
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
+        'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
+        dataset.do_validation=false dataset.do_test=false
+        dataset.pad_to_max_length=true dataset.enable_in_batch_packing=false
+        dataset.defer_in_batch_packing_to_step=true
+        scheduler.lr_decay_iters=100 dist.distributed_timeout_minutes=30
+        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044 model.eos_token_id=248044
+        model.moe_router_force_load_balancing=false
+        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        --save_dir
+        work/model-verification/qwen3.6-35b-a3b/peft-support-v5/checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/peft-support-v5/resolved-config.yaml
+      last_verified: 2026-07-23
+      bridge_commit: 5df98f7edb1f109187a4b3544836fae344044a25  # pragma: allowlist secret
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.043072
+        final_loss: 1.497137
+        last_10_steps_step_time_ms_avg: 22756.67
+        last_10_steps_model_tflops_per_gpu_avg: 33.12
       expected_result: >
-        No executable PEFT command is claimed without an exact Qwen3.6 training
-        configuration. Future verification must use the pinned Qwen3.6
-        checkpoint and MedPix revision, preserve processor-native image and
-        label metadata through qwen3_vl_step, verify the declared adapter target
-        modules exist, record finite loss plus all four metrics, and strictly
-        reload the resulting adapter checkpoint.
+        The pinned four-H100 run used the architecture-shared Qwen3.5/Qwen3.6
+        recipe at TP2/PP1/CP1/EP4/ETP1, MBS1/GBS32, natural expert routing,
+        full-uniform activation recompute in one-layer chunks, 4096-token
+        padding, and fixed 448-by-448 MedPix images. Rank-32, alpha-32,
+        zero-dropout LoRA covered 296 distinct module instances across the
+        language model, vision model, and MTP, including all declared
+        linear_qkv, linear_proj, linear_fc1, and linear_fc2 targets. It
+        completed 100 finite optimizer steps with zero skipped or NaN
+        iterations; step 1 loss was 2.043072 and step 100 loss was 1.497137.
+        The final four-shard adapter checkpoint occupies 4,649,339,545 bytes.
+        A fresh maintained-launcher process loaded the base checkpoint, then
+        loaded the adapter checkpoint at iteration 100, entered the loop at
+        iteration 100 without an extra optimizer step, and exited successfully.
 
   checkpoint_resume:
     H100:
