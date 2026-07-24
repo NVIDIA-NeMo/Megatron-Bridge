@@ -53,9 +53,9 @@ def qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config() -> ConfigContainer:
 
 
 def qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """Qwen3 235B A22B pretrain: 256× VR200, FP8-MX."""
+    """Qwen3 235B A22B pretrain: 256× VR200, FP8-MX (alias of GB300)."""
     cfg = qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config()
-    # VR200-specific process settings stay on this recipe instead of inheriting GB300 defaults.
+    # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.
