@@ -1636,8 +1636,7 @@ class TestConfigContainerValidation:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
     def test_reuse_grad_buf_for_mxfp8_param_ag_required_without_fsdp(self, monkeypatch):
-        """Test that reuse_grad_buf_for_mxfp8_param_ag must be True when
-        FSDP is disabled, fp8_param_gather=True, and fp8_recipe='mxfp8'."""
+        """Test MXFP8 parameter gather requirements when FSDP is disabled."""
         gpt_model_cfg = create_test_gpt_config()
         train_cfg = create_test_training_config(train_iters=500, global_batch_size=16)
         sched_cfg = create_test_scheduler_config()
@@ -1658,12 +1657,30 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-        # Case 2: Should pass when reuse_grad_buf_for_mxfp8_param_ag=True
+        # Case 2: Should raise when reuse_grad_buf_for_mxfp8_param_ag=True but overlap_param_gather=False
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=gpt_model_cfg,
             train_config=train_cfg,
             scheduler_config=sched_cfg,
+            ddp_config=create_test_ddp_config(overlap_param_gather=False),
+        )
+        try:
+            container.mixed_precision = MixedPrecisionConfig(
+                fp8_param_gather=True, fp8_recipe="mxfp8", reuse_grad_buf_for_mxfp8_param_ag=True
+            )
+            with pytest.raises(AssertionError, match="ddp.overlap_param_gather must be set to True"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+        # Case 3: Should pass when both reuse_grad_buf_for_mxfp8_param_ag and overlap_param_gather are True
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=gpt_model_cfg,
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+            ddp_config=create_test_ddp_config(overlap_param_gather=True),
         )
         try:
             container.mixed_precision = MixedPrecisionConfig(
@@ -1673,7 +1690,7 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-        # Case 3: Should pass when fp8_param_gather=False (guard skips)
+        # Case 4: Should pass when fp8_param_gather=False (guard skips)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=gpt_model_cfg,
@@ -1688,7 +1705,7 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
-        # Case 4: Should pass when fp8_recipe is not mxfp8 (guard skips)
+        # Case 5: Should pass when fp8_recipe is not mxfp8 (guard skips)
         container, og_ws, cfg_mod = create_test_config_container(
             world_size_override=1,
             model_config=gpt_model_cfg,
