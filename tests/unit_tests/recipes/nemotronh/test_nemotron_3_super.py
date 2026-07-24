@@ -394,7 +394,11 @@ class TestNemotron3Super16GpuH100:
         assert config.model.sequence_parallel is True
         assert config.model.cp_comm_type == "a2a"
         assert config.model.seq_length == 32768
+        assert config.model.cross_entropy_loss_fusion is False
+        assert config.model.calculate_per_token_loss is True
         assert config.dataset.seq_length == 32768
         assert config.train.global_batch_size == 2
         assert config.train.micro_batch_size == 1
-        assert config.dist.distributed_timeout_minutes == 90
+        assert config.ddp.average_in_collective is False
+        assert config.ddp.overlap_grad_reduce is False
+        assert config.ddp.overlap_param_gather is False

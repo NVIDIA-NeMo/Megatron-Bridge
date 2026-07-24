@@ -287,11 +287,17 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config() -> ConfigContainer:
     cfg.model.expert_model_parallel_size = 2
     cfg.model.seq_length = 32768
     cfg.model.cp_comm_type = "a2a"
+    # CP SFT needs per-token accounting because a CP rank can receive no
+    # supervised labels after masking.
+    cfg.model.cross_entropy_loss_fusion = False
+    cfg.model.calculate_per_token_loss = True
     cfg.dataset.seq_length = 32768
     cfg.train.global_batch_size = 2
-    # A full 32K step can spend longer than the default ten minutes between
-    # collectives when pipeline parallelism and full recompute are enabled.
-    cfg.dist.distributed_timeout_minutes = 90
+    cfg.ddp.average_in_collective = False
+    # With uneven PP stages, asynchronous DDP collectives can race the
+    # cross-stage tied-embedding reduction and PP send/recv operations.
+    cfg.ddp.overlap_grad_reduce = False
+    cfg.ddp.overlap_param_gather = False
     return cfg
 
 
