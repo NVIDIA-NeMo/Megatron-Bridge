@@ -22,6 +22,7 @@ from megatron.bridge.recipes.common import _peft_common, _pretrain_common, _sft_
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 NEMOTRON_3_SUPER_HF_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Super-120B-A12B-BF16"
@@ -142,6 +143,22 @@ def nemotron_3_super_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config() -> ConfigContainer:
+    """Return the 16-H100 low-memory BF16 pre-training configuration."""
+    cfg = nemotron_3_super_pretrain_8gpu_h100_bf16_config()
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
+    cfg.train.global_batch_size = 16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    return cfg
+
+
 # =============================================================================
 # SFT Config
 # =============================================================================
@@ -239,6 +256,22 @@ def nemotron_3_super_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
     }
+    return cfg
+
+
+def nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config() -> ConfigContainer:
+    """Return the 16-H100 low-memory BF16 full-SFT configuration."""
+    cfg = nemotron_3_super_sft_8gpu_h100_bf16_config()
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
+    cfg.train.global_batch_size = 16
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_params_dtype = torch.float16
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
     return cfg
 
 
@@ -364,8 +397,23 @@ def nemotron_3_super_peft_1gpu_h100_bf16_config(
     return cfg
 
 
+def nemotron_3_super_peft_16gpu_h100_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return the 16-H100 BF16 PEFT configuration."""
+    cfg = nemotron_3_super_peft_1gpu_h100_bf16_config(peft_scheme)
+    cfg.model.tensor_model_parallel_size = 8
+    cfg.model.expert_model_parallel_size = 16
+    cfg.train.global_batch_size = 16
+    cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] = 8
+    return cfg
+
+
 __all__ = [
     "nemotron_3_super_peft_1gpu_h100_bf16_config",
+    "nemotron_3_super_peft_16gpu_h100_bf16_config",
+    "nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config",
     "nemotron_3_super_pretrain_8gpu_h100_bf16_config",
+    "nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config",
     "nemotron_3_super_sft_8gpu_h100_bf16_config",
 ]

@@ -27,8 +27,14 @@ import os
 import tempfile
 
 import pytest
+import torch
 
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import (
+    nemotron_3_super_peft_16gpu_h100_bf16_config,
+    nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
+    nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
+)
 from megatron.bridge.recipes.nemotronh.nemotron_3_super import (
     nemotron_3_super_peft_config,
     nemotron_3_super_pretrain_config,
@@ -332,3 +338,44 @@ class TestNemotron3SuperCommon:
         assert config.model.moe_router_topk == 22
         assert config.model.moe_router_topk_scaling_factor == 5.0
         assert config.model.moe_latent_size == 1024
+
+
+@pytest.mark.unit
+class TestNemotron3Super16GpuH100:
+    """Test the 16-H100 support-verification recipes."""
+
+    @pytest.mark.parametrize(
+        "recipe_fn",
+        [
+            nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
+            nemotron_3_super_peft_16gpu_h100_bf16_config,
+        ],
+    )
+    def test_parallelism_and_batch_size(self, recipe_fn):
+        """The verification recipes own their 16-GPU layout and batch size."""
+        config = recipe_fn()
+
+        assert config.model.tensor_model_parallel_size == 8
+        assert config.model.pipeline_model_parallel_size == 1
+        assert config.model.expert_model_parallel_size == 16
+        assert config.train.global_batch_size == 16
+        assert config.train.micro_batch_size == 1
+
+    @pytest.mark.parametrize(
+        "recipe_fn",
+        [
+            nemotron_3_super_pretrain_16gpu_h100_bf16_lowmem_config,
+            nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config,
+        ],
+    )
+    def test_low_memory_optimizer_precision(self, recipe_fn):
+        """Full-model recipes use the explicit reduced-memory optimizer state."""
+        config = recipe_fn()
+
+        assert config.mixed_precision.grad_reduce_in_fp32 is False
+        assert config.ddp.grad_reduce_in_fp32 is False
+        assert config.optimizer.use_precision_aware_optimizer is True
+        assert config.optimizer.main_params_dtype == torch.float16
+        assert config.optimizer.exp_avg_dtype == torch.bfloat16
+        assert config.optimizer.exp_avg_sq_dtype == torch.bfloat16
