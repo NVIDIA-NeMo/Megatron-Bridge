@@ -387,12 +387,12 @@ class TestNemotron3Super16GpuH100:
         config = nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config()
 
         assert config.model.tensor_model_parallel_size == 1
-        assert config.model.pipeline_model_parallel_size == 4
+        assert config.model.pipeline_model_parallel_size == 8
         assert config.model.context_parallel_size == 2
-        assert config.model.expert_model_parallel_size == 4
+        assert config.model.expert_model_parallel_size == 2
         assert config.model.sequence_parallel is True
         assert config.model.cp_comm_type == "a2a"
         assert config.model.seq_length == 32768
         assert config.dataset.seq_length == 32768
-        assert config.train.global_batch_size == 4
+        assert config.train.global_batch_size == 2
         assert config.train.micro_batch_size == 1
