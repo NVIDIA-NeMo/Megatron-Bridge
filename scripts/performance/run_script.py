@@ -88,7 +88,9 @@ def _apply_perf_recipe_overrides(recipe, cli_overrides: list[str], args):
         recipe_key = (args.model_recipe_name, args.task, args.num_gpus, args.gpu, args.compute_dtype)
         fallback_env_vars = MISSING_RECIPE_ENV_VAR_DEFAULTS.get(recipe_key)
         if fallback_env_vars is not None:
-            logger.warning("Restoring the VR200 FP8-MX environment for %s from the performance runner.", args.model_recipe_name)
+            logger.warning(
+                "Restoring the VR200 FP8-MX environment for %s from the performance runner.", args.model_recipe_name
+            )
             recipe.env_vars = fallback_env_vars.copy()
         else:
             logger.warning(
