@@ -556,6 +556,32 @@ class TestLlamaBridgeMappingRegistry:
         assert mapping is not None
         assert mapping.hf_param == "model.norm.weight"
 
+    def test_export_preserves_persisted_rotary_inv_freq(self):
+        """Test that Llama 2 rotary buffers are copied from the source checkpoint."""
+        bridge = LlamaBridge()
+        task = Mock(global_param_name="decoder.layers.3.self_attention.linear_qkv.layer_norm_weight")
+        converted = {"model.layers.3.input_layernorm.weight": torch.ones(4096)}
+        inv_freq_key = "model.layers.3.self_attn.rotary_emb.inv_freq"
+        source_inv_freq = torch.tensor([1.0, 0.25, 0.03125], dtype=torch.float32)
+
+        result = bridge.maybe_modify_converted_hf_weight(
+            task,
+            converted,
+            {inv_freq_key: source_inv_freq},
+        )
+
+        torch.testing.assert_close(result[inv_freq_key], source_inv_freq, rtol=0, atol=0)
+
+    def test_export_does_not_add_unpersisted_rotary_inv_freq(self):
+        """Test that modern Llama checkpoints without persisted RoPE buffers are unchanged."""
+        bridge = LlamaBridge()
+        task = Mock(global_param_name="decoder.layers.3.self_attention.linear_qkv.layer_norm_weight")
+        converted = {"model.layers.3.input_layernorm.weight": torch.ones(4096)}
+
+        result = bridge.maybe_modify_converted_hf_weight(task, converted, {})
+
+        assert set(result) == {"model.layers.3.input_layernorm.weight"}
+
 
 class TestAutoBridgeIntegration:
     """Integration tests for AutoBridge with Llama models."""
