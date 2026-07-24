@@ -47,7 +47,8 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu
-      --nodes 1 --gpus-per-node 1 --hf-model Qwen/Qwen3.6-35B-A3B
+      --nodes 1 --gpus-per-node 1 --mem 512G
+      --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron
       --torch-dtype bfloat16
@@ -90,7 +91,8 @@ items:
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu
-      --nodes 1 --gpus-per-node 1 --hf-model Qwen/Qwen3.6-35B-A3B
+      --nodes 1 --gpus-per-node 1 --mem 512G
+      --hf-model Qwen/Qwen3.6-35B-A3B
       --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
       --megatron-path work/model-verification/qwen3.6-35b-a3b/cpu-megatron/iter_0000000
       --hf-path work/model-verification/qwen3.6-35b-a3b/cpu-hf-export
@@ -276,7 +278,8 @@ items:
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device cpu
-          --nodes 1 --gpus-per-node 1 --hf-model Qwen/Qwen3.6-35B-A3B
+          --nodes 1 --gpus-per-node 1 --mem 512G
+          --hf-model Qwen/Qwen3.6-35B-A3B
           --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
           --megatron-path
           work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints/iter_0000100
@@ -284,7 +287,7 @@ items:
           work/model-verification/qwen3.6-35b-a3b/sft-support-v11/hf-export
           --torch-dtype bfloat16
         - >
-          ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 1
+          ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 1 --mem 256G
           --task hf-inference
           --hf-model
           work/model-verification/qwen3.6-35b-a3b/sft-support-v11/hf-export
@@ -338,7 +341,7 @@ items:
       precision: bf16
       enabled_features: {}
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --mem 512G
         --recipe qwen35_vl_35b_a3b_peft_config --mode lora --dataset medpix
         --step-func qwen3_vl_step
         --pretrained_checkpoint
