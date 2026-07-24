@@ -227,6 +227,12 @@ submit_run() {
     # this run is the bit-exact-proven recipe + optional nsys instrumentation.
     # ``moe_flex_dispatcher_backend`` stays ``null`` (the alltoall default); HybridEP
     # is not selected because ``moe_token_dispatcher_type`` stays ``alltoall``.
+    #
+    # Pass the HF token via the LONG --hf_token, never the short -hf: bootstrap.py
+    # forwards argv unchanged to run_script.py, and the MXFP8 CuteDSL kernel runs
+    # argparse.parse_known_args() on the global sys.argv at first-compile. "-hf"
+    # bundles as "-h"+"f", firing argparse's help action -> SystemExit(0) inside the
+    # fused grouped-MLP forward (surfaces as an NVTX range-pop ValueError under nsys).
     "$PYTHON" scripts/performance/setup_experiment.py \
         --account "$ACCOUNT" \
         --partition "$PARTITION" \
@@ -238,7 +244,7 @@ submit_run() {
         "${SLURM_EXTRA_ARG[@]}" \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
-        -hf "$HF_TOKEN" \
+        --hf_token "$HF_TOKEN" \
         -wdk "$WANDB_API_KEY" \
         -wdp "$WANDB_PROJECT" \
         -wdj "$WDJ" \

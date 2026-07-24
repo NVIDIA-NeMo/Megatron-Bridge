@@ -105,7 +105,7 @@ submit_arm() {
         -m nemotronh -mr nemotron_3_ultra -c bf16 -cv v1 -ng "$NGPUS" -gn "$GN" \
         "${GRES_ARG[@]}" "${SLURM_EXTRA[@]}" \
         --container_image "$CONTAINER_IMAGE" --custom_mounts "$MOUNTS" \
-        -hf "$HF_TOKEN" -wdk "$WANDB_API_KEY" -wdp "$WANDB_PROJECT" -wdj "$WDJ" --task pretrain \
+        --hf_token "$HF_TOKEN" -wdk "$WANDB_API_KEY" -wdp "$WANDB_PROJECT" -wdj "$WDJ" --task pretrain \
         "${NSYS_CLI[@]}" "${DET_ENVS[@]}" \
         -E TRITON_CACHE_AUTOTUNING=1 -E HF_HOME="$HF_CACHE" -E HF_DATASETS_CACHE="$HF_CACHE/datasets" \
         -E TRANSFORMERS_CACHE="$HF_CACHE" -E HF_HUB_OFFLINE="$HF_HUB_OFFLINE" -E TRANSFORMERS_OFFLINE="$HF_HUB_OFFLINE" \

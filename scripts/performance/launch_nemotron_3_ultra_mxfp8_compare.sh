@@ -221,7 +221,7 @@ submit_run() {
         "${SLURM_EXTRA_ARG[@]}" \
         --container_image "$CONTAINER_IMAGE" \
         --custom_mounts "$MOUNTS" \
-        -hf "$HF_TOKEN" \
+        --hf_token "$HF_TOKEN" \
         -wdk "$WANDB_API_KEY" \
         -wdp "$WANDB_PROJECT" \
         -wdj "$WDJ" \
