@@ -270,6 +270,8 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
+    cfg.ddp.bucket_size = 768000000
+    cfg.ddp.average_in_collective = False
     cfg.model.add_bias_linear = False
     cfg.model.apply_rope_fusion = True
     cfg.model.attention_dropout = 0.0
@@ -293,6 +295,8 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.model.tp_only_amax_red = True
     cfg.model.use_te_rng_tracker = True
     cfg.model.wgrad_deferral_limit = 50
+    cfg.model.batch_p2p_comm = False
+    cfg.model.fused_single_qkv_rope = True
     cfg.train.check_optimizer_step_success = False
     cfg.train.decrease_batch_size_if_needed = False
     cfg.train.empty_unused_memory_level = 0
@@ -304,11 +308,6 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.train.manual_gc_eval = False
     cfg.train.manual_gc_interval = 500
     cfg.train.skip_sync_grad_norm_across_mp = True
-    cfg.eval.eval_iters = 64
-    cfg.eval.full_validation = False
-    cfg.eval.multiple_validation_sets = False
-    cfg.eval.skip_train = False
-    cfg.eval.test_mode = False
     cfg.scheduler.end_weight_decay = 0.1
     cfg.scheduler.lr_decay_style = 'cosine'
     cfg.scheduler.lr_warmup_init = 0.0
@@ -436,6 +435,13 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.rng.data_parallel_random_init: False
     cfg.rng.inference_rng_tracker = False
     cfg.rng.te_rng_tracker = True
+
+    cfg.ddp.align_param_gather = False
+    cfg.comm_overlap.align_param_gather = False
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = False
+    cfg.comm_overlap.defer_embedding_wgrad_compute = False
+
 
 
 def llama31_8b_pretrain_config_gb300(

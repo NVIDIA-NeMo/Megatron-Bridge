@@ -330,6 +330,8 @@ LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1 = replace(
     context_parallel_size=1,
     global_batch_size=16,
     micro_batch_size=2,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
@@ -340,6 +342,8 @@ LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V2 = replace(
     context_parallel_size=1,
     global_batch_size=72,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(
@@ -350,6 +354,8 @@ LLAMA31_8B_PRETRAIN_CONFIG_GB300_FP8_CS_V1 = replace(
     context_parallel_size=4,
     global_batch_size=64,
     micro_batch_size=1,
+    cuda_graph_impl="local",
+    cuda_graph_scope="full_iteration",
 )
 
 LLAMA31_8B_PRETRAIN_CONFIG_GB200_NVFP4_V1 = LLAMA31_8B_PRETRAIN_CONFIG_GB300_NVFP4_V1
