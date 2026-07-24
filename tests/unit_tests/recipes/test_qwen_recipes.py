@@ -674,8 +674,8 @@ def test_qwen3_30b_a3b_gb200_mxfp8_functional_defaults(monkeypatch: pytest.Monke
     assert cfg.mixed_precision.bf16 is True
     assert cfg.mixed_precision.fp8 == "e4m3"
     assert cfg.mixed_precision.fp8_recipe == "mxfp8"
-    assert cfg.mixed_precision.fp8_param_gather is False
-    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False
+    assert cfg.mixed_precision.fp8_param_gather is True
+    assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is True
     assert cfg.mixed_precision.fp8_dot_product_attention is True
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.optimizer.use_precision_aware_optimizer is False

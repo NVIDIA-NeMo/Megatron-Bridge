@@ -180,7 +180,7 @@ items:
     GB200:
       status: verified
       precision: fp8_mx
-      bridge_commit: ee8fcd73faee4a7e5369116469cc939d44f33911  # pragma: allowlist secret
+      bridge_commit: bf09638e1a3b426605f5f9ae651af4d4fb33830b  # pragma: allowlist secret
       enabled_features:
         cuda_graph:
           implementation: transformer_engine
@@ -204,23 +204,23 @@ items:
         validation.eval_iters=0 validation.eval_interval=0
         dataset.random_seed=1234 dataset.num_workers=8 rng.seed=1234
         dist.distributed_timeout_minutes=30
-        --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-v2-checkpoints
+        --save_dir work/model-verification/qwen3-30b-a3b/pretrain-mxfp8-gb200-reference-checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
         logger.tensorboard_dir=null
       last_verified: 2026-07-23
       metrics:
         initial_loss: 12.41293
-        final_loss: 6.134433
-        last_10_steps_step_time_ms_avg: 14709.940
-        last_10_steps_model_tflops_per_gpu_avg: 418.070
+        final_loss: 6.106341
+        last_10_steps_step_time_ms_avg: 12394.990
+        last_10_steps_model_tflops_per_gpu_avg: 486.580
       expected_result: >
         On 8x GB200, this support-verification workload completes exactly 100
         bounded RP2 optimizer steps with TP1/PP1/CP1/EP8/ETP1, DP8, SP off,
         GBS/MBS 512/4, and 16-way gradient accumulation. MXFP8 compute, natural
         routing, HybridEP, Transformer Engine CUDA graphs for moe_router and
         moe_preprocess, communication overlap, functional safety checks, and
-        BF16 parameter all-gather remain active. Loss is finite from 12.41293
-        to 6.134433 with no skipped or NaN iterations, all four metrics are
+        MXFP8 parameter all-gather remain active. Loss is finite from 12.41293
+        to 6.106341 with no skipped or NaN iterations, all four metrics are
         recorded, and complete eight-shard iter_0000050 and iter_0000100
         checkpoints are saved. Timing and throughput are support sanity checks,
         not cross-model convergence or tuned performance claims.
