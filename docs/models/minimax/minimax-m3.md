@@ -38,9 +38,11 @@ provider = bridge.to_megatron_provider()
 ```
 
 The bridge imports and exports the language, vision, projector, and Lightning
-Indexer tensors. The Indexer weights are stored as frozen MiniMax-specific
-model state, so a native Megatron checkpoint can be exported to Hugging Face
-without access to the original Hugging Face checkpoint.
+Indexer tensors. A native Megatron checkpoint can be exported to a standalone
+Hugging Face checkpoint, and all exported tensor values come from Megatron
+state rather than source-weight passthrough. The standard export workflow still
+requires the Hugging Face model reference for metadata and the source shard
+map; resolving a cold cache may download source shards.
 
 ## Examples
 

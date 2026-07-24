@@ -7,10 +7,13 @@ backbone. The vision stack is replicated across tensor-parallel ranks.
 
 MiniMax-M3's Lightning Indexer is not yet executed by Megatron: the text model
 uses full causal attention. Its 228 tensors are stored as frozen
-MiniMax-specific model state so they survive native checkpointing and
-Hugging Face export without access to the original HF checkpoint. They are
-not updated during Megatron training, so a post-training export keeps the
-imported indexer rather than a trained sparse-attention indexer.
+MiniMax-specific model state. During export, their values come from the native
+Megatron checkpoint rather than source-weight passthrough. The standard export
+workflow still uses the Hugging Face model reference for metadata and the
+source shard map; resolving a cold cache may download source shards. The
+Indexer tensors are not updated during Megatron training, so a post-training
+export keeps the imported indexer rather than a trained sparse-attention
+indexer.
 
 The bundled H100 pretraining and SQuAD SFT recipes remain text-only: they use
 the checkpoint-compatible text provider and do not instantiate the vision,
@@ -80,15 +83,18 @@ sbatch --account="${SLURM_ACCOUNT}" examples/models/minimax/minimax_m3/slurm_inf
 The run is successful when it completes without missing-weight or forward
 errors and the generated answer is coherent for the prompt.
 
-## Validated configuration
+## Validation status
 
-The text-only surface of the real `MiniMaxAI/MiniMax-M3` checkpoint was
-validated on 32 H100 80 GB GPUs with `TP=1`, `PP=1`, `EP=32`, and `ETP=1`.
-All 1,053 mapped text parameter tasks passed the in-memory HF → Megatron → HF
-round-trip check within the script's standard tolerances. The new VLM
-conversion surface still requires the same real-checkpoint validation. With
-the chat template enabled, Megatron generated a coherent continuation
-beginning:
+The complete real `MiniMaxAI/MiniMax-M3` VLM checkpoint completed GPU import
+to a native Megatron checkpoint and GPU export back to Hugging Face on 32 H100
+80 GB GPUs with `TP=1`, `PP=1`, `EP=32`, and `ETP=1`. The imported checkpoint
+passed an exact 23,416-tensor persisted-state audit. The strict exported-
+artifact key, shape, dtype, and value audit is still pending, so the export
+currently records successful end-to-end execution rather than final parity
+verification.
+
+A prior text-only generation smoke test with the chat template enabled produced
+a coherent continuation beginning:
 
 > The sky appears blue because of Rayleigh scattering, where sunlight
 > interacts with Earth's atmosphere.
