@@ -20,7 +20,6 @@ auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, d
 
 import os
 import sys
-from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -181,15 +180,12 @@ class TestCompareMaskHandling:
     def test_hf_path_receives_ones_like_attention_mask(self):
         """Test that HF model receives torch.ones_like(input_ids, dtype=torch.bool) attention_mask."""
         mock_hf_model = MagicMock()
-        mock_hf_model.dtype = torch.bfloat16
         mock_output = MagicMock()
         mock_output.logits = torch.randn(1, 3, 100)
         mock_hf_model.return_value = mock_output
 
         input_ids = torch.tensor([[1, 2, 3]])
-        pixel_values = torch.randn(1, 3, 4, 4, dtype=torch.float32)
         expected_mask = torch.ones_like(input_ids, dtype=torch.bool)
-        image_position_ids = torch.tensor([[0, 1, 2]])
 
         mock_tokenizer = MagicMock()
         mock_tokenizer.decode.return_value = "test"
@@ -201,10 +197,9 @@ class TestCompareMaskHandling:
             _run_hf_inference(
                 mock_hf_model,
                 input_ids,
-                pixel_values=pixel_values,
+                pixel_values=None,
                 image_grid_thw=None,
                 tokenizer=mock_tokenizer,
-                image_position_ids=image_position_ids,
             )
 
         call_kwargs = mock_hf_model.call_args.kwargs
@@ -212,8 +207,6 @@ class TestCompareMaskHandling:
         assert call_kwargs["attention_mask"].dtype == torch.bool
         assert call_kwargs["attention_mask"].shape == input_ids.shape
         assert torch.equal(call_kwargs["attention_mask"], expected_mask)
-        assert call_kwargs["pixel_values"].dtype == torch.bfloat16
-        assert torch.equal(call_kwargs["image_position_ids"], image_position_ids)
 
     def test_hf_broadcast_uses_model_output_vocab_size(self):
         """Test that non-rank-0 buffers use the HF logits size instead of tokenizer vocab size."""
@@ -234,105 +227,6 @@ class TestCompareMaskHandling:
         assert hf_logits.dtype == torch.float32
         assert hf_next_token.shape == (1,)
         assert broadcast_shapes == [(1,), (1,), (163840,)]
-
-    def test_checkpoint_load_uses_provider_pipeline_dtype(self):
-        """Test checkpoint loading forwards the provider precision to pipeline overrides."""
-        args = SimpleNamespace(
-            tp=4,
-            pp=2,
-            ep=1,
-            etp=1,
-            hf_model_path="org/model",
-            hf_revision=None,
-            megatron_model_path="checkpoint",
-            trust_remote_code=False,
-            enable_debug_hooks=False,
-        )
-        model = MagicMock()
-        model.eval.return_value = model
-        provider = MagicMock(params_dtype=torch.float32)
-        bridge = MagicMock()
-        bridge.to_megatron_provider.return_value = provider
-        bridge.load_megatron_model.return_value = [model]
-
-        with (
-            patch.object(compare.AutoBridge, "from_hf_pretrained", return_value=bridge),
-            patch.object(compare, "is_safe_repo", return_value=True),
-            patch.object(compare, "disable_mtp_for_inference"),
-        ):
-            models, loaded_bridge = compare._load_megatron_model(args)
-
-        assert models == [model]
-        assert loaded_bridge is bridge
-        assert provider.pipeline_dtype is torch.float32
-        bridge.load_megatron_model.assert_called_once_with(
-            "checkpoint",
-            mp_overrides={
-                "tensor_model_parallel_size": 4,
-                "pipeline_model_parallel_size": 2,
-                "expert_model_parallel_size": 1,
-                "expert_tensor_parallel_size": 1,
-                "pipeline_dtype": torch.float32,
-            },
-            wrap_with_ddp=False,
-        )
-
-    def test_vlm_detection_accepts_structured_vision_config(self):
-        """Test Gemma 4 is detected from vision_config without a VL name marker."""
-        config = SimpleNamespace(
-            model_type="gemma4",
-            architectures=["Gemma4ForConditionalGeneration"],
-            vision_config=SimpleNamespace(),
-        )
-
-        with (
-            patch.object(compare.AutoConfig, "from_pretrained", return_value=config),
-            patch.object(compare, "is_safe_repo", return_value=False),
-        ):
-            assert compare.is_vision_language_model("google/gemma-4-26b-a4b-it")
-
-    def test_gemma4_inputs_use_chat_template_and_forward_image_positions(self):
-        """Test Gemma 4 bypasses Qwen-only processing and preserves image positions."""
-
-        class Gemma4Processor:
-            def __init__(self):
-                self.apply_chat_template = MagicMock(
-                    return_value={
-                        "input_ids": torch.tensor([[1, 2, 3, 4]]),
-                        "pixel_values": torch.randn(1, 3, 4, 4),
-                        "image_position_ids": torch.tensor([[0, 1, 2, 3]]),
-                    }
-                )
-
-        processor = Gemma4Processor()
-        tokenizer = SimpleNamespace(pad_token_id=0)
-        image = object()
-
-        with (
-            patch.object(compare, "load_image", return_value=image),
-            patch.object(compare, "QWEN_VL_UTILS_AVAILABLE", False),
-        ):
-            input_ids, pixel_values, image_grid_thw, messages, image_position_ids = compare.process_inputs(
-                tokenizer,
-                processor,
-                "/tmp/image.png",
-                "Describe the image.",
-                True,
-                tp_size=4,
-            )
-
-        assert input_ids.shape == (1, 4)
-        assert pixel_values.shape == (1, 3, 4, 4)
-        assert image_grid_thw is None
-        assert torch.equal(image_position_ids, torch.tensor([[0, 1, 2, 3]]))
-        assert messages[0]["content"][0] == {"type": "image", "image": image}
-        processor.apply_chat_template.assert_called_once_with(
-            messages,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-            add_generation_prompt=True,
-        )
 
     @pytest.mark.parametrize("flag", ["--trust_remote_code", "--trust-remote-code"])
     def test_trust_remote_code_accepts_underscore_and_hyphen_flags(self, flag):
@@ -366,38 +260,3 @@ class TestCompareMaskHandling:
         assert args.hf_revision == revision
         assert compare._hf_revision_kwargs(args.hf_revision) == {"revision": revision}
         assert compare._hf_revision_kwargs(None) == {}
-
-    def test_hf_reference_precision_and_device_map_are_explicit(self):
-        """Test FP32 parity cards can load a sharded FP32 Hugging Face reference."""
-        args = compare.build_parser().parse_args(
-            [
-                "--hf_model_path",
-                "org/model",
-                "--prompt",
-                "Hello",
-                "--hf-dtype",
-                "float32",
-                "--hf-device-map",
-                "auto",
-            ]
-        )
-
-        assert compare._hf_load_precision_kwargs(args) == {
-            "torch_dtype": torch.float32,
-            "device_map": "auto",
-        }
-
-    def test_distributed_timeout_is_configurable_for_slow_reference_loading(self):
-        """Test large FP32 references can extend the process-group timeout."""
-        args = compare.build_parser().parse_args(
-            [
-                "--hf_model_path",
-                "org/model",
-                "--prompt",
-                "Hello",
-                "--distributed-timeout-minutes",
-                "90",
-            ]
-        )
-
-        assert args.distributed_timeout_minutes == 90

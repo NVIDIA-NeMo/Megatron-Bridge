@@ -142,11 +142,6 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
-def _resolve_pipeline_dtype(model_provider: object) -> torch.dtype:
-    """Match pipeline communication to the provider's parameter precision."""
-    return getattr(model_provider, "params_dtype", None) or torch.bfloat16
-
-
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
     tp = args.tp
@@ -189,8 +184,7 @@ def main(args) -> None:
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
-        pipeline_dtype = _resolve_pipeline_dtype(model_provider)
-        model_provider.pipeline_dtype = pipeline_dtype
+        model_provider.pipeline_dtype = torch.bfloat16
         model_provider.init_model_with_meta_device = True
         if args.pp_layout:
             model_provider.pipeline_model_parallel_layout = args.pp_layout
@@ -202,7 +196,7 @@ def main(args) -> None:
             "pipeline_model_parallel_size": pp,
             "expert_model_parallel_size": ep,
             "expert_tensor_parallel_size": etp,
-            "pipeline_dtype": pipeline_dtype,
+            "pipeline_dtype": torch.bfloat16,
         }
         if args.pp_layout:
             mp_overrides["pipeline_model_parallel_layout"] = args.pp_layout
@@ -218,7 +212,7 @@ def main(args) -> None:
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = _resolve_pipeline_dtype(model_provider)
+        model_provider.pipeline_dtype = torch.bfloat16
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         model = model_provider.provide_distributed_model(wrap_with_ddp=False)

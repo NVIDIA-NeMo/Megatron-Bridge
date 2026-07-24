@@ -69,8 +69,6 @@ Available Arguments:
     --prompt: Text prompt for generation (required)
     --image_path: Path or URL to image for VL models (optional)
     --model_class: Specific HuggingFace model class (e.g., 'Qwen2_5_VLForConditionalGeneration' for VL models, optional)
-    --hf-dtype: Hugging Face reference model dtype (default: bfloat16)
-    --hf-device-map: Hugging Face reference model device map (default: cuda)
     --megatron_model_path: Path to Megatron checkpoint (optional, converts from HF if not provided)
     --tp: Tensor parallelism size (default: 1)
     --pp: Pipeline parallelism size (default: 1)
@@ -125,12 +123,7 @@ from PIL import Image
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import (
-    disable_mtp_for_inference,
-    get_last_rank,
-    maybe_initialize_distributed,
-    print_rank_0,
-)
+from megatron.bridge.utils.common_utils import disable_mtp_for_inference, get_last_rank, print_rank_0
 from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
 
 
@@ -224,23 +217,6 @@ def _hf_revision_kwargs(revision: str | None) -> dict[str, str]:
     return {"revision": revision} if revision is not None else {}
 
 
-def _resolve_pipeline_dtype(model_provider: object) -> torch.dtype:
-    """Match pipeline communication to the provider's parameter precision."""
-    return getattr(model_provider, "params_dtype", None) or torch.bfloat16
-
-
-def _hf_load_precision_kwargs(args) -> dict[str, object]:
-    """Resolve the explicitly requested Hugging Face reference precision and placement."""
-    dtype_by_name = {
-        "bfloat16": torch.bfloat16,
-        "float32": torch.float32,
-    }
-    return {
-        "torch_dtype": dtype_by_name[args.hf_dtype],
-        "device_map": args.hf_device_map,
-    }
-
-
 def is_vision_language_model(
     model_path: str,
     trust_remote_code: bool | None = None,
@@ -283,9 +259,7 @@ def is_vision_language_model(
             "minicpm",
         ]
 
-        return getattr(config, "vision_config", None) is not None or any(
-            indicator in model_type or indicator in arch_str for indicator in vl_indicators
-        )
+        return any(indicator in model_type or indicator in arch_str for indicator in vl_indicators)
 
     except Exception as e:
         print_rank_0(f"Warning: Could not determine model type from config: {e}")
@@ -309,7 +283,6 @@ class SingleBatchIterator:
         attention_mask,
         pixel_values=None,
         image_grid_thw=None,
-        image_position_ids=None,
         inference_context=None,
     ):
         self.batch = dict(
@@ -324,8 +297,6 @@ class SingleBatchIterator:
             self.batch["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             self.batch["image_grid_thw"] = image_grid_thw
-        if image_position_ids is not None:
-            self.batch["image_position_ids"] = image_position_ids
 
         self._yielded = False
 
@@ -362,9 +333,10 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
     }
 
     # Add vision inputs if present
-    for key in ("pixel_values", "image_grid_thw", "image_position_ids"):
-        if key in batch:
-            forward_args[key] = batch[key]
+    if "pixel_values" in batch:
+        forward_args["pixel_values"] = batch["pixel_values"]
+    if "image_grid_thw" in batch:
+        forward_args["image_grid_thw"] = batch["image_grid_thw"]
 
     def loss_func(x, **kwargs):
         return x
@@ -474,40 +446,9 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         tp_size: Tensor parallel size for padding sequence length
 
     Returns:
-        Tuple of (input_ids, pixel_values, image_grid_thw, messages, image_position_ids)
+        Tuple of (input_ids, pixel_values, image_grid_thw, messages)
     """
     if is_vl_model and image_path:
-        if processor is not None and "gemma4" in processor.__class__.__name__.lower():
-            image = load_image(image_path)
-            messages = [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "image", "image": image},
-                        {"type": "text", "text": prompt},
-                    ],
-                }
-            ]
-            inputs = processor.apply_chat_template(
-                messages,
-                tokenize=True,
-                return_dict=True,
-                return_tensors="pt",
-                add_generation_prompt=True,
-            )
-            input_ids = pad_input_ids_to_tp_multiple(
-                inputs["input_ids"],
-                tp_size,
-                tokenizer.pad_token_id or 0,
-            )
-            return (
-                input_ids,
-                inputs.get("pixel_values"),
-                None,
-                messages,
-                inputs.get("image_position_ids"),
-            )
-
         if not QWEN_VL_UTILS_AVAILABLE:
             raise ImportError("qwen_vl_utils is required for vision-language models but not installed")
 
@@ -538,7 +479,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
         )
 
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages, None
+        return input_ids, inputs.pixel_values, inputs.image_grid_thw, messages
     else:
         # Text-only processing for both VL models without images and regular LLMs
         if is_vl_model and processor:
@@ -548,7 +489,7 @@ def process_inputs(tokenizer, processor, image_path: Optional[str], prompt: str,
             # Use tokenizer for regular LLMs
             inputs = tokenizer(prompt, return_tensors="pt")
         input_ids = pad_input_ids_to_tp_multiple(inputs.input_ids, tp_size, tokenizer.pad_token_id or 0)
-        return input_ids, None, None, None, None
+        return input_ids, None, None, None
 
 
 def _load_hf_model(args, is_vl_model: bool):
@@ -568,7 +509,8 @@ def _load_hf_model(args, is_vl_model: bool):
     model_class = get_model_class(args.model_class, is_vl_model)
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
-        **_hf_load_precision_kwargs(args),
+        torch_dtype=torch.bfloat16,
+        device_map="cuda",
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
@@ -621,9 +563,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
         print_rank_0("Loading exported HF model for comparison...")
         model_class = get_model_class(args.model_class, is_vl_model)
         hf_model = model_class.from_pretrained(
-            save_path,
-            **_hf_load_precision_kwargs(args),
-            trust_remote_code=True,
+            save_path, torch_dtype=torch.bfloat16, device_map="cuda", trust_remote_code=True
         ).eval()
         if args.enable_debug_hooks:
             print_rank_0("Registering debug hooks for exported HF model...")
@@ -633,7 +573,7 @@ def _export_and_load_roundtrip_hf_model(args, is_vl_model: bool, megatron_model,
     return None
 
 
-def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer, image_position_ids=None):
+def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokenizer):
     """Run HuggingFace model inference and return results.
 
     Args:
@@ -642,7 +582,6 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
         pixel_values: Pixel values for vision models (optional).
         image_grid_thw: Image grid dimensions (optional).
         tokenizer: Tokenizer for decoding.
-        image_position_ids: Image position IDs for models that require them (optional).
 
     Returns:
         Tuple of (hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape).
@@ -658,14 +597,9 @@ def _run_hf_inference(hf_model, input_ids, pixel_values, image_grid_thw, tokeniz
             "attention_mask": torch.ones_like(input_ids, dtype=torch.bool),
         }
         if pixel_values is not None:
-            model_dtype = getattr(hf_model, "dtype", None)
-            hf_inputs["pixel_values"] = (
-                pixel_values.to(dtype=model_dtype) if isinstance(model_dtype, torch.dtype) else pixel_values
-            )
+            hf_inputs["pixel_values"] = pixel_values
         if image_grid_thw is not None:
             hf_inputs["image_grid_thw"] = image_grid_thw
-        if image_position_ids is not None:
-            hf_inputs["image_position_ids"] = image_position_ids
 
         hf_output = hf_model(**hf_inputs)
 
@@ -723,8 +657,7 @@ def _load_megatron_model(args):
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
-        pipeline_dtype = _resolve_pipeline_dtype(model_provider)
-        model_provider.pipeline_dtype = pipeline_dtype
+        model_provider.pipeline_dtype = torch.bfloat16
         model_provider.finalize()
         model_provider.initialize_model_parallel(seed=0)
         megatron_model = bridge.load_megatron_model(
@@ -734,7 +667,6 @@ def _load_megatron_model(args):
                 "pipeline_model_parallel_size": pp,
                 "expert_model_parallel_size": ep,
                 "expert_tensor_parallel_size": etp,
-                "pipeline_dtype": pipeline_dtype,
             },
             wrap_with_ddp=False,
         )
@@ -753,7 +685,7 @@ def _load_megatron_model(args):
         model_provider.pipeline_model_parallel_size = pp
         model_provider.expert_model_parallel_size = ep
         model_provider.expert_tensor_parallel_size = etp
-        model_provider.pipeline_dtype = _resolve_pipeline_dtype(model_provider)
+        model_provider.pipeline_dtype = torch.bfloat16
         model_provider.finalize()
         megatron_model = model_provider.provide_distributed_model(wrap_with_ddp=False)
 
@@ -844,7 +776,6 @@ def compare_models_one_step(args) -> None:
     print_rank_0("=== STARTING MODEL COMPARISON (1-STEP) ===")
 
     if torch.cuda.is_available():
-        maybe_initialize_distributed(timeout_minutes=args.distributed_timeout_minutes)
         local_rank = int(os.environ.get("LOCAL_RANK", 0))
         torch.cuda.set_device(local_rank)
         print_rank_0(f"Set CUDA device to: {torch.cuda.current_device()}")
@@ -873,7 +804,7 @@ def compare_models_one_step(args) -> None:
 
     # Process inputs
     print_rank_0(f"Processing inputs - Prompt: '{args.prompt}', Image: {args.image_path}")
-    input_ids, pixel_values, image_grid_thw, messages, image_position_ids = process_inputs(
+    input_ids, pixel_values, image_grid_thw, messages = process_inputs(
         tokenizer, processor, args.image_path, args.prompt, is_vl_model, args.tp
     )
 
@@ -883,20 +814,13 @@ def compare_models_one_step(args) -> None:
         pixel_values = pixel_values.cuda()
     if image_grid_thw is not None:
         image_grid_thw = image_grid_thw.cuda()
-    if image_position_ids is not None:
-        image_position_ids = image_position_ids.cuda()
 
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model,
-        input_ids,
-        pixel_values,
-        image_grid_thw,
-        tokenizer,
-        image_position_ids,
+        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
     )
 
     del hf_model
@@ -942,7 +866,6 @@ def compare_models_one_step(args) -> None:
                 attention_mask,
                 pixel_values,
                 image_grid_thw,
-                image_position_ids,
             )
             megatron_output = fwd_bwd_function(
                 forward_step_func=vlm_forward_step,
@@ -1072,24 +995,6 @@ def build_parser() -> argparse.ArgumentParser:
         type=str,
         default=None,
         help="Specific HuggingFace model class to use (e.g., 'Qwen2_5_VLForConditionalGeneration' for VL models). If not specified, uses AutoModelForCausalLM.",
-    )
-    parser.add_argument(
-        "--hf-dtype",
-        choices=("bfloat16", "float32"),
-        default="bfloat16",
-        help="Floating-point dtype for the Hugging Face reference model.",
-    )
-    parser.add_argument(
-        "--hf-device-map",
-        choices=("cuda", "auto", "cpu"),
-        default="cuda",
-        help="Transformers device_map for the Hugging Face reference model.",
-    )
-    parser.add_argument(
-        "--distributed-timeout-minutes",
-        type=int,
-        default=60,
-        help="Process-group timeout for slow reference-model loading.",
     )
     parser.add_argument(
         "--enable_debug_hooks",

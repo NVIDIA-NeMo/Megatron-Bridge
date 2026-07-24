@@ -18,10 +18,8 @@
 from __future__ import annotations
 
 import argparse
-import io
 import json
 import logging
-from pathlib import Path
 from typing import Any
 
 
@@ -32,7 +30,6 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hf-model", required=True, help="Exported HF model directory.")
     parser.add_argument("--prompt", required=True, help="Prompt to generate from.")
-    parser.add_argument("--image-path", help="Optional local path or public HTTP(S) image URL.")
     parser.add_argument("--max-new-tokens", required=True, type=int, help="Exact number of tokens to generate.")
     parser.add_argument("--chat-template", action="store_true", help="Format the prompt as a user chat turn.")
     parser.add_argument(
@@ -72,90 +69,17 @@ def _format_prompt(tokenizer: Any, prompt: str, *, chat_template: bool, disable_
     )
 
 
-def _read_public_image_url(image_url: str) -> bytes:
-    """Read an allowlisted public image URL with Bridge's SSRF protections."""
-    from megatron.bridge.utils.safe_url import is_safe_public_http_url, safe_url_open
-
-    is_safe, reason = is_safe_public_http_url(image_url)
-    if not is_safe:
-        raise ValueError(f"Refusing to fetch image URL ({reason}): {image_url}")
-    with safe_url_open(image_url) as response:
-        return response.read()
-
-
-def _load_image(image_path: str) -> Any:
-    """Load one RGB image from a local path or safe public URL."""
-    from PIL import Image
-
-    if image_path.startswith(("http://", "https://")):
-        return Image.open(io.BytesIO(_read_public_image_url(image_path))).convert("RGB")
-    return Image.open(Path(image_path)).convert("RGB")
-
-
-def _prepare_vlm_inputs(processor: Any, prompt: str, image_path: str) -> Any:
-    """Build one image-and-text chat batch without relying on model-specific helpers."""
-    image = _load_image(image_path)
-    if hasattr(processor, "apply_chat_template") and getattr(processor, "chat_template", None) is not None:
-        messages = [
-            {
-                "role": "user",
-                "content": [
-                    {"type": "image", "image": image},
-                    {"type": "text", "text": prompt},
-                ],
-            }
-        ]
-        return processor.apply_chat_template(
-            messages,
-            tokenize=True,
-            return_dict=True,
-            return_tensors="pt",
-            add_generation_prompt=True,
-        )
-
-    tokenizer = getattr(processor, "tokenizer", processor)
-    image_token = getattr(tokenizer, "image_token", "<|image|>")
-    return processor(text=[f"{image_token}\n{prompt}"], images=[image], return_tensors="pt")
-
-
-def _move_inputs(inputs: Any, device: Any, dtype: Any) -> dict[str, Any]:
-    """Move tensor inputs to the selected device and cast floating inputs."""
-    moved = {}
-    for name, value in dict(inputs).items():
-        if not hasattr(value, "to"):
-            moved[name] = value
-        elif getattr(value, "is_floating_point", lambda: False)():
-            moved[name] = value.to(device=device, dtype=dtype)
-        else:
-            moved[name] = value.to(device=device)
-    return moved
-
-
 def main() -> int:
     """Run one exact-length greedy generation and print its completion."""
     args = _parse_args()
 
     import torch
-    import transformers
-    from transformers import AutoConfig, AutoModelForCausalLM, AutoProcessor, AutoTokenizer
+    from transformers import AutoModelForCausalLM, AutoTokenizer
 
     dtype = getattr(torch, args.dtype)
-    if args.image_path:
-        config = AutoConfig.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        architectures = getattr(config, "architectures", None) or []
-        if len(architectures) != 1 or not hasattr(transformers, architectures[0]):
-            raise RuntimeError(
-                "Vision-language inference requires one loadable Transformers architecture in config.architectures"
-            )
-        model_class = getattr(transformers, architectures[0])
-        processor = AutoProcessor.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
-        tokenizer = getattr(processor, "tokenizer", processor)
-    else:
-        model_class = AutoModelForCausalLM
-        processor = None
-        tokenizer = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
+    tokenizer = AutoTokenizer.from_pretrained(args.hf_model, trust_remote_code=args.trust_remote_code)
     model = (
-        model_class.from_pretrained(
+        AutoModelForCausalLM.from_pretrained(
             args.hf_model,
             dtype=dtype,
             trust_remote_code=args.trust_remote_code,
@@ -163,17 +87,13 @@ def main() -> int:
         .to(args.device)
         .eval()
     )
-    if processor is not None:
-        inputs = _prepare_vlm_inputs(processor, args.prompt, args.image_path)
-    else:
-        formatted_prompt = _format_prompt(
-            tokenizer,
-            args.prompt,
-            chat_template=args.chat_template,
-            disable_thinking=args.disable_thinking,
-        )
-        inputs = tokenizer(formatted_prompt, return_tensors="pt")
-    inputs = _move_inputs(inputs, model.device, dtype)
+    formatted_prompt = _format_prompt(
+        tokenizer,
+        args.prompt,
+        chat_template=args.chat_template,
+        disable_thinking=args.disable_thinking,
+    )
+    inputs = tokenizer(formatted_prompt, return_tensors="pt").to(model.device)
     prompt_length = inputs["input_ids"].shape[1]
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
 

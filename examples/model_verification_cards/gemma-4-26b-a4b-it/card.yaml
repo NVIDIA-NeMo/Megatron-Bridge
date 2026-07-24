@@ -200,51 +200,22 @@ items:
       status: unverified
       precision: bf16
       depends_on: sft
-      commands:
-        - >
-          ./scripts/conversion/convert.sh export --executor slurm --device gpu
-          --nodes 1 --gpus-per-node 8 --hf-model google/gemma-4-26B-A4B-it
-          --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
-          --megatron-path work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints/iter_0000010
-          --hf-path work/model-verification/gemma-4-26b-a4b-it/sft-hf-export
-          --torch-dtype bfloat16 --export-weight-dtype bfloat16
-          --distributed-save --tp 2 --pp 1 --ep 8 --etp 1
-        - >
-          uv run python
-          skills/create-model-verification-card/scripts/verify_hf_inference.py
-          --hf-model work/model-verification/gemma-4-26b-a4b-it/sft-hf-export
-          --image-path work/model-verification/gemma-4-26b-a4b-it/nvidia-table.png
-          --prompt "According to the table, how much GPU memory does H100 NVL have?"
-          --max-new-tokens 32
-          --dtype bfloat16 --device cuda
+      commands: null
       last_verified: null
       expected_result: >
         This item is blocked because SFT produced no verified iter_0000010
-        checkpoint. Once that dependency passes, the checkpoint must export
-        and strictly reload as Gemma4ForConditionalGeneration. The VLM helper
-        must run one deterministic greedy generation with exactly 32 new tokens
-        and record the literal completion, including whitespace. The NVIDIA
-        input is pinned at revision cb5a65ff10232128389d882d805fa609427544f1
-        with SHA-256
-        001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
+        checkpoint, so no export or post-SFT inference command is recorded.
+        Once that dependency passes, the checkpoint must export, strictly
+        reload as Gemma4ForConditionalGeneration, and complete one
+        deterministic greedy VLM generation with a recorded literal
+        completion.
 
   sft_long_context:
     H100:
       status: unverified
       precision: bf16
-      enabled_features:
-        sequence_packing: in_batch
-        context_parallel_size: 2
-      command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-        --recipe gemma4_vl_26b_sft_long_context_config --mode sft
-        --dataset cord-v2
-        --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
-        --max_steps 10
-        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
-        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-        --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-long-context-checkpoints
-        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
+      enabled_features: {}
+      command: null
       last_verified: null
       metrics:
         initial_loss: null
@@ -252,11 +223,11 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        The TP2/PP1/CP2/EP8/ETP1 full-SFT run must truncate each of two
-        examples to 4K, pack them into an emergent THD sequence of at most 8K,
-        and complete exactly 10 optimizer steps with finite loss, no skipped or
-        NaN iterations, all four required metrics, and a reloadable final
-        checkpoint.
+        No Gemma 4 VL long-context recipe or run was verified. A future
+        workload must establish sequence-packing and context-parallel settings,
+        complete at least 10 optimizer steps with finite loss and no skipped or
+        NaN iterations, report all four required metrics, and save a reloadable
+        final checkpoint.
 
   peft:
     H100:

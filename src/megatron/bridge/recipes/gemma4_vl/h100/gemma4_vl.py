@@ -110,7 +110,7 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Gemma 4 VL 26B-A4B (MoE VLM).
 
     Default configuration: 8 GPUs
-    - TP=2, PP=1, EP=8, ETP=1 (dense DP=4, expert DP=1)
+    - TP=2, PP=1, EP=8 (max EP with 16 GPUs at TP=2,PP=1; DP=8, EP divides DP)
     - No activation recompute — EP=8 shards 87.5% of expert params per GPU
     - LR=5e-5 (full SFT)
     - Sequence length: 4096
@@ -119,15 +119,14 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
 
     _apply_gemma4_vl_common(cfg, _HF_PATH)
 
-    # The dense TP mesh and MoE EP mesh share each PP stage. Bridge resolves ETP
-    # to one for EP>1, so the minimum world size is PP*max(TP*CP, EP*ETP)=8.
+    # Parallel settings — TP=2, PP=1, EP=8 on 2×8 GPUs
+    # DP = 16/(TP*PP) = 8; EP=8 shards experts across all DP ranks (1 expert replica)
     cfg.model.tensor_model_parallel_size = 2
     cfg.model.pipeline_model_parallel_size = 1
     cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8  # override common EP=1
-    cfg.model.expert_tensor_parallel_size = 1
 
     # Reduce overhead to fit within 30-min wall time.
     # 40 iters × ~15s + 5 min init + 4 evals × 35s = ~20 min → 10 min for checkpoint save.
@@ -159,27 +158,6 @@ def gemma4_vl_26b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
     }
-    return cfg
-
-
-def gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return an 8K-aggregate in-batch-packed full-SFT config with CP=2.
-
-    Each of the two examples is truncated to 4K before the collator packs them
-    into an emergent THD sequence of at most 8K tokens. CP=2 therefore caps the
-    per-rank language-token footprint at 4K, while EP=8 continues to shard the
-    MoE experts across all eight ranks.
-    """
-    cfg = gemma4_vl_26b_sft_8gpu_h100_bf16_config()
-
-    cfg.model.seq_length = 8192
-    cfg.model.context_parallel_size = 2
-    cfg.model.calculate_per_token_loss = True
-    cfg.dataset.seq_length = 4096
-    cfg.dataset.enable_in_batch_packing = True
-    cfg.train.micro_batch_size = 2
-    cfg.ddp.average_in_collective = False
-
     return cfg
 
 
@@ -245,5 +223,4 @@ def gemma4_vl_26b_peft_4gpu_h100_bf16_config(
 __all__ = [
     "gemma4_vl_26b_peft_4gpu_h100_bf16_config",
     "gemma4_vl_26b_sft_8gpu_h100_bf16_config",
-    "gemma4_vl_26b_sft_long_context_8gpu_h100_bf16_config",
 ]

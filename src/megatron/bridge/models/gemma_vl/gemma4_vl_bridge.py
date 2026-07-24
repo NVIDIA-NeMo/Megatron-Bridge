@@ -129,7 +129,6 @@ class Gemma4VLBridge(Gemma4Bridge):
             provider.moe_layer_freq = 1
 
         provider.final_logit_softcapping = getattr(text_config, "final_logit_softcapping", 30.0)
-        provider.autocast_dtype = provider.params_dtype
         provider.make_vocab_size_divisible_by = 128
 
         provider.vision_config = vision_config

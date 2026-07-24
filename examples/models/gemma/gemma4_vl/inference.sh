@@ -15,7 +15,6 @@
 
 # Workspace directory for checkpoints and results
 WORKSPACE=${WORKSPACE:-/workspace}
-IMAGE_PATH=${IMAGE_PATH:-"https://huggingface.co/nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16/resolve/cb5a65ff10232128389d882d805fa609427544f1/images/table.png"}
 
 # Inference with HuggingFace checkpoints (text only)
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
@@ -28,8 +27,8 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 examples/con
 # Inference with HuggingFace checkpoints (vision + text)
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path google/gemma-4-26B-A4B-it \
-    --image_path "${IMAGE_PATH}" \
-    --prompt "According to the table, how much GPU memory does H100 NVL have?" \
+    --image_path "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/pipeline-cat-chonk.jpeg" \
+    --prompt "What is shown in this image?" \
     --max_new_tokens 50 \
     --tp 4 \
     --pp 2
@@ -39,8 +38,8 @@ uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 examples/con
 uv run --no-sync python -m torch.distributed.run --nproc_per_node=8 examples/conversion/hf_to_megatron_generate_vlm.py \
     --hf_model_path google/gemma-4-26B-A4B-it \
     --megatron_model_path ${WORKSPACE}/models/gemma-4-26B-A4B-it/iter_0000000 \
-    --image_path "${IMAGE_PATH}" \
-    --prompt "According to the table, how much GPU memory does H100 NVL have?" \
+    --image_path "https://huggingface.co/datasets/huggingface/documentation-images/resolve/main/p-blog/candy.JPG" \
+    --prompt "What animal is on the candy?" \
     --max_new_tokens 50 \
     --tp 4 \
     --pp 2

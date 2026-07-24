@@ -718,16 +718,6 @@ class TestGemma4VLBridgeProviderBridgeMoE:
         assert p.params_dtype == torch.bfloat16
         assert p.autocast_dtype == torch.bfloat16
 
-    def test_fp32_dtype_matches_hf_config(self, bridge, mock_hf_pretrained_moe):
-        mock_hf_pretrained_moe.config.text_config.torch_dtype = "float32"
-
-        p = bridge.provider_bridge(mock_hf_pretrained_moe)
-
-        assert p.bf16 is False
-        assert p.fp16 is False
-        assert p.params_dtype == torch.float32
-        assert p.autocast_dtype == torch.float32
-
     def test_global_head_config(self, bridge, mock_hf_pretrained_moe):
         p = bridge.provider_bridge(mock_hf_pretrained_moe)
         assert p.global_head_dim == 512
