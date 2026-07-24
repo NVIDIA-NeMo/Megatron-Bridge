@@ -1142,7 +1142,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--global-batch-size", type=int, default=8)
     parser.add_argument("--train-iters", type=int, default=20)
     parser.add_argument("--num-workers", type=int, default=2)
-    parser.add_argument("--dataloader-type", choices=("single", "cyclic"), default="single")
+    parser.add_argument("--dataloader-type", choices=("single", "cyclic"), default="cyclic")
     parser.add_argument("--seed", type=int, default=1234)
     parser.add_argument("--fp32", action="store_true", help="Use fp32 instead of bf16")
     parser.add_argument("--freeze-vision", type=_str2bool, default=False)

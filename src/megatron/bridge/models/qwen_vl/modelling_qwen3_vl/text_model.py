@@ -19,7 +19,7 @@ Copied from https://github.com/Thaurun/mbridge/blob/4462d1e284626d2ed9d3e3e
 """
 
 from dataclasses import replace
-from typing import Literal, Optional
+from typing import Any, Callable, Literal, Optional
 
 import torch
 from megatron.core import tensor_parallel
@@ -161,6 +161,8 @@ class Qwen3VLGPTModel(GPTModel):
         # args for deepstack
         visual_pos_masks: Optional[torch.Tensor] = None,
         deepstack_visual_embeds: Optional[list[torch.Tensor]] = None,
+        output_processor: Callable[..., Tensor] | None = None,
+        output_processor_context: Any | None = None,
     ) -> Tensor:
         """Forward function of the GPT Model This function passes the input tensors
         through the embedding layer, and then the decoeder and finally into the post
@@ -173,6 +175,10 @@ class Qwen3VLGPTModel(GPTModel):
         Args:
             runtime_gather_output (bool): Gather output at runtime. Default None means
                 `parallel_output` arg in the constructor will be used.
+            output_processor (Callable, optional): Custom postprocess hook forwarded to
+                the GPT model postprocessing path.
+            output_processor_context (Any, optional): User-defined context forwarded to
+                `output_processor`.
         """
 
         inference_context = deprecate_inference_params(inference_context, inference_params)
@@ -251,6 +257,8 @@ class Qwen3VLGPTModel(GPTModel):
             runtime_gather_output=runtime_gather_output,
             extra_block_kwargs=extra_block_kwargs,
             inference_context=inference_context,
+            output_processor=output_processor,
+            output_processor_context=output_processor_context,
         )
 
         if _shadow_embedding:
