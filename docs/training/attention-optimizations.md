@@ -60,6 +60,69 @@ export NVTE_FUSED_ATTN=0
 
 However, the recommended approach is to use the `attention_backend` configuration parameter.
 
+## Dual Chunk Attention
+
+Dual Chunk Attention (DCA) extends the effective context of RoPE-based GPT models by splitting a long sequence into fixed-size chunks. For each query chunk, DCA combines causal attention within the current chunk, attention to the immediately preceding chunk, and attention to all earlier chunks. The partial outputs are merged with log-sum-exp normalization so they are equivalent to a single softmax over the attended key partitions.
+
+The Bridge implementation is based on the Megatron-LM DCA implementation proposed in [NVIDIA/Megatron-LM#4048](https://github.com/NVIDIA/Megatron-LM/pull/4048). The generic attention implementation lives under `megatron.bridge.models.transformer`; GPT-specific configuration and layer-spec wiring live under `megatron.bridge.models.gpt`.
+
+### Configure DCA
+
+The modern builder path uses `DualChunkGPTModelConfig` with an explicit `DualChunkTransformerConfig`:
+
+```python
+from megatron.bridge.models.gpt.dca import DualChunkGPTModelConfig
+from megatron.bridge.models.transformer.dca import DualChunkTransformerConfig
+
+transformer_config = DualChunkTransformerConfig(
+    num_layers=2,
+    hidden_size=1024,
+    num_attention_heads=16,
+    num_query_groups=8,
+    transformer_impl="transformer_engine",
+    apply_rope_fusion=False,
+    dca_chunk_size=8192,
+    dca_local_size=1024,
+)
+
+model_config = DualChunkGPTModelConfig(
+    transformer=transformer_config,
+    vocab_size=32000,
+    seq_length=16384,
+    position_embedding_type="rope",
+)
+```
+
+The legacy provider path exposes the same configuration directly:
+
+```python
+from megatron.bridge.models.gpt.dca import DualChunkGPTModelProvider
+
+model_config = DualChunkGPTModelProvider(
+    num_layers=2,
+    hidden_size=1024,
+    num_attention_heads=16,
+    num_query_groups=8,
+    vocab_size=32000,
+    seq_length=16384,
+    position_embedding_type="rope",
+    transformer_impl="transformer_engine",
+    apply_rope_fusion=False,
+    dca_chunk_size=8192,
+    dca_local_size=1024,
+)
+```
+
+The effective chunk length is `dca_chunk_size - dca_local_size`. FlashAttention is used for CUDA FP16/BF16 inputs when `flash-attn` is available; otherwise DCA uses an unfused PyTorch reference path. Because FlashAttention 2.x does not propagate gradients through its returned log-sum-exp tensor, long-sequence DCA uses an auxiliary FlashAttention pass to preserve the exact Q/K normalization gradients without materializing the attention score matrix. Long-sequence gradient-enabled execution with a head dimension of 256 falls back to the unfused path because the auxiliary pass needs one additional dimension. Selective core-attention recompute is supported.
+
+For YARN, configure `yarn_rotary_scaling_factor`, `yarn_original_max_position_embeddings`, `yarn_beta_fast`, `yarn_beta_slow`, and `yarn_correction_range_round_to_int` on `DualChunkTransformerConfig`. The optional `yarn_mscale` and `yarn_mscale_all_dim` fields control the attention concentration factor.
+
+Current DCA support is training-only. It requires RoPE or YARN on every decoder layer, `context_parallel_size=1`, backend-generated causal masks, and unpacked sequences. Inference/KV cache, MTP, sliding-window attention, CUDA graphs, fine-grained activation offloading, full Transformer Engine layer specs, and ModelOpt restore are rejected explicitly.
+
+### Correctness validation
+
+The DCA unit tests compare long-sequence outputs and Q/K/V gradients with a direct token-level implementation that applies one global softmax over all three DCA key partitions. They also verify exact log-sum-exp partition merging in float64, short-sequence parity with standard causal attention, causal independence from future tokens, and CUDA FP16 output and Q/K/V gradient parity between FlashAttention and the unfused path for both multi-head and grouped-query attention.
+
 ## Multi-query Attention (MQA) and Grouped-query Attention (GQA)
 
 **Multi-query Attention (MQA)** and **Grouped-query Attention (GQA)** are modifications of the traditional multihead attention mechanism in Transformer models. These methods improve the efficiency and effectiveness of attention mechanisms.
@@ -124,5 +187,7 @@ model_config = GPTModelProvider(
 ## Resources
 
 - [Megatron Core Attention Implementation](https://github.com/NVIDIA/Megatron-LM/blob/main/megatron/core/transformer/attention.py)
+- [Dual Chunk Attention Paper](https://arxiv.org/abs/2402.17463)
+- [Megatron-LM DCA Reference Implementation](https://github.com/NVIDIA/Megatron-LM/pull/4048)
 - [Flash Attention Paper](https://arxiv.org/abs/2205.14135)
 - [Transformer Engine Attention Mechanisms](https://docs.nvidia.com/deeplearning/transformer-engine/user-guide/examples/attention/attention.html)

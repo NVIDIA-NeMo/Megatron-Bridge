@@ -68,6 +68,7 @@ from megatron.bridge.models.gpt.gpt_builder import GPTModelConfig
 from megatron.bridge.models.hybrid.hybrid_builder import HybridModelConfig
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.megatron_mimo.megatron_mimo_provider import MegatronMIMOProvider
+from megatron.bridge.models.transformer.dca import is_dual_chunk_attention_config
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.flex_dispatcher_backend import validate_flex_dispatcher_backend
@@ -1422,6 +1423,12 @@ class ConfigContainer(Container):
                 assert not self.ddp.average_in_collective, (
                     "When finetuning with CP>1, average_in_collective must be False"
                 )
+
+        if is_dual_chunk_attention_config(self.model):
+            if enable_offline_packing or enable_in_batch_packing:
+                raise ValueError("DCA does not support offline or in-batch sequence packing yet.")
+            if not getattr(self.dataset, "skip_getting_attention_mask_from_dataset", True):
+                raise ValueError("DCA requires backend-generated causal masks.")
 
         self._validate_cp_comm_type()
 
