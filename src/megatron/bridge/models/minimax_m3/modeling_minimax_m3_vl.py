@@ -48,6 +48,14 @@ def _config_value(config: Any, name: str, default: Any = None) -> Any:
     return getattr(config, name, default)
 
 
+# TODO: Remove the local vision implementation from
+# MiniMaxM3VisionPatchEmbeddings through MiniMaxM3VisionTower once Bridge's
+# minimum supported Transformers version includes native MiniMax-M3-VL
+# (Transformers >= 5.12). The replacement must normalize the released
+# checkpoint's legacy ``clip_vision_model`` config, explicitly map
+# ``embeddings.patch_embedding`` to ``embeddings.proj`` and
+# ``encoder.layers`` to ``layers``, and keep the patch projection in FP32.
+# MiniMaxM3VLModel remains Megatron-specific and is not part of this cleanup.
 class MiniMaxM3VisionPatchEmbeddings(nn.Module):
     """Conv3d patch embedding used by the MiniMax-M3 vision tower."""
 
