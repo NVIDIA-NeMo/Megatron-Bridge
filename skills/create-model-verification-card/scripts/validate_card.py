@@ -36,9 +36,8 @@ from yaml.tokens import AliasToken, AnchorToken, TagToken
 LOG = logging.getLogger(__name__)
 
 STATUSES = frozenset({"unverified", "verified", "unsupported", "not_applicable"})
-PRECISIONS = frozenset({"bf16", "fp32", "fp8_mx", "nvfp4"})
-TRAINING_ONLY_PRECISIONS = frozenset({"fp8_mx", "nvfp4"})
-DIRECT_ONLY_PRECISIONS = frozenset({"fp32"})
+PRECISIONS = frozenset({"bf16", "fp8_mx", "nvfp4"})
+TRAINING_ONLY_PRECISIONS = PRECISIONS - {"bf16"}
 REQUIRED_ITEM_NAMES = (
     "hf_to_megatron_cpu",
     "hf_to_megatron_gpu",
@@ -71,7 +70,6 @@ TRAINING_INDEX_SCOPE = (
     "peft",
     "checkpoint_resume",
 )
-DIRECT_ITEMS = frozenset(MODEL_LEVEL_INDEX_SCOPE)
 TRAINING_ITEMS = frozenset(
     {"pretrain", "sft", "sft_long_context", "peft", "checkpoint_resume", "pretrain_performance"}
 )
@@ -1365,8 +1363,6 @@ def _validate_item(
         errors.append(f"{_pointer(*path, 'precision')}: expected one of {sorted(PRECISIONS)} or null")
     elif isinstance(precision, str) and item_name not in TRAINING_ITEMS and precision in TRAINING_ONLY_PRECISIONS:
         errors.append(f"{_pointer(*path, 'precision')}: {precision} is supported only on training items")
-    elif isinstance(precision, str) and item_name not in DIRECT_ITEMS and precision in DIRECT_ONLY_PRECISIONS:
-        errors.append(f"{_pointer(*path, 'precision')}: {precision} is supported only on direct items")
     if status == "verified" and precision is None:
         errors.append(f"{_pointer(*path, 'precision')}: verified items require a concrete precision")
     elif status in {"unsupported", "not_applicable"} and precision is not None:
