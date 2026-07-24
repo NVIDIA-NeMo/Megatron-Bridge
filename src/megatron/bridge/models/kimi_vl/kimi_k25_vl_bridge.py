@@ -184,6 +184,9 @@ class KimiK25VLBridge(MegatronModelBridge):
         hf_state_dict: Mapping[str, torch.Tensor],
     ) -> Dict[str, torch.Tensor]:
         """Re-quantize converted expert weights to INT4 format."""
+        if task.weight_dtype is not None:
+            return converted_weights_dict
+
         result = {}
         for fqn, tensor in converted_weights_dict.items():
             if self._is_quantized_expert_key(fqn):
