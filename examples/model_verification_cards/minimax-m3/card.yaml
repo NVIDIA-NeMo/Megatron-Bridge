@@ -140,9 +140,9 @@ items:
       with only the exact quoted term, including capitalization and hyphen; do not
       explain or reason."
       --max_new_tokens 64
-      --trust-remote-code
+      --trust_remote_code
     last_verified: 2026-07-23
-    expected_result: |-
+    expected_result: >-
       One deterministic greedy generation on 32 H100s reloaded the persisted
       full-VLM checkpoint at TP1/PP1/EP32/ETP1, processed docs/images/tp1.png,
       generated 33 tokens under a 64-token maximum, reached EOS naturally, and
