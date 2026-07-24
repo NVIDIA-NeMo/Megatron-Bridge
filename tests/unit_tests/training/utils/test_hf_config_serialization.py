@@ -135,6 +135,7 @@ def test_qwen_provider_config_container_yaml_roundtrip(tmp_path):
 
     loaded = ConfigContainer.from_yaml(str(yaml_path), mode=InstantiationMode.STRICT)
     assert isinstance(loaded.model, Qwen3OmniModelProvider)
+    assert loaded.dataset.dataloader_type == "cyclic"
     assert isinstance(loaded.model.talker_config, Qwen3OmniMoeTalkerConfig)
     assert isinstance(loaded.model.talker_config.code_predictor_config, Qwen3OmniMoeTalkerCodePredictorConfig)
     assert isinstance(loaded.model.talker_config.text_config, Qwen3OmniMoeTalkerTextConfig)

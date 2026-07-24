@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Functional smoke tests for Nemotron H and Nemotron Nano v2 recipe configurations."""
+"""Functional smoke tests for current Nemotron recipe configurations."""
 
 import pytest
 
@@ -20,20 +20,8 @@ from megatron.bridge.recipes.nemotronh import (
     nemotron_3_nano_pretrain_config,
     nemotron_3_super_pretrain_config,
     nemotron_nano_9b_v2_pretrain_config,
-    nemotronh_4b_pretrain_config,
 )
 from tests.functional_tests.test_groups.recipes.utils import run_pretrain_recipe_test
-
-
-NEMOTRONH_PRETRAIN_RECIPES = [
-    # (config_func, name, parallelism_overrides, model_overrides)
-    (
-        nemotronh_4b_pretrain_config,
-        "nemotronh_4b",
-        {"tensor_model_parallel_size": 1, "pipeline_model_parallel_size": 1},
-        {"num_layers": 3, "hybrid_layer_pattern": "M*-"},
-    ),
-]
 
 
 NEMOTRON_NANO_V2_PRETRAIN_RECIPES = [
@@ -63,26 +51,6 @@ NEMOTRON_3_NANO_PRETRAIN_RECIPES = [
         },
     ),
 ]
-
-
-class TestNemotronHRecipes:
-    """Test class for Nemotron H recipe functional tests."""
-
-    @pytest.mark.run_only_on("GPU")
-    @pytest.mark.parametrize(
-        "config_func,recipe_name,parallelism_overrides,model_overrides", NEMOTRONH_PRETRAIN_RECIPES
-    )
-    def test_nemotronh_pretrain_recipes(
-        self, config_func, recipe_name, parallelism_overrides, model_overrides, tmp_path
-    ):
-        """Functional test for Nemotron H recipes with appropriate parallelism configurations."""
-        run_pretrain_recipe_test(
-            config_func,
-            recipe_name,
-            tmp_path,
-            model_overrides=model_overrides,
-            **parallelism_overrides,
-        )
 
 
 class TestNemotronNanoV2Recipes:

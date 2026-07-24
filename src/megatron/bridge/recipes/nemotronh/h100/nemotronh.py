@@ -16,6 +16,7 @@
 import torch
 from megatron.core.activations import squared_relu
 
+from megatron.bridge.models._deprecation import warn_deprecated_model
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
@@ -27,12 +28,16 @@ from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 
 
+_NEMOTRON_H_V1_NAME = "Nemotron H v1 (4B, 8B, 47B, and 56B)"
+
+
 def nemotronh_4b_pretrain_1gpu_h100_bf16_config() -> ConfigContainer:
     """Return a pre-training config for NemotronH 4B.
 
     This recipe is designed for single-node training (1 node).
     Default parallelism: TP=1, PP=1, SP=False.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _pretrain_common()
 
     # Model config
@@ -171,6 +176,7 @@ def nemotronh_8b_pretrain_2gpu_h100_bf16_config() -> ConfigContainer:
     This recipe is designed for single-node training (1 node).
     Default parallelism: TP=2, PP=1, SP=True.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _pretrain_common()
 
     # Model config
@@ -309,6 +315,7 @@ def nemotronh_47b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     Note: Uses FP8 precision by default.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _pretrain_common()
 
     # Model config
@@ -449,6 +456,7 @@ def nemotronh_56b_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 
     Note: Uses FP8 precision by default.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _pretrain_common()
 
     # Model config
@@ -595,6 +603,7 @@ def nemotronh_4b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 4B SFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _sft_common()
 
     # Model config - NemotronH 4B
@@ -729,6 +738,7 @@ def nemotronh_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 8B SFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _sft_common()
 
     # Model config - NemotronH 8B
@@ -859,6 +869,7 @@ def nemotronh_47b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 47B SFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _sft_common()
 
     # Model config - NemotronH 47B
@@ -991,6 +1002,7 @@ def nemotronh_56b_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 56B SFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _sft_common()
 
     # Model config - NemotronH 56B
@@ -1133,6 +1145,7 @@ def nemotronh_4b_peft_1gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 4B PEFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _peft_common()
 
     # Model config - PEFT uses same parallelism as SFT for 4B
@@ -1285,6 +1298,7 @@ def nemotronh_8b_peft_1gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 8B PEFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=1, SP=False
@@ -1435,6 +1449,7 @@ def nemotronh_47b_peft_4gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 47B PEFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=4, PP=1
@@ -1587,6 +1602,7 @@ def nemotronh_56b_peft_4gpu_h100_bf16_config(
     Returns:
         ConfigContainer with all settings pre-configured for NemotronH 56B PEFT.
     """
+    warn_deprecated_model(_NEMOTRON_H_V1_NAME, stacklevel=3)
     cfg = _peft_common()
 
     # Model config - PEFT uses TP=4, PP=1

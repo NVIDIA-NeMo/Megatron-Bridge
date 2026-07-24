@@ -62,6 +62,12 @@ class TokenizerConfig(MTrainTokenizerConfig):
         }
     """
 
+    chat_template_path: Optional[str] = None
+    """Path to a jinja chat template file, loaded at build time as ``chat_template``. Supports local
+    paths and ``msc://`` URLs. Mutually exclusive with ``chat_template``. Useful for supplying a
+    template from an external/process caller (e.g. CLI overrides) where inlining the jinja is
+    impractical."""
+
     tokenizer_prompt_format: Optional[str] = None
     """Prompt format for the tokenizer."""
 
