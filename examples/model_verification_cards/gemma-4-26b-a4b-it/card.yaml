@@ -5,9 +5,8 @@ title: gemma_4_26b_a4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact GPU export, and
-  deterministic multimodal inference are verified. CPU export preserves BF16
-  but emits five unexpected full-attention v_proj weights. Manual forward
+  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact CPU and GPU
+  export, and deterministic multimodal inference are verified. Manual forward
   comparison remains unverified because the recorded run compared a
   tensor-parallel padding position rather than the prompt's next token. Full
   SFT remains unverified because the default and selective-MLP configurations
@@ -19,10 +18,10 @@ verification_index:
     verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
       - megatron_to_hf_gpu
       - inference
     unverified:
-      - megatron_to_hf_cpu
       - manual_forward_pass
   training:
     H100:
@@ -74,8 +73,9 @@ items:
       inference.
 
   megatron_to_hf_cpu:
-    status: unverified
+    status: verified
     precision: bf16
+    bridge_commit: 8e9fa9e2aaf4d89538b0c0ff15bb837d14b2af47  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model google/gemma-4-26B-A4B-it
@@ -83,14 +83,14 @@ items:
       --megatron-path work/model-verification/gemma-4-26b-a4b-it/cpu-megatron/iter_0000000
       --hf-path work/model-verification/gemma-4-26b-a4b-it/cpu-hf-export
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-07-23
     expected_result: >
-      The 2026-07-23 command completed all 8,548 conversion mappings and wrote
-      11 BF16 shards. Strict inventory comparison found 1,018 tensor keys
-      instead of the immutable source's 1,013 keys: five full-attention v_proj
-      weights were unexpected. Native Gemma4ForConditionalGeneration reload was
-      not attempted after the inventory gate failed, so CPU export remains
-      unverified under the exact-key-set contract.
+      The command completed all 8,548 conversion mappings and wrote 11 BF16
+      shards. All 1,013 exported tensor entries matched the immutable source
+      exactly in key, shape, dtype, and value. Native
+      Gemma4ForConditionalGeneration reload reported
+      model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or
+      error keys.
 
   megatron_to_hf_gpu:
     status: verified
