@@ -148,16 +148,11 @@ def _load_runtime(args: argparse.Namespace) -> tuple[Any, Any, Any]:
     return torch, model, processor
 
 
-def _processor_tokenizer(processor: Any) -> Any:
-    """Return the tokenizer nested in a processor, or the tokenizer itself."""
-    return getattr(processor, "tokenizer", processor)
-
-
 def main() -> int:
     """Run one bounded greedy generation and print its completion."""
     args = _parse_args()
     torch, model, processor = _load_runtime(args)
-    tokenizer = _processor_tokenizer(processor)
+    tokenizer = getattr(processor, "tokenizer", processor)
     inputs = _prepare_inputs(processor, args).to(model.device)
     prompt_length = inputs["input_ids"].shape[1]
     pad_token_id = tokenizer.pad_token_id if tokenizer.pad_token_id is not None else tokenizer.eos_token_id
