@@ -62,8 +62,8 @@ def test_hf_revision_is_forwarded_to_every_loader():
             continue
         if not isinstance(node.func.value, ast.Name):
             continue
-        revision = next((keyword.value for keyword in node.keywords if keyword.arg == "revision"), None)
-        if revision is not None and ast.unparse(revision) == "args.hf_revision":
+        revision_kwargs = next((keyword.value for keyword in node.keywords if keyword.arg is None), None)
+        if revision_kwargs is not None and ast.unparse(revision_kwargs) == "_hf_revision_kwargs(args.hf_revision)":
             revision_loaders.add((node.func.value.id, node.func.attr))
 
     assert revision_loaders == expected_loaders
