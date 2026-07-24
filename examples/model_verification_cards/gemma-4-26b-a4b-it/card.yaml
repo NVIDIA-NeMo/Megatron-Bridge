@@ -5,23 +5,25 @@ title: gemma_4_26b_a4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact GPU export, manual
-  forward comparison, and deterministic multimodal inference are verified. CPU
-  export preserves BF16 but emits five unexpected full-attention v_proj
-  weights. Full SFT remains unverified because the default and selective-MLP
-  configurations exceed H100 memory, while full-layer recompute is too slow for
-  the 10-step verification window. Long-context SFT and PEFT are pending. The
-  published Bridge recipes do not currently provide VLM pretraining.
+  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact GPU export, and
+  deterministic multimodal inference are verified. CPU export preserves BF16
+  but emits five unexpected full-attention v_proj weights. Manual forward
+  comparison remains unverified because the recorded run compared a
+  tensor-parallel padding position rather than the prompt's next token. Full
+  SFT remains unverified because the default and selective-MLP configurations
+  exceed H100 memory, while full-layer recompute is too slow for the 10-step
+  verification window. Long-context SFT and PEFT are pending. The published
+  Bridge recipes do not currently provide VLM pretraining.
 verification_index:
   model_level:
     verified:
       - hf_to_megatron_cpu
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
-      - manual_forward_pass
       - inference
     unverified:
       - megatron_to_hf_cpu
+      - manual_forward_pass
   training:
     H100:
       unverified: [sft, sft_export_inference, sft_long_context, peft]
@@ -112,27 +114,18 @@ items:
       error keys.
 
   manual_forward_pass:
-    status: verified
+    status: unverified
     precision: bf16
-    command: >
-      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
-      examples/conversion/compare_hf_and_megatron/compare.py
-      --hf_model_path google/gemma-4-26B-A4B-it
-      --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
-      --model_class Gemma4ForConditionalGeneration
-      --hf-dtype bfloat16 --hf-device-map auto
-      --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
-      --image_path work/model-verification/gemma-4-26b-a4b-it/nvidia-table.png
-      --tp 2 --pp 1 --ep 4 --etp 1 --distributed-timeout-minutes 60
-      --prompt "According to the table, how much GPU memory does H100 NVL have?"
-    last_verified: 2026-07-23
+    command: null
+    last_verified: null
     expected_result: >
-      The next token matches: both BF16 Hugging Face and Megatron runs selected
-      token 10450 ("According"). Cosine similarity is 0.999844. Maximum and mean
-      absolute logit differences were 0.898438 and 0.130465. The input was
-      images/table.png from nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at
-      revision cb5a65ff10232128389d882d805fa609427544f1, with SHA-256
-      001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
+      No valid prompt next-token comparison is claimed. The 2026-07-23 TP2 run
+      processed 285 real input tokens, padded them to 286, and compared the
+      final padding position on both Hugging Face and Megatron. Its matching
+      token and 0.999844 cosine similarity therefore do not satisfy the manual
+      forward gate. Verification requires either an unpadded final position or
+      a helper that selects the final real token before reporting next-token
+      agreement and cosine similarity of at least 0.99.
 
   inference:
     status: verified
@@ -149,11 +142,10 @@ items:
       --tp 2 --pp 1 --ep 4 --etp 1
     last_verified: 2026-07-23
     expected_result: >
-      One BF16 deterministic greedy generation completed exactly 32 new-token
-      steps. The literal completion, with control-token boundaries rendered as
-      whitespace, was "Based on the table provided, the H100 NVL has **94GB**
-      of GPU memory.  � \nthought\n �". The input was images/table.png from
-      nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at revision
+      One BF16 deterministic greedy run generated exactly 32 tokens. The exact
+      JSON-escaped completion was "Based on the table provided,
+      the H100 NVL has **94GB** of GPU memory.  � \nthought\n �". The input was
+      images/table.png from nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at revision
       cb5a65ff10232128389d882d805fa609427544f1, with SHA-256
       001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
 
