@@ -96,6 +96,54 @@ def test_glm52_long_context_recipe_uses_200k_packed_cp() -> None:
     assert cfg.dataset.hf_dataset is None
 
 
+@pytest.mark.parametrize(
+    "recipe",
+    [
+        glm5.glm52_pretrain_416gpu_h100_bf16_config,
+        glm5.glm52_sft_functional_416gpu_h100_bf16_config,
+    ],
+)
+def test_glm52_default_recipes_use_complete_vpp2_layout(recipe) -> None:
+    cfg = recipe()
+
+    assert cfg.model.virtual_pipeline_model_parallel_size == 2
+    assert cfg.model.pipeline_model_parallel_layout == glm5._GLM52_VPP2_LAYOUT
+    stages = cfg.model.pipeline_model_parallel_layout.split("|")
+    assert len(stages) == cfg.model.pipeline_model_parallel_size * cfg.model.virtual_pipeline_model_parallel_size
+    assert [stage.count("t") for stage in stages] == [
+        1,
+        1,
+        0,
+        4,
+        4,
+        4,
+        4,
+        0,
+        4,
+        4,
+        4,
+        4,
+        0,
+        4,
+        4,
+        4,
+        4,
+        0,
+        4,
+        4,
+        4,
+        4,
+        0,
+        4,
+        4,
+        4,
+    ]
+    assert sum(stage.count("t") for stage in stages) == 78
+    assert cfg.model.pipeline_model_parallel_layout.count("E") == 1
+    assert cfg.model.pipeline_model_parallel_layout.count("m") == 1
+    assert cfg.model.pipeline_model_parallel_layout.count("L") == 1
+
+
 def test_glm52_pretrain_uses_reference_gradient_path() -> None:
     cfg = glm5.glm52_pretrain_416gpu_h100_bf16_config()
 

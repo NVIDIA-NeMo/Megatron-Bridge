@@ -40,7 +40,6 @@ items:
   hf_to_megatron_cpu:
     status: verified
     precision: bf16
-    bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model zai-org/GLM-5.2
@@ -73,7 +72,6 @@ items:
   megatron_to_hf_cpu:
     status: verified
     precision: bf16
-    bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model zai-org/GLM-5.2
@@ -110,7 +108,6 @@ items:
   manual_forward_pass:
     status: verified
     precision: bf16
-    bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=52
       examples/conversion/compare_hf_and_megatron/compare.py
@@ -149,7 +146,6 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
       enabled_features:
         moe_dispatcher: deepep
       command: >
@@ -289,7 +285,6 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 32
@@ -384,7 +379,6 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 8645cda8738cbb87b8b998ad2d09341eef2510c7  # pragma: allowlist secret
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 44 --gpus-per-node 8
