@@ -210,7 +210,7 @@ class TestMaybeLogAndSaveConfig:
 
     @patch("megatron.bridge.training.setup.get_rank_safe", return_value=0)
     def test_rank_zero_saves_and_logs(self, mock_get_rank, tmp_path):
-        filepath = tmp_path / "config.yaml"
+        filepath = tmp_path / "nested" / "config.yaml"
         cfg = Mock()
         cfg.logger.save_config_filepath = str(filepath)
         cfg.to_yaml = Mock()
@@ -218,6 +218,7 @@ class TestMaybeLogAndSaveConfig:
 
         maybe_log_and_save_config(cfg)
 
+        assert filepath.parent.is_dir()
         cfg.to_yaml.assert_called_once_with(str(filepath))
         cfg.log_non_default_values.assert_called_once()
 
