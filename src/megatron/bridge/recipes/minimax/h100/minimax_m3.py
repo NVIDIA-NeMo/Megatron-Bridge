@@ -37,9 +37,10 @@ def minimax_m3_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _pretrain_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
+    vlm_provider = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
         load_weights=False
     )
+    cfg.model = vlm_provider.to_text_provider()
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2
@@ -140,9 +141,10 @@ def minimax_m3_sft_128gpu_h100_bf16_config() -> ConfigContainer:
     """
     cfg = _sft_common()
 
-    cfg.model = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
+    vlm_provider = AutoBridge.from_hf_pretrained(MINIMAX_M3_HF_PATH, trust_remote_code=True).to_megatron_provider(
         load_weights=False
     )
+    cfg.model = vlm_provider.to_text_provider()
 
     # Parallelism
     cfg.model.tensor_model_parallel_size = 2
