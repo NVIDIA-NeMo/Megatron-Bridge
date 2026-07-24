@@ -946,6 +946,19 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         """
         if task.weight_dtype is not None:
             return converted_weights_dict
+        native_scorer_key = next(
+            (
+                key
+                for key in converted_weights_dict
+                if ".indexer.scorer.weights_proj." in key and key not in hf_state_dict
+            ),
+            None,
+        )
+        if native_scorer_key is not None:
+            legacy_key = native_scorer_key.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
+            if legacy_key in hf_state_dict:
+                converted_weights_dict = dict(converted_weights_dict)
+                converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,
