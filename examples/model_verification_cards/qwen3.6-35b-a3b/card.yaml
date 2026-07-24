@@ -17,8 +17,10 @@ summary: >
   and text conversations. CPU and GPU import/export, round-trip weight
   verification, forward-pass correlation, deterministic multimodal inference,
   bounded 100-step MedPix SFT and PEFT runs with reloadable checkpoints, and
-  post-SFT HF export/inference were run; other items retain their explicit
-  status below.
+  post-SFT HF export/inference were run. DataComp preparation produced 519,827
+  train and 5,173 validation samples, and real train/validation batches passed
+  the pinned Qwen3.6 processor and collator; the 1,000-step pretraining run
+  remains unverified below.
 verification_index:
   model_level:
     verified:
@@ -201,7 +203,31 @@ items:
       status: unverified
       precision: bf16
       enabled_features: {}
-      command: null
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        --recipe qwen35_vl_35b_a3b_pretrain_alignment_config --mode pretrain
+        --dataset qwen-vl-energon --step-func qwen3_vl_step
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+        --max_steps 1000
+        dataset.path=work/data/datacomp-1b-qwen-vl/energon
+        dataset.task_encoder.hf_processor_path=Qwen/Qwen3.6-35B-A3B
+        dataset.task_encoder.hf_processor_revision=995ad96eacd98c81ed38be0c5b274b04031597b0
+        dataset.do_validation=true dataset.do_test=false
+        dataset.pad_to_max_length=false dataset.pad_to_multiple_of=128
+        dataset.enable_in_batch_packing=false
+        dataset.defer_in_batch_packing_to_step=true
+        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044 model.eos_token_id=248044
+        model.moe_router_force_load_balancing=false
+        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
+        checkpoint.load=null
+        validation.eval_interval=500 validation.eval_iters=32
+        --save_dir
+        work/model-verification/qwen3.6-35b-a3b/datacomp-pretrain/checkpoints
+        --save_interval 500 logger.log_interval=1
+        logger.log_throughput=true logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/datacomp-pretrain/resolved-config.yaml
       last_verified: null
       metrics:
         initial_loss: null
@@ -209,13 +235,19 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        No pretraining run is claimed. MedPix is a supervised multimodal
-        question-answer dataset and the public launcher correctly treats it as
-        finetuning data, so it cannot be substituted mechanically into the
-        pretrain loop. A future pretrain verification requires a public recipe
-        path that instantiates the exact Qwen3.6 checkpoint, a suitable pinned
-        pretraining corpus, finite loss movement, all four metrics, and a
-        reloadable full-state checkpoint.
+        No pretraining run is claimed. The command is the executable candidate
+        for 1,000 image-caption alignment steps at GBS512 through the maintained
+        train.sh launcher. It uses a pinned DataComp-1B metadata slice converted
+        to Qwen ChatML/Energon samples, the architecture-shared Qwen3.5/Qwen3.6
+        35B recipe, the imported Qwen3.6 checkpoint, and an immutable Qwen3.6
+        processor revision; it does not relabel the causal caption adaptation
+        as DataComp's canonical CLIP objective. Data preparation itself
+        completed on 2026-07-24 with 519,827 train and 5,173 validation
+        samples across 53 indexed tars; real train and validation batches
+        produced nonempty visual inputs and assistant-only loss masks through
+        the pinned Qwen3.6 processor. Verification still requires a completed
+        run with finite loss movement, all four metrics, and a reloadable
+        full-state checkpoint.
 
   sft:
     H100:
@@ -403,14 +435,14 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: null
       resume_comparison:
         reference_item: pretrain
-        sentinel_steps: [51, 100]
+        sentinel_steps: [501, 1000]
         loss_relative_tolerance: 1.0e-2
         loss_absolute_tolerance: 1.0e-6
         sentinels_match: null
       expected_result: >
         No resume result is claimed because the required uninterrupted
         pretraining reference is also unverified. A future run must restore
-        full optimizer, scheduler, RNG, and data-order state from step 50 into
-        a distinct output root, resume at step 51, finish at step 100, record
-        all four metrics, and match steps 51 and 100 against the uninterrupted
-        reference within the declared tolerances.
+        full optimizer, scheduler, RNG, and data-order state from step 500 into
+        a distinct output root, resume at step 501, finish at step 1,000,
+        record all four metrics, and match steps 501 and 1,000 against the
+        uninterrupted reference within the declared tolerances.

@@ -21,9 +21,11 @@ from typing import Any, Callable, List, Literal, Optional, Tuple, TypeAlias
 from megatron.bridge.data.builders import (
     ChatSFTPreprocessingConfig,
     DirectHFSFTDatasetConfig,
+    EnergonDatasetConfig,
     GPTSFTDatasetConfig,
     HFDatasetSourceConfig,
     PromptCompletionSFTPreprocessingConfig,
+    QwenVLEnergonTaskEncoderConfig,
     SFTPreprocessingConfig,
 )
 from megatron.bridge.data.loaders import get_blend_and_blend_per_split
@@ -336,7 +338,9 @@ def get_blend_fields_from_data_paths(
     return blend, blend_per_split, split
 
 
-PublicDatasetConfig: TypeAlias = GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig
+PublicDatasetConfig: TypeAlias = (
+    GPTDatasetConfig | GPTSFTDatasetConfig | DirectHFSFTDatasetConfig | EnergonDatasetConfig
+)
 DatasetPreset: TypeAlias = Callable[[ConfigContainer], PublicDatasetConfig]
 
 
@@ -378,6 +382,48 @@ def _megatron_indexed_dataset_config(config: ConfigContainer) -> GPTDatasetConfi
         data_sharding=True,
         dataloader_type="single",
         skip_getting_attention_mask_from_dataset=True,
+    )
+
+
+def _qwen_vl_energon_dataset_config(config: ConfigContainer) -> EnergonDatasetConfig:
+    """Build an override-ready Qwen-VL Energon pretraining config."""
+    source_dataset = getattr(config, "dataset", None)
+    hf_processor_path = getattr(source_dataset, "hf_processor_path", None)
+    if not isinstance(hf_processor_path, str) or not hf_processor_path.strip():
+        raise ValueError("qwen-vl-energon requires a Qwen-VL recipe with hf_processor_path.")
+
+    train_config = getattr(config, "train", None)
+    micro_batch_size = getattr(train_config, "micro_batch_size", None)
+    if not isinstance(micro_batch_size, int) or micro_batch_size <= 0:
+        raise ValueError("qwen-vl-energon requires a positive recipe train.micro_batch_size.")
+
+    num_workers = getattr(source_dataset, "num_workers", None)
+    if not isinstance(num_workers, int) or num_workers < 0:
+        raise ValueError("qwen-vl-energon requires a non-negative recipe dataset.num_workers.")
+
+    model_config = getattr(config, "model", None)
+    vision_geometry = {
+        field_name: getattr(model_config, field_name, None)
+        for field_name in ("temporal_patch_size", "spatial_merge_size", "patch_size")
+    }
+    for field_name, value in vision_geometry.items():
+        if not isinstance(value, int) or value <= 0:
+            raise ValueError(f"qwen-vl-energon requires a positive recipe model.{field_name}.")
+
+    return EnergonDatasetConfig(
+        path=None,
+        seq_length=_resolve_seq_length(config),
+        micro_batch_size=micro_batch_size,
+        num_workers=num_workers,
+        task_encoder=QwenVLEnergonTaskEncoderConfig(
+            hf_processor_path=hf_processor_path,
+            temporal_patch_size=vision_geometry["temporal_patch_size"],
+            spatial_merge_size=vision_geometry["spatial_merge_size"],
+            patch_size=vision_geometry["patch_size"],
+        ),
+        do_validation=True,
+        do_test=False,
+        defer_in_batch_packing_to_step=True,
     )
 
 
@@ -480,6 +526,7 @@ def _hf_vlm_dataset_config(
 DATASET_PRESETS: dict[str, DatasetPreset] = {
     "mock": _mock_dataset_config,
     "megatron-indexed": _megatron_indexed_dataset_config,
+    "qwen-vl-energon": _qwen_vl_energon_dataset_config,
     "squad": _squad_dataset_config,
     "tulu3": _tulu3_dataset_config,
     "openmathinstruct2": _openmathinstruct2_dataset_config,
@@ -540,4 +587,4 @@ def build_dataset_config(config: ConfigContainer, dataset_name: str) -> PublicDa
 
 def dataset_train_mode(dataset_config: PublicDatasetConfig) -> Literal["pretrain", "finetune"]:
     """Return the training loop required by a built dataset config."""
-    return "pretrain" if isinstance(dataset_config, GPTDatasetConfig) else "finetune"
+    return "pretrain" if isinstance(dataset_config, (GPTDatasetConfig, EnergonDatasetConfig)) else "finetune"

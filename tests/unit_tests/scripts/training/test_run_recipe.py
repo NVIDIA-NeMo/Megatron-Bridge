@@ -46,6 +46,7 @@ def _load_module():
         "load_forward_step",
         "load_recipe",
         "run_config",
+        "sync_energon_micro_batch_size",
         "sync_finetuning_cp_invariants",
         "sync_model_pipeline_layout",
         "sync_offline_packing_alignment",
@@ -56,6 +57,7 @@ def _load_module():
     recipe_runner.apply_determinism.side_effect = lambda config, **_: config
     recipe_runner.apply_runtime_environment.side_effect = lambda config: config
     recipe_runner.bootstrap_recipe_environment.side_effect = lambda config, **_: config
+    recipe_runner.sync_energon_micro_batch_size.side_effect = lambda config, **_: config
     recipe_runner.sync_finetuning_cp_invariants.side_effect = lambda config, **_: config
     recipe_runner.sync_model_pipeline_layout.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
@@ -63,7 +65,7 @@ def _load_module():
     recipe_runner.load_forward_step.return_value = object()
 
     dataset_utils = types.ModuleType("megatron.bridge.recipes.utils.dataset_utils")
-    pretraining_datasets = {"mock", "megatron-indexed"}
+    pretraining_datasets = {"mock", "megatron-indexed", "qwen-vl-energon"}
     dataset_names = {
         *pretraining_datasets,
         "squad",
@@ -735,6 +737,72 @@ def test_local_dataset_names_use_presets_then_apply_config_overrides(public_name
 
     handles.build_dataset_config.assert_called_once_with(config, public_name)
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, options)
+
+
+def test_qwen_vl_energon_uses_pretrain_mode_and_qwen_step():
+    module, handles = _load_module()
+    config = SimpleNamespace()
+    handles.recipe_runner.load_recipe.return_value = config
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_alignment_config",
+            "--mode",
+            "pretrain",
+            "--dataset",
+            "qwen-vl-energon",
+            "--step-func",
+            "qwen3_vl_step",
+            "dataset.path=/data/datacomp-energon",
+        ]
+    )
+
+    handles.build_dataset_config.assert_called_once_with(config, "qwen-vl-energon")
+    handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
+    assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
+
+
+def test_qwen_vl_energon_syncs_micro_batch_size_after_cli_overrides():
+    module, handles = _load_module()
+    config = SimpleNamespace(train=SimpleNamespace(micro_batch_size=2))
+    dataset = SimpleNamespace(dataset_name="qwen-vl-energon", micro_batch_size=2)
+    handles.recipe_runner.load_recipe.return_value = config
+    handles.build_dataset_config.return_value = dataset
+    call_order = []
+
+    def apply_overrides(resolved_config, overrides):
+        call_order.append("overrides")
+        assert overrides == ["train.micro_batch_size=1"]
+        resolved_config.train.micro_batch_size = 1
+        return resolved_config
+
+    def sync_micro_batch_size(resolved_config, *, cli_overrides):
+        call_order.append("sync")
+        assert cli_overrides == ["train.micro_batch_size=1"]
+        resolved_config.dataset.micro_batch_size = resolved_config.train.micro_batch_size
+        return resolved_config
+
+    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
+    handles.recipe_runner.sync_energon_micro_batch_size.side_effect = sync_micro_batch_size
+
+    module.main(
+        [
+            "--recipe",
+            "qwen35_vl_35b_a3b_pretrain_alignment_config",
+            "--mode",
+            "pretrain",
+            "--dataset",
+            "qwen-vl-energon",
+            "--micro_batch_size",
+            "1",
+        ]
+    )
+
+    assert call_order == ["overrides", "sync"]
+    resolved = handles.recipe_runner.run_config.call_args.kwargs["config"]
+    assert resolved.train.micro_batch_size == 1
+    assert resolved.dataset.micro_batch_size == 1
 
 
 @pytest.mark.parametrize(

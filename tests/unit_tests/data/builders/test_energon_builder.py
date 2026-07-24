@@ -85,6 +85,7 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
         in_batch_packing_pad_to_multiple_of=8,
         task_encoder=QwenVLEnergonTaskEncoderConfig(
             hf_processor_path="Qwen/model",
+            hf_processor_revision="0123456789abcdef",
             min_pixels=123,
             max_pixels=456,
             max_num_images=4,
@@ -97,20 +98,32 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
     encoder = object()
     encoder_cls = MagicMock(return_value=encoder)
     safe_repo = MagicMock(return_value=False)
+    load_tokenizer = MagicMock(return_value=tokenizer)
+    load_processor = MagicMock(return_value=processor)
     monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", safe_repo)
     monkeypatch.setattr(
         "megatron.bridge.data.builders.energon.AutoTokenizer.from_pretrained",
-        lambda *_, **__: tokenizer,
+        load_tokenizer,
     )
     monkeypatch.setattr(
         "megatron.bridge.data.builders.energon.Qwen3VLProcessor.from_pretrained",
-        lambda *_, **__: processor,
+        load_processor,
     )
     monkeypatch.setattr("megatron.bridge.models.qwen_vl.data.energon.QwenVLTaskEncoder", encoder_cls)
 
     assert build_energon_task_encoder(config) is encoder
 
     safe_repo.assert_called_once_with(trust_remote_code=True, hf_path="Qwen/model")
+    load_tokenizer.assert_called_once_with(
+        "Qwen/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
+    load_processor.assert_called_once_with(
+        "Qwen/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
     encoder_cls.assert_called_once_with(
         tokenizer=tokenizer,
         image_processor=processor,
@@ -128,6 +141,18 @@ def test_qwen_factory_preserves_limits_and_deferred_packing(monkeypatch: pytest.
         enable_in_batch_packing=False,
         in_batch_packing_pad_to_multiple_of=8,
     )
+
+
+def test_qwen_config_rejects_empty_processor_revision():
+    config = _qwen_config(
+        task_encoder=QwenVLEnergonTaskEncoderConfig(
+            hf_processor_path="Qwen/model",
+            hf_processor_revision=" ",
+        )
+    )
+
+    with pytest.raises(ValueError, match="hf_processor_revision"):
+        config.validate()
 
 
 def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.MonkeyPatch):
