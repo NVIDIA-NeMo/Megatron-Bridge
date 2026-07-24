@@ -25,6 +25,16 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[4]
 WRAPPER_CASES = [
     (
+        "examples/models/exaone/exaone_moe/slurm_conversion.sh",
+        {
+            "nodes": "2",
+            "time": "04:00:00",
+            "hf_model": "LGAI-EXAONE/K-EXAONE-236B-A23B",
+            "config": ("1", "1", "16", "1"),
+            "trust_remote_code": True,
+        },
+    ),
+    (
         "examples/models/glm/glm5/slurm_conversion.sh",
         {
             "nodes": "8",

@@ -11,17 +11,24 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+# ruff: noqa: F401
+"""Compatibility aliases for EXAONE 4.0 recipe names."""
 
-from megatron.bridge.models.exaone.exaone4 import Exaone4Bridge
-from megatron.bridge.models.exaone.exaone45 import Exaone45Bridge, Exaone45Model, Exaone45ModelProvider
-from megatron.bridge.models.exaone.exaone_moe import ExaoneMoeBridge, ExaoneMoeModelProvider
+from __future__ import annotations
+
+from megatron.bridge.recipes.exaone.h100.exaone4 import (
+    exaone4_1p2b_peft_1gpu_h100_bf16_config as exaone4_1p2b_peft_config,
+)
+from megatron.bridge.recipes.exaone.h100.exaone4 import (
+    exaone4_1p2b_pretrain_1gpu_h100_bf16_config as exaone4_1p2b_pretrain_config,
+)
+from megatron.bridge.recipes.exaone.h100.exaone4 import (
+    exaone4_1p2b_sft_1gpu_h100_bf16_config as exaone4_1p2b_sft_config,
+)
 
 
 __all__ = [
-    "Exaone4Bridge",
-    "Exaone45Bridge",
-    "Exaone45Model",
-    "Exaone45ModelProvider",
-    "ExaoneMoeBridge",
-    "ExaoneMoeModelProvider",
+    "exaone4_1p2b_peft_config",
+    "exaone4_1p2b_pretrain_config",
+    "exaone4_1p2b_sft_config",
 ]

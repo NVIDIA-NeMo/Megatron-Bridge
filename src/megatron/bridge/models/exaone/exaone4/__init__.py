@@ -1,6 +1,4 @@
-# CI_TIMEOUT=15
-#!/bin/bash
-# Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -14,12 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-set -xeuo pipefail
+from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
 
-REPO_ROOT=$(cd "$(dirname "$0")/../../../../.." && pwd)
-export CUDA_VISIBLE_DEVICES="0,1"
 
-uv run coverage run --data-file="${REPO_ROOT}/.coverage" --source="${REPO_ROOT}" --parallel-mode -m pytest \
-  -o log_cli=true -o log_cli_level=INFO -v -s -x -m "not pleasefixme" --tb=short -rA \
-  tests/functional_tests/test_groups/models/exaone
-coverage combine -q
+__all__ = ["Exaone4Bridge"]

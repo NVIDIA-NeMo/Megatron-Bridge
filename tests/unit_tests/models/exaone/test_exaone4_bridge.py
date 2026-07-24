@@ -18,8 +18,8 @@ from unittest.mock import Mock
 import torch
 import torch.nn.functional as F
 
-from megatron.bridge.models.exaone.exaone4_bridge import Exaone4Bridge
-from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
+from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
