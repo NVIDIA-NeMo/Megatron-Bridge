@@ -160,3 +160,27 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
     return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 16× H100, BF16."""
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 16× H100, FP8 current-scaling."""
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
+    return cfg

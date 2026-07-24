@@ -13,9 +13,12 @@
 # limitations under the License.
 
 
+from typing import cast
+
 import torch
 from megatron.core.activations import squared_relu
 
+from megatron.bridge import AutoBridge
 from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.peft.lora import LoRA
@@ -24,6 +27,34 @@ from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+
+
+_NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+_NEMOTRON_3_NANO_MTP_MODEL_ID = "placeholder"
+
+
+def _nemotron_3_nano_finetune_model(model_id: str) -> HybridModelProvider:
+    """Build the finetuning provider from the selected Hugging Face model config."""
+    model = cast(
+        HybridModelProvider,
+        AutoBridge.from_hf_pretrained(model_id).to_megatron_provider(load_weights=False),
+    )
+
+    model.seq_length = 2048
+    model.apply_rope_fusion = False
+    model.attention_backend = "fused"
+    model.init_method_std = 0.0173
+    model.use_fused_weighted_squared_relu = True
+    model.calculate_per_token_loss = True
+    model.tensor_model_parallel_size = 1
+    model.pipeline_model_parallel_size = 1
+    model.pipeline_dtype = torch.bfloat16
+    model.virtual_pipeline_model_parallel_size = None
+    model.context_parallel_size = 1
+    model.sequence_parallel = False
+    model.expert_tensor_parallel_size = 1
+    model.expert_model_parallel_size = 8
+    return model
 
 
 def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
@@ -89,9 +120,8 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
         expert_tensor_parallel_size=1,
         expert_model_parallel_size=8,
     )
-
     # Tokenizer (--tokenizer-model)
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MODEL_ID
 
     # Dataset Configuration
     cfg.dataset.seq_length = 8192
@@ -197,78 +227,37 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_nano_mtp_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a pre-training config for Nemotron 3 Nano with MTP."""
+    cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MTP_MODEL_ID
+    return cfg
+
+
 # =============================================================================
 # SFT Config
 # =============================================================================
 
 
-def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a full SFT config for Nemotron 3 Nano (30B-A3B MoE).
+def _nemotron_3_nano_sft_8gpu_h100_bf16_config(model_id: str) -> ConfigContainer:
+    """Build a full SFT config for the selected Nemotron 3 Nano model.
 
     Default parallelism: TP=1, PP=1, EP=8, SP=False
+
+    Args:
+        model_id: Hugging Face model identifier used to derive the model architecture.
 
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron 3 Nano SFT.
     """
     cfg = _sft_common()
 
-    # Model config - Nemotron 3 Nano
-    cfg.model = HybridModelProvider(
-        # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
-        num_layers=52,
-        hidden_size=2688,
-        mamba_num_heads=64,
-        kv_channels=128,
-        mamba_state_dim=128,
-        ffn_hidden_size=1856,
-        num_attention_heads=32,
-        mamba_head_dim=64,
-        seq_length=2048,
-        num_query_groups=2,
-        # MoE
-        num_moe_experts=128,
-        moe_ffn_hidden_size=1856,
-        moe_shared_expert_intermediate_size=3712,
-        moe_router_topk=6,
-        moe_router_topk_scaling_factor=2.5,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        # NemotronH base
-        mamba_num_groups=8,
-        make_vocab_size_divisible_by=128,
-        activation_func=squared_relu,
-        masked_softmax_fusion=True,
-        apply_query_key_layer_scaling=False,
-        persist_layer_norm=True,
-        attention_softmax_in_fp32=False,
-        first_last_layers_bf16=True,
-        is_hybrid_model=True,
-        moe_aux_loss_coeff=0.0001,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        moe_router_load_balancing_type="seq_aux_loss",
-        moe_router_dtype="fp32",
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
-        # Extra config
-        apply_rope_fusion=False,
-        attention_backend="fused",
-        init_method_std=0.0173,
-        use_fused_weighted_squared_relu=True,
-        calculate_per_token_loss=True,
-        # Parallelism
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
-    )
+    cfg.model = _nemotron_3_nano_finetune_model(model_id)
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -346,7 +335,7 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    cfg.tokenizer.tokenizer_model = model_id
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -385,19 +374,31 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a full SFT config for Nemotron 3 Nano."""
+    return _nemotron_3_nano_sft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MODEL_ID)
+
+
+def nemotron_3_nano_mtp_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a full SFT config for Nemotron 3 Nano with MTP."""
+    return _nemotron_3_nano_sft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MTP_MODEL_ID)
+
+
 # =============================================================================
 # PEFT Config
 # =============================================================================
 
 
-def nemotron_3_nano_peft_8gpu_h100_bf16_config(
+def _nemotron_3_nano_peft_8gpu_h100_bf16_config(
+    model_id: str,
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
-    """Return a PEFT config for Nemotron 3 Nano (30B-A3B MoE).
+    """Build a PEFT config for the selected Nemotron 3 Nano model.
 
     Default parallelism: TP=1, PP=1, EP=8, SP=False
 
     Args:
+        model_id: Hugging Face model identifier used to derive the model architecture.
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
 
     Returns:
@@ -405,63 +406,7 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     """
     cfg = _peft_common()
 
-    # Model config - PEFT uses same parallelism as SFT
-    cfg.model = HybridModelProvider(
-        # Architecture (Nemotron 3 Nano 30B-A3B)
-        hybrid_layer_pattern="MEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEM*EMEMEMEM*EMEMEMEME",
-        num_layers=52,
-        hidden_size=2688,
-        mamba_num_heads=64,
-        kv_channels=128,
-        mamba_state_dim=128,
-        ffn_hidden_size=1856,
-        num_attention_heads=32,
-        mamba_head_dim=64,
-        seq_length=2048,
-        num_query_groups=2,
-        # MoE
-        num_moe_experts=128,
-        moe_ffn_hidden_size=1856,
-        moe_shared_expert_intermediate_size=3712,
-        moe_router_topk=6,
-        moe_router_topk_scaling_factor=2.5,
-        moe_router_num_groups=1,
-        moe_router_group_topk=1,
-        # NemotronH base
-        mamba_num_groups=8,
-        make_vocab_size_divisible_by=128,
-        activation_func=squared_relu,
-        masked_softmax_fusion=True,
-        apply_query_key_layer_scaling=False,
-        persist_layer_norm=True,
-        attention_softmax_in_fp32=False,
-        first_last_layers_bf16=True,
-        is_hybrid_model=True,
-        moe_aux_loss_coeff=0.0001,
-        moe_router_score_function="sigmoid",
-        moe_router_enable_expert_bias=True,
-        moe_router_load_balancing_type="seq_aux_loss",
-        moe_router_dtype="fp32",
-        moe_grouped_gemm=True,
-        moe_token_dispatcher_type="alltoall",
-        moe_permute_fusion=True,
-        moe_shared_expert_overlap=True,
-        # Extra config
-        apply_rope_fusion=False,
-        attention_backend="fused",
-        init_method_std=0.0173,
-        use_fused_weighted_squared_relu=True,
-        calculate_per_token_loss=True,
-        # Parallelism
-        tensor_model_parallel_size=1,
-        pipeline_model_parallel_size=1,
-        pipeline_dtype=torch.bfloat16,
-        virtual_pipeline_model_parallel_size=None,
-        context_parallel_size=1,
-        sequence_parallel=False,
-        expert_tensor_parallel_size=1,
-        expert_model_parallel_size=8,
-    )
+    cfg.model = _nemotron_3_nano_finetune_model(model_id)
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -556,7 +501,7 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+    cfg.tokenizer.tokenizer_model = model_id
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -595,7 +540,20 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(
     return cfg
 
 
+def nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Nemotron 3 Nano."""
+    return _nemotron_3_nano_peft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MODEL_ID, peft_scheme)
+
+
+def nemotron_3_nano_mtp_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+    """Return a PEFT config for Nemotron 3 Nano with MTP."""
+    return _nemotron_3_nano_peft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MTP_MODEL_ID, peft_scheme)
+
+
 __all__ = [
+    "nemotron_3_nano_mtp_peft_8gpu_h100_bf16_config",
+    "nemotron_3_nano_mtp_pretrain_8gpu_h100_bf16_config",
+    "nemotron_3_nano_mtp_sft_8gpu_h100_bf16_config",
     "nemotron_3_nano_peft_8gpu_h100_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_h100_bf16_config",
     "nemotron_3_nano_sft_8gpu_h100_bf16_config",

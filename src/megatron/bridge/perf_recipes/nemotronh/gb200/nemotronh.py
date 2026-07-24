@@ -356,3 +356,39 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         "NVTE_USE_FAST_MATH": 1,
     }
     return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 8× GB200, BF16."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 8× GB200, MXFP8."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
+    return cfg
+
+
+def nemotron_3_nano_mtp_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3 Nano with MTP pretrain: 8× GB200, NVFP4."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "placeholder"
+    return cfg

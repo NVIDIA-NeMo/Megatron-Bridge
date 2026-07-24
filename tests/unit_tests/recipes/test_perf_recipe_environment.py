@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tests for explicit flat performance recipe environment settings."""
+"""Tests for flat performance recipe environment settings."""
 
 import ast
 import re
@@ -30,7 +30,7 @@ _CANONICAL_RECIPE_NAME = re.compile(
 )
 _RECIPE_ROOT = Path(__file__).resolve().parents[3] / "src" / "megatron" / "bridge" / "perf_recipes"
 # Deliberately lock the discovered public inventory; update this for intentional recipe additions or removals.
-_EXPECTED_FLAT_RECIPE_COUNT = 410
+_EXPECTED_FLAT_RECIPE_COUNT = 415
 _EXPECTED_DEEPSEEK_RECIPE_COUNT = 39
 _EXPECTED_DEEPSEEK_HYBRID_EP_RECIPE_COUNT = 37
 _INLINE_CORE_ENV_NAMES = {
@@ -61,8 +61,13 @@ def _function(path: Path, function_name: str) -> ast.FunctionDef:
     return next(node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name == function_name)
 
 
-def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int | float | bool]:
-    """Read the literal env mapping written in a flat recipe builder."""
+def _recipe_environment(
+    path: Path,
+    function_name: str,
+    inherited_from: frozenset[str] = frozenset(),
+) -> dict[str, str | int | float | bool]:
+    """Read a recipe's literal environment or follow its direct base recipe."""
+    assert function_name not in inherited_from
     function = _function(path, function_name)
     assignments = [
         node
@@ -74,7 +79,25 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
         and node.targets[0].value.id == "cfg"
         and node.targets[0].attr == "env_vars"
     ]
-    assert len(assignments) == 1
+    assert len(assignments) <= 1
+    if not assignments:
+        cfg_assignments = [
+            node
+            for node in function.body
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "cfg"
+            and isinstance(node.value, ast.Call)
+            and isinstance(node.value.func, ast.Name)
+        ]
+        assert len(cfg_assignments) == 1
+        return _recipe_environment(
+            path,
+            cfg_assignments[0].value.func.id,
+            inherited_from | {function_name},
+        )
+
     mapping = assignments[0].value
     assert isinstance(mapping, ast.Dict)
 
@@ -90,12 +113,12 @@ def _explicit_environment(path: Path, function_name: str) -> dict[str, str | int
     return result
 
 
-def _explicit_environments():
+def _recipe_environments():
     for path in _RECIPE_ROOT.glob("*/*/*.py"):
         tree = ast.parse(path.read_text())
         for node in tree.body:
             if isinstance(node, ast.FunctionDef) and _CANONICAL_RECIPE_NAME.fullmatch(node.name) is not None:
-                yield path, node.name, _explicit_environment(path, node.name)
+                yield path, node.name, _recipe_environment(path, node.name)
 
 
 def test_common_environment_defaults_are_small_and_universal():
@@ -127,7 +150,7 @@ def test_benchmark_common_preserves_legacy_manual_gc_defaults():
     assert cfg.train.manual_gc_interval == 100
 
 
-def test_every_flat_recipe_builder_declares_its_environment_inline():
+def test_every_flat_recipe_builder_defines_or_inherits_its_environment():
     builders = []
     invalid = []
 
@@ -138,7 +161,7 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
                 continue
             builders.append(f"{path.relative_to(_RECIPE_ROOT)}:{node.name}")
             try:
-                _explicit_environment(path, node.name)
+                _recipe_environment(path, node.name)
             except AssertionError:
                 invalid.append(builders[-1])
             assert not any(
@@ -153,8 +176,8 @@ def test_every_flat_recipe_builder_declares_its_environment_inline():
 
 
 def test_explicit_environment_invariants_across_all_flat_recipes():
-    """Keep duplicated inline settings complete without deriving them at runtime."""
-    recipes = list(_explicit_environments())
+    """Keep effective recipe environment settings complete."""
+    recipes = list(_recipe_environments())
     deepseek_recipe_count = 0
     deepseek_hybrid_ep_count = 0
 
@@ -234,6 +257,6 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
     ],
 )
 def test_representative_recipe_specific_environment_is_visible(relative_path, function_name, expected):
-    environment = _explicit_environment(_RECIPE_ROOT / relative_path, function_name)
+    environment = _recipe_environment(_RECIPE_ROOT / relative_path, function_name)
 
     assert environment.items() >= expected.items()

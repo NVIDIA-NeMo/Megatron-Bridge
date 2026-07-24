@@ -62,6 +62,7 @@ def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep AutoBridge-backed recipe construction deterministic and offline."""
     for module_name in (
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
+        "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
