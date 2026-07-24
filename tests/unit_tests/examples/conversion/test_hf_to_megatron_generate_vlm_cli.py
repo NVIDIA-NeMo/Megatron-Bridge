@@ -63,6 +63,20 @@ def test_hf_revision_is_optional():
     assert args.hf_revision is None
 
 
+def test_main_initializes_distributed_before_model_parallel():
+    executable_statements = [
+        statement
+        for statement in _main_function().body
+        if not (
+            isinstance(statement, ast.Expr)
+            and isinstance(statement.value, ast.Constant)
+            and isinstance(statement.value.value, str)
+        )
+    ]
+
+    assert ast.unparse(executable_statements[0]) == "maybe_initialize_distributed()"
+
+
 def test_hf_revision_is_exposed_by_the_cli():
     symbols = _load_cli_symbols()
     revision = "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
