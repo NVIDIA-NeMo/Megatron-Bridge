@@ -12,12 +12,17 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GB200 pretraining recipe for Nemotron 3 Nano."""
+"""GB200 library recipes for Nemotron 3 Nano."""
 
 import torch
 
 from megatron.bridge import AutoBridge
+from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.nemotronh._nemotron_3_nano import (
+    _nemotron_3_nano_peft_reference_config,
+    _nemotron_3_nano_sft_reference_config,
+)
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -136,6 +141,56 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
+def _apply_gb200_finetune_execution_config(cfg: ConfigContainer) -> None:
+    """Apply safe GB200 packed-finetuning execution settings."""
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.expert_model_parallel_size = 8
+
+    # DeepEP is unsupported on compute capability 10, while packed HybridEP
+    # lacks matching workload evidence. Use the correctness-first fallback.
+    cfg.model.moe_token_dispatcher_type = "alltoall"
+    cfg.model.moe_flex_dispatcher_backend = None
+    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_router_force_load_balancing = False
+
+
+def nemotron_3_nano_sft_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Return the Nemotron 3 Nano SFT config for eight GB200 GPUs.
+
+    Packed SFT remains eager because CUDA graphs require static input shapes.
+    Optimizer, schedule, data, and routing semantics remain unchanged.
+
+    Returns:
+        GB200 BF16 SFT configuration.
+    """
+    cfg = _nemotron_3_nano_sft_reference_config()
+    _apply_gb200_finetune_execution_config(cfg)
+    return cfg
+
+
+def nemotron_3_nano_peft_8gpu_gb200_bf16_config(
+    peft_scheme: str | PEFT = "lora",
+) -> ConfigContainer:
+    """Return the Nemotron 3 Nano PEFT config for eight GB200 GPUs.
+
+    Args:
+        peft_scheme: PEFT scheme, or a custom PEFT instance.
+
+    Returns:
+        GB200 BF16 PEFT configuration.
+    """
+    cfg = _nemotron_3_nano_peft_reference_config(peft_scheme=peft_scheme)
+    _apply_gb200_finetune_execution_config(cfg)
+    return cfg
+
+
 # NeMo-CI appends ``_pretrain_config`` to MODEL_RECIPE_NAME. This explicit
 # alias lets the GB200 release case select the hardware recipe without changing
 # the legacy ``nemotron_3_nano_pretrain_config`` default.
@@ -144,5 +199,7 @@ nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16
 
 __all__ = [
     "nemotron_3_nano_gb200_pretrain_config",
+    "nemotron_3_nano_peft_8gpu_gb200_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
+    "nemotron_3_nano_sft_8gpu_gb200_bf16_config",
 ]
