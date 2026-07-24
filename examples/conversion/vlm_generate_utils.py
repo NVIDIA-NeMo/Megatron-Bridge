@@ -132,6 +132,16 @@ def to_cuda(x):
     return x.cuda()
 
 
+def _apply_chat_template(processor, messages):
+    """Use the tokenizer template when a multimodal processor does not expose one."""
+    template_source = processor
+    if getattr(processor, "chat_template", None) is None:
+        tokenizer = getattr(processor, "tokenizer", None)
+        if tokenizer is not None and getattr(tokenizer, "chat_template", None) is not None:
+            template_source = tokenizer
+    return template_source.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
 def process_multi_image_inputs(processor, image_paths: list[str], prompt: str):
     """Process N ordered images + prompt into model inputs (Qwen-family).
 
@@ -148,7 +158,7 @@ def process_multi_image_inputs(processor, image_paths: list[str], prompt: str):
         }
     ]
     image_inputs, video_inputs = process_vision_info(messages)
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = _apply_chat_template(processor, messages)
     inputs = processor(text=[text], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
     return inputs.input_ids, inputs.get("pixel_values"), inputs.get("image_grid_thw")
 
@@ -174,7 +184,7 @@ def process_video_inputs(processor, video_path: str, prompt: str, *, fps: float 
             "content": [{"type": "video"}, {"type": "text", "text": prompt}],
         }
     ]
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = _apply_chat_template(processor, messages)
     text_inputs = processor(text=[text], padding=True, return_tensors="pt")
     video_proc = processor.video_processor(videos=[frames], return_tensors="pt", do_sample_frames=False)
     # processor(text=...) without videos produces a single <|video_pad|> placeholder.
@@ -250,7 +260,7 @@ def _process_default_inputs(processor, image_path, prompt):
         }
     ]
     image_inputs, video_inputs = process_vision_info(messages)
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = _apply_chat_template(processor, messages)
     inputs = processor(
         text=[text],
         images=image_inputs,

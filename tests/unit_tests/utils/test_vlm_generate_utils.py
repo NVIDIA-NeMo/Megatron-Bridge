@@ -132,6 +132,39 @@ class TestProcessMultiImageInputs:
 class TestProcessImageInputs:
     """Tests for ``process_image_inputs``."""
 
+    def test_default_path_uses_tokenizer_chat_template_fallback(self):
+        """Processors without a template should use their tokenizer's template."""
+        proc = mock.MagicMock()
+        proc.chat_template = None
+        proc.tokenizer.chat_template = "TOKENIZER_TEMPLATE"
+        proc.tokenizer.apply_chat_template.return_value = "TEMPLATED"
+        proc_call_result = mock.MagicMock()
+        proc_call_result.input_ids = torch.tensor([[1, 2, 3]])
+        proc_call_result.get.side_effect = lambda key: {
+            "pixel_values": "PIXELS",
+            "image_grid_thw": "GRID",
+        }.get(key)
+        proc.return_value = proc_call_result
+        messages_inputs = ("IMAGE_INPUTS", "VIDEO_INPUTS")
+
+        with (
+            mock.patch.object(vlm_generate_utils, "_HAS_QWEN_VL_UTILS", True),
+            mock.patch.object(vlm_generate_utils, "process_vision_info", return_value=messages_inputs, create=True),
+        ):
+            result = vlm_generate_utils.process_image_inputs(proc, "/image.png", "describe")
+
+        proc.apply_chat_template.assert_not_called()
+        proc.tokenizer.apply_chat_template.assert_called_once()
+        proc.assert_called_once_with(
+            text=["TEMPLATED"],
+            images="IMAGE_INPUTS",
+            videos="VIDEO_INPUTS",
+            padding=True,
+            return_tensors="pt",
+        )
+        assert result[1] == "PIXELS"
+        assert result[2] == "GRID"
+
     def test_kimi_image_path_returns_full_six_field_contract(self):
         """Kimi image preprocessing must match the VLM generation unpack contract."""
         inputs = mock.MagicMock()
