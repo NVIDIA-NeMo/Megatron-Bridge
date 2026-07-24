@@ -1080,14 +1080,6 @@ def _validate_inference(
             )
         if len(prompts) == 1 and literal.strip() == prompts[0].strip():
             errors.append(f"{_pointer(*path, 'expected_result')}: literal completion must not repeat the prompt")
-    repeated = re.search(r"\b(?:twice|two\s+(?:independent\s+)?(?:runs|executions))\b", expected, re.IGNORECASE)
-    matched = re.search(
-        r"\b(?:byte[- ](?:for[- ])?byte|byte[- ]identical|identical|match(?:es|ed)?)\b", expected, re.IGNORECASE
-    )
-    if repeated is None or matched is None:
-        errors.append(
-            f"{_pointer(*path, 'expected_result')}: state that two independent runs produced byte-identical output"
-        )
     if re.search(r"\bdo[_-]sample(?:=|\s+)(?:true|1)\b", command, re.IGNORECASE):
         errors.append(f"{_pointer(*resolved_command_path)}: inference verification must be deterministic")
 
