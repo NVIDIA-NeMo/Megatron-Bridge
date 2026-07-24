@@ -32,6 +32,64 @@ class DummyBridge(MegatronModelBridge):
         return MegatronMappingRegistry()
 
 
+def test_build_conversion_tasks_keeps_output_bias_when_embeddings_are_tied(monkeypatch):
+    """Tied embeddings remove only output_layer.weight, not an independent output bias."""
+    from megatron.bridge.models.conversion import model_bridge as model_bridge_module
+
+    class TiedOutputBridge(DummyBridge):
+        def mapping_registry(self):
+            return MegatronMappingRegistry(
+                AutoMapping("output_layer.weight", "lm_head.weight"),
+                AutoMapping("output_layer.bias", "lm_head.bias"),
+            )
+
+    class State(dict):
+        def __init__(self):
+            super().__init__()
+            self.source = SimpleNamespace(get_all_keys=lambda: {"lm_head.weight", "lm_head.bias"})
+
+    model_config = SimpleNamespace(
+        num_moe_experts=0,
+        pipeline_model_parallel_size=1,
+        share_embeddings_and_output_weights=True,
+    )
+    parameters = {
+        "output_layer.weight": torch.ones(2, 2),
+        "output_layer.bias": torch.ones(2),
+    }
+    model = SimpleNamespace(
+        config=model_config,
+        named_parameters=lambda: iter(parameters.items()),
+    )
+    hf_pretrained = SimpleNamespace(config=SimpleNamespace(), state=State())
+    bridge = TiedOutputBridge()
+
+    monkeypatch.setattr(
+        bridge,
+        "_megatron_global_param_names_all_pp_ranks",
+        lambda _model: ["output_layer.weight", "output_layer.bias"],
+    )
+    monkeypatch.setattr(model_bridge_module, "unwrap_model", lambda _model: [model])
+    monkeypatch.setattr(
+        model_bridge_module,
+        "_megatron_local_name_to_global",
+        lambda _models, _config, name, _vp_stage: name,
+    )
+    monkeypatch.setattr(model_bridge_module, "persistent_buffers", lambda _model: [])
+    monkeypatch.setattr(
+        model_bridge_module,
+        "get_module_and_param_from_name",
+        lambda _model, name, _vp_stage: (SimpleNamespace(config=model_config), parameters[name]),
+    )
+    monkeypatch.setattr(model_bridge_module.parallel_state, "get_pipeline_model_parallel_rank", lambda: 0)
+
+    tasks = bridge.build_conversion_tasks(hf_pretrained, [model])
+
+    assert len(tasks) == 1
+    assert tasks[0] is not None
+    assert tasks[0].global_param_name == "output_layer.bias"
+
+
 def test_hf_weight_tuple_iter_finalized_preserves_two_field_abi():
     tensor = torch.ones(2)
     weight = HFWeightTuple("hf.weight", tensor)

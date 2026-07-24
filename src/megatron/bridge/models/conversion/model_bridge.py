@@ -1681,10 +1681,13 @@ class MegatronModelBridge(
         pp_rank = _get_pp_rank(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         global_names_index_dict = {name: idx for idx, name in enumerate(sorted_global_param_names_all_pp_ranks)}
@@ -1865,10 +1868,13 @@ class MegatronModelBridge(
         pp_group = _get_pp_group(megatron_model)
         sorted_global_param_names_all_pp_ranks = self._megatron_global_param_names_all_pp_ranks(megatron_model)
 
-        # Filter out output_layer related parameters if embeddings are tied
+        # Filter out the output_layer weight if embeddings are tied to it -- it doesn't exist
+        # as a separate parameter in that case. Other `output_layer.*` parameters (e.g. a
+        # standalone bias, as used by BERT-style masked-LM heads) are untouched by weight tying
+        # and must still be converted.
         if embeddings_are_tied:
             sorted_global_param_names_all_pp_ranks = [
-                name for name in sorted_global_param_names_all_pp_ranks if "output_layer" not in name
+                name for name in sorted_global_param_names_all_pp_ranks if not name.endswith("output_layer.weight")
             ]
 
         # 1) Determine which global params are blockwise FP8 and gather flags across PP ranks
