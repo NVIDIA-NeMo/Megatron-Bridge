@@ -30,8 +30,6 @@ Usage::
 import os
 from dataclasses import asdict, is_dataclass
 
-import torch
-
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
@@ -131,12 +129,7 @@ class Gemma4VLBridge(Gemma4Bridge):
             provider.moe_layer_freq = 1
 
         provider.final_logit_softcapping = getattr(text_config, "final_logit_softcapping", 30.0)
-        # Keep the MoE VL path in fp32 for HF parity. The text-only MoE path
-        # defaults to bf16, but VL conversion also runs HF vision/audio modules
-        # whose precision-sensitive buffers are kept in fp32 by transformers.
-        provider.bf16 = False
-        provider.params_dtype = torch.float32
-        provider.autocast_dtype = torch.float32
+        provider.autocast_dtype = provider.params_dtype
         provider.make_vocab_size_divisible_by = 128
 
         provider.vision_config = vision_config

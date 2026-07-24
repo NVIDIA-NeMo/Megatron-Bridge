@@ -164,8 +164,11 @@ def _configure_model_provider(
     model_provider.pipeline_model_parallel_size = pp
     model_provider.expert_model_parallel_size = ep
     model_provider.expert_tensor_parallel_size = etp
+    model_provider.fp16 = dtype == torch.float16
+    model_provider.bf16 = dtype == torch.bfloat16
     model_provider.pipeline_dtype = dtype
     model_provider.params_dtype = dtype
+    model_provider.autocast_dtype = dtype
 
 
 def _hf_tokenizer_kwargs(bridge: AutoBridge, *, trust_remote_code: bool) -> dict[str, object]:
