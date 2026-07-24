@@ -5,32 +5,35 @@ title: gemma_3_4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 3 4B Instruct exact-checkpoint verification is pending for
-  conversion, manual forward comparison, inference, SFT, post-SFT
-  export/inference, long-context SFT, and PEFT; pretraining and checkpoint
-  resume are unsupported because there is no public exact-model pretraining
-  recipe. Existing toy-model tests are not used as exact-model evidence.
+  results. Gemma 3 4B Instruct exact-checkpoint TP2/PP2 GPU import and export
+  and deterministic TP2/PP2 inference are verified. CPU export and manual
+  forward comparison remain unverified after their namespace and correlation
+  gates did not pass; SFT, post-SFT export/inference, long-context SFT, and
+  PEFT remain pending. Pretraining and checkpoint resume are unsupported
+  because there is no public exact-model pretraining recipe. Existing
+  toy-model tests are not used as exact-model evidence.
 verification_index:
   model_level:
+    verified:
+      - hf_to_megatron_gpu
+      - megatron_to_hf_gpu
+      - inference
     unverified:
       - hf_to_megatron_cpu
-      - hf_to_megatron_gpu
       - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
-      - inference
   training:
     H100:
       unverified: [sft, sft_export_inference, sft_long_context, peft]
       unsupported: [pretrain, checkpoint_resume]
 model:
   hf_id: google/gemma-3-4b-it
-  hf_revision: 093f9f388b31de276ce2de164bdc2081324b9767f  # pragma: allowlist secret
+  hf_revision: 093f9f388b31de276ce2de164bdc2081324b9767  # pragma: allowlist secret
   architecture: Gemma3ForConditionalGeneration
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: 0eb2580d7e2e701332227cd352214619514db78f  # pragma: allowlist secret
+  bridge_commit: f81277376ccc94fff1f8245504708f5af5e91a84  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
@@ -39,7 +42,7 @@ items:
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
       --hf-model google/gemma-3-4b-it
-      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron
       --torch-dtype bfloat16
     last_verified: null
@@ -49,19 +52,20 @@ items:
       namespace-mismatched vision-tower weights.
 
   hf_to_megatron_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device gpu
       --nodes 1 --gpus-per-node 4 --hf-model google/gemma-3-4b-it
-      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron
       --torch-dtype bfloat16 --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: null
+    last_verified: 2026-07-24
     expected_result: >
-      Pending exact-revision verification. The distributed BF16 import must
-      complete with TP2/PP2 and produce a reloadable checkpoint with the vision
-      tower and multimodal projector on the owning pipeline stage.
+      Exact-revision distributed BF16 import completed with TP2/PP2/EP1/ETP1.
+      All 781 Bridge tensors loaded and all four ranks saved a reloadable
+      checkpoint with the vision tower and multimodal projector on the owning
+      pipeline stage.
 
   megatron_to_hf_cpu:
     status: unverified
@@ -69,33 +73,38 @@ items:
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
       --hf-model google/gemma-3-4b-it
-      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron/iter_0000000
       --hf-path work/model-verification/gemma-3-4b-it/cpu-hf-export
       --torch-dtype bfloat16
     last_verified: null
     expected_result: >
-      Pending exact-revision verification. CPU export must preserve every
-      source key, shape, dtype, and value and reload natively as
-      Gemma3ForConditionalGeneration.
+      An exact-revision CPU import and export completed on 2026-07-24, but the
+      source/export key gate reported 437 missing legacy
+      vision_tower.vision_model.* keys and 437 extra flat vision_tower.* keys.
+      This leaf remains unverified pending a source-namespace-preserving design;
+      changing the general config-only export path would regress pruned and
+      custom checkpoint exports.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
       --nodes 1 --gpus-per-node 4 --hf-model google/gemma-3-4b-it
-      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
       --hf-path work/model-verification/gemma-3-4b-it/hf-export
       --torch-dtype bfloat16 --export-weight-dtype bfloat16
       --distributed-save --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: null
+    last_verified: 2026-07-24
     expected_result: >
-      Pending exact-revision verification. TP2/PP2 distributed export must
-      finish without a missing PP owner for vision_tower parameters, preserve
-      the source namespace, and reload natively with no missing or unexpected
-      keys.
+      TP2/PP2 distributed export completed without a missing PP owner. Source
+      and export contained the same 883 keys with exact shapes, dtypes, and
+      torch.equal values, including all 437 legacy
+      vision_tower.vision_model.* tensors. Native
+      Gemma3ForConditionalGeneration strict reload reported no missing,
+      unexpected, mismatched, or errored tensors.
 
   manual_forward_pass:
     status: unverified
@@ -103,7 +112,7 @@ items:
     command: >
       uv run python examples/conversion/compare_hf_and_megatron/compare.py
       --hf_model_path google/gemma-3-4b-it
-      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron_model_path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
       --model_class Gemma3ForConditionalGeneration
       --image_path work/model-verification/gemma-3-4b-it/candy.JPG
@@ -111,30 +120,34 @@ items:
       --tp 1 --pp 1 --ep 1 --etp 1
     last_verified: null
     expected_result: >
-      Pending exact-revision image-and-text comparison. Hugging Face and
-      Megatron must predict the same next token with cosine similarity at least
-      0.99. The prompt must not require TP padding; maximum and mean absolute
-      logit differences are recorded for diagnosis only and are not pass/fail
-      gates.
+      The 2026-07-24 exact-revision image-and-text comparison used TP1 without
+      padding and produced the same next token, ID 22515 ("Based"), but cosine
+      similarity was 0.987005, below the required 0.99. Maximum and mean
+      absolute logit differences were 7.406250 and 1.172121 respectively and
+      are report-only diagnostics. The leaf remains unverified while the first
+      runtime divergence is investigated.
 
   inference:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=4
       examples/conversion/hf_to_megatron_generate_vlm.py
       --hf_model_path google/gemma-3-4b-it
-      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767f
+      --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron_model_path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
       --image_path work/model-verification/gemma-3-4b-it/candy.JPG
       --prompt "What animal is on the candy?"
       --max_new_tokens 32
       --tp 2 --pp 2 --ep 1 --etp 1
-    last_verified: null
-    expected_result: >
-      Pending one exact-revision deterministic BF16 greedy multimodal run. The
-      evidence must record the exact positive generated-token count, literal
-      completion text, and public input revision and content hash.
+    last_verified: 2026-07-24
+    expected_result: |-
+      One exact-revision TP2/PP2 BF16 greedy multimodal run generated exactly
+      32 tokens without reaching EOS. The public input was p-blog/candy.JPG at
+      documentation-images revision
+      44c3249461c5a5336585d1e31e0a4ce7fce06a5a with SHA-256
+      fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
+      The JSON-escaped literal completion was: "Based on the image, the animal on the candy is a **turtle**. \n\nYou can see a clear depiction of a turtle's shell on each of"
 
   pretrain:
     all:
