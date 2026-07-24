@@ -20,6 +20,7 @@ from megatron.bridge.perf_recipes.qwen.common import (
 from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_bf16_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_gb300_nvfp4_config,
@@ -160,3 +161,8 @@ def qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
+
+
+def qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config() -> ConfigContainer:
+    """Qwen3 30B-A3B pretrain: 8× VR200, NVFP4 (alias of GB300)."""
+    return qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config()

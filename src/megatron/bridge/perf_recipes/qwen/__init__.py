@@ -2,6 +2,7 @@ from megatron.bridge.perf_recipes.qwen.b200.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_b200_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_b200_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_b200_nvfp4_config,
     qwen3_30b_a3b_pretrain_64gpu_b200_bf16_config,
     qwen3_30b_a3b_pretrain_64gpu_b200_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_b200_bf16_config,
@@ -21,6 +22,7 @@ from megatron.bridge.perf_recipes.qwen.b300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_b300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_b300_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_b300_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_b300_nvfp4_config,
     qwen3_235b_a22b_pretrain_64gpu_b300_bf16_config,
     qwen3_235b_a22b_pretrain_64gpu_b300_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_b300_fp8mx_config,
@@ -38,6 +40,7 @@ from megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb200_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb200_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb200_nvfp4_config,
     qwen3_30b_a3b_pretrain_16gpu_gb200_bf16_dev_config,
     qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_paged_stash_dev_config,
     qwen3_30b_a3b_pretrain_16gpu_gb200_fp8mx_partial_cg_dev_config,
@@ -61,6 +64,7 @@ from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8cs_config,
     qwen3_30b_a3b_pretrain_8gpu_gb300_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_gb300_nvfp4_config,
     qwen3_30b_a3b_pretrain_32gpu_gb300_bf16_config,
     qwen3_30b_a3b_pretrain_32gpu_gb300_fp8cs_config,
     qwen3_235b_a22b_pretrain_64gpu_gb300_bf16_config,
@@ -78,6 +82,7 @@ from megatron.bridge.perf_recipes.qwen.gb300.qwen3_moe import (
 )
 from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
     qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config,
+    qwen3_30b_a3b_pretrain_16gpu_h100_fp8_delayed_config,
     qwen3_30b_a3b_pretrain_16gpu_h100_fp8cs_config,
     qwen3_30b_a3b_pretrain_32gpu_h100_bf16_dev_config,
     qwen3_30b_a3b_pretrain_32gpu_h100_fp8sc_dev_config,
@@ -93,6 +98,7 @@ from megatron.bridge.perf_recipes.qwen.h100.qwen3_moe import (
 from megatron.bridge.perf_recipes.qwen.vr200.qwen3_moe import (
     qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config,
     qwen3_30b_a3b_pretrain_8gpu_vr200_fp8mx_config,
+    qwen3_30b_a3b_pretrain_8gpu_vr200_nvfp4_config,
     qwen3_235b_a22b_pretrain_256gpu_vr200_bf16_config,
     qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config,
     qwen3_235b_a22b_pretrain_256gpu_vr200_nvfp4_config,
