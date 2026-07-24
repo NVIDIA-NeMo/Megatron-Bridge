@@ -414,7 +414,7 @@ def _sft_common_vlm() -> ConfigContainer:
         hf_processor_path=None,  # Must be set by model-specific config
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,
@@ -518,7 +518,7 @@ def _peft_common_vlm() -> ConfigContainer:
         hf_processor_path=None,  # Must be set by model-specific config
         source=HFDatasetSourceConfig(dataset_name="cord_v2"),
         num_workers=2,
-        dataloader_type="single",
+        dataloader_type="cyclic",
         data_sharding=True,
         pin_memory=True,
         persistent_workers=False,

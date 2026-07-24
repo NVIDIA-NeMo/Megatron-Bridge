@@ -22,7 +22,9 @@
 #
 # Full model requires 8 nodes (64 GPUs) minimum.
 # TP does NOT reduce expert memory — increase EP instead.
-# Recommended: TP=2, EP=32, PP=1 (64 GPUs, 8 nodes).
+# Recommended: TP=1, EP=32, PP=2 (64 GPUs, 8 nodes).
+# PP=2 splits the 78 transformer layers evenly (39 per stage), while TP=1
+# avoids the AbsorbedMLA sequence-parallel requirement for TP > 1.
 #
 # Megatron inference engine support is not yet available for this architecture.
 # This launcher defaults to the older slow sanity-check generation path for now.
@@ -64,9 +66,9 @@ MODEL_NAME="${MODEL_NAME:-GLM-5}"
 # Use the direct local snapshot path to avoid 64 processes calling
 # snapshot_download simultaneously (causes Lustre race conditions).
 HF_MODEL_PATH="${HF_HOME}/hub/models--zai-org--${MODEL_NAME}/snapshots/$(ls ${HF_HOME}/hub/models--zai-org--${MODEL_NAME}/snapshots/ | head -1)"
-TP="${TP:-2}"
+TP="${TP:-1}"
 EP="${EP:-32}"
-PP="${PP:-1}"
+PP="${PP:-2}"
 
 PROMPT="${PROMPT:-What is artificial intelligence?}"
 MAX_NEW_TOKENS="${MAX_NEW_TOKENS:-100}"
@@ -76,6 +78,9 @@ export TORCH_NCCL_AVOID_RECORD_STREAMS=1
 export NCCL_NVLS_ENABLE=0
 export NCCL_DEBUG=WARN
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export HF_HUB_OFFLINE=1
+export NCCL_TIMEOUT=1800000
+export WORKDIR HF_MODEL_PATH TP EP PP PROMPT MAX_NEW_TOKENS
 
 # ==============================================================================
 # Job Execution
@@ -90,40 +95,35 @@ echo "======================================"
 mkdir -p logs
 
 srun --mpi=pmix \
+  --export=HF_TOKEN,HF_HOME,UV_CACHE_DIR,NCCL_DEBUG,TORCH_NCCL_AVOID_RECORD_STREAMS,NCCL_NVLS_ENABLE,PYTORCH_CUDA_ALLOC_CONF,HF_HUB_OFFLINE,NCCL_TIMEOUT,WORKDIR,HF_MODEL_PATH,TP,EP,PP,PROMPT,MAX_NEW_TOKENS \
   --container-image="$CONTAINER_IMAGE" \
   --container-mounts="${BRIDGE_PATH}:${WORKDIR},${CONTAINER_MOUNTS}" \
+  --container-env=HF_TOKEN,HF_HOME,UV_CACHE_DIR,NCCL_DEBUG,TORCH_NCCL_AVOID_RECORD_STREAMS,NCCL_NVLS_ENABLE,PYTORCH_CUDA_ALLOC_CONF,HF_HUB_OFFLINE,NCCL_TIMEOUT,WORKDIR,HF_MODEL_PATH,TP,EP,PP,PROMPT,MAX_NEW_TOKENS \
   --no-container-mount-home \
-  bash -c "
-    export HF_TOKEN='$HF_TOKEN'
-    export HF_HOME='$HF_HOME'
-    export UV_CACHE_DIR='$UV_CACHE_DIR'
-    export NCCL_DEBUG=WARN
-    export TORCH_NCCL_AVOID_RECORD_STREAMS=1
-    export NCCL_NVLS_ENABLE=0
-    export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
-    export HF_HUB_OFFLINE=1
-    export NCCL_TIMEOUT=1800000
-    MASTER_ADDR=\$(python3 -c \"
+  bash -c '
+    MASTER_ADDR=$(python3 -c "
 import re, os
-s = os.environ.get('SLURM_NODELIST', '')
-m = re.match(r'([\w-]+)\[(\d+)', s)
-print(m.group(1) + m.group(2) if m else s.split(',')[0])
-\")
-    cd $WORKDIR
-    export PYTHONPATH=$WORKDIR/.venv/lib/python3.12/site-packages:\${PYTHONPATH:-}
+s = os.environ.get('"'"'SLURM_NODELIST'"'"', '"'"''"'"')
+m = re.match(r'"'"'([\w-]+)\[(\d+)'"'"', s)
+print(m.group(1) + m.group(2) if m else s.split('"'"','"'"')[0])
+")
+    cd "$WORKDIR"
+    export PYTHONPATH="$WORKDIR/.venv/lib/python3.12/site-packages:${PYTHONPATH:-}"
     uv run --no-sync python -m torch.distributed.run \
       --nproc_per_node=8 \
-      --nnodes=$SLURM_JOB_NUM_NODES \
-      --node_rank=\$SLURM_PROCID \
-      --master_addr=\$MASTER_ADDR \
+      --nnodes="$SLURM_JOB_NUM_NODES" \
+      --node_rank="$SLURM_PROCID" \
+      --master_addr="$MASTER_ADDR" \
       --master_port=29500 \
       examples/conversion/hf_to_megatron_generate_text.py \
-      --hf_model_path $HF_MODEL_PATH \
-      --prompt '$PROMPT' \
-      --max_new_tokens $MAX_NEW_TOKENS \
-      --tp $TP --ep $EP --pp $PP
-  "
+      --hf_model_path "$HF_MODEL_PATH" \
+      --prompt "$PROMPT" \
+      --max_new_tokens "$MAX_NEW_TOKENS" \
+      --tp "$TP" --ep "$EP" --pp "$PP"
+  '
+status=$?
 
 echo "======================================"
-echo "Inference completed (exit $?)"
+echo "Inference completed (exit $status)"
 echo "======================================"
+exit "$status"

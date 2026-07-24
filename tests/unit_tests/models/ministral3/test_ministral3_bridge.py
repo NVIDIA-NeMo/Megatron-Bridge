@@ -117,17 +117,19 @@ class TestMinistral3BridgeProviderBridge:
         # Should set hf_config
         assert provider.hf_config is mock_hf_pretrained.config
 
-    def test_provider_bridge_tie_word_embeddings(self, ministral3_bridge, mock_hf_pretrained):
-        """Test provider_bridge handles tie_word_embeddings correctly."""
-        # Test with tie_word_embeddings=True
-        mock_hf_pretrained.config.tie_word_embeddings = True
-        provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
-        assert provider.share_embeddings_and_output_weights is True
+    @pytest.mark.parametrize("text_tie_word_embeddings", [True, False])
+    def test_provider_bridge_tie_word_embeddings(
+        self, ministral3_bridge, mock_hf_pretrained, text_tie_word_embeddings
+    ):
+        """The nested language config controls input/output embedding sharing."""
+        mock_hf_pretrained.config.tie_word_embeddings = not text_tie_word_embeddings
+        mock_hf_pretrained.config.text_config.tie_word_embeddings = text_tie_word_embeddings
 
-        # Test with tie_word_embeddings=False
-        mock_hf_pretrained.config.tie_word_embeddings = False
         provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
-        assert provider.share_embeddings_and_output_weights is False
+
+        assert provider.share_embeddings_and_output_weights is text_tie_word_embeddings
+        assert mock_hf_pretrained.config.tie_word_embeddings is text_tie_word_embeddings
+        assert provider.hf_config.tie_word_embeddings is text_tie_word_embeddings
 
     def test_provider_bridge_with_custom_vocab_size(self, ministral3_bridge, mock_hf_pretrained):
         """Test provider_bridge with custom vocabulary size."""
@@ -360,43 +362,40 @@ class TestMinistral3BridgeCompatibility:
             provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
             assert provider.vocab_size == vocab_size
 
-    def test_provider_bridge_3b_config(self, ministral3_bridge, mock_hf_pretrained):
-        """Test provider_bridge with 3B model configuration."""
-        mock_hf_pretrained.config.text_config.num_hidden_layers = 26
-        mock_hf_pretrained.config.text_config.hidden_size = 3072
-        mock_hf_pretrained.config.text_config.intermediate_size = 9216
+    @pytest.mark.parametrize(
+        "num_layers,hidden_size,ffn_hidden_size,rope_theta,tie_word_embeddings",
+        [
+            (26, 3072, 9216, 1000000.0, True),
+            (34, 4096, 14336, 1000000.0, False),
+            (40, 5120, 16384, 1000000000.0, False),
+        ],
+        ids=["3b", "8b", "14b"],
+    )
+    def test_provider_bridge_exact_base_size_configs(
+        self,
+        ministral3_bridge,
+        mock_hf_pretrained,
+        num_layers,
+        hidden_size,
+        ffn_hidden_size,
+        rope_theta,
+        tie_word_embeddings,
+    ):
+        """Map the architecture and embedding-sharing values of each Base size."""
+        text_config = mock_hf_pretrained.config.text_config
+        text_config.num_hidden_layers = num_layers
+        text_config.hidden_size = hidden_size
+        text_config.intermediate_size = ffn_hidden_size
+        text_config.rope_parameters["rope_theta"] = rope_theta
+        text_config.tie_word_embeddings = tie_word_embeddings
 
         provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
 
-        assert provider.num_layers == 26
-        assert provider.hidden_size == 3072
-        assert provider.ffn_hidden_size == 9216
-
-    def test_provider_bridge_8b_config(self, ministral3_bridge, mock_hf_pretrained):
-        """Test provider_bridge with 8B model configuration."""
-        mock_hf_pretrained.config.text_config.num_hidden_layers = 34
-        mock_hf_pretrained.config.text_config.hidden_size = 4096
-        mock_hf_pretrained.config.text_config.intermediate_size = 14336
-
-        provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
-
-        assert provider.num_layers == 34
-        assert provider.hidden_size == 4096
-        assert provider.ffn_hidden_size == 14336
-
-    def test_provider_bridge_14b_config(self, ministral3_bridge, mock_hf_pretrained):
-        """Test provider_bridge with 14B model configuration."""
-        mock_hf_pretrained.config.text_config.num_hidden_layers = 40
-        mock_hf_pretrained.config.text_config.hidden_size = 5120
-        mock_hf_pretrained.config.text_config.intermediate_size = 16384
-        mock_hf_pretrained.config.text_config.rope_parameters["rope_theta"] = 1000000000.0
-
-        provider = ministral3_bridge.provider_bridge(mock_hf_pretrained)
-
-        assert provider.num_layers == 40
-        assert provider.hidden_size == 5120
-        assert provider.ffn_hidden_size == 16384
-        assert provider.rotary_base == 1000000000.0
+        assert provider.num_layers == num_layers
+        assert provider.hidden_size == hidden_size
+        assert provider.ffn_hidden_size == ffn_hidden_size
+        assert provider.rotary_base == rope_theta
+        assert provider.share_embeddings_and_output_weights is tie_word_embeddings
 
     def test_provider_bridge_uses_composite_config_contract(self, ministral3_bridge):
         """Test the real composite config maps text dimensions and top-level fields."""
@@ -440,7 +439,7 @@ class TestMinistral3BridgeCompatibility:
         assert provider.kv_channels == hf_config.text_config.head_dim
         assert provider.seq_length == hf_config.text_config.max_position_embeddings
         assert provider.vocab_size == hf_config.text_config.vocab_size
-        assert provider.share_embeddings_and_output_weights is hf_config.tie_word_embeddings
+        assert provider.share_embeddings_and_output_weights is hf_config.text_config.tie_word_embeddings
         assert provider.params_dtype == torch.float16
         assert provider.fp16 is True
         assert provider.bf16 is False
@@ -545,6 +544,10 @@ class TestMinistral3BridgeCompatibility:
         assert synthesized_config.architectures == ["Mistral3ForConditionalGeneration"]
         assert synthesized_config.model_type == "mistral3"
         assert synthesized_config.tie_word_embeddings is checkpoint_provider.share_embeddings_and_output_weights
+        assert (
+            synthesized_config.text_config.tie_word_embeddings
+            is checkpoint_provider.share_embeddings_and_output_weights
+        )
         assert synthesized_config.dtype == checkpoint_provider.params_dtype
 
         assert synthesized_config.image_token_index == reference_config.image_token_index
@@ -555,7 +558,6 @@ class TestMinistral3BridgeCompatibility:
         assert synthesized_config.text_config.model_type == reference_config.text_config.model_type
         assert synthesized_config.text_config.rope_parameters == reference_rope_parameters
         assert synthesized_config.text_config.sliding_window == reference_config.text_config.sliding_window
-        assert synthesized_config.text_config.tie_word_embeddings is reference_config.text_config.tie_word_embeddings
         assert synthesized_config.text_config.use_cache is reference_config.text_config.use_cache
         assert synthesized_config.vision_config.to_dict() == reference_vision_config
 
@@ -563,7 +565,7 @@ class TestMinistral3BridgeCompatibility:
         assert synthesized_provider.num_attention_heads == checkpoint_provider.num_attention_heads
         assert synthesized_provider.num_query_groups == checkpoint_provider.num_query_groups
         assert synthesized_provider.kv_channels == checkpoint_provider.kv_channels
-        assert synthesized_provider.share_embeddings_and_output_weights is False
+        assert synthesized_provider.share_embeddings_and_output_weights is True
         assert synthesized_provider.params_dtype == torch.bfloat16
         assert synthesized_provider.fp16 is False
         assert synthesized_provider.bf16 is True

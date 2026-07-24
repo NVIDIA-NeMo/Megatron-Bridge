@@ -254,6 +254,10 @@ target cluster. For example, a Pyxis/Enroot cluster may use:
 
 The `=` form is required when `ARG` begins with `-`.
 
+Use `-lmc FREQ`, `--peak-mem-clk FREQ`, or `--peak_mem_clk FREQ` to lock the GPU memory clock to a fixed frequency in
+MHz once per node before training. VR200 benchmark recipes default to `4752`; other recipes leave the memory clock
+unlocked. Pass `-lmc -1` to disable the VR200 default explicitly.
+
 The compact launcher does not add rank-command prefixes or extra sbatch parameters such as `segment`. Configure those
 through the target cluster integration, or use `scripts/performance/setup_experiment.py` when its compatibility NUMA
 and segment policies are required.

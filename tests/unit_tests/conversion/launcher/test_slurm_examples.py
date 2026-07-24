@@ -30,7 +30,7 @@ WRAPPER_CASES = [
             "nodes": "8",
             "time": "01:00:00",
             "hf_model": "zai-org/GLM-5",
-            "config": ("2", "1", "32", "1"),
+            "config": ("1", "2", "32", "1"),
             "trust_remote_code": False,
         },
     ),

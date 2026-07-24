@@ -39,6 +39,8 @@ def _make_config(**model_overrides):
         "share_embeddings_and_output_weights": True,
         "tensor_model_parallel_size": 2,
         "pipeline_model_parallel_size": 2,
+        "num_layers_in_first_pipeline_stage": None,
+        "num_layers_in_last_pipeline_stage": None,
         "virtual_pipeline_model_parallel_size": None,
         "context_parallel_size": 1,
         "expert_model_parallel_size": 1,
@@ -87,6 +89,45 @@ def test_dense_model_state_estimate_matches_legacy_arithmetic():
     assert dense_component.bytes_per_parameter == 9
     assert estimate.weight_and_optimizer_bytes == 30600
     assert estimate.total_parameters == 13088
+
+
+@pytest.mark.unit
+def test_dense_model_state_estimate_uses_heaviest_uneven_pipeline_stage():
+    config = _make_config(
+        num_layers=8,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=4,
+        num_layers_in_first_pipeline_stage=1,
+        num_layers_in_last_pipeline_stage=3,
+        share_embeddings_and_output_weights=False,
+    )
+
+    estimate = estimate_training_memory(config, include_activation=False)
+
+    dense_component = estimate.model_state_components[0]
+    assert dense_component.parameter_count_per_gpu == 9952
+    assert dense_component.memory_bytes == 89568
+
+
+@pytest.mark.unit
+def test_moe_model_state_estimate_uses_layer_pattern_on_uneven_pipeline_stages():
+    config = _make_config(
+        num_layers=8,
+        tensor_model_parallel_size=1,
+        pipeline_model_parallel_size=4,
+        num_layers_in_first_pipeline_stage=1,
+        num_layers_in_last_pipeline_stage=3,
+        share_embeddings_and_output_weights=False,
+        num_moe_experts=2,
+        moe_layer_freq=[0, 1, 0, 0, 1, 0, 1, 1],
+        moe_ffn_hidden_size=32,
+    )
+
+    estimate = estimate_training_memory(config, include_activation=False)
+
+    dense_component, routed_component = estimate.model_state_components
+    assert dense_component.parameter_count_per_gpu == 5856
+    assert routed_component.parameter_count_per_gpu == 4096
 
 
 @pytest.mark.unit
