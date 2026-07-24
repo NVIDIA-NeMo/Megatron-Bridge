@@ -17,7 +17,7 @@
 
 Run on one or more GPUs:
 
-    uv run python -m torch.distributed.run --nproc_per_node=2 examples/evaluation/pure_eval.py --tp-size 2
+    uv run python -m torch.distributed.run --nproc_per_node=2 examples/training_features/pure_eval.py --tp-size 2
 
 The script builds a tiny GPT model and mock GPT dataset, creates Bridge runtime
 state with the standard setup path, and calls ``evaluate_and_print_results()``
