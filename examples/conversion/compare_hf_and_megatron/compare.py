@@ -510,7 +510,7 @@ def _load_hf_model(args, is_vl_model: bool):
     hf_model = model_class.from_pretrained(
         args.hf_model_path,
         torch_dtype=torch.bfloat16,
-        device_map="cuda",
+        device_map=args.hf_device,
         trust_remote_code=is_safe_repo(
             trust_remote_code=args.trust_remote_code,
             hf_path=args.hf_model_path,
@@ -818,14 +818,30 @@ def compare_models_one_step(args) -> None:
     print_rank_0(f"Input shape: {input_ids.shape}")
     print_rank_0(f"Pixel values shape: {pixel_values.shape if pixel_values is not None else 'None'}")
 
+    # Run the HF model on its requested device. Keeping the Megatron inputs on
+    # CUDA allows very large HF checkpoints to use host memory without changing
+    # the distributed Megatron execution.
+    hf_input_ids = input_ids.to(args.hf_device)
+    hf_pixel_values = pixel_values.to(args.hf_device) if pixel_values is not None else None
+    hf_image_grid_thw = image_grid_thw.to(args.hf_device) if image_grid_thw is not None else None
+
     # Run HF model forward pass
     hf_logits, hf_next_token, hf_logits_stats, hf_top5_info, logits_shape = _run_hf_inference(
-        hf_model, input_ids, pixel_values, image_grid_thw, tokenizer
+        hf_model,
+        hf_input_ids,
+        hf_pixel_values,
+        hf_image_grid_thw,
+        tokenizer,
     )
 
     del hf_model
     gc.collect()
     torch.cuda.empty_cache()
+
+    if hf_logits is not None:
+        hf_logits = hf_logits.to(input_ids.device)
+    if hf_next_token is not None:
+        hf_next_token = hf_next_token.to(input_ids.device)
 
     # Broadcast HF results to all ranks
     if torch.distributed.is_initialized():
@@ -972,6 +988,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--hf-revision",
         help="Immutable Hugging Face Hub revision used for model, config, and tokenizer loading.",
+    )
+    parser.add_argument(
+        "--hf-device",
+        choices=("cpu", "cuda"),
+        default="cuda",
+        help="Device used for the Hugging Face reference forward pass (default: cuda).",
     )
     parser.add_argument(
         "--prompt",
