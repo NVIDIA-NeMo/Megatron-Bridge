@@ -19,6 +19,7 @@ from megatron.bridge import AutoBridge
 from megatron.bridge.peft.base import PEFT
 from megatron.bridge.recipes.common import _peft_common_vlm, _sft_common_vlm
 from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.training.config import ConfigContainer
 
@@ -95,6 +96,9 @@ def exaone45_vl_33b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.scheduler = scheduler_cfg
     _set_optimizer_precision(cfg)
 
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
@@ -119,6 +123,9 @@ def exaone45_vl_33b_peft_4gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora")
     cfg.scheduler = scheduler_cfg
     _set_optimizer_precision(cfg)
 
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 
