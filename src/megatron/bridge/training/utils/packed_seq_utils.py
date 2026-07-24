@@ -147,6 +147,9 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             max_seqlen_kv=max_seqlen_kv if max_seqlen_kv is not None else max_seqlen_q,
             total_tokens=batch.get("total_tokens"),
             qkv_format="thd",
+            cp_partition_mode=batch.get("cp_partition_mode", "zigzag"),
+            cp_group=batch.get("cp_group"),
+            local_cp_size=batch.get("local_cp_size"),
         )
 
     cu_seqlens_padded = batch["cu_seqlens"].squeeze()
@@ -195,3 +198,32 @@ def get_packed_seq_params(batch: dict[str, PackedMetadataValue]) -> PackedSeqPar
             total_tokens=total_tokens,
             qkv_format="thd",
         )
+
+
+class SequencePackingIteratorWrapper:
+    """Wraps a fixed-length pretrain iterator to emit ``padded_seq_len`` and
+    ``original_seq_len`` required by MCore's online sequence-packing scheduler
+    (``wrap_data_iterator``).
+
+    Bridge's standard pretrain datasets (GPTDataset / DCLM) yield fixed-length
+    token tensors without sequence-boundary metadata.  The packing scheduler
+    needs ``padded_seq_len`` to know how long each sample is so it can pack
+    multiple samples into a single THD microbatch.  For fixed-length data every
+    sample is exactly ``seq_len`` tokens, so we inject that scalar.
+    """
+
+    def __init__(self, iterator, seq_len: int) -> None:
+        self._it = iterator
+        self._seq_len = seq_len
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        batch = next(self._it)
+        if "padded_seq_len" not in batch and "cu_seqlens" not in batch and "cu_seqlens_q" not in batch:
+            dev = torch.cuda.current_device()
+            sl = torch.tensor([self._seq_len], dtype=torch.int64, device=dev)
+            batch["padded_seq_len"] = sl
+            batch["original_seq_len"] = sl
+        return batch

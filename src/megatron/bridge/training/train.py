@@ -882,12 +882,38 @@ def train_step(
         else:
             adjust_tensor_shapes_fn = None
 
+        # Sequence packing (THD): wrap the data iterator for online sequence packing.
+        # Only entered when sequence_packing_scheduler is set (e.g. dp_balanced for CP+THD).
+        if getattr(model_config, "sequence_packing_scheduler", None) is not None:
+            from megatron.core.datasets.data_schedule import wrap_data_iterator
+
+            from megatron.bridge.training.utils.packed_seq_utils import SequencePackingIteratorWrapper
+
+            # Inject padded_seq_len so MCore's packing scheduler knows each sample's length.
+            assert not isinstance(forward_backward_data_iterator, list), (
+                "THD online packing does not support Virtual Pipeline Parallelism "
+                "(VPP produces a list of iterators; packing requires a single iterator)."
+            )
+            _pretrain_seq_len = model_config.seq_length
+            forward_backward_data_iterator = SequencePackingIteratorWrapper(
+                forward_backward_data_iterator, _pretrain_seq_len
+            )
+
+            (
+                forward_backward_data_iterator,
+                _fb_num_microbatches,
+                _seqlen_sum,
+                _seqlen_sq_sum,
+            ) = wrap_data_iterator(forward_backward_data_iterator, model_config, get_num_microbatches())
+        else:
+            _fb_num_microbatches = get_num_microbatches()
+
         # Forward pass.
         losses_reduced = forward_backward_func(
             forward_step_func=forward_step_func,
             data_iterator=forward_backward_data_iterator,
             model=model,
-            num_microbatches=get_num_microbatches(),
+            num_microbatches=_fb_num_microbatches,
             seq_length=seq_length,
             micro_batch_size=train_config.micro_batch_size,
             decoder_seq_length=seq_length,

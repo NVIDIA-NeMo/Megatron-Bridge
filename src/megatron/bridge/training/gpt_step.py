@@ -310,6 +310,46 @@ def get_batch(
         tuple of tensors containing tokens, labels, loss_mask, attention_mask,
         position_ids, and optional packed-sequence metadata.
     """
+    # Sequence packing (THD) + Context Parallel: when online packing is active AND CP>1,
+    # delegate to MCore's get_batch_on_this_rank_for_sequence_packing which handles both
+    # CP partitioning of the packed token sequence and THD metadata construction.
+    # For CP=1 with THD, the packed batch (cu_seqlens already set by wrap_data_iterator)
+    # flows through the standard get_batch_from_iterator path below without modification.
+    _cp_size = getattr(pg_collection, "cp", None)
+    _cp_size = _cp_size.size() if _cp_size is not None else 1
+    if getattr(cfg.model, "sequence_packing_scheduler", None) is not None and _cp_size > 1:
+        assert pg_collection.tp.size() == 1, (
+            "THD online packing + CP requires TP=1: Bridge gives all TP ranks a valid "
+            "data_iterator, but get_batch_on_this_rank_for_sequence_packing expects "
+            "data_iterator=None for non-TP-0 ranks."
+        )
+        from megatron.core.datasets.data_schedule import get_batch_on_this_rank_for_sequence_packing
+
+        mtp_on_this_rank = use_mtp and is_pp_last_stage(pg_collection.pp)
+        tokens, labels, loss_mask, _, position_ids, packed_seq_params, _ = get_batch_on_this_rank_for_sequence_packing(
+            data_iterator,
+            vpp_size=getattr(cfg.model, "virtual_pipeline_model_parallel_size", None),
+            mtp_on_this_rank=mtp_on_this_rank,
+            vp_stage=vp_stage,
+            config=cfg.model,
+            pg_collection=pg_collection,
+        )
+        # Map MCore PackedSeqParams into Bridge packed_seq_metadata dict.
+        packed_seq_metadata = None
+        if packed_seq_params is not None:
+            packed_seq_metadata = {
+                "cu_seqlens_q": getattr(packed_seq_params, "cu_seqlens_q", None),
+                "cu_seqlens_kv": getattr(packed_seq_params, "cu_seqlens_kv", None),
+                "cu_seqlens_q_padded": getattr(packed_seq_params, "cu_seqlens_q_padded", None),
+                "cu_seqlens_kv_padded": getattr(packed_seq_params, "cu_seqlens_kv_padded", None),
+                "max_seqlen_q": getattr(packed_seq_params, "max_seqlen_q", None),
+                "max_seqlen_kv": getattr(packed_seq_params, "max_seqlen_kv", None),
+                "cp_partition_mode": getattr(packed_seq_params, "cp_partition_mode", "contiguous"),
+                "cp_group": getattr(packed_seq_params, "cp_group", None),
+                "local_cp_size": getattr(packed_seq_params, "local_cp_size", None),
+            }
+        return tokens, labels, loss_mask, None, position_ids, packed_seq_metadata
+
     # Determine pipeline stage role via process group collection
     model_cfg = getattr(cfg, "model", None)
     vp_size = getattr(model_cfg, "virtual_pipeline_model_parallel_size", None)
