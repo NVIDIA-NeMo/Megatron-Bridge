@@ -1047,6 +1047,19 @@ class TestNemotronHBridgeMTPIntegration:
 
         assert bridge._mtp_layers_per_block == 0
 
+    def test_build_conversion_tasks_accepts_config_for_export(self):
+        """Config-only CPU export caches MTP metadata without requiring a model wrapper."""
+        bridge = NemotronHBridge()
+
+        mock_config = Mock(spec=[])
+        mock_config.num_nextn_predict_layers = 1
+        mock_config.mtp_hybrid_override_pattern = "*E"
+
+        with patch.object(MegatronModelBridge, "build_conversion_tasks", return_value=[]):
+            bridge.build_conversion_tasks(mock_config, Mock())
+
+        assert bridge._mtp_layers_per_block == 2
+
     @pytest.mark.parametrize(
         ("hf_config", "expected_mtp_mappings"),
         [

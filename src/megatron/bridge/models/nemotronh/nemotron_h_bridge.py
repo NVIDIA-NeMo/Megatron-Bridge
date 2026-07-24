@@ -269,7 +269,8 @@ class NemotronHBridge(MegatronModelBridge):
     def build_conversion_tasks(self, hf_pretrained: PreTrainedCausalLM, megatron_model, weight_dtype=None):
         # Cache MTP block depth (len of mtp_hybrid_override_pattern) so mapping_registry()
         # can compute the flattened HF layer indices deterministically.
-        _, mtp_pattern = self._hf_mtp_config(hf_pretrained.config)
+        hf_config = hf_pretrained.config if hasattr(hf_pretrained, "config") else hf_pretrained
+        _, mtp_pattern = self._hf_mtp_config(hf_config)
         self._mtp_layers_per_block = len(mtp_pattern) if mtp_pattern else 0
 
         return super().build_conversion_tasks(hf_pretrained, megatron_model, weight_dtype=weight_dtype)
