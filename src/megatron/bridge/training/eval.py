@@ -459,15 +459,15 @@ def evaluate_and_print_results(
                     f"(min {min_sets}, max {max_sets}; this rank has {num_sets}). The dataset "
                     "provider must return the same number of validation sets on every rank."
                 )
-        if val_config.validation_set_names is not None:
-            assert len(val_config.validation_set_names) == len(data_iterators), (
+        if val_config.validation_set_names is not None and len(val_config.validation_set_names) != len(data_iterators):
+            raise ValueError(
                 f"Number of validation_set_names ({len(val_config.validation_set_names)}) must match "
                 f"the number of validation datasets ({len(data_iterators)})"
             )
     else:
         data_iterators = [data_iterator]
 
-    total_loss_dict = None
+    set_loss_dict = None
     for index, set_data_iterator in enumerate(data_iterators):
         suffix = ""
         if val_config.multiple_validation_sets and not is_test:
@@ -476,7 +476,7 @@ def evaluate_and_print_results(
             else:
                 suffix = f"-{index}"
 
-        total_loss_dict, collected_non_loss_data, timelimit = evaluate(
+        set_loss_dict, collected_non_loss_data, timelimit = evaluate(
             state,
             forward_step_func,
             set_data_iterator,
@@ -494,21 +494,21 @@ def evaluate_and_print_results(
         # Timelimit hit during evaluation
         if timelimit:
             return None
-        if total_loss_dict is None:
+        if set_loss_dict is None:
             return None
 
         string = f" validation{suffix} loss at {prefix} | "
-        for key in total_loss_dict:
-            string += "{} value: {:.6E} | ".format(key, total_loss_dict[key].item())
-            ppl = math.exp(min(20, total_loss_dict[key].item()))
+        for key in set_loss_dict:
+            string += "{} value: {:.6E} | ".format(key, set_loss_dict[key].item())
+            ppl = math.exp(min(20, set_loss_dict[key].item()))
             string += "{} PPL: {:.6E} | ".format(key, ppl)
             if writer:
                 writer.add_scalar(
-                    "{} validation{}".format(key, suffix), total_loss_dict[key].item(), state.train_state.step
+                    "{} validation{}".format(key, suffix), set_loss_dict[key].item(), state.train_state.step
                 )
                 writer.add_scalar(
                     "{} validation{} vs samples".format(key, suffix),
-                    total_loss_dict[key].item(),
+                    set_loss_dict[key].item(),
                     state.train_state.consumed_train_samples,
                 )
                 if state.cfg.logger.log_validation_ppl_to_tensorboard:
@@ -521,14 +521,14 @@ def evaluate_and_print_results(
 
             if wandb_writer and is_last_rank():
                 wandb_writer.log(
-                    {"{} validation{}".format(key, suffix): total_loss_dict[key].item()}, state.train_state.step
+                    {"{} validation{}".format(key, suffix): set_loss_dict[key].item()}, state.train_state.step
                 )
                 if state.cfg.logger.log_validation_ppl_to_tensorboard:
                     wandb_writer.log({"{} validation{} ppl".format(key, suffix): ppl}, state.train_state.step)
 
             if mlflow_writer and is_last_rank():
                 mlflow_writer.log_metrics(
-                    _sanitize_mlflow_metrics({f"val/{key}{suffix}": total_loss_dict[key].item()}),
+                    _sanitize_mlflow_metrics({f"val/{key}{suffix}": set_loss_dict[key].item()}),
                     step=state.train_state.step,
                 )
                 if state.cfg.logger.log_validation_ppl_to_tensorboard:
@@ -537,7 +537,7 @@ def evaluate_and_print_results(
                     )
             if comet_logger and is_last_rank():
                 comet_logger.log_metrics(
-                    {"{} validation{}".format(key, suffix): total_loss_dict[key].item()}, step=state.train_state.step
+                    {"{} validation{}".format(key, suffix): set_loss_dict[key].item()}, step=state.train_state.step
                 )
                 if state.cfg.logger.log_validation_ppl_to_tensorboard:
                     comet_logger.log_metrics(
@@ -552,4 +552,4 @@ def evaluate_and_print_results(
         print_rank_last(string)
         print_rank_last("-" * length)
 
-    return total_loss_dict
+    return set_loss_dict

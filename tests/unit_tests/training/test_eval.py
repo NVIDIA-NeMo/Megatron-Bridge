@@ -237,7 +237,7 @@ def test_evaluate_and_print_results_multiple_validation_sets(
 @patch("megatron.bridge.training.eval.evaluate")
 def test_evaluate_and_print_results_validation_set_names_length_mismatch(mock_evaluate):
     """validation_set_names must match the number of validation sets."""
-    with pytest.raises(AssertionError, match="validation_set_names"):
+    with pytest.raises(ValueError, match="validation_set_names"):
         evaluate_and_print_results(
             state=_make_state(multiple_validation_sets=True, validation_set_names=["only-one"]),
             prefix="iteration 0",
