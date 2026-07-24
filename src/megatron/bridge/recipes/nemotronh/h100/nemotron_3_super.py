@@ -280,6 +280,9 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config() -> ConfigContainer:
     cfg = nemotron_3_super_sft_16gpu_h100_bf16_lowmem_config()
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 8
+    # The final stage also owns the output projection and loss. Keep four
+    # decoder layers there and distribute 12 layers to each earlier stage.
+    cfg.model.num_layers_in_last_pipeline_stage = 4
     cfg.model.context_parallel_size = 2
     cfg.model.expert_model_parallel_size = 2
     cfg.model.seq_length = 32768

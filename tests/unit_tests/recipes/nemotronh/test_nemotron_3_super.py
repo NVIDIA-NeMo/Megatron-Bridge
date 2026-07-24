@@ -388,6 +388,7 @@ class TestNemotron3Super16GpuH100:
 
         assert config.model.tensor_model_parallel_size == 1
         assert config.model.pipeline_model_parallel_size == 8
+        assert config.model.num_layers_in_last_pipeline_stage == 4
         assert config.model.context_parallel_size == 2
         assert config.model.expert_model_parallel_size == 2
         assert config.model.sequence_parallel is True
