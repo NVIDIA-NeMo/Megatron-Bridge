@@ -415,6 +415,9 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft is None
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.optimizer.lr == 2e-5
 
 
@@ -454,6 +457,9 @@ def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.peft is not None
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.optimizer.lr == 2e-4
 
 
