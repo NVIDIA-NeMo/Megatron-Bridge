@@ -1913,8 +1913,7 @@ class TestGemma4MoEHelpers:
         out_probs, out_map = Gemma4TopKRouter.routing(
             router,
             torch.zeros(2, 3),
-            input_ids=torch.ones(2, 1, dtype=torch.long),
-            packed_seq_params=SimpleNamespace(),
+            packed_seq_params=object(),
         )
 
         assert out_map is routing_map
@@ -1965,7 +1964,6 @@ class TestGemma4MoEHelpers:
             layer,
             hidden_states,
             padding_mask=torch.tensor([[True]]),
-            input_ids=torch.tensor([[7]]),
         )
 
         base = hidden_states * torch.pow(hidden_states.pow(2).mean(-1, keepdim=True) + 1e-6, -0.5)

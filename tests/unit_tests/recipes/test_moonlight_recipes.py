@@ -279,7 +279,7 @@ def _assert_moonlight_router_identity(cfg, *, aux_loss_coeff: float):
     assert cfg.model.moe_router_force_load_balancing is False
 
 
-def _assert_finetuning_optimizer_contract(cfg):
+def _assert_finetuning_optimizer_contract(cfg, *, precision_aware: bool):
     """Assert the shared SFT/PEFT optimizer and arithmetic contract."""
     assert cfg.optimizer.optimizer == "adam"
     assert cfg.optimizer.adam_beta1 == 0.9
@@ -288,11 +288,17 @@ def _assert_finetuning_optimizer_contract(cfg):
     assert cfg.optimizer.weight_decay == 0.1
     assert cfg.optimizer.clip_grad == 1.0
     assert cfg.optimizer.use_distributed_optimizer is True
-    assert cfg.optimizer.use_precision_aware_optimizer is False
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    if precision_aware:
+        assert cfg.optimizer.use_precision_aware_optimizer is True
+        assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+        assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+        assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    else:
+        assert cfg.optimizer.use_precision_aware_optimizer is False
+        assert cfg.optimizer.main_grads_dtype == torch.float32
+        assert cfg.optimizer.exp_avg_dtype == torch.float32
+        assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
     assert cfg.scheduler.start_weight_decay == 0.033
     assert cfg.scheduler.end_weight_decay == 0.033
     assert cfg.scheduler.weight_decay_incr_style == "constant"
@@ -301,8 +307,9 @@ def _assert_finetuning_optimizer_contract(cfg):
     assert cfg.mixed_precision.bf16 is True
     assert cfg.mixed_precision.params_dtype == torch.bfloat16
     assert cfg.mixed_precision.pipeline_dtype == torch.bfloat16
-    assert cfg.mixed_precision.grad_reduce_in_fp32 is True
-    assert cfg.ddp.grad_reduce_in_fp32 is True
+    reduce_in_fp32 = not precision_aware
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is reduce_in_fp32
+    assert cfg.ddp.grad_reduce_in_fp32 is reduce_in_fp32
 
 
 def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyPatch):
@@ -317,14 +324,15 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.context_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.seq_length == 4096
     assert cfg.train.train_iters == 100
     assert cfg.train.global_batch_size == 1024
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == 2
     assert cfg.train.global_batch_size // 16 == 64
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * 16) == 32
     assert cfg.dataset.random_seed == 1234
     assert cfg.rng.seed == 1234
     assert cfg.optimizer.optimizer == "adam"
@@ -338,9 +346,9 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
     assert cfg.optimizer.use_distributed_optimizer is True
     assert cfg.optimizer.use_precision_aware_optimizer is True
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.main_grads_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.scheduler.lr_warmup_iters == 40
     assert cfg.scheduler.lr_decay_iters == 100
     assert cfg.scheduler.lr_decay_style == "cosine"
@@ -354,6 +362,27 @@ def test_moonlight_16b_pretrain_convergence_contract(monkeypatch: pytest.MonkeyP
     assert cfg.mixed_precision.params_dtype == torch.bfloat16
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.moe_router_fusion is True
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_deepep_num_sms is None
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["USE_MNNVL"] == 0
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
 
 
@@ -374,15 +403,17 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
     assert cfg.model.sequence_parallel is False
     assert cfg.model.vocab_size == 163842
     assert cfg.get_data_parallel_size(8) == 8
-    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(8)) == 4
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(8)) == 1
     assert cfg.model.num_moe_experts // cfg.model.expert_model_parallel_size == 8
-    assert cfg.model.seq_length == 2048
-    assert cfg.dataset.seq_length == 2048
-    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 2048
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 8192
     assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 1
+    assert cfg.dataset.dataset_kwargs == {"pad_to_max_length": True}
     assert cfg.train.train_iters == 100
-    assert cfg.train.global_batch_size == 32
+    assert cfg.train.global_batch_size == 8
     assert cfg.train.micro_batch_size == 1
+    assert cfg.train.global_batch_size * cfg.model.seq_length == 65536
     assert cfg.dataset.seed == 1234
     assert cfg.rng.seed == 5678
     assert cfg.optimizer.lr == 5e-6
@@ -405,14 +436,30 @@ def test_moonlight_16b_sft_convergence_contract(monkeypatch: pytest.MonkeyPatch)
             '++hf_tokenizer_kwargs.revision="476b36a473d4467f94469414bef6cee75c9c8172"'  # pragma: allowlist secret
         ],
     )
-    assert cfg.model.moe_token_dispatcher_type == "alltoall"
-    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_deepep_num_sms is None
     assert cfg.model.moe_hybridep_num_sms is None
-    assert cfg.model.moe_flex_dispatcher_num_sms is None
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_a2a_overlap is False
     assert cfg.model.moe_shared_expert_overlap is False
-    assert cfg.comm_overlap is None
-    _assert_finetuning_optimizer_contract(cfg)
+    assert cfg.model.high_priority_a2a_comm_stream is True
+    assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is True
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20
+    assert cfg.env_vars["USE_MNNVL"] == 0
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.moe_router_fusion is True
+    _assert_finetuning_optimizer_contract(cfg, precision_aware=True)
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
 
 
@@ -447,14 +494,16 @@ def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch
     cfg = moonlight_16b_peft_config(peft_scheme="lora")
 
     assert moonlight_16b_peft_config.__name__ == "moonlight_16b_peft_4gpu_h100_bf16_config"
-    assert cfg.model.tensor_model_parallel_size == 4
+    assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_layout is None
     assert cfg.model.context_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 4
     assert cfg.model.expert_tensor_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.model.vocab_size == 163844
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.vocab_size == 163842
+    assert cfg.get_data_parallel_size(4) == 4
+    assert cfg.train.global_batch_size // (cfg.train.micro_batch_size * cfg.get_data_parallel_size(4)) == 8
     assert cfg.model.seq_length == 2048
     assert cfg.dataset.seq_length == 2048
     assert cfg.dataset.offline_packing_specs.packed_sequence_size == 2048
@@ -488,7 +537,12 @@ def test_moonlight_16b_peft_convergence_contract(monkeypatch: pytest.MonkeyPatch
     assert all(isinstance(getattr(base_model, target), LinearAdapter) for target in expected_targets)
     assert isinstance(base_model.linear_qkv, torch.nn.Linear)
     assert all(not parameter.requires_grad for parameter in base_model.linear_qkv.parameters())
-    _assert_finetuning_optimizer_contract(cfg)
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.recompute_method is None
+    assert cfg.model.recompute_num_layers is None
+    assert cfg.model.moe_router_fusion is True
+    _assert_finetuning_optimizer_contract(cfg, precision_aware=False)
     _assert_moonlight_router_identity(cfg, aux_loss_coeff=0.001)
 
 

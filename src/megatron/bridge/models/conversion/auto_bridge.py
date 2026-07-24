@@ -36,6 +36,7 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
+from megatron.bridge.models._deprecation import warn_if_deprecated_model, warn_if_legacy_nemotron_path
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -276,6 +277,18 @@ class AutoBridge(Generic[MegatronModelT]):
                 "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance"
             )
         self.hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig = hf_pretrained
+        if isinstance(hf_pretrained, PretrainedConfig):
+            hf_config = hf_pretrained
+            model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
+        else:
+            # Pretrained wrappers load their config lazily. A deprecation
+            # warning must not turn construction into an HF Hub request.
+            wrapper_state = vars(hf_pretrained)
+            hf_config = wrapper_state.get("_config")
+            model_name_or_path = wrapper_state.get("_model_name_or_path")
+        if hf_config is not None:
+            warn_if_deprecated_model(hf_config, model_name_or_path)
+
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
@@ -351,6 +364,8 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
+        warn_if_legacy_nemotron_path(hf_model_id)
+
         from transformers import AutoConfig
 
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
@@ -479,6 +494,8 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> # Works with local paths too
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
+        warn_if_legacy_nemotron_path(path)
+
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
         config_kwargs = dict(kwargs)
@@ -510,7 +527,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         wrapper_cls = _resolve_pretrained_wrapper_cls(config)
         try:
-            return cls(wrapper_cls.from_pretrained(path, **kwargs))
+            hf_pretrained = wrapper_cls.from_pretrained(path, **kwargs)
+            # Reuse the config that was already loaded and validated above.
+            # Besides avoiding a second Hub request, this guarantees that the
+            # warning and model wrapper observe the same immutable revision.
+            hf_pretrained.config = config
+            return cls(hf_pretrained)
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 

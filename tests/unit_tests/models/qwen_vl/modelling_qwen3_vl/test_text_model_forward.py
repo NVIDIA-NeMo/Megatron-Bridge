@@ -84,6 +84,29 @@ def test_forward_accepts_extra_preprocess_output():
     assert dummy.postprocess_args["decoder_input"] is preproc[0]
 
 
+def test_forward_forwards_output_processor_hook():
+    """Forward accepts and passes output-processor arguments to postprocessing."""
+    dummy = _DummyModel()
+
+    def output_processor(**kwargs):
+        return kwargs
+
+    output_processor_context = object()
+
+    output = Qwen3VLGPTModel.forward(
+        dummy,
+        input_ids=torch.zeros((1, 4), dtype=torch.long),
+        position_ids=torch.zeros((1, 4), dtype=torch.long),
+        attention_mask=torch.ones((1, 4), dtype=torch.long),
+        output_processor=output_processor,
+        output_processor_context=output_processor_context,
+    )
+
+    assert output == "ok"
+    assert dummy.postprocess_args["output_processor"] is output_processor
+    assert dummy.postprocess_args["output_processor_context"] is output_processor_context
+
+
 def test_mtp_sequence_parallel_embedding_scatter_uses_tp_group(monkeypatch):
     """The MTP embedding wrapper must not fall back to global tensor-parallel state."""
     expected_group = object()

@@ -144,11 +144,8 @@ def _hf_to_bridge_state_dict(hf_state_dict: dict, num_layers: int) -> dict:
 
         indexer_prefix = f"{compressor_prefix}.indexer"
         copy(f"{indexer_prefix}.q_b_proj.weight", f"{ckpt_prefix}.attn.indexer.wq_b.weight")
-        copy(f"{indexer_prefix}.weights_proj.weight", f"{ckpt_prefix}.attn.indexer.weights_proj.weight")
-        copy(
-            f"{indexer_prefix}.scorer.weights_proj.weight",
-            f"{ckpt_prefix}.attn.indexer.scorer.weights_proj.weight",
-        )
+        # HF transformers nests the indexer score projection under `.scorer.`.
+        copy(f"{indexer_prefix}.scorer.weights_proj.weight", f"{ckpt_prefix}.attn.indexer.weights_proj.weight")
         copy(f"{indexer_prefix}.kv_proj.weight", f"{ckpt_prefix}.attn.indexer.compressor.wkv.weight")
         copy(f"{indexer_prefix}.gate_proj.weight", f"{ckpt_prefix}.attn.indexer.compressor.wgate.weight")
         copy(f"{indexer_prefix}.position_bias", f"{ckpt_prefix}.attn.indexer.compressor.ape")
