@@ -4,6 +4,12 @@ This directory contains family-organized documentation for models supported by
 Megatron Bridge. Each model page covers supported variants, Hugging Face <->
 Megatron Bridge conversion, training recipe links, and model-specific notes.
 
+> **Deprecation notice:** Gemma 1 (2B/7B), Gemma 2 (2B/9B/27B), Llama 2,
+> Mistral 7B, Mistral Small 3 24B, Nemotron H v1 (4B/8B/47B/56B), and the
+> legacy `NemotronForCausalLM` bridge previously documented for Nemotron-4 340B
+> are no longer actively maintained or tested against current upstream
+> checkpoints. They will be removed in Megatron Bridge 0.7.0.
+
 ## Family Index
 
 | Family | Model documentation |
@@ -11,16 +17,16 @@ Megatron Bridge conversion, training recipe links, and model-specific notes.
 | **Bailing** | [Ling 2.0](bailing/ling-2.md) |
 | **DeepSeek** | [DeepSeek V2](deepseek/deepseek-v2.md), [DeepSeek V3](deepseek/deepseek-v3.md), [DeepSeek V4](deepseek/deepseek-v4.md) |
 | **Falcon** | [Falcon H1](falcon/falcon-h1.md) |
-| **Gemma** | [Gemma](gemma/gemma.md), [Gemma 2](gemma/gemma2.md), [Gemma 3](gemma/gemma3.md), [Gemma 3 VL](gemma/gemma3-vl.md), [Gemma 4 VL](gemma/gemma4-vl.md) |
+| **Gemma** | [Gemma (deprecated)](gemma/gemma.md), [Gemma 2 (deprecated)](gemma/gemma2.md), [Gemma 3](gemma/gemma3.md), [Gemma 3 VL](gemma/gemma3-vl.md), [Gemma 4 VL](gemma/gemma4-vl.md) |
 | **GLM** | [GLM 4.5](glm/glm45.md), [GLM-4.5V](glm/glm-45v.md), [GLM-4.7 / 4.7-Flash](glm/glm47.md), [GLM-5 / 5.1 / 5.2](glm/glm5.md) |
 | **GPT-OSS** | [GPT OSS](gpt_oss/gpt-oss.md) |
 | **Kimi** | [Kimi K2](kimi/kimi-k2.md), [Kimi-K2.5-VL](kimi/kimi-k25-vl.md) |
-| **Llama** | [Llama 2](llama/llama2.md), [Llama 3](llama/llama3.md) |
+| **Llama** | [Llama 2 (deprecated)](llama/llama2.md), [Llama 3](llama/llama3.md) |
 | **MiniMax** | [MiniMax-M2 / M2.5 / M2.7](minimax/minimax-m2.md), [MiniMax-M3](minimax/minimax-m3.md) |
-| **Mistral** | [Mistral](mistral/mistral.md), [Ministral 3](mistral/ministral3.md) |
+| **Mistral** | [Mistral 7B / Small 3 24B (deprecated)](mistral/mistral.md), [Ministral 3](mistral/ministral3.md) |
 | **Xiaomi-MiMo** | [Xiaomi-MiMo](mimo/mimo.md) |
 | **Moonlight** | [Moonlight](moonlight/moonlight.md) |
-| **Nemotron** | [Llama Nemotron](nemotron/llama-nemotron.md), [Nemotron H and Nemotron Nano v2](nemotron/nemotronh.md), [Nemotron-3 Nano](nemotron/nemotron3-nano.md), [Nemotron-3 Super](nemotron/nemotron3-super.md), [Nemotron Nano V2 VL](nemotron/nemotron-nano-v2-vl.md), [Nemotron-3 Nano Omni](nemotron/nemotron-3-omni.md) |
+| **Nemotron** | [Llama Nemotron](nemotron/llama-nemotron.md), [Nemotron H v1 (deprecated) and Nemotron Nano v2](nemotron/nemotronh.md), [Nemotron-3 Nano](nemotron/nemotron3-nano.md), [Nemotron-3 Super](nemotron/nemotron3-super.md), [Nemotron Nano V2 VL](nemotron/nemotron-nano-v2-vl.md), [Nemotron-3 Nano Omni](nemotron/nemotron-3-omni.md) |
 | **OLMoE** | [OLMoE](olmoe/olmoe.md) |
 | **Qwen** | [Qwen](qwen/qwen.md), [Qwen3-MoE](qwen/qwen3-moe.md), [Qwen3-Next](qwen/qwen3-next.md), [Qwen2.5-VL](qwen/qwen2.5-vl.md), [Qwen3-VL](qwen/qwen3-vl.md), [Qwen3.5 / 3.6](qwen/qwen35-vl.md), [Qwen2-Audio](qwen/qwen2-audio.md), [Qwen2.5-Omni](qwen/qwen25-omni.md), [Qwen3-Omni](qwen/qwen3-omni.md), [Qwen3-ASR](qwen/qwen3-asr.md) |
 | **Sarvam** | [Sarvam](sarvam/sarvam.md) |

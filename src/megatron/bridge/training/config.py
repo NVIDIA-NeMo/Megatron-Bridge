@@ -392,8 +392,21 @@ class MockGPTDatasetConfig(GPTDatasetConfig):
 class SchedulerConfig(MTrainSchedulerConfig):
     """Configuration settings for the learning rate scheduler and weight decay."""
 
+    max_steps: int | None = None
+    """Number of steps used to configure schedules during shortened test runs.
+
+    Set this to ``y`` together with ``TrainingConfig.train_iters=x`` when a
+    test should run only the first ``x`` steps of a full ``y``-step training
+    run. This keeps the learning-rate and weight-decay schedules the same as
+    the full ``y``-step run. ``max_steps`` must be greater than or equal to
+    ``train_iters``. When unset, existing scheduler behavior is unchanged.
+    """
+
     def finalize(self) -> None:
         """Post-initialization checks for scheduler config."""
+        if self.max_steps is not None and self.max_steps <= 0:
+            raise ValueError(f"scheduler.max_steps must be positive, got {self.max_steps}.")
+
         if self.start_weight_decay is not None:
             assert self.start_weight_decay >= 0.0, "start_weight_decay should be positive."
             assert self.end_weight_decay >= self.start_weight_decay
@@ -1517,6 +1530,10 @@ class ConfigContainer(Container):
 
         if has_train_samples:
             # Sample-based training validation
+            assert self.scheduler.max_steps is None, (
+                "scheduler.max_steps is only supported for iteration-based training; "
+                "use sample-based scheduler fields with train_samples"
+            )
             assert self.scheduler.lr_decay_iters is None, (
                 "Use lr_decay_samples for sample-based training, not lr_decay_iters"
             )
@@ -1574,12 +1591,21 @@ class ConfigContainer(Container):
                 self.scheduler.lr_warmup_steps = self.scheduler.lr_warmup_samples
         else:
             # Iteration-based training
-            if self.scheduler.lr_decay_iters is None:
+            scheduler_max_steps = self.scheduler.max_steps
+            if scheduler_max_steps is not None:
+                if scheduler_max_steps < self.train.train_iters:
+                    raise ValueError(
+                        f"scheduler.max_steps ({scheduler_max_steps}) must be greater than or equal to "
+                        f"train.train_iters ({self.train.train_iters})."
+                    )
+                self.scheduler.lr_decay_iters = scheduler_max_steps
+            elif self.scheduler.lr_decay_iters is None:
                 self.scheduler.lr_decay_iters = self.train.train_iters
             if self.scheduler.lr_wsd_decay_iters is None and self.scheduler.lr_decay_style == "WSD":
                 self.scheduler.lr_wsd_decay_iters = self.scheduler.lr_decay_iters
             self.scheduler.lr_decay_steps = self.scheduler.lr_decay_iters * self.train.global_batch_size
-            self.scheduler.wd_incr_steps = self.train.train_iters * self.train.global_batch_size
+            weight_decay_iters = scheduler_max_steps or self.train.train_iters
+            self.scheduler.wd_incr_steps = weight_decay_iters * self.train.global_batch_size
 
             if self.scheduler.lr_wsd_decay_iters is not None:
                 self.scheduler.wsd_decay_steps = self.scheduler.lr_wsd_decay_iters * self.train.global_batch_size

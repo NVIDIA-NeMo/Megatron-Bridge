@@ -121,7 +121,7 @@ def qwen3_omni_30b_a3b_sft_8gpu_h100_bf16_hf_json_config() -> "ConfigContainer":
             split="test",
             load_kwargs={"data_files": {"test": None}},
         ),
-        dataloader_type="single",
+        dataloader_type="cyclic",
         num_workers=2,
         enable_in_batch_packing=False,
         skip_getting_attention_mask_from_dataset=False,
