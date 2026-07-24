@@ -35,7 +35,7 @@ import torch
 from megatron.core.models.gpt.gpt_model import GPTModel
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
-from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
+from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge, WeightConversionTask
 from megatron.bridge.models.conversion.param_mapping import (
     AutoMapping,
     FusedExpertMapping,
@@ -102,7 +102,16 @@ def _layer_types_from_provider(provider: Gemma4ModelProvider | Gemma4DenseProvid
     else:
         pattern = provider.interleaved_attn_pattern
 
-    if isinstance(pattern, list):
+    if (
+        not isinstance(provider, Gemma4DenseProvider)
+        and isinstance(pattern, (list, tuple))
+        and len(pattern) == 2
+        and all(isinstance(value, int) and not isinstance(value, bool) for value in pattern)
+    ):
+        sliding_count, full_count = pattern
+        cycle = ["sliding_attention"] * sliding_count + ["full_attention"] * full_count
+        layer_types = [cycle[index % len(cycle)] for index in range(provider.num_layers)] if cycle else []
+    elif isinstance(pattern, list):
         layer_types = [
             value if isinstance(value, str) else "sliding_attention" if bool(value) else "full_attention"
             for value in pattern
@@ -132,7 +141,7 @@ def _rope_parameters_from_provider(provider: Gemma4ModelProvider | Gemma4DensePr
         global_partial_factor = provider.full_attention_rope_partial_factor
     else:
         rotary_base = provider.rotary_base
-        if isinstance(rotary_base, tuple):
+        if isinstance(rotary_base, (list, tuple)) and len(rotary_base) == 2:
             local_base, global_base = rotary_base
         else:
             local_base = global_base = rotary_base
@@ -332,19 +341,51 @@ class Gemma4Bridge(MegatronModelBridge):
             hf_config.pop("num_experts_per_tok", None)
         return hf_config
 
-    def maybe_modify_converted_hf_weight(self, task, converted_weights_dict, hf_state_dict):
-        """Un-fuse fused weights and drop synthesized keys on export."""
-        if not hf_state_dict:
+    def _is_synthesized_kv_projection(self, hf_name: str) -> bool:
+        """Return whether a KV projection exists only in the Megatron model."""
+        match = re.search(r"(?:^|\.)layers\.(\d+)\.self_attn\.([kv])_proj\.weight$", hf_name)
+        if match is None:
+            return False
+
+        layer_index = int(match.group(1))
+        projection = match.group(2)
+        text_config = self._text_config()
+        if text_config is None:
+            return False
+
+        num_hidden_layers = getattr(text_config, "num_hidden_layers", 0)
+        num_kv_shared_layers = getattr(text_config, "num_kv_shared_layers", 0)
+        first_kv_shared_layer = num_hidden_layers - num_kv_shared_layers
+        if num_kv_shared_layers > 0 and layer_index >= first_kv_shared_layer:
+            return True
+
+        layer_types = getattr(text_config, "layer_types", None)
+        return (
+            projection == "v"
+            and getattr(text_config, "attention_k_eq_v", False)
+            and isinstance(layer_types, (list, tuple))
+            and layer_index < len(layer_types)
+            and layer_types[layer_index] == "full_attention"
+        )
+
+    def maybe_modify_converted_hf_weight(
+        self,
+        task: WeightConversionTask | None,
+        converted_weights_dict: dict[str, torch.Tensor],
+        hf_state_dict: Mapping[str, torch.Tensor] | None,
+    ) -> dict[str, torch.Tensor]:
+        """Drop runtime-only synthesized KV projections on export."""
+        if hf_state_dict:
+            return {hf_name: tensor for hf_name, tensor in converted_weights_dict.items() if hf_name in hf_state_dict}
+
+        synthesized_names = {
+            hf_name for hf_name in converted_weights_dict if self._is_synthesized_kv_projection(hf_name)
+        }
+        if not synthesized_names:
             return converted_weights_dict
-
-        result = {}
-        for hf_name, tensor in converted_weights_dict.items():
-            if hf_name not in hf_state_dict:
-                continue
-
-            result[hf_name] = tensor
-
-        return result
+        return {
+            hf_name: tensor for hf_name, tensor in converted_weights_dict.items() if hf_name not in synthesized_names
+        }
 
     def maybe_modify_loaded_hf_weight(
         self, hf_param: str | dict[str, str], hf_state_dict: Mapping[str, torch.Tensor]

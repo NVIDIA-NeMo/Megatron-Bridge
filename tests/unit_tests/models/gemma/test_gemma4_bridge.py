@@ -317,6 +317,34 @@ class TestGemma4BridgeConfigExport:
         assert config["moe_intermediate_size"] == 704
         assert config["intermediate_size"] == 2112
 
+    def test_moe_architecture_fields_after_checkpoint_config_reload(self):
+        """Checkpoint YAML reloads the interleaved attention tuple as a list."""
+        provider = Gemma4ModelProvider(
+            interleaved_attn_pattern=[5, 1],
+            num_layers=30,
+            vocab_size=262_144,
+        )
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        assert len(config["layer_types"]) == provider.num_layers
+        assert config["layer_types"][:6] == ["sliding_attention"] * 5 + ["full_attention"]
+        Gemma4TextConfig(**config)
+
+    def test_moe_rope_fields_after_checkpoint_config_reload(self):
+        """Checkpoint YAML reloads the dual rotary-base tuple as a list."""
+        provider = Gemma4ModelProvider(
+            rotary_base=[10_000, 1_000_000],
+            vocab_size=262_144,
+        )
+
+        config = Gemma4Bridge.megatron_to_hf_config(provider)
+
+        rope_parameters = config["rope_parameters"]
+        assert rope_parameters["sliding_attention"]["rope_theta"] == 10_000
+        assert rope_parameters["full_attention"]["rope_theta"] == 1_000_000
+        Gemma4TextConfig(**config)
+
 
 # ===========================================================================
 # _infer_attn_pattern helper
@@ -505,6 +533,41 @@ class TestMaybeModifyConvertedHFWeight:
             rtol=0,
             atol=0,
         )
+
+    def test_config_only_export_drops_tied_global_v_proj(self, bridge, mock_hf_config_moe):
+        bridge.hf_config = mock_hf_config_moe
+        converted = {
+            "model.layers.4.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.layers.5.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.layers.5.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.layers.5.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, {})
+
+        assert set(result) == {
+            "model.layers.4.self_attn.v_proj.weight",
+            "model.layers.5.self_attn.q_proj.weight",
+            "model.layers.5.self_attn.k_proj.weight",
+        }
+
+    def test_config_only_export_drops_shared_kv_projections(self, bridge, mock_hf_config_dense):
+        bridge.hf_config = mock_hf_config_dense
+        converted = {
+            "model.layers.41.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.layers.41.self_attn.v_proj.weight": torch.randn(4, 8),
+            "model.layers.42.self_attn.q_proj.weight": torch.randn(8, 8),
+            "model.layers.42.self_attn.k_proj.weight": torch.randn(4, 8),
+            "model.layers.42.self_attn.v_proj.weight": torch.randn(4, 8),
+        }
+
+        result = bridge.maybe_modify_converted_hf_weight(None, converted, None)
+
+        assert set(result) == {
+            "model.layers.41.self_attn.k_proj.weight",
+            "model.layers.41.self_attn.v_proj.weight",
+            "model.layers.42.self_attn.q_proj.weight",
+        }
 
     def test_empty_hf_state_dict_passthrough(self, bridge):
         converted = {"some.weight": torch.randn(4, 4)}
