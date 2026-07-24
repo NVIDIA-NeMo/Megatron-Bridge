@@ -137,6 +137,60 @@ from megatron.bridge.recipes.llama.h100 import llama3_8b_pretrain_2gpu_h100_nvfp
 cfg = llama3_8b_pretrain_2gpu_h100_nvfp4_config()
 ```
 
+### FP8 Healing
+
+NVFP4 training can leave an accuracy gap at the end of training. The *FP8 healing*
+technique closes it: run most training steps in NVFP4, then switch the quantization
+recipe to FP8 for the final steps. Megatron Bridge ships this as
+{py:class}`bridge.training.nvfp4_healing.NVFP4HealingCallback`, the technique used in
+NVIDIA's MLPerf Llama-2 70B LoRA submission.
+
+The callback composes with the NVFP4 recipe — configure `bf16_with_nvfp4_mixed` as usual
+and attach the callback:
+
+```python
+from megatron.bridge.training.finetune import finetune
+from megatron.bridge.training.nvfp4_healing import NVFP4HealingCallback, NVFP4HealingConfig
+
+cfg.mixed_precision = "bf16_with_nvfp4_mixed"
+healing = NVFP4HealingCallback(
+    NVFP4HealingConfig(
+        healing_iter=350,          # steps 0..349 run NVFP4, steps 350+ run FP8
+        healing_recipe="mxfp8",    # or "delayed" (DelayedScaling)
+        pre_quantize_base_weights=True,  # PEFT/frozen base weights only
+    )
+)
+finetune(cfg, forward_step, callbacks=[healing])
+```
+
+#### NVFP4 Healing Configuration Parameters
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `healing_iter` | `int` | required | Number of NVFP4 steps; steps at index >= `healing_iter` run in FP8 |
+| `healing_recipe` | `str` | required | `"delayed"` (Transformer Engine `DelayedScaling`) or `"mxfp8"` (`MXFP8BlockScaling`, Blackwell only) |
+| `pre_quantize_base_weights` | `bool` | `False` | Replace frozen base weights with NVFP4 tensors at startup and stash FP8 copies for healing. Requires frozen base weights (PEFT/LoRA) |
+| `store_quantized_params_on_gpu` | `bool` | `False` | Keep the FP8 stash on GPU instead of pinned host memory |
+| `fp8_amax_history_len` | `int` | `1024` | `DelayedScaling` amax history length |
+| `fp8_amax_compute_algo` | `str` | `"max"` | `DelayedScaling` amax compute algorithm |
+| `reduce_amax` | `bool` | `True` | `DelayedScaling` amax reduction |
+| `reset_cuda_graph_warmup` | `bool` | `False` | Re-run CUDA-graph warmup steps after healing before re-capture |
+
+Layer-structure settings (`first_last_layers_bf16`, `num_layers_at_start_in_bf16`,
+`num_layers_at_end_in_bf16`, `fp8_dot_product_attention`,
+`use_transformer_engine_op_fuser`) are read from the model config at runtime and must
+not be duplicated in the healing config.
+
+Constraints:
+
+- The NVFP4 phase requires Blackwell-generation GPUs and Transformer Engine >= 2.7.0;
+  `"mxfp8"` healing also requires Blackwell, while `"delayed"` healing runs on Hopper-class
+  hardware too.
+- `pre_quantize_base_weights=True` requires the quantized base weights to be frozen
+  (e.g. LoRA fine-tuning); the callback raises an error if it finds trainable target weights.
+- Full-iteration CUDA graphs are reset at the healing step so they re-capture with the
+  FP8 recipe.
+
 NVFP4 is related to FP8 in that both use Transformer Engine low-precision kernels and BF16 fallback for non-quantized state, but the configuration knobs are separate. Use FP8 recipes on Hopper or Blackwell when FP8 is the target precision; use NVFP4 recipes on Blackwell when the model and hardware have been validated for 4-bit training.
 
 ## Available Mixed Precision Recipes
