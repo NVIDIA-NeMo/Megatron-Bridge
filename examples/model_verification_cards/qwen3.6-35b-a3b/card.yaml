@@ -16,8 +16,9 @@ summary: >
   69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
   and text conversations. CPU and GPU import/export, round-trip weight
   verification, forward-pass correlation, deterministic multimodal inference,
-  and bounded 100-step MedPix SFT and PEFT runs with reloadable checkpoints
-  were run; other items retain their explicit status below.
+  bounded 100-step MedPix SFT and PEFT runs with reloadable checkpoints, and
+  post-SFT HF export/inference were run; other items retain their explicit
+  status below.
 verification_index:
   model_level:
     verified:
@@ -29,8 +30,8 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [sft, peft]
-      unverified: [pretrain, sft_export_inference, sft_long_context, checkpoint_resume]
+      verified: [sft, sft_export_inference, peft]
+      unverified: [pretrain, sft_long_context, checkpoint_resume]
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
   hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
@@ -269,21 +270,45 @@ items:
 
   sft_export_inference:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       depends_on: sft
-      commands: null
-      last_verified: null
+      commands:
+        - >
+          ./scripts/conversion/convert.sh export --executor slurm --device cpu
+          --nodes 1 --gpus-per-node 1 --hf-model Qwen/Qwen3.6-35B-A3B
+          --hf-revision 995ad96eacd98c81ed38be0c5b274b04031597b0
+          --megatron-path
+          work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints/iter_0000100
+          --hf-path
+          work/model-verification/qwen3.6-35b-a3b/sft-support-v11/hf-export
+          --torch-dtype bfloat16
+        - >
+          ./scripts/inference/infer.sh --nodes 1 --gpus-per-node 1
+          --task hf-inference
+          --hf-model
+          work/model-verification/qwen3.6-35b-a3b/sft-support-v11/hf-export
+          --prompt "What was observed in the imaging?"
+          --image work/data/medpix/verification.png
+          --max-new-tokens 32 --chat-template --disable-thinking
+          --device cuda --dtype bfloat16
+      last_verified: 2026-07-23
+      bridge_commit: a881c9bffbfde520700b9c1c3971532fcd52d563  # pragma: allowlist secret
       expected_result: >
-        No export command is claimed until an exact Qwen3.6 SFT workflow
-        produces a reloadable checkpoint. Future verification must export every
-        language, vision, projection, MoE, shared-expert, and MTP weight to an
-        indexed BF16 HF checkpoint, strictly reload it, and use the
-        processor-native image verifier to run one greedy generation under a
-        32-token maximum while allowing natural end-of-sequence stopping.
-        Tensor counts, serialized byte totals, the actual generated-token
-        count, and the literal completion must be recorded before this item is
-        marked verified.
+        The CPU-backend export loaded SFT step 100 in a fresh process and
+        completed in 5m15s, using exactly one shared runtime GPU for Transformer
+        Engine vision-module construction. It wrote 1,045 BF16 tensors in 26
+        indexed shards; the index reports 71,903,645,408 tensor bytes and the
+        serialized shard files occupy 71,903,775,952 bytes. The exported config
+        preserves 40 language layers, 256 experts, top-8 routing, 27 vision
+        layers, and one packed MTP layer. The maintained HF verifier strictly
+        reloaded the export with no missing, unexpected, mismatched, or errored
+        keys, applied the processor-native MedPix image and prompt, and ran
+        greedy generation on one shared H100. Generation produced exactly 32
+        generated tokens under the 32-token maximum. The literal completion was
+        "The imaging shows CT:  Hyperdense mass in the region of the
+        quadrigeminal plate cistern.  There is mild ventricular
+        enlargement.\n\n".
 
   sft_long_context:
     H100:
