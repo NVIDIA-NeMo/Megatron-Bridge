@@ -418,9 +418,12 @@ def deepseek_v4_flash_no_mtp_sft_32gpu_h100_bf16_config() -> ConfigContainer:
     # --- MTP disabled ---
     cfg.model.mtp_num_layers = None
     cfg.model.mtp_loss_scaling_factor = 0.0
-    # The bridge appends an MTP-layer entry to csa_compress_ratios based on
-    # num_nextn_predict_layers. With MTP off, len(csa_compress_ratios) must
-    # equal num_layers (transformer_config validates this), so trim it.
+    # Drop the hybrid MTP sub-pattern so finalize() does not append a (0-copy) MTP
+    # section to hybrid_layer_pattern once MTP is off.
+    cfg.model.mtp_hybrid_override_pattern = None
+    # The bridge sizes csa_compress_ratios for the main hybrid layers plus one MTP
+    # depth. With MTP off, len(csa_compress_ratios) must be >= num_layers (the hybrid
+    # main-layer count, which transformer_config validates), so trim the MTP tail.
     ratios = getattr(cfg.model, "csa_compress_ratios", None)
     num_layers = getattr(cfg.model, "num_layers", None)
     if ratios is not None and num_layers is not None and len(ratios) > num_layers:
