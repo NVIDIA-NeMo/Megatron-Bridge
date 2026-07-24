@@ -74,15 +74,18 @@ def _validate_args(args: argparse.Namespace) -> None:
         raise ValueError("--distributed-timeout-minutes must be at least 1.")
     if any(not value.strip() for value in args.srun_args):
         raise ValueError("--srun-arg values must not be empty.")
-    for name in ("tp", "pp", "ep", "etp"):
-        if getattr(args, name) < 1:
-            raise ValueError(f"--{name} must be at least 1.")
+    if args.command != "compare-hf":
+        for name in ("tp", "pp", "ep", "etp"):
+            if getattr(args, name) < 1:
+                raise ValueError(f"--{name} must be at least 1.")
 
     if args.executor == "local":
         if args.nodes != 1:
             raise ValueError("Local execution supports exactly one node.")
         if args.detach:
             raise ValueError("--detach is only supported by the Slurm executor.")
+        if args.exclusive:
+            raise ValueError("--exclusive is only supported by the Slurm executor.")
         if args.srun_args:
             raise ValueError("--srun-arg is only supported by the Slurm executor.")
         if args.mount:
@@ -94,15 +97,17 @@ def _validate_args(args: argparse.Namespace) -> None:
 
     if args.command == "roundtrip" and args.device != "gpu":
         raise ValueError("Round-trip validation requires the GPU backend.")
+    if args.command == "compare-hf" and args.device != "cpu":
+        raise ValueError("Persisted Hugging Face checkpoint comparison requires the CPU backend.")
 
     if args.device == "cpu":
         if args.nodes != 1:
             raise ValueError("CPU conversion supports exactly one node and one process.")
-        if args.gpus_per_node not in (None, 0):
-            raise ValueError("CPU conversion does not accept --gpus-per-node.")
+        if args.gpus_per_node is not None and args.gpus_per_node < 0:
+            raise ValueError("--gpus-per-node must not be negative.")
         if args.gres:
             raise ValueError("CPU conversion does not accept --gres.")
-        if any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
+        if args.command != "compare-hf" and any(getattr(args, name) != 1 for name in ("tp", "pp", "ep", "etp")):
             raise ValueError("CPU conversion requires TP=PP=EP=ETP=1.")
     else:
         if args.gpus_per_node is None or args.gpus_per_node < 1:
@@ -110,7 +115,7 @@ def _validate_args(args: argparse.Namespace) -> None:
         if args.executor == "local":
             worker_values = [args.hf_model]
             if args.command != "roundtrip":
-                worker_values.append(args.megatron_path)
+                worker_values.append(args.hf_path if args.command == "compare-hf" else args.megatron_path)
             if args.command == "export":
                 worker_values.append(args.hf_path)
             if any(shlex.quote(value) != value for value in worker_values):
@@ -155,7 +160,7 @@ def _build_executor(
         )
 
     gpu_kwargs = {}
-    if args.device == "gpu" and not args.no_gpu_resource_request:
+    if args.gpus_per_node and not args.no_gpu_resource_request:
         gpu_kwargs["gpus_per_node"] = args.gpus_per_node
     container_env = [*env_names]
     if "PYTHONPATH" not in container_env:
@@ -167,7 +172,7 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=task_count,
         mem=args.mem,
-        exclusive=True,
+        exclusive=True if args.exclusive else None,
         time=args.time,
         gres=args.gres,
         launcher=launcher,

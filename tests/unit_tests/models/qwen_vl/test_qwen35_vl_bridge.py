@@ -372,6 +372,25 @@ class TestQwen35VLMoEBridgeMappingRegistry:
         names = self._get_mapping_names(bridge.mapping_registry())
         assert any("visual" in n or "vision_model" in n for n in names)
 
+    def test_mapping_registry_detects_qwen36_packed_mtp_experts(self, bridge):
+        source = Mock()
+        source.get_all_keys.return_value = [
+            "model.language_model.layers.0.mlp.experts.gate_up_proj",
+            "mtp.layers.0.mlp.experts.gate_up_proj",
+        ]
+        bridge.hf_pretrained = SimpleNamespace(state=SimpleNamespace(source=source))
+
+        mappings = bridge.mapping_registry().mappings
+
+        assert any(
+            getattr(mapping, "hf_param", None) == "mtp.layers.*.mlp.experts.gate_up_proj" for mapping in mappings
+        )
+        assert not any(
+            isinstance(getattr(mapping, "hf_param", None), dict)
+            and "mtp.layers.*.mlp.experts.*.gate_proj.weight" in mapping.hf_param.values()
+            for mapping in mappings
+        )
+
 
 @pytest.mark.unit
 @pytest.mark.skipif(not _TRANSFORMERS_HAS_QWEN3_5_MOE, reason="transformers does not have qwen3_5_moe support")

@@ -12,7 +12,7 @@ scan without interpreting logs or reconstructing the execution environment.
 ## Use the repository resources
 
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
-- Verify exact-length deterministic HF output with
+- Verify deterministic HF output with
   [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
 - Use the inventory and field rules below as the format contract. Do not infer
   model-specific settings from another family or variant.
@@ -213,6 +213,12 @@ model-verification workload:
 - use short, ignored repository-relative logical paths under `work/...`;
   prefer aliases such as `work/data/<dataset>` and `work/cache/<model>` over
   reproducing a physical storage hierarchy.
+
+CPU conversion should omit `--gpus-per-node` when it is genuinely CPU-only.
+If runtime construction demonstrably requires CUDA even though model weights
+remain on CPU, request exactly one shared runtime GPU and explain the exception
+in the item's result. Never request a full GPU node merely to satisfy a
+launcher or monitor.
 
 The public launchers may read their required generic Slurm configuration from
 the caller's environment. Do not include `srun`, `sbatch`, concrete account or
@@ -508,9 +514,12 @@ result. Private executor configuration stays outside the card.
   helper does not append padding before selecting the compared next-token
   position.
 - **Megatron inference:** Disable sampling, run one deterministic greedy
-  generation with an exact token count, and record the literal completion
-  including whitespace. A second replay may help diagnose nondeterminism, but
-  it is not required verification evidence.
+  generation with an explicit maximum new-token bound. Allow natural
+  end-of-sequence stopping, and record the actual generated-token count plus
+  the literal completion including whitespace. A second replay may help
+  diagnose nondeterminism, but it is not required verification evidence. When
+  using `infer.sh`, specify positive node and GPU counts and run synchronously;
+  do not use `--detach` or a dry-run flag in a verified command.
 - **Pretrain:** Use a bounded public dataset description and a stable schedule.
   Save a middle and final checkpoint when resume is in scope. For expensive
   workloads, a 100-step reference with checkpoints at steps 50 and 100 is a
@@ -524,7 +533,10 @@ result. Private executor configuration stays outside the card.
   checkpoint to HF, reload the exported model with Transformers, and run one
   deterministic greedy generation. Store this item as an ordered `commands`
   list containing exactly two strings: the synchronous Slurm export first and
-  the `uv run` HF inference second. Specify an exact new-token count and record
+  the maintained `infer.sh --task hf-inference` launcher second. Direct
+  `uv run` invocation of the same helper remains valid when no Slurm executor
+  is available. Specify an explicit maximum new-token bound, allow natural
+  end-of-sequence stopping, and record the actual generated-token count plus
   the literal completion, including whitespace, in `expected_result`.
 - **Long-context SFT:** Verify sequence packing and CP together. Record CP only
   when its size is greater than one.
@@ -661,8 +673,9 @@ an item verified merely to make validation pass.
 - Change only the execution/performance contract while tuning throughput, and
   recheck loss sentinels after numerically non-bitwise changes.
 - Leave recipe global and micro batch sizes unchanged in card commands.
-- Save full SFT, export it to HF, and record an exact deterministic N-token HF
-  completion in a two-command ordered list.
+- Save full SFT, export it to HF, and record the deterministic HF completion
+  plus actual generated-token count under an explicit maximum bound in a
+  two-command ordered list.
 - Keep resume as one direct continuation from the pretrain checkpoint.
 - Keep enabled features within the four-family allowlist.
 - Pass the bundled validator, including any caller-supplied denylist.

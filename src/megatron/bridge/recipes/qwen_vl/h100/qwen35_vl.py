@@ -12,12 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Qwen3.5-VL recipes.
+"""Qwen3.5-VL recipes with shared Qwen3.6-VL 35B-A3B support.
 
 This module provides pretrain, SFT, and PEFT configurations for Qwen3.5-VL models:
 
 - **Dense**: 800M, 2B, 4B, 9B, 27B
 - **MoE**: 35B-A3B, 122B-A10B, 397B-A17B
+
+Qwen3.6 35B-A3B uses the same architecture and shares the 35B recipe.
 """
 
 from __future__ import annotations
@@ -136,7 +138,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
-    """Return a pre-training config for Qwen3.5-VL 35B-A3B (MoE)."""
+    """Return a pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE)."""
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
@@ -793,12 +795,12 @@ def qwen35_vl_27b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Qwen3.5-VL MoE SFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
+# Qwen3.5/Qwen3.6-VL MoE SFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
 # =============================================================================
 
 
 def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE).
+    """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 16 GPUs
     - TP=2, PP=1, EP=16
@@ -853,17 +855,17 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100
@@ -910,7 +912,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_sft_2gpu_h100_bf16_fsdp_config() -> ConfigContainer:
-    """Return a full SFT config for Qwen3.5-VL 35B-A3B (MoE) with Megatron FSDP.
+    """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE) with Megatron FSDP.
 
     Uses Megatron FSDP for memory-efficient training with AG/RS overlap.
     Requires fsdp_dtensor checkpoint format (convert offline with
@@ -1757,12 +1759,12 @@ def qwen35_vl_27b_peft_2gpu_h100_bf16_config() -> ConfigContainer:
 
 
 # =============================================================================
-# Qwen3.5-VL MoE PEFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
+# Qwen3.5/Qwen3.6-VL MoE PEFT Configurations (35B-A3B, 122B-A10B, 397B-A17B)
 # =============================================================================
 
 
 def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a PEFT config for Qwen3.5-VL 35B-A3B (MoE).
+    """Return a PEFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 4 GPUs
     - TP=2, PP=1, EP=4
@@ -1818,17 +1820,17 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = None
+    cfg.model.recompute_granularity = "full"
     cfg.model.recompute_modules = None
-    cfg.model.recompute_method = None
-    cfg.model.recompute_num_layers = None
+    cfg.model.recompute_method = "uniform"
+    cfg.model.recompute_num_layers = 1
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
     # Training config
     cfg.train.train_iters = 300000
     cfg.train.global_batch_size = 32
-    cfg.train.micro_batch_size = 4
+    cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
     cfg.train.manual_gc_eval = 100

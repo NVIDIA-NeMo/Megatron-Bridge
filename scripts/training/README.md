@@ -239,6 +239,10 @@ Required Slurm arguments are:
 --container-image (or CONTAINER_IMAGE)
 ```
 
+The launcher requests all node memory by default. For a partial-node job, use
+`--mem`, for example `--mem 512G`, so the memory request does not prevent
+otherwise compatible jobs from sharing the unused GPUs.
+
 Set `CONTAINER_IMAGE` to avoid repeating `--container-image`. On clusters that allocate whole GPU nodes implicitly, pass `--no-gpu-resource-request` to omit the explicit Slurm GPU request while retaining one task per requested GPU. Environment variables and filesystem paths are never
 forwarded implicitly. Export credentials in the launcher environment, then repeat `--env NAME` to forward names without
 materializing their values in the generated sbatch script. Repeat `--mount HOST` for the same host and container path, or use

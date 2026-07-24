@@ -797,8 +797,8 @@ def _validate_conversion_launcher(
     gpu_counts = _argument_values(command, "--gpus-per-node")
     if device == "gpu":
         _require_positive_integer_argument(command, "--gpus-per-node", path=path, errors=errors)
-    elif gpu_counts:
-        errors.append(f"{_pointer(*path)}: CPU conversion must not request GPUs")
+    elif gpu_counts != [] and gpu_counts != ["1"]:
+        errors.append(f"{_pointer(*path)}: CPU conversion may request at most one shared runtime GPU")
     if any(option in tokens for option in ("--detach", "--dry-run", "--submission-dry-run")):
         errors.append(f"{_pointer(*path)}: verified conversion must wait for completion")
 
@@ -815,6 +815,34 @@ def _validate_training_launcher(command: str, *, item_path: tuple[str, ...], err
     _require_positive_integer_argument(command, "--gpus-per-node", path=path, errors=errors)
     if any(option in tokens for option in ("--dry-run", "--submission-dry-run")):
         errors.append(f"{_pointer(*path)}: verified training command must submit the workload")
+
+
+def _is_inference_launcher(command: str, *, task: str) -> bool:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return False
+    return (
+        bool(tokens)
+        and tokens[0].removeprefix("./") == "scripts/inference/infer.sh"
+        and _argument_values(command, "--task") == [task]
+    )
+
+
+def _validate_synchronous_inference_launcher(
+    command: str,
+    *,
+    path: tuple[str, ...],
+    errors: list[str],
+) -> None:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return
+    _require_positive_integer_argument(command, "--nodes", path=path, errors=errors)
+    _require_positive_integer_argument(command, "--gpus-per-node", path=path, errors=errors)
+    if any(option in tokens for option in ("--detach", "--dry-run", "--submission-dry-run")):
+        errors.append(f"{_pointer(*path)}: verified inference must wait for completion")
 
 
 def _validate_command_text(command: str, *, path: tuple[str, ...], errors: list[str]) -> None:
@@ -1042,14 +1070,23 @@ def _validate_inference(
         command_tokens = shlex.split(command)
     except ValueError:
         command_tokens = []
-    if command_tokens[:2] != ["uv", "run"]:
+    expected_launcher_task = {
+        "inference": "vlm-generation",
+        "sft_export_inference": "hf-inference",
+    }.get(item_name)
+    uses_inference_launcher = expected_launcher_task is not None and _is_inference_launcher(
+        command, task=expected_launcher_task
+    )
+    if uses_inference_launcher:
+        _validate_synchronous_inference_launcher(command, path=resolved_command_path, errors=errors)
+    if not uses_inference_launcher and command_tokens[:2] != ["uv", "run"]:
         errors.append(f"{_pointer(*resolved_command_path)}: inference must use uv run")
     prompts = _argument_values(command, "--prompt")
     if len(prompts) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify --prompt exactly once")
     token_matches = re.findall(r"--max[_-]new[_-]tokens(?:=|\s+)(\d+)", command)
     if not token_matches:
-        errors.append(f"{_pointer(*resolved_command_path)}: specify an exact max_new_tokens value")
+        errors.append(f"{_pointer(*resolved_command_path)}: specify an explicit max_new_tokens value")
         return
     if len(token_matches) != 1:
         errors.append(f"{_pointer(*resolved_command_path)}: specify max_new_tokens exactly once")
@@ -1058,8 +1095,31 @@ def _validate_inference(
     token_count = int(token_count_text)
     if token_count <= 0:
         errors.append(f"{_pointer(*resolved_command_path)}: max_new_tokens must be positive")
-    if "exact" not in expected.lower() or token_count_text not in expected:
-        errors.append(f"{_pointer(*path, 'expected_result')}: state the exact {token_count_text}-token result")
+    if token_count_text not in expected:
+        errors.append(f"{_pointer(*path, 'expected_result')}: state the {token_count_text}-token maximum")
+    actual_count_patterns = (
+        r"\bexact(?:ly)?\s+(\d+)(?:-token|\s+(?:new\s+|generated\s+)?tokens?|\s+generation\s+steps?)\b",
+        r"\b(\d+)-token\s+(?:greedy\s+)?(?:result|output|completion|completions)\b",
+        r"\b(?:generated|produced|returned?)\s+(?:exactly\s+)?(\d+)\s+(?:new\s+|generated\s+)?tokens?\b",
+        r"\bafter\s+(\d+)\s+(?:new\s+|generated\s+)?tokens?\b",
+    )
+    actual_counts = {
+        int(match) for pattern in actual_count_patterns for match in re.findall(pattern, expected, re.IGNORECASE)
+    }
+    actual_count = token_count
+    if len(actual_counts) != 1:
+        errors.append(f"{_pointer(*path, 'expected_result')}: record one actual generated-token count")
+    else:
+        actual_count = next(iter(actual_counts))
+        if actual_count <= 0 or actual_count > token_count:
+            errors.append(
+                f"{_pointer(*path, 'expected_result')}: generated-token count must be between 1 and {token_count}"
+            )
+        elif (
+            actual_count < token_count
+            and re.search(r"\b(?:eos|end[- ]of[- ]sequence)\b", expected, re.IGNORECASE) is None
+        ):
+            errors.append(f"{_pointer(*path, 'expected_result')}: state that generation stopped at EOS")
     literals = [
         left or right
         for left, right in re.findall(
@@ -1072,9 +1132,9 @@ def _validate_inference(
         errors.append(f"{_pointer(*path, 'expected_result')}: quote the literal completion after the word completion")
     else:
         literal = max(literals, key=len)
-        if token_count > 0 and len(literal.encode()) < token_count:
+        if actual_count > 0 and len(literal.encode()) < actual_count:
             errors.append(
-                f"{_pointer(*path, 'expected_result')}: literal completion is too short for {token_count} tokens"
+                f"{_pointer(*path, 'expected_result')}: literal completion is too short for {actual_count} tokens"
             )
         if len(prompts) == 1 and literal.strip() == prompts[0].strip():
             errors.append(f"{_pointer(*path, 'expected_result')}: literal completion must not repeat the prompt")
@@ -1138,10 +1198,13 @@ def _validate_manual_forward_pass(
     if status != "verified" or not isinstance(expected, str):
         return
 
+    uses_inference_launcher = _is_inference_launcher(command, task="model-comparison")
+    if uses_inference_launcher:
+        _validate_synchronous_inference_launcher(command, path=(*path, "command"), errors=errors)
     prefix = ["uv", "run", "python", "-m", "torch.distributed.run"]
-    if tokens[:5] != prefix:
+    if not uses_inference_launcher and tokens[:5] != prefix:
         errors.append(f"{_pointer(*path, 'command')}: manual forward pass must use uv distributed run")
-    if "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
+    if not uses_inference_launcher and "examples/conversion/compare_hf_and_megatron/compare.py" not in tokens:
         errors.append(f"{_pointer(*path, 'command')}: use the HF/Megatron comparison helper")
     for argument in ("--hf_model_path", "--megatron_model_path", "--prompt"):
         if len(_argument_values(command, argument)) != 1:
@@ -1233,9 +1296,6 @@ def _validate_sft_export_inference(
     ):
         if fragment not in export_command:
             errors.append(f"{_pointer(*export_path)}: missing {fragment}")
-    for fragment in ("uv run", "scripts/verify_hf_inference.py"):
-        if fragment not in inference_command:
-            errors.append(f"{_pointer(*inference_path)}: missing {fragment}")
     try:
         inference_tokens = shlex.split(inference_command)
     except ValueError:
@@ -1246,8 +1306,10 @@ def _validate_sft_export_inference(
         "python",
         "skills/create-model-verification-card/scripts/verify_hf_inference.py",
     ]
-    if inference_tokens[:4] != expected_inference_prefix:
-        errors.append(f"{_pointer(*inference_path)}: must directly run the HF inference verifier with uv")
+    uses_direct_helper = inference_tokens[:4] == expected_inference_prefix
+    uses_inference_launcher = _is_inference_launcher(inference_command, task="hf-inference")
+    if not uses_direct_helper and not uses_inference_launcher:
+        errors.append(f"{_pointer(*inference_path)}: must run the HF inference verifier through uv or infer.sh")
 
     export_devices = _argument_values(export_command, "--device")
     if len(export_devices) == 1 and export_devices[0] in {"cpu", "gpu"}:

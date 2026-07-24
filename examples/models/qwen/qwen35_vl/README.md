@@ -1,8 +1,11 @@
-# Qwen3.5-VL Examples
+# Qwen3.5/3.6-VL Examples
 
-This directory contains example scripts for Qwen3.5-VL vision-language models.
+This directory contains conversion and inference examples for Qwen3.5 and
+Qwen3.6 vision-language models. Both use the same Bridge architecture; replace
+the Qwen3.5 model ID with `Qwen/Qwen3.6-35B-A3B` to run those paths for
+Qwen3.6.
 
-For model introduction and architecture details, see the [Qwen3.5-VL documentation](../../../../docs/models/qwen/qwen35-vl.md).
+For model introduction and architecture details, see the [Qwen3.5/3.6-VL documentation](../../../../docs/models/qwen/qwen35-vl.md).
 
 ## Workspace Configuration
 
@@ -80,7 +83,11 @@ For multi-node distributed inference—required for the largest 397B model—see
 
 ## Finetune Recipes
 
-- Available recipes:
+The available presets below are checkpoint-specific Qwen3.5 recipes. They must
+not be relabeled as Qwen3.6 recipes even though both model versions share the
+same Bridge implementation.
+
+- Available Qwen3.5 recipes:
   - `qwen35_vl_800m_sft_config` / `qwen35_vl_800m_peft_config`: 0.8B dense model
   - `qwen35_vl_2b_sft_config` / `qwen35_vl_2b_peft_config`: 2B dense model
   - `qwen35_vl_4b_sft_config` / `qwen35_vl_4b_peft_config`: 4B dense model

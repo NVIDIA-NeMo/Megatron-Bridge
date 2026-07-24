@@ -236,3 +236,30 @@ def test_roundtrip_worker_parser_accepts_serialized_args():
         }
         & vars(args).keys()
     )
+
+
+def test_compare_hf_worker_args_forward_reference_revision():
+    module = _load_arguments_module()
+    args = module.build_parser(include_execution=True).parse_args(
+        [
+            "compare-hf",
+            "--hf-model",
+            "hf/model",
+            "--hf-revision",
+            "0123456789abcdef",
+            "--hf-path",
+            "/candidate",
+        ]
+    )
+
+    assert module.conversion_worker_args(args) == [
+        "compare-hf",
+        "--device",
+        "cpu",
+        "--hf-model",
+        "hf/model",
+        "--hf-path",
+        "/candidate",
+        "--hf-revision",
+        "0123456789abcdef",
+    ]

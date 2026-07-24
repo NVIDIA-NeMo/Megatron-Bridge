@@ -398,7 +398,7 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """35B-A3B SFT should have correct default parallelism and learning rate."""
+    """Shared Qwen3.5/Qwen3.6 35B-A3B SFT should have safe recipe defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_sft_config()
@@ -413,6 +413,11 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.moe_grouped_gemm is True
     assert cfg.model.moe_permute_fusion is True
     assert cfg.peft is None
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.optimizer.lr == 2e-5
 
 
@@ -440,7 +445,7 @@ def test_qwen35_vl_35b_a3b_fsdp_sft_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """35B-A3B PEFT should have correct default parallelism and learning rate."""
+    """Shared Qwen3.5/Qwen3.6 35B-A3B PEFT should have safe recipe defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_peft_config()
@@ -450,6 +455,11 @@ def test_qwen35_vl_35b_a3b_peft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 4
     assert cfg.peft is not None
+    assert cfg.train.global_batch_size == 32
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.recompute_granularity == "full"
+    assert cfg.model.recompute_method == "uniform"
+    assert cfg.model.recompute_num_layers == 1
     assert cfg.optimizer.lr == 2e-4
 
 

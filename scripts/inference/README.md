@@ -55,6 +55,10 @@ Run `uv run python scripts/inference/text_generation.py --help` in a configured
 Megatron Bridge environment for the full model, checkpoint, prompt, sampling,
 parallelism, and engine CLI.
 
+Use `--task hf-inference` to reload an exported Hugging Face checkpoint and run
+one deterministic inference. Its forwarded model argument is `--hf-model`, and
+multimodal verification additionally uses `--image` and `--chat-template`.
+
 ## Environment and cluster options
 
 `--env` accepts names only. Export a value in the login-node environment, then

@@ -132,6 +132,19 @@ def to_cuda(x):
     return x.cuda()
 
 
+def _apply_chat_template(processor, messages):
+    """Apply a processor chat template, falling back to its tokenizer."""
+    template_source = processor
+    if getattr(processor, "chat_template", None) is None:
+        tokenizer = getattr(processor, "tokenizer", None)
+        if tokenizer is None or getattr(tokenizer, "chat_template", None) is None:
+            raise ValueError(
+                "The processor and tokenizer have no chat template and no model-specific raw-prompt fallback"
+            )
+        template_source = tokenizer
+    return template_source.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+
+
 def process_multi_image_inputs(processor, image_paths: list[str], prompt: str):
     """Process N ordered images + prompt into model inputs (Qwen-family).
 
@@ -148,7 +161,7 @@ def process_multi_image_inputs(processor, image_paths: list[str], prompt: str):
         }
     ]
     image_inputs, video_inputs = process_vision_info(messages)
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = _apply_chat_template(processor, messages)
     inputs = processor(text=[text], images=image_inputs, videos=video_inputs, padding=True, return_tensors="pt")
     return inputs.input_ids, inputs.get("pixel_values"), inputs.get("image_grid_thw")
 
@@ -174,7 +187,7 @@ def process_video_inputs(processor, video_path: str, prompt: str, *, fps: float 
             "content": [{"type": "video"}, {"type": "text", "text": prompt}],
         }
     ]
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = _apply_chat_template(processor, messages)
     text_inputs = processor(text=[text], padding=True, return_tensors="pt")
     video_proc = processor.video_processor(videos=[frames], return_tensors="pt", do_sample_frames=False)
     # processor(text=...) without videos produces a single <|video_pad|> placeholder.
@@ -238,28 +251,32 @@ def _process_kimi_inputs(processor, image_path, prompt, image_token_id):
 
 def _process_default_inputs(processor, image_path, prompt, *, allow_raw_prompt=False):
     if getattr(processor, "chat_template", None) is None:
-        if not allow_raw_prompt:
-            raise ValueError("The processor has no chat template and no model-specific raw-prompt fallback")
-        image = load_image(image_path).convert("RGB")
-        image_token = getattr(processor, "image_token", None) or getattr(
-            processor.tokenizer, "image_token", "<|image|>"
-        )
-        if image_token not in prompt:
-            prompt = f"{image_token}\n{prompt}"
-        inputs = processor(
-            text=[prompt],
-            images=[image],
-            padding=True,
-            return_tensors="pt",
-        )
-        return (
-            inputs.input_ids,
-            inputs.get("pixel_values"),
-            inputs.get("image_grid_thw"),
-            inputs.get("image_sizes"),
-            inputs.get("mm_token_type_ids"),
-            inputs.get("image_position_ids"),
-        )
+        if allow_raw_prompt:
+            image = load_image(image_path).convert("RGB")
+            image_token = getattr(processor, "image_token", None) or getattr(
+                processor.tokenizer, "image_token", "<|image|>"
+            )
+            if image_token not in prompt:
+                prompt = f"{image_token}\n{prompt}"
+            inputs = processor(
+                text=[prompt],
+                images=[image],
+                padding=True,
+                return_tensors="pt",
+            )
+            return (
+                inputs.input_ids,
+                inputs.get("pixel_values"),
+                inputs.get("image_grid_thw"),
+                inputs.get("image_sizes"),
+                inputs.get("mm_token_type_ids"),
+                inputs.get("image_position_ids"),
+            )
+        tokenizer = getattr(processor, "tokenizer", None)
+        if tokenizer is None or getattr(tokenizer, "chat_template", None) is None:
+            raise ValueError(
+                "The processor and tokenizer have no chat template and no model-specific raw-prompt fallback"
+            )
 
     if not _HAS_QWEN_VL_UTILS:
         raise ImportError(
@@ -276,7 +293,7 @@ def _process_default_inputs(processor, image_path, prompt, *, allow_raw_prompt=F
         }
     ]
     image_inputs, video_inputs = process_vision_info(messages)
-    text = processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    text = _apply_chat_template(processor, messages)
     inputs = processor(
         text=[text],
         images=image_inputs,

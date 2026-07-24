@@ -13,9 +13,9 @@
 # limitations under the License.
 
 """
-Megatron Bridges for Qwen3.5 Vision-Language Models.
+Megatron Bridges for Qwen3.5 and Qwen3.6 Vision-Language Models.
 
-Qwen3.5 is a family of multimodal models that combine:
+Qwen3.5 and Qwen3.6 share a multimodal architecture that combines:
 - A hybrid Gated DeltaNet + Gated Attention language model (like Qwen3-Next)
 - A vision encoder (similar to Qwen3-VL)
 - Dense MLP or Mixture of Experts (MoE) with shared experts
@@ -25,8 +25,9 @@ This module provides two bridges:
 - ``Qwen35VLBridge``: Dense variant (e.g., Qwen3.5-27B)
   Reference: https://huggingface.co/Qwen/Qwen3.5-27B
 
-- ``Qwen35VLMoEBridge``: MoE variant (e.g., Qwen3.5-397B-A17B)
+- ``Qwen35VLMoEBridge``: Qwen3.5/Qwen3.6 MoE variants
   Reference: https://huggingface.co/Qwen/Qwen3.5-397B-A17B
+  Reference: https://huggingface.co/Qwen/Qwen3.6-35B-A3B
 """
 
 import logging
@@ -143,11 +144,12 @@ def _get_vision_mappings():
 )
 class Qwen35VLMoEBridge(MegatronModelBridge):
     """
-    Megatron Bridge for Qwen3.5 Vision-Language Model (MoE variant).
+    Megatron Bridge for Qwen3.5 and Qwen3.6 Vision-Language MoE models.
 
-    This bridge handles the conversion between HuggingFace Qwen3.5 VL model
-    and Megatron-Core Qwen3VLModel formats, including weight mappings and
-    configuration translation for the hybrid GDN+Attention VLM architecture.
+    This bridge handles conversion between Hugging Face Qwen3.5/Qwen3.6 VL
+    models and Megatron-Core Qwen3VLModel formats, including weight mappings
+    and configuration translation for the shared hybrid GDN+Attention VLM
+    architecture.
 
     The weight mappings handle:
     - Language model hybrid layers (GDN + standard attention)
@@ -156,11 +158,14 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
     - QK layernorm, zero-centered RMSNorm for GDN output norm
     - mRoPE position embeddings
 
-    Architecture: 15 × (3 × (GDN → MoE) + 1 × (Attention → MoE)) = 60 layers
+    Layer counts, hidden dimensions, and MoE geometry are read from the
+    checkpoint config. For example, Qwen3.5-397B-A17B has 60 language layers,
+    while Qwen3.6-35B-A3B has 40.
 
     Example:
         >>> from megatron.bridge import AutoBridge
         >>> bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.5-397B-A17B")
+        >>> qwen36_bridge = AutoBridge.from_hf_pretrained("Qwen/Qwen3.6-35B-A3B")
         >>> provider = bridge.to_megatron_provider()
     """
 
@@ -207,7 +212,7 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         provider.video_token_id = getattr(hf_config, "video_token_id", 248057)
         provider.audio_token_id = getattr(hf_config, "audio_token_id", 248076)
 
-        # Qwen3.5 uses mRoPE with [11, 11, 10] sections (different from Qwen3-VL's [24, 20, 20])
+        # Qwen3.5/3.6 use mRoPE with [11, 11, 10] sections (Qwen3-VL uses [24, 20, 20]).
         # The sections correspond to [temporal, height, width] dimensions.
         # With partial_rotary_factor=0.25 and head_dim=256, rotary_dim=64,
         # so each pair needs 32 dims total → sections [11, 11, 10].
@@ -217,7 +222,7 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         """
-        Return MegatronMappingRegistry containing parameter mappings for Qwen3.5 VL.
+        Return parameter mappings for Qwen3.5 and Qwen3.6 VL MoE models.
 
         Combines:
         1. Language model mappings (Qwen3-Next hybrid architecture with VL prefixes):

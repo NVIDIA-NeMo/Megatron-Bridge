@@ -41,13 +41,18 @@ def _add_execution_arguments(parser: argparse.ArgumentParser, *, default_device:
         "--gpus_per_node",
         type=int,
         dest="gpus_per_node",
-        help="GPUs per node; required for the GPU backend.",
+        help="GPUs per node; required for the GPU backend and optional as a CPU-backend runtime resource.",
     )
     execution.add_argument("--mem", default="0", help="Slurm memory request (default: 0, all node memory).")
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit (default: 04:00:00).")
     execution.add_argument("--gres", help="Optional Slurm GRES value for GPU jobs.")
+    execution.add_argument(
+        "--exclusive",
+        action="store_true",
+        help="Request exclusive Slurm nodes; by default conversion jobs may share nodes.",
+    )
     execution.add_argument(
         "--no-gpu-resource-request",
         action="store_true",
@@ -205,6 +210,26 @@ def _add_roundtrip_arguments(parser: argparse.ArgumentParser, *, include_executi
     _add_parallelism_arguments(parser, include_distributed_timeout=True)
 
 
+def _add_hf_comparison_arguments(parser: argparse.ArgumentParser, *, include_execution: bool) -> None:
+    """Add persisted Hugging Face checkpoint comparison arguments."""
+    if include_execution:
+        _add_execution_arguments(parser)
+    else:
+        parser.add_argument("--device", choices=("cpu",), required=True)
+
+    comparison = parser.add_argument_group("Hugging Face checkpoint comparison")
+    comparison.add_argument(
+        "--hf-model",
+        required=True,
+        help="Reference Hugging Face model ID or local checkpoint path.",
+    )
+    comparison.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision for the reference checkpoint.",
+    )
+    comparison.add_argument("--hf-path", required=True, help="Candidate Hugging Face checkpoint path.")
+
+
 def build_parser(*, include_execution: bool) -> argparse.ArgumentParser:
     """Build the conversion argument parser.
 
@@ -236,6 +261,10 @@ Examples:
   ./scripts/conversion/convert.sh roundtrip --executor local --device gpu \\
       --gpus-per-node 8 --hf-model Qwen/Qwen3-30B-A3B \\
       --ep 8
+
+  # Compare two persisted Hugging Face checkpoints bitwise on CPU
+  ./scripts/conversion/convert.sh compare-hf --executor local \\
+      --hf-model Qwen/Qwen3-30B-A3B --hf-path /workspace/qwen-hf
 """,
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -284,6 +313,13 @@ Examples:
         allow_abbrev=False,
     )
     _add_roundtrip_arguments(roundtrip_parser, include_execution=include_execution)
+
+    compare_hf_parser = subparsers.add_parser(
+        "compare-hf",
+        help="Compare two persisted Hugging Face checkpoints bitwise on CPU.",
+        allow_abbrev=False,
+    )
+    _add_hf_comparison_arguments(compare_hf_parser, include_execution=include_execution)
     return parser
 
 
@@ -296,6 +332,20 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
     Returns:
         Command-line arguments accepted by ``run_conversion.py``.
     """
+    if args.command == "compare-hf":
+        worker_args = [
+            "compare-hf",
+            "--device",
+            args.device,
+            "--hf-model",
+            args.hf_model,
+            "--hf-path",
+            args.hf_path,
+        ]
+        if args.hf_revision is not None:
+            worker_args.extend(["--hf-revision", args.hf_revision])
+        return worker_args
+
     if args.command == "roundtrip":
         worker_args = [
             "roundtrip",

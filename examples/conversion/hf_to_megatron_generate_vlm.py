@@ -45,7 +45,12 @@ from vlm_generate_utils import (
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.models.hf_pretrained.utils import is_safe_repo
-from megatron.bridge.utils.common_utils import get_last_rank, print_rank_0, print_rank_last
+from megatron.bridge.utils.common_utils import (
+    get_last_rank,
+    maybe_initialize_distributed,
+    print_rank_0,
+    print_rank_last,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -139,6 +144,7 @@ def vlm_forward_step(data_iterator, model, **kwargs) -> torch.Tensor:
 
 def main(args) -> None:
     """Run VLM inference with HuggingFace or Megatron checkpoints."""
+    maybe_initialize_distributed()
     tp = args.tp
     pp = args.pp
     ep = args.ep
@@ -150,7 +156,7 @@ def main(args) -> None:
     )
 
     # Detect model family for processor-specific handling
-    config = AutoConfig.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    config = AutoConfig.from_pretrained(args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote)
     model_type = getattr(config, "model_type", "")
     is_kimi = "kimi" in model_type
     image_token_id = getattr(config, "image_token_id", None)
@@ -162,7 +168,9 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Load model
     # ------------------------------------------------------------------
-    bridge = AutoBridge.from_hf_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    bridge = AutoBridge.from_hf_pretrained(
+        args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote
+    )
 
     if args.megatron_model_path:
         print_rank_0(f"Loading Megatron model from: {args.megatron_model_path}")
@@ -221,10 +229,14 @@ def main(args) -> None:
     # ------------------------------------------------------------------
     # Tokenizer & processor
     # ------------------------------------------------------------------
-    tokenizer = AutoTokenizer.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote
+    )
     if is_kimi:
         patch_kimi_vision_processor(args.hf_model_path)
-    processor = AutoProcessor.from_pretrained(args.hf_model_path, trust_remote_code=trust_remote)
+    processor = AutoProcessor.from_pretrained(
+        args.hf_model_path, revision=args.hf_revision, trust_remote_code=trust_remote
+    )
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
     pad_token_id = tokenizer.pad_token_id or 0
@@ -261,6 +273,7 @@ def main(args) -> None:
             image_token_id=image_token_id,
         )
 
+    prompt_length = input_ids_raw.size(1)
     input_ids_raw = input_ids_raw.cuda()
     pixel_values = to_cuda(pixel_values)
     image_grid_thw = to_cuda(image_grid_thw)
@@ -356,17 +369,23 @@ def main(args) -> None:
                 break
 
     generated_text = tokenizer.decode(list(generated_ids[0]))
+    completion = tokenizer.decode(generated_ids[0, prompt_length:].tolist(), skip_special_tokens=True)
     print_rank_0("======== GENERATED TEXT OUTPUT ========")
     if args.image_path:
         print_rank_0(f"Image: {args.image_path}")
     print_rank_0(f"Prompt: {args.prompt}")
     print_rank_0(f"Generated: {generated_text}")
+    print_rank_0(f"Completion: {completion}")
     print_rank_0("=======================================")
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="VLM Generation from HuggingFace Models")
     parser.add_argument("--hf_model_path", type=str, required=True, help="Path to the HuggingFace VL model.")
+    parser.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision used for model, config, tokenizer, and processor loading.",
+    )
     parser.add_argument("--prompt", type=str, default="Describe this image.", help="Input prompt.")
     parser.add_argument("--max_new_tokens", type=int, default=20, help="Maximum number of new tokens to generate.")
     parser.add_argument("--tp", type=int, default=1, help="Tensor parallelism size")
@@ -391,7 +410,6 @@ if __name__ == "__main__":
     )
     parser.add_argument("--trust_remote_code", action="store_true", help="Trust remote code for HF model loading")
     args = parser.parse_args()
-
     main(args)
 
     if torch.distributed.is_initialized():
