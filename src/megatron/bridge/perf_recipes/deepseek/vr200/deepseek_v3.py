@@ -297,9 +297,9 @@ def deepseek_v3_pretrain_256gpu_vr200_fp8cs_config() -> ConfigContainer:
 
 
 def deepseek_v3_pretrain_256gpu_vr200_fp8mx_config() -> ConfigContainer:
-    """DeepSeek V3 pretrain: 256× VR200, FP8-MX (alias of GB300)."""
+    """DeepSeek V3 pretrain: 256× VR200, FP8-MX."""
     cfg = deepseek_v3_pretrain_256gpu_gb300_fp8mx_config()
-    # Keep process settings next to the recipe so users can see the exact benchmark environment.
+    # VR200-specific process settings stay on this recipe instead of inheriting GB300 defaults.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
         # CUDA stream scheduling for this model and parallel layout.

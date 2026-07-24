@@ -202,6 +202,29 @@ def test_explicit_environment_invariants_across_all_flat_recipes():
             },
         ),
         (
+            "deepseek/vr200/deepseek_v3.py",
+            "deepseek_v3_pretrain_256gpu_vr200_fp8mx_config",
+            {
+                "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+                "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+                "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+                "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                "USE_MNNVL": 1,
+            },
+        ),
+        (
+            "qwen/vr200/qwen3_moe.py",
+            "qwen3_235b_a22b_pretrain_256gpu_vr200_fp8mx_config",
+            {
+                "CUDNNFE_CLUSTER_OVERLAP_MARGIN": 8,
+                "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 32,
+                "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
+                "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                "USE_MNNVL": 1,
+            },
+        ),
+        (
             "llama/h100/llama3.py",
             "llama3_8b_pretrain_8gpu_h100_fp8cs_config",
             {
