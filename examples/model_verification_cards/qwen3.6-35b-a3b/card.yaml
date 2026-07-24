@@ -15,8 +15,9 @@ summary: >
   finetuning uses mmoukouba/MedPix-VQA at immutable revision
   69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
   and text conversations. CPU and GPU import/export, round-trip weight
-  verification, forward-pass correlation, and deterministic multimodal
-  inference were run; other items retain their explicit status below.
+  verification, forward-pass correlation, deterministic multimodal inference,
+  and a bounded 100-step MedPix SFT run with a reloadable checkpoint were run;
+  other items retain their explicit status below.
 verification_index:
   model_level:
     verified:
@@ -28,7 +29,8 @@ verification_index:
       - inference
   training:
     H100:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [sft]
+      unverified: [pretrain, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
   hf_id: Qwen/Qwen3.6-35B-A3B
   hf_revision: 995ad96eacd98c81ed38be0c5b274b04031597b0  # pragma: allowlist secret
@@ -214,25 +216,56 @@ items:
 
   sft:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen35_vl_35b_a3b_sft_config --mode sft --dataset medpix
+        --step-func qwen3_vl_step
+        --pretrained_checkpoint
+        work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
+        --max_steps 100 --lr 2e-5 --min_lr 2e-6 --warmup_iters 10
+        'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
+        'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
+        dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
+        'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
+        dataset.do_validation=false dataset.do_test=false
+        dataset.pad_to_max_length=true dataset.enable_in_batch_packing=false
+        dataset.defer_in_batch_packing_to_step=true
+        scheduler.lr_decay_iters=100 dist.distributed_timeout_minutes=30
+        model.hf_model_id=Qwen/Qwen3.6-35B-A3B
+        model.bos_token_id=248044 model.eos_token_id=248044
+        model.moe_router_force_load_balancing=false
+        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B checkpoint.load=null
+        validation.eval_iters=0 validation.eval_interval=0
+        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
+        rerun_state_machine.check_for_nan_in_loss=true
+        --save_dir
+        work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+        logger.save_config_filepath=work/model-verification/qwen3.6-35b-a3b/sft-support-v11/resolved-config.yaml
+      last_verified: 2026-07-23
+      bridge_commit: 5df98f7edb1f109187a4b3544836fae344044a25  # pragma: allowlist secret
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 2.209447
+        final_loss: 1.002131
+        last_10_steps_step_time_ms_avg: 4513.20
+        last_10_steps_model_tflops_per_gpu_avg: 41.78
       expected_result: >
-        No Qwen3.6-specific recipe is added by this card. The existing Qwen3.5
-        35B preset uses the shared architecture implementation but hard-codes
-        the Qwen3.5 checkpoint and configuration, so it must not be presented as
-        a Qwen3.6 training command. Future verification must instantiate the
-        pinned Qwen3.6 checkpoint, adapt pinned MedPix image_id, question, and
-        answer fields into processor-native conversations, preserve image and
-        label metadata through qwen3_vl_step, complete a bounded SFT run with
-        finite loss, record all four metrics, and strictly reload its checkpoint.
+        The pinned 16-H100 run used the architecture-shared Qwen3.5/Qwen3.6
+        recipe at TP2/PP1/CP1/EP16/ETP1, MBS1/GBS32, natural expert routing,
+        full-uniform activation recompute in one-layer chunks, 4096-token
+        padding, and fixed 448-by-448 MedPix images. It completed 100 finite
+        optimizer steps in 16m33s with zero skipped or NaN iterations; step 1
+        loss was 2.209447 and step 100 loss was 1.002131. Full-state
+        checkpoints were saved at steps 50 and 100. The final checkpoint has 16
+        distributed-checkpoint shards and 503,856,358,156 serialized bytes
+        including optimizer and run metadata. A fresh process loaded step 100,
+        converted all 21,802 mapped entries, and exported an indexed BF16
+        checkpoint with 1,045 tensors in 26 shards, proving that the saved
+        training state is reloadable.
 
   sft_export_inference:
     H100:
