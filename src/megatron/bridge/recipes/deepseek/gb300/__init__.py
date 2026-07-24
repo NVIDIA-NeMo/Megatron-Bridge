@@ -12,15 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Process environment defaults shared by every flat performance recipe.
+"""GB300 recipes for DeepSeek models."""
 
-Keep this mapping deliberately small. Values that depend on a model, GPU,
-parallel layout, precision, or CUDA graph mode belong next to the corresponding
-recipe builder so users can see the exact benchmark environment.
-"""
+from megatron.bridge.recipes.deepseek.gb300.deepseek_v4 import (
+    deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config,
+    deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config,
+)
 
-COMMON_PERF_ENV_VARS: dict[str, str | int | float | bool] = {
-    # This is the only process setting with the same value in every flat recipe.
-    # Run NCCL work on its high-priority stream for every measured workload.
-    "TORCH_NCCL_HIGH_PRIORITY": 1,
-}
+
+__all__ = [
+    "deepseek_v4_pro_pretrain_32gpu_gb300_bf16_config",
+    "deepseek_v4_pro_pretrain_32gpu_gb300_fp8mx_config",
+]
