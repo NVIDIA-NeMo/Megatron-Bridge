@@ -7,22 +7,22 @@ summary: >
   timing and throughput metrics are sanity checks, not optimized performance
   results. Model-level verification covers the complete MiniMax-M3
   vision-language checkpoint, including the language model, vision tower,
-  projector paths, and lightning-indexer state. The pinned 32-H100 GPU import
-  and one deterministic multimodal Megatron generation completed their
-  verification gates. The distributed GPU export completed and is awaiting its
-  persisted exact-tensor and native-model audit. CPU import and export remain
-  unverified because the CPU-only attempt exited during CUDA-dependent model
-  initialization before producing a checkpoint. Full-VLM manual Hugging
+  projector paths, and lightning-indexer state. The pinned 32-H100 GPU import,
+  GPU export, and one deterministic multimodal Megatron generation completed
+  their verification gates. All 59 exported safetensors shards are
+  byte-for-byte identical to the pinned source, and Transformers 5.12.1
+  natively reloads the export without loading errors. CPU import and export
+  remain unverified because the CPU-only attempt exited during CUDA-dependent
+  model initialization before producing a checkpoint. Full-VLM manual Hugging
   Face/Megatron forward correlation also remains unverified. Training entries
   cover only the language-model backbone and do not claim vision or projector
   training; post-SFT full-VLM export therefore remains unsupported.
 verification_index:
   model_level:
-    verified: [hf_to_megatron_gpu, inference]
+    verified: [hf_to_megatron_gpu, megatron_to_hf_gpu, inference]
     unverified:
       - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - megatron_to_hf_gpu
       - manual_forward_pass
   training:
     H100:
@@ -71,9 +71,10 @@ items:
       iter_0000000, and reloaded it at TP1/PP1/EP32/ETP1. A strict projection of
       the reloaded Megatron model covered exactly 23,416 of 23,416 published
       language, vision, projector, and lightning-indexer tensors and
-      869,157,697,024 serialized source bytes, with zero duplicate, missing,
-      unexpected, shape, invalid-dtype, or value mismatches. No dtype widening
-      was required. The audit covered 1,804 total Megatron state tensors;
+      854,172,958,720 actual tensor-payload bytes, with zero duplicate, missing,
+      unexpected, shape, invalid-dtype, or value mismatches. The source index's
+      declared total_size is 869,157,697,024 bytes. No dtype widening was
+      required. The audit covered 1,804 total Megatron state tensors;
       model-state structure matched across all 32 EP ranks, and all 1,348
       replicated tensors comprising 13,917,973,376 elements matched exactly.
 
@@ -92,7 +93,7 @@ items:
       against the pinned source.
 
   megatron_to_hf_gpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh export --executor slurm --device gpu
@@ -104,13 +105,20 @@ items:
       --torch-dtype bfloat16 --tp 1 --pp 1 --ep 32 --etp 1
       --distributed-timeout-minutes 180 --distributed-save
       --save-every-n-ranks 1 --no-progress --trust-remote-code
-    last_verified: null
+    last_verified: 2026-07-23
     expected_result: >
       The 32-H100 distributed export exited successfully and wrote an indexed
-      full-VLM checkpoint. Verification remains pending until the persisted
-      export matches all source keys, shapes, dtypes, and values exactly and
-      Transformers constructs the native full-VLM model with a state-key set
-      identical to the exported index.
+      full-VLM checkpoint at TP1/PP1/EP32/ETP1. Its key-to-shard map and all 59
+      safetensors shards are byte-for-byte identical to the pinned source,
+      covering all 23,416 tensors and 854,172,958,720 actual tensor-payload
+      bytes. The exported configuration preserves 60 text layers, 128 top-4
+      experts, 32 vision layers, both projector stages, and 57
+      lightning-indexer layers. Three tokenizer probes and multimodal processor
+      inputs match the source. Transformers 5.12.1 natively reloads both source
+      and export as MiniMaxM3SparseForConditionalGeneration through its
+      checkpoint conversion mapping with zero missing, unexpected, mismatched,
+      or error keys. The export consolidates the tokenizer in tokenizer.json
+      and does not reproduce four redundant source-side legacy tokenizer files.
 
   manual_forward_pass:
     status: unverified
