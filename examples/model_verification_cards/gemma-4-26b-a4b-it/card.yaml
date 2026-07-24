@@ -130,24 +130,30 @@ items:
   inference:
     status: verified
     precision: bf16
+    bridge_commit: c4250ac1382eccc8e2b58c2424b3db85415fbf6f  # pragma: allowlist secret
     command: >
       uv run python -m torch.distributed.run --standalone --nproc_per_node=8
       examples/conversion/hf_to_megatron_generate_vlm.py
       --hf_model_path google/gemma-4-26B-A4B-it
       --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
       --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
-      --image_path work/model-verification/gemma-4-26b-a4b-it/nvidia-table.png
-      --prompt "According to the table, how much GPU memory does H100 NVL have?"
+      --image_path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
+      --prompt "What animal is on the candy?"
       --max_new_tokens 32
       --tp 2 --pp 1 --ep 4 --etp 1
     last_verified: 2026-07-23
     expected_result: >
-      One BF16 deterministic greedy run generated exactly 32 tokens. The exact
-      JSON-escaped completion was "Based on the table provided,
-      the H100 NVL has **94GB** of GPU memory.  � \nthought\n �". The input was
-      images/table.png from nvidia/NVIDIA-Nemotron-Nano-12B-v2-VL-BF16 at revision
-      cb5a65ff10232128389d882d805fa609427544f1, with SHA-256
-      001461d8dd271602ce849013c9a226113279e0ae6156a27a12332bace6225e33.
+      One BF16 deterministic greedy run used an exact 32-token generation
+      limit and terminated on EOS after 29 generated tokens. The JSON-escaped
+      literal completion was "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
+      animal on the candy is a
+      turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u002f\u002fthought\n\u003cchannel|\u003eThe
+      animal on the candy is a
+      turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u003ceos\u003e".
+      The input was
+      p-blog/candy.JPG from huggingface/documentation-images at revision
+      44c3249461c5a5336585d1e31e0a4ce7fce06a5a, with SHA-256
+      fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
 
   pretrain:
     all:
