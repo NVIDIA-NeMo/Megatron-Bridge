@@ -104,6 +104,9 @@ class Qwen3OmniBridge(MegatronModelBridge):
             spatial_merge_size=getattr(vision_config, "spatial_merge_size", 2),
             position_embedding_type="mrope",
             mrope_section=rope_scaling.get("mrope_section", [24, 20, 20]),
+            # HF/vLLM Qwen3-Omni expose interleaved keys in rope_scaling, but the
+            # thinker text path matches Megatron's non-interleaved rotary layout.
+            rotary_interleaved=False,
         )
         return provider
 

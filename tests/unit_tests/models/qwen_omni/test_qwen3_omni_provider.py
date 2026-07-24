@@ -43,7 +43,10 @@ class TestQwen3OmniModelProvider:
         assert provider.position_embedding_type == "mrope"
         assert provider.scatter_embedding_sequence_parallel is False
         assert provider.qk_layernorm is True
+        assert provider.moe_router_dtype == "fp32"
+        assert provider.moe_router_score_function == "softmax"
         assert provider.masked_softmax_fusion is False
+        assert provider.moe_enable_routing_replay is False
         assert provider.apply_rotary_pos_emb_in_fp32 is False
         assert provider.image_token_id == 151655
         assert provider.video_token_id == 151656
@@ -74,6 +77,16 @@ class TestQwen3OmniModelProvider:
         )
 
         assert provider.thinker_config.text_config.hidden_size == 128
+
+    def test_qwen3_omni_uses_mcore_routing_replay_field(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            num_attention_heads=4,
+            moe_enable_routing_replay=True,
+        )
+
+        assert provider.moe_enable_routing_replay is True
 
     def test_qwen3_omni_freeze_flags(self):
         provider = Qwen3OmniModelProvider(
@@ -180,6 +193,51 @@ class TestQwen3OmniModelProvider:
         self_attention_spec = kwargs["language_transformer_layer_spec"].submodules.self_attention
         assert self_attention_spec.module is Qwen3VLSelfAttention
         assert self_attention_spec.submodules.core_attention.__name__ == "TEDotProductAttention"
+
+    @pytest.mark.parametrize("attention_backend", [AttnBackend.unfused, "unfused"])
+    def test_unfused_backend_keeps_te_core_attention_with_sequence_parallel(self, attention_backend):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+            attention_backend=attention_backend,
+            sequence_parallel=True,
+        )
+
+        with (
+            patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.HAVE_TE", True),
+            patch("megatron.bridge.models.qwen_omni.qwen3_omni_provider.Qwen3OmniModel") as mock_model_cls,
+        ):
+            provider.provide()
+
+        _, kwargs = mock_model_cls.call_args
+        self_attention_spec = kwargs["language_transformer_layer_spec"].submodules.self_attention
+        assert self_attention_spec.module is Qwen3VLSelfAttention
+        assert self_attention_spec.submodules.core_attention.__name__ == "TEDotProductAttention"
+
+    def test_local_backend_with_sequence_parallel_hard_fails(self):
+        provider = Qwen3OmniModelProvider(
+            num_layers=2,
+            hidden_size=128,
+            ffn_hidden_size=256,
+            num_attention_heads=4,
+            num_query_groups=2,
+            kv_channels=32,
+            vocab_size=1024,
+            use_cpu_initialization=True,
+            bf16=False,
+            attention_backend="local",
+            sequence_parallel=True,
+        )
+
+        with pytest.raises(ValueError, match="sequence_parallel requires a Transformer Engine attention backend"):
+            provider.provide()
 
     def test_default_backend_falls_back_to_local_spec_without_te(self):
         provider = Qwen3OmniModelProvider(
