@@ -987,6 +987,16 @@ class TestNemotronHBridgeMTPIntegration:
 
         assert bridge._mtp_layers_per_block == 3  # len("*E*")
 
+    def test_build_conversion_tasks_caches_mtp_pattern_from_config_only_export(self):
+        """Test that config-only exports cache the MTP block depth."""
+        bridge = NemotronHBridge()
+        mock_config = PretrainedConfig(mtp_hybrid_override_pattern="*E")
+
+        with patch.object(MegatronModelBridge, "build_conversion_tasks", return_value=[]):
+            bridge.build_conversion_tasks(mock_config, Mock())
+
+        assert bridge._mtp_layers_per_block == 2
+
     def test_build_conversion_tasks_no_mtp_pattern(self):
         """Test build_conversion_tasks when mtp_hybrid_override_pattern is missing."""
         bridge = NemotronHBridge()
