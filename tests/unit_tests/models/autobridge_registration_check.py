@@ -30,12 +30,18 @@ def main() -> None:
     """Validate the expected registration manifest in a fresh interpreter."""
     expected = cast(dict[str, str], json.loads(sys.argv[1]))
     string_registrations = set(cast(list[str], json.loads(sys.argv[2])))
-    supported = AutoBridge.list_supported_models()
+    deprecated_registrations = set(cast(list[str], json.loads(sys.argv[3])))
+    supported = [
+        architecture
+        for architecture in AutoBridge.list_supported_models()
+        if architecture not in deprecated_registrations
+    ]
     assert supported == sorted(expected), f"registration manifest mismatch: {supported!r}"
 
     key_kinds = {
         key if isinstance(key, str) else key.__name__: isinstance(key, str)
         for key in model_bridge.get_model_bridge._exact_types
+        if (key if isinstance(key, str) else key.__name__) not in deprecated_registrations
     }
     expected_key_kinds = {architecture: architecture in string_registrations for architecture in expected}
     assert key_kinds == expected_key_kinds, f"registration key-kind mismatch: {key_kinds!r}"

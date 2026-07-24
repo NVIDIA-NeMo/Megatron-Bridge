@@ -16,6 +16,31 @@ ARG BASE_IMAGE=nvcr.io/nvidia/pytorch:26.06-py3
 FROM ${BASE_IMAGE} AS megatron_bridge
 WORKDIR /opt/Megatron-Bridge
 
+RUN --mount=type=bind,source=docker/patches/pytorch-library-finalizer.patch,target=/opt/pytorch-library-finalizer.patch \
+    TORCH_SITE_PACKAGES=$(python -c 'from pathlib import Path; import torch.library; print(Path(torch.library.__file__).parent.parent)') && \
+    patch -d "${TORCH_SITE_PACKAGES}" -p1 < /opt/pytorch-library-finalizer.patch && \
+    python - <<'PY'
+import torch
+from torch.library import Library, _clear_torch_ops_cache
+
+namespace_name = "_mbridge_finalizer_test"
+library = Library(namespace_name, "DEF")
+library.define("uncached_op() -> None")
+namespace = getattr(torch.ops, namespace_name)
+original_getattr = type(namespace).__getattr__
+
+
+def fail_getattr(self, name):
+    raise AssertionError(f"Torch op cache cleanup called __getattr__ for {name}")
+
+
+type(namespace).__getattr__ = fail_getattr
+try:
+    _clear_torch_ops_cache({f"{namespace_name}::uncached_op"})
+finally:
+    type(namespace).__getattr__ = original_getattr
+PY
+
 ARG INSTALL_DEEPEP=True
 ARG DEEPEP_COMMIT=34152ae28f80bcc3ee38d7a12cb2ad87cfd4ea72
 ARG REINSTALL_NVSHMEM=True

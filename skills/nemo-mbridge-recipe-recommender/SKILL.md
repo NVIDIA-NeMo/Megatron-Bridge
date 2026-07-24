@@ -273,9 +273,9 @@ All recipes live under `src/megatron/bridge/recipes/`. Each function returns a
 
 | Recipe | Mode | Notes |
 |--------|------|-------|
-| `moonlight_16b_pretrain_config` | Pretrain | 16 GPUs, TP1/PP1/EP16; bounded convergence cohort |
-| `moonlight_16b_sft_config` | SFT | 8 GPUs, TP1/PP1/EP8; 2K bounded convergence cohort |
-| `moonlight_16b_peft_config` | PEFT | 4 GPUs, TP4/PP1/EP4; bounded LoRA/DoRA cohort |
+| `moonlight_16b_pretrain_config` | Pretrain | 16 GPUs, TP1/PP1/EP8 with HybridEP; GBS/MBS 1024/2 bounded convergence cohort |
+| `moonlight_16b_sft_config` | SFT | 8 GPUs, TP1/PP1/EP8; 8K offline packing, GBS/MBS 8/1, 65,536 tokens/update |
+| `moonlight_16b_peft_config` | PEFT | 4 GPUs, TP1/PP1/EP4; bounded LoRA/DoRA cohort |
 | `moonlight_16b_sft_8k_config` | SFT | 8 GPUs, TP2/PP1/CP2/EP8; separate 8K cohort |
 | `olmoe_7b_{pretrain,sft,peft}_config` | All | MoE EP=8 |
 | `ministral3_{3b,8b,14b}_{sft,peft}_config` | SFT/PEFT | Dense |

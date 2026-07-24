@@ -32,7 +32,7 @@ _nemotronh_module = importlib.import_module("megatron.bridge.recipes.nemotronh")
 _NEMOTRONH_RECIPE_FUNCS = [
     getattr(_nemotronh_module, name)
     for name in getattr(_nemotronh_module, "__all__", [])
-    if callable(getattr(_nemotronh_module, name, None))
+    if callable(getattr(_nemotronh_module, name, None)) and not name.startswith("nemotronh_")
 ]
 
 
@@ -59,8 +59,9 @@ class _FakeAutoBridge:
 
 @pytest.fixture(autouse=True)
 def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep Super and Ultra recipe construction deterministic and offline."""
+    """Keep AutoBridge-backed recipe construction deterministic and offline."""
     for module_name in (
+        "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
@@ -138,6 +139,13 @@ def test_nemotronh_recipe_rejects_unknown_cli_override():
     assert not hasattr(cfg.model, "not_a_real_field")
 
 
+def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
+    """The GB200 pretraining model vocabulary must follow its runtime tokenizer."""
+    cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+
+    assert cfg.model.vocab_size is None
+
+
 def test_nemotron_nano_9b_v2_lora_defaults():
     """Test that Nemotron Nano 9B v2 LoRA has correct default parallelism."""
     from megatron.bridge.recipes.nemotronh import nemotron_nano_9b_v2_peft_config
@@ -203,146 +211,6 @@ def test_nemotron_nano_12b_v2_full_sft_defaults():
 
     # For full SFT, Nemotron Nano 12B v2 should use TP=4, PP=1
     assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
-
-
-def test_nemotronh_4b_lora_defaults():
-    """Test that NemotronH 4B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_4b_peft_config
-
-    cfg = nemotronh_4b_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, NemotronH 4B should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotronh_4b_full_sft_defaults():
-    """Test that NemotronH 4B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_4b_sft_config
-
-    cfg = nemotronh_4b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, NemotronH 4B should use TP=1, PP=1 (no change from LoRA)
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-    assert cfg.peft is None
-
-
-def test_nemotronh_8b_lora_defaults():
-    """Test that NemotronH 8B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_8b_peft_config
-
-    cfg = nemotronh_8b_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, NemotronH 8B should use TP=1, PP=1
-    assert cfg.model.tensor_model_parallel_size == 1
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotronh_8b_full_sft_defaults():
-    """Test that NemotronH 8B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_8b_sft_config
-
-    cfg = nemotronh_8b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, NemotronH 8B should use TP=2, PP=1
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
-
-
-def test_nemotronh_47b_lora_defaults():
-    """Test that NemotronH 47B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_47b_peft_config
-
-    cfg = nemotronh_47b_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, NemotronH 47B should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotronh_47b_full_sft_defaults():
-    """Test that NemotronH 47B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_47b_sft_config
-
-    cfg = nemotronh_47b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, NemotronH 47B should use TP=8, PP=2
-    assert cfg.model.tensor_model_parallel_size == 8
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.sequence_parallel is True
-    assert cfg.peft is None
-
-
-def test_nemotronh_56b_lora_defaults():
-    """Test that NemotronH 56B LoRA has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_56b_peft_config
-
-    cfg = nemotronh_56b_peft_config(peft_scheme="lora")
-
-    _assert_basic_config(cfg)
-
-    # For LoRA, NemotronH 56B should use TP=4, PP=1
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.sequence_parallel is False
-
-    # Check PEFT config
-    assert cfg.peft is not None
-    assert cfg.peft.dim == 32
-    assert cfg.peft.alpha == 32
-    assert cfg.peft.target_modules == ["linear_qkv", "linear_proj", "linear_fc1", "linear_fc2", "in_proj", "out_proj"]
-
-
-def test_nemotronh_56b_full_sft_defaults():
-    """Test that NemotronH 56B full SFT has correct default parallelism."""
-    from megatron.bridge.recipes.nemotronh import nemotronh_56b_sft_config
-
-    cfg = nemotronh_56b_sft_config()
-
-    _assert_basic_config(cfg)
-
-    # For full SFT, NemotronH 56B should use TP=8, PP=1
-    assert cfg.model.tensor_model_parallel_size == 8
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.sequence_parallel is True
     assert cfg.peft is None

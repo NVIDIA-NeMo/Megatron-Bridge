@@ -68,7 +68,7 @@ class DirectHFSFTDatasetConfig(DataloaderConfig):
     do_validation: bool = True
     do_test: bool = True
     skip_getting_attention_mask_from_dataset: bool = True
-    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "single"
+    dataloader_type: Literal["single", "cyclic", "batch", "external"] | None = "cyclic"
     enable_in_batch_packing: bool = False
     defer_in_batch_packing_to_step: bool = False
     pad_to_max_length: bool = False

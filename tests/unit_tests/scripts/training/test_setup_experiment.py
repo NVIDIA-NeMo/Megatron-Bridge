@@ -212,6 +212,118 @@ def test_parser_consumes_repeatable_srun_args():
     assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
 
 
+@pytest.mark.parametrize("option", ["-lmc", "--peak-mem-clk", "--peak_mem_clk"])
+def test_parser_consumes_peak_mem_clk(option):
+    module = _load_setup_experiment_module()
+
+    args, training_args = module.parse_args(
+        [
+            option,
+            "2600",
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+        ]
+    )
+
+    assert args.peak_mem_clk == 2600
+    assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
+
+
+@pytest.mark.parametrize(
+    ("requested_peak_mem_clk", "hardware", "expected"),
+    [
+        (None, "vr200", 4752),
+        (None, "h100", None),
+        (2600, "vr200", 2600),
+        (-1, "vr200", None),
+    ],
+)
+def test_peak_mem_clk_resolution(requested_peak_mem_clk, hardware, expected):
+    module = _load_setup_experiment_module()
+    metadata = types.SimpleNamespace(hardware=hardware)
+
+    assert module._resolve_peak_mem_clk(requested_peak_mem_clk, metadata) == expected
+
+
+def test_peak_mem_clk_resolution_without_benchmark_metadata():
+    module = _load_setup_experiment_module()
+
+    assert module._resolve_peak_mem_clk(None, None) is None
+    assert module._resolve_peak_mem_clk(2600, None) == 2600
+
+
+def test_peak_mem_clk_is_applied_once_per_slurm_node():
+    module = _load_setup_experiment_module()
+    executor = types.SimpleNamespace(
+        nodes=2,
+        tunnel=types.SimpleNamespace(job_dir="/job/dir"),
+        setup_lines="existing setup\n",
+    )
+
+    module._configure_slurm_peak_mem_clk(executor, 4752)
+
+    assert executor.setup_lines.startswith("existing setup\n")
+    assert "srun --ntasks=2 --ntasks-per-node=1 --output /job/dir/peak_mem_clock.out" in executor.setup_lines
+    assert "--error /job/dir/peak_mem_clock.err" in executor.setup_lines
+    assert "sudo nvidia-smi -lmc 4752,4752" in executor.setup_lines
+
+
+def test_main_applies_vr200_peak_mem_clk_default(monkeypatch):
+    module = _load_setup_experiment_module()
+    configured_clocks = []
+    sentinel_executor = object()
+
+    class _Script:
+        def __init__(self, **_kwargs):
+            pass
+
+    class _Experiment:
+        def __init__(self, _name):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            pass
+
+        def add(self, _task, *, executor, name):
+            assert executor is sentinel_executor
+            assert name == "training"
+
+        def dryrun(self):
+            pass
+
+    module.run.Script = _Script
+    module.run.Experiment = _Experiment
+    monkeypatch.setattr(module, "_build_executor", lambda *_args, **_kwargs: sentinel_executor)
+    monkeypatch.setattr(
+        module,
+        "_configure_slurm_peak_mem_clk",
+        lambda executor, peak_mem_clk: configured_clocks.append((executor, peak_mem_clk)),
+    )
+
+    module.main(
+        [
+            "--nodes",
+            "1",
+            "--gpus-per-node",
+            "8",
+            "--account",
+            "account",
+            "--partition",
+            "partition",
+            "--container-image",
+            "image.sqsh",
+            "--submission-dry-run",
+            "--recipe",
+            "qwen3_30b_a3b_pretrain_8gpu_vr200_bf16_config",
+        ]
+    )
+
+    assert configured_clocks == [(sentinel_executor, 4752)]
+
+
 def test_srun_args_reject_empty_values():
     module = _load_setup_experiment_module()
     args, _ = module.parse_args(["--srun-arg="])

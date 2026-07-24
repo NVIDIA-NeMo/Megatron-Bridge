@@ -266,6 +266,20 @@ def test_nemotron_vl_peft_has_hf_dataset_provider(monkeypatch: pytest.MonkeyPatc
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
 
 
+@pytest.mark.parametrize("recipe_func", [*_NEMOTRON_VL_SFT_FUNCS, *_NEMOTRON_VL_PEFT_FUNCS])
+def test_nemotron_vl_dataset_uses_model_processor_without_packing(
+    recipe_func: Callable, monkeypatch: pytest.MonkeyPatch
+):
+    """Test that Nemotron VL datasets load the model-owned processor without unsupported packing."""
+    patch_recipe_module_global(monkeypatch, _nemotron_vl_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    assert cfg.dataset.hf_processor_path == _nemotron_vl_module._DEFAULT_HF_MODEL_PATH
+    assert cfg.dataset.trust_remote_code is True
+    assert cfg.dataset.enable_in_batch_packing is False
+
+
 def test_nemotron_vl_sft_freeze_defaults(monkeypatch: pytest.MonkeyPatch):
     """Test that SFT configs have freeze options set to False by default."""
     # Monkeypatch AutoBridge
