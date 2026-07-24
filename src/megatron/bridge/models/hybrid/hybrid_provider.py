@@ -60,8 +60,9 @@ def _configure_mamba_chunk_size(stack_spec: ModuleSpec, chunk_size: int) -> Modu
 def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> ModuleSpec:
     """Hybrid stack specification for quantization with ModelOpt.
 
-    Uses Norm instead of TENorm and ColumnParallelLinear/RowParallelLinear
-    instead of TE layers to enable proper quantizer insertion by ModelOpt.
+    Grouped-GEMM MoE checkpoints retain the default Transformer Engine stack so
+    their shared expert quantizers have the same state-dict paths when restored.
+    Other Hybrid models use ModelOpt's local stack specification.
 
     Args:
         config: Optional Hybrid configuration object.
@@ -69,6 +70,11 @@ def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> M
     Returns:
         Module specification for quantization-ready Hybrid stack.
     """
+    if config is not None and config.num_moe_experts is not None and config.moe_grouped_gemm:
+        return get_hybrid_stack_modelopt_spec(
+            use_default_te_spec=True,
+            moe_grouped_gemm=True,
+        )
     return get_hybrid_stack_modelopt_spec(
         local_core_attention=False,
         remap_te_layernorm=True,
@@ -129,10 +135,17 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     hybrid_layer_pattern: str | None = None
     seq_length: int = 8192
     # HybridModel with no attention has no need for position embeddings, so none is default.
-    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
+    position_embedding_type: Literal["learned_absolute", "rope", "yarn", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: float | None = None
+    yarn_rotary_scaling_factor: float | None = None
+    yarn_original_max_position_embeddings: int | None = None
+    yarn_beta_fast: float | None = None
+    yarn_beta_slow: float | None = None
+    yarn_mscale: float | None = None
+    yarn_mscale_all_dim: float | None = None
+    yarn_correction_range_round_to_int: bool | None = None
     apply_rope_fusion: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False
@@ -193,9 +206,13 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
             self.hybrid_override_pattern = None
             used_hybrid_override_pattern = True
 
-        # Combine hybrid_layer_pattern (main decoder) with mtp_hybrid_override_pattern
-        # into a single unified pattern that MCore HybridModel can parse.
-        if self.hybrid_layer_pattern is not None and self.mtp_hybrid_override_pattern:
+        # Combine the main and MTP patterns only when MTP is enabled. Providers may
+        # predeclare an MTP override before a recipe sets mtp_num_layers.
+        if (
+            self.hybrid_layer_pattern is not None
+            and self.mtp_hybrid_override_pattern
+            and (self.mtp_num_layers or self.mtp_use_repeated_layer)
+        ):
             sep = Symbols.MTP_SEPARATOR
             main_pattern = self.hybrid_layer_pattern.split(sep)[0]
             # When mtp_use_repeated_layer=True, the shared MTP layer always exists

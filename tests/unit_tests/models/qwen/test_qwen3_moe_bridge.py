@@ -16,15 +16,24 @@
 Unit tests for Qwen3 MoE bridge functionality.
 """
 
+from types import SimpleNamespace
 from unittest.mock import Mock
 
 import pytest
 import torch
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
+from megatron.bridge.models.hybrid.hybrid_provider import HybridModelProvider
 from megatron.bridge.models.qwen.qwen3_moe_bridge import Qwen3MoEBridge
+
+
+@pytest.fixture(autouse=True)
+def _set_bridge_hf_config():
+    previous = Qwen3MoEBridge.hf_config
+    Qwen3MoEBridge.hf_config = SimpleNamespace(num_hidden_layers=2)
+    yield
+    Qwen3MoEBridge.hf_config = previous
 
 
 class TestQwen3MoEBridge:
@@ -124,11 +133,11 @@ class TestQwen3MoEBridge:
         # Call provider_bridge
         result = bridge.provider_bridge(mock_pretrained_qwen3_moe)
 
-        # Check that it returns a GPTModelProvider instance (after refactoring)
-        assert isinstance(result, GPTModelProvider)
+        assert isinstance(result, HybridModelProvider)
 
         # Check basic configuration mapping
-        assert result.num_layers == mock_qwen3_moe_config.num_hidden_layers
+        assert result.num_layers == 2 * mock_qwen3_moe_config.num_hidden_layers
+        assert result.hybrid_layer_pattern == "*E" * mock_qwen3_moe_config.num_hidden_layers
         assert result.hidden_size == mock_qwen3_moe_config.hidden_size
         assert result.num_attention_heads == mock_qwen3_moe_config.num_attention_heads
         assert result.seq_length == mock_qwen3_moe_config.max_position_embeddings
@@ -278,7 +287,7 @@ class TestQwen3MoEBridge:
         bridge = Qwen3MoEBridge()
         result = bridge.provider_bridge(mock_pretrained)
 
-        # GPTModelProvider defaults share_embeddings_and_output_weights to True
+        # Preserve the historical default when the HF field is absent.
         assert result.share_embeddings_and_output_weights is True
 
     def test_provider_bridge_235b_config(self, qwen3_moe_235b_config_dict):
@@ -294,7 +303,7 @@ class TestQwen3MoEBridge:
         result = bridge.provider_bridge(mock_pretrained)
 
         # Check 235B-specific configuration
-        assert result.num_layers == 94
+        assert result.num_layers == 188
         assert result.hidden_size == 4096
         assert result.num_attention_heads == 64
         assert result.ffn_hidden_size == 12288
@@ -339,7 +348,7 @@ class TestQwen3MoEBridge:
 
         # Should have layer norm mappings
         assert "model.norm.weight" in hf_params
-        assert "decoder.final_layernorm.weight" in megatron_params
+        assert "decoder.final_norm.weight" in megatron_params
 
     def test_mapping_registry_qkv_mapping(self):
         """Test that mapping_registry contains QKV mapping."""
@@ -374,7 +383,7 @@ class TestQwen3MoEBridge:
 
         # Check for MoE router mapping
         hf_params = [mapping.hf_param for mapping in auto_mappings]
-        assert "model.layers.*.mlp.gate.weight" in hf_params
+        assert "model.layers.0.mlp.gate.weight" in hf_params
 
         # Check for expert mappings in GatedMLPMapping
         assert len(gated_mlp_mappings) > 0

@@ -31,6 +31,7 @@ BASE_DIR = "/workspace/test_ckpts/qwen3_4b"
 MBRIDGE_CKPT = f"{BASE_DIR}/mbridge"
 MCORE_CKPT = f"{BASE_DIR}/mcore"
 TB_DIR = f"{BASE_DIR}/tb"
+QWEN3_4B_HYBRID_PATTERN = "*-" * 36
 
 
 class TestQwen3Ckpt:
@@ -60,7 +61,7 @@ class TestQwen3Ckpt:
 
     @pytest.mark.run_only_on("GPU")
     def test_qwen3_4b_ckpt_mcore(self, monkeypatch):
-        """Functional test for Qwen MCore checkpoint."""
+        """Functional test for Qwen MCore Hybrid checkpoint."""
 
         load_dir = MBRIDGE_CKPT if os.path.exists(MBRIDGE_CKPT) else None
         train_iters = 10 if load_dir else 5
@@ -76,7 +77,7 @@ class TestQwen3Ckpt:
             [
                 "torchrun",
                 "--nproc_per_node=2",
-                "/opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_gpt.py",
+                "/opt/Megatron-Bridge/3rdparty/Megatron-LM/pretrain_hybrid.py",
                 "--init-method-std",
                 "0.014",
                 "--disable-bias-linear",
@@ -88,8 +89,11 @@ class TestQwen3Ckpt:
                 "--rotary-base",
                 "1000000",
                 "--use-rotary-position-embeddings",
-                "--num-layers",
-                "36",
+                "--hybrid-layer-pattern",
+                QWEN3_4B_HYBRID_PATTERN,
+                "--spec",
+                "megatron.core.models.hybrid.hybrid_layer_specs",
+                "hybrid_stack_spec",
                 "--hidden-size",
                 "2560",
                 "--num-attention-heads",
