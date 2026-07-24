@@ -18,8 +18,9 @@ Verifies that the Megatron path uses None attention_mask (letting the model
 auto-generate its causal mask) and the HF path uses torch.ones_like(input_ids, dtype=torch.bool).
 """
 
-import os
+import importlib.util
 import sys
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -64,25 +65,38 @@ _MODULES_TO_MOCK = [
     "transformers",
 ]
 
-for _mod in _MODULES_TO_MOCK:
-    sys.modules.setdefault(_mod, MagicMock())
 
-# Add compare.py's directory to sys.path so we can import from it
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(__file__), "..", "..", "examples", "conversion", "compare_hf_and_megatron"),
-)
+def _load_compare_module():
+    """Import compare.py without leaking dependency stubs into other tests."""
+    compare_path = Path(__file__).parents[2] / "examples" / "conversion" / "compare_hf_and_megatron" / "compare.py"
+    previous_modules = {name: sys.modules.get(name) for name in (*_MODULES_TO_MOCK, "compare")}
+    previous_sys_path = list(sys.path)
+    try:
+        for name in _MODULES_TO_MOCK:
+            sys.modules.setdefault(name, MagicMock())
+        spec = importlib.util.spec_from_file_location("compare", compare_path)
+        assert spec is not None and spec.loader is not None
+        module = importlib.util.module_from_spec(spec)
+        sys.modules["compare"] = module
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path[:] = previous_sys_path
+        for name, previous in previous_modules.items():
+            if previous is None:
+                sys.modules.pop(name, None)
+            else:
+                sys.modules[name] = previous
 
-import compare  # noqa: E402
-from compare import (  # noqa: E402
-    SingleBatchIterator,
-    _broadcast_hf_results,
-    _maybe_gather_tensor_parallel_logits,
-    _run_hf_inference,  # noqa: E402
-    _run_megatron_forward,
-    inference_forward_step,
-    vlm_forward_step,
-)
+
+compare = _load_compare_module()
+SingleBatchIterator = compare.SingleBatchIterator
+_broadcast_hf_results = compare._broadcast_hf_results
+_maybe_gather_tensor_parallel_logits = compare._maybe_gather_tensor_parallel_logits
+_run_hf_inference = compare._run_hf_inference
+_run_megatron_forward = compare._run_megatron_forward
+inference_forward_step = compare.inference_forward_step
+vlm_forward_step = compare.vlm_forward_step
 
 
 @pytest.mark.unit
