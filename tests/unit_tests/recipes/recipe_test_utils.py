@@ -145,6 +145,10 @@ class _OfflineModelProvider:
         self.vocab_size = 256000
         self.yarn_original_max_position_embeddings = 32768
 
+    def to_text_provider(self) -> "_OfflineModelProvider":
+        """Match multimodal provider conversion without initializing a model."""
+        return self
+
     def finalize(self) -> None:
         """Match the model-provider interface without initializing a model."""
 
