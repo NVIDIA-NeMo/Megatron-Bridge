@@ -24,7 +24,7 @@ overrides = [
     { name = "tokenizers", specifier = ">=0.22.0,<0.23" },
     { name = "torch", marker = "sys_platform == 'never'" },
     { name = "torchvision", marker = "sys_platform == 'never'" },
-    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=2e559f062497bef768dfbe9d7e45548fadeca80a" },
+    { name = "transformer-engine", git = "https://github.com/NVIDIA/TransformerEngine.git?rev=e7c550c5f80636cf841a8204b1d6f85a5f3f28b7" },
     { name = "triton", marker = "sys_platform == 'never'" },
     { name = "urllib3", specifier = ">=2.6.3" },
 ]
@@ -35,8 +35,8 @@ version = "1.0.0+b7643bd"
 
 [[manifest.dependency-metadata]]
 name = "transformer-engine"
-version = "2.17.0+2e559f06"
-requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
+version = "2.18.0+e7c550c5"
+requires-dist = ["einops", "importlib-metadata>=1.0", "nvdlfw-inspect", "nvidia-cudnn-frontend>=1.25.0", "onnx", "onnxscript", "packaging", "pydantic", "torch>=2.1"]
 provides-extras = ["core-cu13", "pytorch"]
 
 [[package]]
@@ -2142,6 +2142,7 @@ build = [
     { name = "cython" },
     { name = "ninja" },
     { name = "numpy" },
+    { name = "nvidia-cudnn-frontend" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -2227,6 +2228,7 @@ build = [
     { name = "cython", specifier = ">=3.0.0" },
     { name = "ninja" },
     { name = "numpy" },
+    { name = "nvidia-cudnn-frontend", specifier = ">=1.25.0" },
     { name = "nvidia-mathdx" },
     { name = "pybind11" },
     { name = "setuptools" },
@@ -4860,12 +4862,13 @@ wheels = [
 
 [[package]]
 name = "transformer-engine"
-version = "2.17.0+2e559f06"
-source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=2e559f062497bef768dfbe9d7e45548fadeca80a#2e559f062497bef768dfbe9d7e45548fadeca80a" }
+version = "2.18.0+e7c550c5"
+source = { git = "https://github.com/NVIDIA/TransformerEngine.git?rev=e7c550c5f80636cf841a8204b1d6f85a5f3f28b7#e7c550c5f80636cf841a8204b1d6f85a5f3f28b7" }
 dependencies = [
     { name = "einops" },
     { name = "importlib-metadata" },
     { name = "nvdlfw-inspect" },
+    { name = "nvidia-cudnn-frontend" },
     { name = "onnx" },
     { name = "onnxscript" },
     { name = "packaging" },
