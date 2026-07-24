@@ -17,10 +17,59 @@ from types import SimpleNamespace
 
 import pytest
 
+from megatron.bridge.recipes.glm import gb200
 from megatron.bridge.recipes.glm.h100 import glm5
 
 
 pytestmark = pytest.mark.unit
+
+
+class _FakeMegatronProvider(SimpleNamespace):
+    _KNOWN_FIELDS = {
+        "apply_rope_fusion",
+        "bias_activation_fusion",
+        "bias_dropout_fusion",
+        "calculate_per_token_loss",
+        "context_parallel_size",
+        "cross_entropy_fusion_impl",
+        "cross_entropy_loss_fusion",
+        "dsa_indexer_loss_coeff",
+        "dsa_indexer_skip_topk_offset",
+        "dsa_indexer_topk_freq",
+        "dsa_indexer_use_sparse_loss",
+        "dsa_kernel_backend",
+        "expert_model_parallel_size",
+        "expert_tensor_parallel_size",
+        "gradient_accumulation_fusion",
+        "microbatch_group_size_per_vp_stage",
+        "moe_flex_dispatcher_backend",
+        "moe_router_force_load_balancing",
+        "moe_shared_expert_overlap",
+        "moe_token_dispatcher_type",
+        "mtp_num_layers",
+        "num_layers_in_first_pipeline_stage",
+        "num_layers_in_last_pipeline_stage",
+        "persist_layer_norm",
+        "pipeline_model_parallel_layout",
+        "pipeline_model_parallel_size",
+        "recompute_granularity",
+        "recompute_method",
+        "recompute_num_layers",
+        "seq_length",
+        "tensor_model_parallel_size",
+        "virtual_pipeline_model_parallel_size",
+    }
+
+    def __init__(self, **kwargs: object) -> None:
+        unknown_fields = set(kwargs) - self._KNOWN_FIELDS
+        if unknown_fields:
+            raise AssertionError(f"Unexpected GLM-5.2 model config fields: {sorted(unknown_fields)}")
+        super().__init__(**kwargs)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name not in self._KNOWN_FIELDS:
+            raise AssertionError(f"Unexpected GLM-5.2 model config field: {name}")
+        super().__setattr__(name, value)
 
 
 class _FakeAutoBridge:
@@ -30,9 +79,9 @@ class _FakeAutoBridge:
         assert len(revision) == 40
         return cls()
 
-    def to_megatron_provider(self, load_weights: bool = False) -> SimpleNamespace:
+    def to_megatron_provider(self, load_weights: bool = False) -> _FakeMegatronProvider:
         assert load_weights is False
-        return SimpleNamespace(
+        return _FakeMegatronProvider(
             dsa_indexer_loss_coeff=0.001,
             dsa_indexer_use_sparse_loss=True,
             dsa_indexer_topk_freq=4,
@@ -96,6 +145,29 @@ def test_glm52_long_context_recipe_uses_200k_packed_cp() -> None:
     assert cfg.dataset.hf_dataset is None
 
 
+def test_glm52_gb200_long_context_recipe_uses_131k_packed_cp() -> None:
+    cfg = gb200.glm52_sft_long_context_192gpu_gb200_bf16_config()
+
+    assert cfg.model.seq_length == 131072
+    assert cfg.model.pipeline_model_parallel_size == 6
+    assert cfg.model.context_parallel_size == 32
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.model.pipeline_model_parallel_layout is None
+    assert cfg.model.num_layers_in_first_pipeline_stage == 14
+    assert cfg.model.num_layers_in_last_pipeline_stage == 16
+    assert cfg.model.moe_token_dispatcher_type == "alltoall"
+    assert cfg.model.moe_flex_dispatcher_backend is None
+    assert cfg.model.apply_rope_fusion is False
+    assert cfg.train.global_batch_size == 8
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.train_iters == 20
+    assert cfg.dataset.seq_length == 131072
+    assert cfg.dataset.dataset_root == "work/data/glm5-2/synthetic-long-context-gb200"
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 131072
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 64
+    assert cfg.dataset.offline_packing_specs.pad_cu_seqlens is True
+
+
 @pytest.mark.parametrize(
     "recipe",
     [
@@ -103,7 +175,7 @@ def test_glm52_long_context_recipe_uses_200k_packed_cp() -> None:
         glm5.glm52_sft_functional_416gpu_h100_bf16_config,
     ],
 )
-def test_glm52_default_recipes_use_complete_vpp2_layout(recipe) -> None:
+def test_glm52_vpp2_default_layout_shape(recipe) -> None:
     cfg = recipe()
 
     assert cfg.model.virtual_pipeline_model_parallel_size == 2
@@ -175,6 +247,10 @@ def test_glm52_recipes_are_exported() -> None:
     from megatron.bridge.recipes.glm import h100
 
     assert glm_recipes.glm52_pretrain_config is glm5.glm52_pretrain_416gpu_h100_bf16_config
+    assert (
+        glm_recipes.glm52_sft_long_context_192gpu_gb200_bf16_config
+        is gb200.glm52_sft_long_context_192gpu_gb200_bf16_config
+    )
     for recipe_name in glm5.__all__:
         assert getattr(h100, recipe_name) is getattr(glm5, recipe_name)
         assert recipe_name in h100.__all__

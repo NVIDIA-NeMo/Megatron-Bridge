@@ -9,10 +9,10 @@ summary: >
   checkpoint round-trip on CPU and GPU, deterministic Megatron inference,
   HF-to-Megatron forward equivalence, bounded full SFT with export/reload
   inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
-  a reloadable middle checkpoint and verified continuation. Historical GB200
-  synthetic and benchmark results remain recorded as unverified references
-  because the public benchmark runner does not reproduce qualifying full-SFT
-  or packed long-context SFT evidence.
+  a reloadable middle checkpoint and verified continuation. GB200 support
+  verification currently covers bounded pretraining, bounded full SFT, 128K
+  packed long-context SFT, and bounded PEFT; post-SFT export/reload inference
+  and checkpoint resume remain pending.
 verification_index:
   model_level:
     verified:
@@ -24,7 +24,8 @@ verification_index:
       - inference
   training:
     GB200:
-      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+      verified: [pretrain, sft, sft_long_context, peft]
+      unverified: [sft_export_inference, checkpoint_resume]
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
@@ -180,18 +181,49 @@ items:
         model, optimizer, scheduler, data-order, and RNG state; the step-50
         checkpoint reloads successfully.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features: {}
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
+        --recipe glm52_pretrain_config --mode pretrain
+        --dataset megatron-indexed --deterministic --seq_length 4096 --max_steps 100
+        --lr 3e-4 --min_lr 3e-5 --warmup_iters 40
+        'dataset.blend=[["work/data/glm5-2/pretrain-tulu3-text-document/tulu3_glm52_text_document_text_document"],null]'
+        dataset.path_to_cache=work/cache/glm5-2/pretrain-tulu3-gb200
+        dataset.random_seed=1234 rng.seed=1234 scheduler.lr_decay_iters=100
+        model.tensor_model_parallel_size=1 model.pipeline_model_parallel_size=6
+        model.context_parallel_size=1 model.expert_model_parallel_size=32
+        model.expert_tensor_parallel_size=1 model.sequence_parallel=false
+        model.virtual_pipeline_model_parallel_size=null
+        model.pipeline_model_parallel_layout=null
+        model.num_layers_in_first_pipeline_stage=14
+        model.num_layers_in_last_pipeline_stage=16
+        model.account_for_embedding_in_pipeline_split=false
+        model.account_for_loss_in_pipeline_split=false
+        model.microbatch_group_size_per_vp_stage=6
+        model.moe_token_dispatcher_type=alltoall
+        model.moe_flex_dispatcher_backend=null
+        model.dsa_kernel_backend=cudnn model.dsa_indexer_loss_coeff=0.001
+        model.dsa_indexer_use_sparse_loss=true model.apply_rope_fusion=false
+        --save_dir work/model-verification/glm5-2/pretrain-gb200-cudnn/checkpoints
+        --save_interval 50 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-24
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 13.19136
+        final_loss: 8.171059
+        last_10_steps_step_time_ms_avg: 60610.850
+        last_10_steps_model_tflops_per_gpu_avg: 101.310
       expected_result: >
-        GLM-5.2 pretraining verification has not been recorded for this card.
+        The 192-GB200 TP1/PP6/CP1/EP32/ETP1 run completed exactly 100
+        real-data pretraining steps at GBS/MBS 1024/1 with cuDNN DSA, sparse
+        indexer loss coefficient 0.001, MTP1, and all-to-all expert dispatch.
+        Loss remained finite from 13.19136 to 8.171059, final grad norm was
+        1.394, and every step recorded zero skipped and NaN iterations. The
+        final 10 steps averaged 60,610.850 ms and 101.310 TFLOPS/GPU. Step-50
+        and step-100 checkpoints were written with model, optimizer, scheduler,
+        data-order, and RNG state for resume verification.
 
   sft:
     H100:
@@ -228,21 +260,56 @@ items:
         iterations; the final grad norm is 0.895 and the step-100 checkpoint
         reloads for export.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      enabled_features:
+        sequence_packing: offline
+      command: >
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
+        --recipe glm52_sft_config --mode sft --dataset tulu3
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048 --lr 5e-6 --min_lr 0 --warmup_iters 10
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="4d67f66cc64d3219133b767c253b2ad1425c6c88"'
+        tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
+        dataset.hf_output_root=work/data/glm5-2/tulu3-full-sft-gb200
+        dataset.hf_rewrite=false dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+        validation.eval_iters=0 validation.eval_interval=0
+        model.tensor_model_parallel_size=1 model.pipeline_model_parallel_size=6
+        model.context_parallel_size=1 model.expert_model_parallel_size=32
+        model.expert_tensor_parallel_size=1 model.sequence_parallel=false
+        model.virtual_pipeline_model_parallel_size=null
+        model.pipeline_model_parallel_layout=null
+        model.num_layers_in_first_pipeline_stage=14
+        model.num_layers_in_last_pipeline_stage=16
+        model.account_for_embedding_in_pipeline_split=false
+        model.account_for_loss_in_pipeline_split=false
+        model.microbatch_group_size_per_vp_stage=6
+        model.moe_token_dispatcher_type=alltoall
+        model.moe_flex_dispatcher_backend=null
+        model.dsa_kernel_backend=cudnn model.dsa_indexer_loss_coeff=0.001
+        model.dsa_indexer_use_sparse_loss=true model.apply_rope_fusion=false
+        checkpoint.load=null
+        --save_dir work/model-verification/glm5-2/sft-gb200-cudnn/checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-24
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.831100
+        final_loss: 0.5953441
+        last_10_steps_step_time_ms_avg: 68370.590
+        last_10_steps_model_tflops_per_gpu_avg: 9.180
       expected_result: >
-        The current public named recipe executes a 128K mock-GPT benchmark, not
-        bounded real-data full SFT, so its historical metrics do not qualify for
-        this item. Verification requires a public non-benchmark SFT recipe with
-        a pinned dataset and tokenizer to complete the full card gate.
+        The immutable-revision 192-GB200 run completed exactly 100 full-SFT
+        steps at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed
+        Tulu 3 data, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1,
+        and all-to-all expert dispatch. Loss remained finite from 1.831100 to
+        0.5953441, final grad norm was 0.837, and every step recorded zero
+        skipped and NaN iterations. The step-100 checkpoint was written and is
+        available for a future GB200 export/reload gate.
 
   sft_export_inference:
     H100:
@@ -311,25 +378,34 @@ items:
         skipped and NaN iterations. The last 10 steps averaged 36,603.370 ms
         and 210.650 TFLOPS/GPU; peak observed GPU memory was 81,005 MiB.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 32
-        moe_dispatcher: hybridep
-      command: null
-      last_verified: null
+      command: >
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
+        --recipe glm52_sft_long_context_192gpu_gb200_bf16_config --mode sft
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --max_steps 20 --seq_length 131072 --lr 1e-6 --min_lr 0 --warmup_iters 2
+        tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
+        checkpoint.load=null ddp.check_for_nan_in_grad=true
+        ddp.check_for_large_grads=true rerun_state_machine.check_for_nan_in_loss=true
+        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+      last_verified: 2026-07-24
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 0.3235812
+        final_loss: 0.1924341
+        last_10_steps_step_time_ms_avg: 29269.730
+        last_10_steps_model_tflops_per_gpu_avg: 236.510
       expected_result: >
-        Historical 128K packed-THD TP1/PP6/CP32/EP32/ETP1 references include a
-        50-step sparse-indexer-loss run and a 500-step cuDNN trajectory ending
-        with LM loss 2.720561e-4 and grad norm 0.167. They remain unverified
-        history because the current public benchmark runner uses mock GPT data
-        and does not reproduce that packed long-context SFT workload.
+        The immutable-revision 192-GB200 run completed exactly 20 optimizer
+        steps over 131,072-token packed rows at TP1/PP6/CP32/EP32/ETP1,
+        GBS/MBS 8/1, with cuDNN DSA, sparse indexer loss coefficient 0.001,
+        MTP1, padded cu_seqlens, and all-to-all expert dispatch. Loss remained
+        finite from 0.3235812 to 0.1924341, final grad norm was 1448.863, and
+        every step recorded zero skipped and NaN iterations. The final 10 steps
+        averaged 29,269.730 ms and 236.510 TFLOPS/GPU.
 
   peft:
     H100:
@@ -362,18 +438,56 @@ items:
         The final grad norm is 0.101; the checkpoint contains exactly 790 BF16
         rank-8 adapter tensors and no base-model weights.
     GB200:
-      status: unverified
+      status: verified
       precision: bf16
-      enabled_features: {}
-      command: null
-      last_verified: null
+      enabled_features:
+        sequence_packing: offline
+      command: >
+        ./scripts/training/train.sh --nodes 48 --gpus-per-node 4
+        --recipe glm52_peft_config --mode lora --dataset tulu3
+        --pretrained_checkpoint work/model-verification/glm5-2/gpu-megatron/iter_0000000
+        --max_steps 100 --seq_length 2048 --lr 1e-4 --min_lr 0 --warmup_iters 10
+        'dataset.hf_dataset.split="train[:10000]"'
+        'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
+        '++tokenizer.hf_tokenizer_kwargs.revision="4d67f66cc64d3219133b767c253b2ad1425c6c88"'
+        tokenizer.chat_template_path=work/templates/glm52_chat_template_generation.jinja
+        dataset.hf_output_root=work/data/glm5-2/tulu3-peft-gb200
+        dataset.hf_rewrite=false dataset.seed=1234 rng.seed=5678
+        dataset.do_validation=false dataset.hf_validation_proportion=null
+        dataset.enable_offline_packing=true scheduler.lr_decay_iters=100
+        validation.eval_iters=0 validation.eval_interval=0
+        model.tensor_model_parallel_size=1 model.pipeline_model_parallel_size=6
+        model.context_parallel_size=1 model.expert_model_parallel_size=32
+        model.expert_tensor_parallel_size=1 model.sequence_parallel=false
+        model.virtual_pipeline_model_parallel_size=null
+        model.pipeline_model_parallel_layout=null
+        model.num_layers_in_first_pipeline_stage=14
+        model.num_layers_in_last_pipeline_stage=16
+        model.account_for_embedding_in_pipeline_split=false
+        model.account_for_loss_in_pipeline_split=false
+        model.microbatch_group_size_per_vp_stage=6
+        model.moe_token_dispatcher_type=alltoall
+        model.moe_flex_dispatcher_backend=null
+        model.dsa_kernel_backend=cudnn model.dsa_indexer_loss_coeff=0.001
+        model.dsa_indexer_use_sparse_loss=true model.apply_rope_fusion=false
+        checkpoint.load=null
+        --save_dir work/model-verification/glm5-2/peft-gb200-cudnn/checkpoints
+        --save_interval 100 logger.log_interval=1 logger.log_throughput=true
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-24
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 1.831100
+        final_loss: 0.8957523
+        last_10_steps_step_time_ms_avg: 68588.270
+        last_10_steps_model_tflops_per_gpu_avg: 9.330
       expected_result: >
-        GLM-5.2 PEFT verification has not been recorded for this card.
+        The immutable-revision 192-GB200 run completed exactly 100 LoRA steps
+        at TP1/PP6/CP1/EP32/ETP1, GBS/MBS 32/1, with offline-packed Tulu 3
+        data, cuDNN DSA, sparse indexer loss coefficient 0.001, MTP1, and
+        all-to-all expert dispatch. Loss remained finite from 1.831100 to
+        0.8957523, final grad norm was 0.101, and every step recorded zero
+        skipped and NaN iterations. The step-100 adapter checkpoint was written
+        for reload validation.
 
   checkpoint_resume:
     H100:
