@@ -429,18 +429,14 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.tokenizer.tokenizer_hf_no_use_fast = False
     cfg.tokenizer.tokenizer_sentencepiece_ignore_extra_whitespaces = True
     cfg.tokenizer.tokenizer_sentencepiece_legacy = False
-    cfg.tokenizer.tokenizer_type = 'HuggingFaceTokenizer'
+    cfg.tokenizer.tokenizer_type = "NullTokenizer"
     cfg.tokenizer.trust_remote_code = False
     cfg.tokenizer.vocab_extra_ids = 0
     cfg.rng.data_parallel_random_init: False
     cfg.rng.inference_rng_tracker = False
     cfg.rng.te_rng_tracker = True
-
     cfg.ddp.align_param_gather = False
-    cfg.comm_overlap.align_param_gather = False
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
-    cfg.comm_overlap.overlap_param_gather_with_optimizer_step = False
-    cfg.comm_overlap.defer_embedding_wgrad_compute = False
 
 
 
