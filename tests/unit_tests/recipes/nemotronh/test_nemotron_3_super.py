@@ -397,3 +397,4 @@ class TestNemotron3Super16GpuH100:
         assert config.dataset.seq_length == 32768
         assert config.train.global_batch_size == 2
         assert config.train.micro_batch_size == 1
+        assert config.dist.distributed_timeout_minutes == 90

@@ -289,6 +289,9 @@ def nemotron_3_super_sft_16gpu_h100_bf16_32k_lowmem_config() -> ConfigContainer:
     cfg.model.cp_comm_type = "a2a"
     cfg.dataset.seq_length = 32768
     cfg.train.global_batch_size = 2
+    # A full 32K step can spend longer than the default ten minutes between
+    # collectives when pipeline parallelism and full recompute are enabled.
+    cfg.dist.distributed_timeout_minutes = 90
     return cfg
 
 
