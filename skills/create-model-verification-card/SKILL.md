@@ -11,6 +11,13 @@ scan without interpreting logs or reconstructing the execution environment.
 
 ## Use the repository resources
 
+Treat verification scripts, validators, and launchers as shared infrastructure. Do not modify them merely to make
+one model card pass. Any such change requires a clear, documented, reusable reason: identify the existing behavior
+that is insufficient, the affected public workflows or models, why an existing maintained path cannot be used, and
+add focused backward-compatible tests. Record the justification in the PR description or commit. If the need is
+model-specific or the reason is not clear, leave the affected verification item unverified instead of adding a
+card-only workaround.
+
 - Validate the result with [scripts/validate_card.py](scripts/validate_card.py).
 - Verify deterministic HF output with
   [scripts/verify_hf_inference.py](scripts/verify_hf_inference.py).
