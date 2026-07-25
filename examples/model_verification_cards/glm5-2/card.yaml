@@ -3,16 +3,21 @@
 
 title: glm5_2
 summary: >
-  Performance disclaimer: this model has not been performance-tuned; reported
-  timing and throughput metrics are sanity checks, not optimized performance
-  results. GLM-5.2 H100 support verification currently covers exact GPU
-  checkpoint round-trip on CPU and GPU, deterministic Megatron inference,
-  HF-to-Megatron forward equivalence, bounded full SFT with export/reload
-  inference, 200K-context CP32 SFT, bounded PEFT, and bounded pretraining with
-  a reloadable middle checkpoint and verified continuation. GB200 support
-  verification currently covers bounded pretraining, bounded full SFT, 128K
-  packed long-context SFT, bounded PEFT, and bounded checkpoint resume;
-  post-SFT export/reload inference remains pending.
+  Performance scope: only pretrain_performance.GB200 uses the tuned canonical
+  dense-equivalent performance proxy; its reduced depth and expert count, mock
+  data, forced router balancing, reduced DSA indexer top-k, and disabled
+  indexer loss make it an upper-throughput benchmark rather than
+  training-equivalent GLM-5.2 evidence. Timing and throughput metrics from
+  functional training items remain sanity checks rather than optimized
+  performance results. GLM-5.2 H100 support verification currently covers
+  exact GPU checkpoint round-trip on CPU and GPU, deterministic Megatron
+  inference, HF-to-Megatron forward equivalence, bounded full SFT with
+  export/reload inference, 200K-context CP32 SFT, bounded PEFT, and bounded
+  pretraining with a reloadable middle checkpoint and verified continuation.
+  GB200 support verification currently covers bounded pretraining, bounded
+  full SFT, 128K packed long-context SFT, bounded PEFT, bounded checkpoint
+  resume, and the dense-equivalent MXFP8 performance proxy; post-SFT
+  export/reload inference remains pending.
 verification_index:
   model_level:
     verified:
@@ -28,6 +33,8 @@ verification_index:
       unverified: [sft_export_inference]
     H100:
       verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    GB200: verified
 model:
   hf_id: zai-org/GLM-5.2
   hf_revision: 4d67f66cc64d3219133b767c253b2ad1425c6c88  # pragma: allowlist secret
@@ -581,3 +588,28 @@ items:
         absolute difference of 0.021295 within the allowed 0.081712. Final grad
         norm is 1.840; the last 10 steps average 67,700.250 ms and 90.710
         TFLOPS/GPU.
+
+  pretrain_performance:
+    GB200:
+      status: verified
+      precision: fp8_mx
+      bridge_commit: 3ce3601617d5cea10ed65dcb71546d52d8db55e7  # pragma: allowlist secret
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
+        --recipe glm52_50b_pretrain_8gpu_gb200_fp8mx_config
+        --mode pretrain --max_steps 20
+      last_verified: 2026-07-25
+      metrics:
+        initial_loss: 13.187000
+        final_loss: 0.02891495
+        last_10_steps_step_time_ms_avg: 5540.930
+        last_10_steps_model_tflops_per_gpu_avg: 977.880
+      expected_result: >
+        On two nodes with 8x GB200, the exact 50B dense-equivalent MXFP8 proxy
+        completes exactly 20 steps with finite LM and MTP losses and no skipped
+        or NaN iterations. The benchmark uses 18 layers (3 dense and 15 MoE),
+        64 experts, mock data, forced router balancing, HybridEP, DSA indexer
+        top-k 512, and zero indexer-loss coefficient, so its throughput is not
+        train-equivalent GLM-5.2 evidence. Over steps 11-20, the run averages
+        5,540.930 ms and 977.880 model TFLOP/s/GPU; an exact-recipe repeat
+        averages 5,562.800 ms and 974.030 model TFLOP/s/GPU.
