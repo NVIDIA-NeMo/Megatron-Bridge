@@ -33,7 +33,9 @@ from megatron.bridge.recipes.utils.dataset_utils import default_peft_config
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam_with_cosine_annealing
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
+from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
+from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 # =============================================================================
@@ -836,9 +838,10 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     # TE and kernels
     cfg.model.transformer_impl = "transformer_engine"
     cfg.model.cuda_graph_impl = "none"
-    cfg.model.cuda_graph_scope = "full"
+    cfg.model.cuda_graph_scope = []
     cfg.model.cuda_graph_warmup_steps = 3
     cfg.model.attention_backend = "auto"
+    cfg.model.bias_activation_fusion = True
     cfg.model.gradient_accumulation_fusion = True
     cfg.model.cross_entropy_loss_fusion = True
     cfg.model.cross_entropy_fusion_impl = "native"
@@ -855,10 +858,10 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = "full"
-    cfg.model.recompute_modules = None
-    cfg.model.recompute_method = "uniform"
-    cfg.model.recompute_num_layers = 1
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
     cfg.model.offload_modules = None
 
@@ -881,11 +884,12 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
-    cfg.optimizer.use_precision_aware_optimizer = False
-    cfg.optimizer.main_grads_dtype = torch.float32
+    cfg.optimizer.use_precision_aware_optimizer = True
+    cfg.optimizer.main_grads_dtype = torch.bfloat16
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.float32
-    cfg.optimizer.exp_avg_sq_dtype = torch.float32
+    cfg.optimizer.exp_avg_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = True
 
     # Dataset config
     cfg.dataset.seq_length = 4096
@@ -898,15 +902,26 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.grad_reduce_in_fp32 = True
-    cfg.ddp.average_in_collective = True
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
-    cfg.comm_overlap = None
-    cfg.mixed_precision = "bf16_mixed"
+    cfg.comm_overlap = CommOverlapConfig(
+        tp_comm_overlap=True,
+        overlap_grad_reduce=False,
+        overlap_param_gather=False,
+        overlap_param_gather_with_optimizer_step=True,
+        overlap_moe_expert_parallel_comm=True,
+        delay_wgrad_compute=False,
+    )
+    cfg.mixed_precision = bf16_mixed()
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
     return cfg
 
