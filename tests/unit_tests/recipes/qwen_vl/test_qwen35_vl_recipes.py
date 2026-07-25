@@ -425,13 +425,13 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.optimizer.main_params_dtype == torch.float32
     assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
-    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is True
+    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.ddp.average_in_collective is False
     assert cfg.comm_overlap.tp_comm_overlap is True
     assert cfg.comm_overlap.overlap_grad_reduce is False
     assert cfg.comm_overlap.overlap_param_gather is False
-    assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is True
+    assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
     assert cfg.comm_overlap.delay_wgrad_compute is False
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False

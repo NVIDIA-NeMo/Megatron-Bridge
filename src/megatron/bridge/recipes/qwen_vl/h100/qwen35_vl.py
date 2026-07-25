@@ -889,7 +889,8 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.main_params_dtype = torch.float32
     cfg.optimizer.exp_avg_dtype = torch.bfloat16
     cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
-    cfg.optimizer.overlap_param_gather_with_optimizer_step = True
+    # The VLM model-chunk layout produces empty optimizer groups with optimizer-step gather overlap.
+    cfg.optimizer.overlap_param_gather_with_optimizer_step = False
 
     # Dataset config
     cfg.dataset.seq_length = 4096
@@ -910,7 +911,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
         tp_comm_overlap=True,
         overlap_grad_reduce=False,
         overlap_param_gather=False,
-        overlap_param_gather_with_optimizer_step=True,
+        overlap_param_gather_with_optimizer_step=False,
         overlap_moe_expert_parallel_comm=True,
         delay_wgrad_compute=False,
     )
