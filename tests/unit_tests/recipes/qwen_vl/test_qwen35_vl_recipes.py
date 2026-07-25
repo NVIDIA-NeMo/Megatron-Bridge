@@ -404,19 +404,21 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_sft_config()
 
     _assert_basic_config(cfg)
-    assert cfg.model.tensor_model_parallel_size == 2
-    assert cfg.model.pipeline_model_parallel_size == 1
-    assert cfg.model.expert_model_parallel_size == 16
-    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.virtual_pipeline_model_parallel_size == 12
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.pipeline_dtype == torch.bfloat16
+    assert cfg.model.sequence_parallel is False
     assert cfg.model.moe_token_dispatcher_type == "alltoall"
     assert cfg.model.moe_router_fusion is True
     assert cfg.model.moe_grouped_gemm is True
     assert cfg.model.moe_permute_fusion is True
     assert cfg.peft is None
-    assert cfg.train.global_batch_size == 32
+    assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
-    assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["core_attn"]
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules == []
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.bias_activation_fusion is True
@@ -428,11 +430,11 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.ddp.average_in_collective is False
-    assert cfg.comm_overlap.tp_comm_overlap is False
+    assert cfg.comm_overlap.tp_comm_overlap is True
     assert cfg.comm_overlap.overlap_grad_reduce is False
     assert cfg.comm_overlap.overlap_param_gather is False
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
-    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32

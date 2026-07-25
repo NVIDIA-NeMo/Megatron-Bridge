@@ -805,7 +805,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 16 GPUs
-    - TP=2, PP=1, EP=16
+    - TP=1, PP=2, VP=12, EP=8
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
     """
@@ -817,14 +817,14 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.seq_length = 4096
 
     # Parallelism settings
-    cfg.model.tensor_model_parallel_size = 2
-    cfg.model.pipeline_model_parallel_size = 1
-    cfg.model.pipeline_dtype = None
-    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 2
+    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.virtual_pipeline_model_parallel_size = 12
     cfg.model.context_parallel_size = 1
-    cfg.model.expert_model_parallel_size = 16
+    cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
 
     # VLM-specific settings
     cfg.model.freeze_language_model = False
@@ -858,8 +858,8 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_padding_for_fp8 = False
 
     # Memory saving
-    cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = []
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
@@ -867,7 +867,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 300000
-    cfg.train.global_batch_size = 32
+    cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
@@ -907,13 +907,14 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
-    # The Qwen VLM wrapper does not implement the schedule plan required by TP UserBuffers.
+    # MoE A2A overlap requires a schedule plan that includes Qwen-VL vision preprocessing.
+    # Keep it disabled until the VLM wrapper can preserve that multimodal path in the plan.
     cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=False,
+        tp_comm_overlap=True,
         overlap_grad_reduce=False,
         overlap_param_gather=False,
         overlap_param_gather_with_optimizer_step=False,
-        overlap_moe_expert_parallel_comm=True,
+        overlap_moe_expert_parallel_comm=False,
         delay_wgrad_compute=False,
     )
     cfg.mixed_precision = bf16_mixed()
