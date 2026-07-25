@@ -428,7 +428,7 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.ddp.average_in_collective is False
-    assert cfg.comm_overlap.tp_comm_overlap is True
+    assert cfg.comm_overlap.tp_comm_overlap is False
     assert cfg.comm_overlap.overlap_grad_reduce is False
     assert cfg.comm_overlap.overlap_param_gather is False
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False

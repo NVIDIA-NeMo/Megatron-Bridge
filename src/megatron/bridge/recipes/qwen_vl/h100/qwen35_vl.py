@@ -907,8 +907,9 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
+    # The Qwen VLM wrapper does not implement the schedule plan required by TP UserBuffers.
     cfg.comm_overlap = CommOverlapConfig(
-        tp_comm_overlap=True,
+        tp_comm_overlap=False,
         overlap_grad_reduce=False,
         overlap_param_gather=False,
         overlap_param_gather_with_optimizer_step=False,
