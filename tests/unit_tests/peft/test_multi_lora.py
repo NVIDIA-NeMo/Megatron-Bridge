@@ -58,9 +58,27 @@ class FakeMultiLoRALinear(nn.Module):
         self.init_kwargs = kwargs
 
 
+class FakeMultiLoRAGroupedExpertLinear(nn.Module):
+    """Stand-in for ``MultiLoRAGroupedExpertLinear`` that records constructor kwargs."""
+
+    def __init__(self, to_wrap: nn.Module, **kwargs) -> None:
+        super().__init__()
+        self.to_wrap = to_wrap
+        self.init_kwargs = kwargs
+
+
 def multi_lora_linear_patch():
-    """Patch ``MultiLoRALinear`` in the transform module with a recording fake."""
-    return patch.object(multi_lora_module, "MultiLoRALinear", FakeMultiLoRALinear)
+    """Patch both multi-LoRA layer types in the transform module with recording fakes.
+
+    ``MultiLoRA.transform`` short-circuits on ``isinstance(module, MultiLoRALinear)``
+    for idempotency, and the real grouped-expert class subclasses the dense one, so
+    the fakes are patched together to keep that relationship out of the matching tests.
+    """
+    return patch.multiple(
+        multi_lora_module,
+        MultiLoRALinear=FakeMultiLoRALinear,
+        MultiLoRAGroupedExpertLinear=FakeMultiLoRAGroupedExpertLinear,
+    )
 
 
 def multi_lora_topk_router_patch(router_cls: type):
@@ -107,8 +125,16 @@ class NestedModel(nn.Module):
         )
 
 
+class _FakeGroupedExpertLinear(nn.Linear):
+    """Grouped expert linear stand-in: a linear that also reports ``num_gemms``."""
+
+    def __init__(self, in_features: int, out_features: int, num_gemms: int = 4) -> None:
+        super().__init__(in_features, out_features)
+        self.num_gemms = num_gemms
+
+
 class MoEModel(nn.Module):
-    """Model with a dense MLP linear and an expert linear of the same name."""
+    """Dense MLP, grouped expert, and sequential expert linears of the same name."""
 
     def __init__(self) -> None:
         super().__init__()
@@ -116,9 +142,13 @@ class MoEModel(nn.Module):
         self.decoder.layers = nn.ModuleList([nn.Module()])
         layer = self.decoder.layers[0]
         layer.mlp = nn.Module()
-        layer.mlp.linear_fc1 = nn.Linear(32, 64)  # dense -> should be wrapped
+        layer.mlp.linear_fc1 = nn.Linear(32, 64)  # dense -> dense multi-LoRA
         layer.mlp.experts = nn.Module()
-        layer.mlp.experts.linear_fc1 = nn.Linear(32, 64)  # expert -> should be skipped
+        # grouped (TEGroupedMLP-style) -> grouped-expert multi-LoRA
+        layer.mlp.experts.linear_fc1 = _FakeGroupedExpertLinear(32, 64)
+        # sequential (SequentialMLP-style) -> skipped
+        layer.mlp.experts.local_experts = nn.ModuleList([nn.Module()])
+        layer.mlp.experts.local_experts[0].linear_fc1 = nn.Linear(32, 64)
 
 
 class _DummyTopKRouter(nn.Module):
@@ -277,16 +307,36 @@ class TestMultiLoRATransform:
         assert isinstance(transformed.layers[1]["attention"]["linear_qkv"], nn.Linear)
         assert isinstance(transformed.layers[1]["mlp"]["linear_fc2"], nn.Linear)
 
-    def test_transform_skips_expert_linear(self) -> None:
+    def test_transform_routes_expert_linears_by_implementation(self) -> None:
         model = MoEModel()
         peft = MultiLoRA(target_modules=["linear_fc1"])
 
         transformed = peft(model, training=True)
 
         layer = transformed.decoder.layers[0]
-        # Dense MLP linear is wrapped; the routed-expert linear of the same name is skipped.
+        # Dense MLP linear gets the dense layer; the grouped expert linear of the
+        # same name gets the grouped-expert layer; the sequential per-expert
+        # linear is left alone (its token order is not slot-segmentable).
         assert isinstance(layer.mlp.linear_fc1, FakeMultiLoRALinear)
-        assert isinstance(layer.mlp.experts.linear_fc1, nn.Linear)
+        assert isinstance(layer.mlp.experts.linear_fc1, FakeMultiLoRAGroupedExpertLinear)
+        assert isinstance(layer.mlp.experts.local_experts[0].linear_fc1, nn.Linear)
+
+    def test_transform_passes_local_expert_count(self) -> None:
+        model = MoEModel()
+        peft = MultiLoRA(target_modules=["linear_fc1"], n_adapters=3, dim=8, alpha=16)
+
+        transformed = peft(model, training=True)
+
+        wrapped = transformed.decoder.layers[0].mlp.experts.linear_fc1
+        assert wrapped.init_kwargs["num_local_experts"] == 4
+        assert wrapped.init_kwargs["n_adapters"] == 3
+        assert wrapped.init_kwargs["dim"] == 8
+
+    @pytest.mark.parametrize("flag", ["normalize_moe_lora", "share_expert_adapters", "experts_shared_outer_loras"])
+    def test_unsupported_expert_layouts_raise(self, flag: str) -> None:
+        peft = MultiLoRA(target_modules=["linear_fc1"], **{flag: True})
+        with pytest.raises(NotImplementedError, match=flag):
+            peft(MoEModel(), training=True)
 
     def test_transform_skips_topk_router(self) -> None:
         router = _DummyTopKRouter()
