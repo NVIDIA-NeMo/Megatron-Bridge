@@ -147,13 +147,13 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     assert cfg.model.vocab_size is None
 
 
-def test_nemotron_3_super_gb200_matches_benchmark_hardware_configuration():
+def test_nemotron_3_super_64gpu_gb200_matches_benchmark_hardware_configuration():
     """The training recipe should share the tuned GB200 layout without benchmark-only behavior."""
     from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
         nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
     )
 
-    training_cfg = _nemotronh_module.nemotron_3_super_gb200_pretrain_config()
+    training_cfg = _nemotronh_module.nemotron_3_super_pretrain_64gpu_gb200_bf16_config()
     benchmark_cfg = nemotron_3_super_pretrain_64gpu_gb200_bf16_config()
 
     for field_name in (

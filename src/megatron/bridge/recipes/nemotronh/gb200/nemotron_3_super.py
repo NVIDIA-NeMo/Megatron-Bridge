@@ -23,7 +23,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
-def nemotron_3_super_gb200_pretrain_config() -> ConfigContainer:
+def nemotron_3_super_pretrain_64gpu_gb200_bf16_config() -> ConfigContainer:
     """Return the Nemotron 3 Super BF16 pretraining config for 64 GB200 GPUs.
 
     This is the convergence-oriented counterpart of the canonical 64-GPU
@@ -80,4 +80,4 @@ def nemotron_3_super_gb200_pretrain_config() -> ConfigContainer:
     return cfg
 
 
-__all__ = ["nemotron_3_super_gb200_pretrain_config"]
+__all__ = ["nemotron_3_super_pretrain_64gpu_gb200_bf16_config"]
