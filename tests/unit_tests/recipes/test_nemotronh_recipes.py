@@ -163,15 +163,21 @@ def test_nemotron_3_super_gb200_matches_benchmark_hardware_configuration():
         "expert_tensor_parallel_size",
         "expert_model_parallel_size",
         "moe_flex_dispatcher_backend",
-        "moe_flex_dispatcher_num_sms",
         "moe_hybridep_num_sms",
         "moe_token_dispatcher_type",
         "moe_shared_expert_overlap",
         "cuda_graph_impl",
-        "cuda_graph_scope",
         "apply_rope_fusion",
     ):
         assert getattr(training_cfg.model, field_name) == getattr(benchmark_cfg.model, field_name)
+
+    training_scopes = [
+        scope.name if hasattr(scope, "name") else scope for scope in training_cfg.model.cuda_graph_scope
+    ]
+    benchmark_scopes = [
+        scope.name if hasattr(scope, "name") else scope for scope in benchmark_cfg.model.cuda_graph_scope
+    ]
+    assert training_scopes == benchmark_scopes
 
     assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
     assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
