@@ -11,3 +11,8 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
+from megatron.bridge.perf_recipes.glm_moe_dsa.gb200.glm5 import (
+    glm52_50b_pretrain_8gpu_gb200_bf16_config,
+    glm52_50b_pretrain_8gpu_gb200_fp8mx_config,
+)
