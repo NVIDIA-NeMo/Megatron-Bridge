@@ -35,6 +35,7 @@ from megatron.bridge.training.checkpointing import (
     _extract_megatron_lm_args_from_state_dict,
     _get_checkpoint_format,
     _get_non_persistent_iteration,
+    _has_global_non_persistent_checkpoint,
     _load_base_checkpoint,
     _load_checkpoint_from_path,
     _load_hf_pretrained_checkpoint,
@@ -1930,6 +1931,116 @@ class TestLoadBaseCheckpoint:
         mock_pg.tp.rank.return_value = 0
         mock_pg.tp.size.return_value = 1
         return mock_pg
+
+    def test_global_non_persistent_checkpoint_is_found_under_distinct_save_dir(self, tmp_path):
+        """An unchanged restart discovers the non-persistent checkpoint written under save."""
+        load_dir = tmp_path / "input"
+        save_dir = tmp_path / "output"
+        non_persistent_dir = save_dir / "non_persistent"
+        non_persistent_dir.mkdir(parents=True)
+        (non_persistent_dir / "latest_train_state.pt").touch()
+
+        ckpt_cfg = Mock(spec=CheckpointConfig)
+        ckpt_cfg.save = str(save_dir)
+        ckpt_cfg.non_persistent_ckpt_type = "global"
+        ckpt_cfg.non_persistent_global_ckpt_dir = None
+
+        assert _has_global_non_persistent_checkpoint(str(load_dir), ckpt_cfg)
+
+    @patch("megatron.bridge.training.checkpointing._load_global_dist_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._get_checkpoint_format", return_value="torch_dist")
+    @patch("megatron.bridge.training.checkpointing._load_non_persistent_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration", return_value=(100, False))
+    def test_newer_global_non_persistent_checkpoint_is_loaded_from_distinct_save_dir(
+        self,
+        _mock_resolve,
+        mock_load_non_persistent,
+        _mock_get_format,
+        mock_load_persistent,
+        tmp_path,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A restart prefers the newer recovery point written under checkpoint.save."""
+        load_dir = tmp_path / "input"
+        save_dir = tmp_path / "output"
+        non_persistent_dir = save_dir / "non_persistent"
+        non_persistent_dir.mkdir(parents=True)
+        torch.save(
+            TrainState(step=200).state_dict(),
+            get_checkpoint_train_state_filename(str(non_persistent_dir), prefix="latest"),
+        )
+
+        base_config.save = str(save_dir)
+        base_config.ckpt_format = "torch_dist"
+        base_config.non_persistent_ckpt_type = "global"
+        base_config.non_persistent_global_ckpt_dir = None
+        expected = ({"model": "newer"}, str(non_persistent_dir / "iter_0000200"), False, CheckpointType.GLOBAL)
+        mock_load_non_persistent.return_value = expected
+
+        checkpointing_context = {}
+        result = _load_base_checkpoint(
+            str(load_dir),
+            base_config,
+            checkpointing_context=checkpointing_context,
+            pg_collection=mock_pg_collection,
+        )
+
+        assert result == expected
+        assert mock_load_non_persistent.call_args.args[0] == str(non_persistent_dir)
+        assert mock_load_non_persistent.call_args.args[4] == 200
+        assert checkpointing_context["dataloader_state_dir"] == str(save_dir / DATALOADER_STATE_SUBDIR)
+        mock_load_persistent.assert_not_called()
+
+    @patch("megatron.bridge.training.checkpointing._load_non_persistent_base_checkpoint")
+    @patch("megatron.bridge.training.checkpointing._resolve_checkpoint_iteration", return_value=(50, False))
+    def test_newer_global_non_persistent_checkpoint_under_load_remains_available(
+        self,
+        _mock_resolve,
+        mock_load_non_persistent,
+        tmp_path,
+        base_config,
+        mock_pg_collection,
+    ):
+        """A distinct empty save root does not hide a newer recovery point under load."""
+        load_dir = tmp_path / "input"
+        save_dir = tmp_path / "output"
+        load_non_persistent_dir = load_dir / "non_persistent"
+        save_non_persistent_dir = save_dir / "non_persistent"
+        load_non_persistent_dir.mkdir(parents=True)
+        save_non_persistent_dir.mkdir(parents=True)
+        torch.save(
+            TrainState(step=200).state_dict(),
+            get_checkpoint_train_state_filename(str(load_non_persistent_dir), prefix="latest"),
+        )
+        torch.save(
+            TrainState(step=100).state_dict(),
+            get_checkpoint_train_state_filename(str(save_non_persistent_dir), prefix="latest"),
+        )
+
+        base_config.save = str(save_dir)
+        base_config.non_persistent_ckpt_type = "global"
+        base_config.non_persistent_global_ckpt_dir = None
+        expected = (
+            {"model": "newer"},
+            str(load_non_persistent_dir / "iter_0000200"),
+            False,
+            CheckpointType.GLOBAL,
+        )
+        mock_load_non_persistent.return_value = expected
+
+        checkpointing_context = {}
+        result = _load_base_checkpoint(
+            str(load_dir),
+            base_config,
+            checkpointing_context=checkpointing_context,
+            pg_collection=mock_pg_collection,
+        )
+
+        assert result == expected
+        assert mock_load_non_persistent.call_args.args[0] == str(load_non_persistent_dir)
+        assert mock_load_non_persistent.call_args.args[4] == 200
+        assert checkpointing_context["dataloader_state_dir"] == str(load_dir / DATALOADER_STATE_SUBDIR)
 
     @patch("megatron.bridge.training.checkpointing._get_non_persistent_iteration")
     @patch("megatron.bridge.training.checkpointing.file_exists")

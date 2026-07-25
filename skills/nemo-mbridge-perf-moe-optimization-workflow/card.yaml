@@ -1,5 +1,5 @@
 title: moe_optimization_workflow
-validated_on: "2026-04-01"
+validated_on: "2026-07-25"
 summary: >
   Systematic 3-phase workflow for optimizing MoE training performance,
   distilled from the Megatron-Core MoE paper (arXiv:2603.07685). Covers
@@ -23,6 +23,10 @@ validation_status:
   cuda_graphs_moe:
     - documented
   dsv3_case_study:
+    - measured
+  qwen3_30b_h100_case_study:
+    - measured
+  overlap_profile_method:
     - measured
 
 core_concepts:
@@ -135,13 +139,36 @@ dsv3_case_study:
     tflops: 368
     dominant_bottleneck: "Communication (cross-node EP all-to-all)"
 
+qwen3_30b_h100_case_study:
+  hardware: "16×H100"
+  precision: BF16
+  parallelism: "TP1/PP1/CP1/EP16"
+  sequence_length: 4096
+  batch: "MBS1/GBS1024"
+  routing: force_balance
+  dispatcher: HybridEP
+  cuda_graph_scopes: "moe_router, moe_preprocess"
+  delayed_wgrad_compute: false
+  baseline_step_time_ms: 24713.800
+  overlap_step_time_ms: 20992.030
+  baseline_tflops: 244.039
+  overlap_tflops: 287.305
+  throughput_gain_percent: 17.729
+  profile_comm_hidden_off_percent: 0.11
+  profile_comm_hidden_on_percent: 36.55
+  dominant_bottleneck: "Exposed HybridEP dispatch/combine communication"
+
 key_lessons:
   - "Platform characteristics drive strategy, not just model architecture"
   - "Parallel Folding unlocks independent attention/MoE optimization"
   - "FP8 shifts bottleneck from memory/compute to CPU overhead"
   - "Optimization is iterative: solving one wall exposes another"
+  - "Use unprofiled steady timing for acceptance and matched profiles for causality"
+  - "Use interval unions and communication/compute intersection; summed concurrent kernel durations are not wall time"
 
 evidence:
   - "arXiv:2603.07685 — Scalable Training of MoE with Megatron Core"
   - "Megatron-Core v0.16 benchmarks"
   - "DSV3 and Qwen3-235B empirical results"
+  - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+  - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"

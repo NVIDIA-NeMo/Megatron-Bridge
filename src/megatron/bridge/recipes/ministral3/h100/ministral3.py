@@ -94,8 +94,8 @@ def ministral3_3b_sft_1gpu_h100_bf16_config() -> ConfigContainer:
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=10,
         lr_decay_iters=50,
-        max_lr=0.00005,
-        min_lr=0.000005,
+        max_lr=0.000005,
+        min_lr=0.0000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -209,8 +209,8 @@ def ministral3_8b_sft_2gpu_h100_bf16_config() -> ConfigContainer:
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=10,
         lr_decay_iters=50,
-        max_lr=0.00005,
-        min_lr=0.000005,
+        max_lr=0.000005,
+        min_lr=0.0000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
@@ -324,8 +324,8 @@ def ministral3_14b_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     opt_cfg, scheduler_cfg = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=10,
         lr_decay_iters=50,
-        max_lr=0.00005,
-        min_lr=0.000005,
+        max_lr=0.000005,
+        min_lr=0.0000005,
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
