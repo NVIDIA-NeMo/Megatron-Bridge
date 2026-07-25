@@ -62,6 +62,7 @@ def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep AutoBridge-backed recipe construction deterministic and offline."""
     for module_name in (
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
+        "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
@@ -144,6 +145,51 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
 
     assert cfg.model.vocab_size is None
+
+
+def test_nemotron_3_super_gb200_matches_benchmark_hardware_configuration():
+    """The training recipe should share the tuned GB200 layout without benchmark-only behavior."""
+    from megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh import (
+        nemotron_3_super_pretrain_64gpu_gb200_bf16_config,
+    )
+
+    training_cfg = _nemotronh_module.nemotron_3_super_gb200_pretrain_config()
+    benchmark_cfg = nemotron_3_super_pretrain_64gpu_gb200_bf16_config()
+
+    for field_name in (
+        "tensor_model_parallel_size",
+        "pipeline_model_parallel_size",
+        "context_parallel_size",
+        "expert_tensor_parallel_size",
+        "expert_model_parallel_size",
+        "moe_flex_dispatcher_backend",
+        "moe_flex_dispatcher_num_sms",
+        "moe_hybridep_num_sms",
+        "moe_token_dispatcher_type",
+        "moe_shared_expert_overlap",
+        "cuda_graph_impl",
+        "cuda_graph_scope",
+        "apply_rope_fusion",
+    ):
+        assert getattr(training_cfg.model, field_name) == getattr(benchmark_cfg.model, field_name)
+
+    assert training_cfg.train.global_batch_size == benchmark_cfg.train.global_batch_size == 512
+    assert training_cfg.train.micro_batch_size == benchmark_cfg.train.micro_batch_size == 1
+    assert training_cfg.env_vars == benchmark_cfg.env_vars
+
+    assert training_cfg.model.moe_router_force_load_balancing is False
+    assert benchmark_cfg.model.moe_router_force_load_balancing is True
+    assert training_cfg.train.train_iters == 39735
+    assert benchmark_cfg.train.train_iters == 50
+    assert training_cfg.checkpoint.async_save is True
+    assert benchmark_cfg.checkpoint.async_save is False
+    assert training_cfg.ddp.check_for_nan_in_grad is True
+    assert benchmark_cfg.ddp.check_for_nan_in_grad is False
+    assert training_cfg.ddp.overlap_grad_reduce is True
+    assert training_cfg.ddp.overlap_param_gather is True
+    assert training_cfg.model.recompute_granularity is None
+    assert training_cfg.optimizer.optimizer_cpu_offload is False
+    assert training_cfg.optimizer.optimizer_offload_fraction == 0.0
 
 
 def test_nemotron_nano_9b_v2_lora_defaults():
