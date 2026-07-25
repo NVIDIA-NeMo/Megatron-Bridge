@@ -172,7 +172,7 @@ def _build_executor(
         nodes=args.nodes,
         ntasks_per_node=task_count,
         mem=args.mem,
-        exclusive=True if args.exclusive else None,
+        exclusive=args.exclusive,
         time=args.time,
         gres=args.gres,
         launcher=launcher,
