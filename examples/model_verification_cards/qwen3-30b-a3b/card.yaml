@@ -504,13 +504,6 @@ items:
       status: verified
       precision: bf16
       bridge_commit: 8198fd9cd5a13c2650ae08e5dfca8d9d382db853  # pragma: allowlist secret
-      enabled_features:
-        cuda_graph:
-          implementation: transformer_engine
-          scopes: [moe_router, moe_preprocess]
-        moe_dispatcher: hybridep
-        expert_parallel_communication_overlap: true
-        delay_wgrad_compute: false
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --max_steps 50
