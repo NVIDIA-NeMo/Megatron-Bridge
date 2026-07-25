@@ -5,27 +5,29 @@ title: gemma_3_4b_it
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Gemma 3 4B Instruct exact-checkpoint TP2/PP2 GPU import and export
-  and deterministic TP2/PP2 inference are verified. CPU export and manual
-  forward comparison remain unverified after their namespace and correlation
-  gates did not pass; SFT, post-SFT export/inference, long-context SFT, and
+  results. Gemma 3 4B Instruct exact-checkpoint CPU and TP2/PP2 GPU import,
+  TP2/PP2 GPU export, manual multimodal forward parity, and deterministic
+  TP2/PP2 inference are verified. CPU export remains unverified because its
+  vision namespace gate does not pass; SFT, post-SFT export/inference, and
   PEFT remain pending. Pretraining and checkpoint resume are unsupported
-  because there is no public exact-model pretraining recipe. Existing
-  toy-model tests are not used as exact-model evidence.
+  because there is no public exact-model pretraining recipe. Long-context SFT
+  is unsupported because the required arbitrary multimodal mask currently
+  excludes context parallelism and in-batch THD packing. Existing toy-model
+  tests are not used as exact-model evidence.
 verification_index:
   model_level:
     verified:
+      - hf_to_megatron_cpu
       - hf_to_megatron_gpu
       - megatron_to_hf_gpu
+      - manual_forward_pass
       - inference
     unverified:
-      - hf_to_megatron_cpu
       - megatron_to_hf_cpu
-      - manual_forward_pass
   training:
     H100:
-      unverified: [sft, sft_export_inference, sft_long_context, peft]
-      unsupported: [pretrain, checkpoint_resume]
+      unverified: [sft, sft_export_inference, peft]
+      unsupported: [pretrain, checkpoint_resume, sft_long_context]
 model:
   hf_id: google/gemma-3-4b-it
   hf_revision: 093f9f388b31de276ce2de164bdc2081324b9767  # pragma: allowlist secret
@@ -33,11 +35,11 @@ model:
   min_transformers_version: "5.8.0"
 verification_environment:
   base_container: nvcr.io/nvidia/pytorch:26.04-py3
-  bridge_commit: f81277376ccc94fff1f8245504708f5af5e91a84  # pragma: allowlist secret
+  bridge_commit: 2d0175b116af6cb785bb8efab7ee053435496266  # pragma: allowlist secret
 
 items:
   hf_to_megatron_cpu:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
       ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
@@ -45,11 +47,12 @@ items:
       --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron-path work/model-verification/gemma-3-4b-it/cpu-megatron
       --torch-dtype bfloat16
-    last_verified: null
+    last_verified: 2026-07-24
     expected_result: >
-      Pending exact-revision verification. The CPU import must create a
-      reloadable iter_0000000 checkpoint without missing, unexpected, or
-      namespace-mismatched vision-tower weights.
+      Exact-revision BF16 CPU import loaded all 781 Bridge tensors and saved
+      one reloadable DCP shard. An independent Gloo reload mapped all 883
+      source tensors with exact keys, shapes, dtypes, and torch.equal values,
+      including all 437 legacy vision-tower keys.
 
   hf_to_megatron_gpu:
     status: verified
@@ -79,8 +82,9 @@ items:
       --torch-dtype bfloat16
     last_verified: null
     expected_result: >
-      An exact-revision CPU import and export completed on 2026-07-24, but the
-      source/export key gate reported 437 missing legacy
+      A fresh exact-revision CPU import and export from Bridge commit
+      2d0175b116af6cb785bb8efab7ee053435496266 completed on 2026-07-24, but
+      the source/export key gate reported 437 missing legacy
       vision_tower.vision_model.* keys and 437 extra flat vision_tower.* keys.
       This leaf remains unverified pending a source-namespace-preserving design;
       changing the general config-only export path would regress pruned and
@@ -107,10 +111,11 @@ items:
       unexpected, mismatched, or errored tensors.
 
   manual_forward_pass:
-    status: unverified
+    status: verified
     precision: bf16
     command: >
-      uv run python examples/conversion/compare_hf_and_megatron/compare.py
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=1
+      examples/conversion/compare_hf_and_megatron/compare.py
       --hf_model_path google/gemma-3-4b-it
       --hf-revision 093f9f388b31de276ce2de164bdc2081324b9767
       --megatron_model_path work/model-verification/gemma-3-4b-it/imported-megatron/iter_0000000
@@ -118,14 +123,13 @@ items:
       --image_path work/model-verification/gemma-3-4b-it/candy.JPG
       --prompt "What animal is on the candy?"
       --tp 1 --pp 1 --ep 1 --etp 1
-    last_verified: null
+    last_verified: 2026-07-24
     expected_result: >
-      The 2026-07-24 exact-revision image-and-text comparison used TP1 without
-      padding and produced the same next token, ID 22515 ("Based"), but cosine
-      similarity was 0.987005, below the required 0.99. Maximum and mean
-      absolute logit differences were 7.406250 and 1.172121 respectively and
-      are report-only diagnostics. The leaf remains unverified while the first
-      runtime divergence is investigated.
+      The exact-revision image-and-text comparison used TP1 without padding.
+      Token match: true; Hugging Face and Megatron both produced next token ID
+      22515 ("Based"). Cosine similarity: 0.990209, passing the required 0.99
+      threshold. Maximum and mean absolute logit differences were 6.046631
+      and 1.016037 respectively and are report-only diagnostics.
 
   inference:
     status: verified
@@ -147,7 +151,9 @@ items:
       documentation-images revision
       44c3249461c5a5336585d1e31e0a4ce7fce06a5a with SHA-256
       fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
-      The JSON-escaped literal completion was: "Based on the image, the animal on the candy is a **turtle**. \n\nYou can see a clear depiction of a turtle's shell on each of"
+      The JSON-escaped literal completion was: "Based on the image, the animal
+      on the candy is a **turtle**. \n\nYou can see a clear depiction of a
+      turtle shell on each of the candies"
 
   pretrain:
     all:
@@ -207,8 +213,8 @@ items:
 
   sft_long_context:
     H100:
-      status: unverified
-      precision: bf16
+      status: unsupported
+      precision: null
       enabled_features: {}
       command: null
       last_verified: null
@@ -218,9 +224,10 @@ items:
         last_10_steps_step_time_ms_avg: null
         last_10_steps_model_tflops_per_gpu_avg: null
       expected_result: >
-        Pending an exact-revision long-context SFT run that enables both sequence
-        packing and context parallelism greater than one. No short-sequence or
-        toy-model result is accepted as long-context evidence.
+        Gemma 3 VL image-bidirectional attention currently requires an
+        arbitrary unfused mask. The provider rejects context parallelism
+        greater than one, and the public recipes disable in-batch THD packing,
+        so there is no supported exact-model long-context SFT contract.
 
   peft:
     H100:
