@@ -20,7 +20,6 @@ from megatron.bridge.perf_recipes.deepseek import (
     deepseek_v3_pretrain_256gpu_vr200_bf16_config,
     deepseek_v3_pretrain_256gpu_vr200_nvfp4_config,
 )
-from megatron.bridge.training.config import ConfigContainer
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_construction_dependencies
 
 
@@ -32,25 +31,24 @@ def _keep_recipe_construction_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     patch_recipe_construction_dependencies(monkeypatch)
 
 
-def _assert_memory_safe_vr200_layout(cfg: ConfigContainer) -> None:
+def test_deepseek_v3_256gpu_vr200_bf16_limits_host_memory() -> None:
+    cfg = deepseek_v3_pretrain_256gpu_vr200_bf16_config()
+
     assert cfg.model.pipeline_model_parallel_size == 4
     assert cfg.model.virtual_pipeline_model_parallel_size == 4
     assert cfg.model.expert_model_parallel_size == 64
     assert cfg.train.micro_batch_size == 1
-    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
+    assert cfg.model.recompute_modules == ["moe_act"]
+    assert cfg.dataset.num_workers == 0
 
 
-def test_deepseek_v3_256gpu_vr200_bf16_uses_memory_safe_layout() -> None:
-    cfg = deepseek_v3_pretrain_256gpu_vr200_bf16_config()
-
-    _assert_memory_safe_vr200_layout(cfg)
-    assert cfg.model.recompute_modules == ["mla_up_proj"]
-
-
-def test_deepseek_v3_256gpu_vr200_nvfp4_uses_memory_safe_layout() -> None:
+def test_deepseek_v3_256gpu_vr200_nvfp4_limits_host_memory() -> None:
     cfg = deepseek_v3_pretrain_256gpu_vr200_nvfp4_config()
 
-    _assert_memory_safe_vr200_layout(cfg)
-    assert cfg.model.recompute_modules == ["mlp"]
-    assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
-    assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is None
+    assert cfg.model.pipeline_model_parallel_size == 2
+    assert cfg.model.virtual_pipeline_model_parallel_size == 8
+    assert cfg.model.expert_model_parallel_size == 32
+    assert cfg.train.micro_batch_size == 2
+    assert cfg.model.recompute_modules == ["mla_up_proj"]
+    assert cfg.dataset.num_workers == 0
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 32
