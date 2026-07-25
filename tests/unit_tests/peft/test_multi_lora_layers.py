@@ -27,7 +27,8 @@ Hardening coverage (disaggregated multi-LoRA):
 Mock-level (no distributed):
   * B7: grouped-GEMM path rejects adapter dropout > 0 (it cannot apply it)
   * B2: expose_adapter_slot / hide_adapters restore the ModuleList even if the body raises
-  * B8: MoE expert linears are skipped with a one-time warning, not silently
+  * B8: sequential MoE expert linears are skipped with a one-time warning, not
+    silently; grouped MoE expert linears are wrapped with the grouped-expert layer
   * B9: load_adapter raises on a checkpoint/model mismatch in either direction
     (params missing from the checkpoint, or checkpoint tensors no param consumed)
 
@@ -563,25 +564,52 @@ def test_expose_adapter_slot_restores_on_success():
 
 
 # --------------------------------------------------------------------------- #
-# B8: expert linears are skipped, but with a one-time warning (not silently).
+# B8: sequential expert linears are skipped, but with a one-time warning
+# (grouped expert linears are wrapped — see test_grouped_expert_linear_wrapped).
 # --------------------------------------------------------------------------- #
-def test_expert_skip_warns_once():
+def test_sequential_expert_skip_warns_once():
     multi_lora_mod._EXPERT_SKIP_WARNED = False
     mlora = MultiLoRA(target_modules=["linear_fc1"], n_adapters=2, dim=8, alpha=16)
     module = nn.Linear(4, 4)
-    full = "decoder.layers.0.mlp.experts.linear_fc1"
+    prefix = "decoder.layers.0.mlp.experts.local_experts.0."
+    full = prefix + "linear_fc1"
     with (
-        patch.object(multi_lora_mod, "is_expert_linear", return_value=True),
         patch.object(mlora, "match", return_value=(MagicMock(), full)),
         patch.object(multi_lora_mod, "logger") as logmock,
     ):
-        out1 = mlora.transform(module, name="linear_fc1", prefix="decoder.layers.0.mlp.experts.")
-        out2 = mlora.transform(module, name="linear_fc1", prefix="decoder.layers.0.mlp.experts.")
+        out1 = mlora.transform(module, name="linear_fc1", prefix=prefix)
+        out2 = mlora.transform(module, name="linear_fc1", prefix=prefix)
 
-    # expert modules are returned unwrapped...
+    # sequential expert modules are returned unwrapped...
     assert out1 is module and out2 is module
     # ...and the warning fires exactly once across both skips
     assert logmock.warning.call_count == 1
+
+
+def test_grouped_expert_linear_wrapped():
+    """A grouped expert linear gets the multi-slot grouped-expert layer."""
+    mlora = MultiLoRA(target_modules=["linear_fc1"], n_adapters=2, dim=8, alpha=16)
+    module = nn.Linear(4, 4)
+    module.num_gemms = 3
+    prefix = "decoder.layers.0.mlp.experts."
+    full = prefix + "linear_fc1"
+
+    recorded = {}
+
+    class _Fake(nn.Module):
+        def __init__(self, **kwargs):
+            super().__init__()
+            recorded.update(kwargs)
+
+    with (
+        patch.object(mlora, "match", return_value=(MagicMock(), full)),
+        patch.object(multi_lora_mod, "MultiLoRAGroupedExpertLinear", _Fake),
+    ):
+        out = mlora.transform(module, name="linear_fc1", prefix=prefix)
+
+    assert isinstance(out, _Fake)
+    assert recorded["num_local_experts"] == 3
+    assert recorded["full_name"] == full
 
 
 # --------------------------------------------------------------------------- #
