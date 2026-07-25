@@ -406,7 +406,7 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     _assert_basic_config(cfg)
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.virtual_pipeline_model_parallel_size == 12
+    assert cfg.model.virtual_pipeline_model_parallel_size == 10
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.pipeline_dtype == torch.bfloat16
     assert cfg.model.sequence_parallel is False

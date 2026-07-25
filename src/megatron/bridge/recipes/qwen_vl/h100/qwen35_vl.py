@@ -805,7 +805,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE).
 
     Default configuration: 16 GPUs
-    - TP=1, PP=2, VP=12, EP=8
+    - TP=1, PP=2, VP=10, EP=8
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
     """
@@ -820,7 +820,8 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.pipeline_model_parallel_size = 2
     cfg.model.pipeline_dtype = torch.bfloat16
-    cfg.model.virtual_pipeline_model_parallel_size = 12
+    # Qwen3.6 has 40 language layers, so PP=2 requires a VP divisor of 20.
+    cfg.model.virtual_pipeline_model_parallel_size = 10
     cfg.model.context_parallel_size = 1
     cfg.model.expert_model_parallel_size = 8
     cfg.model.expert_tensor_parallel_size = 1
