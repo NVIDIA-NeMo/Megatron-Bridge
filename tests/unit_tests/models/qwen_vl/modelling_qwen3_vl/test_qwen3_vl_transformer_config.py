@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -43,6 +43,7 @@ def _megatron_base(**overrides):
     """Minimal megatron_config for get_vision_model_config (shared fields + overrides)."""
     base = dict(
         recompute_granularity=None,
+        recompute_modules=None,
         recompute_method=None,
         recompute_num_layers=None,
         tensor_model_parallel_size=1,
@@ -56,6 +57,18 @@ def _megatron_base(**overrides):
     )
     base.update(overrides)
     return SimpleNamespace(**base)
+
+
+def test_recompute_modules_are_propagated_without_aliasing():
+    """Vision recompute selection should match the language provider without sharing state."""
+    modules = ["moe"]
+    cfg = get_vision_model_config(
+        _hf_config(),
+        _megatron_base(recompute_granularity="selective", recompute_modules=modules),
+    )
+
+    assert cfg.recompute_modules == modules
+    assert cfg.recompute_modules is not modules
 
 
 def _cuda_graph_storage(config):

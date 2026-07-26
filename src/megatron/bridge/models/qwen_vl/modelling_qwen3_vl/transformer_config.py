@@ -1,4 +1,4 @@
-# Copyright (c) 2025, NVIDIA CORPORATION.  All rights reserved.
+# Copyright (c) 2025-2026, NVIDIA CORPORATION.  All rights reserved.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -74,6 +74,7 @@ def get_vision_model_config(hf_config, megatron_config=None):
 
     # apply text model config to vision model config
     config.recompute_granularity = megatron_config.recompute_granularity
+    config.recompute_modules = deepcopy(megatron_config.recompute_modules)
     config.recompute_method = megatron_config.recompute_method
     config.recompute_num_layers = megatron_config.recompute_num_layers
     config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size

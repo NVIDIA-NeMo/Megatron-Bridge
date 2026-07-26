@@ -418,7 +418,7 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.train.global_batch_size == 32
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["core_attn"]
+    assert cfg.model.recompute_modules == ["moe"]
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.bias_activation_fusion is True

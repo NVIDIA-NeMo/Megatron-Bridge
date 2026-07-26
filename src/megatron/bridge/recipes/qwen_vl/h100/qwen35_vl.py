@@ -859,7 +859,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Memory saving
     cfg.model.recompute_granularity = "selective"
-    cfg.model.recompute_modules = ["core_attn"]
+    cfg.model.recompute_modules = ["moe"]
     cfg.model.recompute_method = None
     cfg.model.recompute_num_layers = None
     cfg.model.fine_grained_activation_offloading = False
