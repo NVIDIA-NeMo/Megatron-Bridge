@@ -93,7 +93,7 @@ jobs:
       image-name: megatron-bridge-nccl-ci
       dockerfile: docker/Dockerfile.nccl_ci
       build-args: BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
-      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
+      runner: self-hosted-azure-builder
       registry: ${{ needs.pre-flight.outputs.registry }}
     secrets: inherit  # pragma: allowlist secret
 
