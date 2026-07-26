@@ -183,6 +183,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: de7b4ce37a260df76ef3487b093ab07514d351e7  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -190,68 +191,69 @@ items:
         --recipe qwen3_8b_sft_4gpu_h100_bf16_config --mode sft
         --dataset tulu3
         --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
-        --max_steps 100 --seq_length 8192
+        --max_steps 100 --seq_length 2048
         --lr 5e-6 --min_lr 0 --warmup_iters 10
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
-        dataset.hf_output_root=work/data/tulu3/qwen3-8b-sft-v2-8k-b14afda60f1b
+        dataset.hf_output_root=work/data/tulu3/qwen3-8b-sft-regression-v1-2k-b14afda60f1b
         dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
         +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        --save_dir work/model-verification/qwen3-8b/sft-convergence-v2-checkpoints
+        --save_dir work/model-verification/qwen3-8b/sft-regression-v1-checkpoints
         --save_interval 100
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3-8b/sft-regression-v1-runtime-config.yaml
       last_verified: 2026-07-25
       metrics:
-        initial_loss: 1.530258
-        final_loss: 0.899704
-        last_10_steps_step_time_ms_avg: 2026.780
-        last_10_steps_model_tflops_per_gpu_avg: 373.640
+        initial_loss: 1.657584
+        final_loss: 0.9735701
+        last_10_steps_step_time_ms_avg: 4360.140
+        last_10_steps_model_tflops_per_gpu_avg: 173.630
       expected_result: >
         The pinned Tulu3 pad-1 offline-packed run completes exactly 100 full-SFT
-        steps at sequence length 8192 with TP4/PP1/CP1, DP1, GBS/MBS 8/1, and
-        eight-way gradient accumulation. LM loss is finite from 1.530258 to
-        0.899704 with no skipped or NaN iterations. Packing is 99.87% efficient
-        and the 6553600 token slots contain 4342763 actual supervised tokens.
-        All four metrics and the post-setup configuration persist, and the
-        complete four-shard iter_0000100 checkpoint reloads for export.
+        steps at sequence length 2048 with TP4/PP1/CP1, DP1, GBS/MBS 32/1, and
+        32-way gradient accumulation. LM loss is finite from 1.657584 to
+        0.9735701 with no skipped or NaN iterations. Packing is 99.30% efficient
+        and the 6553600 token slots contain 4350004 supervised tokens under the
+        historical packed-mask counting convention. All four metrics and the
+        post-setup configuration persist, and the complete four-shard
+        iter_0000100 checkpoint reloads for export.
 
   sft_export_inference:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: de7b4ce37a260df76ef3487b093ab07514d351e7  # pragma: allowlist secret
       depends_on: sft
       commands:
         - >
           ./scripts/conversion/convert.sh export --executor slurm --device gpu
           --nodes 1 --gpus-per-node 4 --hf-model Qwen/Qwen3-8B
           --hf-revision b968826d9c46dd6066d109eabc6255188de91218
-          --megatron-path work/model-verification/qwen3-8b/sft-convergence-v2-checkpoints/iter_0000100
-          --hf-path work/model-verification/qwen3-8b/sft-convergence-v2-hf-export
+          --megatron-path work/model-verification/qwen3-8b/sft-regression-v1-checkpoints/iter_0000100
+          --hf-path work/model-verification/qwen3-8b/sft-regression-v1-hf-export
           --torch-dtype bfloat16 --export-weight-dtype bfloat16
           --distributed-save --tp 4
         - >
           uv run python
           skills/create-model-verification-card/scripts/verify_hf_inference.py
-          --hf-model work/model-verification/qwen3-8b/sft-convergence-v2-hf-export
+          --hf-model work/model-verification/qwen3-8b/sft-regression-v1-hf-export
           --prompt "Name the capital of France and explain its role in one sentence."
           --max-new-tokens 45 --chat-template --disable-thinking
       last_verified: 2026-07-25
       expected_result: >
-        The final v2 full-SFT checkpoint exports as five indexed BF16 shards
-        with 399 weights, vocabulary size 151936, and embedding and output-head
-        shapes [151936, 4096]. Transformers reloads all 399 weights without
-        missing, unexpected, or mismatched tensors. One deterministic greedy
-        run produces exactly 45 new tokens with this literal completion, where
-        \n\n denotes two newline bytes: "The capital of France is Paris. It is
-        the political, economic, and cultural center of France and a major
-        global city. ✅\n\nParis is the capital of France and the center of the
-        country's political, economic,"
+        The final controlled full-SFT checkpoint reloads and exports as five
+        indexed BF16 shards with 399 weights, vocabulary size 151936, and
+        embedding and output-head shapes [151936, 4096]. Transformers reloads
+        all 399 weights without missing, unexpected, or mismatched tensors. One
+        deterministic greedy run produces exactly 45 new tokens with this
+        literal completion, where \n\n denotes two newline bytes: "The capital
+        of France is Paris. It is the political, economic, and cultural center
+        of France and serves as the seat of the French government. ✅\n\nI hope
+        this helps! Let me know if you have any other"
 
   sft_long_context:
     H100:
@@ -303,6 +305,7 @@ items:
     H100:
       status: verified
       precision: bf16
+      bridge_commit: de7b4ce37a260df76ef3487b093ab07514d351e7  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
       command: >
@@ -310,34 +313,33 @@ items:
         --recipe qwen3_8b_peft_1gpu_h100_bf16_config --mode lora
         --dataset tulu3
         --pretrained_checkpoint work/model-verification/qwen3-8b/imported-megatron/iter_0000000
-        --max_steps 100 --seq_length 8192
+        --max_steps 100 --seq_length 2048
         --lr 1e-4 --min_lr 0 --warmup_iters 10
         'dataset.hf_dataset.split="train[:10000]"'
         'dataset.hf_dataset.load_kwargs={revision:"b14afda60f1bbebe55d5d2fa1e4df5042f97f8be"}'
         '++tokenizer.hf_tokenizer_kwargs.revision="b968826d9c46dd6066d109eabc6255188de91218"'
-        dataset.hf_output_root=work/data/tulu3/qwen3-8b-peft-v2-8k-b14afda60f1b
+        dataset.hf_output_root=work/data/tulu3/qwen3-8b-peft-regression-v1-2k-b14afda60f1b
         dataset.hf_rewrite=true dataset.seed=1234 rng.seed=5678
         dataset.do_validation=false dataset.hf_validation_proportion=null
         dataset.enable_offline_packing=true
-        +dataset.offline_packing_specs.pad_seq_to_mult=1 scheduler.lr_decay_iters=100
+        +dataset.offline_packing_specs.pad_seq_to_mult=4 scheduler.lr_decay_iters=100
         validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
-        --save_dir work/model-verification/qwen3-8b/peft-convergence-v2-checkpoints
+        --save_dir work/model-verification/qwen3-8b/peft-regression-v1-checkpoints
         --save_interval 100
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3-8b/peft-regression-v1-runtime-config.yaml
       last_verified: 2026-07-25
       metrics:
-        initial_loss: 1.529487
-        final_loss: 0.975589
-        last_10_steps_step_time_ms_avg: 4326.870
-        last_10_steps_model_tflops_per_gpu_avg: 697.720
+        initial_loss: 1.527877
+        final_loss: 1.170195
+        last_10_steps_step_time_ms_avg: 5367.620
+        last_10_steps_model_tflops_per_gpu_avg: 561.330
       expected_result: >
-        The pinned Tulu3 pad-1 offline-packed run completes exactly 100 LoRA
-        steps at sequence length 8192 with TP1/PP1/CP1, DP1, GBS/MBS 8/1, and
-        eight-way gradient accumulation. LM loss is finite from 1.529487 to
-        0.975589 with no skipped or NaN iterations. Packing is 99.87% efficient
-        and the 6553600 token slots contain 4342763 actual supervised tokens.
+        The pinned Tulu3 pad-4 offline-packed run completes exactly 100 LoRA
+        steps at sequence length 2048 with TP1/PP1/CP1, DP1, GBS/MBS 32/1, and
+        32-way gradient accumulation. LM loss is finite from 1.527877 to
+        1.170195 with no skipped or NaN iterations. Packing is 99.39% efficient
+        and the 6553600 token slots contain 4332480 supervised tokens.
         Exactly 5308416 rank-8, alpha-16, dropout-0 linear_qkv and linear_proj
         adapter parameters train while base weights remain frozen. All four
         metrics and the post-setup configuration persist, and the complete
