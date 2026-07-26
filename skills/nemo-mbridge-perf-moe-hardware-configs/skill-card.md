@@ -1,5 +1,5 @@
 ## Description: <br>
-Representative MoE training playbooks by hardware platform and model family. Summarizes rounded throughput bands, parallelism patterns, and common tuning stacks. <br>
+Representative MoE training playbooks by hardware platform and model family, summarizing rounded throughput bands, parallelism patterns, and common tuning stacks. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers selecting MoE training configurations and parallelism strategies for specific NVIDIA hardware platforms (H100, B200, GB200, GB300). <br>
+Developers and performance engineers selecting MoE training configurations, dispatcher choices, and parallelism layouts for specific hardware platforms (H100, B200, GB200, GB300) and model families (DSV3, Qwen3, Qwen3-Next). <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,14 +25,14 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [card.yaml](skills/nemo-mbridge-perf-moe-hardware-configs/card.yaml) <br>
-- [MoE Optimization Docs](docs/training/moe-optimization.md) <br>
+- [MoE Hardware Configuration card.yaml](skills/nemo-mbridge-perf-moe-hardware-configs/card.yaml) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
 **Output Type(s):** [Configuration instructions, Analysis] <br>
-**Output Format:** [Markdown with inline code blocks] <br>
+**Output Format:** [Markdown with inline code blocks and tables] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -43,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 skill-activation task in a k8s-sandbox environment with 1 attempt per task and a 50% pass threshold. <br>
+Evaluated against 1 positive skill-activation task in a k8s-sandbox environment with 1 attempt per task and a 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -68,12 +68,17 @@ Underlying evaluation signals used in this run: <br>
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+100%) | 100% (+0%) |
-| Discoverability | 1 | 100% (+2%) | 94% (+44%) |
-| Effectiveness | 1 | 100% (+93%) | 100% (+7%) |
-| Efficiency | 1 | 100% (+0%) | 100% (+83%) |
+| Discoverability | 1 | 100% (+50%) | 94% (+44%) |
+| Effectiveness | 1 | 100% (+79%) | 100% (+7%) |
+| Efficiency | 1 | 100% (+70%) | 100% (+88%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
-1.0.0+b7643bd (source: pyproject.toml) <br>
+3990c04c (source: git SHA, committed 2026-07-26) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

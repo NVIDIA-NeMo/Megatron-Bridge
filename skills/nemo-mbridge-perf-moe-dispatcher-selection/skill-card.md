@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and performance engineers selecting optimal MoE token dispatcher configurations for large-scale distributed training on NVIDIA GPU systems. <br>
+Developers and engineers selecting and tuning MoE token dispatchers for large-scale pretraining workloads on NVIDIA GPU systems. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -42,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 skill-activation task in k8s-sandbox environment with 50% pass threshold. <br>
+Evaluated against 1 skill-activation task in a k8s-sandbox environment with 1 attempt per task and a 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -68,11 +68,16 @@ Underlying evaluation signals used in this run: <br>
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+100%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 82% (+82%) | 100% (+20%) |
-| Efficiency | 1 | 100% (+50%) | 100% (+90%) |
+| Effectiveness | 1 | 90% (+90%) | 100% (+25%) |
+| Efficiency | 1 | 100% (+70%) | 100% (+90%) |
+
+## Testing Completed: <br>
+**[x] Agent Red-Teaming** <br>
+**[ ] Network Security** <br>
+**[ ] Product Security** <br>
 
 ## Skill Version(s): <br>
-4dde8710 (source: git SHA, committed 2026-07-26) <br>
+1.0.0+b7643bd (source: pyproject.toml) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

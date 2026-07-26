@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and performance engineers optimizing MoE model training throughput on NVIDIA GPUs, using the Three Walls framework to systematically identify and resolve memory, communication, and compute bottlenecks. <br>
+Developers and engineers performing full MoE throughput tuning sweeps or diagnosing MoE throughput regressions after a commit or config change in Megatron Bridge. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -25,13 +25,13 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Scalable Training of MoE Models with Megatron Core](https://arxiv.org/abs/2603.07685) <br>
+- [Scalable Training of MoE Models with Megatron Core (arXiv:2603.07685)](https://arxiv.org/abs/2603.07685) <br>
 - [NVIDIA Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Configuration instructions, Analysis] <br>
-**Output Format:** [Markdown with inline code blocks and tables] <br>
+**Output Type(s):** [Analysis, Configuration instructions] <br>
+**Output Format:** [Markdown with inline configuration examples and diagnostic tables] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -42,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 positive skill-activation task in a k8s-sandbox environment. <br>
+Evaluated against 1 positive skill-activation task covering the full fit-scale-profile-retune workflow, Parallel Folding meshes, dispatcher decision rules, FP8 hardware mapping, and TE-scoped CUDA graph scopes. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -66,10 +66,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+60%) | 100% (+0%) |
+| Correctness | 1 | 100% (+100%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 80% (+50%) | 100% (+12%) |
-| Efficiency | 1 | 100% (+62%) | 100% (+100%) |
+| Effectiveness | 1 | 100% (+100%) | 100% (+10%) |
+| Efficiency | 1 | 100% (+50%) | 100% (+100%) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>

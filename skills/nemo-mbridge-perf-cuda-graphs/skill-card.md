@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers use this skill to reduce host-driver overhead via CUDA graph capture in Megatron Bridge training workloads, or to diagnose crashes and regressions related to CUDA graph configuration changes. <br>
+Developers and engineers reducing host-driver overhead via CUDA graphs in Megatron Bridge training workloads, or diagnosing crashes and regressions related to CUDA graph configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -43,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task covering TE-scoped MoE graph configuration guidance. <br>
+Evaluated against 1 positive skill-activation task testing CUDA graph implementation selection and prerequisite configuration for MoE training workloads. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -68,9 +68,9 @@ Underlying evaluation signals used in this run: <br>
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+100%) | 100% (+0%) |
-| Discoverability | 1 | 100% (+0%) | 94% (+44%) |
-| Effectiveness | 1 | 100% (+100%) | 90% (+2%) |
-| Efficiency | 1 | 100% (+14%) | 100% (+100%) |
+| Discoverability | 1 | 100% (+50%) | 94% (+44%) |
+| Effectiveness | 1 | 100% (+100%) | 100% (+60%) |
+| Efficiency | 1 | 100% (+50%) | 100% (+100%) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>
