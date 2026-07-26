@@ -332,7 +332,7 @@ class TestPrintNumParams:
         mock_print.assert_called_once()
         printed_text = mock_print.call_args[0][0]
         assert "number of parameters" in printed_text
-        assert "(1, 2)" in printed_text  # tensor and pipeline ranks
+        assert "(1, 0, 2)" in printed_text  # tensor, remat, and pipeline ranks
 
     @patch("builtins.print")
     def test_print_num_params_non_zero_rank(self, mock_print):
