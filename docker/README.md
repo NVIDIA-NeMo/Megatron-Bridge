@@ -6,6 +6,7 @@ container and the NeMo Framework (NeMo-FW) image stack.
 | Image | Dockerfile | Purpose |
 |---|---|---|
 | megatron-bridge | `Dockerfile.ci` | Megatron-Bridge development and CI container |
+| release | `Dockerfile.release` | Release wheel build environment with a validated NCCL toolchain |
 | fw-base | `Dockerfile.fw_base` | CUDA / TRT-LLM / vLLM / DeepEP base layer |
 | fw-final | `Dockerfile.fw_final` | NeMo, Export-Deploy, Evaluator, NeMo-Run on top of megatron-bridge |
 
@@ -32,6 +33,20 @@ docker build \
 | `BASE_IMAGE` | Base container |
 | `MCORE_TRIGGERED_TESTING` | When `true`, skips the uv lockfile check to allow testing against a different Megatron-LM version than the one pinned in the lockfile |
 | `UV_CACHE_PRUNE_ARGS` | Extra arguments forwarded to `uv cache prune` after install |
+
+---
+
+## Release container
+
+`Dockerfile.release` derives from the release workflow's PyTorch base image and installs matching
+NCCL runtime and development packages for Transformer Engine source builds:
+
+```bash
+docker build -f docker/Dockerfile.release -t megatron-bridge-release:latest .
+```
+
+The build validates the pinned package versions, NCCL-EP header APIs, and dynamically loaded runtime
+before publishing the image used by `.github/workflows/release.yaml`.
 
 ---
 
