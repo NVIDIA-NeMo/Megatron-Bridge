@@ -684,6 +684,48 @@ def test_qwen3_30b_a3b_perf_base_remains_legacy_8gpu_recipe():
     assert perf_base is legacy_base
 
 
+def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test the text-only Qwen3.5 H100 benchmark topology and performance features."""
+    from megatron.bridge.perf_recipes.qwen.h100.qwen35 import (
+        qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config,
+    )
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    mod = importlib.import_module("megatron.bridge.recipes.qwen.gb200.qwen35")
+    patch_recipe_module_global(monkeypatch, mod, "AutoBridge", _FakeBridge)
+    patch_recipe_module_global(monkeypatch, mod, "AutoConfig", _FakeAutoConfig)
+
+    cfg = qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config()
+
+    assert cfg.tokenizer.tokenizer_model == "Qwen/Qwen3.5-35B-A3B"
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.context_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 16
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules == []
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.moe_token_dispatcher_type == "flex"
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_router_force_load_balancing is True
+    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
+    assert cfg.mixed_precision.bf16 is True
+    assert cfg.train.train_iters == 50
+
+
 def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ):

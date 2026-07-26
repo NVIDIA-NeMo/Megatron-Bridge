@@ -1,0 +1,221 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: qwen35_text_35b_a3b
+summary: >
+  Performance scope: pretrain_performance.H100 uses the canonical text-only
+  Qwen3.5-35B-A3B performance recipe. Functional conversion, inference, and
+  training coverage remains unverified and is not implied by the performance
+  benchmark.
+verification_index:
+  model_level:
+    unverified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - manual_forward_pass
+      - inference
+  training:
+    H100:
+      unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
+  performance:
+    H100: unverified
+model:
+  hf_id: Qwen/Qwen3.5-35B-A3B
+  hf_revision: 59d61f3ce65a6d9863b86d2e96597125219dc754  # pragma: allowlist secret
+  architecture: Qwen3_5MoeForConditionalGeneration
+  min_transformers_version: "5.8.1"
+verification_environment:
+  base_container: nvcr.io/nvidia/nemo:26.06
+  bridge_commit: 7b3c40b727a81ade12a903fbdb648434dff6db97  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned CPU import must exit successfully, persist iter_0000000, and
+      reload the complete text-only tensor set without missing, unexpected,
+      shape-mismatched, dtype-mismatched, or value-mismatched tensors.
+
+  hf_to_megatron_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned distributed GPU import must exit successfully, persist
+      iter_0000000, and reload the complete text-only tensor set without
+      missing, unexpected, shape-mismatched, dtype-mismatched, or
+      value-mismatched tensors.
+
+  megatron_to_hf_cpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned CPU export must exit successfully and strictly reload as the
+      supported text-only Hugging Face model with the expected keys, shapes,
+      dtypes, and values.
+
+  megatron_to_hf_gpu:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned distributed GPU export must exit successfully and strictly
+      reload as the supported text-only Hugging Face model with the expected
+      keys, shapes, dtypes, and values.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      Verification requires a matching next-token prediction and cosine
+      similarity of at least 0.99 against the pinned Hugging Face revision,
+      with maximum and mean absolute logit differences recorded as diagnostics.
+
+  inference:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      A pinned Megatron checkpoint must complete deterministic greedy
+      generation for an exact token count and record the literal completion.
+
+  pretrain:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A public H100 pretraining recipe must complete a bounded 100-step run
+        with finite loss, no skipped or NaN iterations, all four metrics, a
+        persisted post-setup configuration, and reloadable checkpoints.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A public text-only H100 recipe must complete a pinned-data 100-step
+        full-SFT run with finite loss, no skipped or NaN iterations, all four
+        metrics, and a reloadable final checkpoint.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        The final full-SFT checkpoint must export to Hugging Face, reload
+        strictly, and complete deterministic greedy inference for an exact
+        token count.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A public text-only H100 recipe must complete bounded long-context SFT
+        with finite loss, no skipped or NaN iterations, all four metrics, and
+        verified packing and context-parallel behavior.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        A public text-only H100 recipe must complete a pinned-data 100-step
+        PEFT run with finite loss, no skipped or NaN iterations, all four
+        metrics, and a reloadable final adapter checkpoint.
+
+  checkpoint_resume:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison:
+        reference_item: pretrain
+        sentinel_steps: [51, 100]
+        loss_relative_tolerance: 1.0e-2
+        loss_absolute_tolerance: 1.0e-6
+        sentinels_match: null
+      expected_result: >
+        A direct continuation must restore optimizer, scheduler, data-order,
+        and RNG state from the pretraining midpoint, complete the remaining
+        steps, and pass the declared loss-sentinel tolerance.
+
+  pretrain_performance:
+    H100:
+      status: unverified
+      precision: bf16
+      command: >
+        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
+        --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
+        --max_steps 50
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        On two nodes with 16x H100, the exact mock-data performance recipe must
+        complete exactly 50 steps with finite losses, no skipped or NaN
+        iterations, and all four metrics recorded. Over steps 41-50, the run
+        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-25, an
+        experimental MCore development stack with FlashQLA, pre-GDR fusion,
+        HybridEP, and scoped attention/router/preprocess graphs reached only
+        225.8-225.9 model TFLOP/s/GPU over steps 5-8 at the exact GBS1024.
+        This is about 21.4% below the gate, and no qualifying 50-step run was
+        produced, so the item remains unverified. Full-iteration graphs, gated
+        RMSNorm fusion, and GDN offloading remain upstream optimization gaps.
