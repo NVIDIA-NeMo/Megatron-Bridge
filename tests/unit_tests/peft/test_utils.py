@@ -1647,25 +1647,25 @@ class TestGroupedExpertLinearAdapter:
             expected_chunks.append(nn.functional.linear(hidden, adapter.linear_out.weight[expert_idx]))
         torch.testing.assert_close(output, torch.cat(expected_chunks), rtol=2e-2, atol=2e-2)
 
-    @pytest.mark.parametrize("te_version", ["2.16", "2.17"])
+    @pytest.mark.parametrize("te_version", ["2.14", "2.16", "2.17"])
     @pytest.mark.parametrize("grad_enabled", [True, False])
     @pytest.mark.parametrize("active_expert_indices", [(0, 1), (1, 2)])
     def test_grouped_expert_linear_adapter_fp8_te_contract(self, te_version, grad_enabled, active_expert_indices):
-        """FP8 dispatch should pack the supported TE 2.16 and 2.17 call layouts."""
+        """FP8 dispatch should pack the supported TE 2.14, 2.16, and 2.17 call layouts."""
         calls = []
         expected = torch.randn(3, 2)
 
-        class TE216GroupedLinear:
+        class TE214GroupedLinear:
             @staticmethod
             def apply(inp, non_tensor_args, *weights_and_biases):
                 calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected, []
+                return expected
 
             @staticmethod
             def forward(ctx, inp, non_tensor_args, *weights_and_biases):
                 assert ctx is None
                 calls.append((inp, None, non_tensor_args, weights_and_biases))
-                return expected, []
+                return expected
 
         class TE217GroupedLinear:
             @staticmethod
@@ -1679,7 +1679,7 @@ class TestGroupedExpertLinearAdapter:
                 calls.append((inp, m_splits, non_tensor_args, weights_and_biases))
                 return expected, []
 
-        autograd_function = TE216GroupedLinear if te_version == "2.16" else TE217GroupedLinear
+        autograd_function = TE214GroupedLinear if te_version in {"2.14", "2.16"} else TE217GroupedLinear
         helper = Mock()
         helper.prepare_forward.side_effect = lambda inp, *, num_gemms: inp
         helper._get_quantizers.return_value = tuple(
@@ -1693,6 +1693,8 @@ class TestGroupedExpertLinearAdapter:
         helper.sequence_parallel = False
         helper.activation_dtype = torch.float32
         helper.save_original_input = False
+        if te_version == "2.16":
+            helper._fp8_workspaces = {}
 
         adapter = GroupedExpertLinearAdapter(
             in_features=2,
@@ -1724,14 +1726,30 @@ class TestGroupedExpertLinearAdapter:
         assert len(calls) == 1
         received_input, explicit_splits, non_tensor_args, weights_and_biases = calls[0]
         assert received_input is x
-        if te_version == "2.16":
+        if te_version in {"2.14", "2.16"}:
             assert explicit_splits is None
             assert non_tensor_args[0] == [1, 2]
-            common_non_tensor_args = non_tensor_args[1:]
+            common_non_tensor_args = non_tensor_args[1:17]
+            if te_version == "2.14":
+                assert non_tensor_args[17] is helper
+                assert non_tensor_args[18] is None
+                assert non_tensor_args[19] is False
+                assert non_tensor_args[20] is False
+            else:
+                assert non_tensor_args[17] == [None, None]
+                assert non_tensor_args[18] is False
+                assert non_tensor_args[19] is None
+                assert non_tensor_args[20] is False
+                assert non_tensor_args[21] is False
         else:
             torch.testing.assert_close(explicit_splits, torch.tensor([1, 2], dtype=torch.int64))
             assert explicit_splits.device.type == "cpu"
-            common_non_tensor_args = non_tensor_args
+            common_non_tensor_args = non_tensor_args[:16]
+            assert non_tensor_args[16] == [None, None]
+            assert non_tensor_args[17] is False
+            assert non_tensor_args[18] is None
+            assert non_tensor_args[19] is False
+            assert non_tensor_args[20] is False
         assert common_non_tensor_args[0] is False
         assert common_non_tensor_args[2] is True
         assert common_non_tensor_args[12] is True

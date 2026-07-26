@@ -36,6 +36,7 @@ from safetensors.torch import save_file
 from transformers.configuration_utils import PretrainedConfig
 from typing_extensions import Unpack
 
+from megatron.bridge.models._deprecation import warn_if_deprecated_model, warn_if_legacy_nemotron_path
 from megatron.bridge.models.conversion import model_bridge
 from megatron.bridge.models.conversion.model_bridge import (
     HFWeightTuple,
@@ -276,9 +277,24 @@ class AutoBridge(Generic[MegatronModelT]):
                 "hf_pretrained must be a PreTrainedCausalLM, PreTrainedMaskedLM, or PretrainedConfig instance"
             )
         self.hf_pretrained: PreTrainedCausalLM | PreTrainedMaskedLM | PretrainedConfig = hf_pretrained
+        if isinstance(hf_pretrained, PretrainedConfig):
+            hf_config = hf_pretrained
+            model_name_or_path = getattr(hf_pretrained, "name_or_path", None)
+        else:
+            # Pretrained wrappers load their config lazily. A deprecation
+            # warning must not turn construction into an HF Hub request.
+            wrapper_state = vars(hf_pretrained)
+            hf_config = wrapper_state.get("_config")
+            model_name_or_path = wrapper_state.get("_model_name_or_path")
+        if hf_config is not None:
+            warn_if_deprecated_model(hf_config, model_name_or_path)
+
         # Data type for exporting weights
         self.export_weight_dtype: Literal["bf16", "fp16", "fp8"] = "bf16"
         self.hf_model_id: Optional[str] = None
+        init_kwargs = getattr(hf_pretrained, "init_kwargs", {})
+        revision = init_kwargs.get("revision") if isinstance(init_kwargs, dict) else None
+        self.hf_model_revision: str | None = revision if isinstance(revision, str) else None
         trust_remote_code = getattr(hf_pretrained, "trust_remote_code", False)
         self.trust_remote_code = trust_remote_code if isinstance(trust_remote_code, bool) else False
 
@@ -348,6 +364,8 @@ class AutoBridge(Generic[MegatronModelT]):
         Raises:
             FileNotFoundError: If run_config.yaml is not found in the Megatron path
         """
+        warn_if_legacy_nemotron_path(hf_model_id)
+
         from transformers import AutoConfig
 
         from megatron.bridge.models.conversion.utils import conform_config_to_reference
@@ -476,6 +494,8 @@ class AutoBridge(Generic[MegatronModelT]):
             >>> # Works with local paths too
             >>> bridge = AutoBridge.from_hf_pretrained("/path/to/model")
         """
+        warn_if_legacy_nemotron_path(path)
+
         # First load just the config to check architecture support
         # Use thread-safe config loading to prevent race conditions
         config_kwargs = dict(kwargs)
@@ -507,7 +527,12 @@ class AutoBridge(Generic[MegatronModelT]):
 
         wrapper_cls = _resolve_pretrained_wrapper_cls(config)
         try:
-            return cls(wrapper_cls.from_pretrained(path, **kwargs))
+            hf_pretrained = wrapper_cls.from_pretrained(path, **kwargs)
+            # Reuse the config that was already loaded and validated above.
+            # Besides avoiding a second Hub request, this guarantees that the
+            # warning and model wrapper observe the same immutable revision.
+            hf_pretrained.config = config
+            return cls(hf_pretrained)
         except Exception as e:
             raise ValueError(f"Failed to load model with AutoBridge: {e}") from e
 
@@ -1367,10 +1392,12 @@ class AutoBridge(Generic[MegatronModelT]):
         hf_tokenizer_kwargs = {}
         if hasattr(bridge._model_bridge, "get_hf_tokenizer_kwargs"):
             hf_tokenizer_kwargs = bridge._model_bridge.get_hf_tokenizer_kwargs()
+        if hf_tokenizer_kwargs is None:
+            hf_tokenizer_kwargs = {}
+        if kwargs.get("revision") is not None:
+            hf_tokenizer_kwargs.setdefault("revision", kwargs["revision"])
         # Forward trust_remote_code to the tokenizer (needed for repos with custom code)
         if kwargs.get("trust_remote_code"):
-            if hf_tokenizer_kwargs is None:
-                hf_tokenizer_kwargs = {}
             hf_tokenizer_kwargs.setdefault("trust_remote_code", True)
         bridge.save_megatron_model(
             megatron_model,
@@ -1681,6 +1708,8 @@ class AutoBridge(Generic[MegatronModelT]):
 
         if hf_identifier:
             setattr(provider, "hf_model_id", hf_identifier)
+        if hf_path is None and self.hf_model_revision:
+            setattr(provider, "hf_model_revision", self.hf_model_revision)
 
         return provider
 

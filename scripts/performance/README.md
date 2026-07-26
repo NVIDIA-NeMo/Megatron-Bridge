@@ -2,7 +2,16 @@
 
 ## NOTE: This directory will change a lot over the coming weeks
 
-- Scripts defined in `scripts/performance` are recipes optimized for performance. These scripts can launch pre-training experiments on Slurm based clusters.
+New runs of exact exported flat recipes should use `scripts/training/train.sh --recipe <function_name>`. The launcher
+discovers text pretraining, text SFT/PEFT, Qwen-VL pretraining, and Wan pretraining recipes automatically and selects
+their forward step. This directory remains the compatibility path for selector-based invocation, dataset replacement,
+topology resizing, and specialized benchmark controls. The training launcher preserves total GPU-count validation,
+the recipe process environment, and mock-data defaults for text SFT/PEFT; it does not inject offline defaults. The
+performance compatibility launcher continues to own its benchmark offline environment.
+Cluster-specific CPU/NUMA binding, Slurm segment sizing, NCCL fabric settings, and `srun` arguments remain user
+supplied.
+
+- Scripts defined in `scripts/performance` launch performance-optimized experiments on Slurm-based clusters.
 
 ## Performance recipe configs
 
@@ -11,7 +20,7 @@ launcher resolves recipes from that package by model, task, GPU count, GPU type,
 and config variant.
 
 `setup_experiment.py` launches `bootstrap.py` on each rank. The bootstrap resolves and
-applies recipe-owned process settings before importing Torch, then replaces itself with
+applies recipe-owned process settings before importing the training loop, then replaces itself with
 either `run_script.py` for flat performance recipes or `run_recipe.py` for model recipes.
 Each training entrypoint therefore executes only once.
 
@@ -232,6 +241,7 @@ Mounting cached files is not enough by itself. If `HF_HUB_OFFLINE` remains `0`, 
 - `-c/--compute_dtype`: Compute precision (`bf16`, `fp8_cs`, `fp8_mx`, `fp8_sc`, `nvfp4`). Default `bf16`.
 - `-vb/--enable_vboost`: Enable VBoost (tensor core power steering). Pass `true` or `false`. Disabled by default.
 - `-lgc/--lock_gpu_freq`: Lock GPU graphics clock to a fixed frequency in MHz (e.g. `1200`). Used for silicon simulation correlation studies. Disabled by default.
+- `-lmc/--peak_mem_clk`: Lock GPU memory clock to a fixed peak frequency in MHz (e.g. `2600`). Used for silicon simulation correlation studies. Defaults to `4752` MHz for VR200 and is disabled by default for other GPUs. Pass `-lmc -1` or `--peak_mem_clk -1` to disable the VR200 default.
 - `-en/--enable_nsys`: Enable Nsight Systems profiling. Disabled by default.
 - `-pyp/--pytorch_profiler`: Enable PyTorch profiler. Pass `true` or `false`. Disabled by default.
 - `--profiling_start_step`: Defines start step for profiling. Default `10`.

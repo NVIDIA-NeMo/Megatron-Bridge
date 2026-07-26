@@ -59,6 +59,19 @@ def test_qwen35_vl_mimo_finetune_example_imports():
         sys.modules.pop(name, None)
 
 
+def test_dataloader_default_is_cyclic(monkeypatch):
+    name = "qwen35_vl_mimo_dataloader_default"
+    try:
+        module = _load_example_module(name)
+        monkeypatch.setattr(sys, "argv", [str(_SCRIPT_PATH)])
+
+        args = module._parse_args()
+
+        assert args.dataloader_type == "cyclic"
+    finally:
+        sys.modules.pop(name, None)
+
+
 @pytest.mark.parametrize(
     "dataset_name",
     ["cord_v2", "rdr", "medpix"],

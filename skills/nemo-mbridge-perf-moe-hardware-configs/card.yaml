@@ -1,5 +1,5 @@
 title: moe_hardware_configs
-validated_on: "2026-04-01"
+validated_on: "2026-07-25"
 summary: >
   Best-known MoE training configurations per model family and hardware platform,
   with measured throughput, MFU, and parallelism settings. Covers DSV3, Qwen3,
@@ -22,6 +22,7 @@ validation_status:
     - measured
   qwen3_30b_h100:
     - measured
+    - profile_validated
   qwen3_next_80b_b200:
     - measured
   qwen3_next_80b_gb200:
@@ -155,6 +156,25 @@ best_configs:
     routing: force_balance
     recompute: full
 
+  qwen3_30b_h100_16:
+    model: "Qwen3 30B-A3B"
+    hardware: "16×H100"
+    precision: BF16
+    dispatcher: HybridEP
+    tflops: 287.305
+    step_time_ms: 20992.030
+    parallelism: "TP1 EP16 PP1 CP1"
+    sequence_length: 4096
+    batch: "MBS1 GBS1024"
+    routing: force_balance
+    ep_overlap: true
+    delay_wgrad_compute: false
+    cuda_graph: "moe_router, moe_preprocess"
+    rank0_peak_allocated_gib: 62.166
+    baseline_tflops: 244.039
+    throughput_gain_percent: 17.729
+    profile_comm_hidden_percent: "0.11 off, 36.55 on"
+
   qwen3_next_80b_gb200_64:
     model: "Qwen3-Next 80B-A3B"
     hardware: "64×GB200"
@@ -180,6 +200,8 @@ best_configs:
     note: "native CE, cutlass grouped gemm"
 
 optimization_patterns:
+  - name: ep_comm_overlap
+    impact: "+17.729% throughput on measured Qwen3 30B 16×H100 HybridEP shape"
   - name: force_balance_routing
     impact: "+5-10% MFU over dropless"
   - name: 1f1b_overlap
@@ -192,6 +214,8 @@ optimization_patterns:
     impact: "up to +15% from MBS sweep"
 
 evidence:
+  - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
+  - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
   - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3"
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
@@ -199,6 +223,7 @@ evidence:
 
 known_limitations:
   - Container versions can cause significant performance regressions
+  - Dispatcher recommendations are starting points; the validated Qwen3 30B H100 winner used HybridEP rather than DeepEP
   - VPP must divide transformer layers evenly across PP stages
   - FP8 MFU numbers use higher peak FLOPS denominator than BF16
   - Configs are point-in-time measurements; mcore/TE updates may change results

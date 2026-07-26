@@ -20,6 +20,7 @@ import logging
 import cpu_backend
 import gpu_backend
 from arguments import build_parser
+from utils import resolve_hf_commit_revision, resolve_hf_model_revision
 
 
 logger = logging.getLogger(__name__)
@@ -56,6 +57,7 @@ def _run_import(args: argparse.Namespace) -> None:
     """Dispatch an import to the selected backend."""
     common_args = {
         "hf_model": args.hf_model,
+        "hf_revision": args.hf_revision,
         "megatron_path": args.megatron_path,
         "torch_dtype": args.torch_dtype,
         "trust_remote_code": args.trust_remote_code,
@@ -120,6 +122,17 @@ def main(argv: list[str] | None = None) -> None:
     """Parse worker arguments and run checkpoint conversion."""
     args = build_parser(include_execution=False).parse_args(argv)
     _validate_args(args)
+    if args.hf_revision is not None:
+        if args.command == "import":
+            args.hf_revision = resolve_hf_commit_revision(args.hf_model, args.hf_revision)
+            logger.info("Resolved Hugging Face import to immutable revision %s", args.hf_revision)
+        else:
+            args.hf_model = resolve_hf_model_revision(args.hf_model, args.hf_revision)
+            logger.info(
+                "Resolved Hugging Face revision %s to immutable local snapshot %s",
+                args.hf_revision,
+                args.hf_model,
+            )
     logger.info("Selected %s backend for %s conversion", args.device.upper(), args.command)
     if args.command == "import":
         _run_import(args)

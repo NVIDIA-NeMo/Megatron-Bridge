@@ -157,6 +157,7 @@ fi
 # Run each parallelism config in sequence
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 CONFIG_INDEX=0
+JOB_EXIT=0
 for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     OLD_IFS=$IFS
     IFS=',' read -r TP PP EP CP SP <<< "$CONFIG"
@@ -203,9 +204,14 @@ for CONFIG in "${PARALLELISM_CONFIGS[@]}"; do
     RUN_EXIT=$?
     if [ $RUN_EXIT -ne 0 ]; then
         echo "ERROR: Config TP=$TP, PP=$PP, EP=$EP, SP=$SP, CP=$CP failed with exit code $RUN_EXIT"
+        JOB_EXIT=$RUN_EXIT
         continue
     fi
 done
+
+if [ $JOB_EXIT -ne 0 ]; then
+    exit $JOB_EXIT
+fi
 
 echo "======================================"
 echo "Job completed (all ${#PARALLELISM_CONFIGS[@]} configs)"

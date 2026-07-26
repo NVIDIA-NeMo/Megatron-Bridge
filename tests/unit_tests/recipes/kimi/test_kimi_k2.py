@@ -271,3 +271,4 @@ class TestKimiK2PretrainConfig:
         # Default PP=16, VP=None (1), should have a layout
         expected_layout = _get_kimi_k2_pipeline_layout(16, 1)
         assert cfg.model.pipeline_model_parallel_layout == expected_layout
+        assert cfg.model._pipeline_model_parallel_layout_builder is _get_kimi_k2_pipeline_layout

@@ -1,0 +1,279 @@
+# Agent-readable model verification card.
+# status: unverified | verified | unsupported | not_applicable
+
+title: gemma_4_26b_a4b_it
+summary: >
+  Performance disclaimer: this model has not been performance-tuned; reported
+  timing and throughput metrics are sanity checks, not optimized performance
+  results. Gemma 4 26B-A4B-it BF16 CPU and GPU import, exact CPU and GPU
+  export, and deterministic multimodal inference are verified. Manual forward
+  comparison remains unverified because the recorded run compared a
+  tensor-parallel padding position rather than the prompt's next token. Full
+  SFT remains unverified because the default and selective-MLP configurations
+  exceed H100 memory, while full-layer recompute is too slow for the 10-step
+  verification window. Long-context SFT and PEFT are pending. The published
+  Bridge recipes do not currently provide VLM pretraining.
+verification_index:
+  model_level:
+    verified:
+      - hf_to_megatron_cpu
+      - hf_to_megatron_gpu
+      - megatron_to_hf_cpu
+      - megatron_to_hf_gpu
+      - inference
+    unverified:
+      - manual_forward_pass
+  training:
+    H100:
+      unverified: [sft, sft_export_inference, sft_long_context, peft]
+      unsupported: [pretrain, checkpoint_resume]
+model:
+  hf_id: google/gemma-4-26B-A4B-it
+  hf_revision: 4d7ae4984b7db7de8f8457170b3f1a419ee76d52  # pragma: allowlist secret
+  architecture: Gemma4ForConditionalGeneration
+  min_transformers_version: "5.8.0"
+verification_environment:
+  base_container: nvcr.io/nvidia/pytorch:26.04-py3
+  bridge_commit: a0e186550b3dc5f9b36f98c9bd050994f0b3fdc6  # pragma: allowlist secret
+
+items:
+  hf_to_megatron_cpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device cpu --nodes 1
+      --hf-model google/gemma-4-26B-A4B-it
+      --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+      --megatron-path work/model-verification/gemma-4-26b-a4b-it/cpu-megatron
+      --torch-dtype bfloat16
+    last_verified: 2026-07-23
+    expected_result: >
+      The command completed all 8,548 conversion mappings and saved
+      iter_0000000. All 383 tensor entries in the distributed-checkpoint
+      metadata were torch.bfloat16. The run configuration recorded bf16=true,
+      fp16=false, and BF16 parameter and autocast dtypes. The artifact reloaded
+      successfully for CPU export.
+
+  hf_to_megatron_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh import --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model google/gemma-4-26B-A4B-it
+      --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+      --megatron-path work/model-verification/gemma-4-26b-a4b-it/imported-megatron
+      --torch-dtype bfloat16 --tp 4 --pp 2 --ep 1
+    last_verified: 2026-07-23
+    expected_result: >
+      The command completed successfully at TP4/PP2/EP1. It loaded 8,548
+      conversion mappings from the immutable Hugging Face revision and saved
+      the full multimodal checkpoint as iter_0000000. All 383 tensor entries in
+      the distributed-checkpoint metadata were torch.bfloat16. The artifact
+      then reloaded successfully for distributed export and direct-model
+      inference.
+
+  megatron_to_hf_cpu:
+    status: verified
+    precision: bf16
+    bridge_commit: 8e9fa9e2aaf4d89538b0c0ff15bb837d14b2af47  # pragma: allowlist secret
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device cpu --nodes 1
+      --hf-model google/gemma-4-26B-A4B-it
+      --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+      --megatron-path work/model-verification/gemma-4-26b-a4b-it/cpu-megatron/iter_0000000
+      --hf-path work/model-verification/gemma-4-26b-a4b-it/cpu-hf-export
+      --torch-dtype bfloat16
+    last_verified: 2026-07-23
+    expected_result: >
+      The command completed all 8,548 conversion mappings and wrote 11 BF16
+      shards. All 1,013 exported tensor entries matched the immutable source
+      exactly in key, shape, dtype, and value. Native
+      Gemma4ForConditionalGeneration reload reported
+      model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or
+      error keys.
+
+  megatron_to_hf_gpu:
+    status: verified
+    precision: bf16
+    command: >
+      ./scripts/conversion/convert.sh export --executor slurm --device gpu
+      --nodes 1 --gpus-per-node 8 --hf-model google/gemma-4-26B-A4B-it
+      --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+      --megatron-path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
+      --hf-path work/model-verification/gemma-4-26b-a4b-it/hf-export-verified
+      --torch-dtype bfloat16 --export-weight-dtype bfloat16
+      --distributed-save --tp 2 --pp 1 --ep 4 --etp 1
+    last_verified: 2026-07-23
+    expected_result: >
+      Distributed TP2/PP1/EP4 export completed all 2,788 conversion mappings.
+      The exported config preserved sliding-attention rope_theta 10000 and
+      full-attention rope_theta 1000000. All 1,013 exported tensor entries were
+      BF16 and matched the immutable source exactly in key, shape, dtype, and
+      value. Native Gemma4ForConditionalGeneration reload reported
+      model.dtype=torch.bfloat16 with no missing, unexpected, mismatched, or
+      error keys.
+
+  manual_forward_pass:
+    status: unverified
+    precision: bf16
+    command: null
+    last_verified: null
+    expected_result: >
+      No valid prompt next-token comparison is claimed. The 2026-07-23 TP2 run
+      processed 285 real input tokens, padded them to 286, and compared the
+      final padding position on both Hugging Face and Megatron. Its matching
+      token and 0.999844 cosine similarity therefore do not satisfy the manual
+      forward gate. Verification requires either an unpadded final position or
+      a helper that selects the final real token before reporting next-token
+      agreement and cosine similarity of at least 0.99.
+
+  inference:
+    status: verified
+    precision: bf16
+    bridge_commit: c4250ac1382eccc8e2b58c2424b3db85415fbf6f  # pragma: allowlist secret
+    command: >
+      uv run python -m torch.distributed.run --standalone --nproc_per_node=8
+      examples/conversion/hf_to_megatron_generate_vlm.py
+      --hf_model_path google/gemma-4-26B-A4B-it
+      --hf-revision 4d7ae4984b7db7de8f8457170b3f1a419ee76d52
+      --megatron_model_path work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
+      --image_path work/model-verification/gemma-4-26b-a4b-it/candy.JPG
+      --prompt "What animal is on the candy?"
+      --max_new_tokens 32
+      --tp 2 --pp 1 --ep 4 --etp 1
+    last_verified: 2026-07-23
+    expected_result: >
+      One BF16 deterministic greedy run used an exact 32-token generation
+      limit and terminated on EOS after 29 generated tokens. The JSON-escaped
+      literal completion was "\u003c|channel\u003ethought\n\u003cchannel|\u003eThe
+      animal on the candy is a
+      turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u002f\u002fthought\n\u003cchannel|\u003eThe
+      animal on the candy is a
+      turtle.\u003cturn|\u003e\u003cturn|\u003e\u003cturn|\u003e\u003ceos\u003e".
+      The input was
+      p-blog/candy.JPG from huggingface/documentation-images at revision
+      44c3249461c5a5336585d1e31e0a4ce7fce06a5a, with SHA-256
+      fc417c899e94f8df465b7541c5a70f0eebb85c414d06345f0b290c061eccc84c.
+
+  pretrain:
+    all:
+      status: unsupported
+      precision: null
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        Megatron Bridge does not publish a pretraining recipe for this Gemma 4
+        conditional-generation variant; the current model package provides SFT
+        and PEFT recipes only.
+
+  sft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
+        --recipe gemma4_vl_26b_sft_config --mode sft --dataset cord-v2
+        --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
+        --max_steps 10 --seq_length 4096
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        --save_dir work/model-verification/gemma-4-26b-a4b-it/sft-checkpoints
+        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        On 2026-07-23 the default 8-GPU TP2/PP1/EP8/ETP1 run and a GBS4
+        selective-MLP recompute run both failed before the first completed
+        optimizer step. Each rank had about 77.84 to 78.70 GiB in use and
+        needed an additional 1 to 2 GiB. Full 30-layer recompute crossed that
+        memory peak, but one GBS4 optimizer step did not finish during more
+        than nine observed minutes. No valid 10-step metrics or iter_0000010
+        checkpoint were produced, so SFT remains unverified.
+
+  sft_export_inference:
+    H100:
+      status: unverified
+      precision: bf16
+      depends_on: sft
+      commands: null
+      last_verified: null
+      expected_result: >
+        This item is blocked because SFT produced no verified iter_0000010
+        checkpoint, so no export or post-SFT inference command is recorded.
+        Once that dependency passes, the checkpoint must export, strictly
+        reload as Gemma4ForConditionalGeneration, and complete one
+        deterministic greedy VLM generation with a recorded literal
+        completion.
+
+  sft_long_context:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        No Gemma 4 VL long-context recipe or run was verified. A future
+        workload must establish sequence-packing and context-parallel settings,
+        complete at least 10 optimizer steps with finite loss and no skipped or
+        NaN iterations, report all four required metrics, and save a reloadable
+        final checkpoint.
+
+  peft:
+    H100:
+      status: unverified
+      precision: bf16
+      enabled_features: {}
+      command: >
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+        --recipe gemma4_vl_26b_peft_config --mode lora --dataset cord-v2
+        --pretrained_checkpoint work/model-verification/gemma-4-26b-a4b-it/imported-megatron/iter_0000000
+        --max_steps 10 --seq_length 4096
+        'dataset.source.load_kwargs={revision:"7f0115a4b758a71d6473b8d085751692da2fef98"}'
+        validation.eval_iters=0 validation.eval_interval=0 checkpoint.load=null
+        --save_dir work/model-verification/gemma-4-26b-a4b-it/peft-checkpoints
+        --save_interval 10 logger.log_interval=1 logger.log_throughput=true
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      expected_result: >
+        The 4-GPU TP2/PP1/EP4 LoRA run must complete exactly 10 optimizer steps
+        with finite loss, no skipped or NaN iterations, all four required
+        metrics, and a reloadable final adapter checkpoint.
+
+  checkpoint_resume:
+    all:
+      status: unsupported
+      precision: null
+      depends_on: pretrain
+      command: null
+      last_verified: null
+      metrics:
+        initial_loss: null
+        final_loss: null
+        last_10_steps_step_time_ms_avg: null
+        last_10_steps_model_tflops_per_gpu_avg: null
+      resume_comparison: null
+      expected_result: >
+        Megatron Bridge does not provide a Gemma 4 VLM pretraining recipe, so
+        there is no supported reference run, middle checkpoint, optimizer/RNG
+        state contract, or model-wide checkpoint-resume workflow to verify.

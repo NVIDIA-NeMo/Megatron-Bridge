@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import *  # noqa: F403
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano_4b import *  # noqa: F403
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_super import *  # noqa: F403
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_ultra import *  # noqa: F403
 from megatron.bridge.recipes.nemotronh.h100.nemotron_nano_v2 import *  # noqa: F403
@@ -20,6 +21,10 @@ from megatron.bridge.recipes.nemotronh.h100.nemotronh import *  # noqa: F403
 
 
 __all__ = [
+    "nemotron_3_nano_4b_peft_8gpu_h100_bf16_config",
+    "nemotron_3_nano_4b_pretrain_8gpu_h100_bf16_config",
+    "nemotron_3_nano_4b_sft_8gpu_h100_bf16_32k_config",
+    "nemotron_3_nano_4b_sft_8gpu_h100_bf16_config",
     "nemotron_3_nano_peft_8gpu_h100_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_h100_bf16_config",
     "nemotron_3_nano_sft_8gpu_h100_bf16_config",

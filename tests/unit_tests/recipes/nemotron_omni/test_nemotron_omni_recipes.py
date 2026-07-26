@@ -148,6 +148,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert cfg.dataset.source.dataset_name == "cord_v2"
     assert resolve_model_collate("NemotronH_Nano_Omni_Reasoning_V3Processor") is nemotron_omni_collate_fn
     assert cfg.dataset.enable_in_batch_packing is False
+    assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.model.temporal_patch_dim == 1
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
@@ -158,6 +159,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
 
     _assert_common_config(cfg)
     assert isinstance(cfg.dataset, DirectHFSFTDatasetConfig)
+    assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.peft is not None
     assert cfg.peft.target_modules == [
         "linear_qkv",

@@ -764,6 +764,7 @@ class SafeTensorsStateSource(StateSource):
         buffered_tensors = {}
         all_yielded_keys = set()
         all_saved_keys = set()
+        total_saved_tensor_bytes = 0
 
         for name, tensor in generator:
             all_yielded_keys.add(name)
@@ -797,6 +798,9 @@ class SafeTensorsStateSource(StateSource):
                 output_file_path = _resolve_output_shard_path(output_path, filename)
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
                 save_file(tensors_to_save, output_file_path)
+                total_saved_tensor_bytes += sum(
+                    tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
+                )
 
                 # Free memory by removing saved tensors from the buffer.
                 for key in keys_for_file:
@@ -830,6 +834,9 @@ class SafeTensorsStateSource(StateSource):
                     output_file_path = _resolve_output_shard_path(output_path, filename)
                     output_file_path.parent.mkdir(parents=True, exist_ok=True)
                     save_file(tensors_to_save, output_file_path)
+                    total_saved_tensor_bytes += sum(
+                        tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
+                    )
 
                     # Free memory by removing saved tensors from the buffer.
                     for key in tensors_to_save.keys():
@@ -881,10 +888,9 @@ class SafeTensorsStateSource(StateSource):
 
             new_weight_map = {key: key_to_filename_map[key] for key in all_saved_keys}
 
-            new_index_data = {
-                "metadata": original_index_data.get("metadata", {}),
-                "weight_map": new_weight_map,
-            }
+            metadata = dict(original_index_data.get("metadata", {}))
+            metadata["total_size"] = total_saved_tensor_bytes
+            new_index_data = {"metadata": metadata, "weight_map": new_weight_map}
 
             output_index_file = output_path / "model.safetensors.index.json"
             if new_weight_map:
@@ -985,6 +991,7 @@ class SafeTensorsStateSource(StateSource):
 
         buffered_tensors: Dict[str, torch.Tensor] = {}
         actually_saved_keys: Set[str] = set()
+        local_saved_tensor_bytes = 0
 
         for name, tensor in generator:
             all_yielded_keys.add(name)
@@ -1028,6 +1035,9 @@ class SafeTensorsStateSource(StateSource):
                 output_file_path.parent.mkdir(parents=True, exist_ok=True)
                 save_file(tensors_to_save, output_file_path)
                 actually_saved_keys.update(tensors_to_save.keys())
+                local_saved_tensor_bytes += sum(
+                    tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
+                )
 
         # Strict-mode check: ensure all expected tensors were written. Aggregate
         # per-rank missing counts so all ranks raise consistently (avoids hangs
@@ -1038,11 +1048,16 @@ class SafeTensorsStateSource(StateSource):
             local_unsaved_keys = set()
 
         if is_distributed:
-            gathered_counts: list[int | None] = [None] * world_size
-            torch.distributed.all_gather_object(gathered_counts, len(local_unsaved_keys))
-            total_unsaved_count = sum(c for c in gathered_counts if c is not None)
+            gathered_save_status: list[tuple[int, int] | None] = [None] * world_size
+            torch.distributed.all_gather_object(
+                gathered_save_status,
+                (len(local_unsaved_keys), local_saved_tensor_bytes),
+            )
+            total_unsaved_count = sum(status[0] for status in gathered_save_status if status is not None)
+            total_saved_tensor_bytes = sum(status[1] for status in gathered_save_status if status is not None)
         else:
             total_unsaved_count = len(local_unsaved_keys)
+            total_saved_tensor_bytes = local_saved_tensor_bytes
 
         if total_unsaved_count and strict:
             if local_unsaved_keys:
@@ -1090,10 +1105,9 @@ class SafeTensorsStateSource(StateSource):
                     key: key_to_filename_map[key] for key in key_to_filename_map if key in all_saved_keys_aggregated
                 }
 
-                new_index_data = {
-                    "metadata": original_index_data.get("metadata", {}),
-                    "weight_map": new_weight_map,
-                }
+                metadata = dict(original_index_data.get("metadata", {}))
+                metadata["total_size"] = total_saved_tensor_bytes
+                new_index_data = {"metadata": metadata, "weight_map": new_weight_map}
                 output_index_file = output_path / "model.safetensors.index.json"
                 with open(output_index_file, "w") as f:
                     json.dump(new_index_data, f, indent=4)

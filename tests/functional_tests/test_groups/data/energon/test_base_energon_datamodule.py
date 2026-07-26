@@ -473,6 +473,20 @@ class TestEnergonDataModuleCPHandling:
         assert state == {"step": 0}
         mock_energon["loader"].save_state_rank.assert_called_once()
 
+    def test_energon_dataloader_restore_state(self, mock_energon):
+        """EnergonDataloader.restore_state() should delegate to the underlying loader and rebuild the iterator."""
+        pg = self._make_pg_collection(dp_rank=0, dp_world_size=1, cp_rank=0, cp_size=1)
+
+        dm = self._make_datamodule(pg_collection=pg)
+        loader = dm.train_dataloader()
+        prev_iter = loader._iter
+
+        loader.restore_state({"rank_state": 123})
+
+        mock_energon["loader"].restore_state_rank.assert_called_once_with({"rank_state": 123})
+        # Iterator must be rebuilt so the active stream picks up the restored position.
+        assert loader._iter is not prev_iter
+
 
 class TestEnergonDataShardingVerification:
     """

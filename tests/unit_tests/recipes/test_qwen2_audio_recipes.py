@@ -171,6 +171,7 @@ class TestQwen2AudioSftConfig:
         assert cfg.dataset.hf_processor_path == "Qwen/Qwen2-Audio-7B-Instruct"
         assert cfg.dataset.source.split is None
         assert cfg.dataset.validation_source.split == "validation"
+        assert cfg.dataset.dataloader_type == "cyclic"
 
     def test_sft_config_full_sft_uses_low_lr(self):
         """When peft is None (full SFT), the entry point picks lr=5e-6."""
