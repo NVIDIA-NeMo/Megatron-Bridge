@@ -25,12 +25,20 @@ if [[ "$RUNTIME_VERSION" != "$EXPECTED_VERSION" || "$DEVELOPMENT_VERSION" != "$E
     exit 1
 fi
 
-for symbol in ncclWinGetUserPtr ncclGetPeerDevicePointer ncclCommQueryProperties; do
-    if ! grep -Rqw --include='*.h' "$symbol" /usr/include/nccl.h /usr/include/nccl_device; then
-        echo "NCCL development headers do not expose $symbol" >&2
-        exit 1
-    fi
-done
+if ! gcc -x c -fsyntax-only - <<'C'
+#include <nccl.h>
+#include <nccl_device.h>
+
+static void* const NCCL_EP_APIS[] = {
+    (void*)ncclWinGetUserPtr,
+    (void*)ncclGetPeerDevicePointer,
+    (void*)ncclCommQueryProperties,
+};
+C
+then
+    echo "NCCL development headers do not expose the required NCCL-EP APIs" >&2
+    exit 1
+fi
 
 IFS=. read -r NCCL_MAJOR NCCL_MINOR NCCL_PATCH <<< "${EXPECTED_VERSION%%-*}"
 EXPECTED_VERSION_CODE=$((NCCL_MAJOR * 10000 + NCCL_MINOR * 100 + NCCL_PATCH))
