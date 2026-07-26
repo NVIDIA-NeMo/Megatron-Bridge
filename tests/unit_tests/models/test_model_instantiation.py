@@ -83,6 +83,7 @@ class _PG:
         self.dp = _Rank0Group()
         self.dp_cp = _Rank0Group()
         self.expt_dp = _Rank0Group()
+        self.gtp_remat = None
 
 
 class MockModelProvider(ModelProviderMixin):
