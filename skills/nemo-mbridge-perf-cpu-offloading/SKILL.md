@@ -31,6 +31,7 @@ Two independent mechanisms to move data from GPU to CPU memory:
 | Throughput is top priority | Don't enable — offloading always adds overhead |
 | CUDA graphs are needed | Only optimizer offloading — activation offloading is incompatible |
 | Memory pressure is moderate | Optimizer offload at 25–50% fraction for best efficiency |
+| A larger MBS OOMs inside forward/backward | Offload may not help; prove whether optimizer state or activations/kernel workspace own the peak |
 
 ## Enablement
 
@@ -105,6 +106,15 @@ cfg.model.cuda_graph_impl = "none"
 Activation offloading is blocked for Qwen3-30B-A3B and similar large MoE
 models. The PP=1 constraint means each GPU holds all 48 layers; model
 weights + optimizer states alone (~70 GB) exceed H100 80 GB capacity.
+
+Optimizer offloading is not a guarantee that a larger microbatch will fit. In
+a 2026-07-25 Qwen3.5-35B-A3B text experiment on 16×H100, MBS=2 used
+selective recompute for `gdn_norm_out`, `moe_act`, and `shared_experts`.
+Twenty-five-percent optimizer offload still OOMed in iteration 0, short by
+about 420 MiB on a 970 MiB allocation. Fifty-percent offload completed setup
+but then all ranks OOMed in the first Triton forward/backward path. The peak
+was therefore not solely Adam state. Keep MBS=1 or reduce activation/workspace
+memory instead of blindly increasing the offload fraction.
 
 ## Minimal Runnable Command
 
@@ -217,6 +227,7 @@ uv run python -m pytest \
 | OOM with activation offloading | Model too large for PP=1 | Check allocated memory vs 80 GB | Use optimizer offloading with PP > 1 |
 | Extreme slowdown (>4x) | 100% optimizer offload, CPU Adam bottleneck | Compare iter time at different fractions | Reduce fraction or enable `overlap_cpu_optimizer_d2h_h2d` |
 | OOM at partial optimizer offload | Insufficient offload for this config | Check memory at different fractions | Increase fraction or add PP |
+| 25% and 50% offload both OOM inside the first forward/backward | The peak is activations or kernel workspace, not only optimizer state | Locate the failing allocation and compare whether setup completed | Reduce MBS/add selective recompute; stop increasing offload if the failure remains in the compute path |
 
 ## Known Limitations
 

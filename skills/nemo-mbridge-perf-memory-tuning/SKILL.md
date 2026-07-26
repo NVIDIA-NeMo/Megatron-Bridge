@@ -1,6 +1,6 @@
 ---
 name: nemo-mbridge-perf-memory-tuning
-description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, PEFT + SP input re-gather, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
+description: Techniques for reducing peak GPU memory in Megatron Bridge — expandable segments, optimizer-state precision, PEFT + SP input re-gather, parallelism resizing, activation recompute, CPU offloading constraints, and common OOM fixes.
 license: Apache-2.0
 when_to_use: GPU OOM errors, reducing peak memory, reducing LoRA or PEFT activation memory with sequence parallelism, or tracing an OOM regression to a specific commit or config change; 'out of memory', 'OOM', 'memory fragmentation', 'expandable_segments', 'reduce GPU memory', 'LoRA memory', 'PEFT memory', 'sequence_parallel_input_regather', 'PYTORCH_CUDA_ALLOC_CONF'.
 ---
@@ -57,15 +57,20 @@ When a training run OOMs or is close to the memory limit:
    (`LoRA(sequence_parallel_input_regather=True)`). This avoids retaining the
    full gathered LoRA-A input in every eligible layer; it has no effect when SP
    is disabled.
-3. **Add selective activation recompute** (`recompute_modules=[core_attn]`) if
+3. **If step 1 passes but step 2 OOMs, inspect optimizer-state precision.**
+   Adam states may be materialized after the first iteration. On BF16 training,
+   a precision-aware optimizer with BF16 gradients and moments can recover
+   enough capacity to keep PP low; validate numerical behavior for the target
+   workload.
+4. **Add selective activation recompute** (`recompute_modules=[core_attn]`) if
    not already enabled. See @skills/nemo-mbridge-perf-activation-recompute/SKILL.md.
-4. **Avoid increasing TP** as a memory fix — doubling TP dramatically increases
+5. **Avoid increasing TP** as a memory fix — doubling TP dramatically increases
    NVLink all-reduce volume and often kills throughput (-28% on Llama3 70B).
-5. **Avoid increasing PP at the cost of DP** — halving DP doubles gradient
+6. **Avoid increasing PP at the cost of DP** — halving DP doubles gradient
    accumulation steps and hurts throughput (~6%).
-6. Consider `mlp` recompute if still OOM. Saves ~3 GB but costs ~16% GPU
+7. Consider `mlp` recompute if still OOM. Saves ~3 GB but costs ~16% GPU
    utilization on large dense models (Llama3 70B).
-7. CPU offloading is **blocked when PP > 1**.
+8. CPU offloading is **blocked when PP > 1**.
 
 ## Enablement
 
@@ -97,6 +102,31 @@ If the model genuinely does not fit (not fragmentation), adjust parallelism:
 | Increase TP | Fewer params per GPU | Severe (-28% on 70B) | Last resort |
 | Distributed optimizer | Shards optimizer state across DP ranks | ~1-2% | Recommended for large models |
 | FSDP | Shards params + grads + optimizer | Varies | See @skills/nemo-mbridge-perf-megatron-fsdp/SKILL.md |
+
+### Delayed optimizer-state OOM
+
+A finite first iteration does not prove that a layout fits. Optimizer state can
+be allocated lazily during or after the first optimizer step, making iteration
+2 the first point where full steady-state memory is visible. Distinguish this
+from activation memory before adding recompute or PP:
+
+1. Record peak allocated memory after both iterations 1 and 2.
+2. Keep the batch shape and model topology fixed.
+3. For BF16 training, test the precision-aware optimizer with BF16 gradients
+   and Adam moments:
+
+```python
+import torch
+
+cfg.optimizer.use_precision_aware_optimizer = True
+cfg.optimizer.main_grads_dtype = torch.bfloat16
+cfg.optimizer.exp_avg_dtype = torch.bfloat16
+cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+```
+
+The optimizer can retain FP32 main parameters and parameter remainders. Treat
+reduced-precision states as a numerical choice, not only a capacity switch:
+require multiple finite steps with zero skipped/NaN iterations.
 
 ### Activation recompute
 
@@ -230,6 +260,25 @@ All runs had finite losses with zero skipped or NaN iterations. Two-rank BF16
 and FP32 checks matched the baseline for outputs, input gradients, LoRA-A and
 LoRA-B gradients, and two-microbatch fused `main_grad` accumulation.
 
+### Precision-aware optimizer for a hybrid GDN MoE
+
+Qwen3.5 35B-A3B text pretraining on 16× H100, BF16, sequence length 4096,
+PP1/EP16, and native all-to-all showed a delayed optimizer-state capacity
+failure with FP32 Adam states: iteration 1 completed, then iteration 2 OOMed.
+
+With BF16 main gradients, first moments, and second moments, the same topology
+completed six iterations with finite losses and zero skipped/NaN iterations.
+Peak allocated memory after state materialization was 70.337 GiB. The first
+iteration's 61.455 GiB peak was therefore not the acceptance peak; iteration 2
+was the first representative memory point.
+
+Increasing the same model to MBS2 remained a genuine capacity failure even
+with `gdn_norm_out,moe_act,shared_experts` selective recompute and BF16
+precision-aware Adam states. At optimizer-state materialization, 73.06 GiB was
+allocated and a 3.79 GiB request had only about 2.35 GiB free. Whole-GDN
+recompute fit on an experimental MCore revision, but reduced throughput to
+about 190.1 model TFLOPS/GPU. Prefer MBS1 for this 16×H100 PP1/EP16 shape.
+
 ## Code Anchors
 
 ### LoRA sequence-parallel input re-gather
@@ -286,7 +335,9 @@ model_config = GPTModelProvider(
 | Symptom | Cause | Confirm | Fix |
 |---|---|---|---|
 | OOM on a single rank despite headroom on others | Memory fragmentation | check if `expandable_segments:True` is set | set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
+| Step 1 passes, step 2 OOMs on all ranks | delayed Adam-state materialization | compare peak memory after iterations 1 and 2; inspect optimizer dtypes | use a validated precision-aware optimizer configuration, distributed optimizer/FSDP, or more model parallelism |
 | OOM with `expandable_segments` already set | Genuine capacity limit | check `nvidia-smi` for param/optimizer memory | increase PP, use distributed optimizer, or add recompute |
+| MBS2 still OOMs after selective recompute at optimizer-state creation | activations were reduced, but parameter plus optimizer state still exceeds capacity | compare the requested allocation with actual free memory; confirm reserved-but-unallocated memory is small | keep MBS1 or shard/offload optimizer state; measure whole-module recompute before accepting it |
 | Estimated memory exceeds GPU capacity before launch | model state or activations genuinely too large | run `estimate_training_memory` and inspect the largest component | adjust PP/TP/CP/EP, distributed optimizer, or recompute before launching |
 | LoRA + SP retains unexpectedly high activation memory | full gathered LoRA-A inputs are retained until backward | check whether `cfg.peft.sequence_parallel_input_regather` is enabled and the target is eligible | set `LoRA(sequence_parallel_input_regather=True)`; verify fallback constraints |
 | `ValueError: PP + CPU offloading` | using cpu_offloading with PP > 1 | check PP config | disable CPU offloading or set PP=1 |

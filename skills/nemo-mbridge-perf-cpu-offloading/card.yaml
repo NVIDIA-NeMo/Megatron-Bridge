@@ -39,6 +39,8 @@ validation_status:
     - measured  # Job 10609512
   optimizer_offload_100pct_overlap:
     - measured  # Job 10611046
+  qwen35_mbs2_partial_optimizer_offload:
+    - measured  # Jobs 5708644 (25%) and 5708654 (50%); both OOM
 training_dimensions:
   speed:
     effect: "1.9x-4.2x slower step time (scales linearly with offload fraction)"
@@ -53,10 +55,12 @@ training_dimensions:
     rationale: >
       Measured on Qwen3-30B-A3B (47.2 GB baseline). Savings scale linearly.
   scale:
-    effect: "enables otherwise-OOM configurations"
+    effect: "can enable optimizer-state-bound OOM configurations, but not activation/workspace-bound peaks"
     confidence: medium
     rationale: >
       Can free memory for larger batch sizes or additional parallelism.
+      Qwen3.5 MBS=2 still OOMed at 25% and 50% offload because the remaining
+      peak occurred in the first forward/backward Triton path.
   convergence:
     effect: "no change (loss delta < 0.001 across all fractions)"
     confidence: high
@@ -176,6 +180,16 @@ measured_results:
     mem_allocated_gb: 70.3
     job: "10609511"
     status: oom
+  - model: Qwen3.5-35B-A3B
+    config: mbs2_selective_recompute_optimizer_offload_25pct
+    failure: "iteration-0 OOM; about 420 MiB short on a 970 MiB request"
+    job: "5708644"
+    status: oom
+  - model: Qwen3.5-35B-A3B
+    config: mbs2_selective_recompute_optimizer_offload_50pct
+    failure: "all ranks failed in first iteration with Triton CUDA OOM"
+    job: "5708654"
+    status: oom
 failure_modes:
   - name: pp_constraint
     symptom: "Currently there is no support for Pipeline parallelism with CPU offloading"
@@ -189,6 +203,9 @@ failure_modes:
   - name: large_model_oom
     symptom: OOM with activation offloading even with many nodes
     fix: use optimizer offloading instead
+  - name: compute_peak_survives_optimizer_offload
+    symptom: first forward/backward still OOMs at 25-50% optimizer offload
+    fix: reduce microbatch size or activation/kernel-workspace memory; more optimizer offload may not help
 known_constraints:
   - cpu_offloading requires PP = 1 (transformer_config.py:1303)
   - cpu_offloading requires recompute_granularity = None (transformer_config.py:1308)
@@ -198,6 +215,7 @@ known_limitations:
   - Activation offloading impractical for large MoE models due to PP=1 constraint
   - Optimizer offloading throughput penalty scales linearly with fraction
   - D2H/H2D overlap provides only ~7% improvement
+  - Optimizer offloading cannot remove activation or Triton kernel-workspace peaks
 evidence:
   - docs/training/cpu-offloading.md
   - 3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py

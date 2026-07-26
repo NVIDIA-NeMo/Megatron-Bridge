@@ -26,6 +26,8 @@ validation_status:
     - measured
   qwen3_30b_h100_case_study:
     - measured
+  qwen35_35b_h100_bringup_case_study:
+    - measured
   overlap_profile_method:
     - measured
 
@@ -158,6 +160,97 @@ qwen3_30b_h100_case_study:
   profile_comm_hidden_on_percent: 36.55
   dominant_bottleneck: "Exposed HybridEP dispatch/combine communication"
 
+qwen35_35b_h100_bringup_case_study:
+  hardware: "16×H100"
+  model: Qwen3.5-35B-A3B
+  model_type: "30 Gated DeltaNet layers + 10 full-attention layers, MoE + MTP"
+  precision: BF16
+  sequence_length: 4096
+  batch: "MBS1/GBS128 for short controlled A/B"
+  routing: force_balance
+  bringup_results:
+    - layout: "TP1/PP4/EP4, native all-to-all"
+      tflops: 100.0
+      note: "equal layer count produced a 53% stage-parameter imbalance"
+    - layout: "TP1/PP2/EP8, balanced 21/19 layers, native all-to-all"
+      tflops: 146.1
+      note: "PP rebalancing was the largest confirmed early topology gain"
+    - layout: "TP1/PP1/EP16, native all-to-all, precision-aware optimizer"
+      tflops: 148.1
+      peak_allocated_gib: 70.337
+      note: "PP1 exposed EP16 communication as the next bottleneck"
+    - layout: "TP1/PP1/EP16, native all-to-all, FlashQLA + pre-GDR"
+      tflops: 157.2
+      peak_allocated_gib: 70.069
+      note: "matched kernel A/B improved end-to-end throughput by 6.19%"
+    - layout: "TP1/PP1/EP16, HybridEP, FlashQLA + pre-GDR"
+      tflops: 189.1
+      peak_allocated_gib: 69.939
+      note: "matched dispatcher A/B improved throughput by 20.25%"
+    - layout: "TP1/PP1/EP16, HybridEP + router/preprocess TE graphs, FlashQLA + pre-GDR"
+      tflops: 212.251
+      peak_allocated_gib: 69.939
+      note: "steady graph replay improved throughput by 12.245% over eager HybridEP"
+    - layout: "TP1/PP1/EP16, HybridEP + attention/router/preprocess TE graphs, FlashQLA + pre-GDR"
+      tflops: 218.121
+      peak_allocated_gib: 69.939
+      note: "adding attention scope improved throughput by another 2.766%"
+    - layout: "TP1/PP1/EP16, GBS1024, HybridEP + attention/router/preprocess TE graphs, FlashQLA + pre-GDR"
+      tflops: 225.9
+      step_time_ms: 26081.35
+      peak_allocated_gib: 69.942
+      note: "exact-batch steps 5-8 averaged 225.85 TFLOPS/GPU; larger accumulation did not close the Qwen3 gap"
+    - layout: "TP1/PP1/EP16, per-expert capacity 1.0 + pad-to-capacity"
+      tflops: 224.9
+      step_time_ms: 3273.925
+      peak_allocated_gib: 69.963
+      note: "host-sync upper bound only; random routing can drop expert routes, so this is not a valid dropless benchmark"
+    - layout: "TP1/PP1/EP16, HybridEP + plain EP overlap, FlashQLA + pre-GDR"
+      tflops: 184.6
+      peak_allocated_gib: 71.698
+      note: "matched overlap A/B regressed throughput by 2.45%; leave overlap disabled"
+    - layout: "TP1/PP1/EP16, HybridEP + shared-expert overlap, FlashQLA + pre-GDR"
+      tflops: 207.0
+      step_time_ms: 3558.125
+      peak_allocated_gib: 70.006
+      note: "matched shared-overlap A/B regressed the scoped-graph baseline by about 5.1%; leave disabled"
+    - layout: "TP1/PP1/EP16, HybridEP, blockwise FP8, FlashQLA + pre-GDR"
+      tflops: 174.38
+      peak_allocated_gib: 72.730
+      note: "matched precision A/B regressed throughput by 7.8%; retain BF16"
+    - layout: "TP1/PP1/EP16, HybridEP, tensorwise current-scaling FP8, pinned GDN backend"
+      tflops: 145.3
+      step_time_ms: 5067.8
+      peak_allocated_gib: 66.053
+      cold_iteration_seconds: 192.33
+      note: "finite run with zero skipped/NaN iterations, but small-expert scaling overhead dominated"
+    - layout: "TP1/PP1/EP16, HybridEP + attention/router/preprocess TE graphs, preprocessing SMS32"
+      tflops: 216.85
+      note: "reducing preprocessing SMs from the default 108 regressed throughput by 0.58%; retain the default"
+    - layout: "TP1/PP1/EP16, MBS2 + gdn_norm_out/moe_act/shared_experts recompute"
+      result: "OOM at delayed Adam-state materialization"
+      note: "73.06 GiB allocated; 3.79 GiB requested with only ~2.35 GiB free"
+    - layout: "TP1/PP1/EP16, MBS2 + experimental whole-GDN/moe_act recompute"
+      tflops: 190.1
+      note: "fit, but recompute erased the intended micro-batch throughput gain"
+  memory_result: >
+    FP32 Adam states completed iteration 1 and OOMed on iteration 2.
+    BF16 main gradients and Adam moments completed six finite iterations with
+    zero skipped/NaN iterations while retaining FP32 main parameters and
+    remainders.
+  cache_result: >
+    Persisting 11 TileLang kernel variants reduced the FlashQLA cold iteration
+    from 904 seconds to 87.6 seconds; compilation remained excluded from
+    steady-state timing.
+  fp8_result: >
+    Blockwise FP8 completed six finite iterations with zero skipped/NaN
+    iterations, but regressed steady throughput by 7.8% versus BF16, increased
+    peak allocated memory by 2.791 GiB, and incurred a 129.1-second cold first
+    iteration. Tensorwise current scaling also completed finite steps, but
+    averaged only 145.3 model TFLOPS/GPU after a 192.33-second cold compile
+    iteration. The recipe therefore retains BF16.
+  dominant_bottleneck: "EP16 native all-to-all communication after PP1 fit was recovered"
+
 key_lessons:
   - "Platform characteristics drive strategy, not just model architecture"
   - "Parallel Folding unlocks independent attention/MoE optimization"
@@ -165,6 +258,15 @@ key_lessons:
   - "Optimization is iterative: solving one wall exposes another"
   - "Use unprofiled steady timing for acceptance and matched profiles for causality"
   - "Use interval unions and communication/compute intersection; summed concurrent kernel durations are not wall time"
+  - "Hybrid GDN MoE bring-up requires multiple optimizer steps; step 2 can be the first full-state memory point"
+  - "Balance hybrid-model PP stages by parameter/block cost, not equal layer count"
+  - "Persist TileLang/Inductor caches and separate kernel JIT from graph capture and steady replay"
+  - "A faster GDN kernel is additive, but dispatcher/overlap can remain the dominant end-to-end lever"
+  - "Benchmark HybridEP and EP overlap separately; overlap can regress a GDN-heavy MoE even after HybridEP wins"
+  - "Current-scaling FP8 is not automatically faster for GDN-heavy Hopper workloads"
+  - "Revalidate the winner at the acceptance global batch; do not extrapolate from the short A/B batch"
+  - "Never accept a throughput gain caused by MoE capacity dropping routes when the target recipe is dropless"
+  - "Treat shared-expert overlap as its own concurrency A/B; dispatcher or EP-overlap results do not predict it"
 
 evidence:
   - "arXiv:2603.07685 — Scalable Training of MoE with Megatron Core"
@@ -172,3 +274,5 @@ evidence:
   - "DSV3 and Qwen3-235B empirical results"
   - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
   - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
+  - "Linear MB-998 — Qwen3.5 35B-A3B H100 performance bring-up"
+  - "Megatron-LM draft PR #5564 — FlashQLA integration"

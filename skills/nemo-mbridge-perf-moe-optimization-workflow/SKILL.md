@@ -38,9 +38,14 @@ For MoE optimization workflow prompts, present the response in this order:
    overhead, or compute.
 4. **Retune**: change dispatcher, overlap, FP8 mode, CUDA graphs, or recompute
    based on the profiled bottleneck.
-5. Include the exact Parallel Folding meshes: `Attention: TP x CP x DP x PP`
+5. **Validate multiple optimizer steps**: a finite first step is not enough.
+   Optimizer-state allocation, JIT compilation, graph capture, or a
+   dispatcher/overlap stall may appear only on later steps. Require at least
+   three completed steps with finite loss and zero skipped/NaN iterations
+   before treating a candidate as viable.
+6. Include the exact Parallel Folding meshes: `Attention: TP x CP x DP x PP`
    and `MoE: ETP x EP x EDP x PP`.
-6. Include the default mappings: `alltoall` for safe bring-up,
+7. Include the default mappings: `alltoall` for safe bring-up,
    `flex` + `deepep` for H100/B200-style systems, `flex` + `hybridep` for
    GB200/GB300/NVL72 systems, Hopper to FP8 blockwise, Blackwell to MXFP8, and
    dropless MoE TE-scoped CUDA graphs over `attn`, `moe_router`, and
@@ -53,9 +58,13 @@ Start with a configuration that fits reliably before chasing throughput.
 Recommended order:
 
 1. Use the smallest amount of model parallelism that still fits.
-2. Turn on selective recompute before falling back to full recompute.
-3. Add offloading only when recompute and parallelism are still insufficient.
-4. Use `--fake-init-process-group` to sanity-check large parallel layouts on a
+2. Identify whether the peak comes from activations or delayed optimizer-state
+   allocation. An OOM on step 2 after a finite step 1 is often optimizer-state
+   memory, not an activation peak; inspect precision-aware optimizer dtypes
+   before paying for recompute or more PP.
+3. Turn on selective recompute before falling back to full recompute.
+4. Add offloading only when recompute and parallelism are still insufficient.
+5. Use `--fake-init-process-group` to sanity-check large parallel layouts on a
    single GPU before burning cluster time.
 
 ### Recompute guidance
@@ -123,11 +132,25 @@ profile for causal explanation:
    exposed GPU-active union and end-to-end step time fall.
 4. Corroborate the trace with dispatch/combine NVTX ranges, steady step time,
    model TFLOPS/GPU, loss finiteness, skipped/NaN counts, and peak memory.
+5. Separate one-time compilation from steady execution. Persist
+   `TORCHINDUCTOR_CACHE_DIR` and, for TileLang kernels,
+   `TILELANG_CACHE_DIR` on a mounted cache path. Container `HOME` may point to
+   an ephemeral filesystem even when the host home is persistent.
+6. Exclude the first iteration, JIT compilation, graph warmup, and graph
+   capture from acceptance timing. Use a fixed post-warmup iteration window.
 
 On a controlled 16×H100 Qwen3 30B-A3B HybridEP run, plain EP overlap increased
 communication hidden by GEMM/attention from 0.11% to 36.55%. The unprofiled
 step fell from 24.7138s to 20.9920s and throughput rose from 244.039 to 287.305
 model TFLOPS/GPU. `delay_wgrad_compute` remained disabled.
+
+Do not generalize that overlap result across model families. On a matched
+16×H100 Qwen3.5-35B-A3B GDN-MoE run, changing native all-to-all to HybridEP
+improved steady BF16 throughput from 157.248 to 189.096 model TFLOPS/GPU
+(+20.25%), but then enabling plain EP overlap reduced it to 184.57
+TFLOPS/GPU (-2.45%). Keep dispatcher and overlap as separate A/B dimensions;
+an overlap stream can contend with GDN, expert, or dispatcher kernels even
+when the same knob helps an attention-only MoE.
 
 ## Dispatcher And Overlap Guidance
 
@@ -149,6 +172,28 @@ If the all-to-all path is visible in profiles, combine dispatcher tuning with:
 - `--overlap-moe-expert-parallel-comm`
 - `--overlap-grad-reduce`
 - `--tp-comm-overlap`
+
+### Hybrid GDN MoE bring-up
+
+Hybrid models with Gated DeltaNet or another JIT-backed linear-attention block
+need a stricter bring-up sequence than attention-only MoE models:
+
+1. Start with eager execution, native `alltoall`, no EP overlap, and a fixed
+   routing mode.
+2. Balance PP stages by parameter count and block cost, not layer count alone.
+   Embeddings, output logits, MTP, and the mix of attention/GDN layers can make
+   equal layer splits badly imbalanced.
+3. Complete at least three optimizer steps before calling the layout stable.
+   A first-step pass can still become a step-2 OOM when Adam states are first
+   materialized.
+4. Measure a matched kernel A/B with identical topology, precision, routing,
+   batch shape, container, and cache state.
+5. Only then test a flex dispatcher, EP overlap, scoped CUDA graphs, or delayed
+   wgrad, one variable at a time.
+
+FlashQLA-style TileLang backends can compile separate forward, recompute, MTP,
+and backward variants. The cold iteration may therefore be minutes rather than
+seconds. Cache every target shape and report only steady replay iterations.
 
 ## FP8 Recipe Quick Decision
 
@@ -204,3 +249,47 @@ Related references:
 
 6. **Summed kernel time is not exposed time**: use interval unions and
    communication/compute intersection when validating overlap.
+
+7. **A finite first step is not a stability result**: validate later optimizer
+   steps and watch both high-power compute and low-power 100%-SM communication
+   spin states.
+
+8. **Current-scaling FP8 is not an automatic Hopper win**: small projections,
+   GDN kernels, and quantization overhead can make it slower than BF16. Start
+   Hopper exploration with blockwise FP8 after a stable BF16 baseline, and keep
+   only a measured win.
+
+9. **Blockwise FP8 is still shape-specific on Hopper**: on the controlled
+   16×H100 Qwen3.5-35B-A3B HybridEP shape, blockwise FP8 reduced throughput
+   from 189.096 to 174.38 model TFLOPS/GPU (-7.8%) and increased rank-0 peak
+   allocated memory from 69.939 to 72.730 GiB. Its cold first iteration also
+   took 129.1 seconds for kernel compilation. Exclude compilation from timing,
+   but reject the precision mode when its steady-state result still loses.
+
+10. **Tensorwise current scaling can lose even more on small experts**: on the
+    pinned 16×H100 Qwen3.5-35B-A3B EP16 HybridEP shape, the first iteration
+    took 192.33 seconds to compile and iterations 3-10 averaged only
+    145.3 model TFLOPS/GPU. The run was finite with zero skipped/NaN
+    iterations, so this was a performance rejection rather than a correctness
+    failure. Treat FP8 mode and scaling granularity as separate A/Bs.
+
+11. **Do not optimize the metric by dropping MoE work**: a Qwen3.5
+    `moe_expert_capacity_factor=1.0` diagnostic removed HybridEP's dynamic
+    token-count synchronization but improved the valid dropless result by only
+    about 3.1%. Random force-balanced routing can exceed individual expert
+    capacities, so the setting may drop routes. Use it to bound synchronization
+    overhead, not to accept throughput.
+
+12. **Revalidate at the acceptance batch**: the Qwen3.5 GBS128 winner reached
+    218.121 model TFLOPS/GPU, while an exact GBS1024 replay stabilized at
+    225.8-225.9 model TFLOPS/GPU over its last four steps. Larger gradient
+    accumulation helped modestly but did not remove the model-family gap to
+    Qwen3. Report the exact acceptance batch instead of extrapolating from a
+    short A/B batch.
+
+13. **Shared-expert overlap is a separate concurrency A/B**: enabling only
+    `moe_shared_expert_overlap` on the same Qwen3.5 HybridEP + scoped-graph
+    stack reduced throughput from 218.121 to about 207.0 model TFLOPS/GPU
+    (-5.1%) and slightly increased peak memory. Do not infer a win from either
+    dispatcher selection or EP overlap; the shared-expert stream can introduce
+    its own GDN/expert/communication contention.

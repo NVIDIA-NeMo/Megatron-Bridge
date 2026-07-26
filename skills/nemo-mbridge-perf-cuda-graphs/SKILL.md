@@ -120,11 +120,23 @@ auto-enables `model.use_te_rng_tracker` plus `rng.te_rng_tracker` when
 
 1. Stabilize the eager run first.
 2. Fix sequence length and micro-batch size.
-3. Enable the narrowest useful graph scope.
-4. Confirm replay is active and memory is still acceptable.
-5. Compare eager against graph replay iterations after warmup and capture; do
+3. Finish non-graph JIT compilation first. Inductor, Triton, or TileLang
+   compilation is distinct from CUDA-graph warmup/capture and can dominate the
+   first iteration. Persist the relevant compiler caches on a mounted path.
+4. Enable the narrowest useful graph scope.
+5. Confirm replay is active and memory is still acceptable.
+6. Compare eager against graph replay iterations after warmup and capture; do
    not include the capture step in steady-state timing.
-6. Only then widen scope or combine with overlap features.
+7. Only then widen scope or combine with overlap features.
+
+Treat benchmark startup as three separate phases:
+
+```text
+kernel JIT/cache warmup -> CUDA graph warmup and capture -> steady replay
+```
+
+Do not infer a graph regression from the first step of a cold kernel cache, and
+do not count either compilation or capture in the steady-state window.
 
 ## Code Anchors
 
@@ -318,6 +330,27 @@ def _delete_cuda_graphs(cuda_graph_helper):
     graphable layers, about `6.9 s` capture time on rank 0), but replay
     iterations 5-8 averaged `42.00 s` versus `41.36 s` for eager. Treat
     scoped graphs as a bring-up candidate and validate on the target stack.
+
+14. **Narrow MoE scopes can win on a tuned dispatcher**: On a controlled
+    16×H100 Qwen3.5-35B-A3B BF16 HybridEP run, TE-scoped
+    `moe_router,moe_preprocess` graphs reduced the steady step from 3.8968 to
+    3.4717 seconds and increased throughput from 189.096 to 212.251 model
+    TFLOPS/GPU (+12.245%). Adding `attn` for the model's 10 full-attention
+    layers reduced the step again to 3.3783 seconds and reached 218.121
+    TFLOPS/GPU (+2.766% over the narrower graph, +15.349% over eager).
+    Iteration 1 took about 130 seconds for cold kernel compilation, and
+    iteration 4 contained capture overhead; only iterations 5-10 were used
+    for replay results.
+
+15. **Optimizer graph capture is a separate acceptance gate**: Do not infer
+    optimizer-step graph support from successful TE module graphs. On the same
+    16×H100 Qwen3.5 HybridEP + PAO stack, iterations 1-3 completed with finite
+    loss, but every rank stalled after logging
+    `Capture CUDA graph for optimizer!!!`. For more than three minutes the
+    GPUs stayed at about 69.4 GiB, 0% utilization, and low power; no rank
+    logged capture completion or iteration 4. Treat optimizer graph capture as
+    an independent A/B, bound its capture time, and reject a no-progress
+    capture rather than waiting for steady replay that will never begin.
 
 ## Verification
 

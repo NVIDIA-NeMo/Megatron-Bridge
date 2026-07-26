@@ -35,6 +35,9 @@ feature_meaning:
   context_parallel: >
     Split long sequences across GPUs using ring attention or similar
     communication patterns.
+  gdn_headwise_context_parallel: >
+    Split GDN linear-attention heads across CP ranks, with per-layer
+    context-to-head and head-to-context all-to-all transforms.
   expert_parallel: >
     Distribute MoE experts across GPUs, only applies to expert layers.
 recommended_path:
@@ -54,10 +57,27 @@ known_constraints:
   - EP requires num_moe_experts > 0 and expert_model_parallel_size divides num_moe_experts.
   - PP interleaved schedule requires virtual_pipeline_model_parallel_size > 1.
   - Total parallelism dimensions must divide evenly into world_size.
+  - >
+    On the July 2026 Qwen3.5 development stack, GDN headwise CP with
+    FlashQLA requires gdn_pre_gated_delta_rule_fusion=false: the fused
+    pre-GDR path validates the post-A2A head-local width against the
+    global head width.
+  - >
+    The measured HybridEP runtime on 8-GPU H100 nodes also rejects a
+    CP4/EP4 mesh because its four-rank EP group is not divisible by the
+    eight ranks per node.
+  - >
+    A CP2/EP8 retry passed that divisibility check but stalled in the first
+    iteration after headwise-CP P2P communicator creation; no optimizer
+    step completed on the measured Qwen3.5 stack.
 known_limitations:
   - Model-size-to-parallelism mapping is a heuristic, not a benchmark-proven table.
   - Not every parallelism combination has the same level of in-repo functional test coverage.
   - Memory estimates assume standard Adam optimizer and FP16/BF16 parameters.
+  - >
+    CP can change dense DP degree, microbatch count, kernel shapes, and
+    communication cost; do not infer an exact-global-batch throughput
+    improvement from head partitioning alone.
 evidence:
   - docs/parallelisms.md
   - docs/performance-guide.md
