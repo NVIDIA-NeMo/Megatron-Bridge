@@ -25,7 +25,20 @@ if [[ "$RUNTIME_VERSION" != "$EXPECTED_VERSION" || "$DEVELOPMENT_VERSION" != "$E
     exit 1
 fi
 
-if ! gcc -x c -fsyntax-only - <<'C'
+CUDA_INCLUDE_DIR=
+for cuda_root in "${CUDA_HOME:-}" "${CUDA_PATH:-}" /usr/local/cuda /usr/local/cuda-*; do
+    if [[ -n "$cuda_root" && -f "$cuda_root/include/cuda_runtime.h" ]]; then
+        CUDA_INCLUDE_DIR="$cuda_root/include"
+        break
+    fi
+done
+
+if [[ -z "$CUDA_INCLUDE_DIR" ]]; then
+    echo "CUDA development headers are unavailable: cuda_runtime.h was not found via CUDA_HOME, CUDA_PATH, or /usr/local/cuda*" >&2
+    exit 1
+fi
+
+if ! gcc -I"$CUDA_INCLUDE_DIR" -x c -fsyntax-only - <<'C'
 #include <nccl.h>
 #include <nccl_device.h>
 
