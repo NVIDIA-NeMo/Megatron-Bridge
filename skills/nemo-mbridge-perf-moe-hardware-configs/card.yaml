@@ -1,5 +1,5 @@
 title: moe_hardware_configs
-validated_on: "2026-07-25"
+validated_on: "2026-07-26"
 summary: >
   Best-known MoE training configurations per model family and hardware platform,
   with measured throughput, MFU, and parallelism settings. Covers DSV3, Qwen3,
@@ -23,6 +23,8 @@ validation_status:
   qwen3_30b_h100:
     - measured
     - profile_validated
+  qwen35_35b_h100:
+    - measured
   qwen3_next_80b_b200:
     - measured
   qwen3_next_80b_gb200:
@@ -187,13 +189,14 @@ best_configs:
     ep_overlap: false
     delay_wgrad_compute: false
     cuda_graph: "attn, moe_router, moe_preprocess"
-    exact_gbs1024_tflops: 225.85
-    exact_gbs1024_step_time_ms: 26081.35
+    exact_gbs1024_tflops: 235.55
+    exact_gbs1024_step_time_ms: 25007.25
     exact_gbs1024_rank0_peak_allocated_gib: 69.942
     dispatcher_gain_vs_native_percent: ~20
     scoped_graph_gain_vs_eager_hybridep_percent: ~15
-    rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes"
-    note: "FlashQLA + pre-GDR experimental kernel stack; target tuning still in progress"
+    fused_hybridep_permutation_step_time_gain_percent: 4.12
+    rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, Q/K norm folding, standalone fused GDN norm, non-default FlashQLA and HybridEP chunking"
+    note: "FlashQLA + pre-GDR + fused HybridEP permutation development stack; public recipe remains conservative and target tuning is still in progress"
 
   qwen3_next_80b_gb200_64:
     model: "Qwen3-Next 80B-A3B"
@@ -228,6 +231,8 @@ optimization_patterns:
     caveat: "benchmark independently from dispatcher and EP overlap; side-stream contention is model-specific"
   - name: hybridep_dispatcher
     impact: "about +20% over native all-to-all on measured Qwen3.5 16×H100 shape"
+  - name: hybridep_fused_permutation
+    impact: "-4.12% step time after validating live chunk-size compatibility on measured Qwen3.5 16×H100 shape"
   - name: force_balance_routing
     impact: "+5-10% MFU over dropless"
   - name: 1f1b_overlap

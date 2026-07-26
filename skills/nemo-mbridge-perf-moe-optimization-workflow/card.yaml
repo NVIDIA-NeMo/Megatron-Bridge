@@ -1,5 +1,5 @@
 title: moe_optimization_workflow
-validated_on: "2026-07-25"
+validated_on: "2026-07-26"
 summary: >
   Systematic 3-phase workflow for optimizing MoE training performance,
   distilled from the Megatron-Core MoE paper (arXiv:2603.07685). Covers
@@ -28,6 +28,7 @@ validation_status:
     - measured
   qwen35_35b_h100_bringup_case_study:
     - measured
+    - profile_validated
   overlap_profile_method:
     - measured
 
@@ -169,13 +170,21 @@ qwen35_35b_h100_bringup_case_study:
   screening_batch: "MBS1/GBS128"
   acceptance_batch: "MBS1/GBS1024"
   routing: force_balance
-  accepted_layout: "TP1/PP1/CP1/EP16, HybridEP, BF16, scoped TE graphs"
-  accepted_tflops: 225.85
-  accepted_step_time_ms: 26081.35
-  accepted_peak_allocated_gib: 69.942
-  key_wins: "PP balancing, GDN kernels, HybridEP, scoped TE graphs"
-  rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, work-dropping capacity"
+  best_development_layout: "TP1/PP1/CP1/EP16, HybridEP, BF16, scoped TE graphs"
+  best_development_tflops: 235.55
+  best_development_step_time_ms: 25007.25
+  best_development_peak_allocated_gib: 69.942
+  key_wins: "PP balancing, FlashQLA/pre-GDR kernels, HybridEP, scoped TE graphs, fused HybridEP permutation"
+  rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, Q/K norm folding, standalone fused GDN norm, HybridEP 24/48-SM and 32/128-token chunk variants, non-default FlashQLA chunking, MBS2 selective recompute and optimizer-offload attempts, work-dropping capacity"
   dominant_bottleneck: "dispatcher and host/kernel overhead after the layout fit"
+  profile_capture_span_ms: 26230.551
+  profile_kernel_active_union_ms: 22447.745
+  profile_hybridep_active_union_ms: 7722.504
+  profile_expert_linear_gemm_active_union_ms: 8446.067
+  profile_gdn_flashqla_active_union_ms: 1406.683
+  profile_hybridep_expert_gemm_overlap_ms: 0
+  profile_cuda_stream_synchronize_calls: 2775
+  profile_cuda_stream_synchronize_summed_cpu_wait_ms: 7422.4
 
 key_lessons:
   - "Platform characteristics drive strategy, not just model architecture"
@@ -193,6 +202,13 @@ key_lessons:
   - "Revalidate the winner at the acceptance global batch; do not extrapolate from the short A/B batch"
   - "Never accept a throughput gain caused by MoE capacity dropping routes when the target recipe is dropless"
   - "Treat shared-expert overlap as its own concurrency A/B; dispatcher or EP-overlap results do not predict it"
+  - "Fused HybridEP permutation requires validating live dispatch/combine/preprocessing chunk-size compatibility"
+  - "Decompose combined kernel patches; the isolated fused GDN norm did not reproduce its apparent combined gain"
+  - "For the measured Qwen3.5 H100 shape, BF16, FlashQLA auto-partitioning, 32 HybridEP SMs, and 64-token chunks remained locally optimal"
+  - "Profile the full stack before writing another GDN kernel; the measured winner spent far more active time in HybridEP and expert GEMMs than in FlashQLA"
+  - "Trace tuning knobs to their consumers: high_priority_a2a_comm_stream affects combined 1F1B stream creation and is a no-op for standalone HybridEP"
+  - "Require completed iteration progress after an OOM workaround; 1% optimizer offload crossed the MBS2 allocation failure but stalled before iteration 1"
+  - "BF16 precision-aware optimizer stores FP32 master-weight remainders by default, so lowering main_params_dtype is not a free full-copy memory saving"
 
 evidence:
   - "arXiv:2603.07685 — Scalable Training of MoE with Megatron Core"

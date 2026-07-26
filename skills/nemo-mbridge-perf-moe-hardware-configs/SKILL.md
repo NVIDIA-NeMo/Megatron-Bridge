@@ -54,7 +54,7 @@ moves. Treat them as planning ranges, not exact promises.
 | Qwen3 235B | H100 | low-300s TFLOPS/GPU, around 30% MFU | TP2, EP32, PP8, DeepEP |
 | Qwen3 235B | GB200 | high-hundreds TFLOPS/GPU in tuned runs | TP1 or TP2, EP32-64, PP4, HybridEP |
 | Qwen3 30B | H100 | high-200s TFLOPS/GPU on the validated 16-GPU shape | TP1, EP16, PP1, HybridEP + EP overlap |
-| Qwen3.5 35B-A3B | H100 | low-200s TFLOPS/GPU during 16-GPU GDN-MoE bring-up | TP1, EP16, PP1, HybridEP without EP overlap, router/preprocess TE graphs |
+| Qwen3.5 35B-A3B | H100 | mid-200s TFLOPS/GPU during 16-GPU GDN-MoE bring-up | TP1, EP16, PP1, HybridEP without EP overlap, scoped TE graphs |
 | Qwen3-Next 80B | GB200 | low-300s TFLOPS/GPU in BF16-class runs | TP1, EP32, PP2, HybridEP |
 
 ## Representative Config Families
@@ -140,17 +140,19 @@ Routing: force balance
 EP overlap: disabled
 Delayed wgrad: disabled
 TE graph scopes: attn, moe_router, moe_preprocess
-Measured bring-up: low-200s model TFLOPS/GPU
-Exact GBS1024 replay: about 225.9 model TFLOPS/GPU
+Measured bring-up: mid-200s model TFLOPS/GPU
+Exact GBS1024 development replay: 235.55 model TFLOPS/GPU, 25.007s/step
 ```
 
 On the measured development stack, HybridEP improved the matching native
 all-to-all baseline by about 20%, and scoped router/preprocess/attention graphs
-added another roughly 15% over eager HybridEP. Plain EP overlap,
-shared-expert overlap, and the tested FP8 modes regressed, so the playbook keeps
-BF16 and treats every overlap stream as an independent A/B. Revalidate the
-winner at the acceptance global batch instead of extrapolating from the short
-screening batch.
+added another roughly 15% over eager HybridEP. Fused HybridEP permutation with
+runtime-compatible chunk sizes then reduced exact-batch step time by 4.12%.
+Plain EP overlap, shared-expert overlap, tested FP8 modes, isolated GDN/QK
+fusions, and non-default FlashQLA/HybridEP chunking regressed, so the playbook
+keeps BF16 and treats every overlap or fusion as an independent A/B. The fused
+permutation result is development evidence, not yet the conservative public
+recipe, and remains below the Qwen3 287.305 TFLOPS/GPU gate.
 
 ### Qwen3-Next 80B on GB200
 

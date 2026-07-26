@@ -134,10 +134,29 @@ First confirm the HybridEP package imports in the target container; a missing
 package fails during model construction, before any dispatcher timing is
 available.
 
+When enabling fused HybridEP permutation, validate the live buffer template
+after dispatcher construction. Dispatch, combine, and preprocessing chunk
+sizes must remain compatible with the fused path; a config helper accepting
+the knobs does not prove that the runtime kept them. On the measured
+Qwen3.5-35B-A3B 16×H100 stack, correcting that runtime contract reduced exact
+GBS1024 step time from 26.081 to 25.007 seconds (4.12%). The local optimum was
+32 communication SMs and 64-token chunks: 24 and 48 SMs regressed 0.48% and
+5.71%, while 32- and 128-token chunks regressed 1.46% and 1.86%.
+
+In the matched rank-0 profile, HybridEP combine, dispatch, and support/RDMA
+occupied 7.723 seconds of a 22.448-second GPU-active union, with no overlap
+against the 8.446-second expert-GEMM union. HybridEP metadata preprocessing
+also enclosed most of 2,775 stream synchronizations (7.422 seconds of summed
+CPU wait, overlapping GPU work). Treat dynamic metadata and expert-shape
+materialization as part of the dispatcher wall, not as generic Python overhead.
+
 Leave `moe_expert_rank_capacity_factor=None` for the first Hopper run. Static
 capacity removes a host-side dynamic-size synchronization, but it also changes
 the expert input shape and requires a compatible fused GroupedLinear path.
 Validate that combination independently before using it in a benchmark recipe.
+In the 2026-07-26 H100 Qwen3.5 experiment, the required Transformer Engine
+operation-fuser GroupedMLP path was available only on sm100. Bypassing that
+guard reached communication failure and is not a valid Hopper workaround.
 Do not substitute `moe_expert_capacity_factor` plus pad-to-capacity unless
 token dropping and padded work are part of the intended training semantics.
 For a dropless benchmark, verify that every configured route is still executed.
@@ -210,3 +229,7 @@ more comparable across dispatcher backends.
    is missing from the container, do not compare its failed job against a
    completed `alltoall` job. Fix the environment first, then rerun the same
    stack.
+
+7. **Fused permutation is a runtime contract**: verify the instantiated
+   HybridEP buffer's dispatch/combine/preprocessing chunk sizes before
+   attributing a gain or failure to the fusion flag.

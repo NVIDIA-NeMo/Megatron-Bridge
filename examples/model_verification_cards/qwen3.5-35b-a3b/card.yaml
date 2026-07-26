@@ -212,10 +212,14 @@ items:
         On two nodes with 16x H100, the exact mock-data performance recipe must
         complete exactly 50 steps with finite losses, no skipped or NaN
         iterations, and all four metrics recorded. Over steps 41-50, the run
-        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-25, an
+        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-26, an
         experimental MCore development stack with FlashQLA, pre-GDR fusion,
-        HybridEP, and scoped attention/router/preprocess graphs reached only
-        225.8-225.9 model TFLOP/s/GPU over steps 5-8 at the exact GBS1024.
-        This is about 21.4% below the gate, and no qualifying 50-step run was
-        produced, so the item remains unverified. Full-iteration graphs, gated
-        RMSNorm fusion, and GDN offloading remain upstream optimization gaps.
+        HybridEP, scoped attention/router/preprocess graphs, and fused
+        HybridEP permutation reached 235.55 model TFLOP/s/GPU over steps 5-8
+        at the exact GBS1024 (25.007 seconds/step, zero skipped or NaN
+        iterations). The fused path required diagnostic runtime normalization
+        of HybridEP dispatch/combine/preprocessing chunk sizes and is not part
+        of the public recipe. The result is about 18.0% below the gate, and no
+        qualifying 50-step run was produced, so the item remains unverified.
+        Full-iteration graphs, additional GDN kernel fusion, and GDN
+        offloading remain upstream optimization gaps.

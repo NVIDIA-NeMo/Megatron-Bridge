@@ -116,6 +116,14 @@ auto-enables `model.use_te_rng_tracker` plus `rng.te_rng_tracker` when
 - CPU offloading is incompatible with CUDA graphs
 - `moe_preprocess` scope requires `moe_router` scope to also be set
 
+Dropless Hopper MoE still needs a runtime proof before attempting
+`full_iteration`. On the measured Qwen3.5-35B-A3B H100 stack, dynamic
+`tokens_per_expert` handling retained a host synchronization, while the static
+rank-capacity route required an sm100-only Transformer Engine operation-fuser
+GroupedMLP implementation. Do not bypass the architecture guard: keep dynamic
+expert work outside the graph and use TE-scoped `attn`, `moe_router`, and
+`moe_preprocess` capture until the Hopper fused path is supported.
+
 ### Practical bring-up order
 
 1. Stabilize the eager run first.

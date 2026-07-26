@@ -48,6 +48,8 @@ validation_status:
     - measured  # Qwen3-30B-A3B, TP2 PP2 EP4, 2x H100 nodes
   qwen3_moe_h100_alltoall_te_scoped_neutral:
     - measured  # Qwen3-30B-A3B H100 BF16, alltoall, replay 42.00s vs 41.36s eager
+  qwen35_h100_full_iteration_static_capacity_block:
+    - measured  # Dynamic expert sizes retain host sync; TE op-fuser GroupedMLP was sm100-only
   qwen3_sft_packed_sequence_block:
     - measured  # packed_seq_params is not a Tensor for TE-scoped graphs
   gpt_oss_20b_pretrain_te_scoped:
@@ -123,6 +125,7 @@ interactions:
     - older TE/container builds may fail packed-sequence attention before any graph-specific behavior is reached
     - Inductor, Triton, or TileLang JIT must finish before graph capture timing; persist compiler caches outside ephemeral container HOME
     - optimizer.optimizer_cuda_graph has an independent distributed capture path and must complete its own bounded capture smoke
+    - dropless Hopper MoE full-iteration capture remains blocked when dynamic tokens_per_expert reaches the host and static rank capacity requires an sm100-only operation-fuser GroupedMLP
   incompatible:
     - cpu_offloading
     - moe with moe_router
@@ -259,6 +262,10 @@ failure_modes:
     symptom: "Available backends = {FlashAttention=False, FusedAttention=False, UnfusedDotProductAttention=False}"
     likely_cause: TE/container build does not provide the packed-sequence attention backend required by the recipe
     fix: upgrade the container or TE build before evaluating CUDA graphs
+  - name: hopper_dropless_moe_full_iteration
+    symptom: "dynamic tokens_per_expert host synchronization, or operation-fuser GroupedMLP architecture rejection"
+    likely_cause: "static rank-capacity full-graph path requires a fused implementation unavailable on sm90 in the tested stack"
+    fix: "use TE-scoped attn+moe_router+moe_preprocess graphs; do not bypass the architecture guard"
   - name: dynamic_shapes
     symptom: capture or replay failure after warmup
     likely_cause: sequence length or micro-batch size changes across steps

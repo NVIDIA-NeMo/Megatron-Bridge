@@ -193,6 +193,59 @@ FlashQLA-style TileLang backends can compile separate forward, recompute, MTP,
 and backward variants. The cold iteration may therefore be minutes rather than
 seconds. Cache every target shape and report only steady replay iterations.
 
+### Qwen3.5 H100 kernel A/B learnings
+
+The 2026-07-26 exact-GBS1024 sweep on 16×H100 found one additional end-to-end
+win after HybridEP and scoped graphs: fused HybridEP permutation with compatible
+runtime chunk sizes reduced step time from 26.081 to 25.007 seconds (4.12%).
+Keep the negative controls because individually plausible kernel changes were
+not additive:
+
+- tensorwise current-scaling FP8 was 21.14% slower than BF16
+- folding Q/K L2 normalization into FlashQLA was 3.45% lower throughput
+- a standalone fused GDN RMSNorm+SiLU gate was 0.61% slower
+- FlashQLA's default 16 local chunks beat both 8 chunks (2.00% slower) and
+  disabled intra-card partitioning (3.10% slower)
+- HybridEP 32 SMs beat both 24 SMs (0.48% slower) and 48 SMs (5.71% slower);
+  64-token chunks beat both 32-token chunks (1.46% slower) and 128-token
+  chunks (1.86% slower)
+- backward-dispatch/expert-wgrad overlap moved step time by only 0.18% while
+  adding about 1 GiB, so treat it as noise until a longer run proves otherwise
+- increasing MBS from 1 to 2 exceeded the H100 memory limit; selective
+  layernorm recompute did not change that peak, while recomputing both GDN and
+  MoE activations fit but erased the larger-MBS throughput opportunity
+- 1% optimizer CPU offload crossed the immediate MBS2 allocation failure, but
+  both prefix-based and experimental size-aware tensor selection stalled
+  before completing iteration 1 with rank-split GPU progress; memory fit is a
+  necessary but insufficient acceptance criterion for a distributed recipe
+
+These results illustrate why a combined patch must be decomposed into
+independent A/Bs: an apparent fused-norm gain in a combined experiment did not
+reproduce when isolated.
+
+Do not assume that lowering `main_params_dtype` will recover another full
+master-weight copy when using BF16 precision-aware optimizer (PAO). PAO enables
+`store_param_remainders` by default and stores the missing FP32 master-weight
+bits as an int16 remainder. Treat a master-dtype change as a numerical-policy
+experiment, not a free memory optimization.
+
+Check a knob's call site before consuming a benchmark slot.
+`high_priority_a2a_comm_stream` controls the stream created by the combined
+1F1B schedule; it does not reprioritize standalone HybridEP when EP overlap is
+disabled. On PP1 without combined 1F1B, changing it is a no-op rather than a
+dispatcher A/B.
+
+The matched rank-0 Nsight capture explained the remaining wall. Across a
+26.231-second capture span, the GPU kernel-active union was 22.448 seconds.
+HybridEP combine, dispatch, and support/RDMA occupied 3.909, 2.845, and 0.968
+seconds of active union, while expert/linear GEMMs occupied 8.446 seconds and
+GDN/FlashQLA kernels only 1.407 seconds. HybridEP and expert GEMMs did not
+overlap in that configuration. The trace also recorded 2,775
+`cudaStreamSynchronize` calls with 7.422 seconds of summed CPU wait duration,
+largely inside HybridEP metadata preprocessing. These durations overlap GPU
+work and must not be added to wall time, but they redirect tuning from another
+GDN microkernel toward dispatcher metadata, communication, and expert GEMMs.
+
 ## FP8 Recipe Quick Decision
 
 | Platform | Recommended starting recipe |
@@ -263,3 +316,21 @@ Related references:
 10. **Shared-expert overlap is a separate concurrency A/B**: dispatcher and EP
     overlap results do not predict it; the extra stream can introduce its own
     compute/communication contention.
+
+11. **Validate the live dispatcher contract**: fused HybridEP permutation can
+    require dispatch/combine/preprocessing chunk-size agreement that is lost
+    between configuration and runtime buffer construction.
+
+12. **Decompose combined kernel patches**: a gain seen with two fusions can
+    disappear when the proposed contribution is isolated.
+
+13. **Trace a knob to its consumer before benchmarking**:
+    `high_priority_a2a_comm_stream` applies to combined 1F1B stream creation,
+    not standalone HybridEP dispatch.
+
+14. **Require iteration progress after an OOM workaround**: a configuration
+    that crosses allocation can still deadlock or stall in asymmetric
+    communication state.
+
+15. **Account for PAO parameter remainders before estimating memory savings**:
+    BF16 PAO already avoids a redundant full FP32 master-weight copy by default.
