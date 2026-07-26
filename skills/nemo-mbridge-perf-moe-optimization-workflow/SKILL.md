@@ -218,6 +218,10 @@ not additive:
   both prefix-based and experimental size-aware tensor selection stalled
   before completing iteration 1 with rank-split GPU progress; memory fit is a
   necessary but insufficient acceptance criterion for a distributed recipe
+- replacing random force-balance routing with deterministic exact-balanced
+  routes was not a valid shortcut around dynamic expert metadata: even a
+  cross-rank route-only control that left HybridEP's metadata tensor untouched
+  segfaulted during the first backward after fused dispatch
 
 These results illustrate why a combined patch must be decomposed into
 independent A/Bs: an apparent fused-norm gain in a combined experiment did not
@@ -334,3 +338,8 @@ Related references:
 
 15. **Account for PAO parameter remainders before estimating memory savings**:
     BF16 PAO already avoids a redundant full FP32 master-weight copy by default.
+
+16. **Do not rewrite routing semantics to remove metadata synchronization**:
+    exact-balanced deterministic routes can exercise a different and unsafe
+    fused-dispatch communication pattern. The asynchronous API must preserve
+    arbitrary valid routes.

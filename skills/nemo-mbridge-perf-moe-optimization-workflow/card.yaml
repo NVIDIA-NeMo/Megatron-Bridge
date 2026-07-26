@@ -175,7 +175,7 @@ qwen35_35b_h100_bringup_case_study:
   best_development_step_time_ms: 25007.25
   best_development_peak_allocated_gib: 69.942
   key_wins: "PP balancing, FlashQLA/pre-GDR kernels, HybridEP, scoped TE graphs, fused HybridEP permutation"
-  rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, Q/K norm folding, standalone fused GDN norm, HybridEP 24/48-SM and 32/128-token chunk variants, non-default FlashQLA chunking, MBS2 selective recompute and optimizer-offload attempts, work-dropping capacity"
+  rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, Q/K norm folding, standalone fused GDN norm, HybridEP 24/48-SM and 32/128-token chunk variants, non-default FlashQLA chunking, deterministic exact-balanced routing, MBS2 selective recompute and optimizer-offload attempts, work-dropping capacity"
   dominant_bottleneck: "dispatcher and host/kernel overhead after the layout fit"
   profile_capture_span_ms: 26230.551
   profile_kernel_active_union_ms: 22447.745
@@ -209,6 +209,7 @@ key_lessons:
   - "Trace tuning knobs to their consumers: high_priority_a2a_comm_stream affects combined 1F1B stream creation and is a no-op for standalone HybridEP"
   - "Require completed iteration progress after an OOM workaround; 1% optimizer offload crossed the MBS2 allocation failure but stalled before iteration 1"
   - "BF16 precision-aware optimizer stores FP32 master-weight remainders by default, so lowering main_params_dtype is not a free full-copy memory saving"
+  - "Do not rewrite force-balance routing semantics to bypass dynamic metadata; a cross-rank exact-balanced route-only control segfaulted in the first backward"
 
 evidence:
   - "arXiv:2603.07685 — Scalable Training of MoE with Megatron Core"

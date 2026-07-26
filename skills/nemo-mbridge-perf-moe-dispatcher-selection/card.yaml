@@ -148,5 +148,7 @@ known_limitations:
   - Static capacity must preserve GroupedLinear shapes and all routed work
   - Hopper static rank capacity is blocked when the selected Transformer Engine operation-fuser GroupedMLP path is sm100-only
   - Fused HybridEP permutation requires compatible live dispatch, combine, and preprocessing chunk sizes
+  - Deterministic exact-balanced routing is not a safe substitute for native nonblocking metadata; the measured cross-rank route-only control segfaulted in its first backward
+  - The GPU tokens_per_expert tensor is produced on the communication stream and must remain alive for the asynchronous path
   - Container version can cause performance regression
   - 1F1B overlap + DeepEP may regress on some configurations

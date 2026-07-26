@@ -150,6 +150,16 @@ also enclosed most of 2,775 stream synchronizations (7.422 seconds of summed
 CPU wait, overlapping GPU work). Treat dynamic metadata and expert-shape
 materialization as part of the dispatcher wall, not as generic Python overhead.
 
+Do not remove those synchronizations by substituting a benchmark-only route
+layout. A Qwen3.5 H100 control assigned exactly equal expert counts while
+spreading each token's top-k routes across EP ranks, kept HybridEP's original
+GPU metadata tensor, and still segfaulted during the first backward after fused
+dispatch. Likewise, `tokens_per_expert` is produced on the communication stream
+and its GPU tensor must remain alive for the asynchronous path. The safe
+optimization requires a native nonblocking HybridEP-to-GroupedMLP metadata
+contract that supports arbitrary valid routes; a CPU split or deterministic
+route shim is not equivalent.
+
 Leave `moe_expert_rank_capacity_factor=None` for the first Hopper run. Static
 capacity removes a host-side dynamic-size synchronization, but it also changes
 the expert input shape and requires a compatible fused GroupedLinear path.
@@ -233,3 +243,7 @@ more comparable across dispatcher backends.
 7. **Fused permutation is a runtime contract**: verify the instantiated
    HybridEP buffer's dispatch/combine/preprocessing chunk sizes before
    attributing a gain or failure to the fusion flag.
+
+8. **Preserve arbitrary routing and metadata lifetime**: do not replace
+   force-balance routes or discard the comm-stream `tokens_per_expert` tensor to
+   avoid a host synchronization.
