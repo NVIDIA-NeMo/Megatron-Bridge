@@ -72,19 +72,32 @@ jobs:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
 
   build-nccl-ci-container:
-    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@v0.80.1
     needs: [pre-flight]
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
-    with:
-      build-ref: ${{ github.sha }}
-      image-name: megatron-bridge-nccl-ci
-      dockerfile: docker/Dockerfile.nccl_ci
-      build-args: BASE_IMAGE=nvcr.io/nvidia/pytorch:25.05-py3
-      runner: ${{ needs.pre-flight.outputs.runner_prefix }}
-      registry: ${{ needs.pre-flight.outputs.registry }}
-    secrets: inherit  # pragma: allowlist secret
+    runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}
+    outputs:
+      container-uri: ${{ steps.image.outputs.uri }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Set image URI
+        id: image
+        run: echo "uri=${{ needs.pre-flight.outputs.registry }}/megatron-bridge:nccl-ci-${GITHUB_RUN_ID}" | tee -a "$GITHUB_OUTPUT"
+
+      - name: Build and push NCCL CI container
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: docker/Dockerfile.nccl_ci
+          push: true
+          build-args: BASE_IMAGE=nvcr.io/nvidia/pytorch:25.05-py3
+          tags: ${{ steps.image.outputs.uri }}
 
   # pip-test-pytorch:
   #   needs: [pre-flight]
