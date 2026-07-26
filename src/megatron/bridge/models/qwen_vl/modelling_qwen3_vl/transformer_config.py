@@ -74,7 +74,6 @@ def get_vision_model_config(hf_config, megatron_config=None):
 
     # apply text model config to vision model config
     config.recompute_granularity = megatron_config.recompute_granularity
-    config.recompute_modules = deepcopy(megatron_config.recompute_modules)
     config.recompute_method = megatron_config.recompute_method
     config.recompute_num_layers = megatron_config.recompute_num_layers
     config.tensor_model_parallel_size = megatron_config.tensor_model_parallel_size

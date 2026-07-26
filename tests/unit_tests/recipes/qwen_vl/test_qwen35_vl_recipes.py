@@ -398,7 +398,7 @@ def test_qwen35_vl_27b_peft_lora_defaults(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
-    """Shared Qwen3.5/Qwen3.6 35B-A3B SFT should have safe recipe defaults."""
+    """Shared Qwen3.5/Qwen3.6 35B-A3B SFT should have tuned H100 defaults."""
     patch_recipe_module_global(monkeypatch, _qwen35_vl_module, "AutoBridge", _FakeAutoBridge)
 
     cfg = _qwen35_vl_module.qwen35_vl_35b_a3b_sft_config()
@@ -415,28 +415,28 @@ def test_qwen35_vl_35b_a3b_sft_defaults(monkeypatch: pytest.MonkeyPatch):
     assert cfg.model.moe_grouped_gemm is True
     assert cfg.model.moe_permute_fusion is True
     assert cfg.peft is None
-    assert cfg.train.global_batch_size == 32
+    assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
-    assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe"]
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules == []
     assert cfg.model.recompute_method is None
     assert cfg.model.recompute_num_layers is None
     assert cfg.model.bias_activation_fusion is True
-    assert cfg.optimizer.use_precision_aware_optimizer is False
-    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.use_precision_aware_optimizer is True
+    assert cfg.optimizer.main_grads_dtype == torch.bfloat16
     assert cfg.optimizer.main_params_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_dtype == torch.float32
-    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.bfloat16
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.optimizer.overlap_param_gather_with_optimizer_step is False
-    assert cfg.ddp.grad_reduce_in_fp32 is True
-    assert cfg.ddp.average_in_collective is True
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.average_in_collective is False
     assert cfg.comm_overlap.tp_comm_overlap is False
     assert cfg.comm_overlap.overlap_grad_reduce is False
     assert cfg.comm_overlap.overlap_param_gather is False
     assert cfg.comm_overlap.overlap_param_gather_with_optimizer_step is False
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
-    assert cfg.mixed_precision == "bf16_mixed"
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
     assert cfg.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] == 20
     assert cfg.env_vars["NVTE_FWD_LAYERNORM_SM_MARGIN"] == 20

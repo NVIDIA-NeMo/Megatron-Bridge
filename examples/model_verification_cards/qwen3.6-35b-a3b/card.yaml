@@ -5,7 +5,13 @@ title: qwen3_6_35b_a3b
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. Public identity decision: the canonical checkpoint is
+  results. In this card, that required disclaimer means no canonical public
+  pretraining performance recipe exists. The preserved 41.78 TFLOP/s/GPU SFT
+  metric belongs to the bounded 100-step convergence run. A later
+  execution-only MedPix experiment with the tuned shared H100 recipe completed
+  ten finite steps and averaged 103.46 TFLOP/s/GPU over warmed steps 2-10; it
+  is not substituted for convergence evidence. Public identity decision: the
+  canonical checkpoint is
   Qwen/Qwen3.6-35B-A3B even though its name has no VL suffix. Its public task is
   image-text-to-text and its Transformers architecture is
   Qwen3_5MoeForConditionalGeneration, matching the shared Qwen3.5/Qwen3.6
@@ -268,7 +274,16 @@ items:
         including optimizer and run metadata. A fresh process loaded step 100,
         converted all 21,802 mapped entries, and exported an indexed BF16
         checkpoint with 1,045 tensors in 26 shards, proving that the saved
-        training state is reloadable.
+        training state is reloadable. These metrics remain tied to that
+        historical convergence run. A separate ten-step execution experiment
+        of the tuned shared H100 recipe used TP1/PP2/EP8, MBS1/GBS512, BF16
+        precision-aware gradient and optimizer-moment storage, natural expert
+        routing, standard all-to-all, and no activation recompute. Warmed steps
+        2-10 averaged 29,151.84 ms and 103.46 TFLOP/s/GPU with finite losses
+        (1.988633 at step 1 and 1.500628 at step 10), zero skipped or NaN
+        iterations, and about 55 GiB peak allocated memory. That execution
+        result changes batch and optimizer-state precision semantics, so it is
+        not presented as convergence evidence.
 
   sft_export_inference:
     H100:
