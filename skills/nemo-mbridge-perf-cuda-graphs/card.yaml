@@ -1,5 +1,5 @@
 title: cuda_graphs
-validated_on: "2026-07-25"
+validated_on: "2026-07-26"
 summary: >
   Megatron Bridge supports CUDA graph capture through two implementations:
   local full-iteration graphs (MCore FullCudaGraphWrapper) and Transformer
@@ -48,8 +48,6 @@ validation_status:
     - measured  # Qwen3-30B-A3B, TP2 PP2 EP4, 2x H100 nodes
   qwen3_moe_h100_alltoall_te_scoped_neutral:
     - measured  # Qwen3-30B-A3B H100 BF16, alltoall, replay 42.00s vs 41.36s eager
-  qwen35_optimizer_graph_capture_stall:
-    - measured  # 16x H100, HybridEP + PAO, stalled after all ranks entered optimizer capture
   qwen3_sft_packed_sequence_block:
     - measured  # packed_seq_params is not a Tensor for TE-scoped graphs
   gpt_oss_20b_pretrain_te_scoped:
@@ -169,63 +167,6 @@ expected_metric_change:
     conditions: TE scoped graphs on H100 80GB
     evidence: measured_qwen3_30b_a3b_and_gpt_oss_20b_plus_gpt_oss_120b_oom
 measured_results:
-  - model: Qwen3.5-35B-A3B
-    task: pretrain
-    parallelism: TP1_PP1_EP16
-    nodes: 2
-    gpu: H100_80GB
-    dispatcher: HybridEP
-    precision: BF16_PAO
-    scope: optimizer_step
-    impl: mcore_optimizer_cuda_graph
-    completed_warmup_iterations: 3
-    last_pre_capture_iter_ms: 3899.9
-    rank0_capture_memory_gib: ~69.4
-    capture_observation_seconds: ">180"
-    job: "5708956+5708957"
-    status: rejected_capture_stall
-  - model: Qwen3.5-35B-A3B
-    task: pretrain
-    parallelism: TP1_PP1_EP16
-    nodes: 2
-    gpu: H100_80GB
-    dispatcher: HybridEP
-    precision: BF16
-    scope: "moe_router+moe_preprocess"
-    impl: transformer_engine
-    baseline_iter_ms: 3896.825
-    graph_iter_ms: 3471.717
-    speedup_pct: 12.245
-    baseline_tflops: 189.096
-    graph_tflops: 212.251
-    stable_replay_iterations: "5-10"
-    cold_first_iteration_ms: 131405.8
-    graphable_layers: 41
-    rank0_peak_allocated_gib: 69.939
-    job: "5707765"
-    status: success
-  - model: Qwen3.5-35B-A3B
-    task: pretrain
-    parallelism: TP1_PP1_EP16
-    nodes: 2
-    gpu: H100_80GB
-    dispatcher: HybridEP
-    precision: BF16
-    scope: "attn+moe_router+moe_preprocess"
-    impl: transformer_engine
-    baseline_scope: "moe_router+moe_preprocess"
-    baseline_iter_ms: 3471.717
-    graph_iter_ms: 3378.283
-    speedup_pct: 2.766
-    eager_iter_ms: 3896.825
-    eager_to_graph_speedup_pct: 15.349
-    graph_tflops: 218.121
-    stable_replay_iterations: "5-10"
-    cold_first_iteration_ms: 130114.9
-    capture_iteration_ms: 9744.8
-    rank0_peak_allocated_gib: 69.939
-    job: "5707823"
-    status: success
   - model: Qwen3-30B-A3B
     task: pretrain
     parallelism: TP2_PP2_EP4

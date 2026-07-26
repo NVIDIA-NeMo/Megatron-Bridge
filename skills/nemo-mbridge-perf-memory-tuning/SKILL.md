@@ -260,25 +260,6 @@ All runs had finite losses with zero skipped or NaN iterations. Two-rank BF16
 and FP32 checks matched the baseline for outputs, input gradients, LoRA-A and
 LoRA-B gradients, and two-microbatch fused `main_grad` accumulation.
 
-### Precision-aware optimizer for a hybrid GDN MoE
-
-Qwen3.5 35B-A3B text pretraining on 16× H100, BF16, sequence length 4096,
-PP1/EP16, and native all-to-all showed a delayed optimizer-state capacity
-failure with FP32 Adam states: iteration 1 completed, then iteration 2 OOMed.
-
-With BF16 main gradients, first moments, and second moments, the same topology
-completed six iterations with finite losses and zero skipped/NaN iterations.
-Peak allocated memory after state materialization was 70.337 GiB. The first
-iteration's 61.455 GiB peak was therefore not the acceptance peak; iteration 2
-was the first representative memory point.
-
-Increasing the same model to MBS2 remained a genuine capacity failure even
-with `gdn_norm_out,moe_act,shared_experts` selective recompute and BF16
-precision-aware Adam states. At optimizer-state materialization, 73.06 GiB was
-allocated and a 3.79 GiB request had only about 2.35 GiB free. Whole-GDN
-recompute fit on an experimental MCore revision, but reduced throughput to
-about 190.1 model TFLOPS/GPU. Prefer MBS1 for this 16×H100 PP1/EP16 shape.
-
 ## Code Anchors
 
 ### LoRA sequence-parallel input re-gather
@@ -337,7 +318,6 @@ model_config = GPTModelProvider(
 | OOM on a single rank despite headroom on others | Memory fragmentation | check if `expandable_segments:True` is set | set `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` |
 | Step 1 passes, step 2 OOMs on all ranks | delayed Adam-state materialization | compare peak memory after iterations 1 and 2; inspect optimizer dtypes | use a validated precision-aware optimizer configuration, distributed optimizer/FSDP, or more model parallelism |
 | OOM with `expandable_segments` already set | Genuine capacity limit | check `nvidia-smi` for param/optimizer memory | increase PP, use distributed optimizer, or add recompute |
-| MBS2 still OOMs after selective recompute at optimizer-state creation | activations were reduced, but parameter plus optimizer state still exceeds capacity | compare the requested allocation with actual free memory; confirm reserved-but-unallocated memory is small | keep MBS1 or shard/offload optimizer state; measure whole-module recompute before accepting it |
 | Estimated memory exceeds GPU capacity before launch | model state or activations genuinely too large | run `estimate_training_memory` and inspect the largest component | adjust PP/TP/CP/EP, distributed optimizer, or recompute before launching |
 | LoRA + SP retains unexpectedly high activation memory | full gathered LoRA-A inputs are retained until backward | check whether `cfg.peft.sequence_parallel_input_regather` is enabled and the target is eligible | set `LoRA(sequence_parallel_input_regather=True)`; verify fallback constraints |
 | `ValueError: PP + CPU offloading` | using cpu_offloading with PP > 1 | check PP config | disable CPU offloading or set PP=1 |

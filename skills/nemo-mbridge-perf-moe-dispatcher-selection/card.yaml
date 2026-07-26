@@ -45,10 +45,10 @@ training_dimensions:
 
 dispatcher_recommendations:
   h100:
-    recommended: "A/B DeepEP and HybridEP; use HybridEP for measured Qwen3.5 text on EOS"
+    recommended: "A/B DeepEP and HybridEP after both complete a real dispatch"
     rationale: >
-      Qwen3.5-35B-A3B measured HybridEP about 20.25% above native all-to-all,
-      while the available DeepEP path timed out at its first dispatch.
+      Runtime compatibility and workload shape can outweigh the platform
+      default; the measured Qwen3.5 text shape favored HybridEP.
   b200:
     recommended: DeepEP
     rationale: "Best measured perf for cross-node EP"
@@ -79,20 +79,6 @@ key_tuning_parameters:
     note: "Set to 32 when using EP overlap + CUDA graphs"
 
 best_measured_configs:
-  - model: "Qwen3.5 35B-A3B text"
-    hardware: "16×H100"
-    dispatcher: HybridEP
-    precision: BF16
-    tflops: 218.121
-    parallelism: "TP1 EP16 PP1"
-    note: "Valid dropless result with attention/router/preprocess TE graph scopes"
-  - model: "Qwen3.5 35B-A3B text"
-    hardware: "16×H100"
-    dispatcher: HybridEP
-    precision: BF16
-    tflops: ~189
-    parallelism: "TP1 EP16 PP1"
-    note: "Dispatcher-only result before the later scoped CUDA-graph gains"
   - model: "DSV3 685B w/ MTP"
     hardware: "1024×H100"
     dispatcher: DeepEP
@@ -142,11 +128,9 @@ evidence:
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
 
 known_limitations:
-  - HybridEP is topology-sensitive; it also worked on the measured two-node EOS H100 topology
-  - On the measured 8-GPU-node runtime, HybridEP requires the EP group size to be divisible by 8; CP4/EP4 failed at first dispatch
+  - HybridEP is topology-sensitive and can work outside NVL72 only when the installed runtime supports the target topology
   - DeepEP SM count tuning is hardware-specific
-  - A successful DeepEP import does not rule out a first-dispatch CPU timeout
-  - HybridEP static rank capacity plus TE op fuser produced a padded-shape mismatch on the measured H100 stack
-  - Per-expert capacity factor 1.0 reached 224.9 TFLOPS/GPU but can drop random routes; it is only a host-sync upper bound, not a valid dropless result
+  - A successful backend import does not prove dispatch/combine runtime compatibility
+  - Static capacity must preserve GroupedLinear shapes and all routed work
   - Container version can cause performance regression
   - 1F1B overlap + DeepEP may regress on some configurations

@@ -145,12 +145,10 @@ step fell from 24.7138s to 20.9920s and throughput rose from 244.039 to 287.305
 model TFLOPS/GPU. `delay_wgrad_compute` remained disabled.
 
 Do not generalize that overlap result across model families. On a matched
-16×H100 Qwen3.5-35B-A3B GDN-MoE run, changing native all-to-all to HybridEP
-improved steady BF16 throughput from 157.248 to 189.096 model TFLOPS/GPU
-(+20.25%), but then enabling plain EP overlap reduced it to 184.57
-TFLOPS/GPU (-2.45%). Keep dispatcher and overlap as separate A/B dimensions;
-an overlap stream can contend with GDN, expert, or dispatcher kernels even
-when the same knob helps an attention-only MoE.
+GDN-MoE run, HybridEP improved the native all-to-all baseline, but enabling
+plain EP overlap afterward regressed. Keep dispatcher and overlap as separate
+A/B dimensions: an overlap stream can contend with GDN, expert, or dispatcher
+kernels even when the same knob helps an attention-only MoE.
 
 ## Dispatcher And Overlap Guidance
 
@@ -250,46 +248,18 @@ Related references:
 6. **Summed kernel time is not exposed time**: use interval unions and
    communication/compute intersection when validating overlap.
 
-7. **A finite first step is not a stability result**: validate later optimizer
-   steps and watch both high-power compute and low-power 100%-SM communication
-   spin states.
+7. **FP8 is shape-specific on Hopper**: small experts, GDN projections, and
+   quantization overhead can make either blockwise or tensorwise current
+   scaling slower than BF16. Treat precision and scaling granularity as
+   separate A/Bs and keep only a measured win.
 
-8. **Current-scaling FP8 is not an automatic Hopper win**: small projections,
-   GDN kernels, and quantization overhead can make it slower than BF16. Start
-   Hopper exploration with blockwise FP8 after a stable BF16 baseline, and keep
-   only a measured win.
+8. **Do not optimize the metric by dropping MoE work**: capacity settings can
+    reduce routed work. Use them to bound synchronization overhead only unless
+    every configured route is preserved.
 
-9. **Blockwise FP8 is still shape-specific on Hopper**: on the controlled
-   16×H100 Qwen3.5-35B-A3B HybridEP shape, blockwise FP8 reduced throughput
-   from 189.096 to 174.38 model TFLOPS/GPU (-7.8%) and increased rank-0 peak
-   allocated memory from 69.939 to 72.730 GiB. Its cold first iteration also
-   took 129.1 seconds for kernel compilation. Exclude compilation from timing,
-   but reject the precision mode when its steady-state result still loses.
+9. **Revalidate at the acceptance batch**: report the exact target global
+    batch instead of extrapolating from a short screening run.
 
-10. **Tensorwise current scaling can lose even more on small experts**: on the
-    pinned 16×H100 Qwen3.5-35B-A3B EP16 HybridEP shape, the first iteration
-    took 192.33 seconds to compile and iterations 3-10 averaged only
-    145.3 model TFLOPS/GPU. The run was finite with zero skipped/NaN
-    iterations, so this was a performance rejection rather than a correctness
-    failure. Treat FP8 mode and scaling granularity as separate A/Bs.
-
-11. **Do not optimize the metric by dropping MoE work**: a Qwen3.5
-    `moe_expert_capacity_factor=1.0` diagnostic removed HybridEP's dynamic
-    token-count synchronization but improved the valid dropless result by only
-    about 3.1%. Random force-balanced routing can exceed individual expert
-    capacities, so the setting may drop routes. Use it to bound synchronization
-    overhead, not to accept throughput.
-
-12. **Revalidate at the acceptance batch**: the Qwen3.5 GBS128 winner reached
-    218.121 model TFLOPS/GPU, while an exact GBS1024 replay stabilized at
-    225.8-225.9 model TFLOPS/GPU over its last four steps. Larger gradient
-    accumulation helped modestly but did not remove the model-family gap to
-    Qwen3. Report the exact acceptance batch instead of extrapolating from a
-    short A/B batch.
-
-13. **Shared-expert overlap is a separate concurrency A/B**: enabling only
-    `moe_shared_expert_overlap` on the same Qwen3.5 HybridEP + scoped-graph
-    stack reduced throughput from 218.121 to about 207.0 model TFLOPS/GPU
-    (-5.1%) and slightly increased peak memory. Do not infer a win from either
-    dispatcher selection or EP overlap; the shared-expert stream can introduce
-    its own GDN/expert/communication contention.
+10. **Shared-expert overlap is a separate concurrency A/B**: dispatcher and EP
+    overlap results do not predict it; the extra stream can introduce its own
+    compute/communication contention.

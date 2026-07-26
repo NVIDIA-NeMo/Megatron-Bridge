@@ -1,5 +1,5 @@
 title: memory_tuning
-validated_on: "2026-07-25"
+validated_on: "2026-07-26"
 summary: >
   Techniques for reducing peak GPU memory to fix OOM or increase headroom.
   Current coverage: expandable segments (fragmentation fix), delayed
@@ -22,8 +22,6 @@ validation_status:
   lora_sequence_parallel_input_regather:
     - measured  # PR #4581, real checkpoints and SQuAD on H100
     - parity_verified  # TP2 BF16/FP32 and fused two-microbatch main_grad
-  qwen35_delayed_optimizer_state:
-    - measured  # 16x H100, PP1/EP16, six finite BF16 steps
 training_dimensions:
   speed:
     effect: "zero cost for expandable_segments; LoRA input re-gather and parallelism changes vary"
@@ -40,9 +38,8 @@ training_dimensions:
       insufficient capacity. expandable_segments:True eliminated the OOM
       without any model or parallelism changes. VPP changes do not
       meaningfully affect peak memory. LoRA input re-gather saved 0.8-4.7 GB
-      in measured TP+SP workloads. BF16 precision-aware Adam states made a
-      Qwen3.5 PP1/EP16 layout complete six steps where FP32 states OOMed after
-      the first step.
+      in measured TP+SP workloads. Precision-aware Adam state dtypes can
+      reduce delayed optimizer-state pressure.
   scale:
     effect: "neutral for expandable_segments; LoRA input re-gather requires SP"
     confidence: high
@@ -129,11 +126,6 @@ expected_metric_change:
     magnitude: "0.34-6.74% measured"
     conditions: LoRA sequence-parallel input re-gather
     evidence: measured_pr_4581
-  - metric: steady_state_capacity
-    direction: up
-    magnitude: "step-2 OOM to six completed steps"
-    conditions: Qwen3.5 35B-A3B, BF16, PP1/EP16, BF16 gradients and Adam moments
-    evidence: measured_qwen35_h100
 measured_results:
   - model: Llama3 70B
     task: sft
@@ -212,36 +204,6 @@ measured_results:
         baseline_peak_mem_gb: 52.185
         regather_peak_mem_gb: 51.371
         throughput_change_pct: -0.34
-  - name: qwen35_delayed_optimizer_state
-    model: Qwen3.5-35B-A3B
-    task: pretrain
-    precision: BF16
-    gpus: 16
-    gpu: H100_80GB
-    parallelism: TP1_PP1_EP16
-    seq_length: 4096
-    mbs: 1
-    gbs: 128
-    baseline_result: "iteration 1 finite, iteration 2 OOM with FP32 Adam states"
-    precision_aware_result: "six finite steps, zero skipped/NaN iterations"
-    peak_mem_after_iteration_1_gib: 61.455
-    peak_mem_after_iteration_2_gib: 70.337
-    state_dtypes: "BF16 main gradients, exp_avg, and exp_avg_sq; FP32 main parameters/remainders"
-  - name: qwen35_mbs2_selective_recompute_capacity
-    model: Qwen3.5-35B-A3B
-    task: pretrain
-    precision: BF16
-    gpus: 16
-    gpu: H100_80GB
-    parallelism: TP1_PP1_EP16
-    mbs: 2
-    recompute_modules: "gdn_norm_out,moe_act,shared_experts"
-    result: "OOM while materializing delayed Adam state"
-    allocated_at_failure_gib: 73.06
-    requested_gib: 3.79
-    free_gib: 2.35
-    reserved_unallocated_mib: 100
-    decision: "retain MBS1; whole-GDN recompute fit but regressed throughput to about 190.1 TFLOPS/GPU"
 failure_modes:
   - name: fragmentation_oom
     symptom: "OOM on a single rank despite headroom on other ranks"

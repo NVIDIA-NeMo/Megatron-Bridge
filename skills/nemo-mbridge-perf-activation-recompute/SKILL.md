@@ -74,15 +74,6 @@ cfg.model.recompute_num_layers = 4
 | `moe_act` | MoE activation functions | low | small |
 | `shared_experts` | shared expert layers | moderate | moderate |
 | `mla_up_proj` | Multi-Latent Attention up projection | moderate | moderate |
-| `gdn_norm_out` | GatedDeltaNet output norm and HP-to-CP all-to-all | low | small, shape-dependent |
-
-GDN recompute naming is MCore-version-specific. The repository's pinned MCore
-uses `gdn_norm_out`, an output-discarding checkpoint around only the GDN output
-norm and HP-to-CP all-to-all. The experimental FlashQLA draft commit
-`aed727d4f14202dd8dc780044f2ab046a21f82c6` instead exposes `gdn`, which
-checkpoints the entire GatedDeltaNet module. Always inspect the target
-`TransformerConfig.recompute_modules` enum before copying a GDN override;
-using the other spelling fails config validation before training.
 
 ### Performance harness CLI
 
@@ -187,22 +178,6 @@ Key takeaways:
             )
 ```
 
-### Qwen3.5 GDN recompute A/B
-
-On 16×H100 Qwen3.5-35B-A3B with MBS2, recomputing the experimental
-whole-module `gdn` scope together with `moe_act` completed steady optimizer
-steps, but only reached about 190.1 model TFLOPS/GPU. The recompute cost erased
-the intended micro-batch throughput gain.
-
-On the repository-pinned MCore, the cheaper
-`gdn_norm_out,moe_act,shared_experts` combination still OOMed when Adam state
-was materialized: 73.06 GiB was already allocated, the optimizer requested
-another 3.79 GiB, and only about 2.35 GiB remained free. The failure had only
-about 100 MiB reserved but unallocated, so it was a genuine capacity shortfall,
-not fragmentation. Selective recompute is not guaranteed to recover optimizer
-state capacity, and a scope that fits may still be too expensive for a
-throughput recipe.
-
 ## Failure Diagnosis
 
 | Symptom | Cause | Confirm | Fix |
@@ -210,8 +185,6 @@ throughput recipe.
 | >15% GPU utilization drop | `mlp` recompute on a large FFN | check whether `recompute_modules` includes `mlp` | remove `mlp`, lower micro batch size, or use CPU offload if PP=1 |
 | Still OOM after adding layernorm | layernorm activations are too small to move the peak materially | compare peak memory before/after | switch to a higher-impact module or full-layer recompute |
 | `AssertionError: full recompute is only supported with full iteration CUDA graph` | layer-level recompute with TE-scoped graph capture | check `cuda_graph_impl` and `cuda_graph_scope` | use `selective`, set `cuda_graph_impl=none`, or use `local` + `full_iteration` |
-| `Invalid choices for recompute_modules: {'gdn_norm_out'}` (or `{'gdn'}`) | GDN recompute scope copied across incompatible MCore revisions | inspect the target `TransformerConfig.recompute_modules` enum | use `gdn_norm_out` on the repository's pinned MCore; use `gdn` only on the older experimental draft that exposes whole-GDN recompute |
-| Selective recompute still OOMs at the first optimizer step | recompute reduced activations but not enough delayed optimizer-state capacity | compare the failed allocation with free memory and reserved-but-unallocated memory | keep MBS1, shard/offload optimizer state, or change parallelism; do not add whole-module recompute without measuring its throughput cost |
 | ValueError: PP + CPU offloading | `cpu_offloading=True` with `pipeline_model_parallel_size > 1` | check PP config | disable CPU offloading or set PP=1 |
 | mlp+core_attn worse than mlp alone | double recompute overhead | compare Exp 1 vs Exp 2 | use mlp alone |
 

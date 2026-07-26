@@ -180,43 +180,19 @@ best_configs:
     hardware: "16×H100"
     precision: BF16
     dispatcher: HybridEP
-    tflops: 218.121
-    step_time_ms: 3378.283
     parallelism: "TP1 EP16 PP1 CP1"
     sequence_length: 4096
-    batch: "MBS1 GBS128 controlled A/B"
+    batch: "MBS1 GBS1024 acceptance"
     routing: force_balance
     ep_overlap: false
     delay_wgrad_compute: false
     cuda_graph: "attn, moe_router, moe_preprocess"
-    rank0_peak_allocated_gib: 69.939
-    native_dispatcher_tflops: 157.248
-    dispatcher_gain_percent: 20.25
-    eager_hybridep_tflops: 189.096
-    router_preprocess_graph_tflops: 212.251
-    router_preprocess_graph_gain_percent: 12.245
-    attention_graph_incremental_gain_percent: 2.766
-    ep_overlap_tflops: 184.57
-    ep_overlap_regression_percent: 2.45
-    shared_expert_overlap_tflops: 207.0
-    shared_expert_overlap_step_time_ms: 3558.125
-    shared_expert_overlap_regression_percent: 5.1
-    shared_expert_overlap_rank0_peak_allocated_gib: 70.006
-    blockwise_fp8_tflops: 174.38
-    blockwise_fp8_regression_percent: 7.8
-    blockwise_fp8_rank0_peak_allocated_gib: 72.730
-    tensorwise_current_scaling_fp8_tflops: 145.3
-    tensorwise_current_scaling_fp8_step_time_ms: 5067.8
-    tensorwise_current_scaling_fp8_cold_iteration_seconds: 192.33
-    tensorwise_current_scaling_fp8_rank0_peak_allocated_gib: 66.053
     exact_gbs1024_tflops: 225.85
     exact_gbs1024_step_time_ms: 26081.35
     exact_gbs1024_rank0_peak_allocated_gib: 69.942
-    per_expert_capacity_1_tflops: 224.9
-    per_expert_capacity_1_valid_dropless_result: false
-    preprocessing_sms_default: 108
-    preprocessing_sms_32_tflops: 216.85
-    preprocessing_sms_32_regression_percent: 0.58
+    dispatcher_gain_vs_native_percent: ~20
+    scoped_graph_gain_vs_eager_hybridep_percent: ~15
+    rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes"
     note: "FlashQLA + pre-GDR experimental kernel stack; target tuning still in progress"
 
   qwen3_next_80b_gb200_64:
@@ -246,21 +222,12 @@ best_configs:
 optimization_patterns:
   - name: ep_comm_overlap
     impact: "+17.729% throughput on measured Qwen3 30B 16×H100 HybridEP shape"
-    caveat: "-2.45% on measured Qwen3.5 35B 16×H100 GDN-MoE shape; benchmark separately"
+    caveat: "regressed on the measured Qwen3.5 GDN-MoE shape; benchmark separately"
   - name: shared_expert_overlap
-    impact: "-5.1% on measured Qwen3.5 35B 16×H100 GDN-MoE shape"
+    impact: "regressed on the measured Qwen3.5 GDN-MoE shape"
     caveat: "benchmark independently from dispatcher and EP overlap; side-stream contention is model-specific"
   - name: hybridep_dispatcher
-    impact: "+20.25% over native all-to-all on measured Qwen3.5 35B 16×H100 shape"
-  - name: hybridep_preprocessing_sms
-    impact: "-0.58% when reducing the implementation default from 108 to 32 on measured Qwen3.5 35B"
-    caveat: "leave the default unchanged unless a target-shape A/B wins"
-  - name: blockwise_fp8
-    impact: "-7.8% on measured Qwen3.5 35B 16×H100 GDN-MoE shape"
-    caveat: "retain BF16 unless a target-shape A/B proves a steady-state win"
-  - name: tensorwise_current_scaling_fp8
-    impact: "145.3 TFLOPS/GPU on measured Qwen3.5 35B 16×H100 GDN-MoE shape"
-    caveat: "small expert GEMMs and scaling/shape overhead can outweigh Hopper FP8 tensor-core gains"
+    impact: "about +20% over native all-to-all on measured Qwen3.5 16×H100 shape"
   - name: force_balance_routing
     impact: "+5-10% MFU over dropless"
   - name: 1f1b_overlap

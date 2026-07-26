@@ -91,45 +91,6 @@ loss.
 | 8K-32K | add CP=2 |
 | 32K+ | add CP=4-8, consider `a2a+p2p` for large CP |
 
-### GDN headwise CP
-
-For Gated Delta Net hybrids such as Qwen3.5, CP is also a GDN head
-partitioning choice. Set the linear-attention mode explicitly:
-
-```python
-cfg.model.context_parallel_size = 4
-cfg.model.linear_cp_mode = "headwise"
-```
-
-Before benchmarking, run a one-step compatibility smoke for the exact
-kernel stack. On the July 2026 Qwen3.5 development stack, headwise CP and
-FlashQLA initialize together, but adding streamed pre-GDR fusion fails on
-the first forward: the post-A2A head-local `qkvzba` width is 3088 while
-the fusion validates against the global width 12352. Until that upstream
-path is made head-partition-aware, use one of these combinations:
-
-- CP=1 + FlashQLA + pre-GDR fusion
-- headwise CP + FlashQLA with `gdn_pre_gated_delta_rule_fusion=False`
-
-Then validate the resulting EP mesh against the dispatcher topology. On
-8-GPU H100 nodes, the measured HybridEP runtime rejected CP4/EP4 because its
-four-rank EP group was not divisible by the eight ranks per node. A parallel
-mesh can divide the global world size correctly and still be invalid for the
-selected communication backend.
-
-Passing that divisibility gate is still only a smoke test. A CP2/EP8 retry on
-the same stack compiled its headwise FlashQLA shapes and passed HybridEP setup,
-but stalled in the first iteration after lazy unbatched P2P communicators were
-created for the size-16 process group. All GPUs remained near 55 GiB at 0%
-utilization for about four minutes. Require a completed optimizer step, not
-just model construction and communicator initialization.
-
-Treat CP as a topology A/B, not an automatic throughput gain. CP changes
-the dense DP degree and kernel shapes, adds per-GDN all-to-all traffic,
-and can increase the number of microbatches required for a fixed global
-batch. Compare exact global-batch throughput after the compatibility
-smoke.
-
 ## Combined Parallelism Enablement
 
 3D parallelism (TP + PP + DP):
@@ -309,18 +270,6 @@ parallel_state.initialize_model_parallel(
    not the product of all dimensions. The dense `TP*CP`-mesh and MoE
    `EP*ETP`-mesh share the same GPUs in each PP stage. See
    "Minimum GPU Count" section above.
-
-9. For GDN headwise CP, validate the exact GDN backend and fusion stack
-   before performance testing. A backend supporting headwise CP does not
-   imply that adjacent pre-GDR fusions consume head-local shapes.
-
-10. Validate folded CP/EP meshes against dispatcher-local node constraints.
-    HybridEP on the measured 8-GPU-node stack rejects an EP4 group even when
-    CP4×EP4 divides a 16-GPU world.
-
-11. Bound the first-step communication smoke. On the measured Qwen3.5 stack,
-    CP2/EP8 passed HybridEP divisibility but stalled after headwise-CP P2P
-    communicator creation with no completed iteration.
 
 ## Verification
 

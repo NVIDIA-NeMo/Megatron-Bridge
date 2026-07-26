@@ -140,35 +140,17 @@ Routing: force balance
 EP overlap: disabled
 Delayed wgrad: disabled
 TE graph scopes: attn, moe_router, moe_preprocess
-Measured bring-up: 3.3783s/step, 218.121 model TFLOPS/GPU
-Rank-0 peak allocated memory: 69.939 GiB
-Exact GBS1024 replay: 26.0814s/step, 225.85 model TFLOPS/GPU
+Measured bring-up: low-200s model TFLOPS/GPU
+Exact GBS1024 replay: about 225.9 model TFLOPS/GPU
 ```
 
-On the FlashQLA + pre-GDR stack, switching only the dispatcher from native
-all-to-all to HybridEP improved throughput by 20.25%. Enabling plain EP
-overlap afterward regressed throughput by 2.45% and raised peak allocated
-memory to 71.698 GiB. Enabling shared-expert overlap separately regressed the
-scoped-graph result by about 5.1% to roughly 207.0 model TFLOPS/GPU and raised
-peak allocated memory slightly to 70.006 GiB. GDN-heavy models therefore need
-separate A/Bs for each overlap stream instead of inheriting the Qwen3 30B
-overlap setting. Blockwise FP8 also
-regressed to 174.38 model TFLOPS/GPU (-7.8% versus BF16) and raised peak
-allocated memory to 72.730 GiB. Tensorwise current-scaling FP8 on the pinned
-H100 stack was worse still: after a 192.33-second cold compile iteration,
-iterations 3-10 averaged 5.0678s/step and 145.3 model TFLOPS/GPU, with
-66.053 GiB peak allocated on rank 0. Both FP8 variants completed finite steps,
-but neither beat BF16 for these small routed-expert shapes. TE-scoped router
-and preprocessing graphs then improved the BF16
-HybridEP result by 12.245% to 212.251 model TFLOPS/GPU. Adding the attention
-scope improved it by another 2.766% to 218.121 model TFLOPS/GPU.
-Replaying the same stack at the Qwen3 comparison batch of GBS1024 averaged
-26.0814s/step and 225.85 model TFLOPS/GPU over steps 5-8. Treat the larger
-batch as a required validation point, not an assumed multiplier: it improved
-throughput only modestly and did not close the model-family gap.
-Reducing HybridEP preprocessing SMs from the implementation default 108 to 32
-regressed throughput by 0.58% (218.121 to about 216.85 model TFLOPS/GPU), so
-the recipe leaves preprocessing SMs at the default.
+On the measured development stack, HybridEP improved the matching native
+all-to-all baseline by about 20%, and scoped router/preprocess/attention graphs
+added another roughly 15% over eager HybridEP. Plain EP overlap,
+shared-expert overlap, and the tested FP8 modes regressed, so the playbook keeps
+BF16 and treats every overlap stream as an independent A/B. Revalidate the
+winner at the acceptance global batch instead of extrapolating from the short
+screening batch.
 
 ### Qwen3-Next 80B on GB200
 

@@ -331,26 +331,14 @@ def _delete_cuda_graphs(cuda_graph_helper):
     iterations 5-8 averaged `42.00 s` versus `41.36 s` for eager. Treat
     scoped graphs as a bring-up candidate and validate on the target stack.
 
-14. **Narrow MoE scopes can win on a tuned dispatcher**: On a controlled
-    16×H100 Qwen3.5-35B-A3B BF16 HybridEP run, TE-scoped
-    `moe_router,moe_preprocess` graphs reduced the steady step from 3.8968 to
-    3.4717 seconds and increased throughput from 189.096 to 212.251 model
-    TFLOPS/GPU (+12.245%). Adding `attn` for the model's 10 full-attention
-    layers reduced the step again to 3.3783 seconds and reached 218.121
-    TFLOPS/GPU (+2.766% over the narrower graph, +15.349% over eager).
-    Iteration 1 took about 130 seconds for cold kernel compilation, and
-    iteration 4 contained capture overhead; only iterations 5-10 were used
-    for replay results.
+14. **Narrow MoE scopes can win on a tuned dispatcher**: benchmark
+    `moe_router,moe_preprocess` first, then add `attn` as a separate A/B. Keep
+    dynamic expert work outside the graph and compare only steady replay.
 
-15. **Optimizer graph capture is a separate acceptance gate**: Do not infer
-    optimizer-step graph support from successful TE module graphs. On the same
-    16×H100 Qwen3.5 HybridEP + PAO stack, iterations 1-3 completed with finite
-    loss, but every rank stalled after logging
-    `Capture CUDA graph for optimizer!!!`. For more than three minutes the
-    GPUs stayed at about 69.4 GiB, 0% utilization, and low power; no rank
-    logged capture completion or iteration 4. Treat optimizer graph capture as
-    an independent A/B, bound its capture time, and reject a no-progress
-    capture rather than waiting for steady replay that will never begin.
+15. **Optimizer graph capture is a separate acceptance gate**: successful TE
+    module graphs do not prove optimizer-step graph support. Bound optimizer
+    capture time independently and reject a no-progress capture before waiting
+    for replay measurements.
 
 ## Verification
 

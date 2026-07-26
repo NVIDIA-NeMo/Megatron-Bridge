@@ -1,10 +1,10 @@
 title: activation_recompute
-validated_on: "2026-07-25"
+validated_on: "2026-04-02"
 summary: >
   Selective activation recompute trades GPU compute for memory by recomputing
   specific module outputs during backward instead of storing them. Megatron
   Bridge exposes recompute_modules (core_attn, mlp, layernorm, moe, moe_act,
-  shared_experts, mla_up_proj, gdn_norm_out) for fine-grained control. Measured on Llama3
+  shared_experts, mla_up_proj) for fine-grained control. Measured on Llama3
   70B SFT (32x H100, FP8 CS): mlp recompute saves ~3 GB peak memory but
   costs ~16% GPU utilization; layernorm recompute is nearly free (~0% cost)
   but saves negligible memory; core_attn recompute is the default and is
@@ -76,9 +76,7 @@ feature_meaning:
     (entire transformer layer).
   recompute_modules: >
     List of modules to selectively recompute: core_attn, mlp, layernorm,
-    moe, moe_act, shared_experts, mla_up_proj, gdn_norm_out. Experimental
-    MCore revisions may instead expose whole-module GDN recompute as gdn;
-    inspect the target enum before applying a GDN override.
+    moe, moe_act, shared_experts, mla_up_proj.
   recompute_method: >
     For full granularity: uniform (divide layers evenly into blocks) or
     block (recompute a fixed number of layers per PP stage).
@@ -143,13 +141,6 @@ measured_results:
         peak_mem_gb: 59.6
         status: OOM_on_rank0
 failure_modes:
-  - name: recompute_does_not_recover_optimizer_capacity
-    symptom: "selective recompute passes forward/backward but OOMs when Adam state is first materialized"
-    likely_cause: >
-      recompute reduced activation retention but did not recover enough memory
-      for delayed optimizer state; this is a genuine capacity failure when
-      reserved-but-unallocated memory is small
-    fix: keep a smaller micro batch, shard/offload optimizer state, or change parallelism; benchmark whole-module recompute before accepting its compute cost
   - name: mlp_recompute_too_expensive
     symptom: ">15% GPU utilization drop"
     likely_cause: FFN hidden dimension is large (e.g. 28672 for Llama3 70B)
@@ -162,17 +153,9 @@ failure_modes:
     symptom: "AssertionError: full recompute is only supported with full iteration CUDA graph"
     likely_cause: recompute_granularity=full with any TE-scoped CUDA graph (attn, mlp, moe_router, etc.). Common on FP8 CS configs that default to cuda_graph_impl=transformer_engine + scope=mlp (e.g. LLAMA3_70B_SFT_CONFIG_H100_FP8_CS_V1). Enforced in MCore transformer_config.py:2001-2005.
     fix: use recompute_granularity=selective with recompute_modules, or set cuda_graph_impl=none, or switch to cuda_graph_impl=local + cuda_graph_scope=full_iteration
-  - name: gdn_recompute_scope_version_mismatch
-    symptom: "Invalid choices for recompute_modules: {'gdn_norm_out'} or {'gdn'}"
-    likely_cause: >
-      The repository-pinned MCore exposes gdn_norm_out, while experimental
-      FlashQLA draft commit aed727d4f14202dd8dc780044f2ab046a21f82c6 exposes
-      whole-module recompute as gdn.
-    fix: inspect TransformerConfig.recompute_modules and use the exact scope supported by the target MCore revision
 known_constraints:
   - recompute_granularity=selective requires a non-empty recompute_modules list
   - recompute_granularity=full requires recompute_method and recompute_num_layers
-  - selective recompute does not reduce parameter or optimizer-state memory
   - distribute_saved_activations cannot be used with sequence_parallel=True
   - combining mlp+core_attn is slightly worse than mlp alone due to double overhead
 known_limitations:
