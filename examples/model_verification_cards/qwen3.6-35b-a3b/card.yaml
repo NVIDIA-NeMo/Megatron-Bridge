@@ -234,22 +234,18 @@ items:
         --step-func qwen3_vl_step
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-        --max_steps 100 --lr 2e-5 --min_lr 2e-6 --warmup_iters 10
+        --max_steps 100 --warmup_iters 10
         'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
         'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
         dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
-        dataset.do_validation=false dataset.do_test=false
-        dataset.pad_to_max_length=true dataset.enable_in_batch_packing=false
-        dataset.defer_in_batch_packing_to_step=true
+        dataset.do_validation=false dataset.pad_to_max_length=true
         scheduler.lr_decay_iters=100 dist.distributed_timeout_minutes=30
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
         model.bos_token_id=248044 model.eos_token_id=248044
-        model.moe_router_force_load_balancing=false
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B checkpoint.load=null
+        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
         validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
+        ddp.check_for_large_grads=true
         --save_dir
         work/model-verification/qwen3.6-35b-a3b/sft-support-v11/checkpoints
         --save_interval 50 logger.log_interval=1 logger.log_throughput=true
@@ -361,22 +357,18 @@ items:
         --step-func qwen3_vl_step
         --pretrained_checkpoint
         work/model-verification/qwen3.6-35b-a3b/imported-megatron/iter_0000000
-        --max_steps 100 --lr 2e-4 --min_lr 3e-5 --warmup_iters 10
+        --max_steps 100 --warmup_iters 10
         'dataset.source.load_kwargs={revision:69eb219d477ab8699296da1fd6b89beb768042d3}'
         'dataset.source.adapter_kwargs={resized_height:448,resized_width:448}'
         dataset.hf_processor_path=Qwen/Qwen3.6-35B-A3B
         'dataset.hf_processor_kwargs={revision:995ad96eacd98c81ed38be0c5b274b04031597b0}'
-        dataset.do_validation=false dataset.do_test=false
-        dataset.pad_to_max_length=true dataset.enable_in_batch_packing=false
-        dataset.defer_in_batch_packing_to_step=true
+        dataset.do_validation=false dataset.pad_to_max_length=true
         scheduler.lr_decay_iters=100 dist.distributed_timeout_minutes=30
         model.hf_model_id=Qwen/Qwen3.6-35B-A3B
         model.bos_token_id=248044 model.eos_token_id=248044
-        model.moe_router_force_load_balancing=false
-        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B checkpoint.load=null
+        checkpoint.hf_source_path=Qwen/Qwen3.6-35B-A3B
         validation.eval_iters=0 validation.eval_interval=0
-        ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
-        rerun_state_machine.check_for_nan_in_loss=true
+        ddp.check_for_large_grads=true
         --save_dir
         work/model-verification/qwen3.6-35b-a3b/peft-support-v5/checkpoints
         --save_interval 100 logger.log_interval=1 logger.log_throughput=true

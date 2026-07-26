@@ -436,11 +436,11 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert executor.kwargs["tunnel"].job_dir == str(tmp_path / "experiments")
     assert executor.kwargs["ntasks_per_node"] == 1
     assert executor.kwargs["gpus_per_node"] == 1
-    assert executor.kwargs["exclusive"] is None
-    assert executor.kwargs["mem"] == "0"
+    assert "exclusive" not in executor.kwargs
+    assert "mem" not in executor.kwargs
     assert executor.env_vars == {}
     assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
-    assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}
+    assert executor.additional_parameters == {"export": "PATH,HF_TOKEN", "mem": "0"}
     assert executor.container_mounts == ["/host:/container"]
     assert executor.srun_args == []
 
@@ -475,7 +475,8 @@ def test_slurm_executor_accepts_partial_node_memory_request(tmp_path, monkeypatc
 
     executor = module._build_executor(args, [], [])
 
-    assert executor.kwargs["mem"] == "512G"
+    assert "mem" not in executor.kwargs
+    assert executor.additional_parameters["mem"] == "512G"
     assert training_args == ["--recipe", "qwen35_vl_35b_a3b_peft_config"]
 
 
@@ -549,7 +550,8 @@ def test_slurm_executor_requests_exclusive_node_only_when_explicit(tmp_path, mon
 
     executor = module._build_executor(args, [], [])
 
-    assert executor.kwargs["exclusive"] is True
+    assert "exclusive" not in executor.kwargs
+    assert executor.additional_parameters["exclusive"] is True
 
 
 def test_training_task_environment_does_not_inject_benchmark_offline_defaults():
@@ -593,7 +595,7 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
 
     assert executor.kwargs["ntasks_per_node"] == 8
     assert "gpus_per_node" not in executor.kwargs
-    assert executor.additional_parameters == {"export": "PATH"}
+    assert executor.additional_parameters == {"export": "PATH", "mem": "0"}
     assert executor.srun_args == ["--mpi=pmix", "--container-writable"]
 
 

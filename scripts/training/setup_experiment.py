@@ -262,8 +262,6 @@ def _build_executor(
         partition=args.partition,
         nodes=args.nodes,
         ntasks_per_node=args.gpus_per_node,
-        mem=args.mem,
-        exclusive=True if args.exclusive else None,
         time=args.time,
         gres=args.gres,
         tunnel=run.LocalTunnel(job_dir=os.path.join(get_nemorun_home(), "experiments")),
@@ -283,7 +281,12 @@ def _build_executor(
     # Keep Slurm control commands available to the batch script without
     # forwarding the host PATH into the training container.
     slurm_env_names = list(dict.fromkeys(["PATH", *env_names]))
-    executor.additional_parameters = {"export": ",".join(slurm_env_names)}
+    executor.additional_parameters = {
+        "export": ",".join(slurm_env_names),
+        "mem": args.mem,
+    }
+    if args.exclusive:
+        executor.additional_parameters["exclusive"] = True
     executor.srun_args = srun_args
     return executor
 

@@ -907,6 +907,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = False
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     # MoE A2A overlap requires a schedule plan that includes Qwen-VL vision preprocessing.
     # Keep it disabled until the VLM wrapper can preserve that multimodal path in the plan.
@@ -1885,6 +1886,7 @@ def qwen35_vl_35b_a3b_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.grad_reduce_in_fp32 = True
     cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.comm_overlap = None
     cfg.mixed_precision = "bf16_mixed"
