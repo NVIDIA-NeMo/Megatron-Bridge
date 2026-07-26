@@ -35,7 +35,6 @@ from megatron.bridge.recipes.utils.optimizer_utils import distributed_fused_adam
 from megatron.bridge.recipes.utils.tokenizer_utils import DEFAULT_NULL_TOKENIZER_VOCAB_SIZE
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
-from megatron.bridge.training.mixed_precision import bf16_mixed
 
 
 # =============================================================================
@@ -806,6 +805,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     Default configuration: 16 GPUs
     - TP=1, PP=2, EP=8
+    - MBS=1, GBS=32
     - LR=2e-5 (full SFT)
     - Sequence length: 4096
     """
@@ -867,7 +867,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
 
     # Training config
     cfg.train.train_iters = 300000
-    cfg.train.global_batch_size = 512
+    cfg.train.global_batch_size = 32
     cfg.train.micro_batch_size = 1
     cfg.train.manual_gc = True
     cfg.train.manual_gc_interval = 100
@@ -884,11 +884,11 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     )
     cfg.optimizer = opt_cfg
     cfg.scheduler = scheduler_cfg
-    cfg.optimizer.use_precision_aware_optimizer = True
-    cfg.optimizer.main_grads_dtype = torch.bfloat16
+    cfg.optimizer.use_precision_aware_optimizer = False
+    cfg.optimizer.main_grads_dtype = torch.float32
     cfg.optimizer.main_params_dtype = torch.float32
-    cfg.optimizer.exp_avg_dtype = torch.bfloat16
-    cfg.optimizer.exp_avg_sq_dtype = torch.bfloat16
+    cfg.optimizer.exp_avg_dtype = torch.float32
+    cfg.optimizer.exp_avg_sq_dtype = torch.float32
     # The VLM model-chunk layout produces empty optimizer groups with optimizer-step gather overlap.
     cfg.optimizer.overlap_param_gather_with_optimizer_step = False
 
@@ -903,8 +903,8 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.ddp.overlap_param_gather = False
     cfg.ddp.check_for_nan_in_grad = True
     cfg.ddp.use_distributed_optimizer = True
-    cfg.ddp.grad_reduce_in_fp32 = False
-    cfg.ddp.average_in_collective = False
+    cfg.ddp.grad_reduce_in_fp32 = True
+    cfg.ddp.average_in_collective = True
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
 
     # MoE A2A overlap requires a schedule plan that includes Qwen-VL vision preprocessing.
@@ -917,8 +917,7 @@ def qwen35_vl_35b_a3b_sft_16gpu_h100_bf16_config() -> ConfigContainer:
         overlap_moe_expert_parallel_comm=False,
         delay_wgrad_compute=False,
     )
-    cfg.mixed_precision = bf16_mixed()
-    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.mixed_precision = "bf16_mixed"
     # Keep the complete process environment visible on the recipe.
     cfg.env_vars = {
         **COMMON_RECIPE_ENV_VARS,
