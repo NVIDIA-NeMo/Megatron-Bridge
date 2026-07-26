@@ -26,7 +26,7 @@ if [[ "$RUNTIME_VERSION" != "$EXPECTED_VERSION" || "$DEVELOPMENT_VERSION" != "$E
 fi
 
 for symbol in ncclWinGetUserPtr ncclGetPeerDevicePointer ncclCommQueryProperties; do
-    if ! grep -Rqw "$symbol" /usr/include/nccl*.h; then
+    if ! grep -Rqw --include='*.h' "$symbol" /usr/include/nccl.h /usr/include/nccl_device; then
         echo "NCCL development headers do not expose $symbol" >&2
         exit 1
     fi
