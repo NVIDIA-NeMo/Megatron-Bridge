@@ -67,9 +67,13 @@ jobs:
           HEAD_REF: ${{ steps.metadata.outputs.head_ref }}
         working-directory: ./docs/fern
         run: |
-          OUTPUT=$(fern generate --docs --preview --id "$HEAD_REF" 2>&1)
+          FERN_STATUS=0
+          OUTPUT=$(fern generate --docs --preview --id "$HEAD_REF" 2>&1) || FERN_STATUS=$?
           echo "$OUTPUT"
-          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K.*(?= \()')
+          if [ "$FERN_STATUS" -ne 0 ]; then
+            exit "$FERN_STATUS"
+          fi
+          URL=$(echo "$OUTPUT" | grep -oP 'Published docs to \K.*(?= \()' || true)
           if [ -z "$URL" ]; then
             echo "::error::Failed to generate preview URL. See fern output above."
             exit 1
