@@ -38,7 +38,7 @@ if [[ -z "$CUDA_INCLUDE_DIR" ]]; then
     exit 1
 fi
 
-if ! gcc -I"$CUDA_INCLUDE_DIR" -x c -fsyntax-only - <<'C'
+if ! g++ -std=c++17 -I"$CUDA_INCLUDE_DIR" -x c++ -fsyntax-only - <<'C'
 #include <nccl.h>
 #include <nccl_device.h>
 
