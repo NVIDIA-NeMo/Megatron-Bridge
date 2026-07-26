@@ -13,7 +13,8 @@ summary: >
   results. Qwen3-8B HybridModel bidirectional CPU and TP4 conversion, manual
   forward correlation, deterministic Megatron inference, bounded pretraining,
   full SFT with exported-HF inference, PEFT, and direct checkpoint resume are
-  verified on H100; long-context SFT verification remains pending.
+  verified on H100, including long-context SFT with sequence packing and
+  context parallelism.
 verification_index:
   model_level:
     verified:
@@ -25,8 +26,7 @@ verification_index:
       - inference
   training:
     H100:
-      verified: [pretrain, sft, sft_export_inference, peft, checkpoint_resume]
-      unverified: [sft_long_context]
+      verified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
     GB200:
       unverified: [pretrain, sft, sft_export_inference, sft_long_context, peft, checkpoint_resume]
 model:
@@ -255,8 +255,9 @@ items:
 
   sft_long_context:
     H100:
-      status: unverified
+      status: verified
       precision: bf16
+      bridge_commit: 6d417c08fde67c88827bb95aa7048c65f481d5d1  # pragma: allowlist secret
       enabled_features:
         sequence_packing: offline
         context_parallel_size: 2
@@ -281,21 +282,22 @@ items:
         checkpoint.load=null checkpoint.save=null
         ddp.check_for_nan_in_grad=true ddp.check_for_large_grads=true
         rerun_state_machine.check_for_nan_in_loss=true
-        logger.log_interval=1 logger.log_throughput=true logger.tensorboard_dir=null
-      last_verified: null
+        logger.log_interval=1 logger.log_throughput=true
+        logger.save_config_filepath=work/model-verification/qwen3-8b/sft-long-context-runtime-config.yaml
+        logger.tensorboard_dir=null
+      last_verified: 2026-07-25
       metrics:
         initial_loss: 1.611647
-        final_loss: 1.490598
-        last_10_steps_step_time_ms_avg: 55077.330
-        last_10_steps_model_tflops_per_gpu_avg: 44.360
+        final_loss: 1.490631
+        last_10_steps_step_time_ms_avg: 55104.950
+        last_10_steps_model_tflops_per_gpu_avg: 44.300
       expected_result: >
-        The pinned Tulu3 run completed exactly 20 SFT steps at sequence length
+        The pinned Tulu3 run completes exactly 20 SFT steps at sequence length
         32768 with TP4/PP1/CP2/SP-on, DP1, GBS/MBS 8/1, and explicit pad-8
-        offline packing. LM loss was finite from 1.611647 to 1.490598 with no
-        skipped or NaN iterations. Packing was 99.97% efficient and the 5242880
-        token slots contained 3463090 actual supervised tokens. The workload
-        remains unverified because it did not persist the required post-setup
-        configuration; rerun with an explicit logger.save_config_filepath.
+        offline packing. LM loss is finite from 1.611647 to 1.490631 with no
+        skipped or NaN iterations. Packing is 99.97% efficient and the 5242880
+        token slots contain 3463090 actual supervised tokens. All four metrics
+        and the post-setup ConfigContainer persist.
 
   peft:
     H100:
