@@ -654,6 +654,42 @@ def test_load_adapter_unused_keys_raises():
 
 
 # --------------------------------------------------------------------------- #
+# SP-shard span narrowing: a replicated base linear (e.g. MLA q/kv down-proj)
+# consumes the sequence-parallel shard directly, so the per-slot spans must be
+# intersected with this rank's contiguous token window. Getting this wrong is
+# an out-of-bounds grouped GEMM, not a shape error.
+# --------------------------------------------------------------------------- #
+def _narrow(counts, start, num_rows):
+    return multi_lora_layers_module._narrow_token_counts_to_window(
+        torch.tensor(counts, dtype=torch.int32), start, num_rows
+    ).tolist()
+
+
+def test_narrow_window_spanning_a_slot_boundary():
+    # Slots [10, 54, 0, 0] over 64 tokens; rank 0 of TP=4 sees rows [0, 16).
+    assert _narrow([10, 54, 0, 0], start=0, num_rows=16) == [10, 6, 0, 0]
+    # Rank 1 sees rows [16, 32) — entirely inside slot 1.
+    assert _narrow([10, 54, 0, 0], start=16, num_rows=16) == [0, 16, 0, 0]
+
+
+def test_narrow_full_window_is_identity():
+    assert _narrow([10, 54, 0, 0], start=0, num_rows=64) == [10, 54, 0, 0]
+
+
+def test_narrow_single_slot_batch():
+    # One active slot (the smoke-run shape): every shard lands in slot 0.
+    for rank in range(4):
+        assert _narrow([64, 0, 0, 0], start=rank * 16, num_rows=16) == [16, 0, 0, 0]
+
+
+def test_narrow_window_covering_many_small_slots():
+    # Window [3, 9) overlaps the tail of slot 0, all of slot 1, and the head of slot 2.
+    assert _narrow([4, 3, 5, 0], start=3, num_rows=6) == [1, 3, 2, 0]
+    # Counts always sum to the window size.
+    assert sum(_narrow([4, 3, 5, 0], start=3, num_rows=6)) == 6
+
+
+# --------------------------------------------------------------------------- #
 # Forward smoke / B4 reset: single-GPU integration through a real
 # ColumnParallelLinear.
 # --------------------------------------------------------------------------- #
