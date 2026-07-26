@@ -76,12 +76,30 @@ jobs:
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
       default_test_data_path: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       non_nvidia_test_data_path: ${{ vars.NON_NVIDIA_TEST_DATA_PATH }}
+      default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
+      non_nvidia_registry: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
+    secrets: inherit  # pragma: allowlist secret
+
+  build-nccl-ci-container:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@v0.80.1
+    needs: [pre-flight]
+    if: |
+      !cancelled() && !failure()
+      && !(needs.pre-flight.outputs.docs_only == 'true'
+           || needs.pre-flight.outputs.is_deployment_workflow == 'true')
+    with:
+      build-ref: ${{ inputs.release-ref || github.sha }}
+      image-name: megatron-bridge-nccl-ci
+      dockerfile: docker/Dockerfile.nccl_ci
+      build-args: BASE_IMAGE=nvcr.io/nvidia/pytorch:25.11-py3
+      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
+      registry: ${{ needs.pre-flight.outputs.registry }}
     secrets: inherit  # pragma: allowlist secret
 
   release:
     uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_release_library.yml@v1.4.3
-    needs: [pre-flight]
+    needs: [pre-flight, build-nccl-ci-container]
     if: |
       !cancelled() && !failure()
       && !(needs.pre-flight.outputs.docs_only == 'true'
@@ -99,7 +117,7 @@ jobs:
       packaging: uv
       has-src-dir: true
       skip-test-wheel: true
-      custom-container: nvcr.io/nvidia/pytorch:25.11-py3
+      custom-container: ${{ needs.build-nccl-ci-container.outputs.container-uri }}
       runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
       no-build-isolation: true
       app-id: ${{ vars.BOT_ID }}

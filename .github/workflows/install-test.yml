@@ -17,6 +17,10 @@
 
 name: Installation Test
 
+permissions:
+  id-token: write
+  contents: read
+
 on:
   push:
     branches:
@@ -61,9 +65,26 @@ jobs:
     with:
       default_runner_prefix: ${{ vars.DEFAULT_RUNNER_PREFIX }}
       non_nvidia_runner_prefix: ${{ vars.NON_NVIDIA_RUNNER_PREFIX }}
+      default_registry: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}
+      non_nvidia_registry: ${{ vars.NON_NVIDIA_CONTAINER_REGISTRY }}
       sso_users_filename: ${{ vars.SSO_USERS_FILENAME }}
     secrets:
       NVIDIA_MANAGEMENT_ORG_PAT: ${{ secrets.NVIDIA_MANAGEMENT_ORG_PAT }}
+
+  build-nccl-ci-container:
+    uses: NVIDIA-NeMo/FW-CI-templates/.github/workflows/_build_container.yml@v0.80.1
+    needs: [pre-flight]
+    if: |
+      !(needs.pre-flight.outputs.docs_only == 'true'
+      || needs.pre-flight.outputs.is_deployment_workflow == 'true')
+    with:
+      build-ref: ${{ github.sha }}
+      image-name: megatron-bridge-nccl-ci
+      dockerfile: docker/Dockerfile.nccl_ci
+      build-args: BASE_IMAGE=nvcr.io/nvidia/pytorch:25.05-py3
+      runner: ${{ needs.pre-flight.outputs.runner_prefix }}-container
+      registry: ${{ needs.pre-flight.outputs.registry }}
+    secrets: inherit  # pragma: allowlist secret
 
   # pip-test-pytorch:
   #   needs: [pre-flight]
@@ -120,14 +141,14 @@ jobs:
   #         python-binary: ${{ env.UV_PROJECT_ENVIRONMENT }}/bin/python
 
   uv-test-pytorch:
-    needs: [pre-flight]
+    needs: [pre-flight, build-nccl-ci-container]
     if: |
       !(needs.pre-flight.outputs.docs_only == 'true'
       || needs.pre-flight.outputs.is_deployment_workflow == 'true')
     runs-on: ${{ needs.pre-flight.outputs.runner_prefix }}-container
     name: UV - Python${{ matrix.python-version }} - AMD64/Linux - NGC PyTorch
     container:
-      image: nvcr.io/nvidia/pytorch:25.05-py3
+      image: ${{ needs.build-nccl-ci-container.outputs.container-uri }}
     strategy:
       fail-fast: false
       matrix:
