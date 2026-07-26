@@ -105,8 +105,16 @@ class MultiLoRALinear(AdapterWrapper):
         # wrapped base linear's output layout.
         self.input_is_parallel = attrs.input_is_parallel
         self.disable_sequence_parallel_comm = attrs.disable_sequence_parallel_comm
+        # False for replicated bases (TELinear parallel_mode="duplicated", e.g. MLA
+        # q/kv down-projections): their adapters are unsharded and need no TP
+        # collectives between the two grouped GEMMs.
+        self.base_linear_is_parallel = attrs.base_linear_is_parallel
         self.use_a2a = a2a_experimental
-        self._gather_output = attrs.input_is_parallel
+        # Mirrors ParallelLinearAdapter's lin_out_gather_output: row-parallel
+        # bases and replicated bases produce a full [tokens, out] tensor, so the
+        # column-sharded adapter output must be gathered before the residual
+        # add; a column-parallel base keeps the [tokens, out/tp] shard.
+        self._gather_output = attrs.input_is_parallel or not attrs.base_linear_is_parallel
 
         # ModuleList of ParallelLinearAdapters gives per-adapter optimizer state
         # isolation, clean checkpoint serialization, and bridge export compatibility.
@@ -136,6 +144,9 @@ class MultiLoRALinear(AdapterWrapper):
         )
 
         self.tokens_per_adapter: Optional[torch.Tensor] = None
+        # Host-side sum of tokens_per_adapter (set alongside it); lets forward
+        # detect an SP-sharded input without a per-layer device sync.
+        self.tokens_per_adapter_total: Optional[int] = None
         device = next(to_wrap.parameters()).device
         dtype = next(to_wrap.parameters()).dtype
         # Non-persistent: slot lifecycle is externally managed, not checkpointed.
@@ -160,6 +171,25 @@ class MultiLoRALinear(AdapterWrapper):
             x = gather_from_sequence_parallel_region(x)
 
         x_flat = x.reshape(-1, x.shape[-1])
+
+        # A replicated base (e.g. MLA q/kv down-projections) does no SP gather —
+        # under sequence parallelism it consumes the SP shard directly, so the
+        # per-slot spans must be narrowed to this rank's contiguous token window.
+        # The shard is contiguous in the same sequence-major flattening the spans
+        # address (same invariant as the MoE slot routing's SP narrow).
+        total = self.tokens_per_adapter_total
+        if total is not None and x_flat.shape[0] != total:
+            tp_size = parallel_state.get_tensor_model_parallel_world_size()
+            if x_flat.shape[0] * tp_size != total:
+                raise RuntimeError(
+                    f"{self.base_linear_name}: adapter token spans cover {total} tokens but the "
+                    f"base linear received {x_flat.shape[0]} rows, which is not the full batch "
+                    f"or its 1/{tp_size} sequence-parallel shard. Check that "
+                    f"set_tokens_per_adapter_slot() was given this micro-batch's counts."
+                )
+            start = parallel_state.get_tensor_model_parallel_rank() * x_flat.shape[0]
+            tokens_per_adapter = _narrow_token_counts_to_window(tokens_per_adapter, start, x_flat.shape[0])
+
         offsets = tokens_per_adapter.cumsum(dim=0, dtype=torch.int32)
 
         stacked_A = torch.stack([a.linear_in.weight for a in self.adapters])
@@ -168,8 +198,10 @@ class MultiLoRALinear(AdapterWrapper):
         mid = torch._grouped_mm(x_flat, stacked_A.transpose(-2, -1), offsets)
 
         # TP collective between A and B: row-parallel base needs an all-reduce
-        # of the partial sums; column-parallel base needs an all-gather of the
-        # rank-sharded output to a full [tokens, dim] for the second GEMM.
+        # of the partial sums; every other base (column-parallel and replicated
+        # alike — ParallelLinearAdapter shards A on the rank axis whenever
+        # input_is_parallel is False) needs an all-gather of the rank-sharded
+        # mid to a full [tokens, dim] for the second GEMM.
         if self.input_is_parallel:
             mid = reduce_from_tensor_model_parallel_region(mid)
         else:
@@ -450,6 +482,9 @@ class MultiLoRAGroupedExpertLinear(MultiLoRALinear):
         )
 
         self.tokens_per_adapter: Optional[torch.Tensor] = None
+        # Written by set_tokens_per_adapter_slot alongside tokens_per_adapter;
+        # unused here (the slot-routing hook owns the expert-side SP narrow).
+        self.tokens_per_adapter_total: Optional[int] = None
         # Republished by the MoE-layer forward pre-hook on every experts forward
         # (including recompute replays), so it is never stale when read; the None
         # here only guards a forward that runs before install_moe_slot_routing.
@@ -560,6 +595,18 @@ class MultiLoRAGroupedExpertLinear(MultiLoRALinear):
 _MULTI_LORA_TYPES = (MultiLoRALinear,)
 
 
+def _narrow_token_counts_to_window(counts: torch.Tensor, start: int, num_rows: int) -> torch.Tensor:
+    """Intersect contiguous per-slot token spans with the window ``[start, start + num_rows)``.
+
+    ``counts[i]`` tokens of slot ``i`` occupy the rows ``[cum[i-1], cum[i])`` of the
+    sequence-major flattened micro-batch. A base linear that consumes the
+    sequence-parallel shard sees only ``num_rows`` of those rows starting at
+    ``start``, so its spans are the per-slot overlap with that window.
+    """
+    cum = counts.cumsum(dim=0)
+    return (cum.clamp(max=start + num_rows) - (cum - counts).clamp(min=start)).clamp(min=0).to(counts.dtype)
+
+
 def _iter_multi_lora_modules(model):
     models = model if isinstance(model, list) else [model]
     for model_chunk in models:
@@ -575,8 +622,13 @@ def set_tokens_per_adapter_slot(model, tokens_per_adapter: torch.Tensor) -> None
     upcoming forward that belong to adapter slot ``i``. Must sum to the total
     token count of the micro-batch.
     """
+    # One host sync per micro-batch: layers whose base linear consumes the
+    # SP-sharded sequence (replicated bases) compare their row count against
+    # this total to narrow the spans to their shard without a per-layer sync.
+    total = int(tokens_per_adapter.sum().item())
     for module in _iter_multi_lora_modules(model):
         module.tokens_per_adapter = tokens_per_adapter
+        module.tokens_per_adapter_total = total
 
 
 def _split_sizes_to_list(splits) -> Optional[List[int]]:
