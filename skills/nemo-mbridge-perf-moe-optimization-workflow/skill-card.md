@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers performing full MoE throughput tuning sweeps or diagnosing MoE throughput regressions after a commit or configuration change in Megatron Bridge. <br>
+Developers and performance engineers optimizing MoE model training throughput on NVIDIA GPUs, using the Three Walls framework to systematically identify and resolve memory, communication, and compute bottlenecks. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,13 +25,13 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Scalable Training of MoE Models with Megatron Core (arXiv:2603.07685)](https://arxiv.org/abs/2603.07685) <br>
-- [NeMo Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
+- [Scalable Training of MoE Models with Megatron Core](https://arxiv.org/abs/2603.07685) <br>
+- [NVIDIA Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
-**Output Format:** [Markdown with inline bash code blocks] <br>
+**Output Type(s):** [Configuration instructions, Analysis] <br>
+**Output Format:** [Markdown with inline code blocks and tables] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
 
@@ -42,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (positive skill-activation case) in k8s-sandbox environment. <br>
+Evaluated against 1 positive skill-activation task in a k8s-sandbox environment. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -66,10 +66,10 @@ Underlying evaluation signals used in this run: <br>
 | Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 100% (+0%) |
+| Correctness | 1 | 100% (+60%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 100% (+100%) | 100% (+18%) |
-| Efficiency | 1 | 100% (+71%) | 100% (+75%) |
+| Effectiveness | 1 | 80% (+50%) | 100% (+12%) |
+| Efficiency | 1 | 100% (+62%) | 100% (+100%) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>

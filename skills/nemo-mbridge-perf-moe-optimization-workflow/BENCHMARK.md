@@ -53,10 +53,10 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Dimension | Num | Claude Code (`aws/anthropic/bedrock-claude-opus-4-8`) | Codex (`openai/openai/gpt-5.5`) |
 |---|---:|---:|---:|
 | Security | 1 | 100% (+0%) | 100% (+0%) |
-| Correctness | 1 | 100% (+100%) | 100% (+0%) |
+| Correctness | 1 | 100% (+60%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 100% (+100%) | 100% (+18%) |
-| Efficiency | 1 | 100% (+71%) | 100% (+75%) |
+| Effectiveness | 1 | 80% (+50%) | 100% (+12%) |
+| Efficiency | 1 | 100% (+62%) | 100% (+100%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

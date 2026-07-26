@@ -55,8 +55,8 @@ Task composition is derived from the evaluation dataset when possible. Entries w
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+40%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 100% (+18%) | 90% (+40%) |
-| Efficiency | 1 | 100% (+50%) | 100% (+92%) |
+| Effectiveness | 1 | 100% (+35%) | 85% (+8%) |
+| Efficiency | 1 | 100% (+65%) | 100% (+75%) |
 
 Score values show skill-assisted performance. Values in parentheses show uplift versus the no-skill baseline when baseline data is available.
 

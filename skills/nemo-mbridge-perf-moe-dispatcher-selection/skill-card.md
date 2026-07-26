@@ -1,5 +1,5 @@
 ## Description: <br>
-Choose the right MoE token dispatcher (alltoall, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage, summarizing patterns from DSV3, Qwen3, Qwen3-Next, and VLM bring-up work. <br>
+Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage. <br>
 
 This skill is ready for commercial/non-commercial use. <br>
 
@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers selecting MoE token dispatchers for optimal training performance and memory efficiency on NVIDIA GPU systems (H100, B200, GB200, GB300). <br>
+Developers and performance engineers selecting optimal MoE token dispatcher configurations for large-scale distributed training on NVIDIA GPU systems. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -27,11 +27,10 @@ Mitigation: Review and scan skill before deployment. <br>
 ## Reference(s): <br>
 - [MoE Optimization Documentation](docs/training/moe-optimization.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [Dispatcher Validation Card](skills/nemo-mbridge-perf-moe-dispatcher-selection/card.yaml) <br>
 
 
 ## Skill Output: <br>
-**Output Type(s):** [Analysis, Configuration instructions, Shell commands] <br>
+**Output Type(s):** [Configuration instructions, Analysis] <br>
 **Output Format:** [Markdown with inline bash code blocks] <br>
 **Output Parameters:** [1D] <br>
 **Other Properties Related to Output:** [None] <br>
@@ -43,7 +42,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task in k8s-sandbox environment with 50% pass threshold. Overall verdict: PASS. <br>
+Evaluated against 1 skill-activation task in k8s-sandbox environment with 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -69,11 +68,11 @@ Underlying evaluation signals used in this run: <br>
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+100%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 78% (+78%) | 100% (+10%) |
-| Efficiency | 1 | 100% (+50%) | 100% (+88%) |
+| Effectiveness | 1 | 82% (+82%) | 100% (+20%) |
+| Efficiency | 1 | 100% (+50%) | 100% (+90%) |
 
 ## Skill Version(s): <br>
-1.0.0+b7643bd (source: pyproject.toml) <br>
+4dde8710 (source: git SHA, committed 2026-07-26) <br>
 
 ## Ethical Considerations: <br>
 NVIDIA believes Trustworthy AI is a shared responsibility and we have established policies and practices to enable development for a wide array of AI applications. When downloaded or used in accordance with our terms of service, developers should work with their internal team to ensure this skill meets requirements for the relevant industry and use case and addresses unforeseen product misuse. <br>

@@ -9,14 +9,14 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers reducing host-driver overhead via CUDA graph capture in Megatron Bridge training workloads, or diagnosing crashes and regressions related to CUDA graph configuration changes. <br>
+Developers and engineers use this skill to reduce host-driver overhead via CUDA graph capture in Megatron Bridge training workloads, or to diagnose crashes and regressions related to CUDA graph configuration changes. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
 
 ## Requirements / Dependencies: <br>
-**Requires API Key or External Credential:** [Not Specified] <br>
-**Credential Type(s):** [None identified] <br>
+**Requires API Key or External Credential:** [No] <br>
+**Credential Type(s):** [None] <br>
 
 Do not include secrets in prompts/logs/output; use least-privilege credentials; rotate keys as appropriate. <br>
 
@@ -43,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 evaluation task (1 positive skill-activation case) in k8s-sandbox environment with 1 attempt per task and a 50% pass threshold. <br>
+Evaluated against 1 evaluation task covering TE-scoped MoE graph configuration guidance. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -69,7 +69,7 @@ Underlying evaluation signals used in this run: <br>
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+100%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+0%) | 94% (+44%) |
-| Effectiveness | 1 | 90% (+90%) | 98% (+18%) |
+| Effectiveness | 1 | 100% (+100%) | 90% (+2%) |
 | Efficiency | 1 | 100% (+14%) | 100% (+100%) |
 
 ## Testing Completed: <br>

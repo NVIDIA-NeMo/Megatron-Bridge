@@ -9,7 +9,7 @@ NVIDIA <br>
 ### License/Terms of Use: <br>
 Apache 2.0 <br>
 ## Use Case: <br>
-Developers and engineers troubleshooting GPU out-of-memory errors and optimizing peak memory usage during Megatron Bridge training workloads. <br>
+Developers and engineers diagnosing GPU out-of-memory errors or reducing peak memory consumption during Megatron Bridge training runs on NVIDIA GPUs. <br>
 
 ### Deployment Geography for Use: <br>
 Global <br>
@@ -25,9 +25,9 @@ Risk: Review before execution as proposals could introduce incorrect or misleadi
 Mitigation: Review and scan skill before deployment. <br>
 
 ## Reference(s): <br>
-- [Parallelisms Documentation](docs/parallelisms.md) <br>
+- [Megatron Bridge Parallelisms Documentation](docs/parallelisms.md) <br>
 - [Performance Tuning Guide](docs/performance-guide.md) <br>
-- [card.yaml (validation metadata)](skills/nemo-mbridge-perf-memory-tuning/card.yaml) <br>
+- [Megatron Bridge Documentation](https://docs.nvidia.com/nemo/megatron-bridge/latest/) <br>
 
 
 ## Skill Output: <br>
@@ -43,7 +43,7 @@ Mitigation: Review and scan skill before deployment. <br>
 
 
 ## Evaluation Tasks: <br>
-Evaluated against 1 positive skill-activation task in k8s-sandbox environment with 1 attempt per task and 50% pass threshold. <br>
+Evaluated against 1 internal skill-activation task in a k8s-sandbox environment with 1 attempt per task and a 50% pass threshold. <br>
 
 ## Evaluation Metrics Used: <br>
 Reported benchmark dimensions: <br>
@@ -69,8 +69,8 @@ Underlying evaluation signals used in this run: <br>
 | Security | 1 | 100% (+0%) | 100% (+0%) |
 | Correctness | 1 | 100% (+40%) | 100% (+0%) |
 | Discoverability | 1 | 100% (+50%) | 94% (+44%) |
-| Effectiveness | 1 | 100% (+18%) | 90% (+40%) |
-| Efficiency | 1 | 100% (+50%) | 100% (+92%) |
+| Effectiveness | 1 | 100% (+35%) | 85% (+8%) |
+| Efficiency | 1 | 100% (+65%) | 100% (+75%) |
 
 ## Testing Completed: <br>
 **[x] Agent Red-Teaming** <br>
