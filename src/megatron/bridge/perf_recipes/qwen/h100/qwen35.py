@@ -21,6 +21,9 @@ from megatron.bridge.perf_recipes.qwen.common import (
     _benchmark_common,
     _perf_precision,
 )
+from megatron.bridge.perf_recipes.qwen.h100.qwen35_runtime import (
+    qwen35_h100_transformer_block_spec,
+)
 from megatron.bridge.recipes.qwen import qwen35_text_35b_a3b_pretrain_config
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
@@ -58,16 +61,25 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.recompute_num_layers = None
     cfg.model.recompute_modules = []
 
-    cfg.model.cuda_graph_impl = "transformer_engine"
-    set_cuda_graph_modules(cfg.model, ["attn", "moe_router", "moe_preprocess"])
-    cfg.model.use_te_rng_tracker = True
-    cfg.rng.te_rng_tracker = True
+    # Static dispatcher metadata removes the synchronization wall that the
+    # scoped graphs targeted. The matched final-stack A/B favored eager.
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.model.transformer_layer_spec = qwen35_h100_transformer_block_spec
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_flex_dispatcher_num_sms = 32
+    cfg.model.moe_flex_dispatcher_num_sms = 16
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_hybridep_num_sms_preprocessing = 108
     cfg.model.moe_router_force_load_balancing = True
-    cfg.model.moe_shared_expert_overlap = False
+    cfg.model.moe_shared_expert_overlap = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.05
+    cfg.model.moe_permute_fusion_into_hybridep = True
+    # MCore uses this flag to validate and align static HybridEP buffers. The
+    # layer spec above replaces only the SM100-only fused expert implementation
+    # with the measured Hopper torch.grouped_mm implementation.
+    cfg.model.use_transformer_engine_op_fuser = True
 
     cfg.ddp.overlap_grad_reduce = False
     cfg.ddp.overlap_param_gather = False
@@ -80,15 +92,20 @@ def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.comm_overlap.delay_wgrad_compute = False
 
     _benchmark_common(cfg)
+    # Restore the final-stack HybridEP settings after the shared benchmark
+    # defaults normalize legacy dispatcher fields and disable the op fuser.
+    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.use_transformer_engine_op_fuser = True
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
-        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
-        "NCCL_GRAPH_REGISTER": 0,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 1,
         "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
         "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
-        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API": 64,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 64,
         "NVLINK_DOMAIN_SIZE": 8,
         "USE_MNNVL": 0,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,

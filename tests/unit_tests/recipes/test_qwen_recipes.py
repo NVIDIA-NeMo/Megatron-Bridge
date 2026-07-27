@@ -694,6 +694,9 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     from megatron.bridge.perf_recipes.qwen.h100.qwen35 import (
         qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config,
     )
+    from megatron.bridge.perf_recipes.qwen.h100.qwen35_runtime import (
+        qwen35_h100_transformer_block_spec,
+    )
     from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
     mod = importlib.import_module("megatron.bridge.recipes.qwen.gb200.qwen35")
@@ -716,13 +719,19 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.train.micro_batch_size == 1
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules == []
-    assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.transformer_layer_spec is qwen35_h100_transformer_block_spec
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.moe_flex_dispatcher_num_sms == 32
+    assert cfg.model.moe_flex_dispatcher_num_sms == 16
+    assert cfg.model.moe_hybridep_num_sms is None
+    assert cfg.model.moe_hybridep_num_sms_preprocessing == 108
     assert cfg.model.moe_router_force_load_balancing is True
-    assert cfg.model.moe_shared_expert_overlap is False
+    assert cfg.model.moe_shared_expert_overlap is True
+    assert cfg.model.moe_expert_rank_capacity_factor == 1.05
+    assert cfg.model.moe_permute_fusion_into_hybridep is True
+    assert cfg.model.use_transformer_engine_op_fuser is True
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
     assert cfg.comm_overlap.delay_wgrad_compute is False
     assert cfg.optimizer.use_precision_aware_optimizer is True
@@ -731,10 +740,50 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.mixed_precision.bf16 is True
     assert cfg.train.train_iters == 50
-    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+
+
+def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the H100 block factory replaces only the routed MoE runtime."""
+    from functools import partial
+    from types import SimpleNamespace
+
+    from megatron.core.transformer.moe.experts import TEGroupedMLP
+    from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    expert_builder = partial(TEGroupedMLP)
+    moe_builder = partial(
+        MoELayer,
+        submodules=MoESubmodules(experts=expert_builder),
+    )
+    layer_specs = [
+        SimpleNamespace(submodules=SimpleNamespace(mlp=moe_builder)),
+        SimpleNamespace(submodules=SimpleNamespace(mlp=moe_builder)),
+    ]
+    block_spec = SimpleNamespace(layer_specs=layer_specs)
+    monkeypatch.setattr(
+        qwen35_runtime,
+        "get_transformer_block_with_experimental_attention_variant_spec",
+        lambda config, vp_stage=None: block_spec,
+    )
+
+    result = qwen35_runtime.qwen35_h100_transformer_block_spec(object())
+
+    assert result is block_spec
+    first_custom_moe = result.layer_specs[0].submodules.mlp
+    second_custom_moe = result.layer_specs[1].submodules.mlp
+    assert first_custom_moe is second_custom_moe
+    assert first_custom_moe.func is qwen35_runtime._Qwen35H100MoELayer
+    assert first_custom_moe.keywords["submodules"].experts.func is qwen35_runtime._Qwen35H100TorchGroupedMLP
 
 
 def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
