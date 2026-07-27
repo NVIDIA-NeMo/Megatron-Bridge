@@ -35,14 +35,21 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 _H100_HYBRIDEP_BF16_ALIGNMENT = 16
+_FLASH_QLA_VERSION = "0.1.2"
 
 
 def _load_flash_qla_gated_delta_rule() -> Any:
     """Load the measured Hopper GDN kernel lazily."""
     try:
+        from flash_qla import __version__ as flash_qla_version
         from flash_qla import chunk_gated_delta_rule
     except (ImportError, RuntimeError, ValueError) as exc:
-        raise ImportError("The Qwen3.5 H100 performance recipe requires flash_qla==0.1.2.") from exc
+        raise ImportError(f"The Qwen3.5 H100 performance recipe requires flash_qla=={_FLASH_QLA_VERSION}.") from exc
+
+    if flash_qla_version != _FLASH_QLA_VERSION:
+        raise ImportError(
+            f"The Qwen3.5 H100 performance recipe requires flash_qla=={_FLASH_QLA_VERSION}; found {flash_qla_version}."
+        )
 
     return chunk_gated_delta_rule
 

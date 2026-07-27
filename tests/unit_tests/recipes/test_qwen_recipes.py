@@ -791,6 +791,42 @@ def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
     assert result.layer_specs[1].submodules.self_attention.module is qwen35_runtime._Qwen35H100FlashQLAGatedDeltaNet
 
 
+def test_qwen35_h100_flash_qla_runtime_requires_exact_version(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the measured GDN runtime rejects a different FlashQLA version."""
+    import sys
+    from types import ModuleType
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    flash_qla = ModuleType("flash_qla")
+    flash_qla.__version__ = "0.1.1"
+    flash_qla.chunk_gated_delta_rule = object()
+    monkeypatch.setitem(sys.modules, "flash_qla", flash_qla)
+
+    with pytest.raises(ImportError, match=r"requires flash_qla==0\.1\.2; found 0\.1\.1"):
+        qwen35_runtime._load_flash_qla_gated_delta_rule()
+
+
+def test_qwen35_h100_flash_qla_runtime_loads_pinned_version(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the measured GDN runtime accepts the pinned FlashQLA version."""
+    import sys
+    from types import ModuleType
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    gated_delta_rule = object()
+    flash_qla = ModuleType("flash_qla")
+    flash_qla.__version__ = "0.1.2"
+    flash_qla.chunk_gated_delta_rule = gated_delta_rule
+    monkeypatch.setitem(sys.modules, "flash_qla", flash_qla)
+
+    assert qwen35_runtime._load_flash_qla_gated_delta_rule() is gated_delta_rule
+
+
 def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
     """Test the static H100 rank budget without the SM100 op-fuser alignment."""
     from types import SimpleNamespace
