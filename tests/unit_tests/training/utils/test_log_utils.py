@@ -18,6 +18,7 @@ from unittest.mock import patch
 
 import pytest
 
+from megatron.bridge.training.config import LoggerConfig
 from megatron.bridge.training.utils.log_utils import safe_serialize, setup_logging
 
 
@@ -103,6 +104,15 @@ class TestSetupLogging:
         setup_logging()
 
         assert logging.getLogger().level == logging.WARNING
+
+    def test_default_logger_config_allows_environment_override(self):
+        """Test that the documented environment override works with the standard config default."""
+        os.environ["MEGATRON_BRIDGE_LOGGING_LEVEL"] = str(logging.DEBUG)
+        logger_config = LoggerConfig()
+
+        setup_logging(logging_level=logger_config.logging_level, filter_warning=False)
+
+        assert logging.getLogger().level == logging.DEBUG
 
     def test_setup_logging_sets_megatron_bridge_loggers(self):
         """Test that setup_logging sets level for megatron.bridge loggers by default."""
