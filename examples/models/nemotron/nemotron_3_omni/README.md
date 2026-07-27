@@ -192,10 +192,16 @@ All training scripts use the Nemotron-3-Nano-Omni-30B-A3B-Reasoning
 pretrained checkpoint and enable in-batch sequence packing via
 `dataset.enable_in_batch_packing=True`. Default GPU layout per script:
 
-For the canonical expanded-sequence image path, the collator owns THD packing.
-The model receives the final packed tensors and global boundaries, inserts
-image embeddings without changing sequence length, and then selects its
-rank-local context-parallel shard.
+The canonical expanded-sequence collator owns THD packing for text, image,
+video, and audio rows. The model receives the final packed tensors and global
+boundaries, inserts media without changing sequence length, and applies only
+the rank-local CP/SP shard. Alignment gaps are carried as a padding mask so
+they do not affect MoE routing statistics.
+
+Compact variable-length packs do not yet restore the original per-row batch
+dimension for `seq_aux_loss`; that requires follow-up boundary-aware
+unflattening in Megatron-Core. Attention and Mamba sequence boundaries remain
+per row in the current implementation.
 
 - **Full SFT** — 2 nodes / 16 GPUs (full optimizer state for ~33 B params)
 - **LoRA PEFT** — 1 node / 8 GPUs

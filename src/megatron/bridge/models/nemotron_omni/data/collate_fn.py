@@ -967,6 +967,7 @@ def nemotron_omni_collate_fn(
                 in_batch_packing_pad_to_multiple_of=in_batch_packing_pad_to_multiple_of,
                 pad_token_id=int(pad_token_id),
                 ignore_index=IGNORE_INDEX,
+                emit_packed_padding_mask=True,
             )
             # Do not synthesize PackedSeqParams.tokens_per_sample: canonical
             # packing is compact and rows may have different physical lengths.

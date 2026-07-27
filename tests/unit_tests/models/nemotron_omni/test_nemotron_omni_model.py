@@ -462,6 +462,7 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
     position_ids = torch.tensor([[0, 1, 2, 3, 0, 1, 2, 3]])
     labels = input_ids.clone()
     loss_mask = torch.tensor([[1.0, 1.0, 0.0, 0.0, 1.0, 1.0, 0.0, 0.0]])
+    padding_mask = torch.tensor([[False, False, False, True, False, False, False, True]])
     cu_seqlens = torch.tensor([0, 3, 6], dtype=torch.int32)
     cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32)
     packed_seq_params = PackedSeqParams(
@@ -480,6 +481,7 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
         position_ids=position_ids,
         labels=labels,
         loss_mask=loss_mask,
+        padding_mask=padding_mask,
         packed_seq_params=packed_seq_params,
         images=torch.ones(1),
     )
@@ -496,6 +498,10 @@ def test_collator_owned_packing_is_preserved_while_model_applies_cp_shard(monkey
     assert torch.equal(local_loss_mask, loss_mask.index_select(1, cp_index))
     assert model.language_model.last_kwargs["packed_seq_params"] is packed_seq_params
     assert torch.equal(model.language_model.last_kwargs["labels"], labels.index_select(1, cp_index))
+    assert torch.equal(
+        model.language_model.last_kwargs["padding_mask"],
+        padding_mask.index_select(1, cp_index),
+    )
     assert model.language_model.last_kwargs["attention_mask"] is None
 
 
@@ -557,6 +563,7 @@ def test_real_radio_image_forward_with_collator_owned_cp1_packing(
     with torch.no_grad():
         output = model(
             input_ids=input_ids,
+            padding_mask=torch.zeros_like(attention_mask),
             packed_seq_params=caller_packed_seq_params,
             pixel_values=torch.randn(1, 3, 32, 32, device="cuda"),
             imgs_sizes=torch.tensor([[32, 32]], dtype=torch.int32, device="cuda"),
@@ -643,7 +650,7 @@ def test_packed_mamba_resets_state_between_samples(single_rank_model_parallel):
     provider.finalize()
     model = provider.provide().cuda().eval()
 
-    def forward(input_ids, cu_seqlens, cu_seqlens_padded):
+    def forward(input_ids, padding_mask, cu_seqlens, cu_seqlens_padded):
         caller_packed_seq_params = PackedSeqParams(
             qkv_format="thd",
             cu_seqlens_q=cu_seqlens,
@@ -656,22 +663,26 @@ def test_packed_mamba_resets_state_between_samples(single_rank_model_parallel):
         )
         return model(
             input_ids=input_ids,
+            padding_mask=padding_mask,
             packed_seq_params=caller_packed_seq_params,
         )
 
     input_ids = torch.tensor([[7, 8, 9, 0, 11, 12, 0, 0]], device="cuda")
+    padding_mask = torch.tensor([[False, False, False, True, False, False, True, True]], device="cuda")
     cu_seqlens = torch.tensor([0, 3, 5], dtype=torch.int32, device="cuda")
     cu_seqlens_padded = torch.tensor([0, 4, 8], dtype=torch.int32, device="cuda")
 
     with torch.no_grad():
-        packed_output = forward(input_ids, cu_seqlens, cu_seqlens_padded)
+        packed_output = forward(input_ids, padding_mask, cu_seqlens, cu_seqlens_padded)
         first_output = forward(
             input_ids[:, :4],
+            padding_mask[:, :4],
             torch.tensor([0, 3], dtype=torch.int32, device="cuda"),
             torch.tensor([0, 4], dtype=torch.int32, device="cuda"),
         )
         second_output = forward(
             input_ids[:, 4:],
+            padding_mask[:, 4:],
             torch.tensor([0, 2], dtype=torch.int32, device="cuda"),
             torch.tensor([0, 4], dtype=torch.int32, device="cuda"),
         )

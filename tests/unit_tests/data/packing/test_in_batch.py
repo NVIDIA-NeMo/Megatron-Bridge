@@ -162,6 +162,28 @@ class TestPackBatchSequences:
         # max_seqlen should be 6 (longest padded sequence)
         assert max_seqlen.item() == 6
 
+    def test_packing_marks_only_physical_alignment_gaps_as_padding(self):
+        """MoE routing can exclude collator-inserted THD alignment gaps."""
+        batch = {
+            "tokens": torch.tensor([[1, 2, 3, 0, 0], [4, 5, 0, 0, 0]]),
+            "labels": torch.tensor([[2, 3, -100, -100, -100], [5, -100, -100, -100, -100]]),
+            "loss_mask": torch.tensor([[1.0, 1.0, 0.0, 0.0, 0.0], [1.0, 0.0, 0.0, 0.0, 0.0]]),
+            "attention_mask": torch.tensor([[1, 1, 1, 0, 0], [1, 1, 0, 0, 0]]),
+            "position_ids": torch.arange(5).unsqueeze(0).expand(2, -1),
+        }
+
+        pack_right_padded_sequence_batch_to_mcore_thd(
+            batch,
+            pad_token_id=0,
+            pad_to_multiple_of=4,
+            emit_padding_mask=True,
+        )
+
+        assert batch["padding_mask"].dtype == torch.bool
+        assert batch["padding_mask"].tolist() == [[False, False, False, True, False, False, True, True]]
+        assert batch["cu_seqlens_q"].tolist() == [0, 3, 5]
+        assert batch["cu_seqlens_q_padded"].tolist() == [0, 4, 8]
+
     def test_packing_with_larger_multiple(self):
         """Test packing with larger pad_to_multiple_of (e.g., for CP=4)."""
         tokens = torch.tensor(

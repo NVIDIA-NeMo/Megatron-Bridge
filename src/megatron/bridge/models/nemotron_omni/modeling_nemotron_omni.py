@@ -115,7 +115,7 @@ class NemotronOmniModel(MegatronModule):
     selects the rank-local CP shard without changing packed metadata.
 
     Image, video, sound, and text inputs use the same one-feature-per-placeholder
-    contract before model-owned packing.
+    contract.
     """
 
     model_owns_packing = False
@@ -543,8 +543,10 @@ class NemotronOmniModel(MegatronModule):
         attention_mask: Optional[torch.Tensor],
         labels: Optional[torch.Tensor],
         loss_mask: Optional[torch.Tensor],
+        padding_mask: Optional[torch.Tensor],
         packed_seq_params: Optional[PackedSeqParams],
     ) -> tuple[
+        Optional[torch.Tensor],
         Optional[torch.Tensor],
         Optional[torch.Tensor],
         Optional[torch.Tensor],
@@ -561,6 +563,7 @@ class NemotronOmniModel(MegatronModule):
             (position_ids, 1),
             (labels, 1),
             (loss_mask, 1),
+            (padding_mask, 1),
         )
         full_lengths = {tensor.size(dim) for tensor, dim in sequence_tensors if tensor is not None}
         if len(full_lengths) > 1:
@@ -568,7 +571,7 @@ class NemotronOmniModel(MegatronModule):
         if not full_lengths:
             # Intermediate PP stages receive an already CP-local pipeline
             # tensor and only need the unchanged global THD metadata.
-            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, False
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, padding_mask, False
 
         total_tokens = full_lengths.pop()
         if packed_seq_params is not None:
@@ -586,13 +589,14 @@ class NemotronOmniModel(MegatronModule):
             device=device,
         )
         if index is None:
-            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, False
+            return input_ids, combined_embeddings, position_ids, attention_mask, labels, loss_mask, padding_mask, False
 
         input_ids = self._select_sequence(input_ids, index, dim=1)
         combined_embeddings = self._select_sequence(combined_embeddings, index, dim=0)
         position_ids = self._select_sequence(position_ids, index, dim=1)
         labels = self._select_sequence(labels, index, dim=1)
         loss_mask = self._select_sequence(loss_mask, index, dim=1)
+        padding_mask = self._select_sequence(padding_mask, index, dim=1)
 
         if attention_mask is not None:
             attention_seq_dim = 1 if attention_mask.dim() == 2 else 2
@@ -605,6 +609,7 @@ class NemotronOmniModel(MegatronModule):
             attention_mask,
             labels,
             loss_mask,
+            padding_mask,
             loss_mask is not None,
         )
 
@@ -615,6 +620,7 @@ class NemotronOmniModel(MegatronModule):
         attention_mask: Optional[torch.Tensor] = None,
         labels: Optional[torch.Tensor] = None,
         loss_mask: Optional[torch.Tensor] = None,
+        padding_mask: Optional[torch.Tensor] = None,
         inference_context=None,
         runtime_gather_output: Optional[bool] = None,
         packed_seq_params: Optional[PackedSeqParams] = None,
@@ -678,7 +684,7 @@ class NemotronOmniModel(MegatronModule):
                 input_ids,
                 image_embeddings,
                 self.image_token_index,
-                attention_mask,
+                ~padding_mask if packed_seq_params is not None and padding_mask is not None else attention_mask,
             )
 
             if self.sound_token_index > 0:
@@ -689,7 +695,7 @@ class NemotronOmniModel(MegatronModule):
                     input_ids,
                     sound_embeddings,
                     self.sound_token_index,
-                    attention_mask,
+                    ~padding_mask if packed_seq_params is not None and padding_mask is not None else attention_mask,
                 )
 
         if packed_seq_params is not None:
@@ -705,6 +711,7 @@ class NemotronOmniModel(MegatronModule):
             attention_mask,
             labels,
             loss_mask,
+            padding_mask,
             return_sliced_loss_mask,
         ) = self._apply_context_parallel_sharding(
             input_ids=lm_input_ids,
@@ -713,6 +720,7 @@ class NemotronOmniModel(MegatronModule):
             attention_mask=attention_mask,
             labels=labels,
             loss_mask=loss_mask,
+            padding_mask=padding_mask,
             packed_seq_params=packed_seq_params,
         )
 
@@ -736,6 +744,15 @@ class NemotronOmniModel(MegatronModule):
                 combined_embeddings,
                 group=self.pg_collection.tp,
             ).contiguous()
+        if padding_mask is not None and self.sequence_parallel_lm:
+            padding_mask = (
+                tensor_parallel.scatter_to_sequence_parallel_region(
+                    padding_mask.transpose(0, 1).contiguous(),
+                    group=self.pg_collection.tp,
+                )
+                .transpose(0, 1)
+                .contiguous()
+            )
 
         # Match LLaVAModel's external-embedding contract. Once media has been
         # merged into decoder embeddings, the language model must not receive
@@ -758,6 +775,7 @@ class NemotronOmniModel(MegatronModule):
             inference_params=inference_params,
             runtime_gather_output=runtime_gather_output,
             packed_seq_params=language_packed_seq_params,
+            padding_mask=padding_mask,
         )
         if return_sliced_loss_mask:
             return output, loss_mask

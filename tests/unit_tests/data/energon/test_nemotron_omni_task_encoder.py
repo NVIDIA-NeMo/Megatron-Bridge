@@ -444,34 +444,6 @@ def test_raw_video_bytes_are_decoded_through_one_temporary_mp4(monkeypatch):
     assert sampled_fps == 2.5
 
 
-def test_energon_canonical_collator_owns_complete_thd_packing(monkeypatch):
-    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
-    encoder = NemotronOmniTaskEncoder(
-        processor=_Processor([[1, 2, 3], [4, 5]]),
-        seq_length=8,
-        enable_in_batch_packing=True,
-        in_batch_packing_pad_to_multiple_of=4,
-        pad_to_multiple_of=1,
-    )
-    samples = [
-        encoder.encode_sample(_sample([{"role": "user", "content": "text"}], key=f"row-{row_index}"))
-        for row_index in range(2)
-    ]
-
-    batch = encoder.batch(samples)
-    encoded = encoder.encode_batch(batch)
-
-    assert batch.input_ids.tolist() == [[1, 2, 3, PAD_AND_END_ID, 4, 5, PAD_AND_END_ID, PAD_AND_END_ID]]
-    assert batch.attention_mask is None
-    assert getattr(batch, "padding_mask", None) is None
-    assert batch.cu_seqlens_q.tolist() == [0, 3, 5]
-    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
-    assert batch.total_tokens == 8
-    assert encoded["tokens"] is batch.input_ids
-    assert encoded.get("padding_mask") is None
-    assert get_packed_seq_params(encoded).tokens_per_sample is None
-
-
 def test_energon_llava_multimodal_packing_uses_post_merge_boundaries(monkeypatch):
     from PIL import Image
 
@@ -542,7 +514,8 @@ def test_energon_llava_multimodal_packing_uses_post_merge_boundaries(monkeypatch
     assert packed_seq_params.seq_idx[0, 264:].unique().tolist() == [1]
 
 
-def test_hf_and_energon_llava_packing_are_identical_for_image_video_audio(monkeypatch):
+@pytest.mark.parametrize("collapse_image_tokens", [False, True], ids=["canonical", "llava"])
+def test_hf_and_energon_packing_are_identical_for_image_video_audio(monkeypatch, collapse_image_tokens):
     from PIL import Image
 
     monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
@@ -599,7 +572,12 @@ def test_hf_and_energon_llava_packing_are_identical_for_image_video_audio(monkey
         "pad_to_multiple_of": 1,
     }
 
-    hf_batch = omni_collate.nemotron_omni_llava_collate_fn(examples, _Processor(rows), **collate_kwargs)
+    hf_collate_fn = (
+        omni_collate.nemotron_omni_llava_collate_fn
+        if collapse_image_tokens
+        else omni_collate.nemotron_omni_expanded_collate_fn
+    )
+    hf_batch = hf_collate_fn(examples, _Processor(rows), **collate_kwargs)
     energon_encoder = NemotronOmniTaskEncoder(
         processor=_Processor(rows),
         seq_length=1024,
@@ -609,7 +587,7 @@ def test_hf_and_energon_llava_packing_are_identical_for_image_video_audio(monkey
         temporal_patch_size=2,
         num_mel_bins=4,
         pad_to_multiple_of=1,
-        collapse_image_tokens=True,
+        collapse_image_tokens=collapse_image_tokens,
     )
     energon_batch = energon_encoder.encode_batch(energon_encoder.batch(normalized_samples))
 
@@ -636,6 +614,10 @@ def test_hf_and_energon_llava_packing_are_identical_for_image_video_audio(monkey
     assert hf_batch["total_tokens"] == energon_batch["total_tokens"] == 800
     assert hf_batch["cu_seqlens_q"].tolist() == [0, 265, 789]
     assert hf_batch["cu_seqlens_q_padded"].tolist() == [0, 272, 800]
+    if not collapse_image_tokens:
+        assert hf_batch["input_ids"].shape == (1, 800)
+        assert hf_batch["padding_mask"].sum().item() == 11
+        assert torch.equal(hf_batch["padding_mask"], energon_batch["padding_mask"])
     assert torch.equal(
         hf_batch["visual_inputs"].pixel_values,
         energon_batch["visual_inputs"].pixel_values,
@@ -667,3 +649,29 @@ def test_energon_llava_temporal_video_refuses_unsafe_sequence_truncation(monkeyp
 
     with pytest.raises(ValueError, match="cannot fit the rectangular multimodal batch"):
         encoder.batch([encoded])
+def test_energon_canonical_collator_owns_complete_thd_packing(monkeypatch):
+    monkeypatch.setattr(omni_collate, "build_assistant_loss_mask", _mask_all_tokens)
+    encoder = NemotronOmniTaskEncoder(
+        processor=_Processor([[1, 2, 3], [4, 5]]),
+        seq_length=8,
+        enable_in_batch_packing=True,
+        in_batch_packing_pad_to_multiple_of=4,
+        pad_to_multiple_of=1,
+    )
+    samples = [
+        encoder.encode_sample(_sample([{"role": "user", "content": "text"}], key=f"row-{row_index}"))
+        for row_index in range(2)
+    ]
+
+    batch = encoder.batch(samples)
+    encoded = encoder.encode_batch(batch)
+
+    assert batch.input_ids.tolist() == [[1, 2, 3, PAD_AND_END_ID, 4, 5, PAD_AND_END_ID, PAD_AND_END_ID]]
+    assert batch.attention_mask is None
+    assert batch.padding_mask.tolist() == [[False, False, False, True, False, False, True, True]]
+    assert batch.cu_seqlens_q.tolist() == [0, 3, 5]
+    assert batch.cu_seqlens_q_padded.tolist() == [0, 4, 8]
+    assert batch.total_tokens == 8
+    assert encoded["tokens"] is batch.input_ids
+    assert encoded["padding_mask"] is batch.padding_mask
+    assert get_packed_seq_params(encoded).tokens_per_sample is None
