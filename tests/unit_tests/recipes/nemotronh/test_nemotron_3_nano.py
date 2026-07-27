@@ -17,8 +17,8 @@ Unit tests for Nemotron 3 and 3.5 Nano recipe configuration builders.
 
 Tests cover:
 - Separate Nemotron 3 and 3.5 pretrain configurations
-- SFT configuration with Hugging Face-derived model architecture
-- PEFT configuration with Hugging Face-derived model architecture, LoRA, and DoRA
+- SFT configuration with explicit Nemotron 3.5 MTP overrides
+- PEFT configuration with explicit Nemotron 3.5 MTP overrides, LoRA, and DoRA
 - MoE-specific settings (DeepEP, expert parallelism)
 - Parallelism and tokenizer configurations
 """
@@ -252,37 +252,78 @@ class TestNemotron3NanoSft:
         assert config.checkpoint.pretrained_checkpoint == "/path/to/checkpoint"
 
     @pytest.mark.parametrize(
-        ("recipe_factory", "model_id", "mtp_num_layers"),
+        ("recipe_factory", "mtp_num_layers", "tokenizer_model"),
         [
-            (nemotron_3_nano_sft_config, recipe_module._NEMOTRON_3_NANO_MODEL_ID, 0),
-            (nemotron_3_nano_peft_config, recipe_module._NEMOTRON_3_NANO_MODEL_ID, 0),
-            (nemotron_3_5_nano_sft_config, recipe_module._NEMOTRON_3_5_NANO_MODEL_ID, 2),
-            (nemotron_3_5_nano_peft_config, recipe_module._NEMOTRON_3_5_NANO_MODEL_ID, 2),
+            (nemotron_3_nano_sft_config, 0, recipe_module._NEMOTRON_3_NANO_MODEL_ID),
+            (nemotron_3_nano_peft_config, 0, recipe_module._NEMOTRON_3_NANO_MODEL_ID),
+            (nemotron_3_5_nano_sft_config, 2, recipe_module._NEMOTRON_3_5_NANO_MODEL_ID),
+            (nemotron_3_5_nano_peft_config, 2, recipe_module._NEMOTRON_3_5_NANO_MODEL_ID),
         ],
     )
-    def test_finetuning_derives_mtp_from_hf_model(self, recipe_factory, model_id, mtp_num_layers):
-        """SFT and PEFT preserve the MTP architecture selected by AutoBridge."""
-        provider = HybridModelProvider(
-            mtp_num_layers=mtp_num_layers,
-            mtp_hybrid_override_pattern="*E" if mtp_num_layers else None,
-            mtp_use_repeated_layer=bool(mtp_num_layers),
-            keep_mtp_spec_in_bf16=bool(mtp_num_layers),
-            mtp_loss_scaling_factor=0.3 if mtp_num_layers else 0.1,
-        )
+    def test_finetuning_uses_nemotron_3_base_model(
+        self,
+        recipe_factory,
+        mtp_num_layers,
+        tokenizer_model,
+    ):
+        """SFT and PEFT derive the provider from Nemotron 3 before applying MTP."""
+        provider = HybridModelProvider()
         bridge = Mock()
         bridge.to_megatron_provider.return_value = provider
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_factory()
 
-        from_hf.assert_called_once_with(model_id)
+        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
         bridge.to_megatron_provider.assert_called_once_with(load_weights=False)
         assert config.model is provider
         assert config.model.mtp_num_layers == mtp_num_layers
         assert config.model.mtp_hybrid_override_pattern == ("*E" if mtp_num_layers else None)
         assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
         assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
-        assert config.tokenizer.tokenizer_model == model_id
+        assert config.model.mtp_loss_scaling_factor == (0.3 if mtp_num_layers else 0.1)
+        assert config.tokenizer.tokenizer_model == tokenizer_model
+
+    @pytest.mark.parametrize(
+        ("recipe_factory", "base_factory_name", "recipe_kwargs", "base_args"),
+        [
+            (
+                nemotron_3_5_nano_sft_config,
+                "nemotron_3_nano_sft_8gpu_h100_bf16_config",
+                {},
+                (),
+            ),
+            (
+                nemotron_3_5_nano_peft_config,
+                "nemotron_3_nano_peft_8gpu_h100_bf16_config",
+                {"peft_scheme": "dora"},
+                ("dora",),
+            ),
+        ],
+    )
+    def test_nemotron_3_5_finetuning_overrides_base_recipe(
+        self,
+        recipe_factory,
+        base_factory_name,
+        recipe_kwargs,
+        base_args,
+    ):
+        """Nemotron 3.5 SFT and PEFT mutate their corresponding Nemotron 3 config."""
+        base_config = Mock()
+        base_config.model = HybridModelProvider()
+        base_config.tokenizer = Mock()
+
+        with patch.object(recipe_module, base_factory_name, return_value=base_config) as base_factory:
+            config = recipe_factory(**recipe_kwargs)
+
+        base_factory.assert_called_once_with(*base_args)
+        assert config is base_config
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
 
     def test_finetuning_recipes_do_not_expose_model_id(self):
         """Model selection is fixed by separate Nemotron 3 and 3.5 factories."""
@@ -293,19 +334,19 @@ class TestNemotron3NanoSft:
 
     def test_nemotron_3_5_openmath_sft_recipe_owns_verified_h100_defaults(self):
         """The dedicated H100 recipe makes the standard packed SFT command concise."""
-        provider = HybridModelProvider(
-            mtp_num_layers=2,
-            mtp_hybrid_override_pattern="*E",
-            mtp_use_repeated_layer=True,
-            keep_mtp_spec_in_bf16=True,
-            mtp_loss_scaling_factor=0.3,
-        )
+        provider = HybridModelProvider()
         bridge = Mock()
         bridge.to_megatron_provider.return_value = provider
 
-        with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge):
+        with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge) as from_hf:
             config = recipe_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
 
+        from_hf.assert_called_once_with(recipe_module._NEMOTRON_3_NANO_MODEL_ID)
+        assert config.model.mtp_num_layers == 2
+        assert config.model.mtp_hybrid_override_pattern == "*E"
+        assert config.model.mtp_use_repeated_layer is True
+        assert config.model.keep_mtp_spec_in_bf16 is True
+        assert config.model.mtp_loss_scaling_factor == 0.3
         assert config.model.tensor_model_parallel_size == 2
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1
