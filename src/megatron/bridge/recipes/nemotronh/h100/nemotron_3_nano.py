@@ -621,7 +621,11 @@ def _nemotron_3_nano_peft_8gpu_h100_bf16_config(
 
 def nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Nemotron 3 Nano."""
-    return _nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme)
+    cfg = _nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme)
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
+    return cfg
 
 
 def nemotron_3_5_nano_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
