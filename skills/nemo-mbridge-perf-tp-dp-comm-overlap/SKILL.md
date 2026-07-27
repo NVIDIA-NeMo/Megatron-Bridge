@@ -97,13 +97,13 @@ optimizer, keep both config fields consistent, and test checkpointing
 separately: some recipes disable optimizer-step gather overlap because of
 async-checkpoint interactions.
 
-For MoE models that split dense and expert parameters into a chained
-optimizer, validate optimizer construction before benchmarking. On the
-measured Qwen3.5-35B-A3B TP1/PP1/EP16 path, setting both optimizer-step gather
-fields to `True` left one distributed-optimizer group with no model chunks.
-Construction failed before iteration 1 when `DistributedOptimizer` read
-`self.model_chunks[0].ddp_config`. Treat this as a topology/grouping
-compatibility gate, not a throughput regression:
+Validate the model-chunk topology before benchmarking this path. MCore separates
+the first model chunk, where gather overlaps the optimizer step, from all
+remaining chunks. On the measured Qwen3.5-35B-A3B TP1/PP1/EP16 path with no
+virtual pipeline parallelism, there was only one chunk, so the remaining-chunk
+optimizer group was empty. Construction failed before iteration 1 when
+`DistributedOptimizer` read `self.model_chunks[0].ddp_config`. Treat this as a
+topology compatibility gate, not a throughput regression:
 
 ```text
 DistributedOptimizer.__init__
@@ -130,10 +130,11 @@ executor.env_vars["NVTE_BWD_LAYERNORM_SM_MARGIN"] = str(self.layernorm_sm_margin
 6. Optimizer-step parameter-gather overlap is not the same as
    `ddp.overlap_param_gather`; enable the optimizer and comm-overlap fields
    together and verify distributed-optimizer bucketing plus checkpointing.
-7. Chained dense/expert optimizers can produce a parameter group with no model
-   chunks on this path. Require optimizer construction and at least one finite
-   iteration before timing; a pre-iteration `model_chunks[0]` failure is an
-   unsupported grouping, not a performance sample.
+7. A single model chunk produces an empty remaining-chunk optimizer group on
+   the tested optimizer-step gather path. Require at least two model chunks,
+   optimizer construction, and one finite iteration before timing; a
+   pre-iteration `model_chunks[0]` failure is an unsupported topology, not a
+   performance sample.
 
 ## Verification
 

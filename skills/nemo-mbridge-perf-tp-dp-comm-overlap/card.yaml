@@ -11,7 +11,7 @@ validation_status:
     - code_verified
   optimizer_step_param_gather_overlap:
     - code_verified
-    - runtime_rejected_on_qwen35_chained_optimizer
+    - runtime_rejected_on_qwen35_single_model_chunk
   pp_overlap_auto_selection:
     - code_verified
   launch_env_wiring:
@@ -41,7 +41,7 @@ known_constraints:
   - TP overlap requires Transformer Engine to be available.
   - DP overlap is tied to the distributed-optimizer path.
   - Optimizer-step parameter-gather overlap must be set consistently on optimizer and CommOverlapConfig and disables ordinary DDP bucketing.
-  - The measured Qwen3.5-35B-A3B TP1/PP1/EP16 chained dense/expert optimizer rejected optimizer-step parameter-gather overlap before iteration 1 because one distributed-optimizer group had an empty model_chunks list.
+  - MCore splits the first model chunk from the remaining chunks for optimizer-step parameter-gather overlap; the measured Qwen3.5-35B-A3B TP1/PP1/EP16 path had one chunk and rejected the resulting empty remainder group before iteration 1.
   - Checkpoint behavior needs separate validation because some recipes disable optimizer-step parameter-gather overlap for async-checkpoint compatibility.
   - PP overlap behavior depends on the pipeline schedule and is not identical for every PP setup.
   - Launch-time environment tuning is part of practical overlap behavior.
@@ -61,5 +61,5 @@ evidence:
   - tests/unit_tests/models/test_model_instantiation.py
   - tests/unit_tests/training/test_comm_overlap.py
 follow_up_validation:
-  - Fix or explicitly gate empty model-chunk groups before benchmarking optimizer-step parameter-gather overlap on chained dense/expert MoE optimizers.
+  - Fix or explicitly gate the single-model-chunk case before benchmarking optimizer-step parameter-gather overlap without virtual pipeline chunks.
   - Add a functional PP smoke for interleaved pipeline overlap.
