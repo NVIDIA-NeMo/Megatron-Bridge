@@ -212,6 +212,29 @@ def test_parser_consumes_repeatable_srun_args():
     assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
 
 
+def test_parser_consumes_additional_slurm_parameters():
+    module = _load_setup_experiment_module()
+
+    args, training_args = module.parse_args(
+        [
+            "--additional-slurm-params",
+            "segment=8;reservation=testing",
+            "--recipe",
+            "gpt_oss_20b_pretrain_config",
+        ]
+    )
+
+    assert args.additional_slurm_params == {"segment": "8", "reservation": "testing"}
+    assert training_args == ["--recipe", "gpt_oss_20b_pretrain_config"]
+
+
+def test_additional_slurm_parameters_require_key_value_pairs():
+    module = _load_setup_experiment_module()
+
+    with pytest.raises(SystemExit):
+        module.parse_args(["--additional-slurm-params", "segment"])
+
+
 @pytest.mark.parametrize("option", ["-lmc", "--peak-mem-clk", "--peak_mem_clk"])
 def test_parser_consumes_peak_mem_clk(option):
     module = _load_setup_experiment_module()
@@ -440,12 +463,12 @@ def test_slurm_executor_configures_local_tunnel_job_dir(tmp_path, monkeypatch):
     assert "mem" not in executor.kwargs
     assert executor.env_vars == {}
     assert set(executor.container_env) == {"HF_TOKEN", "PYTHONPATH"}
-    assert executor.additional_parameters == {"export": "PATH,HF_TOKEN", "mem": "0"}
+    assert executor.additional_parameters == {"export": "PATH,HF_TOKEN"}
     assert executor.container_mounts == ["/host:/container"]
     assert executor.srun_args == []
 
 
-def test_slurm_executor_accepts_partial_node_memory_request(tmp_path, monkeypatch):
+def test_slurm_executor_forwards_additional_slurm_parameters(tmp_path, monkeypatch):
     module = _load_setup_experiment_module()
 
     class _SlurmExecutor:
@@ -460,14 +483,14 @@ def test_slurm_executor_accepts_partial_node_memory_request(tmp_path, monkeypatc
         [
             "--gpus-per-node",
             "4",
-            "--mem",
-            "512G",
             "--account",
             "account",
             "--partition",
             "partition",
             "--container-image",
             "image.sqsh",
+            "--additional_slurm_params",
+            "mem=512G",
             "--recipe",
             "qwen35_vl_35b_a3b_peft_config",
         ]
@@ -523,37 +546,6 @@ def test_benchmark_slurm_executor_uses_the_generic_cluster_policy(tmp_path, monk
     assert set(executor.container_env) == {"PYTHONPATH"}
 
 
-def test_slurm_executor_requests_exclusive_node_only_when_explicit(tmp_path, monkeypatch):
-    module = _load_setup_experiment_module()
-
-    class _SlurmExecutor:
-        def __init__(self, **kwargs):
-            self.kwargs = kwargs
-
-    module.run.LocalTunnel = lambda **kwargs: types.SimpleNamespace(**kwargs)
-    module.run.Packager = object
-    module.run.SlurmExecutor = _SlurmExecutor
-    monkeypatch.setattr(module, "get_nemorun_home", lambda: str(tmp_path))
-    args, _ = module.parse_args(
-        [
-            "--gpus-per-node",
-            "8",
-            "--exclusive",
-            "--account",
-            "account",
-            "--partition",
-            "partition",
-            "--container-image",
-            "image.sqsh",
-        ]
-    )
-
-    executor = module._build_executor(args, [], [])
-
-    assert "exclusive" not in executor.kwargs
-    assert executor.additional_parameters["exclusive"] is True
-
-
 def test_training_task_environment_does_not_inject_benchmark_offline_defaults():
     module = _load_setup_experiment_module()
     environment = module._task_environment()
@@ -595,7 +587,7 @@ def test_slurm_executor_can_skip_gpu_request_for_implicit_whole_node_clusters(tm
 
     assert executor.kwargs["ntasks_per_node"] == 8
     assert "gpus_per_node" not in executor.kwargs
-    assert executor.additional_parameters == {"export": "PATH", "mem": "0"}
+    assert executor.additional_parameters == {"export": "PATH"}
     assert executor.srun_args == ["--mpi=pmix", "--container-writable"]
 
 

@@ -74,16 +74,13 @@ Arguments not owned by this launcher are forwarded unchanged to run_recipe.py.
     execution.add_argument("--account", default=os.environ.get("SLURM_ACCOUNT"), help="Slurm account.")
     execution.add_argument("--partition", default=os.environ.get("SLURM_PARTITION"), help="Slurm partition.")
     execution.add_argument("--time", default="04:00:00", help="Slurm time limit.")
-    execution.add_argument(
-        "--mem",
-        default="0",
-        help="Slurm memory request per node, for example 512G. Defaults to all node memory.",
-    )
     execution.add_argument("--gres", help="Optional Slurm GRES value.")
     execution.add_argument(
-        "--exclusive",
-        action="store_true",
-        help="Request exclusive Slurm nodes; by default training jobs may share nodes.",
+        "--additional-slurm-params",
+        "--additional_slurm_params",
+        type=_parse_additional_slurm_params,
+        default={},
+        help="Additional sbatch parameters as semicolon-separated KEY=VALUE pairs.",
     )
     execution.add_argument(
         "--no-gpu-resource-request",
@@ -171,6 +168,17 @@ def _parse_mounts(values: list[str]) -> list[str]:
         if mount not in mounts:
             mounts.append(mount)
     return mounts
+
+
+def _parse_additional_slurm_params(value: str) -> dict[str, str]:
+    """Parse semicolon-separated Slurm executor parameters."""
+    parameters: dict[str, str] = {}
+    for item in value.split(";"):
+        key, separator, parameter_value = item.partition("=")
+        if not separator or not key or not parameter_value:
+            raise argparse.ArgumentTypeError("--additional-slurm-params expects semicolon-separated KEY=VALUE pairs.")
+        parameters[key] = parameter_value
+    return parameters
 
 
 def _validate_args(
@@ -282,11 +290,9 @@ def _build_executor(
     # forwarding the host PATH into the training container.
     slurm_env_names = list(dict.fromkeys(["PATH", *env_names]))
     executor.additional_parameters = {
+        **args.additional_slurm_params,
         "export": ",".join(slurm_env_names),
-        "mem": args.mem,
     }
-    if args.exclusive:
-        executor.additional_parameters["exclusive"] = True
     executor.srun_args = srun_args
     return executor
 

@@ -5,26 +5,9 @@ title: qwen3_6_35b_a3b
 summary: >
   Performance disclaimer: this model has not been performance-tuned; reported
   timing and throughput metrics are sanity checks, not optimized performance
-  results. In this card, that required disclaimer means no canonical public
-  pretraining performance recipe exists. The preserved 41.78 TFLOP/s/GPU SFT
-  metric belongs to the bounded 100-step convergence run. A later
-  execution-only MedPix experiment with the tuned shared H100 recipe completed
-  ten finite steps and averaged 103.46 TFLOP/s/GPU over warmed steps 2-10; it
-  is not substituted for convergence evidence. Public identity decision: the
-  canonical checkpoint is
-  Qwen/Qwen3.6-35B-A3B even though its name has no VL suffix. Its public task is
-  image-text-to-text and its Transformers architecture is
-  Qwen3_5MoeForConditionalGeneration, matching the shared Qwen3.5/Qwen3.6
-  vision-language Bridge implementation. The common architecture is configured
-  dynamically from each checkpoint; the existing Qwen3.5 35B recipe remains a
-  Qwen3.5 checkpoint preset and is not relabeled as Qwen3.6. Functional
-  finetuning uses mmoukouba/MedPix-VQA at immutable revision
-  69eb219d477ab8699296da1fd6b89beb768042d3 through processor-native image
-  and text conversations. CPU and GPU import/export, round-trip weight
-  verification, forward-pass correlation, deterministic multimodal inference,
-  bounded 100-step MedPix SFT and PEFT runs with reloadable checkpoints, and
-  post-SFT HF export/inference were run; other items retain their explicit
-  status below.
+  results. This card verifies conversion, multimodal inference, MedPix SFT and
+  PEFT, and post-SFT export for Qwen/Qwen3.6-35B-A3B; pretraining, long-context
+  SFT, and checkpoint resume remain unverified.
 verification_index:
   model_level:
     verified:
@@ -352,7 +335,8 @@ items:
       precision: bf16
       enabled_features: {}
       command: >
-        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4 --mem 512G
+        ./scripts/training/train.sh --nodes 1 --gpus-per-node 4
+        --additional-slurm-params mem=512G
         --recipe qwen35_vl_35b_a3b_peft_config --mode lora --dataset medpix
         --step-func qwen3_vl_step
         --pretrained_checkpoint
