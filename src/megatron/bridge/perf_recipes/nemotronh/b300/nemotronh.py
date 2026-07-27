@@ -223,9 +223,8 @@ def nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Ultra (550B-A55B LatentMoE) pretrain: 256× B300, MXFP8, Megatron-FSDP (HSDP).
 
     TP1 / PP1 / CP1 / EP8 / ETP1, GBS 256 / MBS 1, seq 8192, BF16 + MXFP8 mixed
-    precision, HybridEP flex dispatcher, full-iteration CUDA graphs, CuteDSL
-    fused grouped MLP, selective recompute + fine-grained activation offload
-    of the expert MLP, MTP=2.
+    precision, HybridEP flex dispatcher, CuteDSL fused grouped MLP, selective
+    recompute + fine-grained activation offload of the expert MLP, MTP=2.
     """
     cfg = _nemotron_3_ultra_fp8mx_config(
         num_gpus=256,
@@ -240,8 +239,8 @@ def nemotron_3_ultra_pretrain_256gpu_b300_fp8mx_config() -> ConfigContainer:
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         # CUDA graph and allocator behavior for this recipe.
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP topology for one 8-GPU B300 NVLink domain.

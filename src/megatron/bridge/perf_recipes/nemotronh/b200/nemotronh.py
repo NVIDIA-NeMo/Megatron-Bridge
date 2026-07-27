@@ -215,9 +215,9 @@ def nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Ultra pretrain: 256× B200, MXFP8, Megatron-FSDP (HSDP).
 
     TP1 / PP1 / CP1 / EP8 / ETP1, GBS 256 / MBS 1, seq 8192, HybridEP,
-    full-iteration CUDA graphs, selective recompute, and fine-grained activation
-    offload. The 64-GPU FSDP shard groups trade cross-node communication for a
-    lower per-GPU training-state footprint than the 8-GPU B300 configuration.
+    selective recompute, and fine-grained activation offload. The 64-GPU FSDP
+    shard groups trade cross-node communication for a lower per-GPU training-state
+    footprint than the 8-GPU B300 configuration.
     """
     cfg = _nemotron_3_ultra_fp8mx_config(
         num_gpus=256,
@@ -229,8 +229,8 @@ def nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
         **COMMON_PERF_ENV_VARS,
         "CUDA_DEVICE_MAX_CONNECTIONS": 32,
         "NCCL_GRAPH_REGISTER": 0,
-        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
-        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
         "NCCL_NVLS_ENABLE": 0,
         # HybridEP follows the physical 8-GPU B200 NVLink domain even though
         # Megatron-FSDP shards training state over a wider group.

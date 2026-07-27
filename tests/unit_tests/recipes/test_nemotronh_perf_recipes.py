@@ -47,15 +47,14 @@ def test_nemotron_3_ultra_b300_uses_single_node_nvlink_domains() -> None:
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.seq_length == 8192
     assert cfg.train.global_batch_size == 256
-    assert cfg.model.cuda_graph_impl == "full_iteration"
-    assert cfg.model.cuda_graph_warmup_steps == 3
-    assert cfg.model.moe_paged_stash is False
-    assert cfg.model.fine_grained_offloading_max_inflight_offloads == 1
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cfg.model.cuda_graph_scope == []
 
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 32
     assert cfg.ddp.outer_dp_sharding_strategy == "optim"
-    assert cfg.ddp.megatron_fsdp_cuda_graph_mode is True
+    assert cfg.ddp.megatron_fsdp_cuda_graph_mode is False
+    assert cfg.ddp.fsdp_all_gather_in_start_param_sync is True
     expert_data_parallel_size = 256 // (
         cfg.model.expert_tensor_parallel_size
         * cfg.model.expert_model_parallel_size
@@ -68,6 +67,8 @@ def test_nemotron_3_ultra_b300_uses_single_node_nvlink_domains() -> None:
     assert cfg.env_vars["USE_MNNVL"] == 0
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
 
 
 def test_nemotron_3_ultra_b200_uses_wider_fsdp_shards() -> None:
@@ -76,7 +77,7 @@ def test_nemotron_3_ultra_b200_uses_wider_fsdp_shards() -> None:
 
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
-    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.cuda_graph_impl == "none"
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 4
     assert cfg.ddp.outer_dp_sharding_strategy == "optim"
@@ -86,6 +87,8 @@ def test_nemotron_3_ultra_b200_uses_wider_fsdp_shards() -> None:
     assert cfg.env_vars["USE_MNNVL"] == 0
     assert cfg.env_vars["NVTE_CPU_OFFLOAD_V1"] == 1
     assert cfg.env_vars["NVTE_CUTEDSL_FUSED_GROUPED_MLP"] == 1
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
 
 
 def test_nemotron_3_ultra_gb300_keeps_mnnvl_hsdp_domains() -> None:
@@ -93,10 +96,12 @@ def test_nemotron_3_ultra_gb300_keeps_mnnvl_hsdp_domains() -> None:
     cfg = nemotron_3_ultra_pretrain_256gpu_gb300_fp8mx_config()
 
     assert cfg.ddp.num_distributed_optimizer_instances == 4
-    assert cfg.model.cuda_graph_impl == "full_iteration"
+    assert cfg.model.cuda_graph_impl == "none"
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+    assert cfg.env_vars["PYTORCH_CUDA_ALLOC_CONF"] == "expandable_segments:True"
+    assert cfg.env_vars["TORCH_NCCL_AVOID_RECORD_STREAMS"] == 1
 
 
 def test_nemotron_3_ultra_h100_keeps_the_validated_bf16_topology() -> None:

@@ -154,26 +154,6 @@ def _apply_nemotron_3_ultra_fsdp_hsdp(
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
 
 
-def _enable_nemotron_3_ultra_full_iteration_cuda_graphs(cfg: ConfigContainer) -> None:
-    """Enable the full-iteration CUDA-graph path used by Blackwell Ultra recipes."""
-    cfg.model.cuda_graph_impl = "full_iteration"
-    cfg.model.cuda_graph_scope = []
-    cfg.model.cuda_graph_warmup_steps = 3
-    cfg.rng.te_rng_tracker = True
-    cfg.model.use_te_rng_tracker = True
-
-    # Full-iteration graphs require fixed MoE buffer sizes. Keep the rank capacity
-    # bounded while retaining fused-grouped-MLP activation offload; MoE paged stash
-    # cannot be combined with that offload module.
-    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
-    cfg.model.moe_expert_rank_capacity_factor = 1.5
-    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
-
-    # Megatron-FSDP needs its CUDA-graph-aware synchronization path.
-    cfg.ddp.megatron_fsdp_cuda_graph_mode = True
-    cfg.ddp.fsdp_all_gather_in_start_param_sync = False
-
-
 def _nemotron_3_ultra_fp8mx_config(
     *,
     num_gpus: int,
@@ -223,6 +203,5 @@ def _nemotron_3_ultra_fp8mx_config(
         num_gpus=num_gpus,
         fsdp_shard_group_gpus=fsdp_shard_group_gpus,
     )
-    _enable_nemotron_3_ultra_full_iteration_cuda_graphs(cfg)
 
     return cfg
