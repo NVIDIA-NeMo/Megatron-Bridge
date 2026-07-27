@@ -54,14 +54,27 @@ the only measured correctness fallback for that run.
 The experimental `ncclep` flex backend has a separate build gate. Import
 `transformer_engine.pytorch.ep` from the exact training container and require
 `EpBuffer`, `ep_bootstrap`, `ep_dispatch`, `ep_combine`, and `ep_finalize`.
-Those symbols require Transformer Engine to be built with
-`NVTE_BUILD_WITH_NCCL_EP=1`. A newer MCore checkout containing the backend
-does not make an older Transformer Engine wheel capable of running it.
+Those symbols require Transformer Engine's NCCL-EP extension. In the pinned
+TE 2.17 source, the build control is `NVTE_WITH_NCCL_EP`: the extension is on
+by default when an SM90-or-newer architecture is targeted, and
+`NVTE_WITH_NCCL_EP=0` disables it. A source build also requires the recursive
+NCCL submodule and NCCL 2.30.4 or newer. Do not confuse this with the similarly
+named MCore feature switches, and do not assume that updating MCore or the TE
+source pin changes the immutable runtime image.
 For the Qwen3.5 H100 campaign, a read-only inventory of the exact training
-image found no `transformer_engine.pytorch.ep` module. The import probe was
-cancelled before allocation because the immutable-image inventory had already
-failed the capability gate. Record this as an unavailable container endpoint,
-not an NCCL EP performance result.
+image found TE 2.15 and no `transformer_engine.pytorch.ep` module, even though
+the project lock points at a later source commit containing the extension. The
+import probe was cancelled before allocation because the immutable-image
+inventory had already failed the capability gate. Record this as an unavailable
+container endpoint, not an NCCL EP performance result.
+
+On Hopper, NCCL EP's dynamic-shape mode is the supported path. It narrows the
+receive buffer using `tokens_per_expert.sum().item()`, so it introduces a D2H
+synchronization and serializes the 1F1B expert-communication overlap boundary.
+That makes a non-overlapped dispatcher A/B valid, but it prevents claiming the
+static/overlapped fast path. Static shape needs SM100+, the TE operation fuser,
+and `NVTE_CUTEDSL_FUSED_GROUPED_MLP=1`; the current manager also rejects its
+nominal symmetric-memory zero-copy option.
 
 Package import and model construction are necessary but not sufficient. Require
 the target multi-node topology to complete a real dispatch and combine before

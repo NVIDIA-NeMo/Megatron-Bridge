@@ -183,8 +183,9 @@ evidence:
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
 
 known_limitations:
-  - The measured Qwen3.5 H100 training image has no transformer_engine.pytorch.ep module; the import probe was cancelled before allocation after the immutable-image inventory failed the capability gate, so no NCCL EP throughput result exists
+  - The measured Qwen3.5 H100 training image contains TE 2.15 and has no transformer_engine.pytorch.ep module; the project lock's later TE source pin does contain NCCL EP, but it is not installed in that immutable image, so no NCCL EP throughput result exists
   - NCCL EP requires the exact Transformer Engine container build to expose transformer_engine.pytorch.ep with EpBuffer, ep_bootstrap, ep_dispatch, ep_combine, and ep_finalize; MCore source support alone is insufficient
+  - The pinned TE 2.17 source uses NVTE_WITH_NCCL_EP, enables the extension by default for SM90+ targets, and requires the recursive NCCL submodule plus NCCL 2.30.4 or newer; NVTE_WITH_NCCL_EP=0 disables it
   - NCCL EP dynamic shape is the only H100-compatible mode and performs a tokens_per_expert.sum().item() D2H synchronization that serializes the 1F1B overlap boundary
   - NCCL EP static shape requires SM100+, the Transformer Engine operation fuser, and NVTE_CUTEDSL_FUSED_GROUPED_MLP=1
   - NCCL EP symmetric-memory/zero-copy payload buffers are not implemented in the current manager

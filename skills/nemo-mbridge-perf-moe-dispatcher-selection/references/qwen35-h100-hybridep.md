@@ -65,6 +65,21 @@ In the 2026-07-26 H100 Qwen3.5 experiment, the required Transformer Engine
 operation-fuser GroupedMLP path was available only on sm100. Bypassing that
 guard reached communication failure and is not a valid Hopper workaround.
 
+NCCL EP has a different availability boundary. The exact immutable training
+image contained TE 2.15 and did not expose `transformer_engine.pytorch.ep`,
+while the repository's pinned TE 2.17 source did contain `EpBuffer`,
+`ep_bootstrap`, `ep_dispatch`, `ep_combine`, and `ep_finalize`. The source
+build knob is `NVTE_WITH_NCCL_EP`, enabled by default for SM90-or-newer
+targets; `NVTE_WITH_NCCL_EP=0` disables it. Building the extension also needs
+the recursive NCCL submodule and NCCL 2.30.4 or newer. Inventory the imported
+runtime rather than inferring capability from either the MCore source or lock
+file. On H100, only dynamic shape is supported, and its
+`tokens_per_expert.sum().item()` narrowing introduces a D2H synchronization.
+A non-overlapped NCCL-EP dispatcher A/B is still meaningful, but the static
+overlapped path requires SM100+, the TE operation fuser, and
+`NVTE_CUTEDSL_FUSED_GROUPED_MLP=1`. The current manager also rejects the
+symmetric-memory zero-copy option.
+
 The runtime contract is more specific than "static shapes are graphable."
 With dynamic HybridEP sizing, `dispatch_with_permute(non_blocking=False)`
 returns `padded_tokens_per_expert` through pinned CPU memory and synchronizes
