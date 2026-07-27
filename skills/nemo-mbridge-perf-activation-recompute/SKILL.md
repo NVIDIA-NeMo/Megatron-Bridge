@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-activation-recompute
-description: Validate and use selective and full activation recompute in Megatron Bridge to reduce GPU memory usage at the cost of extra compute.
+description: Validate and use selective and full activation recompute in Megatron Bridge to reduce GPU memory usage at the cost of extra compute. Use for GPU-memory reduction, recompute-related OOM or regression investigation, recompute_granularity, recompute_num_layers, recompute_modules, recompute_method, selective recompute, full recompute, or activation-memory OOM.
 license: Apache-2.0
-when_to_use: Reducing GPU memory via activation recompute, or investigating a commit that changed recompute settings and caused OOM or a regression; 'recompute_granularity', 'recompute_num_layers', 'recompute_modules', 'recompute_method', 'selective recompute', 'full recompute', 'activation memory OOM'.
 ---
 
 # Activation Recompute
@@ -34,6 +33,10 @@ how many layers via `recompute_num_layers`.
    @skills/nemo-mbridge-perf-memory-tuning/SKILL.md.
 2. For activation pressure, start with selective recompute:
    `recompute_granularity="selective"` and `recompute_modules=["core_attn"]`.
+   For a Gated Delta Net model, use `recompute_modules=["gdn"]` as a focused
+   alternative when GDN activations, rather than attention activations, own the
+   peak. Benchmark the exact model because this checkpoints the complete GDN
+   module, not only its recurrent kernel.
 3. Add modules by cost: `"layernorm"` is cheap but saves little, while `"mlp"`
    saves much more memory at a clear throughput cost.
 4. Use full-layer recompute only when selective recompute does not fit, and set
@@ -74,6 +77,7 @@ cfg.model.recompute_num_layers = 4
 | `moe_act` | MoE activation functions | low | small |
 | `shared_experts` | shared expert layers | moderate | moderate |
 | `mla_up_proj` | Multi-Latent Attention up projection | moderate | moderate |
+| `gdn` | complete GatedDeltaNet module: projections, convolution, recurrent rule, normalization, CP exchange, and output projection | architecture-dependent | potentially material on GDN-heavy hybrids |
 
 ### Performance harness CLI
 
@@ -109,6 +113,15 @@ uv run python scripts/performance/run_script.py \
 - `distribute_saved_activations=True` cannot be combined with `sequence_parallel=True`
 - Combining `mlp` + `core_attn` recompute is slightly worse than `mlp` alone
   due to double recompute overhead
+- `gdn` requires
+  `experimental_attention_variant="gated_delta_net"`. It is selective
+  submodule recompute and is distinct from full-layer recompute.
+- Fine-grained MoE expert-parallel overlap rejects full-layer recompute,
+  non-null `recompute_method`/`recompute_num_layers`, and
+  `recompute_modules` containing `moe`. On current MCore, selective non-MoE
+  modules such as `gdn` remain valid. This is a compatibility contract, not a
+  throughput guarantee; validate memory, step time, and numerical health on
+  the exact combined schedule.
 
 ## Measured Results
 
@@ -132,6 +145,34 @@ Key takeaways:
 - Combining `mlp` + `core_attn` is slightly worse than `mlp` alone
 - For this workload, the actual OOM fix was `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`
   (memory fragmentation, not capacity). See @skills/nemo-mbridge-perf-memory-tuning/SKILL.md.
+
+### Qwen3.5 GDN-heavy EP-overlap result
+
+On 2026-07-26, an exact 2-node/16-H100 Qwen3.5-35B-A3B run paired
+fine-grained EP overlap with `recompute_modules=["gdn"]`. The matched
+owner-stream-release/connections=1 overlap control averaged 44.4646 seconds
+over steps 2-3 and reached 72.028 GiB rank-0 peak allocated memory.
+
+Selective GDN recompute completed all three steps with finite loss and
+gradients and zero skipped/NaN iterations. Steps 2-3 were 25.5641 and 25.1589
+seconds, a 25.3615-second mean (about 232.27 model TFLOP/s/GPU), while
+iteration-2 rank-0 peak allocated/reserved memory fell to 59.516/65.123 GiB.
+This removed about 12.5 GiB of allocated peak and contracted the pathological
+overlap schedule by 42.96%.
+
+The result still ran 13.52% slower by step time than the accepted no-EP-overlap
+control at 22.340925 seconds, so it was rejected as a performance recipe.
+Treat architecture-specific selective recompute as a way to recover a
+memory-bound schedule, not as a guarantee that recompute plus overlap beats
+the simpler schedule.
+
+The recovered headroom can enable another memory feature without making the
+combination faster. Adding active MoE paged stash to the same selective-GDN
+run completed with finite numerics and held iteration-2 rank-0 peak allocation
+to 65.891 GiB, but steps 2-3 averaged 29.98755 seconds. That was 18.24% slower
+than GDN recompute alone because full-schedule stash pack/unpack work outweighed
+the allocator benefit. Validate stacked memory features end to end; capacity
+compatibility does not imply additive throughput benefit.
 
 ## Code Anchors
 
@@ -169,6 +210,19 @@ Key takeaways:
                     ], "full recompute is only supported with full iteration CUDA graph."
 ```
 
+### GDN selective recompute and EP-overlap validation (MCore)
+
+```text
+3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
+3rdparty/Megatron-LM/megatron/core/ssm/gated_delta_net.py
+src/megatron/bridge/training/comm_overlap.py
+```
+
+`TransformerConfig` accepts `gdn` only for the gated-delta-net attention
+variant, and `GatedDeltaNet` uses it to checkpoint the whole module. Bridge and
+MCore EP-overlap validation forbid full/MoE recompute but do not forbid this
+selective GDN scope.
+
 ### CPU offloading PP incompatibility (MCore)
 
 ```1303:1306:3rdparty/Megatron-LM/megatron/core/transformer/transformer_config.py
@@ -187,6 +241,8 @@ Key takeaways:
 | `AssertionError: full recompute is only supported with full iteration CUDA graph` | layer-level recompute with TE-scoped graph capture | check `cuda_graph_impl` and `cuda_graph_scope` | use `selective`, set `cuda_graph_impl=none`, or use `local` + `full_iteration` |
 | ValueError: PP + CPU offloading | `cpu_offloading=True` with `pipeline_model_parallel_size > 1` | check PP config | disable CPU offloading or set PP=1 |
 | mlp+core_attn worse than mlp alone | double recompute overhead | compare Exp 1 vs Exp 2 | use mlp alone |
+| `gdn` rejected during config validation | the model is not using the gated-delta-net attention variant | inspect `experimental_attention_variant` | remove `gdn` or select a module implemented by that architecture |
+| EP-overlap recompute assertion | full-layer recompute, `recompute_method`/`recompute_num_layers`, or full `moe` recompute was enabled | inspect all four recompute fields after overrides | use selective non-MoE scope such as `gdn` and leave method/count null |
 
 ## Known Limitations
 

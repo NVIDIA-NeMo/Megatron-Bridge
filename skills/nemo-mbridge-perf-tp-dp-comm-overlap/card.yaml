@@ -9,6 +9,8 @@ validation_status:
     - code_verified
   dp_overlap_defaults:
     - code_verified
+  optimizer_step_param_gather_overlap:
+    - code_verified
   pp_overlap_auto_selection:
     - code_verified
   launch_env_wiring:
@@ -22,17 +24,23 @@ feature_meaning:
   dp_overlap: >
     Overlap of gradient reduce-scatter and parameter all-gather on the
     distributed-optimizer path.
+  optimizer_step_param_gather_overlap: >
+    Overlap distributed-optimizer parameter all-gather with optimizer work;
+    this is separate from ordinary DDP overlap_param_gather.
   pp_overlap: >
     Overlap of pipeline send and receive behavior, especially relevant for
     interleaved pipeline schedules.
 recommended_path:
   comm_overlap.tp_comm_overlap: true_when_tp_and_sp_are_enabled
   ddp.use_distributed_optimizer: true_for_dp_overlap
+  optimizer.overlap_param_gather_with_optimizer_step: benchmark_with_matching_comm_overlap_field
 known_constraints:
   - TP overlap requires tensor_model_parallel_size > 1.
   - TP overlap requires sequence_parallel=True.
   - TP overlap requires Transformer Engine to be available.
   - DP overlap is tied to the distributed-optimizer path.
+  - Optimizer-step parameter-gather overlap must be set consistently on optimizer and CommOverlapConfig and disables ordinary DDP bucketing.
+  - Checkpoint behavior needs separate validation because some recipes disable optimizer-step parameter-gather overlap for async-checkpoint compatibility.
   - PP overlap behavior depends on the pipeline schedule and is not identical for every PP setup.
   - Launch-time environment tuning is part of practical overlap behavior.
 known_limitations:
@@ -44,8 +52,12 @@ evidence:
   - src/megatron/bridge/training/comm_overlap.py
   - src/megatron/bridge/training/config.py
   - src/megatron/bridge/training/mixed_precision.py
+  - src/megatron/bridge/perf_recipes/_common.py
+  - src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py
   - src/megatron/bridge/recipes/run_plugins.py
+  - 3rdparty/Megatron-LM/megatron/training/models/dist_utils.py
+  - tests/unit_tests/models/test_model_instantiation.py
   - tests/unit_tests/training/test_comm_overlap.py
 follow_up_validation:
-  - Add benchmark-backed overlap guidance for at least one representative model family.
+  - Benchmark optimizer-step parameter-gather overlap against a matched distributed-optimizer control on a representative MoE model.
   - Add a functional PP smoke for interleaved pipeline overlap.

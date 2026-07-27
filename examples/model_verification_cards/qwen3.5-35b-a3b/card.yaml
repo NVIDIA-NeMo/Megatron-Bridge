@@ -212,14 +212,17 @@ items:
         On two nodes with 16x H100, the exact mock-data performance recipe must
         complete exactly 50 steps with finite losses, no skipped or NaN
         iterations, and all four metrics recorded. Over steps 41-50, the run
-        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-26, an
-        experimental MCore development stack with FlashQLA, pre-GDR fusion,
-        HybridEP, scoped attention/router/preprocess graphs, and fused
-        HybridEP permutation reached 235.55 model TFLOP/s/GPU over steps 5-8
-        at the exact GBS1024 (25.007 seconds/step, zero skipped or NaN
-        iterations). The fused path required diagnostic runtime normalization
-        of HybridEP dispatch/combine/preprocessing chunk sizes and is not part
-        of the public recipe. The result is about 18.0% below the gate, and no
-        qualifying 50-step run was produced, so the item remains unverified.
-        Full-iteration graphs, additional GDN kernel fusion, and GDN
-        offloading remain upstream optimization gaps.
+        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-27, an
+        experimental development stack using FlashQLA, HybridEP, fused
+        permutation, device-resident static dispatcher metadata, Hopper
+        grouped expert matrix multiplication, one-connection launch ordering,
+        and normal-priority shared-expert overlap averaged 22.340925 seconds
+        per step over steps 5-8, or about 263.67 model TFLOP/s/GPU. Losses and
+        gradients were finite with zero skipped or NaN iterations. This is
+        8.22% below the gate, and no qualifying 50-step run has completed.
+        The accepted short-run fused HybridEP template used effective
+        preprocessing, dispatch, and combine chunks of 64 tokens. A matched
+        full-field 128-token template averaged 23.5981 seconds per step over
+        its two steady samples, or about 249.62 model TFLOP/s/GPU, and was
+        rejected. These experimental runtime changes are not public recipe
+        defaults, so the item remains unverified.

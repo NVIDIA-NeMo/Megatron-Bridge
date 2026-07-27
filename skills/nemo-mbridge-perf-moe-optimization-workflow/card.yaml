@@ -31,6 +31,8 @@ validation_status:
     - profile_validated
   overlap_profile_method:
     - measured
+  qwen35_overlap_allocator_ab:
+    - measured
 
 core_concepts:
   three_walls:
@@ -170,21 +172,153 @@ qwen35_35b_h100_bringup_case_study:
   screening_batch: "MBS1/GBS128"
   acceptance_batch: "MBS1/GBS1024"
   routing: force_balance
-  best_development_layout: "TP1/PP1/CP1/EP16, HybridEP, BF16, scoped TE graphs"
-  best_development_tflops: 235.55
-  best_development_step_time_ms: 25007.25
-  best_development_peak_allocated_gib: 69.942
-  key_wins: "PP balancing, FlashQLA/pre-GDR kernels, HybridEP, scoped TE graphs, fused HybridEP permutation"
-  rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, Q/K norm folding, standalone fused GDN norm, HybridEP 24/48-SM and 32/128-token chunk variants, non-default FlashQLA chunking, deterministic exact-balanced routing, MBS2 selective recompute and optimizer-offload attempts, work-dropping capacity"
-  dominant_bottleneck: "dispatcher and host/kernel overhead after the layout fit"
-  profile_capture_span_ms: 26230.551
-  profile_kernel_active_union_ms: 22447.745
-  profile_hybridep_active_union_ms: 7722.504
-  profile_expert_linear_gemm_active_union_ms: 8446.067
-  profile_gdn_flashqla_active_union_ms: 1406.683
+  best_development_layout: "TP1/PP1/CP1/EP16, HybridEP, BF16, static dispatch, experimental SM90 grouped-MM"
+  best_development_tflops: 263.67
+  best_development_step_time_ms: 22340.925
+  best_development_peak_allocated_gib: 61.460
+  best_development_peak_reserved_gib: 65.500
+  best_development_shared_expert_overlap: true
+  best_development_shared_expert_stream_priority: normal
+  best_development_cuda_device_max_connections: 1
+  best_development_gate_gap_percent: 8.22
+  mixed_fp8_tensorwise_bf16_experts_step_time_ms: 24205.175
+  mixed_fp8_tensorwise_bf16_experts_tflops: 243.36
+  mixed_fp8_tensorwise_step_time_regression_percent: 7.87
+  mixed_fp8_tensorwise_throughput_regression_percent: 7.30
+  mixed_fp8_tensorwise_cold_iteration_1_ms: 154335.1
+  mixed_fp8_tensorwise_observed_memory_high_water_gib: 78.4
+  mixed_fp8_blockwise_bf16_experts_step_time_ms: 24213.25
+  mixed_fp8_blockwise_bf16_experts_tflops: 243.28
+  mixed_fp8_blockwise_step_time_regression_percent: 7.91
+  mixed_fp8_blockwise_throughput_regression_percent: 7.33
+  mixed_fp8_blockwise_rank0_max_allocated_gib: 63.369
+  mixed_fp8_blockwise_rank0_max_reserved_gib: 67.228
+  mixed_fp8_blockwise_full_scoped_graph_capture_iteration_ms: 51853.3
+  mixed_fp8_blockwise_full_scoped_graph_replay_step_ms: "44877.6/44827.4"
+  mixed_fp8_blockwise_full_scoped_graph_replay_mean_ms: 44852.5
+  mixed_fp8_blockwise_full_scoped_graph_replay_tflops: 131.33
+  mixed_fp8_blockwise_full_scoped_graph_replay_regression_percent: 85.24
+  mixed_fp8_blockwise_full_scoped_graph_terminal_status: timeout_after_iteration_6_rejected
+  shared_expert_overlap_step_time_ms: 22340.925
+  shared_expert_overlap_tflops: 263.67
+  shared_expert_overlap_gain_percent: 0.44
+  shared_expert_overlap_profile_stream_sum_ms: 690.403
+  shared_expert_overlap_profile_primary_intersection_ms: 212.596
+  shared_expert_overlap_profile_hybridep_intersection_ms: 163.318
+  shared_expert_overlap_connections_2_step_time_ms: 22936.825
+  shared_expert_overlap_connections_2_regression_percent: 2.67
+  shared_expert_overlap_high_priority_step_time_ms: 22380.525
+  shared_expert_overlap_high_priority_regression_percent: 0.18
+  native_te_variable_split_step_time_ms: 33178
+  native_te_fixed_slot_step_time_ms: 36758
+  torchao_mxfp8_optimized_minimum_capability: sm100
+  pytorch_scaled_grouped_mm_hopper_api_available: true
+  pytorch_scaled_grouped_mm_tensorwise_dispatch_available: false
+  pytorch_scaled_grouped_mm_rowwise_real_shape_cosine: 0.9993
+  pytorch_scaled_grouped_mm_rowwise_cached_fc1_slowdown: 7.39
+  pytorch_scaled_grouped_mm_rowwise_cached_fc2_slowdown: 3.52
+  pytorch_cublaslt_prefer_grouped_gemm_setter_available: false
+  shared_overlap_scoped_graph_step_time_ms: 22364.525
+  shared_overlap_scoped_graph_tflops: 263.39
+  shared_overlap_scoped_graph_regression_percent: 0.106
+  delayed_grouped_wgrad_primitive_dgrad_reduction_percent: 21.1
+  delayed_grouped_wgrad_primitive_sequential_overhead_percent: 1.58
+  delayed_grouped_wgrad_step_time_ms: 22489.325
+  delayed_grouped_wgrad_tflops: 261.93
+  delayed_grouped_wgrad_regression_percent: 0.664
+  compiled_grouped_mlp_balanced_rows: 32768
+  compiled_grouped_mlp_balanced_forward_gain_percent: 28.30
+  compiled_grouped_mlp_balanced_forward_backward_gain_percent: 26.92
+  compiled_grouped_mlp_production_budget_rows: 34416
+  compiled_grouped_mlp_production_step_time_ms: 22537.050
+  compiled_grouped_mlp_production_tflops: 261.38
+  compiled_grouped_mlp_production_regression_percent: 0.878
+  compiled_grouped_mlp_uniform_sweep_rows: "33424, 33760, 34080, 34416"
+  compiled_grouped_mlp_uniform_sweep_forward_backward_gain_percent: "25.36, 25.02, 25.32, 25.64"
+  compiled_grouped_mlp_uniform_sweep_min_cosine: 0.99999356
+  compiled_grouped_mlp_carveout_sms: "0, 16, 24"
+  compiled_grouped_mlp_carveout_forward_backward_ratio: "0.750026, 0.759552, 0.788057"
+  compiled_grouped_mlp_carveout_concurrent_ratio: "0.759904, 0.760688, 0.802129"
+  compiled_grouped_mlp_carveout_min_cosine: 0.99999356
+  hybridep_preprocessing_default_blocks: 108
+  hybridep_fused_permute_default_blocks: 108
+  hybridep_fused_unpermute_default_blocks: 108
+  hybridep_preprocessing_32_step_time_ms: 22434.250
+  hybridep_preprocessing_32_tflops: 262.57
+  hybridep_preprocessing_32_regression_percent: 0.418
+  hybridep_unpermute_32_step_time_ms: 23400.300
+  hybridep_unpermute_32_tflops: 251.73
+  hybridep_unpermute_32_regression_percent: 4.742
+  padded_bmm_forward_slowdown: 2.0625
+  padded_bmm_forward_backward_slowdown: 2.5573
+  padded_bmm_peak_memory_increase_gib: 0.238286
+  validation_nodes: 2
+  validation_gpus_per_node: 8
+  key_wins: "PP balancing, FlashQLA/pre-GDR kernels, HybridEP, fused HybridEP permutation, static GPU dispatcher metadata, experimental SM90 grouped-MM, workload-specific launch ordering, normal-priority shared-expert overlap"
+  rejected_dimensions: "plain EP overlap, high-priority shared-expert stream, shared-overlap connections=2, scoped graphs after static dispatch, HybridEP preprocessing=32, HybridEP fused unpermute blocks=32, Transformer Engine cross-entropy, EP8/expert-DP2 due to iteration-2 optimizer-state OOM, tested global FP8 modes, native TE variable/fixed expert splits, Q/K norm folding, standalone fused GDN norm, HybridEP 24/48-SM and non-default chunk variants, non-default FlashQLA chunking, deterministic exact-balanced routing, MBS2 selective recompute and optimizer-offload attempts, work-dropping capacity"
+  dominant_bottleneck: "mostly serialized HybridEP, routed expert, and shared-expert active regions"
+  profile_capture_span_ms: 26048.484
+  profile_kernel_active_union_ms: 21844.166
+  profile_hybridep_active_union_ms: 7375.865
+  profile_expert_linear_gemm_active_union_ms: 8115.059
+  profile_gdn_active_union_ms: 1333.811
+  profile_sdpa_active_union_ms: 900.310
   profile_hybridep_expert_gemm_overlap_ms: 0
-  profile_cuda_stream_synchronize_calls: 2775
-  profile_cuda_stream_synchronize_summed_cpu_wait_ms: 7422.4
+  profile_cuda_stream_synchronize_calls: 154
+  profile_cuda_stream_synchronize_summed_cpu_wait_ms: 1679.145
+  profile_previous_expert_linear_active_union_ms: 8655.827
+  profile_previous_hybridep_active_union_ms: 7722.504
+  profile_previous_cuda_stream_synchronize_summed_cpu_wait_ms: 7422.366
+  overlap_profile_kernel_count: 401776
+  no_overlap_profile_kernel_count: 401840
+  overlap_profile_capture_span_ms: 85452.785
+  overlap_profile_idle_gap_ms: 24187.357
+  overlap_profile_dispatch_active_union_ms: 38912.453
+  overlap_profile_nccl_active_union_ms: 16500.408
+  overlap_profile_cuda_event_synchronize_ms: 12513
+  overlap_profile_allocator_vmm_calls: "about 30,000 per major cuMem category"
+  native_allocator_iteration_1_step_time_ms: 151869.5
+  native_allocator_iteration_2_status: "stalled for more than 6 minutes; canceled"
+  native_allocator_rank_memory_gib: "79.2-80.9"
+  retain_combine_iteration_1_step_time_ms: 149703.4
+  retain_combine_iteration_1_peak_allocated_gib: 68.932
+  normal_release_first_step_peak_allocated_gib: 63.15
+  retain_combine_iteration_2_status: "16/16 ranks OOM requesting 1.89 GiB"
+  owner_release_iteration_2_step_time_ms: 67978.4
+  owner_release_iteration_3_step_time_ms: 64666.5
+  owner_release_steps_2_3_mean_tflops_per_gpu: 88.9
+  owner_release_iteration_1_peak_allocated_gib: 63.152
+  owner_release_iteration_2_peak_allocated_gib: 72.028
+  owner_release_profile_capture_span_ms: 73024.244
+  owner_release_profile_idle_gap_ms: 19915.957
+  owner_release_profile_dispatch_active_union_ms: 30196.093
+  owner_release_profile_nccl_active_union_ms: 14061.158
+  owner_release_profile_cuda_event_synchronize_calls: 4524
+  owner_release_profile_cuda_event_synchronize_ms: 4346.428
+  owner_release_profile_cu_mem_unmap_calls: 22049
+  owner_release_profile_cu_mem_create_calls: 23156
+  owner_release_profile_cu_mem_map_calls: 22358
+  owner_release_connections_1_iteration_2_step_time_ms: 44349.3
+  owner_release_connections_1_iteration_3_step_time_ms: 44579.9
+  owner_release_connections_1_steps_2_3_mean_step_time_ms: 44464.6
+  owner_release_connections_1_steps_2_3_mean_tflops_per_gpu: 132.45
+  owner_release_connections_1_iteration_2_peak_allocated_gib: 72.028
+  owner_release_connections_1_profile_capture_span_ms: 46741.668
+  owner_release_connections_1_profile_idle_gap_ms: 16587.562
+  owner_release_connections_1_profile_dispatch_active_union_ms: 11162.102
+  owner_release_connections_1_profile_nccl_active_union_ms: 665.423
+  owner_release_connections_1_profile_useful_intersection_ms: 155.779
+  owner_release_connections_1_profile_cuda_event_synchronize_calls: 426
+  owner_release_connections_1_profile_cuda_event_synchronize_ms: 1639.806
+  no_overlap_connections_1_profile_capture_span_ms: 25906.977
+  no_overlap_connections_1_profile_kernel_active_union_ms: 21071.084
+  no_overlap_connections_1_profile_idle_gap_ms: 4835.893
+  no_overlap_connections_1_profile_hybridep_active_union_ms: 6729.301
+  no_overlap_connections_1_profile_dispatch_active_union_ms: 2416.654
+  no_overlap_connections_1_profile_combine_active_union_ms: 3844.918
+  no_overlap_connections_1_profile_expert_linear_union_ms: 7987.200
+  no_overlap_connections_1_profile_useful_intersection_ms: 0
+  no_overlap_connections_1_profile_kernel_count: 401840
 
 key_lessons:
   - "Platform characteristics drive strategy, not just model architecture"
@@ -204,12 +338,51 @@ key_lessons:
   - "Treat shared-expert overlap as its own concurrency A/B; dispatcher or EP-overlap results do not predict it"
   - "Fused HybridEP permutation requires validating live dispatch/combine/preprocessing chunk-size compatibility"
   - "Decompose combined kernel patches; the isolated fused GDN norm did not reproduce its apparent combined gain"
-  - "For the measured Qwen3.5 H100 shape, BF16, FlashQLA auto-partitioning, 32 HybridEP SMs, and 64-token chunks remained locally optimal"
+  - "For the measured Qwen3.5 H100 shape, BF16 and FlashQLA auto-partitioning remained locally optimal; coupled chunk conclusions require a logged post-normalization template, and the later apparent combine-only 64/128/256 ranking was invalid because every run instantiated effective 64/64/64 fused chunks"
+  - "The corrected final-schedule fused-chunk A/B audited effective 128/128/128, stages 10/4/2, blocks 108/108, and valid=True; it regressed exact-2-node step time 5.627% versus effective 64/64/64"
   - "Profile the full stack before writing another GDN kernel; the measured winner spent far more active time in HybridEP and expert GEMMs than in FlashQLA"
   - "Trace tuning knobs to their consumers: high_priority_a2a_comm_stream affects combined 1F1B stream creation and is a no-op for standalone HybridEP"
   - "Require completed iteration progress after an OOM workaround; 1% optimizer offload crossed the MBS2 allocation failure but stalled before iteration 1"
   - "BF16 precision-aware optimizer stores FP32 master-weight remainders by default, so lowering main_params_dtype is not a free full-copy memory saving"
   - "Do not rewrite force-balance routing semantics to bypass dynamic metadata; a cross-rank exact-balanced route-only control segfaulted in the first backward"
+  - "Device-resident static dispatch plus SM90 grouped-MM cut expert/linear active union 6.25%, HybridEP active union 4.49%, and summed host stream-sync wait 77.4%; GDN changed only 1.5%"
+  - "Partial CUDA graphs replay tensor work but not Python shape state; preserve static dispatcher integers and handle lifetimes across eager graph boundaries"
+  - "Rebaseline graphs after removing their synchronization target; scoped graphs were not additive to static dispatch in the matched run"
+  - "Topology memory validation must cross optimizer-state materialization; EP8/expert-DP2 fit initialization and iteration 1 but OOMed at iteration 2"
+  - "Profile attribution is a hypothesis: replacing native fused cross-entropy with TE changed steps 5-8 by only 0.0085%, proving the summed host wait was overlapping rather than recoverable wall time"
+  - "Slurm container environment forwarding does not assign cache values; explicitly export mounted HF_HOME, TileLang, and TorchInductor paths, then local-only preflight config/tokenizer before a multi-rank launch"
+  - "High-priority A2A was neutral on the Qwen3.5 overlap regression (82,700.3 versus 82,668.3 ms), ruling out simple normal-priority communication-stream starvation"
+  - "TORCHINDUCTOR_COMPILE_THREADS is per rank; budget it from node CPU concurrency divided by local ranks to avoid 8× oversubscription during first cache population"
+  - "Unchanged kernel count plus inflated dispatch/NCCL unions, idle gaps, and cudaEventSynchronize time identifies rank-skew/rendezvous inflation rather than duplicated model work"
+  - "Large cuMem VMM totals require an allocator-only A/B; backend:native was materially worse on the Qwen3.5 overlap shape, so allocator traffic was correlated rather than proven causal"
+  - "Retaining MoE-combine inputs until backward added about 5.8 GiB and caused a 16-rank optimizer-state OOM; preserve early reclamation and fix retirement dependencies instead"
+  - "Dependency-aware owner-stream release preserved memory and improved the Qwen3.5 overlap stall from 82.70 to 67.98 seconds, but remained nearly 3x slower than no overlap and therefore requires a matched profile"
+  - "The owner-release profile reduced capture span by 14.5%, event-sync time by 65.3%, major VMM call counts by about 25%, and dispatch by 22.4%; this confirms a retirement/allocator interaction but not an adoptable overlap schedule"
+  - "CUDA_DEVICE_MAX_CONNECTIONS=1 improved the owner-release overlap mean from 66.322 to 44.465 seconds with unchanged peak allocation; verify the live PID, but keep no-overlap as the decision control because it remained 1.89x faster"
+  - "The connections=1 profile cut NCCL by 95.3% and event-sync calls by 90.6%, but useful intersection also fell by 93.2% to 0.156 seconds; the gain was ordering through near-serialization, not effective overlap"
+  - "The nearest upward point, connections=2, regressed the steady mean to 50.356 seconds / about 117.0 model TFLOP/s/GPU with 64 allocator retries; stop the sweep and return to the faster no-overlap dispatcher wall"
+  - "On the no-overlap control, HybridEP num_sms=108 regressed the steps 5-8 mean by 19.97% versus 32; internal persistent-kernel and stream contention remains possible even when the combined EP-overlap schedule is disabled"
+  - "On the same control, HybridEP num_sms=20 improved the steps 5-8 mean only 0.78% versus 32, from 23.516 to 23.335 seconds; treat the low-SM winner as a shallow local optimum"
+  - "Reducing HybridEP num_sms from 20 to 16 improved the mean only another 0.46%, to 23.228 seconds / 253.60 model TFLOP/s/GPU; the low-SM tuning region had diminishing returns"
+  - "Reducing HybridEP num_sms from 16 to 12 regressed the mean 9.28%, to 25.385 seconds / 232.06 model TFLOP/s/GPU; bracket both high-SM contention and low-SM communication underprovisioning"
+  - "A profile-motivated asymmetric HybridEP split kept dispatch at 16 SMs and raised only combine to 20, but regressed steps 5-8 from 22.340925 to 22.49995 seconds / about 263.67 to 261.81 model TFLOP/s/GPU; active-union duration nominates an A/B but does not size the persistent-kernel budget"
+  - "HybridEP preprocessing, dispatch/combine, and fused permute/unpermute use independent block budgets; changing only preprocessing from 108 to 32 regressed the current winner 0.418%, while changing only fused unpermute from 108 to 32 regressed it 4.742% to 23.400 seconds / 251.73 model TFLOP/s/GPU"
+  - "Do not infer SM saturation from a compiler microbenchmark transfer gap: reserving 16 SMs did not improve compiled/shared concurrent makespan, 24 SMs regressed it from 0.7599x to 0.8021x eager, and static buffer rows must be separated from active offset rows"
+  - "On the fastest no-overlap path with HybridEP num_sms=16, changing only CUDA_DEVICE_MAX_CONNECTIONS from 32 to 1 improved the steps 5-8 mean 3.46%, from 23.228 seconds / 253.60 model TFLOP/s/GPU to 22.451 seconds / 262.38; treat it as launch-order evidence until a matched profile attributes the gain"
+  - "With num_sms=16, connections=1, and rank capacity 1.05 fixed, eager averaged 22.439 seconds / about 262.52 model TFLOP/s/GPU versus 22.451 / 262.38 with TE-scoped graphs; the 0.053% difference is noise-level, so graphs provide no measurable benefit on the current static path"
+  - "The current-winner profile kept 401,840 kernels and zero HybridEP/expert intersection; connections=1 reduced HybridEP active union 8.77% and expert/linear union 1.58% versus 32, but increased idle gaps 15.02% from 4.204 to 4.836 seconds"
+  - "The adjacent no-overlap connections=2 point averaged 22.502 seconds / about 261.78 model TFLOP/s/GPU, 0.28% slower than connections=1; added concurrency did not recover the profiled idle tradeoff"
+  - "Reducing the current winner's static rank-capacity factor from 1.05 to 1.02 triggered the device-side route-overflow assertion in iteration 1 and produced no valid throughput sample; fail closed and keep 1.05 as the measured safe value for that exact route distribution"
+  - "Global hybrid FP8 with tensorwise scaling and BF16 grouped experts completed eight finite steps but averaged 24.205 seconds / about 243.36 model TFLOP/s/GPU over steps 5-8, regressing step time 7.87% and throughput 7.30% versus BF16; non-expert scaling and compile overhead still require an end-to-end A/B"
+  - "Changing that mixed path to blockwise scaling improved rank-0 first-step max allocated/reserved memory to 63.369/67.228 GiB but averaged 24.213 seconds / about 243.28 model TFLOP/s/GPU; the 0.03% timing difference from tensorwise was noise-level, so scaling alone did not remove the precision-boundary overhead"
+  - "Qwen3's blockwise-FP8 graph gain did not transfer to the Qwen3.5 mixed boundary: full attn/router/preprocess scope produced 44.8776/44.8274-second replay steps versus 24.21325 seconds eager, an 85.24% regression; the bounded job timed out after iteration 6 and is rejected rather than reported as a complete positive benchmark"
+  - "The installed scaled-grouped-MM enum overstated usable modes: tensorwise had no registered GEMM, while rowwise cached-scale FC1/FC2 were 7.39x/3.52x slower than BF16 despite about 0.9993 cosine similarity"
+  - "Slurm nodes and tasks per node are separate: the Qwen3.5 validation uses exactly 2 nodes with 8 H100 workers each; an interactive GrpNodes=8 limit described partition-wide QoS consumption, not an eight-node request"
+  - "Adding scoped graphs to the shared-overlap winner averaged 22.365 seconds / 263.39 model TFLOP/s/GPU, 0.106% slower than eager, and added 150.351 seconds of cold capture plus stream-mismatch warnings"
+  - "Fixed-capacity batched expert GEMMs were 2.06x slower in forward and 2.56x slower through backward after including 12.5% padding, repack/gather, and SwiGLU; static shape alone was not enough"
+  - "Uniform-offset compiled grouped-MLP primitives stayed 25.02-25.64% faster through backward from 33,424 to 34,416 rows even though the 34,416-row full model regressed 0.878%; replay production per-expert offsets and the end-to-end schedule rather than blaming total capacity alone"
+  - "A 34,416-buffer/32,768-active-row probe showed why the earlier compiler primitive did not transfer: compiled forward/backward was 29.32%/23.69% faster than ordinary PyTorch eager but 7.05%/5.11% slower than MCore's actual fused weighted-SwiGLU eager path; the benchmark reference is part of the workload contract"
+  - "Compiled 40-call bursts were 1.57% faster in forward and 4.60% faster through backward than the fused control, yet shared-MLP concurrent makespan was 7.44% slower; test repeated launches and production concurrency separately before promoting a primitive"
 
 evidence:
   - "arXiv:2603.07685 — Scalable Training of MoE with Megatron Core"
@@ -217,3 +390,4 @@ evidence:
   - "DSV3 and Qwen3-235B empirical results"
   - "examples/model_verification_cards/qwen3-30b-a3b/card.yaml"
   - "src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py"
+  - "Qwen3.5 H100 overlap profile and allocator-only measurement"

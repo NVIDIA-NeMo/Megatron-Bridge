@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-cuda-graphs
-description: Validate and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs for attention, MLP, and MoE modules.
+description: Validate and use CUDA graph capture in Megatron Bridge, including local full-iteration graphs and Transformer Engine scoped graphs for attention, MLP, and MoE modules. Use for host-driver-overhead reduction, CUDA-graph crash or regression investigation, cuda_graph_impl, full-iteration graphs, TE scoped graphs, graphed callables, or CUDA graph capture.
 license: Apache-2.0
-when_to_use: Reducing host-driver overhead via CUDA graphs, or tracing a crash or regression to a CUDA graph config change; 'cuda_graph_impl', 'full iteration graph', 'TE scoped graph', 'graphed callables', 'CUDA graph capture'.
 ---
 
 # CUDA Graphs
@@ -109,7 +108,8 @@ auto-enables `model.use_te_rng_tracker` plus `rng.te_rng_tracker` when
 - `full_iteration` scope requires `check_for_nan_in_loss = False`
 - Do not combine `moe` scope and `moe_router` scope
 - Tensor shapes must be static (fixed seq_length, fixed micro_batch_size)
-- MoE token-dropless routing limits graphable scope to dense modules
+- Dropless MoE capture requires static/capturable layer inputs; scope labels
+  may select an entire MoE TransformerLayer rather than only dense submodules
 - With `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True`, set
   `NCCL_GRAPH_REGISTER=0` (MCore enforces for local impl on arch < sm_100;
   TE impl asserts unconditionally)
@@ -120,9 +120,17 @@ Dropless Hopper MoE still needs a runtime proof before attempting
 `full_iteration`. On the measured Qwen3.5-35B-A3B H100 stack, dynamic
 `tokens_per_expert` handling retained a host synchronization, while the static
 rank-capacity route required an sm100-only Transformer Engine operation-fuser
-GroupedMLP implementation. Do not bypass the architecture guard: keep dynamic
-expert work outside the graph and use TE-scoped `attn`, `moe_router`, and
-`moe_preprocess` capture until the Hopper fused path is supported.
+GroupedMLP implementation on the public/native path. Do not bypass the
+architecture guard; use TE-scoped capture only after confirming the selected
+layer set and expert-shape contract on Hopper.
+
+The TE scope names select graphable layer objects in current MCore; they do not
+necessarily wrap only the named kernel. `_layer_is_graphable()` selects an
+entire `TransformerLayer` for `moe`, `moe_router`, or `moe_preprocess` when
+`layer.mlp` is a `MoELayer`. On an all-MoE model (`moe_layer_freq=1`), a
+router/preprocess-only list can therefore graph every transformer layer. Print
+the reported graphable-layer count and inspect the model's MoE frequency before
+calling a shorter scope an isolated router A/B.
 
 ### Practical bring-up order
 
@@ -339,14 +347,41 @@ def _delete_cuda_graphs(cuda_graph_helper):
     iterations 5-8 averaged `42.00 s` versus `41.36 s` for eager. Treat
     scoped graphs as a bring-up candidate and validate on the target stack.
 
-14. **Narrow MoE scopes can win on a tuned dispatcher**: benchmark
-    `moe_router,moe_preprocess` first, then add `attn` as a separate A/B. Keep
-    dynamic expert work outside the graph and compare only steady replay.
+14. **Narrow MoE scopes can win on a tuned dispatcher, but verify that they
+    are actually narrow**: benchmark `moe_router,moe_preprocess` first, then
+    add `attn` as a separate A/B only when `_layer_is_graphable()` and the
+    runtime count show different selected layer sets. Compare only steady
+    replay.
 
 15. **Optimizer graph capture is a separate acceptance gate**: successful TE
     module graphs do not prove optimizer-step graph support. Bound optimizer
     capture time independently and reject a no-progress capture before waiting
     for replay measurements.
+
+16. **Rebaseline graphs after changing precision or expert kernels**: a neutral
+    BF16 graph result does not predict the FP8 path. On the measured
+    Qwen3-30B-A3B 26.08.rc2 H100 stack, blockwise FP8 without scoped graphs was
+    about 29.18 seconds/step, while
+    `attn,moe_router,moe_preprocess` replay averaged 19.99728 seconds over
+    steps 5--10 and reached 301.60 model TFLOP/s/GPU. The same campaign found
+    adding attention scope negative for BF16. Graph capture can remove
+    precision-path-specific launch/scaling overhead, so repeat the eager/graph
+    A/B after changing precision, scaling recipe, or expert implementation.
+    The transfer can reverse sharply: on Qwen3.5-35B-A3B with global blockwise
+    FP8 but BF16 Torch grouped experts, the full
+    `attn,moe_router,moe_preprocess` scope produced two consistent replay
+    steps of 44.8776 and 44.8274 seconds versus 24.21325 seconds for eager.
+    The bounded job timed out after iteration 6, so it is not a valid positive
+    benchmark, but the 85.24% replay regression is sufficient to reject that
+    scope and audit scope equivalence before attempting another A/B.
+
+17. **Scope labels can be layer selectors rather than submodule boundaries**:
+    Qwen3.5-35B-A3B has `moe_layer_freq=1`; its full scoped run reported 41
+    graphable layers. A proposed `moe_router,moe_preprocess` follow-up was
+    cancelled before allocation because current MCore would still select all
+    40 model layers plus the MTP layer. Verify `_layer_is_graphable()`, layer
+    types, and the runtime count before spending an allocation on a supposedly
+    narrower scope.
 
 ## Verification
 

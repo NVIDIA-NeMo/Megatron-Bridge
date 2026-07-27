@@ -1,12 +1,14 @@
 title: expert_parallel_overlap
-validated_on: "2026-07-25"
+validated_on: "2026-07-27"
 summary: >
   Megatron-Bridge supports MoE expert-parallel communication overlap through
   overlap_moe_expert_parallel_comm, with optional delayed expert wgrad
   scheduling. The path depends on dispatcher choice (alltoall or flex),
   expert parallelism degree, precision (BF16/FP16), and runtime support. A
   controlled Qwen3 30B-A3B HybridEP run on 16 H100 GPUs measured a 15.059%
-  step-time reduction from plain EP overlap.
+  step-time reduction from plain EP overlap, while a matched Qwen3.5-35B-A3B
+  run regressed to 71.2 model TFLOP/s/GPU. Always repeat the model-specific
+  A/B.
 
 validation_status:
   moe_overlap_validation:
@@ -25,10 +27,22 @@ validation_status:
     - measured
   matched_nsys_ab:
     - measured
+  qwen35_35b_hybridep_h100_counterexample:
+    - measured
+  qwen35_high_priority_a2a_control:
+    - measured
+  qwen35_overlap_profile_and_allocator_ab:
+    - measured
+  early_attn_memory_release_schedule:
+    - code_verified
+  early_attn_memory_release_output_gradient_equivalence:
+    - code_verified
+  qwen35_early_attn_memory_release_ab:
+    - measured
 
 training_dimensions:
   speed:
-    effect: "15.059% faster step time and 17.729% higher throughput on the measured Qwen3 30B-A3B HybridEP H100 shape"
+    effect: "model-dependent: +17.729% throughput on Qwen3 30B-A3B, but a multi-fold regression on the matched Qwen3.5-35B-A3B shape"
     confidence: high_for_measured_shape
     rationale: >
       Hides expert dispatch/combine all-to-all under expert FFN compute.
@@ -62,6 +76,7 @@ avoid_when:
   - moe_shared_expert_overlap is enabled
   - PyTorch < 2.6.0
   - Still bringing up training for correctness
+  - A matched model-specific A/B shows longer step time or higher live memory
 
 interactions:
   - name: recompute
@@ -86,6 +101,10 @@ feature_meaning:
   moe_flex_dispatcher_backend: >
     Backend selection for DeepEP or HybridEP once the dispatcher is explicitly
     switched to flex via apply_flex_dispatcher_backend().
+  ep_overlap_early_attn_memory_release: >
+    Move pre-dispatch attention/GDN backward before the next MLP forward so
+    attention activations are released earlier. Requires EP overlap and can
+    expose dispatch/combine that the normal order hides.
 
 config_keys:
   - comm_overlap.overlap_moe_expert_parallel_comm
@@ -93,6 +112,7 @@ config_keys:
   - model.moe_token_dispatcher_type
   - model.moe_flex_dispatcher_backend
   - model.moe_shared_expert_overlap
+  - model.ep_overlap_early_attn_memory_release
   - model.expert_model_parallel_size
   - model.num_moe_experts
 
@@ -117,6 +137,74 @@ expected_metric_change:
     magnitude: "slight (not yet measured)"
     conditions: "EP overlap buffers"
     evidence: not_yet_measured
+  - metric: model_tflops_per_gpu
+    direction: down
+    magnitude: "250.5 to 71.2 on the first Qwen3.5 steady sample"
+    conditions: "16×H100 BF16 seq4096 TP1 PP1 CP1 EP16 MBS1 GBS1024 static HybridEP grouped-MM path"
+    evidence: measured
+  - metric: shared_expert_overlap_step_time
+    direction: down
+    magnitude: "0.44% (22.439 to 22.341 seconds)"
+    conditions: "final measured Qwen3.5 BF16 path, connections=1, normal-priority shared stream"
+    evidence: measured
+
+qwen35_profile_result:
+  no_overlap_kernel_count: 401840
+  overlap_kernel_count: 401776
+  no_overlap_capture_span_s: 26.048484
+  overlap_capture_span_s: 85.452785
+  no_overlap_idle_gap_s: 4.204318
+  overlap_idle_gap_s: 24.187357
+  no_overlap_dispatch_active_s: 2.801829
+  overlap_dispatch_active_s: 38.912453
+  no_overlap_nccl_active_s: 0.397199
+  overlap_nccl_active_s: 16.500408
+  overlap_cuda_event_synchronize_s: 12.513
+  overlap_allocator_vmm_calls: "about 30,000 per major cuMem category"
+  native_allocator_iteration_1_step_time_ms: 151869.5
+  native_allocator_iteration_2_status: "stalled for more than 6 minutes; canceled"
+  native_allocator_rank_memory_gib: "79.2-80.9"
+  retain_combine_iteration_1_step_time_ms: 149703.4
+  retain_combine_iteration_1_peak_allocated_gib: 68.932
+  retain_combine_iteration_2_status: "16/16 ranks OOM requesting 1.89 GiB"
+  normal_release_first_step_peak_allocated_gib: 63.15
+  owner_release_iteration_2_step_time_ms: 67978.4
+  owner_release_iteration_3_step_time_ms: 64666.5
+  owner_release_steps_2_3_mean_tflops_per_gpu: 88.9
+  owner_release_iteration_1_peak_allocated_gib: 63.152
+  owner_release_iteration_2_peak_allocated_gib: 72.028
+  owner_release_profile_capture_span_s: 73.024244
+  owner_release_profile_idle_gap_s: 19.915957
+  owner_release_profile_dispatch_active_s: 30.196093
+  owner_release_profile_nccl_active_s: 14.061158
+  owner_release_profile_cuda_event_synchronize_calls: 4524
+  owner_release_profile_cuda_event_synchronize_s: 4.346428
+  owner_release_profile_cu_mem_unmap_calls: 22049
+  owner_release_profile_cu_mem_create_calls: 23156
+  owner_release_profile_cu_mem_map_calls: 22358
+  owner_release_connections_1_iteration_2_step_time_ms: 44349.3
+  owner_release_connections_1_iteration_3_step_time_ms: 44579.9
+  owner_release_connections_1_steps_2_3_mean_step_time_ms: 44464.6
+  owner_release_connections_1_steps_2_3_mean_tflops_per_gpu: 132.45
+  owner_release_connections_1_iteration_2_peak_allocated_gib: 72.028
+  owner_release_connections_1_profile_capture_span_s: 46.741668
+  owner_release_connections_1_profile_idle_gap_s: 16.587562
+  owner_release_connections_1_profile_dispatch_active_s: 11.162102
+  owner_release_connections_1_profile_nccl_active_s: 0.665423
+  owner_release_connections_1_profile_useful_intersection_s: 0.155779
+  owner_release_connections_1_profile_cuda_event_synchronize_calls: 426
+  owner_release_connections_1_profile_cuda_event_synchronize_s: 1.639806
+  early_attn_release_iteration_2_step_time_ms: 44027.1
+  early_attn_release_iteration_3_step_time_ms: 44390.6
+  early_attn_release_steps_2_3_mean_step_time_ms: 44208.85
+  early_attn_release_steps_2_3_mean_tflops_per_gpu: 133.246
+  early_attn_release_step_time_delta_vs_overlap_control_pct: -0.575
+  early_attn_release_throughput_delta_vs_accepted_winner_pct: -49.465
+  early_attn_release_iteration_1_peak_allocated_gib: 63.152
+  early_attn_release_iteration_2_peak_allocated_gib: 72.028
+  early_attn_release_skipped_iterations: 0
+  early_attn_release_nan_iterations: 0
+  disposition: "rank-skew/rendezvous inflation; expandable remains better and VMM traffic is not proven causal"
 
 minimal_example:
   config: |
@@ -160,6 +248,18 @@ failure_modes:
     symptom: "No throughput gain from flex dispatcher"
     likely_cause: "apply_flex_dispatcher_backend() not called"
     fix: "Call apply_flex_dispatcher_backend(cfg.model, ...)"
+  - name: combined_schedule_regression
+    symptom: "Step time and live memory both jump after enabling overlap"
+    likely_cause: "The combined 1F1B schedule lengthens the critical path or retains more activations for this model"
+    fix: "Reject the path using the first exact steady A/B before layering delayed wgrad or CUDA graphs"
+  - name: high_priority_stream_is_neutral
+    symptom: "Normal- and high-priority overlap runs both take about 82.7 seconds"
+    likely_cause: "The regression is not simple normal-priority A2A stream starvation"
+    fix: "Profile the combined schedule before tuning stream priority or dispatcher SM reservations"
+  - name: overlap_forward_outpaces_backward_release
+    symptom: "Peak memory and allocator/rank-skew stalls contract under attention or GDN recompute"
+    likely_cause: "The normal overlap order delays pre-dispatch attention/GDN backward until after combine forward"
+    fix: "A/B ep_overlap_early_attn_memory_release and reject it if newly exposed dispatch/combine outweighs memory relief"
 
 known_constraints:
   - expert_model_parallel_size must be greater than 1.
@@ -174,6 +274,7 @@ known_constraints:
   - recompute_num_layers must be None.
   - mtp_num_layers must be None or 1.
   - delay_wgrad_compute requires overlap_moe_expert_parallel_comm.
+  - ep_overlap_early_attn_memory_release requires overlap_moe_expert_parallel_comm.
   - delay_wgrad_compute with overlap_grad_reduce requires TE >= 2.7.0.
   - CUDA graph attn scope + delay_wgrad requires TE >= 2.12.0 and no attention bias.
 
@@ -181,18 +282,44 @@ known_limitations:
   - Setting moe_flex_dispatcher_backend alone does not activate flex dispatch.
   - Public recipes are often conservative and leave MoE overlap disabled by default.
   - The measured gain is specific to one Qwen3 30B-A3B HybridEP H100 shape.
+  - A matched Qwen3.5-35B-A3B H100 run regressed to 71.2 model TFLOP/s/GPU and raised peak allocation to about 72.0 GiB; sibling-model results do not predict the sign.
+  - Giving the Qwen3.5 overlap communication stream high priority measured 71.3 model TFLOP/s/GPU, effectively identical to its 71.2 normal-priority control.
+  - The matched Qwen3.5 profile kept kernel count effectively unchanged but inflated dispatch, NCCL, idle gaps, and cudaEventSynchronize time, identifying rank-skew/rendezvous inflation rather than duplicated work.
+  - Switching only to backend:native worsened progress and pushed ranks near physical memory capacity; large expandable-allocator cuMem totals were a symptom, not sufficient root-cause evidence.
+  - Retaining MoE-combine inputs until backward added about 5.8 GiB first-step peak allocation and caused a 16-rank optimizer-state OOM; early reclamation is required even if its retirement ordering still needs work.
+  - Waiting on the combine completion event and retiring storage on the compute/owner stream preserved control memory while improving steps 2-3 to 67.98 and 64.67 seconds; this isolates retirement cost but is still a large no-overlap regression.
+  - The matched owner-release profile reduced capture span by 14.5%, event-sync time by 65.3%, major VMM call counts by about 25%, and dispatch by 22.4%; the mechanism is confirmed, but dispatch and NCCL remained about 10.8x and 35.4x above no overlap.
+  - Changing only CUDA_DEVICE_MAX_CONNECTIONS from 32 to 1 raised the owner-release overlap mean from about 88.9 to 132.45 model TFLOP/s/GPU with unchanged peak allocation, but remained 1.89x slower than no overlap.
+  - Its matched profile cut NCCL by 95.3%, dispatch by 63.0%, and event-sync calls by 90.6%, but useful HybridEP/expert intersection also fell by 93.2% to 0.156 seconds; ordering improved mainly through serialization.
+  - The nearest upward point, connections=2, regressed the two-step mean from 44.465 to 50.356 seconds and recorded 64 allocator retries at iteration 2; stop the sweep instead of assuming 4/8 will restore useful overlap.
+  - On the faster no-overlap Qwen3.5 control with HybridEP num_sms=16, changing only CUDA_DEVICE_MAX_CONNECTIONS from 32 to 1 improved the steps 5-8 mean from 23.228 to 22.451 seconds and throughput from 253.60 to 262.38 model TFLOP/s/GPU; launch-order pressure is not limited to the combined-overlap failure.
+  - Its matched no-overlap profile kept 401,840 kernels and zero HybridEP/expert intersection; connections=1 cut HybridEP active union 8.77% but increased idle gaps 15.02% from 4.204 to 4.836 seconds, establishing cheaper but more idle serial execution.
+  - The adjacent no-overlap connections=2 point averaged 22.502 seconds / about 261.78 model TFLOP/s/GPU, 0.28% slower than connections=1; added launch concurrency did not recover the profiled idle tradeoff.
+  - Shared-expert overlap is a separate alternative to plain EP overlap. It improved the final Qwen3.5 steps 5-8 mean by 0.44% to 22.341 seconds / about 263.67 model TFLOP/s/GPU.
+  - The matched Qwen3.5 early-attention-release A/B averaged 44.20885 seconds / about 133.25 model TFLOP/s/GPU, only 0.575% shorter than the broken overlap control and 49.47% below the accepted winner.
+  - Early release did not preserve a steady memory benefit on that shape: peak allocated memory rose from 63.152 GiB on the cold first iteration to the same 72.028 GiB control peak after optimizer warmup. Compare post-warmup memory, not only iteration 1.
+  - The shared-expert side stream summed 0.690 seconds but overlapped the primary stream for only 0.213 seconds and HybridEP for 0.163 seconds; most work remained dependency-serialized.
+  - Changing shared-overlap connections from 1 to 2 regressed 2.67%, and changing only the shared stream to high priority regressed 0.18%; priority cannot enlarge explicit dependency windows.
+  - An exact real-shape delayed grouped-wgrad split matched native gradients bitwise and shortened dgrad-only by 21.1%, but the full connections=1 schedule averaged 22.489 seconds / about 261.93 model TFLOP/s/GPU, 0.664% slower than immediate wgrad.
+  - Primitive dgrad headroom is not sufficient evidence for delayed wgrad; verify that the runtime connection count and dependency graph expose a useful concurrent window.
+  - The focused MCore alltoall test compares four-microbatch reference and early-release outputs plus parameter gradients, but its containing suite is marked flaky_in_dev for a Transformer Engine 2.17 pybind11 GIL failure; retain target-environment finite-loss/gradient validation.
   - Summed per-stream kernel duration is not exposed wall time when kernels overlap.
 
 evidence:
   - docs/training/communication-overlap.md
   - examples/model_verification_cards/qwen3-30b-a3b/card.yaml
   - src/megatron/bridge/perf_recipes/qwen/h100/qwen3_moe.py
+  - 3rdparty/Megatron-LM/tests/unit_tests/a2a_overlap/test_schedule_layer_1f1b.py
   - src/megatron/bridge/training/comm_overlap.py
   - src/megatron/bridge/training/flex_dispatcher_backend.py
   - src/megatron/bridge/training/config.py
+  - 3rdparty/Megatron-LM/megatron/core/models/common/model_chunk_schedule_plan.py
+  - 3rdparty/Megatron-LM/megatron/core/model_parallel_config.py
   - scripts/performance/utils/overrides.py
+  - "Qwen3.5 H100 early-attention-release measurement"
   - tests/unit_tests/training/test_comm_overlap.py
   - tests/unit_tests/training/test_deepep.py
+  - "Qwen3.5 H100 overlap profile and allocator-only measurement"
 
 follow_up_validation:
   - Add a positive Bridge functional smoke test for overlap_moe_expert_parallel_comm.

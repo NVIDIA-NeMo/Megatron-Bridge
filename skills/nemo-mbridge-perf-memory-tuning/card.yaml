@@ -5,9 +5,13 @@ summary: >
   Current coverage: expandable segments (fragmentation fix), delayed
   optimizer-state allocation and precision, parallelism resizing, activation
   recompute, LoRA sequence-parallel input re-gather, and CPU offloading
-  constraints. The most
-  common OOM fix is setting PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,
-  which eliminates memory fragmentation at zero throughput cost. Measured on
+  constraints. A common OOM fix is setting
+  PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True,
+  which can eliminate memory fragmentation without a measured throughput cost
+  on conventional schedules. Fine-grained multi-stream schedules still require
+  a matched allocator A/B: a 16x H100 Qwen3.5 HybridEP-overlap experiment showed
+  that native allocation worsened rank skew and iteration time despite removing
+  expandable-allocator VMM traffic. Measured on
   Llama3 70B SFT (32x H100, FP8 CS): expandable_segments eliminated the
   baseline OOM without any parallelism changes. By contrast, doubling PP
   (4→8) cost ~6% and halved DP, while doubling TP (4→8) caused -28%
@@ -22,14 +26,33 @@ validation_status:
   lora_sequence_parallel_input_regather:
     - measured  # PR #4581, real checkpoints and SQuAD on H100
     - parity_verified  # TP2 BF16/FP32 and fused two-microbatch main_grad
+  qwen35_hybridep_allocator_ab:
+    - measured  # exact 2-node/16-H100 allocator-only A/B
+  qwen35_combine_input_retention_ab:
+    - measured  # exact 2-node/16-H100 scheduler lifetime A/B
+  qwen35_owner_stream_release_ab:
+    - measured  # exact 2-node/16-H100 dependency-aware retirement A/B
+  qwen35_cuda_malloc_async_overlap_ab:
+    - measured  # exact 2-node/16-H100 first-backward OOM
+  qwen35_gdn_recompute_overlap_ab:
+    - measured  # exact 2-node/16-H100 lifetime reduction
+  qwen35_paged_stash_activation_gate:
+    - code_verified
+    - measured_invalid_control  # captured no eligible tensors
+    - measured_capacity_failure  # activated stash then OOMed
+  qwen35_gdn_paged_stash_overlap_ab:
+    - measured  # finite but throughput-rejected
 training_dimensions:
   speed:
-    effect: "zero cost for expandable_segments; LoRA input re-gather and parallelism changes vary"
-    confidence: high
+    effect: "often neutral for expandable_segments; validate fine-grained overlap schedules"
+    confidence: medium
     rationale: >
-      expandable_segments:True has no throughput impact. Parallelism resizing
-      (TP, PP) can cost 6-28% depending on the strategy. Measured LoRA input
-      re-gather cost ranged from 0.34% to 6.74% depending on the workload.
+      expandable_segments:True had no throughput impact in the measured Llama3
+      workload. In a Qwen3.5 HybridEP-overlap run, switching to backend:native
+      made iteration 1 take 151.9 seconds and iteration 2 stall for more than
+      six minutes, versus about 82.7 seconds per step with expandable segments.
+      Parallelism resizing (TP, PP) can cost 6-28% depending on the strategy.
+      Measured LoRA input re-gather cost ranged from 0.34% to 6.74%.
   memory:
     effect: "eliminates fragmentation-induced OOM; can reduce optimizer-state and retained LoRA + SP memory"
     confidence: high
@@ -41,11 +64,12 @@ training_dimensions:
       in measured TP+SP workloads. Precision-aware Adam state dtypes can
       reduce delayed optimizer-state pressure.
   scale:
-    effect: "neutral for expandable_segments; LoRA input re-gather requires SP"
-    confidence: high
+    effect: "allocator is per-process, but rank skew can enter the distributed critical path"
+    confidence: medium
     rationale: >
-      expandable_segments is a per-process allocator setting with no
-      distributed implications. LoRA input re-gather has no effect when
+      The setting is per-process, but allocator-induced fragmentation or
+      delayed reuse can make ranks reach collectives at different times in a
+      fine-grained overlap schedule. LoRA input re-gather has no effect when
       sequence parallelism is disabled.
   convergence:
     effect: "no change for allocator/re-gather; validate reduced-precision optimizer states"
@@ -74,6 +98,9 @@ interactions:
   conditional:
     - "with CUDA graphs: set NCCL_GRAPH_REGISTER=0 when using expandable_segments (required on pre-Blackwell GPUs)"
     - "with NCCL UB: expandable_segments is incompatible with --use-nccl-ub"
+    - "with fine-grained MoE overlap: compare allocator runtime APIs, iteration 2, and all-rank memory/utilization in a matched allocator A/B"
+    - "cudaMallocAsync is not interchangeable with expandable segments; require a completed optimizer step before timing it"
+    - "with MoE paged stash: require eligible saved-tensor markers and an actual allocate_stash_buffers cuda log after capture"
     - "with LoRA + SP: sequence_parallel_input_regather trades a backward all-gather for lower retained activation memory"
     - "with precision-aware Adam: reduced state dtypes require numerical validation"
   incompatible:
@@ -91,6 +118,10 @@ feature_meaning:
     use_precision_aware_optimizer permits explicit main-gradient and Adam
     moment dtypes. BF16 states can reduce capacity pressure while FP32 main
     parameters and parameter remainders are retained.
+  moe_paged_stash_activation_gate: >
+    A paged-stash config is active only when eligible token-major saved tensors
+    carry the grouped_tensor_scale_inv marker and capture produces concrete
+    CUDA stash buffers. A max_tokens_dict-is-None skip is an unpaged control.
 config_keys:
   - "env: PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True"
   - "peft: LoRA.sequence_parallel_input_regather=True"
@@ -114,8 +145,13 @@ expected_metric_change:
   - metric: gpu_utilization
     direction: unchanged
     magnitude: "0%"
-    conditions: expandable_segments only
+    conditions: conventional Llama3 schedule measured in PR #3107
     evidence: measured_pr_3107
+  - metric: step_time
+    direction: workload_dependent
+    magnitude: "82.7 s expandable versus 151.9 s native first iteration and >6 min native second-iteration stall"
+    conditions: Qwen3.5-35B-A3B, exact 2-node/16-H100 HybridEP fine-grained overlap
+    evidence: mb_998_qwen35_allocator_ab
   - metric: peak_memory
     direction: down
     magnitude: "0.8-4.7 GB measured"
@@ -204,6 +240,126 @@ measured_results:
         baseline_peak_mem_gb: 52.185
         regather_peak_mem_gb: 51.371
         throughput_change_pct: -0.34
+  - name: qwen35_hybridep_allocator_ab
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    parallelism: EP16
+    expandable_step_time_s: 82.7
+    native_iteration_1_step_time_s: 151.8695
+    native_iteration_2_status: "stalled for more than 6 minutes; canceled"
+    native_rank_memory_gib: "79.2-80.9"
+    note: >
+      The expandable profile contained roughly 30,000 calls in each major
+      cuMem VMM category, but native allocation worsened iteration time and
+      rank skew. VMM traffic was correlated, not sufficient evidence of cause.
+  - name: qwen35_combine_input_retention_ab
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    control_first_step_peak_allocated_gib: 63.15
+    retain_first_step_time_ms: 149703.4
+    retain_first_step_peak_allocated_gib: 68.932
+    retain_iteration_2_status: "16/16 ranks OOM requesting 1.89 GiB"
+    note: "Coarse retention recovered no speed and removed optimizer-state headroom; early release is capacity-critical."
+  - name: qwen35_owner_stream_release_ab
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    control_iteration_2_step_time_ms: 82700.3
+    owner_release_iteration_2_step_time_ms: 67978.4
+    owner_release_iteration_3_step_time_ms: 64666.5
+    owner_release_iteration_1_peak_allocated_gib: 63.152
+    owner_release_iteration_2_peak_allocated_gib: 72.028
+    normal_profile_capture_span_s: 85.452785
+    owner_release_profile_capture_span_s: 73.024244
+    normal_profile_cuda_event_synchronize_calls: 8952
+    owner_release_profile_cuda_event_synchronize_calls: 4524
+    normal_profile_cuda_event_synchronize_s: 12.513
+    owner_release_profile_cuda_event_synchronize_s: 4.346428
+    normal_profile_cu_mem_unmap_calls: 29502
+    owner_release_profile_cu_mem_unmap_calls: 22049
+    note: "Event-wait plus owner-stream retirement preserved early-reclamation memory and reduced event/VMM churn, but remained far slower than no overlap."
+  - name: qwen35_cuda_malloc_async_overlap_ab
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    allocator: "backend:cudaMallocAsync"
+    schedule: "owner-stream retirement, connections=1, plain EP overlap"
+    status: "OOM in first fine-grained backward; zero completed optimizer steps"
+    requested_gib: 1.89
+    cuda_free_mib: 9.56
+    device_limit_gib: 79.11
+    note: "Repeated AccumulateGrad stream-mismatch warnings accompanied the capacity failure; no throughput result is claimed."
+  - name: qwen35_gdn_recompute_overlap_ab
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    schedule: "owner-stream retirement, connections=1, plain EP overlap"
+    recompute_modules: ["gdn"]
+    control_steps_2_3_mean_s: 44.4646
+    recompute_steps_2_3_mean_s: 25.3615
+    step_time_contraction_pct: 42.96
+    control_peak_allocated_gib: 72.028
+    recompute_peak_allocated_gib: 59.516
+    accepted_no_overlap_step_time_s: 22.340925
+    status: "finite, 0 skipped/NaN; rejected because no-overlap remained 13.52% faster"
+  - name: qwen35_paged_stash_activation_gate
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    schedule: "owner-stream retirement, connections=1, plain EP overlap"
+    requested_config: "moe_paged_stash=true, page_size=64, CUDA factor=1.10, CPU factor=0.0"
+    runtime_signal: "Paged stash: max_tokens_dict is None, skipping stash buffer allocation"
+    steady_steps_s: [44.3824, 44.3754, 45.1325]
+    status: "invalid paged-stash measurement; classified as unpaged matched control"
+    note: "Custom Torch grouped-MM activations lacked the grouped_tensor_scale_inv eligibility marker."
+  - name: qwen35_paged_stash_capacity_gate
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    schedule: "owner-stream retirement, connections=1, plain EP overlap"
+    capture_iteration_s: 158.8747
+    cuda_buffer_shapes:
+      bf16: [[1478272, 2048], [1478272, 1024], [1478272, 512]]
+      fp32: [[1478272, 1]]
+    optimizer_request_gib: 1.89
+    pytorch_allocated_gib: 70.11
+    cuda_free_gib: "1.6-1.7"
+    status: "activation gate passed; all-rank OOM before iteration 2; no throughput result"
+    note: "PP1 sizing covered eligible activations across the in-flight layer schedule rather than one expert group."
+  - name: qwen35_gdn_paged_stash_overlap_ab
+    model: Qwen3.5-35B-A3B
+    task: pretrain
+    gpu: H100_80GB
+    gpus: 16
+    nodes: 2
+    schedule: "owner-stream retirement, connections=1, plain EP overlap"
+    recompute_modules: ["gdn"]
+    paged_stash: true
+    steps_2_3_s: [30.1803, 29.7948]
+    steps_2_3_mean_s: 29.98755
+    model_tflops_per_gpu: 196.4
+    iteration_2_peak_allocated_gib: 65.891
+    iteration_2_peak_reserved_gib: 72.343
+    vs_recompute_only_step_time_pct: 18.24
+    vs_accepted_no_overlap_step_time_pct: 34.23
+    status: "finite, 0 skipped/NaN; rejected for throughput"
+    note: "Selective GDN recompute supplied capacity, but paged pack/unpack overhead outweighed allocator benefit."
 failure_modes:
   - name: fragmentation_oom
     symptom: "OOM on a single rank despite headroom on other ranks"
@@ -213,6 +369,30 @@ failure_modes:
     symptom: "RuntimeError with --use-nccl-ub"
     likely_cause: expandable allocator incompatible with NCCL UB registration
     fix: "remove expandable_segments:True or disable --use-nccl-ub"
+  - name: allocator_runtime_calls_during_overlap
+    symptom: "many cuMem calls, long cudaEventSynchronize time, and idle/busy rank split"
+    likely_cause: "allocator activity correlated with a cross-stream lifetime or scheduler critical path"
+    fix: "run an exact allocator-only A/B; retain the better allocator and inspect schedule storage release if native is no better"
+  - name: native_allocator_overlap_fragmentation
+    symptom: "iteration 2 stalls while some ranks approach physical memory capacity"
+    likely_cause: "native allocator fragmentation or delayed reuse amplifies rank skew"
+    fix: "restore expandable_segments and profile the schedule rather than continuing with backend:native"
+  - name: cuda_malloc_async_overlap_capacity
+    symptom: "all ranks OOM in the first fine-grained backward"
+    likely_cause: "stream-ordered pool cannot reuse enough memory under the combined activation lifetime"
+    fix: "reject cudaMallocAsync for the shape; reduce activation lifetime or change parallelism before timing"
+  - name: paged_stash_no_eligible_tensors
+    symptom: "moe_paged_stash=true but max_tokens_dict is None and no stash buffer is allocated"
+    likely_cause: "custom expert ops did not tag eligible token-major saved tensors"
+    fix: "mark only eligible activation tensors, rerun capture, and require allocate_stash_buffers cuda before timing"
+  - name: paged_stash_full_schedule_capacity
+    symptom: "real stash buffers allocate after capture, then optimizer state OOMs before the next step"
+    likely_cause: "PP1 full-schedule stash buffers and optimizer-state lifetime exceed device capacity"
+    fix: "combine with a validated lifetime reduction, narrow eligible activation scope, or change parallelism before timing"
+  - name: scheduler_input_retention_optimizer_oom
+    symptom: "finite first step followed by all-rank 1.89 GiB optimizer-state OOM"
+    likely_cause: "disabling immediate schedule-input release retains about 5.8 GiB of additional live allocation"
+    fix: "restore early reclamation and test dependency-aware retirement instead of retaining inputs until backward"
   - name: pp_increase_loses_dp
     symptom: throughput drop despite lower memory
     likely_cause: increasing PP reduces DP, increasing gradient accumulation steps
@@ -221,6 +401,10 @@ failure_modes:
     symptom: "iteration 1 completes, then iteration 2 OOMs across ranks"
     likely_cause: Adam state is materialized after the first optimizer step
     fix: "validate precision-aware state dtypes, distributed optimizer/FSDP, or additional model parallelism"
+  - name: mixed_fp8_cold_start_memory_spike
+    symptom: "mixed FP8 first iteration is much slower than steady state and approaches physical GPU capacity even when grouped experts remain BF16"
+    likely_cause: "FP8 compilation, scaling state, and non-expert precision boundaries add cold-start workspaces; the exact Qwen3.5 H100 run took 154.335 seconds and reached about 78.4 GiB/GPU"
+    fix: "sample all-rank memory through the first optimizer step, then require a finite post-compile steady window to beat the exact BF16 control; blockwise reduced rank-0 max allocated/reserved memory to 63.369/67.228 GiB but did not improve steady throughput"
   - name: lora_sp_gathered_input_retention
     symptom: "LoRA + SP activation memory remains high"
     likely_cause: full gathered LoRA-A inputs are retained until backward
@@ -233,6 +417,7 @@ known_constraints:
   - sequence_parallel_input_regather falls back for row-parallel, expert, TP1, CUDA graph, CPU-offload, and overlapping recompute paths
 known_limitations:
   - expandable_segments fixes fragmentation but not genuine capacity limits
+  - expandable_segments is not guaranteed to be throughput-neutral for every fine-grained multi-stream schedule
   - parallelism resizing (TP/PP) has significant throughput costs
   - no automatic memory profiling to recommend the optimal strategy
   - LoRA input re-gather adds a backward all-gather and may not improve throughput
@@ -243,9 +428,18 @@ evidence:
   - docs/performance-guide.md
   - "PR #3107 (Llama3 70B SFT OOM fix experiment)"
   - "PR #4581 (LoRA sequence-parallel input re-gather experiments)"
+  - "Qwen3.5 H100 exact 2-node allocator measurement"
+  - "Qwen3.5 H100 MoE-combine input-retention measurement"
+  - "Qwen3.5 H100 dependency-aware owner-stream release measurement"
+  - "Qwen3.5 H100 cudaMallocAsync owner-release overlap measurement"
+  - "Qwen3.5 H100 selective GDN recompute overlap measurement"
+  - "Qwen3.5 H100 paged-stash eligibility gate"
+  - "Qwen3.5 H100 paged-stash capacity gate"
+  - "Qwen3.5 H100 selective-GDN plus paged-stash measurement"
   - tests/unit_tests/peft/test_lora_sp_input_regather_distributed.py
   - 3rdparty/Megatron-LM/megatron/core/transformer/moe/README.md
 follow_up_validation:
   - Quantify expandable_segments memory savings across different model sizes.
   - Measure interaction between expandable_segments and CUDA graph memory overhead.
+  - Repeat allocator-only profiles for fine-grained MoE overlap after scheduler storage-lifetime fixes.
   - Measure LoRA input re-gather across more sequence lengths, TP sizes, and target-module sets.

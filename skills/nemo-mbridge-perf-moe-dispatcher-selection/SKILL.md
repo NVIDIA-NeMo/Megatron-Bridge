@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-moe-dispatcher-selection
-description: Choose the right MoE token dispatcher (`alltoall`, DeepEP, or HybridEP) for the hardware, EP degree, and optimization stage. Summarizes patterns from DSV3, Qwen3, Qwen3-Next, and VLM bring-up work.
+description: Choose the right MoE token dispatcher, including alltoall, DeepEP, HybridEP, or experimental NCCL EP, for the hardware, EP degree, and optimization stage. Summarizes DSV3, Qwen3, Qwen3-Next, and VLM bring-up patterns. Use for dispatcher selection, dispatcher-related regressions or crashes, alltoall versus DeepEP, HybridEP, MoE dispatcher, flex backend, or EP-dispatcher selection.
 license: Apache-2.0
-when_to_use: Choosing a MoE token dispatcher, or tracing a MoE regression or crash to a dispatcher config change; 'which dispatcher', 'alltoall vs DeepEP', 'HybridEP', 'MoE dispatcher', 'flex backend', 'EP dispatcher selection'.
 ---
 
 # MoE Dispatcher Selection Guide
@@ -16,7 +15,7 @@ Card: @skills/nemo-mbridge-perf-moe-dispatcher-selection/card.yaml
 
 | Hardware | First choice | Why |
 |---|---|---|
-| H100 | A/B DeepEP and HybridEP after proving both runtime paths | Runtime compatibility and workload shape can outweigh the platform default |
+| H100 | A/B DeepEP and HybridEP after proving both runtime paths | Runtime compatibility and workload shape can outweigh the platform default; NCCL EP is experimental and its static fast path is not available on Hopper |
 | B200 | DeepEP, if the runtime package is installed | Good first choice unless a platform-specific HybridEP path is available |
 | GB200 / GB300 NVL72 | HybridEP, if the runtime package is installed | Best fit for NVLink-domain-aware dispatch and lower memory pressure |
 | Unknown or first bring-up | `alltoall` | Easiest path for correctness and debugging |
@@ -51,6 +50,29 @@ select `moe_token_dispatcher_type="flex"` and then require their corresponding
 runtime packages at model construction time. If DeepEP or HybridEP is missing,
 record the import failure as an environment limitation and treat `alltoall` as
 the only measured correctness fallback for that run.
+
+The experimental `ncclep` flex backend has a separate build gate. Import
+`transformer_engine.pytorch.ep` from the exact training container and require
+`EpBuffer`, `ep_bootstrap`, `ep_dispatch`, `ep_combine`, and `ep_finalize`.
+Those symbols require Transformer Engine to be built with
+`NVTE_BUILD_WITH_NCCL_EP=1`. A newer MCore checkout containing the backend
+does not make an older Transformer Engine wheel capable of running it.
+For the Qwen3.5 H100 campaign, a read-only inventory of the exact training
+image found no `transformer_engine.pytorch.ep` module. The import probe was
+cancelled before allocation because the immutable-image inventory had already
+failed the capability gate. Record this as an unavailable container endpoint,
+not an NCCL EP performance result.
+
+Package import and model construction are necessary but not sufficient. Require
+the target multi-node topology to complete a real dispatch and combine before
+accepting any timing. On a 16×H100 Qwen3.5 text candidate, DeepEP imported,
+constructed the model, entered the training loop, and exposed device-resident
+expert counts to an experimental Hopper grouped-MM path. Rank 8 nevertheless
+timed out in the first inter-node dispatch (`timeout (dispatch CPU)`) and then
+aborted during CUDA illegal-address cleanup. Zero iterations completed, so the
+result is a runtime/topology compatibility failure, not a dispatcher throughput
+ranking. The DeepEP implementation explicitly requires adaptive routing to be
+disabled; verify that cluster setting before retrying.
 
 ### Qwen3 30B A3B on H100
 
@@ -111,6 +133,11 @@ DeepEP is selected by setting
 
 Tune the SM count allocated to DeepEP communication kernels (default 20).
 The optimal value depends on the workload and EP degree.
+
+When replacing a HybridEP recipe, clear HybridEP-only rank capacity with a
+true YAML/Python null. In CLI overrides, use the runner's `null` spelling; a
+literal `None` can remain the string `"None"` and fail MCore validation under
+the DeepEP backend.
 First confirm the DeepEP package imports in the target container, then require
 a complete dispatch/combine and steady iteration. Initialization alone is not
 performance evidence.
@@ -134,39 +161,112 @@ First confirm the HybridEP package imports in the target container; a missing
 package fails during model construction, before any dispatcher timing is
 available.
 
-When enabling fused HybridEP permutation, validate the live buffer template
-after dispatcher construction. Dispatch, combine, and preprocessing chunk
-sizes must remain compatible with the fused path; a config helper accepting
-the knobs does not prove that the runtime kept them. On the measured
-Qwen3.5-35B-A3B 16×H100 stack, correcting that runtime contract reduced exact
-GBS1024 step time from 26.081 to 25.007 seconds (4.12%). The local optimum was
-32 communication SMs and 64-token chunks: 24 and 48 SMs regressed 0.48% and
-5.71%, while 32- and 128-token chunks regressed 1.46% and 1.86%.
+For the detailed Qwen3.5 H100 HybridEP campaign, read
+[references/qwen35-h100-hybridep.md](references/qwen35-h100-hybridep.md).
+Use it when validating fused-template chunks, static device metadata, grouped
+expert backends, graph-state lifetime, or independent SM/block budgets. The
+portable rules are:
 
-In the matched rank-0 profile, HybridEP combine, dispatch, and support/RDMA
-occupied 7.723 seconds of a 22.448-second GPU-active union, with no overlap
-against the 8.446-second expert-GEMM union. HybridEP metadata preprocessing
-also enclosed most of 2,775 stream synchronizations (7.422 seconds of summed
-CPU wait, overlapping GPU work). Treat dynamic metadata and expert-shape
-materialization as part of the dispatcher wall, not as generic Python overhead.
+- log the post-normalization template before interpreting an A/B;
+- preserve arbitrary routing, device-count lifetime, and overflow assertions;
+- probe the installed grouped-expert backend on real shapes;
+- treat graphs, capacity, chunk sizes, and phase resource budgets as separate
+  end-to-end A/Bs.
 
-Do not remove those synchronizations by substituting a benchmark-only route
-layout. A Qwen3.5 H100 control assigned exactly equal expert counts while
-spreading each token's top-k routes across EP ranks, kept HybridEP's original
-GPU metadata tensor, and still segfaulted during the first backward after fused
-dispatch. Likewise, `tokens_per_expert` is produced on the communication stream
-and its GPU tensor must remain alive for the asynchronous path. The safe
-optimization requires a native nonblocking HybridEP-to-GroupedMLP metadata
-contract that supports arbitrary valid routes; a CPU split or deterministic
-route shim is not equivalent.
+### NCCL EP (experimental)
 
-Leave `moe_expert_rank_capacity_factor=None` for the first Hopper run. Static
-capacity removes a host-side dynamic-size synchronization, but it also changes
-the expert input shape and requires a compatible fused GroupedLinear path.
-Validate that combination independently before using it in a benchmark recipe.
-In the 2026-07-26 H100 Qwen3.5 experiment, the required Transformer Engine
-operation-fuser GroupedMLP path was available only on sm100. Bypassing that
-guard reached communication failure and is not a valid Hopper workaround.
+Select the backend with
+`moe_token_dispatcher_type="flex"` and
+`moe_flex_dispatcher_backend="ncclep"`. Set
+`moe_expert_rank_capacity_factor` explicitly: it sizes the per-rank receive
+buffer, and exceeding the budget hard-traps instead of softly dropping routes.
+Start with `moe_ncclep_static_shape=false` and
+`moe_ncclep_use_symm_mem=false`.
+
+Treat its two shape modes as different hardware paths:
+
+- dynamic shape narrows the received buffer with
+  `tokens_per_expert.sum().item()`. It is valid on H100 when the TE NCCL EP
+  build is present, but the D2H synchronization serializes the 1F1B overlap
+  boundary;
+- static shape avoids that narrowing and is the intended overlap/CUDA-graph
+  path, but it requires SM100+, the TE operation fuser, and
+  `NVTE_CUTEDSL_FUSED_GROUPED_MLP=1`. Do not enable it on H100;
+- symmetric-memory/zero-copy payload buffers are not implemented in the
+  current manager and must remain disabled.
+
+Use a staged gate: exact-container import probe, exact multi-node
+dispatch/combine correctness, then unprofiled end-to-end training. The import
+probe is capability evidence only. A successful bootstrap is still not a
+throughput result, and the dynamic Hopper path should be compared against the
+same no-overlap HybridEP winner before considering overlap.
+
+Dispatcher selection also interacts with launch ordering after the SM budget is
+chosen. On the same exact 2-node no-overlap path with `num_sms=16`, changing
+only `CUDA_DEVICE_MAX_CONNECTIONS` from 32 to 1 reduced the steps 5-8 mean from
+23.228 to 22.451 seconds and raised throughput from 253.60 to 262.38 model
+TFLOP/s/GPU. The 3.46% step-time gain shows that HybridEP's internal streams
+can remain launch-order sensitive even when Bridge's explicit EP overlap is
+disabled. Treat the value as a same-workload A/B, not a dispatcher-wide
+default or evidence that communication was hidden.
+
+Rebaseline scoped graphs after changing launch ordering. With `num_sms=16`,
+connections=1, and rank capacity 1.05 fixed, disabling TE-scoped graphs changed
+the steps 5-8 mean from 22.451 to 22.439 seconds (262.38 to about 262.52 model
+TFLOP/s/GPU). The 0.053% eager advantage is noise-level, so scoped graphs
+provide no measurable benefit after static dispatch and one-connection launch
+ordering. Prefer the simpler eager control unless a longer run proves a stable
+difference.
+
+The matched no-overlap profile explained why connections=1 won. Relative to
+the older connections=32 trace, HybridEP active union fell 8.77% from 7.376 to
+6.729 seconds, led by a 13.75% dispatch reduction. Expert/linear union fell
+1.58%, but idle gaps increased 15.02% from 4.204 to 4.836 seconds. Kernel count
+remained 401,840 and HybridEP/expert intersection remained zero. Connection
+count therefore changed serial dispatcher cost and idle scheduling rather than
+hiding communication. Use this tradeoff to justify only the adjacent
+no-overlap connections=2 A/B; do not infer its outcome from a different
+combined-overlap schedule.
+
+That adjacent no-overlap point averaged 22.502 seconds / about 261.78 model
+TFLOP/s/GPU over steps 5-8, 0.28% slower than connections=1. The extra
+concurrency did not recover the profiled idle penalty. Keep connections=1 for
+this dispatcher shape and stop the launch-order sweep.
+
+Do not turn the static rank-capacity factor into an unchecked memory/performance
+knob. On that same current winner, reducing only the factor from 1.05 to 1.02
+triggered the device-side `HybridEP static rank capacity overflowed and dropped
+routed tokens` assertion in the first training iteration. It produced zero
+valid throughput samples. Keep 1.05 as the measured safe value for this exact
+route distribution and fail closed on any lower factor that overflows.
+
+A matched rank-0 Nsight comparison separated that gain from unrelated kernels.
+The grouped/static path reduced expert/linear active union from 8.656 to 8.115
+seconds (6.25%), HybridEP active union from 7.723 to 7.376 seconds (4.49%), and
+summed host `cudaStreamSynchronize` wait from 7.422 to 1.679 seconds (77.4%).
+GDN moved only from 1.355 to 1.334 seconds (1.5%). The remaining expert/linear
+and HybridEP regions were still serial, so the next target is their native
+nonblocking handoff or overlap rather than another GDN microkernel. Of the 154
+remaining host synchronizations, 136 came from `aten::copy_`; 128 were the two
+BF16 conversion copies per microbatch in native fused cross-entropy backward.
+The isolated Transformer Engine cross-entropy A/B averaged 23,514.2 ms over
+steps 5-8 versus 23,516.2 ms with native cross-entropy, a 0.0085% difference
+within noise, and MCore warned that the TE implementation had known stability
+issues. The host waits overlapped other GPU work and were not recoverable wall
+time. Treat profile attribution as a hypothesis until an end-to-end A/B
+changes the acceptance metric.
+
+Do not reduce EP solely to keep a HybridEP group inside one NVLink domain
+without budgeting the resulting expert data parallel replicas. In a matched
+2-node, 16-H100 Qwen3.5-35B-A3B control, changing EP from 16 to 8 made each
+HybridEP group node-local but introduced expert-DP=2. Model and optimizer
+construction fit at about 41.7 GiB/GPU, and the first iteration completed with
+finite loss, `skipped=0`, and `nan=0`. The second iteration then OOMed on all
+ranks while creating optimizer state: process usage was about 78.2 GiB/GPU
+and each rank needed another 1.89 GiB. Treat EP topology changes as a joint
+communication, parameter-replication, optimizer-state, and gradient-reduction
+decision; crossing initialization or one iteration is not a memory-fit proof.
+
 Do not substitute `moe_expert_capacity_factor` plus pad-to-capacity unless
 token dropping and padded work are part of the intended training semantics.
 For a dropless benchmark, verify that every configured route is still executed.
@@ -217,6 +317,12 @@ more comparable across dispatcher backends.
 - memory headroom matters in addition to throughput
 - measured Hopper workloads where a same-stack A/B beats DeepEP or `alltoall`
 
+### NCCL EP
+
+- experimental validation of a TE build compiled with NCCL EP support
+- dynamic-shape H100 dispatcher A/Bs where a D2H shape sync is acceptable
+- static-shape overlap only on SM100+ with the CuTe DSL fused grouped MLP
+
 ## Pitfalls
 
 1. **Do not compare dispatchers on different stacks**: container, routing mode,
@@ -247,3 +353,10 @@ more comparable across dispatcher backends.
 8. **Preserve arbitrary routing and metadata lifetime**: do not replace
    force-balance routes or discard the comm-stream `tokens_per_expert` tensor to
    avoid a host synchronization.
+
+9. **NCCL EP source availability is not runtime availability**: require the
+   exact container to expose the TE EP module and all five lifecycle symbols.
+
+10. **Do not transfer the NCCL EP static path to Hopper**: SM100+, the TE
+    operation fuser, and the CuTe DSL fused grouped MLP are hard prerequisites;
+    dynamic H100 mode retains a D2H shape synchronization.

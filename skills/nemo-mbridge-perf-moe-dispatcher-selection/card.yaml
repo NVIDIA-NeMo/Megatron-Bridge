@@ -2,7 +2,8 @@ title: moe_dispatcher_selection
 validated_on: "2026-07-26"
 summary: >
   Empirical guide for selecting MoE token dispatchers (AlltoAll, DeepEP,
-  HybridEP) based on hardware platform, model scale, and EP degree.
+  HybridEP, and experimental NCCL EP) based on hardware platform, model scale,
+  and EP degree.
   Backed by measured benchmarks from DSV3, Qwen3, and Qwen3-Next experiments
   across H100, B200, GB200, and GB300 systems.
 
@@ -26,6 +27,12 @@ validation_status:
   qwen35_hybridep_fused_permutation:
     - measured
     - profile_validated
+  qwen35_h100_grouped_mm_static_dispatch:
+    - measured
+    - profile_validated
+  ncclep_hardware_and_build_gates:
+    - static_analysis
+    - container_inventory
 
 training_dimensions:
   speed:
@@ -69,11 +76,19 @@ key_tuning_parameters:
     rationale: "Controls SM count for DeepEP communication kernels; default 20 is a starting point"
   - name: moe-hybridep-num-sms
     default: 16
-    recommended: "16-32 range, tune per workload; 32 won the measured Qwen3.5 H100 sweep"
-    rationale: "Controls SM count for HybridEP communication; 24 and 48 regressed 0.48% and 5.71% on the measured Qwen3.5 shape"
+    recommended: "16-32 starting range, tune per workload; 16 narrowly won the measured Qwen3.5 H100 sweep so far"
+    rationale: "Controls SM count for HybridEP communication; 20 improved 0.78% versus 32, 16 improved another 0.46%, 12 regressed 9.28% versus 16, and 108 regressed 19.97% versus 32 on the measured Qwen3.5 shape"
   - name: HybridEP fused-permutation chunk sizes
-    recommended: "validate dispatch/combine/preprocessing compatibility in the instantiated buffer"
-    rationale: "Runtime normalization enabled fused permutation and reduced exact GBS1024 step time by 4.12%; 64-token chunks beat 32 and 128 by 1.46% and 1.86%"
+    recommended: "log and validate the post-normalization dispatch/combine/preprocessing template"
+    rationale: "Joint runtime normalization enabled fused permutation and reduced exact GBS1024 step time by 4.12%; coupled 64-token chunks beat coupled 32 and 128 by 1.46% and 1.86%. A later apparent combine-only 128-to-64 A/B was invalid because the shim copied the unchanged 64-token dispatch chunk into all three fields. A true final-schedule 128/128/128 A/B was then audited as stages 10/4/2, blocks 108/108, valid=True and regressed step time 5.627% versus effective 64/64/64."
+  - name: moe-hybridep-num-sms-preprocessing
+    default: 108
+    recommended: "inspect the instantiated fused template and A/B independently from dispatch/combine and permute/unpermute"
+    rationale: "On Qwen3.5 16xH100, changing only preprocessing from 108 to 32 left fused permute/unpermute at 108 and dispatch/combine at 16, then regressed step time 0.418%"
+  - name: moe-hybridep-num-blocks-unpermute
+    default: runtime-specific
+    recommended: "inspect the live template and tune independently from preprocessing and permute"
+    rationale: "On Qwen3.5 16xH100, changing only fused unpermute from 108 to 32 blocks regressed step time 4.742% to 23.400 seconds / 251.73 model TFLOP/s/GPU"
   - name: NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN
     default: varies
     recommended: "match NVLink domain size (e.g., 16 for GB200)"
@@ -83,6 +98,18 @@ key_tuning_parameters:
   - name: CUDA_DEVICE_MAX_CONNECTIONS
     default: 1
     note: "Set to 32 when using EP overlap + CUDA graphs"
+  - name: moe-ncclep-static-shape
+    default: false
+    recommended: "false on H100; true only on SM100+ with the TE op fuser and NVTE_CUTEDSL_FUSED_GROUPED_MLP=1"
+    rationale: "Dynamic mode works with the supported TE build but narrows through a D2H count sync; static mode removes that boundary and requires the Blackwell CuTe DSL fused grouped MLP"
+  - name: moe-ncclep-use-symm-mem
+    default: false
+    recommended: false
+    rationale: "The current NCCL EP manager rejects the symmetric-memory zero-copy path as not implemented"
+  - name: moe-expert-rank-capacity-factor
+    default: null
+    recommended: "set explicitly and validate routed-count headroom for NCCL EP"
+    rationale: "NCCL EP uses it to size the receive buffer and hard-traps on overflow"
 
 best_measured_configs:
   - model: "DSV3 685B w/ MTP"
@@ -131,10 +158,24 @@ best_measured_configs:
     hardware: "16×H100"
     dispatcher: HybridEP
     precision: BF16
-    tflops: 235.55
-    step_time_ms: 25007.25
+    tflops: 263.67
+    step_time_ms: 22340.925
+    num_sms: 16
+    cuda_device_max_connections: 1
+    static_rank_capacity_factor: 1.05
+    shared_expert_overlap: true
+    cuda_graph_impl: none
+    scoped_graph_control_tflops: 262.38
+    scoped_graph_control_step_time_ms: 22450.75
+    scaled_grouped_mm_tensorwise_dispatch_available: false
+    scaled_grouped_mm_rowwise_cached_fc1_slowdown: 7.39
+    scaled_grouped_mm_rowwise_cached_fc2_slowdown: 3.52
+    shared_overlap_scoped_graph_step_time_ms: 22364.525
+    shared_overlap_scoped_graph_tflops: 263.39
+    padded_bmm_forward_slowdown: 2.0625
+    padded_bmm_forward_backward_slowdown: 2.5573
     parallelism: "TP1 EP16 PP1 CP1"
-    note: "Development stack with fused permutation runtime normalization; not yet the public recipe"
+    note: "Development stack with static dispatch, experimental SM90 BF16 grouped-MM, and normal-priority shared-expert overlap; not yet the public recipe or a qualifying 50-step result"
 
 evidence:
   - "[MoE Perf] MCore Release Performance Tracker - DeepSeek-V3"
@@ -142,13 +183,42 @@ evidence:
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
 
 known_limitations:
+  - The measured Qwen3.5 H100 training image has no transformer_engine.pytorch.ep module; the import probe was cancelled before allocation after the immutable-image inventory failed the capability gate, so no NCCL EP throughput result exists
+  - NCCL EP requires the exact Transformer Engine container build to expose transformer_engine.pytorch.ep with EpBuffer, ep_bootstrap, ep_dispatch, ep_combine, and ep_finalize; MCore source support alone is insufficient
+  - NCCL EP dynamic shape is the only H100-compatible mode and performs a tokens_per_expert.sum().item() D2H synchronization that serializes the 1F1B overlap boundary
+  - NCCL EP static shape requires SM100+, the Transformer Engine operation fuser, and NVTE_CUTEDSL_FUSED_GROUPED_MLP=1
+  - NCCL EP symmetric-memory/zero-copy payload buffers are not implemented in the current manager
+  - NCCL EP receive-capacity overflow hard-traps; the rank-capacity factor is a correctness boundary, not a token-dropping tuning knob
   - HybridEP is topology-sensitive and can work outside NVL72 only when the installed runtime supports the target topology
   - DeepEP SM count tuning is hardware-specific
   - A successful backend import does not prove dispatch/combine runtime compatibility
+  - A 16xH100 Qwen3.5 DeepEP candidate passed import, construction, and config validation but timed out in the first inter-node dispatch; verify the implementation's adaptive-routing requirement before treating the backend as benchmarkable
+  - Clear HybridEP-only rank capacity with a true YAML null when switching backends; a CLI literal None may remain a non-null string and fail MCore validation
   - Static capacity must preserve GroupedLinear shapes and all routed work
   - Hopper static rank capacity is blocked when the selected Transformer Engine operation-fuser GroupedMLP path is sm100-only
   - Fused HybridEP permutation requires compatible live dispatch, combine, and preprocessing chunk sizes
+  - A config input is not an A/B unless the post-normalization JIT template differs; the measured static/shared path silently reduced both intended combine-128 and combine-64 runs to effective 64/64/64 chunks
+  - Record effective chunk, stage, and block fields together; the measured true 128/128/128 final-schedule template was valid at stages 10/4/2 and blocks 108/108 but regressed 5.627% versus 64/64/64
   - Deterministic exact-balanced routing is not a safe substitute for native nonblocking metadata; the measured cross-rank route-only control segfaulted in its first backward
   - The GPU tokens_per_expert tensor is produced on the communication stream and must remain alive for the asynchronous path
+  - Static nonblocking dispatch requires an overflow assertion and lifetime-safe GPU counts and communication handles
+  - Scoped graphs were not additive after static dispatch removed the same CPU synchronization wall
+  - No-overlap does not make maximal dispatcher occupancy safe; HybridEP num_sms=108 regressed the measured Qwen3.5 H100 path by 19.97% step time versus 32
+  - On the same Qwen3.5 path, num_sms=20 improved step time only 0.78% versus 32; treat low-SM tuning as a shallow local optimum rather than a portable constant
+  - Reducing the same Qwen3.5 cap from 20 to 16 improved only another 0.46%; low-SM gains were diminishing and by themselves left throughput 11.73% below the acceptance gate
+  - Reducing the Qwen3.5 cap from 16 to 12 regressed step time 9.28%; the coarse sweep brackets an underprovisioned lower boundary rather than supporting ever-lower SMS values
+  - A profile-motivated asymmetric split kept Qwen3.5 dispatch at 16 SMs and raised only combine to 20, but regressed steps 5-8 from 22.340925 to 22.49995 seconds / about 263.67 to 261.81 model TFLOP/s/GPU; active-union duration is a candidate signal, not a phase-SM sizing formula
+  - HybridEP preprocessing, dispatch/combine, and fused permute/unpermute are independent resource budgets; the measured preprocessing-only 108-to-32 Qwen3.5 A/B regressed step time 0.418%, while the unpermute-only 108-to-32 A/B regressed 4.742%
+  - On the no-overlap num_sms=16 path, changing only CUDA_DEVICE_MAX_CONNECTIONS from 32 to 1 improved step time 3.46% and reached 262.38 model TFLOP/s/GPU; this is a workload-specific launch-order A/B, not a portable dispatcher default
+  - With num_sms=16, connections=1, and rank capacity 1.05 fixed, eager averaged 22.439 seconds versus 22.451 with TE-scoped graphs; the 0.053% difference is noise-level, so graphs provide no measurable benefit on the current static path
+  - The matched no-overlap profile kept 401,840 kernels and zero HybridEP/expert intersection; connections=1 reduced HybridEP active union 8.77% versus 32 but increased idle gaps 15.02% from 4.204 to 4.836 seconds
+  - The adjacent no-overlap connections=2 run averaged 22.502 seconds / about 261.78 model TFLOP/s/GPU, 0.28% slower than connections=1; added concurrency did not recover the idle tradeoff
+  - Reducing the current Qwen3.5 winner's static rank capacity factor from 1.05 to 1.02 triggered the device-side route-overflow assertion in iteration 1 and yielded no valid throughput sample; keep 1.05 as the measured safe value for that route distribution
+  - Scaled grouped-MM API presence did not imply a usable expert backend: tensorwise had no registered GEMM, and rowwise cached-scale FC1/FC2 forward was 7.39x/3.52x slower than BF16 on the real Qwen3.5 shapes
+  - Adding scoped graphs to the shared-overlap winner averaged 22.365 seconds / 263.39 model TFLOP/s/GPU, 0.106% slower than eager; keep the simpler eager schedule
+  - Fixed-capacity padded batched GEMM was 2.06x slower in forward and 2.56x slower through backward than variable grouped MM after the complete layout contract was included
+  - The validation allocation is exactly 2 nodes with 8 H100 workers per node; an interactive GrpNodes=8 rejection describes partition-wide QoS consumption, not an eight-node benchmark request
+  - Reducing EP16 to EP8 introduced expert-DP2 and OOMed at iteration 2 during optimizer-state materialization despite initialization and iteration 1 fitting
+  - The profiled grouped/static winner still serialized 8.115 seconds of expert/linear work with 7.376 seconds of HybridEP work
   - Container version can cause performance regression
   - 1F1B overlap + DeepEP may regress on some configurations

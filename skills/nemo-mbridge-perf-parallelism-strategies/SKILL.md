@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-parallelism-strategies
-description: Operational guide for choosing and combining parallelism strategies in Megatron Bridge, including sizing rules, hardware topology mapping, and combined parallelism configuration.
+description: Operational guide for choosing and combining parallelism strategies in Megatron Bridge, including sizing rules, hardware-topology mapping, and combined parallelism configuration. Use for choosing or sizing TP, DP, PP, CP, or EP degrees, parallelism-related OOM or regression investigation, tensor parallelism, pipeline parallelism, or selecting parallelism for a GPU count.
 license: Apache-2.0
-when_to_use: Choosing or sizing TP/DP/PP/CP/EP degrees, or tracing an OOM or regression to a parallelism config change; 'how to parallelize', 'tensor parallel', 'pipeline parallel', 'parallelism config', 'which parallelism for X GPUs'.
 ---
 
 # Parallelism Strategy Selection Skill
@@ -183,12 +182,73 @@ Example — TP=2, CP=1, EP=8, ETP=1, PP=1:
 When sizing slurm scripts, compute `--nodes` from `min_gpus` (or a
 multiple of it for higher throughput via DP/EDP).
 
+### Preserve workload shape in folded-topology A/Bs
+
+Two layouts can use the same world size and satisfy both DP equations while
+presenting very different work to each expert GEMM. Before benchmarking a
+folded MoE topology change, compare all of the following against the control:
+
+```text
+dense_dp = world_size / (TP * PP * CP)
+expert_dp = world_size / (PP * EP * ETP)
+accumulation_microsteps = GBS / (MBS * dense_dp)
+local_experts = num_experts / EP
+```
+
+Also print or derive the source tokens entering each dispatch, routed
+rows/rank, and routed rows/local-expert. Flex dispatch replicates each selected
+expert route across ETP shards, so an ETP increase can preserve total
+rows/rank while shrinking rows/local-expert and adding ETP communication.
+`min_gpus` alone does not expose either effect.
+
+For example, on a force-balanced 16-GPU, seq-4096, top-8 Qwen3.5 MoE A/B:
+
+| Layout | Dense DP | Expert DP | Microsteps | Routed rows/rank | Rows/local expert |
+|---|---:|---:|---:|---:|---:|
+| TP1, EP16, ETP1, MBS1 | 16 | 1 | 64 | ~32,768 | ~2,048 |
+| TP2, EP16, ETP1, MBS2, SP | 8 | 1 | 64 | ~32,768 | ~2,048 |
+| TP2, EP8, ETP2, MBS1, SP | 8 | 1 | 128 | ~32,768 | ~1,024 |
+
+The middle row is the workload-equivalent topology A/B: it preserves the
+expert mesh, accumulation count, and grouped-GEMM row shape while isolating
+dense TP/SP. The last row is not equivalent even though it also has expert
+DP=1.
+
+The middle row was measured on the exact 16-H100 Qwen3.5 shape. Bridge
+automatically enabled its default TP all-gather/reduce-scatter overlap for
+TP2. The candidate completed eight finite steps, but steps 5--8 averaged
+26.219175 seconds / about 224.669 model TFLOP/s/GPU versus 22.340925 seconds /
+about 263.67 for TP1, a 17.359% step-time regression. Rank-0 iteration-2 peak
+allocated/reserved memory also rose from 61.460/65.500 to 66.504/68.373 GiB.
+Matching expert rows and accumulation makes the comparison interpretable; it
+does not guarantee a win because dense GEMM shard shapes, TP/SP collectives,
+and overlap coordination still change.
+
+New folded layouts can also require new model-kernel compile artifacts. The
+first bounded TP2/MBS2 allocation spent eight minutes compiling new GDN
+forward/backward shapes and timed out before iteration 1. A longer identical
+run reused the completed forward cache, finished the remaining backward
+compile, and then produced stable 26.1--26.3-second steps. Classify a
+compile-only timeout as cache-seeding evidence, not a topology performance
+result; accept timing only from finite iterations and a successful terminal
+run.
+
+Check static-capacity implementations separately when ETP is greater than one.
+In the current HybridEP manager, Flex expands the routing map over ETP but the
+static rank budget uses `config.moe_router_topk` without multiplying by ETP.
+A factor calibrated at ETP1 can therefore under-provision replicated ETP
+routes and trigger the overflow gate. This is a current-code boundary, not a
+general promise about every HybridEP release; verify the live implementation
+and fail closed on overflow before accepting timing.
+
 When answering MoE sizing prompts, include this checklist:
 
 - compute `min_gpus = PP * max(TP * CP, EP * ETP)` with the requested values
 - explicitly reject the wrong `PP * TP * CP * EP * ETP` full product
 - give both DP formulas: dense `world_size / (TP * PP * CP)` and MoE
   `world_size / (PP * EP * ETP)`
+- for performance A/Bs, preserve or explicitly account for accumulation
+  microsteps, routed rows/rank, and rows/local-expert
 - mention TP topology, SP, CP divisibility, and long-sequence CP guidance
 
 ## Memory Estimation
@@ -270,6 +330,14 @@ parallel_state.initialize_model_parallel(
    not the product of all dimensions. The dense `TP*CP`-mesh and MoE
    `EP*ETP`-mesh share the same GPUs in each PP stage. See
    "Minimum GPU Count" section above.
+
+9. Equal world size and equal EDP do not make two folded MoE layouts
+   performance-equivalent. Match accumulation and expert grouped-GEMM row
+   shapes, and validate ETP-aware static dispatcher capacity.
+
+10. Workload-equivalent expert shapes do not freeze the dense path. TP can
+    change dense GEMM efficiency, activate TP communication overlap, increase
+    coordination, and create new compile-cache keys.
 
 ## Verification
 

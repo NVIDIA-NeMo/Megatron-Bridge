@@ -1,5 +1,5 @@
 title: moe_hardware_configs
-validated_on: "2026-07-26"
+validated_on: "2026-07-27"
 summary: >
   Best-known MoE training configurations per model family and hardware platform,
   with measured throughput, MFU, and parallelism settings. Covers DSV3, Qwen3,
@@ -25,6 +25,7 @@ validation_status:
     - profile_validated
   qwen35_35b_h100:
     - measured
+    - launch_order_validated
   qwen3_next_80b_b200:
     - measured
   qwen3_next_80b_gb200:
@@ -188,15 +189,140 @@ best_configs:
     routing: force_balance
     ep_overlap: false
     delay_wgrad_compute: false
-    cuda_graph: "attn, moe_router, moe_preprocess"
+    cuda_graph: "none (accepted short-run winner)"
+    historical_cuda_graph_scopes: "attn, moe_router, moe_preprocess"
+    shared_expert_overlap: true
+    shared_expert_stream_priority: normal
     exact_gbs1024_tflops: 235.55
     exact_gbs1024_step_time_ms: 25007.25
     exact_gbs1024_rank0_peak_allocated_gib: 69.942
     dispatcher_gain_vs_native_percent: ~20
     scoped_graph_gain_vs_eager_hybridep_percent: ~15
     fused_hybridep_permutation_step_time_gain_percent: 4.12
-    rejected_dimensions: "plain EP overlap, shared-expert overlap, tested FP8 modes, Q/K norm folding, standalone fused GDN norm, non-default FlashQLA and HybridEP chunking"
-    note: "FlashQLA + pre-GDR + fused HybridEP permutation development stack; public recipe remains conservative and target tuning is still in progress"
+    grouped_mm_no_overlap_tflops: 250.5
+    grouped_mm_no_overlap_step_time_ms: 23516.2
+    grouped_mm_no_overlap_sms_20_tflops: 252.45
+    grouped_mm_no_overlap_sms_20_step_time_ms: 23335.0
+    grouped_mm_no_overlap_sms_20_step_time_gain_percent: 0.78
+    grouped_mm_no_overlap_sms_16_tflops: 253.60
+    grouped_mm_no_overlap_sms_16_step_time_ms: 23228.325
+    grouped_mm_no_overlap_sms_16_gain_vs_sms_20_percent: 0.46
+    grouped_mm_no_overlap_sms_16_connections_1_tflops: 262.38
+    grouped_mm_no_overlap_sms_16_connections_1_step_time_ms: 22450.75
+    grouped_mm_no_overlap_sms_16_connections_1_gain_vs_connections_32_percent: 3.46
+    grouped_mm_no_overlap_sms_16_connections_1_gate_gap_percent: 8.67
+    grouped_mm_no_overlap_sms_16_connections_1_static_rank_capacity_factor: 1.05
+    grouped_mm_no_overlap_sms_16_connections_1_eager_tflops: 262.52
+    grouped_mm_no_overlap_sms_16_connections_1_eager_step_time_ms: 22438.775
+    grouped_mm_no_overlap_sms_16_connections_1_eager_gain_vs_scoped_graph_percent: 0.053
+    grouped_mm_no_overlap_sms_16_connections_1_eager_gate_gap_percent: 8.63
+    grouped_mm_no_overlap_sms_16_connections_1_profile_capture_span_ms: 25906.977
+    grouped_mm_no_overlap_sms_16_connections_1_profile_kernel_active_union_ms: 21071.084
+    grouped_mm_no_overlap_sms_16_connections_1_profile_idle_gap_ms: 4835.893
+    grouped_mm_no_overlap_sms_16_connections_1_profile_hybridep_active_union_ms: 6729.301
+    grouped_mm_no_overlap_sms_16_connections_1_profile_expert_linear_union_ms: 7987.200
+    grouped_mm_no_overlap_sms_16_connections_1_profile_useful_intersection_ms: 0
+    grouped_mm_no_overlap_sms_16_connections_2_tflops: 261.78
+    grouped_mm_no_overlap_sms_16_connections_2_step_time_ms: 22501.775
+    grouped_mm_no_overlap_sms_16_connections_2_regression_vs_connections_1_percent: 0.28
+    mixed_fp8_tensorwise_bf16_experts_tflops: 243.36
+    mixed_fp8_tensorwise_bf16_experts_step_time_ms: 24205.175
+    mixed_fp8_tensorwise_step_time_regression_vs_bf16_percent: 7.87
+    mixed_fp8_tensorwise_throughput_regression_vs_bf16_percent: 7.30
+    mixed_fp8_tensorwise_cold_iteration_1_ms: 154335.1
+    mixed_fp8_tensorwise_observed_memory_high_water_gib: 78.4
+    mixed_fp8_blockwise_bf16_experts_tflops: 243.28
+    mixed_fp8_blockwise_bf16_experts_step_time_ms: 24213.25
+    mixed_fp8_blockwise_step_time_regression_vs_bf16_percent: 7.91
+    mixed_fp8_blockwise_throughput_regression_vs_bf16_percent: 7.33
+    mixed_fp8_blockwise_rank0_max_allocated_gib: 63.369
+    mixed_fp8_blockwise_rank0_max_reserved_gib: 67.228
+    shared_expert_overlap_tflops: 263.67
+    shared_expert_overlap_step_time_ms: 22340.925
+    shared_expert_overlap_step_time_gain_percent: 0.44
+    shared_expert_overlap_gate_gap_percent: 8.22
+    shared_expert_overlap_rank0_max_allocated_gib: 61.460
+    shared_expert_overlap_rank0_max_reserved_gib: 65.500
+    numa_bound_step_time_ms: 22341.025
+    numa_bound_tflops: 263.6688
+    numa_bound_regression_percent: 0.000448
+    numa_bound_layout: "local ranks 0-3 -> NUMA 0; local ranks 4-7 -> NUMA 1 on both hosts"
+    tp2_ep16_etp1_mbs2_sp_step_time_ms: 26219.175
+    tp2_ep16_etp1_mbs2_sp_tflops: 224.669
+    tp2_ep16_etp1_mbs2_sp_step_time_regression_percent: 17.359
+    tp2_ep16_etp1_mbs2_sp_gate_gap_percent: 21.801
+    tp2_ep16_etp1_mbs2_sp_rank0_iteration2_max_allocated_gib: 66.504
+    tp2_ep16_etp1_mbs2_sp_rank0_iteration2_max_reserved_gib: 68.373
+    shared_expert_overlap_profile_stream_sum_ms: 690.403
+    shared_expert_overlap_profile_primary_intersection_ms: 212.596
+    shared_expert_overlap_profile_hybridep_intersection_ms: 163.318
+    shared_expert_overlap_connections_2_step_time_ms: 22936.825
+    shared_expert_overlap_connections_2_regression_percent: 2.67
+    shared_expert_overlap_high_priority_step_time_ms: 22380.525
+    shared_expert_overlap_high_priority_regression_percent: 0.18
+    native_te_variable_split_step_time_ms: 33178
+    native_te_fixed_slot_step_time_ms: 36758
+    torchao_mxfp8_optimized_minimum_capability: sm100
+    scaled_grouped_mm_tensorwise_dispatch_available: false
+    scaled_grouped_mm_rowwise_cached_fc1_slowdown: 7.39
+    scaled_grouped_mm_rowwise_cached_fc2_slowdown: 3.52
+    cublaslt_prefer_grouped_gemm_setter_available: false
+    shared_overlap_scoped_graph_step_time_ms: 22364.525
+    shared_overlap_scoped_graph_tflops: 263.39
+    shared_overlap_scoped_graph_regression_percent: 0.106
+    delayed_grouped_wgrad_primitive_dgrad_reduction_percent: 21.1
+    delayed_grouped_wgrad_step_time_ms: 22489.325
+    delayed_grouped_wgrad_tflops: 261.93
+    delayed_grouped_wgrad_regression_percent: 0.664
+    compiled_grouped_mlp_balanced_rows: 32768
+    compiled_grouped_mlp_balanced_forward_backward_gain_percent: 26.92
+    compiled_grouped_mlp_production_budget_rows: 34416
+    compiled_grouped_mlp_production_step_time_ms: 22537.050
+    compiled_grouped_mlp_production_tflops: 261.38
+    compiled_grouped_mlp_production_regression_percent: 0.878
+    compiled_grouped_mlp_uniform_sweep_rows: "33424, 33760, 34080, 34416"
+    compiled_grouped_mlp_uniform_sweep_forward_backward_gain_percent: "25.36, 25.02, 25.32, 25.64"
+    compiled_grouped_mlp_uniform_sweep_min_cosine: 0.99999356
+    compiled_grouped_mlp_carveout_sms: "0, 16, 24"
+    compiled_grouped_mlp_carveout_forward_backward_ratio: "0.750026, 0.759552, 0.788057"
+    compiled_grouped_mlp_carveout_concurrent_ratio: "0.759904, 0.760688, 0.802129"
+    compiled_grouped_mlp_carveout_min_cosine: 0.99999356
+    padded_bmm_forward_slowdown: 2.0625
+    padded_bmm_forward_backward_slowdown: 2.5573
+    validation_nodes: 2
+    validation_gpus_per_node: 8
+    static_rank_capacity_factor_1_02_status: "rejected; device-side route-overflow assertion in iteration 1"
+    grouped_mm_no_overlap_sms_12_tflops: 232.06
+    grouped_mm_no_overlap_sms_12_step_time_ms: 25384.5
+    grouped_mm_no_overlap_sms_12_regression_vs_sms_16_percent: 9.28
+    grouped_mm_no_overlap_sms_108_tflops: 208.8
+    grouped_mm_no_overlap_sms_108_step_time_ms: 28211.6
+    grouped_mm_no_overlap_sms_108_step_time_regression_percent: 19.97
+    hybridep_preprocessing_default_blocks: 108
+    hybridep_fused_permute_default_blocks: 108
+    hybridep_fused_unpermute_default_blocks: 108
+    hybridep_preprocessing_32_step_time_ms: 22434.250
+    hybridep_preprocessing_32_tflops: 262.57
+    hybridep_preprocessing_32_regression_percent: 0.418
+    hybridep_unpermute_32_step_time_ms: 23400.300
+    hybridep_unpermute_32_tflops: 251.73
+    hybridep_unpermute_32_regression_percent: 4.742
+    owner_release_connections_32_steps_2_3_mean_step_time_ms: 66322.45
+    owner_release_connections_32_steps_2_3_mean_tflops_per_gpu: 88.9
+    owner_release_connections_1_steps_2_3_mean_step_time_ms: 44464.6
+    owner_release_connections_1_steps_2_3_mean_tflops_per_gpu: 132.45
+    owner_release_connections_1_iteration_2_peak_allocated_gib: 72.028
+    owner_release_connections_1_profile_capture_span_s: 46.741668
+    owner_release_connections_1_profile_idle_gap_s: 16.587562
+    owner_release_connections_1_profile_dispatch_active_s: 11.162102
+    owner_release_connections_1_profile_nccl_active_s: 0.665423
+    owner_release_connections_1_profile_useful_intersection_s: 0.155779
+    owner_release_connections_2_steps_2_3_mean_step_time_ms: 50355.9
+    owner_release_connections_2_steps_2_3_mean_tflops_per_gpu: 117.0
+    owner_release_connections_2_iteration_2_allocator_retries: 64
+    owner_release_connections_2_iteration_2_reserved_gib: 77.265
+    rejected_dimensions: "plain EP overlap, high-priority shared-expert stream, shared-overlap connections=2, scoped graphs with shared overlap, HybridEP preprocessing=32, HybridEP fused unpermute blocks=32, tensorwise global FP8 with BF16 experts, scaled grouped-MM tensorwise/rowwise, fixed-capacity padded batched GEMM, other tested FP8 modes, native TE variable/fixed split experts, Q/K norm folding, standalone fused GDN norm, non-default FlashQLA and coupled HybridEP chunking"
+    note: "FlashQLA + pre-GDR + fused HybridEP permutation development stack; normal-priority shared-expert overlap with connections=1 is the short-run winner but remains 8.22% below the gate"
 
   qwen3_next_80b_gb200_64:
     model: "Qwen3-Next 80B-A3B"
@@ -227,8 +353,8 @@ optimization_patterns:
     impact: "+17.729% throughput on measured Qwen3 30B 16×H100 HybridEP shape"
     caveat: "regressed on the measured Qwen3.5 GDN-MoE shape; benchmark separately"
   - name: shared_expert_overlap
-    impact: "regressed on the measured Qwen3.5 GDN-MoE shape"
-    caveat: "benchmark independently from dispatcher and EP overlap; side-stream contention is model-specific"
+    impact: "+0.44% step-time gain on the final measured Qwen3.5 GDN-MoE shape"
+    caveat: "only 30.8% of the measured shared side stream overlapped the primary stream; connections=2 and high priority both regressed"
   - name: hybridep_dispatcher
     impact: "about +20% over native all-to-all on measured Qwen3.5 16×H100 shape"
   - name: hybridep_fused_permutation
@@ -237,10 +363,14 @@ optimization_patterns:
     impact: "+5-10% MFU over dropless"
   - name: 1f1b_overlap
     impact: "+15% on H100, varies on GB200"
+  - name: cuda_device_max_connections
+    impact: "+48.99% throughput for 1 versus 32 on the measured Qwen3.5 owner-release overlap control"
+    caveat: "still 1.89x slower than no overlap; the profile showed NCCL/rank drift collapsed but useful intersection also fell to 0.156 seconds"
   - name: cuda_graphs
     impact: "+10-15% with attn+moe_router+moe_preprocess scope"
   - name: cpu_binding
     impact: "+15% on GB200"
+    caveat: "verified per-rank binding was throughput-neutral on the measured 16×H100 Qwen3.5 GPU-bound winner"
   - name: mbs_tuning
     impact: "up to +15% from MBS sweep"
 
@@ -258,3 +388,22 @@ known_limitations:
   - VPP must divide transformer layers evenly across PP stages
   - FP8 MFU numbers use higher peak FLOPS denominator than BF16
   - Configs are point-in-time measurements; mcore/TE updates may change results
+  - CUDA_DEVICE_MAX_CONNECTIONS is workload-specific; a large overlap-relative gain does not establish an end-to-end win
+  - No-overlap does not make a maximal dispatcher SM cap safe; 108 regressed the measured Qwen3.5 H100 path by 19.97% step time versus 32
+  - The measured Qwen3.5 H100 num_sms=20 winner improved only 0.78% versus 32; it is a shallow same-stack optimum, not a portable hardware constant
+  - The measured Qwen3.5 H100 num_sms=16 point improved only another 0.46% versus 20 and by itself remained 11.73% below the gate; low-SM tuning had diminishing returns
+  - The measured Qwen3.5 H100 num_sms=12 point regressed 9.28% versus 16; too few dispatcher SMs underprovision communication just as too many create contention
+  - Verified H100 NUMA binding changed the Qwen3.5 winner from 22.340925 to 22.341025 seconds, a 0.000448% regression; keep host placement as launcher hygiene unless a matched workload proves a throughput gain
+  - TP2/EP16/ETP1/MBS2/SP preserved the measured Qwen3.5 expert EDP, microsteps, and grouped-GEMM row shape but regressed steps 5-8 to 26.219175 seconds / 224.669 model TFLOP/s/GPU; dense shard and TP/SP communication costs still require end-to-end validation
+  - A Qwen3.5 asymmetric split kept dispatch at 16 SMs and raised only combine to 20 because combine had the longer profiled active union, but regressed steps 5-8 from 22.340925 to 22.49995 seconds / about 263.67 to 261.81 model TFLOP/s/GPU; size phase budgets by end-to-end A/B rather than trace duration
+  - HybridEP preprocessing, dispatch/combine, and fused permute/unpermute have independent block budgets; preprocessing-only 108-to-32 regressed 0.418%, while unpermute-only 108-to-32 regressed 4.742% to 23.400 seconds / 251.73 model TFLOP/s/GPU
+  - The apparent static/shared combine-only 128-to-64 and 128-to-256 sweeps were not valid kernel A/Bs: fused-template normalization copied the unchanged 64-token dispatch chunk into preprocessing and combine, so the environment-only combine values were inert
+  - A corrected exact-2-node full-field 128/128/128 A/B was audited as effective 128/128/128 with stages 10/4/2, blocks 108/108, and valid=True; it averaged 23.5981 seconds / 249.62 model TFLOP/s/GPU and regressed step time 5.627% versus the effective-64/64/64 winner
+  - Reserving compiler SMs did not repair the uniform grouped-MM transfer gap; 16-SM carveout was neutral for shared concurrency and 24 regressed
+  - On the no-overlap num_sms=16 point, CUDA_DEVICE_MAX_CONNECTIONS=1 improved step time 3.46% versus 32 and reached 262.38 model TFLOP/s/GPU, but remained 8.67% below the gate; this is workload-specific launch-order evidence, not proof of communication hiding
+  - With num_sms=16, connections=1, and rank capacity 1.05 fixed, eager averaged 22.439 seconds versus 22.451 with scoped graphs; the 0.053% difference is noise-level, leaving graphs without a measurable benefit on the current static path
+  - The matched no-overlap profile kept 401,840 kernels and zero HybridEP/expert intersection; connections=1 cut HybridEP active union 8.77% but increased idle gaps 15.02% from 4.204 to 4.836 seconds
+  - The adjacent no-overlap connections=2 point averaged 22.502 seconds / about 261.78 model TFLOP/s/GPU, 0.28% slower than connections=1; added concurrency did not recover the idle tradeoff
+  - Uniform-offset compiled grouped-MLP primitives remained 25.02-25.64% faster through backward across 33,424-34,416 rows than an ordinary PyTorch eager expression, while the 34,416-row full model regressed 0.878%; the eager reference implementation is part of the workload contract
+  - With a 34,416-row buffer and 32,768 active rows, compiled forward/backward was 7.05%/5.11% slower than MCore's actual fused weighted-SwiGLU eager path; 40-call bursts improved 1.57%/4.60%, but shared-MLP concurrent makespan regressed 7.44%
+  - Reducing that winner's static rank-capacity factor from 1.05 to 1.02 overflowed routed-token capacity in iteration 1; the fail-closed assertion yielded no valid throughput sample

@@ -48,6 +48,10 @@ validation_status:
     - measured  # Qwen3-30B-A3B, TP2 PP2 EP4, 2x H100 nodes
   qwen3_moe_h100_alltoall_te_scoped_neutral:
     - measured  # Qwen3-30B-A3B H100 BF16, alltoall, replay 42.00s vs 41.36s eager
+  qwen3_moe_h100_fp8_blockwise_te_scoped:
+    - measured  # Qwen3-30B-A3B H100, 26.08.rc2, about 29.18s eager vs 19.99728s scoped replay
+  qwen35_mixed_fp8_blockwise_full_te_scoped_regression:
+    - measured  # Two replay steps 44.8776/44.8274s vs 24.21325s eager; bounded job timed out after iteration 6
   qwen35_h100_full_iteration_static_capacity_block:
     - measured  # Dynamic expert sizes retain host sync; TE op-fuser GroupedMLP was sm100-only
   qwen3_sft_packed_sequence_block:
@@ -69,7 +73,11 @@ training_dimensions:
       391-399ms and 37.9-42.2 to 49.4-50.4 TFLOP/s/GPU. A 2026-05-18
       Qwen3-30B-A3B H100 BF16 all-to-all run captured 48 TE-scoped graphable
       layers but replay was slightly slower than eager, so speedup depends on
-      launch overhead and dispatcher/container shape.
+      launch overhead and dispatcher/container shape. On a later 26.08.rc2
+      Qwen3 H100 blockwise-FP8 path, the same narrow scope improved about
+      29.18s eager steps to 19.99728s replay steps, while the campaign's BF16
+      attention-scope A/B was negative; precision and expert-kernel changes
+      require a new graph baseline.
   memory:
     effect: "-"
     confidence: medium
@@ -126,6 +134,7 @@ interactions:
     - Inductor, Triton, or TileLang JIT must finish before graph capture timing; persist compiler caches outside ephemeral container HOME
     - optimizer.optimizer_cuda_graph has an independent distributed capture path and must complete its own bounded capture smoke
     - dropless Hopper MoE full-iteration capture remains blocked when dynamic tokens_per_expert reaches the host and static rank capacity requires an sm100-only operation-fuser GroupedMLP
+    - current MCore TE scope labels select graphable layer objects; moe_router or moe_preprocess selects an entire TransformerLayer when its MLP is MoE, so all-MoE models may graph every layer
   incompatible:
     - cpu_offloading
     - moe with moe_router
@@ -187,6 +196,40 @@ measured_results:
     graphable_layers_per_pp: 24
     capture_time_s: 5.6
     status: success
+  - model: Qwen3-30B-A3B
+    task: pretrain
+    precision: hybrid_fp8_blockwise
+    parallelism: 16xH100_recipe
+    nodes: 2
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    baseline_iter_ms_approx: 29180
+    graph_iter_ms: 19997.28
+    step_time_reduction_pct_approx: 31.47
+    graph_tflops: 301.60
+    stable_window: iterations_5_10
+    numerical_status: finite_zero_skipped_zero_nan
+    status: success
+    source: Qwen3_H100_release_performance_reference
+  - model: Qwen3.5-35B-A3B
+    task: pretrain
+    precision: hybrid_fp8_blockwise_with_bf16_grouped_experts
+    parallelism: TP1_PP1_EP16
+    nodes: 2
+    gpu: H100_80GB
+    scope: "attn+moe_router+moe_preprocess"
+    impl: transformer_engine
+    baseline_iter_ms: 24213.25
+    capture_iter_ms: 51853.3
+    replay_iter_ms: "44877.6/44827.4"
+    replay_mean_ms: 44852.5
+    replay_step_time_regression_pct: 85.24
+    replay_tflops: 131.33
+    numerical_status: finite_zero_skipped_zero_nan_through_iteration_6
+    terminal_status: timeout_after_iteration_6
+    status: rejected
+    source: Qwen3.5_H100_mixed_blockwise_scoped_graph_measurement
   - model: Qwen3-30B-A3B
     task: sft_packed
     parallelism: TP2_PP2_EP4
@@ -285,11 +328,15 @@ known_constraints:
   - With expandable_segments, NCCL_GRAPH_REGISTER=0 required (MCore cuda_graphs.py:1428, 1697).
   - MoE recompute unsupported with moe_router scope + TE impl (MCore transformer_config.py:1977).
   - full recompute (recompute_granularity=full) only works with local full_iteration, not TE scoped.
+  - Current TE _layer_is_graphable logic treats moe_router/moe_preprocess as whole-TransformerLayer selectors when layer.mlp is MoELayer; inspect graphable-layer count before assuming submodule-only capture.
 known_limitations:
   - Most public recipes default to cuda_graph_impl none.
   - Tensor shapes must be static; variable-length sequences break graph replay.
   - TE-scoped graphs and packed-sequence finetuning remain a fragile combination across model families.
   - Large-model MoE rollout is memory-headroom-sensitive even when smaller-model TE-scoped graphs work.
+  - A BF16 graph A/B does not predict FP8: the measured Qwen3 26.08.rc2 blockwise-FP8 path improved from about 29.18s eager to 19.99728s scoped replay even though the campaign's BF16 attention-scope A/B was negative.
+  - Precision-specific graph gains do not transfer across model/expert boundaries: Qwen3.5 mixed blockwise FP8 with BF16 grouped experts regressed from 24.21325s eager to a 44.8525s two-step full-scope replay mean; the bounded job timed out after iteration 6 and is rejected, not accepted as a complete performance result.
+  - Qwen3.5 has moe_layer_freq=1 and the rejected run reported 41 graphable layers; a router/preprocess-only follow-up was cancelled before allocation because it would select the same 40 model layers plus MTP rather than isolate router kernels.
 evidence:
   - docs/training/cuda-graphs.md
   - docs/performance-guide.md

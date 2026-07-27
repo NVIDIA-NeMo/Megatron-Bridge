@@ -1,8 +1,7 @@
 ---
 name: nemo-mbridge-perf-moe-optimization-workflow
-description: Systematic workflow for MoE training optimization in Megatron Bridge, based on the Megatron-Core MoE paper. Covers the Three Walls framework, parallel folding, recompute strategy, dispatcher choice, and CUDA-graph bring-up.
+description: Systematic workflow for MoE training optimization in Megatron Bridge, based on the Megatron-Core MoE paper. Covers the Three Walls framework, parallel folding, recompute strategy, dispatcher choice, and CUDA-graph bring-up. Use for full MoE throughput sweeps, throughput-regression diagnosis, optimizing MoE throughput, MoE performance tuning, or compute, communication, and memory-wall analysis.
 license: Apache-2.0
-when_to_use: Full MoE throughput tuning sweep, or diagnosing a MoE throughput regression after a commit or config change; 'optimize MoE throughput', 'MoE perf tuning', 'Three Walls', 'memory wall', 'communication wall', 'compute wall'.
 ---
 
 # MoE Training Optimization Workflow
@@ -192,63 +191,30 @@ need a stricter bring-up sequence than attention-only MoE models:
 FlashQLA-style TileLang backends can compile separate forward, recompute, MTP,
 and backward variants. The cold iteration may therefore be minutes rather than
 seconds. Cache every target shape and report only steady replay iterations.
+When launching through Slurm containers, `--container-env NAME` only forwards
+an existing host value; it does not assign one. A batch submitted from a
+non-interactive SSH shell can therefore forward empty `HF_HOME`,
+`TILELANG_CACHE_DIR`, or `TORCHINDUCTOR_CACHE_DIR` values and either send every
+rank to the Hub or silently recompile every job. Export explicit paths under a
+mounted persistent directory inside the batch script, then verify the effective
+values in the container. For cached model jobs, run a one-task preflight that
+loads config and tokenizer with `local_files_only=True` before launching all
+training ranks.
+Also remember that `TORCHINDUCTOR_COMPILE_THREADS` is applied per rank. For
+eight local training ranks, setting it to 32 creates up to 256 compile workers
+per node. Size it from available CPU cores divided by local ranks; persistent
+cache does not make per-rank CPU oversubscription harmless during its first
+population.
 
-### Qwen3.5 H100 kernel A/B learnings
+### Qwen3.5 H100 measured campaign
 
-The 2026-07-26 exact-GBS1024 sweep on 16×H100 found one additional end-to-end
-win after HybridEP and scoped graphs: fused HybridEP permutation with compatible
-runtime chunk sizes reduced step time from 26.081 to 25.007 seconds (4.12%).
-Keep the negative controls because individually plausible kernel changes were
-not additive:
-
-- tensorwise current-scaling FP8 was 21.14% slower than BF16
-- folding Q/K L2 normalization into FlashQLA was 3.45% lower throughput
-- a standalone fused GDN RMSNorm+SiLU gate was 0.61% slower
-- FlashQLA's default 16 local chunks beat both 8 chunks (2.00% slower) and
-  disabled intra-card partitioning (3.10% slower)
-- HybridEP 32 SMs beat both 24 SMs (0.48% slower) and 48 SMs (5.71% slower);
-  64-token chunks beat both 32-token chunks (1.46% slower) and 128-token
-  chunks (1.86% slower)
-- backward-dispatch/expert-wgrad overlap moved step time by only 0.18% while
-  adding about 1 GiB, so treat it as noise until a longer run proves otherwise
-- increasing MBS from 1 to 2 exceeded the H100 memory limit; selective
-  layernorm recompute did not change that peak, while recomputing both GDN and
-  MoE activations fit but erased the larger-MBS throughput opportunity
-- 1% optimizer CPU offload crossed the immediate MBS2 allocation failure, but
-  both prefix-based and experimental size-aware tensor selection stalled
-  before completing iteration 1 with rank-split GPU progress; memory fit is a
-  necessary but insufficient acceptance criterion for a distributed recipe
-- replacing random force-balance routing with deterministic exact-balanced
-  routes was not a valid shortcut around dynamic expert metadata: even a
-  cross-rank route-only control that left HybridEP's metadata tensor untouched
-  segfaulted during the first backward after fused dispatch
-
-These results illustrate why a combined patch must be decomposed into
-independent A/Bs: an apparent fused-norm gain in a combined experiment did not
-reproduce when isolated.
-
-Do not assume that lowering `main_params_dtype` will recover another full
-master-weight copy when using BF16 precision-aware optimizer (PAO). PAO enables
-`store_param_remainders` by default and stores the missing FP32 master-weight
-bits as an int16 remainder. Treat a master-dtype change as a numerical-policy
-experiment, not a free memory optimization.
-
-Check a knob's call site before consuming a benchmark slot.
-`high_priority_a2a_comm_stream` controls the stream created by the combined
-1F1B schedule; it does not reprioritize standalone HybridEP when EP overlap is
-disabled. On PP1 without combined 1F1B, changing it is a no-op rather than a
-dispatcher A/B.
-
-The matched rank-0 Nsight capture explained the remaining wall. Across a
-26.231-second capture span, the GPU kernel-active union was 22.448 seconds.
-HybridEP combine, dispatch, and support/RDMA occupied 3.909, 2.845, and 0.968
-seconds of active union, while expert/linear GEMMs occupied 8.446 seconds and
-GDN/FlashQLA kernels only 1.407 seconds. HybridEP and expert GEMMs did not
-overlap in that configuration. The trace also recorded 2,775
-`cudaStreamSynchronize` calls with 7.422 seconds of summed CPU wait duration,
-largely inside HybridEP metadata preprocessing. These durations overlap GPU
-work and must not be added to wall time, but they redirect tuning from another
-GDN microkernel toward dispatcher metadata, communication, and expert GEMMs.
+Read [references/qwen35-h100-campaign.md](references/qwen35-h100-campaign.md)
+when tuning this model family, interpreting a similar Hopper MoE profile, or
+checking whether a proposed kernel, overlap, memory, or topology change was
+already tested. The accepted short-run point is about 263.67 model TFLOP/s/GPU
+at 22.340925 seconds per step on 16 H100 GPUs, still 8.22% below the 287.305
+gate. Treat the reference as workload-specific measured evidence; keep the
+workflow here as the reusable decision procedure.
 
 ## FP8 Recipe Quick Decision
 
@@ -343,3 +309,131 @@ Related references:
     exact-balanced deterministic routes can exercise a different and unsafe
     fused-dispatch communication pattern. The asynchronous API must preserve
     arbitrary valid routes.
+
+17. **Distinguish dispatcher metadata location from its Python type**:
+    dynamically sized HybridEP can return a CPU pinned count tensor after a
+    stream synchronization, whereas static nonblocking dispatch can return GPU
+    counts. Verify device, dtype, lifetime, overflow, and the consuming grouped
+    GEMM rather than assuming a tensor-shaped result is sync-free.
+
+18. **Check the architecture guard at the kernel entry point**: a public
+    device-offset wrapper can exist on Hopper while its selected grouped-GEMM
+    mode remains sm100-only. A small forward/backward/graph probe is cheaper
+    and more reliable than a full-model launch.
+
+19. **Audit non-tensor state across partial graph boundaries**: scoped graphs
+    can export dispatcher tensors while leaving Python integers, handles, and
+    reset logic eager. Any value that defines a communication or GEMM buffer
+    shape must remain valid from graph replay through eager expert compute and
+    combine, and the next replay must not inherit a reset dynamic state.
+
+20. **Rebaseline after removing a synchronization wall**: an optimization
+    that helped a dynamic dispatcher can become neutral after static
+    nonblocking dispatch removes the same CPU wait. Re-run the isolated A/B;
+    do not multiply historical speedup ratios from overlapping mechanisms.
+
+21. **Assign cache paths before forwarding them into a container**:
+    `--container-env HF_HOME` or `--container-env TILELANG_CACHE_DIR` does not
+    create a value. Explicitly export mounted persistent Hugging Face, TileLang,
+    and TorchInductor cache directories in non-interactive Slurm jobs. Verify
+    config/tokenizer with a local-only preflight before a multi-rank launch and
+    verify compiler-cache values before attributing cold compilation to a
+    kernel change.
+
+22. **Treat high-priority communication as an isolated diagnostic**: on the
+    Qwen3.5 grouped-MM overlap regression, the first steady sample changed only
+    from 82,700.3 to 82,668.3 ms when high-priority A2A was enabled. A neutral
+    priority A/B rules out simple normal-priority stream starvation; profile
+    the combined schedule before tuning dispatcher SM reservations.
+
+23. **Budget compile workers per node, not per command**:
+    `TORCHINDUCTOR_COMPILE_THREADS` is instantiated by every local rank. Divide
+    the node's usable CPU concurrency by `ntasks-per-node`; otherwise eight
+    ranks at 32 threads can create 256 compile workers and turn cache
+    population into a CPU and shared-filesystem bottleneck.
+
+24. **Use kernel count to separate extra work from schedule inflation**:
+    unchanged kernel count plus larger dispatch/NCCL unions, idle gaps, and
+    event-sync time points to rank skew and collective rendezvous rather than
+    duplicated model computation.
+
+25. **Allocator API time is a hypothesis, not a verdict**: isolate only
+    `PYTORCH_CUDA_ALLOC_CONF` and require iteration-2 progress. Native allocation
+    can remove expandable-segment VMM calls yet perform worse because of
+    fragmentation and delayed reuse.
+
+26. **Do not fix cross-stream retirement by keeping everything alive**:
+    compare first-step peak memory and require iteration 2. On the measured
+    Qwen3.5 schedule, combine-input retention added about 5.8 GiB and consumed
+    the headroom needed for optimizer-state materialization.
+
+27. **Retire on the owner stream only after an explicit dependency**:
+    this preserved the memory benefit and improved the measured Qwen3.5
+    overlap stall by about 18%. The matched profile reduced event-sync time by
+    65%, major VMM call counts by about 25%, and dispatch by 22%, establishing
+    the mechanism. Because it remained nearly 3x slower than no overlap,
+    preserve it as diagnostic evidence and profile the next scheduler
+    dependency before recipe adoption.
+
+28. **Verify launch-order environment values in the live PID**:
+    `CUDA_DEVICE_MAX_CONNECTIONS=1` improved the measured Qwen3.5 owner-release
+    schedule by about 49% throughput versus 32 connections, with unchanged peak
+    allocation. The serialized recipe still carries its default, so process
+    environment is the source of truth. Keep the no-overlap run in the decision
+    table: a large overlap-relative gain can still be an end-to-end loss.
+
+29. **Measure useful intersection after fixing rank drift**:
+    connection count 1 cut NCCL by 95% but also cut useful HybridEP/expert
+    intersection by 93%. Continue with the smallest incremental concurrency
+    sweep and reject any setting that restores rendezvous inflation faster than
+    it restores useful overlap.
+
+30. **Separate a packaged FP8 training wrapper from its kernel API**:
+    TorchAO MXFP8 can be SM100-only while the same Hopper PyTorch build exposes
+    lower-level tensorwise or rowwise scaled grouped GEMM. Probe the exact
+    forward, dgrad, and 2D-by-2D wgrad contracts before either rejecting the
+    hardware path or attempting a full model.
+
+31. **Require the offset dtype after every metadata transform**:
+    grouped-MM offsets must remain CUDA `int32`; a `cumsum` without an explicit
+    dtype can promote `int32` expert counts and fail before the kernel. Check
+    device, dtype, monotonicity, and static-tail semantics in the primitive
+    probe.
+
+32. **Do not replace dynamic host splits with coarse fixed expert slots**:
+    on the measured H100 shape, fully device-side repacking into fixed
+    2,304-token slots was slower than the already losing variable-split TE path
+    and later stopped during graph capture. Removing a host synchronization is
+    not a win when it multiplies padded expert work.
+
+33. **Profile shared-expert overlap as its own stream**:
+    identify the stream's kernel names, sum, primary-stream intersection, and
+    dispatcher intersection. A positive end-to-end result can still hide only
+    a minority of shared work; the measured Qwen3.5 side stream overlapped the
+    primary stream for about 30.8% of its duration.
+
+34. **Stream priority cannot enlarge dependency windows**:
+    after shared-expert overlap improved Qwen3.5 by 0.44%, changing only its
+    stream to high priority regressed 0.18%. If the trace shows explicit waits
+    before FC1/FC2 or combine, optimize those legal windows rather than assuming
+    a higher-priority queue can create new concurrency.
+
+35. **Inspect the scaled-GEMM dispatch table, not just its enum**:
+    the measured PyTorch build advertised tensorwise scaling but registered no
+    tensorwise grouped-GEMM implementation. Its rowwise Hopper path was
+    numerically healthy but 7.39x/3.52x slower than BF16 FC1/FC2 even with
+    cached weight scales. Gate on a real-shape cached-forward probe before
+    spending an allocation on autograd or a full model.
+
+36. **Separate Slurm node count from workers per node and QoS usage**:
+    `--nodes=2 --ntasks-per-node=8` requests two eight-GPU nodes, not eight
+    nodes. An interactive QoS `GrpNodes=8` error can mean other users already
+    consume the partition-wide eight-node pool. Record the exact allocation and
+    use an approved batch partition on the same hardware pool when interactive
+    is saturated; do not change the benchmark's node count to work around QoS.
+
+37. **Include repack, padding, gather, and backward in fixed-shape GEMM gates**:
+    on the measured Qwen3.5 shape, padded batched GEMM was 2.06x slower in
+    forward and 2.56x slower through backward despite exact outputs. A faster
+    isolated dense GEMM cannot justify a model experiment when its required
+    layout contract loses at the complete primitive boundary.
