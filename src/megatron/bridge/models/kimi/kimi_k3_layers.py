@@ -502,7 +502,7 @@ class KimiK3TransformerLayer(TransformerLayer):
         **kwargs,
     ) -> tuple[torch.Tensor, torch.Tensor]:
         """Apply attention, MLP/MoE, and AttnRes state updates."""
-        del context_mask, kwargs
+        del context_mask, input_ids, kwargs
         layer_idx = self.layer_number - 1
 
         if context is not None:
@@ -558,10 +558,7 @@ class KimiK3TransformerLayer(TransformerLayer):
             self.mlp_res_norm,
             self.pre_mlp_layernorm,
         )
-        mlp_kwargs = {"padding_mask": padding_mask}
-        if self.is_moe_layer:
-            mlp_kwargs["input_ids"] = input_ids
-        mlp_output = self._add_bias(self.mlp(mlp_input, **mlp_kwargs))
+        mlp_output = self._add_bias(self.mlp(mlp_input, padding_mask=padding_mask))
         prefix_sum = prefix_sum + mlp_output
 
         if self.layer_number == self.config.num_layers:

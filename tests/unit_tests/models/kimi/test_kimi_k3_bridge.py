@@ -25,7 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
 )
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
-from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3MoELayer
+from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3MoELayer, KimiK3TransformerLayer
 from megatron.bridge.models.kimi.kimi_k3_pipeline import (
     bank_num_rows,
     pack_stage_boundary,
@@ -39,12 +39,10 @@ def kimi_k3_text_config() -> SimpleNamespace:
     """Return the official K3 architecture truncated to four language layers."""
     return SimpleNamespace(
         attention_bias=False,
-        attention_dropout=0.0,
         attn_res_block_size=12,
         first_k_dense_replace=1,
         head_dim=256,
         hidden_act="situ",
-        hidden_dropout=0.0,
         hidden_size=7168,
         initializer_range=0.006,
         intermediate_size=33792,
@@ -115,6 +113,8 @@ def test_provider_bridge_configures_four_layer_proxy(kimi_k3_pretrained: Mock) -
     assert provider.moe_router_num_groups == 1
     assert provider.moe_router_group_topk == 1
     assert provider.activation_func is torch.nn.functional.silu
+    assert provider.hidden_dropout == 0.0
+    assert provider.attention_dropout == 0.0
     assert provider.make_vocab_size_divisible_by == 128
     assert provider.use_te_activation_func is True
     assert provider.bf16 is True
@@ -190,3 +190,43 @@ def test_latent_moe_normalizes_after_combine_and_before_up_projection() -> None:
     output = KimiK3MoELayer.postprocess(layer, routed_output, shared_output)
 
     assert torch.equal(output, torch.tensor([12.0]))
+
+
+def test_transformer_layer_does_not_forward_input_ids_to_upstream_moe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """K3 keeps token IDs out of the upstream MCore MoELayer call."""
+    hidden_states = torch.ones(2, 1, 4)
+    block_residual = torch.zeros(2, 1, 1, 4)
+    padding_mask = torch.ones(1, 2, dtype=torch.bool)
+    input_ids = torch.ones(1, 2, dtype=torch.long)
+    mlp = Mock(return_value=(torch.zeros_like(hidden_states), None))
+    layer = SimpleNamespace(
+        layer_number=2,
+        config=SimpleNamespace(num_layers=4, hidden_size=4),
+        attn_res_block_size=12,
+        self_attention_res_proj=Mock(),
+        self_attention_res_norm=Mock(),
+        input_layernorm=Mock(),
+        self_attention=Mock(return_value=(torch.zeros_like(hidden_states), None)),
+        mlp_res_proj=Mock(),
+        mlp_res_norm=Mock(),
+        pre_mlp_layernorm=Mock(),
+        mlp=mlp,
+        is_stage_exit=False,
+        _add_bias=KimiK3TransformerLayer._add_bias,
+    )
+    monkeypatch.setattr(
+        "megatron.bridge.models.kimi.kimi_k3_layers.attn_res_aggregate",
+        lambda prefix_sum, *_args: prefix_sum,
+    )
+
+    KimiK3TransformerLayer.forward(
+        layer,
+        hidden_states,
+        context=block_residual,
+        padding_mask=padding_mask,
+        input_ids=input_ids,
+    )
+
+    assert mlp.call_args.kwargs == {"padding_mask": padding_mask}

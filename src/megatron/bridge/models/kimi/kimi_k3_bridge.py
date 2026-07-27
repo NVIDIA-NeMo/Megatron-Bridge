@@ -121,6 +121,8 @@ class KimiK3Bridge(MegatronModelBridge):
         provider.use_te_activation_func = True
         provider.bias_activation_fusion = False
         provider.bias_dropout_fusion = False
+        provider.hidden_dropout = 0.0
+        provider.attention_dropout = 0.0
         provider.attention_softmax_in_fp32 = True
         provider.disable_bf16_reduced_precision_matmul = True
         provider.apply_rope_fusion = False
