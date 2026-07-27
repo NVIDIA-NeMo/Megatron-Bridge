@@ -241,5 +241,20 @@ items:
         short-run control. Its NCCL-EP candidate completed bootstrap and
         entered iteration 0, but all 16 ranks timed out in the first real
         dispatch with NCCL error 2 at nccl_ep.cc:886, so it produced no
-        performance sample. These experimental runtime changes are not public
-        recipe defaults, so the item remains unverified.
+        performance sample. A later exact-two-node fused gated-RMSNorm A/B
+        measured 22.549100 seconds / 261.235779 model TFLOP/s/GPU for its
+        control and 22.207450 seconds / 265.254754 model TFLOP/s/GPU for its
+        candidate, a 1.54% same-allocation throughput signal. The required
+        direct fused-kernel marker was absent, so this candidate was not
+        promoted over the accepted 263.67 model TFLOP/s/GPU short-run result.
+        An official DeepEP V2 extension subsequently built successfully, but
+        its required 16-rank BF16 dispatch/combine gate stopped before training
+        because the allocated nodes exposed CUDA driver API 12.2, which was
+        incompatible with the candidate PyTorch/CUDA runtime. That run is an
+        environment limitation, not dispatcher performance data. Further
+        optimization is deferred at this delivery point. If resumed, first
+        preflight node-driver compatibility, then rerun the real 16-rank
+        DeepEP V2 gate and same-allocation dispatcher A/B, directly verify the
+        fused gated-RMSNorm kernel path, and only promote a candidate after the
+        exact 50-step acceptance protocol passes. These experimental runtime
+        changes are not public recipe defaults, so the item remains unverified.
