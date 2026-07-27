@@ -40,6 +40,15 @@ TFLOP/s/GPU over finite iterations 2--3, 5.627% slower by step time than the
 effective-64/64/64 winner. Retain 64/64/64 for this final schedule; the result
 is workload-specific and does not supersede live-template validation.
 
+A follow-up requested dispatch and fused-permute pipeline stages 12/12 with
+inflight depths 10/10 on the same 64/64/64, 16-SM winner. Its finite exact
+2-node iterations 2--3 averaged 23.463650 seconds, about 251.05 model
+TFLOP/s/GPU, or 5.025% slower by step time than the winner. Reject the
+candidate. The staged runtime shim checksum matched, but its post-normalization
+template marker did not appear, so the result does not prove that every
+requested field reached the compiled kernel. It is evidence against promoting
+the candidate, not a clean field-level stage/inflight ranking.
+
 In the matched rank-0 profile, HybridEP combine, dispatch, and support/RDMA
 occupied 7.723 seconds of a 22.448-second GPU-active union, with no overlap
 against the 8.446-second expert-GEMM union. HybridEP metadata preprocessing

@@ -200,6 +200,7 @@ known_limitations:
   - Fused HybridEP permutation requires compatible live dispatch, combine, and preprocessing chunk sizes
   - A config input is not an A/B unless the post-normalization JIT template differs; the measured static/shared path silently reduced both intended combine-128 and combine-64 runs to effective 64/64/64 chunks
   - Record effective chunk, stage, and block fields together; the measured true 128/128/128 final-schedule template was valid at stages 10/4/2 and blocks 108/108 but regressed 5.627% versus 64/64/64
+  - A requested 12/12-stage and 10/10-inflight dispatch-pipeline candidate averaged 23.463650 seconds / about 251.05 model TFLOP/s/GPU and was rejected, but its post-normalization marker was absent; do not treat the 5.025% step-time regression as a clean field-level ranking
   - Deterministic exact-balanced routing is not a safe substitute for native nonblocking metadata; the measured cross-rank route-only control segfaulted in its first backward
   - The GPU tokens_per_expert tensor is produced on the communication stream and must remain alive for the asynchronous path
   - Static nonblocking dispatch requires an overflow assertion and lifetime-safe GPU counts and communication handles

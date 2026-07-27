@@ -334,6 +334,15 @@ the same-stack Configurer as effective 128/128/128, stages 10/4/2, blocks
 regression versus effective 64/64/64. This is the valid final-schedule chunk
 comparison; the earlier combine-only numbers remain invalid.
 
+A later exact-2-node candidate kept 64/64/64 and requested only dispatch and
+fused-permute stages 12/12 with inflight depths 10/10. Its finite iterations
+2--3 averaged 23.463650 seconds / about 251.05 model TFLOP/s/GPU, 5.025% slower
+by step time than the winner, so it was rejected. The runtime shim checksum
+matched, but the intended post-normalization template marker did not appear.
+Use this as evidence not to promote or rerun the candidate, but not as a clean
+stage/inflight ranking: requested JIT inputs are not an attributable A/B
+without an effective-template record.
+
 Trace duration is not a direct SM-allocation rule. The final Qwen3.5 profile
 showed a longer HybridEP combine union than dispatch, but an experimental
 split that kept dispatch at 16 SMs and raised only combine to 20 regressed the
