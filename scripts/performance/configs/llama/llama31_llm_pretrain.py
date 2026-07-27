@@ -271,6 +271,7 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.ddp.overlap_param_gather = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.bucket_size = 768000000
+    cfg.ddp.grad_reduce_in_fp32 = False
     cfg.ddp.average_in_collective = False
     cfg.model.add_bias_linear = False
     cfg.model.apply_rope_fusion = True
@@ -453,14 +454,15 @@ def llama31_8b_pretrain_config_gb300(
         config_variant=config_variant,
     )
     precision_config = get_precision_config(precision)
-
     cfg = llama31_8b_pretrain_config()
+    set_workload_base_configs(cfg, base_cfg)
     cfg.mixed_precision = precision_config
     cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
     cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
     cfg.mixed_precision.first_last_layers_bf16 = False
     cfg.mixed_precision.fp4_param_gather = False
-    set_workload_base_configs(cfg, base_cfg)
+    cfg.mixed_precision.fp4_param = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
     set_llama31_8b_common_configs(cfg)
 
     if config_variant.lower() == "v1" and precision.lower() == "nvfp4":
@@ -524,10 +526,15 @@ def llama31_8b_pretrain_config_gb200(
         config_variant=config_variant,
     )
     precision_config = get_precision_config(precision)
-
     cfg = llama31_8b_pretrain_config()
-    cfg.mixed_precision = precision_config
     set_workload_base_configs(cfg, base_cfg)
+    cfg.mixed_precision = precision_config
+    cfg.mixed_precision.num_layers_at_start_in_bf16 = 0
+    cfg.mixed_precision.num_layers_at_end_in_bf16 = 0
+    cfg.mixed_precision.first_last_layers_bf16 = False
+    cfg.mixed_precision.fp4_param_gather = False
+    cfg.mixed_precision.fp4_param = False
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
     set_llama31_8b_common_configs(cfg)
 
     if config_variant.lower() == "v1" and precision.lower() == "nvfp4":
