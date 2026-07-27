@@ -240,24 +240,39 @@ items:
         steps_5_10_model_tflops_per_gpu_avg: 194.417
         skipped_iterations: 0
         nan_iterations: 0
+      latest_attempt:
+        date: 2026-07-27
+        job_id: 5716977
+        bridge_commit: ff24fbbbd3bbb93dea7b45a648977131c44c599e  # pragma: allowlist secret
+        steps_completed: 50
+        terminal_state: completed
+        exit_code: "0:0"
+        skipped_iterations: 0
+        nan_iterations: 0
+        acceptance_gate_met: false
       metrics:
-        initial_loss: null
-        final_loss: null
-        last_10_steps_step_time_ms_avg: null
-        last_10_steps_model_tflops_per_gpu_avg: null
+        initial_loss: 12.82963
+        final_loss: 0.008182429
+        last_10_steps_step_time_ms_avg: 31751.010
+        last_10_steps_model_tflops_per_gpu_avg: 185.560
       expected_result: >
         On two nodes with 16x H100, the exact mock-data performance recipe must
         complete exactly 50 steps with finite losses, no skipped or NaN
         iterations, and all four metrics recorded. Over steps 41-50, the run
-        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-27, an
-        experimental development stack using FlashQLA, HybridEP, fused
-        permutation, device-resident static dispatcher metadata, Hopper
-        grouped expert matrix multiplication, one-connection launch ordering,
-        and normal-priority shared-expert overlap averaged 22.340925 seconds
-        per step over steps 5-8, or about 263.67 model TFLOP/s/GPU. Losses and
-        gradients were finite with zero skipped or NaN iterations. This is
-        8.22% below the gate, and no qualifying 50-step run has completed.
-        The accepted short-run fused HybridEP template used effective
+        must average at least 287.305 model TFLOP/s/GPU. On 2026-07-27, clean
+        PR-head job 5716977 completed all 50 steps with finite losses and
+        gradients, zero skipped iterations, and zero NaN iterations. Steps
+        41-50 averaged 31.751010 seconds and 185.560 model TFLOP/s/GPU, which
+        is 35.41% below the gate. The completion and stability requirements
+        passed, but the throughput requirement did not, so this item remains
+        unverified. An experimental development stack using FlashQLA,
+        HybridEP, fused permutation, device-resident static dispatcher
+        metadata, Hopper grouped expert matrix multiplication, one-connection
+        launch ordering, and normal-priority shared-expert overlap averaged
+        22.340925 seconds per step over steps 5-8, or about 263.67 model
+        TFLOP/s/GPU. Losses and gradients were finite with zero skipped or NaN
+        iterations. This is 8.22% below the gate. The accepted short-run fused
+        HybridEP template used effective
         preprocessing, dispatch, and combine chunks of 64 tokens. A matched
         full-field 128-token template averaged 23.5981 seconds per step over
         its two steady samples, or about 249.62 model TFLOP/s/GPU, and was
