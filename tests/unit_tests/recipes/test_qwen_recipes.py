@@ -742,9 +742,9 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.train.train_iters == 50
     assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 1
     assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 128
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 128
-    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_PREPROCESSING_API"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_DISPATCH_API"] == 64
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 64
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
 
 
