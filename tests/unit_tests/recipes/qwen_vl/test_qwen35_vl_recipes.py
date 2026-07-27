@@ -824,11 +824,11 @@ def test_qwen35_vl_35b_a3b_pretrain_mock_defaults(monkeypatch: pytest.MonkeyPatc
 
     _assert_basic_config(cfg)
 
-    assert cfg.model.tensor_model_parallel_size == 4
-    assert cfg.model.pipeline_model_parallel_size == 2
-    assert cfg.model.pipeline_dtype is not None  # PP > 1 => bf16
-    assert cfg.model.expert_model_parallel_size == 4
-    assert cfg.model.sequence_parallel is True
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.pipeline_dtype is None
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.sequence_parallel is False
     assert cfg.train.global_batch_size == 512
     assert cfg.train.micro_batch_size == 1
 

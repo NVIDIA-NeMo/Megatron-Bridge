@@ -142,7 +142,7 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     """Return the shared 8-GPU pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B.
 
-    The recipe uses TP4/PP2/EP4, freezes the language and vision towers, trains
+    The recipe uses TP1/PP1/EP8, freezes the language and vision towers, trains
     the vision projection, and owns the MBS1/GBS512 batch contract used by
     image-caption pre-training datasets.
     """
@@ -150,17 +150,17 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
     cfg.model = AutoBridge.from_hf_pretrained(hf_path).to_megatron_provider(load_weights=False)
-    cfg.model.tensor_model_parallel_size = 4
-    cfg.model.pipeline_model_parallel_size = 2
-    cfg.model.pipeline_dtype = torch.bfloat16
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.pipeline_dtype = None
     cfg.model.virtual_pipeline_model_parallel_size = None
     cfg.model.context_parallel_size = 1
-    cfg.model.sequence_parallel = True
+    cfg.model.sequence_parallel = False
     cfg.model.freeze_language_model = True
     cfg.model.freeze_vision_model = True
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
-    cfg.model.expert_model_parallel_size = 4
+    cfg.model.expert_model_parallel_size = 8
     cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 1
 
