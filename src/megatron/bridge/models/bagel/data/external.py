@@ -12,9 +12,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections.abc import Callable, Iterable, Mapping, Sequence
+import random
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Literal, Self
+
+import numpy as np
+import torch
 
 from megatron.bridge.data.base import DatasetBuildContext
 from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODatasetProvider
@@ -23,6 +27,64 @@ from megatron.bridge.data.megatron_mimo.base_provider import MegatronMIMODataset
 def _reject_collate(_: object) -> object:
     """Reject collation because Megatron external loaders bypass it."""
     raise RuntimeError("BAGEL external packed batches must not be collated again")
+
+
+class BagelRNGIterator:
+    """Run the official packer with data-only process RNG state."""
+
+    def __init__(self, iterator: Iterator[dict[str, object]], seed: int) -> None:
+        """Initialize independent Python, NumPy, and CPU Torch RNG states."""
+        self.iterator = iterator
+        self.python_rng = random.Random(seed).getstate()
+        self.numpy_rng = np.random.RandomState(seed % (2**32)).get_state()
+        self.torch_rng = torch.Generator().manual_seed(seed).get_state()
+
+    def __iter__(self) -> Self:
+        """Return this stateful RNG-isolated iterator."""
+        return self
+
+    def __next__(self) -> dict[str, object]:
+        """Advance the packer without changing the model process RNG."""
+        process_python_rng = random.getstate()
+        process_numpy_rng = np.random.get_state()
+        process_torch_rng = torch.get_rng_state()
+        random.setstate(self.python_rng)
+        np.random.set_state(self.numpy_rng)
+        torch.set_rng_state(self.torch_rng)
+        try:
+            return next(self.iterator)
+        finally:
+            self.python_rng = random.getstate()
+            self.numpy_rng = np.random.get_state()
+            self.torch_rng = torch.get_rng_state()
+            random.setstate(process_python_rng)
+            np.random.set_state(process_numpy_rng)
+            torch.set_rng_state(process_torch_rng)
+
+    def state_dict(self) -> dict[str, object]:
+        """Capture the wrapped packer and isolated data RNG."""
+        state = self.iterator.state_dict()
+        state.update(
+            python_rng=self.python_rng,
+            numpy_rng=self.numpy_rng,
+            torch_rng=self.torch_rng,
+        )
+        return state
+
+    def load_state_dict(self, state: Mapping[str, object]) -> None:
+        """Restore the wrapped packer without leaking its RNG to the model."""
+        process_python_rng = random.getstate()
+        process_numpy_rng = np.random.get_state()
+        process_torch_rng = torch.get_rng_state()
+        try:
+            self.iterator.load_state_dict(state)
+            self.python_rng = state["python_rng"]
+            self.numpy_rng = state["numpy_rng"]
+            self.torch_rng = state["torch_rng"]
+        finally:
+            random.setstate(process_python_rng)
+            np.random.set_state(process_numpy_rng)
+            torch.set_rng_state(process_torch_rng)
 
 
 class BagelExternalLoader:
