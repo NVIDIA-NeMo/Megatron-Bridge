@@ -115,3 +115,51 @@ the compute of the divergent layer.
 - `DET_TRACE_BWD_SCOPE` cannot be used with pipeline parallelism.
 - `force_sync` trades throughput for complete value capture — this is a debug
   tool, not a training-time feature.
+
+## Reproduction: an FSDP + HybridEP MoE recipe
+
+Worked example of a two-launch cross-process trace on a Megatron-FSDP + flex/HybridEP
+MXFP8 MoE recipe. The pattern generalizes; the point is the ordered checklist, since
+each step below is one that silently wasted a run when skipped.
+
+1. **Make the environment consistent *before* launching.** Sync the Megatron-LM
+   submodule to the branch pin (`git submodule update --init --recursive`) — a stale
+   submodule fails at import (`ModuleNotFoundError: No module named
+   'megatron.training.models.gpt'`) long before the tracer runs. Mount the repo into
+   the container so the run uses this exact checkout, not the container's copy.
+
+2. **Launch two identical jobs**, differing only in `DET_TRACE_OUT_DIR` (a shared-FS
+   path per arm). Keep the recipe's *real* dispatcher — with the perf harness that means
+   passing `--moe_flex_dispatcher_backend hybridep`, because the direct
+   `setup_experiment.py` path forces `alltoall` otherwise (`utils/overrides.py`).
+   Enable op-level tracing, since the HybridEP combine is a torch-invisible custom
+   extension (see Limitations) and collectives-only would miss the whole MoE path:
+
+   ```bash
+   <your launcher> ... \
+     --moe_flex_dispatcher_backend hybridep \
+     --max_steps 5 \
+     -E DET_TRACE_OUT_DIR="$STREAMS/A" -E DET_TRACE_ITERS=1-3 -E DET_TRACE_OPS=1
+   # then again, identical, with $STREAMS/B
+   ```
+
+   Trace a bounded window (`1-3`) and cap `--max_steps` — the force-sync makes traced
+   iterations slow, and a divergence shows up in the first few steps anyway.
+
+3. **Diff** once both arms have written streams:
+
+   ```bash
+   python src/megatron/bridge/training/utils/determinism/diff_streams.py \
+       "$STREAMS/A" "$STREAMS/B"
+   ```
+
+### Gotchas this recipe surfaced
+
+- **Keyword-arg collectives.** Megatron-FSDP calls `all_gather_into_tensor` with
+  `output_tensor=`/`input_tensor=` keywords; the collective wrappers must accept both
+  positional and keyword forms (`_wrap_out_in` in `collective_trace.py`). A fixed
+  positional `(output, input)` signature raises `TypeError: missing 2 required
+  positional arguments` at the first FSDP param all-gather.
+- **HybridEP blind spot ⇒ `DET_TRACE_OPS=1` is mandatory** for MoE recipes: the
+  dispatch/combine is invisible to the collective layer, so the first divergence
+  surfaces one hop later at the ATen op consuming the dispatched tokens.
