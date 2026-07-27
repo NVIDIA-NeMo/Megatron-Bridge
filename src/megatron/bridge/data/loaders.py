@@ -276,6 +276,8 @@ def build_train_valid_test_data_loaders(
             "The dataset provider returned multiple validation datasets but "
             "ValidationConfig.multiple_validation_sets is not set."
         )
+    if cfg.validation.multiple_validation_sets and valid_ds is not None and not isinstance(valid_ds, list):
+        valid_ds = [valid_ds]
 
     drop_last = False if cfg.train.num_epochs is not None else cfg.dataset.drop_last
     if (

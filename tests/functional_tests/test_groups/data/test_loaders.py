@@ -300,6 +300,37 @@ class TestDataLoaders:
         assert test_dataloader is None
 
     @mock.patch("torch.distributed.broadcast")
+    @mock.patch("torch.distributed.get_world_size", return_value=1)
+    @mock.patch("torch.distributed.get_rank", return_value=0)
+    @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader")
+    @mock.patch("megatron.bridge.data.loaders.build_train_valid_test_datasets")
+    def test_build_train_valid_test_data_loaders_normalizes_single_valid_set(
+        self, mock_build_datasets, mock_build_loader, mock_dp_rank, mock_dp_size, mock_broadcast
+    ):
+        """A single validation dataset with multiple_validation_sets is normalized to a 1-element list."""
+        cfg = create_simple_test_config()
+        cfg.validation.multiple_validation_sets = True
+        train_state = TrainState()
+
+        fake_train_ds = mock.MagicMock()
+        fake_train_ds.__len__.return_value = cfg.train.global_batch_size
+        fake_train_ds.collate_fn = None
+        single_valid_ds = mock.MagicMock()
+        single_valid_ds.collate_fn = None
+        mock_build_datasets.return_value = (fake_train_ds, single_valid_ds, None)
+        mock_build_loader.side_effect = lambda dataset, *args, **kwargs: object() if dataset is not None else None
+
+        _, valid_dataloader, _ = build_train_valid_test_data_loaders(
+            cfg=cfg,
+            train_state=train_state,
+            build_train_valid_test_datasets_provider=mock.Mock(),
+            dp_group=object(),
+        )
+
+        assert isinstance(valid_dataloader, list)
+        assert len(valid_dataloader) == 1
+
+    @mock.patch("torch.distributed.broadcast")
     @mock.patch("torch.distributed.get_world_size")
     @mock.patch("torch.distributed.get_rank")
     @mock.patch("megatron.bridge.data.loaders.build_pretraining_data_loader", return_value=object())
