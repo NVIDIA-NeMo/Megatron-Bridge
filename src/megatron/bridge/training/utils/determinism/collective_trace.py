@@ -405,15 +405,24 @@ def _wrap_out_in(op_name):
     """Factory for collectives with signature ``(output, input, ...)`` (out separate)."""
 
     def factory(orig):
-        def wrapper(output, input, *args, **kwargs):
+        def wrapper(*args, **kwargs):
             # Skip when suspended so a deprecated alias delegating to a public name we also
             # patched (e.g. _reduce_scatter_base -> reduce_scatter_tensor) does not double-record.
+            # Guard first (like _wrap_all_reduce) so the disabled path stays free of extra work.
             if not (_S.enabled and _S.active) or _S.suspend:
-                return orig(output, input, *args, **kwargs)
-            group = _extract_group(args, kwargs)
+                return orig(*args, **kwargs)
+            # Accept both positional and keyword forms. torch collective signatures differ:
+            # all_gather_into_tensor/_all_gather_base name their args (output_tensor,
+            # input_tensor); reduce_scatter_tensor/all_to_all_single use (output, input).
+            # Megatron-FSDP calls all_gather_into_tensor by keyword, so a fixed positional
+            # (output, input) signature would drop those args. The call is forwarded verbatim
+            # below; here we only *read* out/in for fingerprinting.
+            output = args[0] if len(args) >= 1 else kwargs.get("output", kwargs.get("output_tensor"))
+            input = args[1] if len(args) >= 2 else kwargs.get("input", kwargs.get("input_tensor"))
+            group = _extract_group(args[2:], kwargs)
             in_sig = _staged_sig_list(input)
             with _suspended():
-                work = orig(output, input, *args, **kwargs)
+                work = orig(*args, **kwargs)
                 _await_async(work)  # async (e.g. SP all-gather): wait before staging the output
             # The output reduction is enqueued after the collective completes, so it reads the
             # finished result (sync: already ordered; async: ordered by _await_async above).
