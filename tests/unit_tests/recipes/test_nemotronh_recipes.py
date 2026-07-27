@@ -180,9 +180,9 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.model.moe_router_force_load_balancing is False
     assert cfg.model.cross_entropy_fusion_impl == "native"
     assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cuda_graph_module_names(cfg.model) == ["mamba"]
     assert cfg.model.recompute_granularity == "selective"
-    assert cfg.model.recompute_modules == ["moe", "layernorm"]
+    assert cfg.model.recompute_modules == ["moe", "layernorm", "core_attn"]
 
     assert cfg.mixed_precision.grad_reduce_in_fp32 is False
     assert cfg.optimizer.use_precision_aware_optimizer is False
