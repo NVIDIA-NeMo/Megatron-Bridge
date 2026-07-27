@@ -52,6 +52,12 @@ The launcher waits for `det-bitwise` and `det-bitwise2`, then diffs their per-it
 sampled iter matches to the last printed digit; any divergence ⇒ the two allocations do
 **not** reproduce. Job IDs and the diff are printed at the end and land under `$OUT_DIR`.
 
+**On record, this recipe does NOT reproduce:** the two det arms' lm losses **diverge with
+`deterministic_mode=true`** — see the
+[wandb workspace](https://wandb.ai/nvidia/mbridge-dev/workspace?nw=lxtkt39in9n) (two jobs,
+diverging lm-loss curves). That is the determinism break: HybridEP's combine has no
+deterministic path, so the recipe is not bit-reproducible across allocations.
+
 ## Prerequisites / gotchas
 
 - **Sync the submodule first:** `git submodule update --init --recursive` (a stale

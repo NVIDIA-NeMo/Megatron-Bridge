@@ -26,6 +26,12 @@ Total ≈ 1.2 GB, world-readable. This is the canonical sharing location.
 
 Root cause for the 48-node observations is not yet attributed.
 
+**gb300 / MXFP8 (128 GPU / 32 nodes) — determinism break:** the two `det-bitwise` /
+`det-bitwise2` arms **diverge in lm loss even with `deterministic_mode=true`**
+([wandb workspace](https://wandb.ai/nvidia/mbridge-dev/workspace?nw=lxtkt39in9n)) — i.e.
+this recipe is **not** bit-reproducible across allocations (the HybridEP combine has no
+deterministic path). Reproduce: [`REPRO-det-bitwise-gb300-mxfp8.md`](REPRO-det-bitwise-gb300-mxfp8.md).
+
 ## Files
 
 | File | What it is |
