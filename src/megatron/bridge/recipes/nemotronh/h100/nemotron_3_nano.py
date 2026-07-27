@@ -251,7 +251,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     """Return the Nemotron 3.5 Nano BF16 pretraining config."""
     cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
     cfg.model.mtp_num_layers = 2
@@ -403,14 +403,14 @@ def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     return _nemotron_3_nano_sft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MODEL_ID)
 
 
-def nemotron_3_5_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+def nemotron_3_5_nano_sft_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron 3.5 Nano."""
     return _nemotron_3_nano_sft_8gpu_h100_bf16_config(_NEMOTRON_3_5_NANO_MODEL_ID)
 
 
-def nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config() -> ConfigContainer:
-    """Return the verified 4K packed OpenMathInstruct-2 SFT config for 16 H100 GPUs."""
-    cfg = nemotron_3_5_nano_sft_8gpu_h100_bf16_config()
+def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
+    """Return the verified 4K packed OpenMathInstruct-2 SFT config."""
+    cfg = nemotron_3_5_nano_sft_config()
 
     cfg.model.seq_length = 4096
     cfg.model.tensor_model_parallel_size = 2
@@ -624,16 +624,16 @@ def nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora")
     return _nemotron_3_nano_peft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MODEL_ID, peft_scheme)
 
 
-def nemotron_3_5_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
+def nemotron_3_5_nano_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Nemotron 3.5 Nano."""
     return _nemotron_3_nano_peft_8gpu_h100_bf16_config(_NEMOTRON_3_5_NANO_MODEL_ID, peft_scheme)
 
 
 __all__ = [
-    "nemotron_3_5_nano_peft_8gpu_h100_bf16_config",
-    "nemotron_3_5_nano_pretrain_8gpu_h100_bf16_config",
-    "nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config",
-    "nemotron_3_5_nano_sft_8gpu_h100_bf16_config",
+    "nemotron_3_5_nano_peft_config",
+    "nemotron_3_5_nano_pretrain_config",
+    "nemotron_3_5_nano_sft_config",
+    "nemotron_3_5_nano_sft_openmathinstruct2_packed_config",
     "nemotron_3_nano_peft_8gpu_h100_bf16_config",
     "nemotron_3_nano_pretrain_8gpu_h100_bf16_config",
     "nemotron_3_nano_sft_8gpu_h100_bf16_config",

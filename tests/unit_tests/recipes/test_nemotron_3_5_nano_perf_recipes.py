@@ -14,6 +14,7 @@
 
 """Unit tests for Nemotron 3.5 Nano performance recipe exports."""
 
+import importlib
 from collections.abc import Callable
 from inspect import signature
 
@@ -78,6 +79,62 @@ _NEMOTRON_3_5_BASE_RECIPE_PAIRS = (
         nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config,
     ),
 )
+_NEMOTRON_NANO_PERF_FACTORIES = (
+    ("megatron.bridge.perf_recipes.nemotronh.h100.nemotronh", "nemotron_3_nano_pretrain_16gpu_h100_bf16_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.h100.nemotronh", "nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_bf16_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_fp8mx_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.b200.nemotronh", "nemotron_3_nano_pretrain_8gpu_b200_nvfp4_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.b300.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_bf16_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.b300.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_fp8mx_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.b300.nemotronh", "nemotron_3_nano_pretrain_8gpu_b300_nvfp4_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_bf16_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_fp8mx_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.gb300.nemotronh", "nemotron_3_nano_pretrain_8gpu_gb300_nvfp4_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_bf16_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_fp8mx_config"),
+    ("megatron.bridge.perf_recipes.nemotronh.vr200.nemotronh", "nemotron_3_nano_pretrain_8gpu_vr200_nvfp4_config"),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.h100.nemotronh",
+        "nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.h100.nemotronh",
+        "nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config",
+    ),
+    (
+        "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh",
+        "nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config",
+    ),
+)
+
+
+@pytest.mark.parametrize(
+    ("module_name", "factory_name"),
+    _NEMOTRON_NANO_PERF_FACTORIES,
+    ids=[factory_name for _, factory_name in _NEMOTRON_NANO_PERF_FACTORIES],
+)
+def test_nemotron_nano_perf_recipe_model_finalizes(module_name: str, factory_name: str) -> None:
+    """Nano perf recipes use one non-conflicting CUDA graph configuration API."""
+    module = importlib.import_module(module_name)
+    cfg = getattr(module, factory_name)()
+
+    cfg.model.finalize()
 
 
 @pytest.mark.parametrize("recipe_factory", _NEMOTRON_3_RECIPES, ids=lambda recipe: recipe.__name__)
@@ -165,7 +222,8 @@ def test_gb200_fsdp_perf_recipe_defaults() -> None:
     assert cfg.train.global_batch_size == 384
     assert cfg.train.micro_batch_size == 3
     assert cfg.model.cuda_graph_impl == "none"
-    assert cfg.model.cuda_graph_scope == []
+    assert cfg.model.cuda_graph_scope is None
+    assert cfg.model.cuda_graph_modules == []
     assert cfg.model.init_model_with_meta_device is True
 
     assert cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag is False

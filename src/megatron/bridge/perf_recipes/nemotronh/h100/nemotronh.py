@@ -22,6 +22,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     nemotron_3_nano_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
+from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
@@ -78,7 +79,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["attn", "mamba"]
+    set_cuda_graph_modules(cfg.model, ["attn", "mamba"])
 
     cfg.model.recompute_modules = ["moe", "layernorm"]
 
@@ -132,7 +133,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.moe_router_force_load_balancing = True
 
     cfg.model.cuda_graph_impl = "transformer_engine"
-    cfg.model.cuda_graph_scope = ["mamba"]
+    set_cuda_graph_modules(cfg.model, ["mamba"])
 
     cfg.model.recompute_modules = ["moe", "layernorm", "core_attn", "moe_act"]
 
