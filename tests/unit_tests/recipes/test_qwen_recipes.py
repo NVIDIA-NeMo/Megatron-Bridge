@@ -751,12 +751,14 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
 def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
     monkeypatch: pytest.MonkeyPatch,
 ):
-    """Test that the H100 block factory replaces only the routed MoE runtime."""
+    """Test that the H100 block factory replaces the measured expert and GDN runtimes."""
     from functools import partial
     from types import SimpleNamespace
 
+    from megatron.core.ssm.gated_delta_net import GatedDeltaNet
     from megatron.core.transformer.moe.experts import TEGroupedMLP
     from megatron.core.transformer.moe.moe_layer import MoELayer, MoESubmodules
+    from megatron.core.transformer.spec_utils import ModuleSpec
 
     from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
 
@@ -765,9 +767,10 @@ def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
         MoELayer,
         submodules=MoESubmodules(experts=expert_builder),
     )
+    gdn_spec = ModuleSpec(module=GatedDeltaNet)
     layer_specs = [
-        SimpleNamespace(submodules=SimpleNamespace(mlp=moe_builder)),
-        SimpleNamespace(submodules=SimpleNamespace(mlp=moe_builder)),
+        SimpleNamespace(submodules=SimpleNamespace(mlp=moe_builder, self_attention=gdn_spec)),
+        SimpleNamespace(submodules=SimpleNamespace(mlp=moe_builder, self_attention=gdn_spec)),
     ]
     block_spec = SimpleNamespace(layer_specs=layer_specs)
     monkeypatch.setattr(
@@ -784,6 +787,8 @@ def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
     assert first_custom_moe is second_custom_moe
     assert first_custom_moe.func is qwen35_runtime._Qwen35H100MoELayer
     assert first_custom_moe.keywords["submodules"].experts.func is qwen35_runtime._Qwen35H100TorchGroupedMLP
+    assert result.layer_specs[0].submodules.self_attention.module is qwen35_runtime._Qwen35H100FlashQLAGatedDeltaNet
+    assert result.layer_specs[1].submodules.self_attention.module is qwen35_runtime._Qwen35H100FlashQLAGatedDeltaNet
 
 
 def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():

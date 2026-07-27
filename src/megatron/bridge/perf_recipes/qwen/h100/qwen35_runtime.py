@@ -26,13 +26,42 @@ from megatron.core.fusions.fused_bias_swiglu import WeightedSwiGLUFunction
 from megatron.core.models.gpt.experimental_attention_variant_module_specs import (
     get_transformer_block_with_experimental_attention_variant_spec,
 )
+from megatron.core.ssm.gated_delta_net import GatedDeltaNet
 from megatron.core.transformer.moe.experts import TEGroupedMLP
 from megatron.core.transformer.moe.moe_layer import MoELayer
+from megatron.core.transformer.spec_utils import ModuleSpec
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
 
 
 _H100_HYBRIDEP_BF16_ALIGNMENT = 16
+
+
+def _load_flash_qla_gated_delta_rule() -> Any:
+    """Load the measured Hopper GDN kernel lazily."""
+    try:
+        from flash_qla import chunk_gated_delta_rule
+    except (ImportError, RuntimeError, ValueError) as exc:
+        raise ImportError("The Qwen3.5 H100 performance recipe requires flash_qla==0.1.2.") from exc
+
+    return chunk_gated_delta_rule
+
+
+class _Qwen35H100FlashQLAGatedDeltaNet(GatedDeltaNet):
+    """Gated Delta Net using the measured FlashQLA Hopper kernel."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        if self.config.deterministic_mode:
+            raise RuntimeError("FlashQLA is not certified for deterministic mode")
+        if self.cp_size != 1:
+            raise RuntimeError("The Qwen3.5 H100 FlashQLA path requires context parallel size 1")
+        if self.key_head_dim != 128 or self.value_head_dim != 128:
+            raise RuntimeError("The Qwen3.5 H100 FlashQLA path requires 128-dimensional QK/V heads")
+        capability = torch.cuda.get_device_capability(torch.cuda.current_device())
+        if capability != (9, 0):
+            raise RuntimeError(f"The Qwen3.5 H100 FlashQLA path requires SM90, got {capability}")
+        self.gated_delta_rule = _load_flash_qla_gated_delta_rule()
 
 
 def _setup_h100_static_hybridep_metadata(
@@ -221,6 +250,13 @@ def _replace_moe_runtime(moe_builder: Any) -> partial:
     return partial(_Qwen35H100MoELayer, *moe_builder.args, **moe_kwargs)
 
 
+def _replace_gdn_runtime(attention_spec: Any) -> Any:
+    """Replace stock GDN attention with the measured Hopper kernel."""
+    if not isinstance(attention_spec, ModuleSpec) or attention_spec.module is not GatedDeltaNet:
+        return attention_spec
+    return replace(attention_spec, module=_Qwen35H100FlashQLAGatedDeltaNet)
+
+
 def qwen35_h100_transformer_block_spec(
     config: TransformerConfig,
     vp_stage: int | None = None,
@@ -237,4 +273,5 @@ def qwen35_h100_transformer_block_spec(
         if builder_id not in replacements:
             replacements[builder_id] = _replace_moe_runtime(moe_builder)
         layer_spec.submodules.mlp = replacements[builder_id]
+        layer_spec.submodules.self_attention = _replace_gdn_runtime(layer_spec.submodules.self_attention)
     return block_spec
