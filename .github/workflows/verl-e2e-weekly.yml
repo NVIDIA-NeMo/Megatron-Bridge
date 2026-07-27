@@ -26,7 +26,7 @@ on:
         description: "verl git ref to check out"
         required: false
         type: string
-        default: 6a4a0784337828523126ddd3d668524bd4578d4d # pragma: allowlist secret
+        default: main
 
 concurrency:
   group: ${{ github.workflow }}
@@ -90,7 +90,7 @@ jobs:
     env:
       CONTAINER: verl_${{ github.run_id }}_${{ matrix.script }}
       VERL_IMAGE: ${{ vars.DEFAULT_CONTAINER_REGISTRY }}/dockerhub/verlai/verl:vllm020.dev1
-      VERL_REF: ${{ github.event.inputs.verl_ref || '6a4a0784337828523126ddd3d668524bd4578d4d' }} # pragma: allowlist secret
+      VERL_REF: ${{ github.event.inputs.verl_ref || 'main' }}
       TEST_DATA_PATH: ${{ vars.DEFAULT_TEST_DATA_PATH }}
       VERL_DATA_ROOT: /home/TestData/verl_ci
     steps:

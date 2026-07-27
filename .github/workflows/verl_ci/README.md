@@ -110,10 +110,7 @@ workflow edit. The workflow reads two tuning headers from each script:
 - `# GPU_COUNT=<n>` — selects the N-GPU runner label (default 8).
 
 In NVIDIA CI the L20x8 runner profile above is served by an 8×H100 node, and the
-verl image is mirrored into the internal ECR registry. Scheduled runs pin verl to
-the revision in the workflow's `verl_ref` default so upstream changes cannot alter
-the tested environment between runs. A manual dispatch can override that ref for
-compatibility testing. Required models and the raw GSM8K dataset are pre-staged
-into the shared test-data volume, so each leg runs offline (`HF_HUB_OFFLINE=1`);
-the workflow reproduces the `${HOME}/models` and `${HOME}/models/hf_data/gsm8k`
-layout above via symlinks before invoking a script.
+verl image is mirrored into the internal ECR registry. Required models and the raw
+GSM8K dataset are pre-staged into the shared test-data volume, so each leg runs
+offline (`HF_HUB_OFFLINE=1`); the workflow reproduces the `${HOME}/models` and
+`${HOME}/models/hf_data/gsm8k` layout above via symlinks before invoking a script.
