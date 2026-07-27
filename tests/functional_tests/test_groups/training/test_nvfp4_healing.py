@@ -181,11 +181,13 @@ class TestNVFP4HealingEndToEnd:
             torch.distributed.barrier()
 
             # Phase 2: LoRA finetune in NVFP4 with FP8 healing at HEALING_ITER.
+            # This validates the core recipe-switch path on Blackwell. Base-weight
+            # pre-quantization (pre_quantize_base_weights) is covered by the unit tests;
+            # its Transformer Engine quantizer kernels are not exercised on this toy model.
             healing_callback = NVFP4HealingCallback(
                 NVFP4HealingConfig(
                     healing_iter=HEALING_ITER,
                     healing_recipe=healing_recipe,
-                    pre_quantize_base_weights=True,
                 )
             )
             tracker = RecipeTrackingCallback()
