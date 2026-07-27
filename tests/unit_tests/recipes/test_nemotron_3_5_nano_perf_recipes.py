@@ -160,6 +160,7 @@ def test_perf_recipes_enable_mtp(recipe_factory: Callable[[], ConfigContainer]) 
     assert cfg.model.mtp_loss_scaling_factor == 0.3
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.hf_model_id == _NEMOTRON_3_5_NANO_MODEL_ID
     assert cfg.tokenizer.tokenizer_model == _NEMOTRON_3_5_NANO_MODEL_ID
 
 
