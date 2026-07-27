@@ -311,10 +311,10 @@ def qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config() -> ConfigContainer:
     cfg.optimizer.exp_avg_dtype = torch.float32
     cfg.optimizer.exp_avg_sq_dtype = torch.float32
 
-    # Communication overlap (default None, can pass CommOverlapConfig for advanced overlap)
-    # cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)  # Uncomment to enable
-    # cfg.comm_overlap.delay_wgrad_compute = False
-    # cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    # Communication overlap
+    cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
+    cfg.comm_overlap.delay_wgrad_compute = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = False  # Overlap shared expert computation
 

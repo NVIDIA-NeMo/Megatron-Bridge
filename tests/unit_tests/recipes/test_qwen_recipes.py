@@ -98,6 +98,18 @@ class _FakeAutoConfig:
         return _FakeRootConfig()
 
 
+def test_qwen3_235b_h100_pretrain_overlaps_expert_communication(monkeypatch: pytest.MonkeyPatch):
+    qwen3_moe_mod = importlib.import_module("megatron.bridge.recipes.qwen.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, qwen3_moe_mod, "AutoBridge", _FakeBridge)
+    recipe_module = importlib.import_module("megatron.bridge.recipes.qwen.h100.qwen3_moe")
+    patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", _FakeBridge)
+
+    cfg = recipe_module.qwen3_235b_a22b_pretrain_256gpu_h100_bf16_config()
+
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+
+
 def _assert_basic_config(cfg):
     from megatron.bridge.training.config import ConfigContainer
 

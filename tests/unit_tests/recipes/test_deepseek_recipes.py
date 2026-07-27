@@ -155,6 +155,18 @@ def test_each_deepseek_recipe_builds_config(recipe_func: Callable, monkeypatch: 
     assert getattr(cfg.model, "pipeline_model_parallel_size", 1) >= 1
 
 
+def test_deepseek_v3_256gpu_h100_overlaps_expert_communication(monkeypatch: pytest.MonkeyPatch):
+    deepseek_v3_mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, deepseek_v3_mod, "AutoBridge", _FakeBridge)
+    recipe_module = importlib.import_module("megatron.bridge.recipes.deepseek.h100.deepseek_v3")
+    patch_recipe_module_global(monkeypatch, recipe_module, "AutoBridge", _FakeBridge)
+
+    cfg = recipe_module.deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config()
+
+    assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is True
+    assert cfg.comm_overlap.delay_wgrad_compute is False
+
+
 def test_model_and_perf_deepseek_recipes_bake_environment_defaults(monkeypatch: pytest.MonkeyPatch):
     """Model H100 and flat GB200 recipes should own topology-correct env defaults."""
     deepseek_v3_mod = importlib.import_module("megatron.bridge.recipes.deepseek.deepseek_v3")

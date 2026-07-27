@@ -368,7 +368,7 @@ def deepseek_v3_pretrain_256gpu_h100_bf16_32nodes_config() -> ConfigContainer:
     # Communication overlap
     cfg.comm_overlap = CommOverlapConfig(tp_comm_overlap=False)
     cfg.comm_overlap.delay_wgrad_compute = False
-    cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
+    cfg.comm_overlap.overlap_moe_expert_parallel_comm = True
     # Note: moe_shared_expert_overlap may be overridden by apply_flex_dispatcher_backend at the end
     cfg.model.moe_shared_expert_overlap = True
 
