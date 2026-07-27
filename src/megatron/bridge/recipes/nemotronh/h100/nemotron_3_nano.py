@@ -36,11 +36,11 @@ _NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 _OPENMATHINSTRUCT2_REVISION = "469216e3f46f4dacf476b382e192485ea51a143e"  # pragma: allowlist secret
 
 
-def _nemotron_3_nano_finetune_model(model_id: str) -> HybridModelProvider:
-    """Build the finetuning provider from the selected Hugging Face model config."""
+def _nemotron_3_nano_finetune_model() -> HybridModelProvider:
+    """Build the Nemotron 3 Nano finetuning provider."""
     model = cast(
         HybridModelProvider,
-        AutoBridge.from_hf_pretrained(model_id).to_megatron_provider(load_weights=False),
+        AutoBridge.from_hf_pretrained(_NEMOTRON_3_NANO_MODEL_ID).to_megatron_provider(load_weights=False),
     )
 
     model.seq_length = 2048
@@ -268,20 +268,17 @@ def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
 # =============================================================================
 
 
-def _nemotron_3_nano_sft_8gpu_h100_bf16_config(model_id: str) -> ConfigContainer:
-    """Build a full SFT config for the selected Nemotron Nano model.
+def _nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Build a full SFT config for Nemotron 3 Nano.
 
     Default parallelism: TP=1, PP=1, EP=8, SP=False
-
-    Args:
-        model_id: Hugging Face model identifier used to derive the model architecture.
 
     Returns:
         ConfigContainer with all settings pre-configured for Nemotron Nano SFT.
     """
     cfg = _sft_common()
 
-    cfg.model = _nemotron_3_nano_finetune_model(model_id)
+    cfg.model = _nemotron_3_nano_finetune_model()
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -359,7 +356,7 @@ def _nemotron_3_nano_sft_8gpu_h100_bf16_config(model_id: str) -> ConfigContainer
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = model_id
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MODEL_ID
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -400,12 +397,19 @@ def _nemotron_3_nano_sft_8gpu_h100_bf16_config(model_id: str) -> ConfigContainer
 
 def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron 3 Nano."""
-    return _nemotron_3_nano_sft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MODEL_ID)
+    return _nemotron_3_nano_sft_8gpu_h100_bf16_config()
 
 
 def nemotron_3_5_nano_sft_config() -> ConfigContainer:
     """Return a full SFT config for Nemotron 3.5 Nano."""
-    return _nemotron_3_nano_sft_8gpu_h100_bf16_config(_NEMOTRON_3_5_NANO_MODEL_ID)
+    cfg = nemotron_3_nano_sft_8gpu_h100_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    return cfg
 
 
 def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
@@ -469,15 +473,13 @@ def nemotron_3_5_nano_sft_openmathinstruct2_packed_config() -> ConfigContainer:
 
 
 def _nemotron_3_nano_peft_8gpu_h100_bf16_config(
-    model_id: str,
     peft_scheme: str | PEFT = "lora",
 ) -> ConfigContainer:
-    """Build a PEFT config for the selected Nemotron Nano model.
+    """Build a PEFT config for Nemotron 3 Nano.
 
     Default parallelism: TP=1, PP=1, EP=8, SP=False
 
     Args:
-        model_id: Hugging Face model identifier used to derive the model architecture.
         peft_scheme: PEFT scheme - "lora", "dora", or a custom PEFT instance.
 
     Returns:
@@ -485,7 +487,7 @@ def _nemotron_3_nano_peft_8gpu_h100_bf16_config(
     """
     cfg = _peft_common()
 
-    cfg.model = _nemotron_3_nano_finetune_model(model_id)
+    cfg.model = _nemotron_3_nano_finetune_model()
 
     # Parallelism settings
     cfg.model.pipeline_model_parallel_layout = None
@@ -580,7 +582,7 @@ def _nemotron_3_nano_peft_8gpu_h100_bf16_config(
     cfg.scheduler.lr_decay_style = "cosine"
 
     # Tokenizer
-    cfg.tokenizer.tokenizer_model = model_id
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_NANO_MODEL_ID
 
     # Checkpoint config overrides
     cfg.checkpoint.save_interval = 200
@@ -621,12 +623,19 @@ def _nemotron_3_nano_peft_8gpu_h100_bf16_config(
 
 def nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Nemotron 3 Nano."""
-    return _nemotron_3_nano_peft_8gpu_h100_bf16_config(_NEMOTRON_3_NANO_MODEL_ID, peft_scheme)
+    return _nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme)
 
 
 def nemotron_3_5_nano_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigContainer:
     """Return a PEFT config for Nemotron 3.5 Nano."""
-    return _nemotron_3_nano_peft_8gpu_h100_bf16_config(_NEMOTRON_3_5_NANO_MODEL_ID, peft_scheme)
+    cfg = nemotron_3_nano_peft_8gpu_h100_bf16_config(peft_scheme)
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    return cfg
 
 
 __all__ = [
