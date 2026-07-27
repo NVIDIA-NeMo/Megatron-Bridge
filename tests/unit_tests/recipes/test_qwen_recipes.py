@@ -95,7 +95,7 @@ class _FakeAutoConfig:
     @staticmethod
     def from_pretrained(hf_path: str, **kwargs):
         expected_revisions = {
-            "Qwen/Qwen3.5-35B-A3B-Base": "0f0813072d2358973511097385626f21fcb6d422",
+            "Qwen/Qwen3.5-35B-A3B-Base": "0f0813072d2358973511097385626f21fcb6d422",  # pragma: allowlist secret
         }
         assert kwargs == ({"revision": expected_revisions[hf_path]} if hf_path in expected_revisions else {})
         return _FakeRootConfig()
@@ -704,7 +704,7 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
 
     assert cfg.tokenizer.tokenizer_model == "Qwen/Qwen3.5-35B-A3B"
     assert cfg.tokenizer.hf_tokenizer_kwargs == {
-        "revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",
+        "revision": "59d61f3ce65a6d9863b86d2e96597125219dc754",  # pragma: allowlist secret
     }
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1

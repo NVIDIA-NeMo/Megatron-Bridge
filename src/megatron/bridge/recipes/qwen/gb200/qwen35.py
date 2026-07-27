@@ -28,7 +28,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 _QWEN35_9B_BASE = "Qwen/Qwen3.5-9B-Base"
 _QWEN35_35B_A3B_BASE = "Qwen/Qwen3.5-35B-A3B-Base"
-_QWEN35_35B_A3B_BASE_REVISION = "0f0813072d2358973511097385626f21fcb6d422"
+_QWEN35_35B_A3B_BASE_REVISION = "0f0813072d2358973511097385626f21fcb6d422"  # pragma: allowlist secret
 
 
 def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:

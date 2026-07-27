@@ -30,7 +30,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: ab5f69ae7056bad28a2e3973d2b07f5f5a815b3e  # pragma: allowlist secret
+  bridge_commit: ff24fbbbd3bbb93dea7b45a648977131c44c599e  # pragma: allowlist secret
   megatron_core_commit: 6cd6ea530e18776da54297bbf88292264264bcd3  # pragma: allowlist secret
   recipe_name: qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
   recipe_source: src/megatron/bridge/perf_recipes/qwen/h100/qwen35.py
@@ -222,12 +222,24 @@ items:
         ./scripts/training/train.sh \
           --nodes 2 --gpus-per-node 8 --no-gpu-resource-request \
           --account "$SLURM_ACCOUNT" --partition "$SLURM_PARTITION" \
-          --time 00:30:00 --container-image "$CONTAINER_IMAGE" \
+          --time 00:45:00 --container-image "$CONTAINER_IMAGE" \
           --mount "$PWD:/opt/Megatron-Bridge" --mount "$HF_HOME:$HF_HOME" \
           --env HF_HOME \
           --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config \
           --mode pretrain --max_steps 50
       last_verified: null
+      latest_probe:
+        date: 2026-07-27
+        job_id: 5716939
+        bridge_commit: ab5f69ae7056bad28a2e3973d2b07f5f5a815b3e  # pragma: allowlist secret
+        steps_completed: 10
+        terminal_state: completed
+        initial_loss: 12.82952
+        final_loss: 0.08893608
+        steps_5_10_step_time_ms_avg: 30301.633
+        steps_5_10_model_tflops_per_gpu_avg: 194.417
+        skipped_iterations: 0
+        nan_iterations: 0
       metrics:
         initial_loss: null
         final_loss: null

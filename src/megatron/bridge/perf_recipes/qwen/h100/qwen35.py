@@ -26,7 +26,7 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _QWEN35_35B_A3B = "Qwen/Qwen3.5-35B-A3B"
-_QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"
+_QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"  # pragma: allowlist secret
 
 
 def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
