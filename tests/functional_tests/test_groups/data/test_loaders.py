@@ -433,6 +433,17 @@ class TestSampleBasedDataLoaders:
         assert valid_samples == expected_valid_samples
         assert test_samples == expected_test_samples
 
+    def test_get_train_valid_test_num_samples_eval_at_start(self):
+        """eval_at_start reserves one extra evaluation's worth of validation samples."""
+        cfg = create_simple_test_config()
+        cfg.validation.eval_at_start = True
+
+        _, valid_samples, _ = get_train_valid_test_num_samples(cfg)
+
+        interval_eval_iters = (cfg.train.train_iters // cfg.validation.eval_interval + 1) * cfg.validation.eval_iters
+        expected_valid_samples = (interval_eval_iters + cfg.validation.eval_iters) * cfg.train.global_batch_size
+        assert valid_samples == expected_valid_samples
+
     @mock.patch("torch.distributed.get_world_size")
     @mock.patch("torch.distributed.get_rank")
     @mock.patch("torch.distributed.broadcast")
