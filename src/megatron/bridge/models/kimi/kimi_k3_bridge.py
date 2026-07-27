@@ -63,14 +63,15 @@ class KimiK3Bridge(MegatronModelBridge):
             return "situ"
         return super().megatron_to_hf_activation(activation_func)
 
+    def hf_config_to_provider_kwargs(self, hf_config) -> dict:
+        """Map the nested K3 language configuration with the common config mappings."""
+        return super().hf_config_to_provider_kwargs(getattr(hf_config, "text_config", hf_config))
+
     def provider_bridge(self, hf_pretrained: PreTrainedCausalLM) -> KimiK3ModelProvider:
         """Translate the nested Kimi K3 text configuration."""
         hf_config = hf_pretrained.config
         text_config = hf_config.text_config
-        provider_kwargs = self.hf_config_to_provider_kwargs(text_config)
-        provider_kwargs.pop("_mla_rope_params", None)
-        valid_fields = KimiK3ModelProvider.__dataclass_fields__
-        provider = KimiK3ModelProvider(**{key: value for key, value in provider_kwargs.items() if key in valid_fields})
+        provider = super().provider_bridge(hf_pretrained)
 
         provider.transformer_layer_spec = build_kimi_k3_spec
         provider.normalization = "RMSNorm"
@@ -83,19 +84,10 @@ class KimiK3Bridge(MegatronModelBridge):
         provider.position_embedding_type = "none"
         provider.attention_backend = AttnBackend.auto
 
-        provider.q_lora_rank = text_config.q_lora_rank
-        provider.kv_lora_rank = text_config.kv_lora_rank
-        provider.qk_head_dim = text_config.qk_nope_head_dim
-        provider.qk_pos_emb_head_dim = text_config.qk_rope_head_dim
-        provider.v_head_dim = text_config.v_head_dim
-
-        provider.moe_ffn_hidden_size = text_config.moe_intermediate_size
         provider.moe_latent_size = text_config.routed_expert_hidden_size
-        provider.num_moe_experts = text_config.num_experts
         provider.moe_router_topk = text_config.num_experts_per_token
         provider.moe_router_score_function = text_config.moe_router_activation_func
         provider.moe_router_pre_softmax = True
-        provider.moe_router_topk_scaling_factor = text_config.routed_scaling_factor
         if text_config.use_grouped_topk:
             provider.moe_router_num_groups = text_config.num_expert_group
             provider.moe_router_group_topk = text_config.topk_group
@@ -126,12 +118,9 @@ class KimiK3Bridge(MegatronModelBridge):
         provider.kimi_kda_gate_lower_bound = linear_config["gate_lower_bound"]
         provider.kimi_attn_res_block_size = text_config.attn_res_block_size
 
-        provider.activation_func = F.silu
         provider.use_te_activation_func = True
         provider.bias_activation_fusion = False
         provider.bias_dropout_fusion = False
-        provider.hidden_dropout = 0.0
-        provider.attention_dropout = 0.0
         provider.attention_softmax_in_fp32 = True
         provider.disable_bf16_reduced_precision_matmul = True
         provider.apply_rope_fusion = False
@@ -140,7 +129,6 @@ class KimiK3Bridge(MegatronModelBridge):
         provider.cross_entropy_loss_fusion = True
         provider.masked_softmax_fusion = True
         provider.persist_layer_norm = True
-        provider.make_vocab_size_divisible_by = 128
         provider.should_pad_vocab = False
 
         self._num_hidden_layers = text_config.num_hidden_layers
@@ -149,169 +137,105 @@ class KimiK3Bridge(MegatronModelBridge):
     def mapping_registry(self) -> MegatronMappingRegistry:
         """Map K3's nested language model and custom layer parameters."""
         prefix = "language_model.model"
+        megatron_layer = "decoder.layers.*"
+        hf_layer = f"{prefix}.layers.*"
+        megatron_attention = f"{megatron_layer}.self_attention"
+        hf_attention = f"{hf_layer}.self_attn"
+
+        auto_mappings = [
+            ("embedding.word_embeddings.weight", f"{prefix}.embed_tokens.weight"),
+            ("output_layer.weight", "language_model.lm_head.weight"),
+        ]
+        replicated_mappings = [
+            ("decoder.final_layernorm.weight", f"{prefix}.norm.weight"),
+            (f"{megatron_layer}.input_layernorm.weight", f"{hf_layer}.input_layernorm.weight"),
+            (f"{megatron_attention}.f_a_proj.weight", f"{hf_attention}.f_a_proj.weight"),
+            (f"{megatron_attention}.o_norm.weight", f"{hf_attention}.o_norm.weight"),
+            (f"{megatron_attention}.q_a_proj.weight", f"{hf_attention}.q_a_proj.weight"),
+            (f"{megatron_attention}.q_a_layernorm.weight", f"{hf_attention}.q_a_layernorm.weight"),
+            (f"{megatron_attention}.kv_a_proj_with_mqa.weight", f"{hf_attention}.kv_a_proj_with_mqa.weight"),
+            (f"{megatron_attention}.kv_a_layernorm.weight", f"{hf_attention}.kv_a_layernorm.weight"),
+            (f"{megatron_layer}.self_attention_res_norm.weight", f"{hf_layer}.self_attention_res_norm.weight"),
+            (f"{megatron_layer}.self_attention_res_proj.weight", f"{hf_layer}.self_attention_res_proj.weight"),
+            (f"{megatron_layer}.pre_mlp_layernorm.weight", f"{hf_layer}.post_attention_layernorm.weight"),
+            (f"{megatron_layer}.mlp_res_norm.weight", f"{hf_layer}.mlp_res_norm.weight"),
+            (f"{megatron_layer}.mlp_res_proj.weight", f"{hf_layer}.mlp_res_proj.weight"),
+            (f"{megatron_layer}.mlp.router.weight", f"{hf_layer}.block_sparse_moe.gate.weight"),
+            (
+                f"{megatron_layer}.mlp.router.expert_bias",
+                f"{hf_layer}.block_sparse_moe.gate.e_score_correction_bias",
+            ),
+            (
+                f"{megatron_layer}.mlp.fc1_latent_proj.weight",
+                f"{hf_layer}.block_sparse_moe.routed_expert_down_proj.weight",
+            ),
+            (
+                f"{megatron_layer}.mlp.routed_expert_norm.weight",
+                f"{hf_layer}.block_sparse_moe.routed_expert_norm.weight",
+            ),
+            (
+                f"{megatron_layer}.mlp.fc2_latent_proj.weight",
+                f"{hf_layer}.block_sparse_moe.routed_expert_up_proj.weight",
+            ),
+        ]
+        column_parallel_mappings = [
+            (f"{megatron_attention}.{name}", f"{hf_attention}.{name}")
+            for name in (
+                "q_proj.weight",
+                "k_proj.weight",
+                "v_proj.weight",
+                "q_conv1d.weight",
+                "k_conv1d.weight",
+                "v_conv1d.weight",
+                "A_log",
+                "dt_bias",
+                "f_b_proj.weight",
+                "b_proj.weight",
+                "g_proj.weight",
+                "q_b_proj.weight",
+                "kv_b_proj.weight",
+            )
+        ]
+        row_parallel_mappings = [
+            (f"{megatron_attention}.o_proj.weight", f"{hf_attention}.o_proj.weight"),
+            (f"{megatron_layer}.mlp.linear_fc2.weight", f"{hf_layer}.mlp.down_proj.weight"),
+            (
+                f"{megatron_layer}.mlp.shared_experts.linear_fc2.weight",
+                f"{hf_layer}.block_sparse_moe.shared_experts.down_proj.weight",
+            ),
+            (
+                f"{megatron_layer}.mlp.experts.linear_fc2.weight*",
+                f"{hf_layer}.block_sparse_moe.experts.*.w2.weight",
+            ),
+            (
+                f"{megatron_layer}.mlp.experts.local_experts.*.linear_fc2.weight",
+                f"{hf_layer}.block_sparse_moe.experts.*.w2.weight",
+            ),
+        ]
         mappings = [
-            AutoMapping("embedding.word_embeddings.weight", f"{prefix}.embed_tokens.weight"),
-            ReplicatedMapping("decoder.final_layernorm.weight", f"{prefix}.norm.weight"),
-            AutoMapping("output_layer.weight", "language_model.lm_head.weight"),
-            ReplicatedMapping(
-                "decoder.layers.*.input_layernorm.weight",
-                f"{prefix}.layers.*.input_layernorm.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.q_proj.weight",
-                f"{prefix}.layers.*.self_attn.q_proj.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.k_proj.weight",
-                f"{prefix}.layers.*.self_attn.k_proj.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.v_proj.weight",
-                f"{prefix}.layers.*.self_attn.v_proj.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.q_conv1d.weight",
-                f"{prefix}.layers.*.self_attn.q_conv1d.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.k_conv1d.weight",
-                f"{prefix}.layers.*.self_attn.k_conv1d.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.v_conv1d.weight",
-                f"{prefix}.layers.*.self_attn.v_conv1d.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.A_log",
-                f"{prefix}.layers.*.self_attn.A_log",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.dt_bias",
-                f"{prefix}.layers.*.self_attn.dt_bias",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.f_a_proj.weight",
-                f"{prefix}.layers.*.self_attn.f_a_proj.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.f_b_proj.weight",
-                f"{prefix}.layers.*.self_attn.f_b_proj.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.b_proj.weight",
-                f"{prefix}.layers.*.self_attn.b_proj.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.g_proj.weight",
-                f"{prefix}.layers.*.self_attn.g_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.o_norm.weight",
-                f"{prefix}.layers.*.self_attn.o_norm.weight",
-            ),
-            RowParallelMapping(
-                "decoder.layers.*.self_attention.o_proj.weight",
-                f"{prefix}.layers.*.self_attn.o_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.q_a_proj.weight",
-                f"{prefix}.layers.*.self_attn.q_a_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.q_a_layernorm.weight",
-                f"{prefix}.layers.*.self_attn.q_a_layernorm.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.q_b_proj.weight",
-                f"{prefix}.layers.*.self_attn.q_b_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.kv_a_proj_with_mqa.weight",
-                f"{prefix}.layers.*.self_attn.kv_a_proj_with_mqa.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention.kv_a_layernorm.weight",
-                f"{prefix}.layers.*.self_attn.kv_a_layernorm.weight",
-            ),
-            ColumnParallelMapping(
-                "decoder.layers.*.self_attention.kv_b_proj.weight",
-                f"{prefix}.layers.*.self_attn.kv_b_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention_res_norm.weight",
-                f"{prefix}.layers.*.self_attention_res_norm.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.self_attention_res_proj.weight",
-                f"{prefix}.layers.*.self_attention_res_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.pre_mlp_layernorm.weight",
-                f"{prefix}.layers.*.post_attention_layernorm.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp_res_norm.weight",
-                f"{prefix}.layers.*.mlp_res_norm.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp_res_proj.weight",
-                f"{prefix}.layers.*.mlp_res_proj.weight",
+            *(AutoMapping(*mapping) for mapping in auto_mappings),
+            *(ReplicatedMapping(*mapping) for mapping in replicated_mappings),
+            *(ColumnParallelMapping(*mapping) for mapping in column_parallel_mappings),
+            *(RowParallelMapping(*mapping) for mapping in row_parallel_mappings),
+            GatedMLPMapping(
+                f"{megatron_layer}.mlp.linear_fc1.weight",
+                gate=f"{hf_layer}.mlp.gate_proj.weight",
+                up=f"{hf_layer}.mlp.up_proj.weight",
             ),
             GatedMLPMapping(
-                "decoder.layers.*.mlp.linear_fc1.weight",
-                gate=f"{prefix}.layers.*.mlp.gate_proj.weight",
-                up=f"{prefix}.layers.*.mlp.up_proj.weight",
-            ),
-            RowParallelMapping(
-                "decoder.layers.*.mlp.linear_fc2.weight",
-                f"{prefix}.layers.*.mlp.down_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp.router.weight",
-                f"{prefix}.layers.*.block_sparse_moe.gate.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp.router.expert_bias",
-                f"{prefix}.layers.*.block_sparse_moe.gate.e_score_correction_bias",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp.fc1_latent_proj.weight",
-                f"{prefix}.layers.*.block_sparse_moe.routed_expert_down_proj.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp.routed_expert_norm.weight",
-                f"{prefix}.layers.*.block_sparse_moe.routed_expert_norm.weight",
-            ),
-            ReplicatedMapping(
-                "decoder.layers.*.mlp.fc2_latent_proj.weight",
-                f"{prefix}.layers.*.block_sparse_moe.routed_expert_up_proj.weight",
+                f"{megatron_layer}.mlp.shared_experts.linear_fc1.weight",
+                gate=f"{hf_layer}.block_sparse_moe.shared_experts.gate_proj.weight",
+                up=f"{hf_layer}.block_sparse_moe.shared_experts.up_proj.weight",
             ),
             GatedMLPMapping(
-                "decoder.layers.*.mlp.shared_experts.linear_fc1.weight",
-                gate=f"{prefix}.layers.*.block_sparse_moe.shared_experts.gate_proj.weight",
-                up=f"{prefix}.layers.*.block_sparse_moe.shared_experts.up_proj.weight",
-            ),
-            RowParallelMapping(
-                "decoder.layers.*.mlp.shared_experts.linear_fc2.weight",
-                f"{prefix}.layers.*.block_sparse_moe.shared_experts.down_proj.weight",
+                f"{megatron_layer}.mlp.experts.linear_fc1.weight*",
+                gate=f"{hf_layer}.block_sparse_moe.experts.*.w1.weight",
+                up=f"{hf_layer}.block_sparse_moe.experts.*.w3.weight",
             ),
             GatedMLPMapping(
-                "decoder.layers.*.mlp.experts.linear_fc1.weight*",
-                gate=f"{prefix}.layers.*.block_sparse_moe.experts.*.w1.weight",
-                up=f"{prefix}.layers.*.block_sparse_moe.experts.*.w3.weight",
-            ),
-            RowParallelMapping(
-                "decoder.layers.*.mlp.experts.linear_fc2.weight*",
-                f"{prefix}.layers.*.block_sparse_moe.experts.*.w2.weight",
-            ),
-            GatedMLPMapping(
-                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc1.weight",
-                gate=f"{prefix}.layers.*.block_sparse_moe.experts.*.w1.weight",
-                up=f"{prefix}.layers.*.block_sparse_moe.experts.*.w3.weight",
-            ),
-            RowParallelMapping(
-                "decoder.layers.*.mlp.experts.local_experts.*.linear_fc2.weight",
-                f"{prefix}.layers.*.block_sparse_moe.experts.*.w2.weight",
+                f"{megatron_layer}.mlp.experts.local_experts.*.linear_fc1.weight",
+                gate=f"{hf_layer}.block_sparse_moe.experts.*.w1.weight",
+                up=f"{hf_layer}.block_sparse_moe.experts.*.w3.weight",
             ),
         ]
 

@@ -18,6 +18,11 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+from megatron.bridge.models.conversion.param_mapping import (
+    ColumnParallelMapping,
+    ReplicatedMapping,
+    RowParallelMapping,
+)
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.kimi.kimi_k3_bridge import KimiK3Bridge
 from megatron.bridge.models.kimi.kimi_k3_layers import KimiK3MoELayer
@@ -100,11 +105,17 @@ def test_provider_bridge_configures_four_layer_proxy(kimi_k3_pretrained: Mock) -
     assert provider.position_embedding_type == "none"
     assert provider.kimi_kda_layers == (1, 2, 3)
     assert provider.moe_layer_freq == [0, 1, 1, 1]
+    assert provider.q_lora_rank == 1536
+    assert provider.kv_lora_rank == 512
+    assert provider.num_moe_experts == 896
+    assert provider.moe_ffn_hidden_size == 3072
     assert provider.moe_latent_size == 3584
     assert provider.moe_shared_expert_intermediate_size == 6144
     assert provider.moe_router_topk == 16
     assert provider.moe_router_num_groups == 1
     assert provider.moe_router_group_topk == 1
+    assert provider.activation_func is torch.nn.functional.silu
+    assert provider.make_vocab_size_divisible_by == 128
     assert provider.use_te_activation_func is True
     assert provider.bf16 is True
     assert provider.params_dtype == torch.bfloat16
@@ -117,15 +128,26 @@ def test_mapping_registry_covers_kda_latent_moe_and_attn_res(kimi_k3_pretrained:
     registry = bridge.mapping_registry()
 
     cases = {
-        "decoder.layers.0.self_attention.q_conv1d.weight": ("language_model.model.layers.0.self_attn.q_conv1d.weight"),
-        "decoder.layers.2.mlp.routed_expert_norm.weight": (
-            "language_model.model.layers.2.block_sparse_moe.routed_expert_norm.weight"
+        "decoder.layers.0.self_attention.q_conv1d.weight": (
+            "language_model.model.layers.0.self_attn.q_conv1d.weight",
+            ColumnParallelMapping,
         ),
-        "decoder.layers.3.output_attn_res_proj.weight": "language_model.model.output_attn_res_proj.weight",
+        "decoder.layers.1.self_attention.o_proj.weight": (
+            "language_model.model.layers.1.self_attn.o_proj.weight",
+            RowParallelMapping,
+        ),
+        "decoder.layers.2.mlp.routed_expert_norm.weight": (
+            "language_model.model.layers.2.block_sparse_moe.routed_expert_norm.weight",
+            ReplicatedMapping,
+        ),
+        "decoder.layers.3.output_attn_res_proj.weight": (
+            "language_model.model.output_attn_res_proj.weight",
+            ReplicatedMapping,
+        ),
     }
-    for megatron_name, hf_name in cases.items():
+    for megatron_name, (hf_name, mapping_type) in cases.items():
         mapping = registry.megatron_to_hf_lookup(megatron_name)
-        assert mapping is not None
+        assert isinstance(mapping, mapping_type)
         assert mapping.hf_param == hf_name
         reverse = registry.hf_to_megatron_lookup(hf_name)
         assert reverse is not None
