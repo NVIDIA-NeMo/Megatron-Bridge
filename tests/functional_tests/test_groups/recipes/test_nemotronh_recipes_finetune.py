@@ -94,7 +94,7 @@ class TestNemotron3NanoFinetuneRecipes:
         original_cache = dynamic_module_utils.HF_MODULES_CACHE
 
         # Patch
-        dynamic_module_utils.HF_MODULES_CACHE = temp_hf_modules_cache
+        dynamic_module_utils.HF_MODULES_CACHE = str(temp_hf_modules_cache)
 
         yield temp_hf_modules_cache
 
@@ -386,7 +386,7 @@ class TestNemotron3SuperFinetuneRecipes:
         original_cache = dynamic_module_utils.HF_MODULES_CACHE
 
         # Patch
-        dynamic_module_utils.HF_MODULES_CACHE = temp_hf_modules_cache
+        dynamic_module_utils.HF_MODULES_CACHE = str(temp_hf_modules_cache)
 
         yield temp_hf_modules_cache
 
