@@ -69,6 +69,15 @@ exported, omit the item instead of adding an unverified placeholder. Once a
 canonical recipe exists, keep the item in the card even if its run is still
 unverified.
 
+Add `pretrain_fsdp` as an optional hardware-scoped item when a first-class
+Megatron FSDP performance recipe exists for the exact model variant. Record
+the FSDP result under `pretrain_fsdp.<hardware>` and its non-FSDP control under
+the corresponding `pretrain.<hardware>.matched_non_fsdp_comparison`. This
+keeps each run's metrics with the execution mode that produced them. Keep the
+pair separate from checkpoint-resume and tuned non-FSDP
+`pretrain_performance` results. It does not claim checkpoint save/load unless
+a separate functional item records that evidence.
+
 A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
 performance recipe exists for that hardware. Its item status states whether
 the card's benchmark run has been verified; an `unverified` leaf still records
@@ -106,19 +115,19 @@ items:
 
 The hardware-scoped names are `pretrain`, `sft`, `sft_export_inference`,
 `sft_long_context`, `peft`, `checkpoint_resume`, and optional
-`pretrain_performance`. Use canonical public accelerator identifiers such as
-`H100`, `B200`, or `GB200`, never a private cluster name. The validator's
-public-hardware allowlist is authoritative and must be updated when a new
-accelerator target is introduced. The hardware key replaces the old `gpu_type`
-field. Each hardware leaf is independent and must carry its own status plus the
-command or commands, date, metrics, features, and optional commit override that
-apply to that item. Dependencies resolve within the same hardware key:
-`checkpoint_resume.H100` consumes `pretrain.H100`, and
-`sft_export_inference.H100` consumes `sft.H100`. Never fall back across
-hardware targets. Use the reserved key `all` only as the sole leaf for a
-model-wide `unsupported` or `not_applicable` limitation. A terminal dependency
-leaf still names its logical dependency but does not require a matching `all`
-or concrete-hardware dependency leaf.
+`pretrain_performance` and `pretrain_fsdp`. Use canonical public accelerator
+identifiers such as `H100`, `B200`, or `GB200`, never a private cluster name.
+The validator's public-hardware allowlist is authoritative and must be updated
+when a new accelerator target is introduced. The hardware key replaces the old
+`gpu_type` field. Each hardware leaf is independent and must carry its own
+status plus the command or commands, date, metrics, features, and optional
+commit override that apply to that item. Dependencies resolve within the same
+hardware key: `checkpoint_resume.H100` consumes `pretrain.H100`, and
+`sft_export_inference.H100` consumes `sft.H100`. Never fall back across hardware
+targets. Use the reserved key `all` only as the sole leaf for a model-wide
+`unsupported` or `not_applicable` limitation. A terminal dependency leaf still
+names its logical dependency but does not require a matching `all` or
+concrete-hardware dependency leaf.
 
 Use only `unverified`, `verified`, `unsupported`, or `not_applicable`. Do not
 add `smoke` or an evidence field.
@@ -135,7 +144,9 @@ Use `model_level` for the six direct items: the four conversion directions,
 hardware-scoped items: `pretrain`, `sft`, `sft_export_inference`,
 `sft_long_context`, `peft`, and `checkpoint_resume`. Keep the optional
 `pretrain_performance` item separate under `performance`; omit `performance`
-when the card has no canonical performance recipe.
+when the card has no canonical performance recipe. Keep optional
+`pretrain_fsdp` leaves separate under `fsdp`; omit `fsdp` when the card has no
+FSDP recipe.
 
 Group item names under the same four status names used by the detailed items.
 For an explicitly indexed hardware target with no corresponding item leaf,
@@ -173,6 +184,23 @@ When a canonical performance recipe exists, mirror only its concrete leaves:
   performance:
     H100: verified
 ```
+
+When an FSDP recipe exists, mirror only its concrete leaves:
+
+```yaml
+  fsdp:
+    GB200: verified
+```
+
+Each verified `pretrain_fsdp` leaf must compare the FSDP recipe with a
+non-FSDP control that uses the same model, precision, sequence length, global
+batch size, micro batch size, data source, parallelism, and CUDA-graph policy.
+Record the control as `pretrain.<hardware>.matched_non_fsdp_comparison`,
+including its precision, initial/final loss, final-10 timing and throughput,
+and peak allocated/reserved memory. Record the signed FSDP throughput and
+reserved-memory deltas there as well. Keep CUDA graphs disabled in both
+variants when graph hooks are incompatible with FSDP. Do not imply loss parity:
+record both trajectories and state when they differ.
 
 The index may declare an allowlisted public hardware target such as `GB200`
 before detailed evidence exists. It must also include every concrete hardware
@@ -575,6 +603,13 @@ For every verified training item, record:
   optimizer steps;
 - `last_10_steps_model_tflops_per_gpu_avg`: arithmetic mean over the same rows.
 
+Optionally record `peak_allocated_memory_gib` and
+`peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
+leaves. The corresponding `pretrain.<hardware>.matched_non_fsdp_comparison`
+must record all six metrics for the control—initial/final loss, final-10
+timing/throughput, and peak allocated/reserved memory—plus its batch sizes and
+the signed FSDP throughput and reserved-memory deltas.
+
 Parse all fields from each complete keyed optimizer-step line. Do not collect
 loss, time, and throughput independently and zip them. Reject missing,
 duplicate, skipped, NaN, or non-finite rows rather than excluding them.
@@ -592,8 +627,9 @@ reproducible functional run; keep the physical dataset root private.
 
 ### 7. Record only important enabled features
 
-Use `enabled_features` only on pretrain, SFT, long-context SFT, and PEFT. Keep
-it empty when none of these are central to the verification.
+Use `enabled_features` only on pretrain, SFT, long-context SFT, PEFT, and
+`pretrain_fsdp`. Keep it empty when none of these are central to the
+verification.
 
 | Key | Allowed value |
 | --- | --- |
@@ -602,6 +638,7 @@ it empty when none of these are central to the verification.
 | `cuda_graph.scopes` | `full_iteration`, `attn`, `mlp`, `moe`, `moe_router`, `moe_preprocess`, or `mamba` |
 | `context_parallel_size` | integer greater than one |
 | `moe_dispatcher` | `deepep` or `hybridep` |
+| `megatron_fsdp` | `optim_grads_params` (only on `pretrain_fsdp`) |
 
 Do not list routine TP/PP/DP sizes, Transformer Engine, fused loss,
 distributed optimizer, ordinary communication overlap, LoRA, or DoRA.
@@ -630,7 +667,8 @@ an item verified merely to make validation pass.
 
 - Keep all twelve core inventory items and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
-  performance recipe.
+  performance recipe, and `pretrain_fsdp` only when an exact FSDP performance
+  recipe and matched non-FSDP control exist.
 - Start the summary with the exact untuned performance disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
