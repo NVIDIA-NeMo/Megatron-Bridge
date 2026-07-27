@@ -725,6 +725,72 @@ class TestPartitionPackedBatchForCp:
         assert fake_partitioner.seq_lens_seen == [4]
         assert result["tokens"].size(1) == 2
 
+    # ── Contiguous mode tests ──────────────────────────────────────────────
+
+    def _run_contiguous(self, monkeypatch, batch, cp_rank=0, cp_size=2):
+        """Run _partition_packed_batch_for_cp in contiguous mode."""
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.torch.distributed.get_world_size",
+            lambda _group: cp_size,
+        )
+        monkeypatch.setattr(
+            "megatron.bridge.training.gpt_step.torch.distributed.get_rank",
+            lambda _group: cp_rank,
+        )
+        return _partition_packed_batch_for_cp(batch, _MockProcessGroup(size=cp_size), cp_partition_mode="contiguous")
+
+    def test_contiguous_basic_slice(self, monkeypatch):
+        """Rank 0 of 2 receives the first half of each data tensor."""
+        tokens = torch.arange(8, dtype=torch.long).unsqueeze(0)
+        labels = torch.arange(8, dtype=torch.long).unsqueeze(0)
+        loss_mask = torch.ones(1, 8)
+        position_ids = torch.arange(8).unsqueeze(0)
+        cu_seqlens = torch.tensor([[0, 4, 8]], dtype=torch.int32)
+        batch = {
+            "tokens": tokens,
+            "labels": labels,
+            "loss_mask": loss_mask,
+            "position_ids": position_ids,
+            "cu_seqlens": cu_seqlens,
+        }
+        result = self._run_contiguous(monkeypatch, batch, cp_rank=0, cp_size=2)
+        assert result["tokens"].shape == (1, 4)
+        assert torch.equal(result["tokens"].squeeze(), torch.arange(4, dtype=torch.long))
+        # cu_seqlens clipped to [0, 4] window
+        assert result["cu_seqlens"].squeeze().tolist() == [0, 4]
+
+    def test_contiguous_rank1_slice(self, monkeypatch):
+        """Rank 1 of 2 receives the second half."""
+        tokens = torch.arange(8, dtype=torch.long).unsqueeze(0)
+        cu_seqlens = torch.tensor([[0, 4, 8]], dtype=torch.int32)
+        batch = {"tokens": tokens, "cu_seqlens": cu_seqlens}
+        result = self._run_contiguous(monkeypatch, batch, cp_rank=1, cp_size=2)
+        assert result["tokens"].shape == (1, 4)
+        assert torch.equal(result["tokens"].squeeze(), torch.arange(4, 8, dtype=torch.long))
+        assert result["cu_seqlens"].squeeze().tolist() == [0, 4]
+
+    def test_contiguous_rejects_non_divisible_length(self, monkeypatch):
+        """Raises RuntimeError when total_tokens is not divisible by cp_size."""
+        tokens = torch.arange(5, dtype=torch.long).unsqueeze(0)
+        batch = {
+            "tokens": tokens,
+            "cu_seqlens": torch.tensor([[0, 5]], dtype=torch.int32),
+        }
+        with pytest.raises(RuntimeError, match="divisible by cp_size"):
+            self._run_contiguous(monkeypatch, batch, cp_size=2)
+
+    def test_contiguous_middle_pp_stage_returns_unchanged(self, monkeypatch):
+        """Middle PP stage (all data tensors None) returns batch unchanged."""
+        cu_seqlens = torch.tensor([[0, 4, 8]], dtype=torch.int32)
+        batch = {
+            "tokens": None,
+            "labels": None,
+            "loss_mask": None,
+            "cu_seqlens": cu_seqlens,
+        }
+        result = self._run_contiguous(monkeypatch, batch, cp_size=2)
+        assert result is batch  # unchanged
+
 
 class TestGetPackedSeqParams:
     """Tests for the get_packed_seq_params function."""

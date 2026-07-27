@@ -50,10 +50,24 @@ logger = logging.getLogger(__name__)
 
 _CURRENT_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens_q", "cu_seqlens_kv", "cu_seqlens_q_padded", "cu_seqlens_kv_padded")
 _CURRENT_PACKED_SEQ_HOST_KEYS = ("max_seqlen_q", "max_seqlen_kv")
-_CURRENT_PACKED_SEQ_PARAM_KEYS = (*_CURRENT_PACKED_SEQ_DEVICE_KEYS, *_CURRENT_PACKED_SEQ_HOST_KEYS, "total_tokens")
+_CURRENT_PACKED_SEQ_PARAM_KEYS = (
+    *_CURRENT_PACKED_SEQ_DEVICE_KEYS,
+    *_CURRENT_PACKED_SEQ_HOST_KEYS,
+    "total_tokens",
+    "cp_partition_mode",
+    "cp_group",
+    "local_cp_size",
+)
 _LEGACY_PACKED_SEQ_DEVICE_KEYS = ("cu_seqlens", "cu_seqlens_unpadded")
 _LEGACY_PACKED_SEQ_HOST_KEYS = ("cu_seqlens_argmin", "max_seqlen", "cu_seqlens_unpadded_argmin")
-_LEGACY_PACKED_SEQ_PARAM_KEYS = (*_LEGACY_PACKED_SEQ_DEVICE_KEYS, *_LEGACY_PACKED_SEQ_HOST_KEYS, "total_tokens")
+_LEGACY_PACKED_SEQ_PARAM_KEYS = (
+    *_LEGACY_PACKED_SEQ_DEVICE_KEYS,
+    *_LEGACY_PACKED_SEQ_HOST_KEYS,
+    "total_tokens",
+    "cp_partition_mode",
+    "cp_group",
+    "local_cp_size",
+)
 _PackedMetadataValue = torch.Tensor | int | None
 
 
@@ -172,16 +186,24 @@ def _current_stage_needs_mtp_inputs_from_layout(
 
 
 def _partition_packed_batch_for_cp(
-    batch: dict[str, torch.Tensor], cp_group: torch.distributed.ProcessGroup
+    batch: dict[str, torch.Tensor],
+    cp_group: torch.distributed.ProcessGroup,
+    cp_partition_mode: str = "zigzag",
 ) -> dict[str, torch.Tensor]:
     """Partition THD/packed batches across context-parallel ranks.
 
-    Uses MCore's packed-sequence partitioning to slice sequence dimensions
-    aligned with packed cu_seqlens.
+    Supports two modes:
+    - "zigzag" (default): uses Bridge's get_thd_cp_partition_indices for load-balanced
+      partitioning. Suitable for standard causal transformers (GPT, LLaMA, etc.).
+    - "contiguous": each rank receives a consecutive token slice. Required for
+      DSv4 hybrid attention whose CSA compressor exchanges boundary hidden states
+      between adjacent CP ranks (only meaningful with contiguous partitions).
     """
+    cp_size = torch.distributed.get_world_size(cp_group)
+    cp_rank = torch.distributed.get_rank(cp_group)
     cu_seqlens = _cu_seqlens_for_cp_partition(batch)
 
-    skip_keys = {
+    seqlen_keys = {
         "cu_seqlens",
         "cu_seqlens_unpadded",
         "cu_seqlens_argmin",
@@ -200,19 +222,83 @@ def _partition_packed_batch_for_cp(
         "attention_mask",
     }
 
-    indices: dict[tuple[int, torch.device], torch.Tensor] = {}
-    for key, val in batch.items():
-        if val is None or key in skip_keys:
-            continue
-        index_key = (val.size(1), val.device)
-        if index_key not in indices:
-            indices[index_key] = get_thd_cp_partition_indices(
-                cu_seqlens,
-                total_tokens=val.size(1),
-                cp_group=cp_group,
-                device=val.device,
+    if cp_partition_mode == "contiguous":
+        # Slice a consecutive [start, end) token window for this CP rank.
+        # Use the actual data tensor size (padded) for slicing — consistent with how
+        # zigzag uses val.size(1) and cu_seqlens separately. The padded packed_sequence_size
+        # must be divisible by cp_size (set packed_sequence_size = N * cp_size when packing).
+        # Find a non-None data tensor to determine the padded token count.
+        _data_val = next((v for k, v in batch.items() if v is not None and k not in seqlen_keys), None)
+        if _data_val is None:
+            return batch  # middle PP stage with no data tensors — nothing to slice
+        total_tokens = _data_val.size(1)
+        if total_tokens % cp_size != 0:
+            raise RuntimeError(
+                f"Contiguous CP partitioning requires packed sequence length ({total_tokens}) "
+                f"to be divisible by cp_size ({cp_size}). "
+                "Set packed_sequence_size to a multiple of cp_size when running prepare_gpt_sft_packed_data.py."
             )
-        batch[key] = val.index_select(1, indices[index_key])
+        local_len = total_tokens // cp_size
+        start = cp_rank * local_len
+        end = start + local_len
+
+        for key, val in batch.items():
+            if val is None or key in seqlen_keys:
+                continue
+            batch[key] = val[:, start:end].contiguous()
+
+        # Clip cu_seqlens-style tensors to the local window.
+        # For legacy cu_seqlens, use the sentinel-free trimmed version (computed above)
+        # since offline packing may pad with -1. cu_seqlens_q/kv/unpadded in the current
+        # format do not use -1 sentinels and are safe to clip directly.
+        _SEQLEN_MAP = {
+            "cu_seqlens": cu_seqlens,  # trimmed by _cu_seqlens_for_cp_partition
+            "cu_seqlens_q": batch.get("cu_seqlens_q"),
+            "cu_seqlens_kv": batch.get("cu_seqlens_kv"),
+            "cu_seqlens_unpadded": batch.get("cu_seqlens_unpadded"),
+        }
+        for key in seqlen_keys:
+            val = batch.get(key)
+            if val is None or "argmin" in key or key in {"max_seqlen", "max_seqlen_q", "max_seqlen_kv", "token_count"}:
+                continue
+            trimmed = _SEQLEN_MAP.get(key)
+            src = trimmed if trimmed is not None else val
+            clipped = (src.clamp(min=start, max=end) - start).to(val.dtype)
+            batch[key] = clipped
+        # Update argmin to reflect trimmed+clipped length (no sentinels remain)
+        for argmin_key, cs_key in [
+            ("cu_seqlens_argmin", "cu_seqlens"),
+            ("cu_seqlens_unpadded_argmin", "cu_seqlens_unpadded"),
+        ]:
+            if batch.get(argmin_key) is not None and batch.get(cs_key) is not None:
+                batch[argmin_key] = batch[argmin_key].new_tensor([[batch[cs_key].squeeze().numel()]])
+        # Recompute max_seqlen from actual local diffs (clipped sequences may be shorter).
+        for max_key, cs_key in [
+            ("max_seqlen", "cu_seqlens"),
+            ("max_seqlen_q", "cu_seqlens_q"),
+            ("max_seqlen_kv", "cu_seqlens_kv"),
+        ]:
+            cs = batch.get(cs_key)
+            if cs is None or batch.get(max_key) is None:
+                continue
+            cs_flat = cs.squeeze()
+            diffs = (cs_flat[1:] - cs_flat[:-1]).clamp(min=0)
+            batch[max_key] = batch[max_key].new_tensor([[int(diffs.max().item()) if diffs.numel() > 0 else 0]])
+
+    else:
+        indices: dict[tuple[int, torch.device], torch.Tensor] = {}
+        for key, val in batch.items():
+            if val is None or key in seqlen_keys:
+                continue
+            index_key = (val.size(1), val.device)
+            if index_key not in indices:
+                indices[index_key] = get_thd_cp_partition_indices(
+                    cu_seqlens,
+                    total_tokens=val.size(1),
+                    cp_group=cp_group,
+                    device=val.device,
+                )
+            batch[key] = val.index_select(1, indices[index_key])
 
     return batch
 
@@ -330,7 +416,9 @@ def get_batch(
     cp_size = pg_collection.cp.size()
     has_packed = _has_packed_sequence_metadata(batch)
     if has_packed and cp_size > 1:
-        batch = _partition_packed_batch_for_cp(batch, pg_collection.cp)
+        _cp_mode = getattr(cfg.model, "cp_partition_mode", "zigzag")
+        batch = _partition_packed_batch_for_cp(batch, pg_collection.cp, cp_partition_mode=_cp_mode)
+        batch["cp_partition_mode"] = _cp_mode
     else:
         # slice batch along sequence dimension for context parallelism
         batch = get_batch_on_this_cp_rank(batch, is_hybrid_cp=False, cp_group=pg_collection.cp)
