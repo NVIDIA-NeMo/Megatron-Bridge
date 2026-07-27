@@ -28,6 +28,7 @@ from megatron.bridge.training.mixed_precision import bf16_mixed
 
 _QWEN35_9B_BASE = "Qwen/Qwen3.5-9B-Base"
 _QWEN35_35B_A3B_BASE = "Qwen/Qwen3.5-35B-A3B-Base"
+_QWEN35_35B_A3B_BASE_REVISION = "0f0813072d2358973511097385626f21fcb6d422"
 
 
 def qwen35_text_9b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
@@ -107,7 +108,10 @@ def qwen35_text_35b_a3b_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Return a text-only Qwen3.5-35B-A3B pretraining config for eight GB200 GPUs."""
     cfg = _pretrain_common()
 
-    text_config = AutoConfig.from_pretrained(_QWEN35_35B_A3B_BASE).text_config
+    text_config = AutoConfig.from_pretrained(
+        _QWEN35_35B_A3B_BASE,
+        revision=_QWEN35_35B_A3B_BASE_REVISION,
+    ).text_config
     # The nested text config intentionally omits ``architectures``. AutoBridge
     # needs it to select the registered causal-LM bridge instead of the VLM.
     text_config.architectures = ["Qwen3_5MoeForCausalLM"]

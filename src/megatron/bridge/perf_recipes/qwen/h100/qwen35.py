@@ -26,12 +26,14 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _QWEN35_35B_A3B = "Qwen/Qwen3.5-35B-A3B"
+_QWEN35_35B_A3B_REVISION = "59d61f3ce65a6d9863b86d2e96597125219dc754"
 
 
 def qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Qwen3.5 text 35B-A3B pretrain: 16× H100, BF16, EP=16."""
     cfg = qwen35_text_35b_a3b_pretrain_config()
     cfg.tokenizer.tokenizer_model = _QWEN35_35B_A3B
+    cfg.tokenizer.hf_tokenizer_kwargs = {"revision": _QWEN35_35B_A3B_REVISION}
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.optimizer.use_precision_aware_optimizer = True
     cfg.optimizer.main_grads_dtype = torch.bfloat16
