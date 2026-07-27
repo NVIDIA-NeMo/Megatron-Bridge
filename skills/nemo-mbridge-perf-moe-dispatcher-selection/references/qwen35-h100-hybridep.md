@@ -89,6 +89,43 @@ overlapped path requires SM100+, the TE operation fuser, and
 `NVTE_CUTEDSL_FUSED_GROUPED_MLP=1`. The current manager also rejects the
 symmetric-memory zero-copy option.
 
+Treat a new dispatcher container as a whole-kernel-stack migration, not only
+a Transformer Engine upgrade. On the 2026-07-27 TE 2.17/NCCL-EP bring-up,
+`mbridge-260707` exposed all required EP symbols but its preinstalled
+`causal_conv1d==1.6.2.post1` extension failed while importing the real
+Qwen3Next modeling module. The shared object referenced
+`c10::impl::cow::materialize_cow_storage`, which was absent from the
+container's torch 2.13 ABI. Rebuilding exact upstream tag commit
+`4f6ae4e26ae5fe8af9372f8d312ab25cc4595223` with
+`CAUSAL_CONV1D_FORCE_BUILD=TRUE`, no build isolation, and the live torch
+CXX11 ABI produced a venv-local extension that passed BF16 CUDA execution.
+An `import transformer_engine` probe alone would have missed this blocker.
+
+Warm JIT caches can hide a second incompatibility. The accepted torch 2.12
+Qwen3.5 run and the torch 2.13 container both reported TileLang 0.1.8 without
+`tilelang.language.async_copy`, yet the old run succeeded because it reused a
+compiled FlashQLA cache. A fresh cache retraced FlashQLA 0.1.2 and failed at
+`T.async_copy`. FlashQLA 0.1.2's package metadata pins `tilelang==0.1.9` and
+`apache-tvm-ffi==0.1.9`; installing those exact packages in the isolated venv
+allowed a fresh-cache Qwen3.5-shape forward and backward CUDA smoke to execute
+successfully at B1, S4096, 16 key heads, 32 value heads, and head dimension
+128. For a new software stack, require both a fresh-cache forward/backward
+kernel smoke and a real model-module import before multi-rank timing. A
+warm-cache success is performance evidence for that cache, not dependency or
+cold-start validation.
+
+Passing that stack gate did not make NCCL EP viable on the measured 2-node
+H100 topology. The matched torch 2.13 / CUDA 13.3 / TE 2.17 HybridEP control
+completed three iterations; its two post-compile steps averaged 24.236950
+seconds / 243.043440 model TFLOP/s/GPU, 8.486779% slower than the accepted
+torch 2.12 short-run control. The NCCL-EP candidate completed construction,
+process-group setup, bootstrap, and entered iteration 0, but all GPUs remained
+idle during the first real dispatch. After the backend's 101010 ms timeout,
+all 16 ranks reported `NCCL error 2 at nccl_ep.cc:886`; the error did not
+propagate to Python, and no iteration or throughput sample completed.
+Bootstrap success is therefore only a capability stage. Require the first
+multi-node dispatch/combine to finish before retaining NCCL EP as a candidate.
+
 The runtime contract is more specific than "static shapes are graphable."
 With dynamic HybridEP sizing, `dispatch_with_permute(non_blocking=False)`
 returns `padded_tokens_per_expert` through pinned CPU memory and synchronizes

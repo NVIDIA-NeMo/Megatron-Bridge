@@ -183,7 +183,7 @@ evidence:
   - "[MoE Perf] MCore Release Performance Tracker - Qwen3-Next"
 
 known_limitations:
-  - The measured Qwen3.5 H100 training image contains TE 2.15 and has no transformer_engine.pytorch.ep module; the project lock's later TE source pin does contain NCCL EP, but it is not installed in that immutable image, so no NCCL EP throughput result exists
+  - The accepted Qwen3.5 H100 training image contains TE 2.15 and has no transformer_engine.pytorch.ep module; a separate torch-2.13/TE-2.17 build exposed NCCL EP but its first real 2-node dispatch timed out, so no NCCL EP throughput result exists
   - NCCL EP requires the exact Transformer Engine container build to expose transformer_engine.pytorch.ep with EpBuffer, ep_bootstrap, ep_dispatch, ep_combine, and ep_finalize; MCore source support alone is insufficient
   - The pinned TE 2.17 source uses NVTE_WITH_NCCL_EP, enables the extension by default for SM90+ targets, and requires the recursive NCCL submodule plus NCCL 2.30.4 or newer; NVTE_WITH_NCCL_EP=0 disables it
   - NCCL EP dynamic shape is the only H100-compatible mode and performs a tokens_per_expert.sum().item() D2H synchronization that serializes the 1F1B overlap boundary
@@ -193,6 +193,11 @@ known_limitations:
   - HybridEP is topology-sensitive and can work outside NVL72 only when the installed runtime supports the target topology
   - DeepEP SM count tuning is hardware-specific
   - A successful backend import does not prove dispatch/combine runtime compatibility
+  - A TE NCCL-EP symbol probe does not validate the model's other native/JIT kernels; the measured torch-2.13 container required an exact causal-conv1d source rebuild after its preinstalled extension referenced a missing torch COW ABI symbol
+  - Warm JIT caches can mask source/dependency incompatibility; the accepted torch-2.12 Qwen3.5 run reused FlashQLA artifacts even though TileLang 0.1.8 lacked T.async_copy, while a fresh cache required FlashQLA 0.1.2's pinned TileLang 0.1.9 and apache-tvm-ffi 0.1.9
+  - Container migrations need a real model import plus fresh-cache model-shape forward/backward CUDA smoke before multi-rank dispatcher timing
+  - The exact-2-node torch-2.13/TE-2.17 HybridEP control averaged 24.236950 seconds / 243.043440 model TFLOP/s/GPU, 8.486779% slower than the accepted torch-2.12 short-run control
+  - The matched NCCL-EP candidate completed bootstrap and reached iteration 0, but all GPUs stayed idle until the 101010 ms backend timeout and all 16 ranks emitted NCCL error 2 at nccl_ep.cc:886; the error did not propagate to Python and no performance sample completed
   - A 16xH100 Qwen3.5 DeepEP candidate passed import, construction, and config validation but timed out in the first inter-node dispatch; verify the implementation's adaptive-routing requirement before treating the backend as benchmarkable
   - Clear HybridEP-only rank capacity with a true YAML null when switching backends; a CLI literal None may remain a non-null string and fail MCore validation
   - Static capacity must preserve GroupedLinear shapes and all routed work

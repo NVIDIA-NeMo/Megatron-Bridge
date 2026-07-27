@@ -63,6 +63,21 @@ measured_folded_moe_ab:
   candidate_rank0_iteration2_max_allocated_gib: 66.504
   candidate_rank0_iteration2_max_reserved_gib: 68.373
   disposition: rejected
+measured_pp2_ep8_layout_ab:
+  model: Qwen3.5-35B-A3B
+  hardware: "16×H100, 2 nodes"
+  topology: "TP1 PP2 EP8 ETP1 MBS1, one PP stage and one EP8 group per node"
+  dense_dp: 8
+  expert_dp: 1
+  accumulation_microsteps: 128
+  balanced_layout: "Et*20|t*20mL"
+  balanced_step_time_ms: 27436.850
+  balanced_tflops: 214.697813
+  asymmetric_layout: "Et*21|t*19mL"
+  asymmetric_step_time_ms: 26593.400
+  asymmetric_tflops: 221.507280
+  asymmetric_vs_tp1_pp1_ep16_step_time_regression_percent: 19.034463
+  disposition: rejected
 known_constraints:
   - TP should stay within a single NVLink domain for performance.
   - SP requires tensor_model_parallel_size > 1.
@@ -71,6 +86,7 @@ known_constraints:
   - PP interleaved schedule requires virtual_pipeline_model_parallel_size > 1.
   - Total parallelism dimensions must divide evenly into world_size.
   - Folded MoE performance A/Bs must account for accumulation microsteps, routed rows per rank, and rows per local expert; equal EDP is not sufficient.
+  - A node-local EP group does not guarantee a throughput win when PP changes dense DP, accumulation count, stage balance, and pipeline communication.
   - Current HybridEP static rank-capacity code uses the configured top-k after Flex expands routes across ETP, so ETP > 1 requires live overflow validation.
 known_limitations:
   - Model-size-to-parallelism mapping is a heuristic, not a benchmark-proven table.

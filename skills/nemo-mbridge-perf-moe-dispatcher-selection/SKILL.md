@@ -208,11 +208,30 @@ Treat its two shape modes as different hardware paths:
 - symmetric-memory/zero-copy payload buffers are not implemented in the
   current manager and must remain disabled.
 
-Use a staged gate: exact-container import probe, exact multi-node
-dispatch/combine correctness, then unprofiled end-to-end training. The import
-probe is capability evidence only. A successful bootstrap is still not a
-throughput result, and the dynamic Hopper path should be compared against the
-same no-overlap HybridEP winner before considering overlap.
+Use a staged gate: exact-container TE-symbol probe, real model-module import,
+fresh-cache forward/backward smoke for every JIT/native model kernel, exact
+multi-node dispatch/combine correctness, then unprofiled end-to-end training.
+The import probe is capability evidence only. A successful bootstrap is still
+not a throughput result, and the dynamic Hopper path should be compared
+against the same no-overlap HybridEP winner before considering overlap.
+
+Do not reuse a warm JIT cache as the dependency gate for a new container. In a
+Qwen3.5 TE 2.17 bring-up, TE's NCCL-EP symbols passed while the container's
+prebuilt causal-conv extension had a torch ABI mismatch. After rebuilding it,
+a fresh FlashQLA cache exposed that FlashQLA 0.1.2 requires TileLang 0.1.9 and
+apache-tvm-ffi 0.1.9 even though the warm torch 2.12 winner had run with the
+container's TileLang 0.1.8. Build or install exact package versions in an
+isolated environment, assert their import paths, and execute model-shape CUDA
+forward and backward before launching all ranks.
+
+On the measured exact-2-node H100 Qwen3.5 path, that gate passed with torch
+2.13, CUDA 13.3, TE 2.17, and TileLang 0.1.9. The matched HybridEP control
+averaged 24.236950 seconds / 243.043440 model TFLOP/s/GPU over its two
+post-compile steps. The NCCL-EP candidate reached iteration 0, but its first
+real dispatch kept every GPU idle until the backend's 101010 ms timeout; all
+16 ranks emitted `NCCL error 2 at nccl_ep.cc:886`, and the error did not
+propagate back to Python. Reject a backend that only bootstraps. Require a
+completed multi-node dispatch and combine before collecting end-to-end timing.
 
 Dispatcher selection also interacts with launch ordering after the SM budget is
 chosen. On the same exact 2-node no-overlap path with `num_sms=16`, changing

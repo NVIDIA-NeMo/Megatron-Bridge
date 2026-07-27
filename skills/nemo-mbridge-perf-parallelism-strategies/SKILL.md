@@ -224,6 +224,23 @@ Matching expert rows and accumulation makes the comparison interpretable; it
 does not guarantee a win because dense GEMM shard shapes, TP/SP collectives,
 and overlap coordination still change.
 
+An exact 16-H100 Qwen3.5 PP2/EP8 experiment tested whether assigning one
+pipeline stage and one EP8 group to each 8-GPU node could make the expensive
+expert communication node-local. The default rank order gave ranks 0--7 to
+PP0 and ranks 8--15 to PP1, so EP8 and dense-DP8 groups were node-local while
+only pipeline activations crossed nodes. This topology still changed dense DP
+from 16 to 8 and accumulation from 64 to 128 microsteps, so treat it as an
+end-to-end candidate rather than a communication-only A/B.
+
+The balanced `Et*20|t*20mL` layout averaged 27.436850 seconds / 214.697813
+model TFLOP/s/GPU over its two steady steps. Moving one transformer layer from
+the second stage to the first (`Et*21|t*19mL`) improved the mean to 26.593400
+seconds / 221.507280 model TFLOP/s/GPU, but remained 19.034% slower than the
+22.340925-second TP1/PP1/EP16 control. Node-local EP communication did not
+offset the pipeline schedule and extra accumulation cost. Verify the actual
+rank-to-node mapping, but do not infer a throughput win from topology locality
+alone.
+
 New folded layouts can also require new model-kernel compile artifacts. The
 first bounded TP2/MBS2 allocation spent eight minutes compiling new GDN
 forward/backward shapes and timed out before iteration 1. A longer identical
@@ -249,6 +266,8 @@ When answering MoE sizing prompts, include this checklist:
   `world_size / (PP * EP * ETP)`
 - for performance A/Bs, preserve or explicitly account for accumulation
   microsteps, routed rows/rank, and rows/local-expert
+- for PP layouts, print the stage-to-rank and EP-group-to-node mapping, then
+  measure pipeline balance; node-local EP does not by itself prove a win
 - mention TP topology, SP, CP divisibility, and long-sequence CP guidance
 
 ## Memory Estimation

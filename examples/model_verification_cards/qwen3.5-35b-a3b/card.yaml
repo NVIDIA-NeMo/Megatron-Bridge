@@ -228,5 +228,18 @@ items:
         before iteration 1: both matching fields resolved to true, but one
         PP1 model chunk left an empty remaining-chunk optimizer group during
         DistributedOptimizer construction, so it produced no performance
-        sample. These experimental runtime changes are not public recipe
-        defaults, so the item remains unverified.
+        sample. A later exact-16-H100 PP2/EP8 topology experiment placed one
+        pipeline stage and one EP8 group on each node. Its balanced
+        Et*20|t*20mL layout averaged 27.436850 seconds / 214.697813 model
+        TFLOP/s/GPU; an Et*21|t*19mL split improved to 26.593400 seconds /
+        221.507280 model TFLOP/s/GPU but remained 19.03% slower than the
+        TP1/PP1/EP16 short-run control. Node-local EP did not offset the
+        pipeline and 128-microstep schedule cost. A torch 2.13 / CUDA 13.3 /
+        TE 2.17 migration then passed a fresh-cache FlashQLA forward/backward
+        smoke and completed a matched HybridEP control at 24.236950 seconds /
+        243.043440 model TFLOP/s/GPU, 8.49% slower than the accepted torch 2.12
+        short-run control. Its NCCL-EP candidate completed bootstrap and
+        entered iteration 0, but all 16 ranks timed out in the first real
+        dispatch with NCCL error 2 at nccl_ep.cc:886, so it produced no
+        performance sample. These experimental runtime changes are not public
+        recipe defaults, so the item remains unverified.
