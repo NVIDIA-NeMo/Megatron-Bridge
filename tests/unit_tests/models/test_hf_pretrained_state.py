@@ -28,9 +28,12 @@ from megatron.bridge.models.hf_pretrained.state import SafeTensorsStateSource, _
 pytestmark = pytest.mark.unit
 
 
-def _write_safetensors_index(tmp_path, weight_map: dict[str, str]) -> None:
+def _write_safetensors_index(tmp_path, weight_map: dict[str, str], metadata: dict[str, object] | None = None) -> None:
     index_file = tmp_path / "model.safetensors.index.json"
-    index_file.write_text(json.dumps({"weight_map": weight_map}), encoding="utf-8")
+    index: dict[str, object] = {"weight_map": weight_map}
+    if metadata is not None:
+        index["metadata"] = metadata
+    index_file.write_text(json.dumps(index), encoding="utf-8")
 
 
 @pytest.mark.parametrize(
@@ -106,6 +109,43 @@ def test_save_generator_strict_false_writes_nested_partial_shard(tmp_path) -> No
 
     index_data = json.loads((output_path / "model.safetensors.index.json").read_text(encoding="utf-8"))
     assert index_data["weight_map"] == {"model.present": shard_filename}
+
+
+@pytest.mark.parametrize("distributed_save", [False, True])
+def test_save_generator_recomputes_index_total_size(tmp_path, monkeypatch, distributed_save: bool) -> None:
+    first_shard = "model-00001-of-00002.safetensors"
+    second_shard = "model-00002-of-00002.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.embed_tokens.weight": first_shard,
+            "lm_head.weight": second_shard,
+        },
+        metadata={"format": "pt", "total_size": 1},
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    output_path = tmp_path / "output"
+    tensors = {
+        "model.embed_tokens.weight": torch.ones((3, 2), dtype=torch.bfloat16),
+        "lm_head.weight": torch.ones((2, 2), dtype=torch.float32),
+    }
+    if distributed_save:
+        monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+        monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+        monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
+        monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+        monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+        def gather_rank_zero(output: list[object | None], value: object) -> None:
+            output[0] = value
+
+        monkeypatch.setattr(torch.distributed, "all_gather_object", gather_rank_zero)
+
+    source.save_generator(iter(tensors.items()), output_path, distributed_save=distributed_save)
+
+    index_data = json.loads((output_path / "model.safetensors.index.json").read_text(encoding="utf-8"))
+    expected_total_size = sum(tensor.numel() * tensor.element_size() for tensor in tensors.values())
+    assert index_data["metadata"] == {"format": "pt", "total_size": expected_total_size}
 
 
 def test_save_generator_writes_shard_as_soon_as_its_remaining_keys_arrive(tmp_path, monkeypatch) -> None:

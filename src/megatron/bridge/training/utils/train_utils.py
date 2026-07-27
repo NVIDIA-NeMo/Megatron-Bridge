@@ -718,7 +718,9 @@ def training_log(
     train_config = config.train
     pg_collection = pg_collection or get_pg_collection(model)
 
-    loggers_exist = writer is not None or wandb_writer is not None or mlflow_logger is not None
+    loggers_exist = (
+        writer is not None or wandb_writer is not None or mlflow_logger is not None or comet_logger is not None
+    )
 
     # Advanced, skipped, and Nan iterations.
     advanced_iters_key = "advanced iterations"

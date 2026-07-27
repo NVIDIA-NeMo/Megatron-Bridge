@@ -680,6 +680,39 @@ class TestConfigContainerValidation:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_scheduler_max_steps_preserves_full_run_schedules(self, monkeypatch):
+        """A short test run can use the schedules from the full training run."""
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=1000, global_batch_size=32)
+        sched_cfg = create_test_scheduler_config(max_steps=48000)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            container.validate()
+            assert container.train.train_iters == 1000
+            assert container.scheduler.max_steps == 48000
+            assert container.scheduler.lr_decay_iters == 48000
+            assert container.scheduler.lr_decay_steps == 48000 * train_cfg.global_batch_size
+            assert container.scheduler.wd_incr_steps == 48000 * train_cfg.global_batch_size
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_scheduler_max_steps_rejects_value_shorter_than_training(self, monkeypatch):
+        gpt_model_cfg = create_test_gpt_config()
+        train_cfg = create_test_training_config(train_iters=1000)
+        sched_cfg = create_test_scheduler_config(max_steps=999)
+
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1, model_config=gpt_model_cfg, train_config=train_cfg, scheduler_config=sched_cfg
+        )
+        try:
+            with pytest.raises(ValueError, match="must be greater than or equal to train.train_iters"):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_scheduler_wd_incr_steps(self, monkeypatch):
         """Test `wd_incr_steps` calculation."""
         gpt_model_cfg = create_test_gpt_config()
@@ -3216,6 +3249,22 @@ class TestRuntimeConfigUpdate:
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)
 
+    def test_hf_model_revision_round_trip_through_yaml(self, tmp_path):
+        """Immutable Hugging Face model provenance should survive runtime config persistence."""
+        revision = "b968826d9c46dd6066d109eabc6255188de91218"  # pragma: allowlist secret
+        gpt_cfg = create_test_gpt_config(hf_model_id="Qwen/Qwen3-8B", hf_model_revision=revision)
+        full_cfg, og_ws, cfg_mod = create_test_config_container(world_size_override=1, model_config=gpt_cfg)
+        config_path = tmp_path / "recipe.yaml"
+
+        try:
+            full_cfg.to_yaml(str(config_path))
+            restored_cfg = ConfigContainer.from_yaml(str(config_path))
+
+            assert restored_cfg.model.hf_model_id == "Qwen/Qwen3-8B"
+            assert restored_cfg.model.hf_model_revision == revision
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
     def test_runtime_config_update_with_mixed_precision_string(self):
         """Test runtime_config_update with mixed precision as string."""
         from megatron.bridge.training.config import runtime_config_update
@@ -3622,6 +3671,23 @@ class TestSampleBasedTraining:
             with pytest.raises(
                 AssertionError, match="Use lr_decay_samples for sample-based training, not lr_decay_iters"
             ):
+                container.validate()
+        finally:
+            restore_get_world_size_safe(og_ws, cfg_mod)
+
+    def test_sample_based_training_rejects_scheduler_max_steps(self):
+        """scheduler.max_steps applies only to iteration-based training."""
+        train_cfg = create_test_training_config(train_samples=10000, train_iters=None)
+        sched_cfg = create_test_scheduler_config(max_steps=1000)
+        container, og_ws, cfg_mod = create_test_config_container(
+            world_size_override=1,
+            model_config=create_test_gpt_config(),
+            train_config=train_cfg,
+            scheduler_config=sched_cfg,
+        )
+
+        try:
+            with pytest.raises(AssertionError, match="only supported for iteration-based training"):
                 container.validate()
         finally:
             restore_get_world_size_safe(og_ws, cfg_mod)

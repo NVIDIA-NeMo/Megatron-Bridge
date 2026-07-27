@@ -95,16 +95,18 @@ class QwenVLTextGenerationController(VLMTextGenerationController):
 
     def __init__(self, inference_wrapped_model, tokenizer, image_processor, processor):
         super().__init__(inference_wrapped_model, tokenizer, image_processor)
+        vision_start_token_id = tokenizer.convert_tokens_to_ids("<|vision_start|>")
+        image_token_id = tokenizer.convert_tokens_to_ids("<|image_pad|>")
 
         class QwenVLTokenizer(TokenizerWrapper):
             # pylint: disable=C0115,C0116
             def detokenize(self, tokens):
                 new_tokens = []
                 for token in tokens:
-                    if token == 151652:
+                    if token == vision_start_token_id:
                         new_tokens.append(token)
-                        new_tokens.append(151655)
-                    elif token != 151655:
+                        new_tokens.append(image_token_id)
+                    elif token != image_token_id:
                         new_tokens.append(token)
                 return self._tokenizer.decode(new_tokens, skip_special_tokens=False)
 

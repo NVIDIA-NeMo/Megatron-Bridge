@@ -41,10 +41,24 @@ class _FakeTokenizer:
         return f"decoded({list(tokens)},sst={skip_special_tokens})"
 
 
+class _FakeChatTokenizer(_FakeTokenizer):
+    """HF tokenizer with the chat-template contract used by MCore's server."""
+
+    def __init__(self):
+        super().__init__()
+        self.chat_template = "{{ messages }}"
+        self.chat_template_calls = []
+
+    def apply_chat_template(self, messages, **kwargs):
+        self.chat_template_calls.append((messages, kwargs))
+        return [101, 102]
+
+
 def test_text_generation_defaults():
     tok = _FakeTokenizer()
     adapter = HFTokenizerAdapter(tok)
 
+    assert adapter.chat_template is None
     assert adapter.eod == 2
     assert adapter.bos == 1
     assert adapter.vocab_size == 32000
@@ -79,3 +93,29 @@ def test_force_skip_special_tokens_none_honors_caller():
     adapter = HFTokenizerAdapter(tok, force_skip_special_tokens=None)
     adapter.detokenize([65], skip_special_tokens=False)
     assert tok.decode_calls == [False]
+
+
+def test_openai_server_preserves_hf_chat_template_contract():
+    """The server adapter must expose an available HF chat template to MCore."""
+    tok = _FakeChatTokenizer()
+    adapter = HFTokenizerAdapter(tok)
+    messages = [{"role": "system", "content": "Be concise."}, {"role": "user", "content": "Hello"}]
+
+    assert adapter.chat_template == tok.chat_template
+    assert adapter.apply_chat_template(
+        messages,
+        tokenize=True,
+        add_generation_prompt=True,
+        tools=[{"type": "function"}],
+    ) == [101, 102]
+    assert adapter.eos_id == tok.eos_token_id
+    assert tok.chat_template_calls == [
+        (
+            messages,
+            {
+                "tokenize": True,
+                "add_generation_prompt": True,
+                "tools": [{"type": "function"}],
+            },
+        )
+    ]

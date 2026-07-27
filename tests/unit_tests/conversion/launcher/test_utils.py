@@ -14,6 +14,7 @@
 
 import importlib.util
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -26,6 +27,46 @@ assert spec is not None and spec.loader is not None
 conversion_utils = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(conversion_utils)
 prepare_output_directory = conversion_utils.prepare_output_directory
+resolve_hf_commit_revision = conversion_utils.resolve_hf_commit_revision
+resolve_hf_model_revision = conversion_utils.resolve_hf_model_revision
+
+
+def test_resolve_hf_model_revision_downloads_exact_snapshot(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda **kwargs: calls.append(kwargs) or "/cache/models--hf--model/snapshots/0123456789abcdef",
+    )
+
+    resolved = resolve_hf_model_revision("hf/model", "0123456789abcdef")
+
+    assert resolved == "/cache/models--hf--model/snapshots/0123456789abcdef"
+    assert calls == [{"repo_id": "hf/model", "revision": "0123456789abcdef"}]
+
+
+def test_resolve_hf_commit_revision_resolves_named_ref_without_downloading(monkeypatch):
+    calls = []
+
+    def fake_model_info(_self, *, repo_id, revision):
+        calls.append({"repo_id": repo_id, "revision": revision})
+        return SimpleNamespace(sha="0123456789abcdef0123456789abcdef01234567")  # pragma: allowlist secret
+
+    monkeypatch.setattr("huggingface_hub.HfApi.model_info", fake_model_info)
+    monkeypatch.setattr(
+        "huggingface_hub.snapshot_download",
+        lambda **_kwargs: pytest.fail("import revision resolution must not download a snapshot"),
+    )
+
+    resolved = resolve_hf_commit_revision("hf/model", "release-tag")
+
+    assert resolved == "0123456789abcdef0123456789abcdef01234567"  # pragma: allowlist secret
+    assert calls == [{"repo_id": "hf/model", "revision": "release-tag"}]
+
+
+@pytest.mark.parametrize("resolver", [resolve_hf_commit_revision, resolve_hf_model_revision])
+def test_hf_revision_resolvers_reject_local_path(tmp_path, resolver):
+    with pytest.raises(ValueError, match="only to Hugging Face Hub model IDs"):
+        resolver(str(tmp_path), "0123456789abcdef")
 
 
 @pytest.mark.parametrize("relationship", ["equal", "destination-parent", "destination-child"])

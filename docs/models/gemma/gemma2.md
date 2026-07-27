@@ -1,5 +1,9 @@
 # Gemma 2
 
+> **Deprecation notice:** Gemma 2 support (2B, 9B, and 27B) is no longer
+> actively maintained or tested against current upstream checkpoints and will
+> be removed in Megatron Bridge 0.7.0.
+
 [Google's Gemma 2](https://huggingface.co/collections/google/gemma-2-release-667d6600fd5220e7b967f315) is a family of lightweight, open models built on the same research and technology used to create Gemini models. The Gemma 2 architecture builds on the transformer decoder framework with enhancements including pre-normalization with RMSNorm, GeGLU activations, Rotary Positional Embeddings (RoPE), attention logit softcapping, and sliding window attention.
 
 Gemma 2 models are designed for a wide range of text generation tasks and are available in multiple sizes to suit different computational budgets.

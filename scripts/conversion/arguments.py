@@ -153,6 +153,10 @@ def _add_common_conversion_arguments(parser: argparse.ArgumentParser, *, include
 
     conversion = parser.add_argument_group("Conversion")
     conversion.add_argument("--hf-model", required=True, help="Hugging Face model ID or local path.")
+    conversion.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
+    )
     conversion.add_argument("--megatron-path", required=True, help="Megatron checkpoint path.")
     conversion.add_argument(
         "--torch-dtype",
@@ -188,6 +192,10 @@ def _add_roundtrip_arguments(parser: argparse.ArgumentParser, *, include_executi
         required=True,
         dest="hf_model",
         help="Hugging Face model ID or local path.",
+    )
+    roundtrip.add_argument(
+        "--hf-revision",
+        help="Immutable Hugging Face Hub revision to resolve before conversion (for example, a commit SHA).",
     )
     roundtrip.add_argument(
         "--trust-remote-code",
@@ -304,6 +312,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
             "--etp",
             str(args.etp),
         ]
+        if args.hf_revision is not None:
+            worker_args.extend(["--hf-revision", args.hf_revision])
         if args.trust_remote_code:
             worker_args.append("--trust-remote-code")
         if args.distributed_timeout_minutes is not None:
@@ -329,6 +339,8 @@ def conversion_worker_args(args: argparse.Namespace) -> list[str]:
         "--etp",
         str(args.etp),
     ]
+    if args.hf_revision is not None:
+        worker_args.extend(["--hf-revision", args.hf_revision])
     if args.trust_remote_code:
         worker_args.append("--trust-remote-code")
     if args.overwrite:

@@ -14,9 +14,11 @@
 
 """Unit tests for pretrain module process group cleanup."""
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from megatron.bridge.training.pretrain import _maybe_destroy_process_group
+import pytest
+
+from megatron.bridge.training.pretrain import _maybe_destroy_process_group, _pretrain
 
 
 class TestDestroyProcessGroupIfNeeded:
@@ -59,5 +61,75 @@ class TestDestroyProcessGroupIfNeeded:
 
         _maybe_destroy_process_group(should_destroy=False)
 
+        mock_dist.barrier.assert_not_called()
+        mock_dist.destroy_process_group.assert_not_called()
+
+
+class TestPretrainProcessGroupOwnership:
+    """Test process group ownership across exceptional pretrain exits."""
+
+    def test_framework_owned_process_group_is_destroyed_when_setup_raises(self):
+        """Test Bridge destroys a process group initialized during failed setup."""
+        state = MagicMock()
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch(
+                "megatron.bridge.training.pretrain.setup",
+                side_effect=RuntimeError("setup failed after distributed initialization"),
+            ),
+        ):
+            mock_dist.is_initialized.side_effect = [False, True]
+
+            with pytest.raises(RuntimeError, match="setup failed after distributed initialization"):
+                _pretrain(state, MagicMock())
+
+        mock_destroy_global_state.assert_called_once_with()
+        mock_dist.barrier.assert_not_called()
+        mock_dist.destroy_process_group.assert_called_once_with()
+
+    def test_caller_owned_process_group_is_preserved_when_setup_raises(self):
+        """Test Bridge preserves a process group that existed before setup."""
+        state = MagicMock()
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=RuntimeError("setup failed")),
+        ):
+            mock_dist.is_initialized.return_value = True
+
+            with pytest.raises(RuntimeError, match="setup failed"):
+                _pretrain(state, MagicMock())
+
+        mock_dist.destroy_process_group.assert_not_called()
+
+    def test_inprocess_restart_wrapper_retains_cleanup_ownership_when_setup_raises(self):
+        """Test NVRx retains cleanup ownership for wrapped pretrain failures."""
+        state = MagicMock()
+        store = MagicMock()
+        inprocess_call_wrapper = MagicMock()
+        inprocess_call_wrapper.iteration = 1
+
+        with (
+            patch("megatron.bridge.training.pretrain.dist") as mock_dist,
+            patch("megatron.bridge.training.pretrain.destroy_global_state") as mock_destroy_global_state,
+            patch("megatron.bridge.training.pretrain.get_dataset_provider"),
+            patch("megatron.bridge.training.pretrain.setup", side_effect=RuntimeError("setup failed")),
+        ):
+            mock_dist.is_initialized.return_value = False
+
+            with pytest.raises(RuntimeError, match="setup failed"):
+                _pretrain(
+                    state,
+                    MagicMock(),
+                    store=store,
+                    inprocess_call_wrapper=inprocess_call_wrapper,
+                )
+
+        mock_dist.PrefixStore.assert_called_once_with("1", store)
+        mock_destroy_global_state.assert_not_called()
         mock_dist.barrier.assert_not_called()
         mock_dist.destroy_process_group.assert_not_called()

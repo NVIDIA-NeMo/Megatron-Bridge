@@ -238,6 +238,7 @@ class NemotronHBridge(MegatronModelBridge):
         # Mamba-specific fields
         ("mamba_head_dim", "mamba_head_dim"),
         ("mamba_num_heads", "mamba_num_heads"),
+        ("chunk_size", "mamba_chunk_size"),
         ("n_groups", "mamba_num_groups"),
         ("ssm_state_size", "mamba_state_dim"),
         ("hybrid_override_pattern", "hybrid_layer_pattern"),
