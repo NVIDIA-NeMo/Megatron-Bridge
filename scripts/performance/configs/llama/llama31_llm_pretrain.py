@@ -13,7 +13,7 @@
 # limitations under the License.
 
 import logging
-
+import torch
 from utils.overrides import set_workload_base_configs
 from utils.precision import get_precision_config
 from utils.utils import get_workload_base_config
@@ -389,7 +389,7 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.logger.filter_warnings = True
     cfg.logger.log_device_memory_used = False
     cfg.logger.log_energy = False
-    cfg.logger.log_interval = 1200001
+    cfg.logger.log_interval = 1
     cfg.logger.log_l2_norm_grad_to_tensorboard = False
     cfg.logger.log_loss_scale_to_tensorboard = True
     cfg.logger.log_max_attention_logit = False
@@ -410,11 +410,11 @@ def set_llama31_8b_common_configs(cfg: ConfigContainer) -> None:
     cfg.logger.moe_routing_trace_dump_weights = False
     cfg.logger.runtime_time_unit = 'hours'
     cfg.logger.set_level_for_all_loggers = False
-    cfg.logger.skip_train_metrics_log = True
+    cfg.logger.skip_train_metrics_log = False
     cfg.logger.tensorboard_log_interval = 1
     cfg.logger.tensorboard_queue_size = 1000
     cfg.logger.throughput_window_size = 100
-    cfg.logger.timing_log_level = -1
+    cfg.logger.timing_log_level = 0
     cfg.logger.timing_log_option = 'minmax'
     cfg.tokenizer.force_system_message = False
     cfg.tokenizer.hf_tokenizer_kwargs = {'use_fast': True}
