@@ -17,6 +17,7 @@ from __future__ import annotations
 
 from dataclasses import replace
 from functools import partial
+from types import MethodType
 from typing import Any
 
 import torch
@@ -29,6 +30,31 @@ from megatron.core.transformer.moe.experts import TEGroupedMLP
 from megatron.core.transformer.moe.moe_layer import MoELayer
 from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.core.transformer.transformer_config import TransformerConfig
+
+
+_H100_HYBRIDEP_BF16_ALIGNMENT = 16
+
+
+def _setup_h100_static_hybridep_metadata(
+    manager: Any,
+    routing_map: torch.Tensor,
+    probs: torch.Tensor,
+) -> None:
+    """Set static BF16 HybridEP metadata with its native H100 alignment."""
+    config = manager.config
+    if config.fp8 or config.fp4:
+        raise RuntimeError("The Qwen3.5 H100 static HybridEP path is BF16-only")
+    if manager.drop_and_pad:
+        raise RuntimeError("The Qwen3.5 H100 rank-capacity path does not support per-expert drop-and-pad")
+    if manager.moe_expert_rank_capacity_factor is None:
+        raise RuntimeError("The Qwen3.5 H100 HybridEP path requires static rank capacity")
+
+    num_tokens = routing_map.shape[0]
+    manager.routing_map = routing_map.reshape(num_tokens, manager.num_experts)
+    manager.token_probs = probs.reshape(num_tokens, manager.num_experts)
+    budget = int(num_tokens * config.moe_router_topk * manager.moe_expert_rank_capacity_factor)
+    budget += -budget % _H100_HYBRIDEP_BF16_ALIGNMENT
+    manager.num_permuted_tokens = budget
 
 
 def _grouped_mm(
@@ -151,6 +177,16 @@ class _Qwen35H100TorchGroupedMLP(TEGroupedMLP):
 
 class _Qwen35H100MoELayer(MoELayer):
     """Fail closed if the static HybridEP budget drops a routed token."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        manager = self.token_dispatcher._comm_manager
+        if self.config.moe_flex_dispatcher_backend != "hybridep":
+            raise RuntimeError("The Qwen3.5 H100 runtime requires the HybridEP dispatcher")
+        manager.setup_metadata = MethodType(
+            _setup_h100_static_hybridep_metadata,
+            manager,
+        )
 
     def forward(self, *args: Any, **kwargs: Any) -> Any:
         """Run the MoE layer and assert that its static rank budget was sufficient."""

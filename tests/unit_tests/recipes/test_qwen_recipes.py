@@ -786,6 +786,36 @@ def test_qwen35_h100_perf_spec_replaces_grouped_expert_runtime(
     assert first_custom_moe.keywords["submodules"].experts.func is qwen35_runtime._Qwen35H100TorchGroupedMLP
 
 
+def test_qwen35_h100_static_hybridep_metadata_uses_bf16_alignment():
+    """Test the static H100 rank budget without the SM100 op-fuser alignment."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    manager = SimpleNamespace(
+        config=SimpleNamespace(
+            fp8=None,
+            fp4=None,
+            moe_router_topk=8,
+        ),
+        drop_and_pad=False,
+        moe_expert_rank_capacity_factor=1.05,
+        num_experts=16,
+    )
+    routing_map = torch.zeros((3, 2, 8), dtype=torch.bool)
+    probs = torch.zeros((3, 2, 8), dtype=torch.float32)
+
+    qwen35_runtime._setup_h100_static_hybridep_metadata(
+        manager,
+        routing_map,
+        probs,
+    )
+
+    assert manager.routing_map.shape == (3, 16)
+    assert manager.token_probs.shape == (3, 16)
+    assert manager.num_permuted_tokens == 32
+
+
 def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ):
