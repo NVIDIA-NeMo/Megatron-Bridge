@@ -39,6 +39,11 @@ not additive:
   both prefix-based and experimental size-aware tensor selection stalled
   before completing iteration 1 with rank-split GPU progress; memory fit is a
   necessary but insufficient acceptance criterion for a distributed recipe
+- optimizer-step parameter-gather overlap was not a valid Qwen3 helper
+  transfer: both matching config fields resolved to true, but the TP1/PP1/EP16
+  dense/expert chained optimizer left one distributed-optimizer group with an
+  empty `model_chunks` list and failed in construction before iteration 1;
+  require every optimizer group to pass construction before measuring overlap
 - replacing random force-balance routing with deterministic exact-balanced
   routes was not a valid shortcut around dynamic expert metadata: even a
   cross-rank route-only control that left HybridEP's metadata tensor untouched

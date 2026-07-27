@@ -224,5 +224,9 @@ items:
         preprocessing, dispatch, and combine chunks of 64 tokens. A matched
         full-field 128-token template averaged 23.5981 seconds per step over
         its two steady samples, or about 249.62 model TFLOP/s/GPU, and was
-        rejected. These experimental runtime changes are not public recipe
-        defaults, so the item remains unverified.
+        rejected. Optimizer-step parameter-gather overlap was also rejected
+        before iteration 1: both matching fields resolved to true, but one
+        dense/expert chained-optimizer group had an empty model_chunks list
+        during DistributedOptimizer construction, so it produced no
+        performance sample. These experimental runtime changes are not public
+        recipe defaults, so the item remains unverified.
