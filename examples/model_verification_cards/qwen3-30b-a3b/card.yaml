@@ -503,24 +503,26 @@ items:
     H100:
       status: verified
       precision: bf16
-      bridge_commit: 7160fd35c8f01f09d795e10f2057259d122c1e7e  # pragma: allowlist secret
+      bridge_commit: 8198fd9cd5a13c2650ae08e5dfca8d9d382db853  # pragma: allowlist secret
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config --max_steps 50
-      last_verified: 2026-07-18
+      last_verified: 2026-07-25
       metrics:
         initial_loss: 12.34643
-        final_loss: 8.143753
-        last_10_steps_step_time_ms_avg: 25118.160
-        last_10_steps_model_tflops_per_gpu_avg: 240.110
+        final_loss: 8.145228
+        last_10_steps_step_time_ms_avg: 20992.030
+        last_10_steps_model_tflops_per_gpu_avg: 287.305
       expected_result: >
         On two nodes with 16x H100, the exact mock-data performance recipe
         completes exactly 50 steps with finite losses, no skipped or NaN
-        iterations, and all four metrics recorded. HybridEP is active and
-        Transformer Engine CUDA graph capture completes for all 48 graphable
-        layers with moe_router and moe_preprocess scopes. Over steps 41-50, the
-        run averages at most 27 seconds per step and at least 225 model
-        TFLOP/s/GPU, while peak allocated memory remains below 65 GiB/GPU.
+        iterations, and all four metrics recorded. HybridEP expert-parallel
+        communication overlap is active with delayed weight-gradient compute
+        disabled, and Transformer Engine CUDA graph capture completes for all
+        48 graphable layers with moe_router and moe_preprocess scopes. Over
+        steps 41-50, the run averages at most 21.55 seconds per step and at
+        least 280 model TFLOP/s/GPU, while peak allocated memory remains below
+        65 GiB/GPU.
 
     GB200:
       status: verified

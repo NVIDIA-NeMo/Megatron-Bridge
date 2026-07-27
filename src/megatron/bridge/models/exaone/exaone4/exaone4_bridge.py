@@ -16,13 +16,13 @@
 
 EXAONE 4.0 architecture overview:
 - Pure Post-LayerNorm (no Pre-LN / input_layernorm)
-- QK RMSNorm (similar to Qwen3)
+- QK RMSNorm on attention query and key projections
 - GQA with 32 heads / 8 KV heads
 - SwiGLU activation
 - RoPE with llama3-style scaling
 - Tied word embeddings (embed_tokens == lm_head)
 
-Key differences from standard Llama/Qwen:
+Key differences from standard GPT-style model bridges:
 - No input_layernorm or pre_feedforward_layernorm weights
 - Has post_attention_layernorm (after self-attention output)
 - Has post_feedforward_layernorm (after MLP output, EXAONE-specific)
@@ -31,7 +31,7 @@ Key differences from standard Llama/Qwen:
 References:
 - HuggingFace: LGAI-EXAONE/EXAONE-4.0-1.2B
 - Gemma2 bridge: Post-LN via TERowParallelLinearLayerNorm pattern
-- Qwen3 bridge: QK layernorm mapping pattern
+- EXAONE bridge: QK layernorm mapping pattern
 """
 
 import torch
@@ -45,7 +45,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
-from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 
@@ -72,7 +72,7 @@ class Exaone4Bridge(MegatronModelBridge):
     - EXAONE 4.0 uses pure Post-LayerNorm (no input_layernorm).
     - Post-LN is implemented via custom layer spec with TERowParallelLinearLayerNorm,
       following the same pattern established by Gemma2 bridge.
-    - QK RMSNorm is mapped using the same convention as Qwen3.
+    - QK RMSNorm is mapped using EXAONE attention norm parameters.
     - 1.2B model uses full attention only (no sliding window / hybrid attention).
     - 32B model introduces hybrid attention (LLLG pattern) — future extension.
 
@@ -161,7 +161,7 @@ class Exaone4Bridge(MegatronModelBridge):
 
         EXAONE 4.0 weight mapping combines patterns from:
         - Llama: Basic GPT structure (embed, QKV, GatedMLP, final_layernorm)
-        - Qwen3: QK layernorm (q_norm → q_layernorm, k_norm → k_layernorm)
+        - EXAONE: QK layernorm (q_norm → q_layernorm, k_norm → k_layernorm)
         - Gemma2: Post-LN (post_*_layernorm → *.post_layernorm.weight)
 
         Key difference: No input_layernorm or pre_feedforward_layernorm mappings
@@ -178,7 +178,7 @@ class Exaone4Bridge(MegatronModelBridge):
             "decoder.final_layernorm.weight": "model.norm.weight",
             # Attention output projection
             "decoder.layers.*.self_attention.linear_proj.weight": "model.layers.*.self_attn.o_proj.weight",
-            # QK RMSNorm (Qwen3 pattern)
+            # QK RMSNorm
             "decoder.layers.*.self_attention.q_layernorm.weight": "model.layers.*.self_attn.q_norm.weight",
             "decoder.layers.*.self_attention.k_layernorm.weight": "model.layers.*.self_attn.k_norm.weight",
             # Post-LN: post-attention layernorm (Gemma2 pattern)

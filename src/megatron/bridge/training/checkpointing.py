@@ -149,17 +149,29 @@ DATALOADER_STATE_SUBDIR = "energon"
 # ============================================================================
 
 
+def _get_global_non_persistent_checkpoint_dirs(
+    load_dir: str | None,
+    ckpt_cfg: CheckpointConfig,
+) -> tuple[str, ...]:
+    """Return the configured global non-persistent checkpoint sources."""
+    if ckpt_cfg.non_persistent_global_ckpt_dir:
+        return (ckpt_cfg.non_persistent_global_ckpt_dir,)
+
+    checkpoint_dirs = []
+    for checkpoint_root in (getattr(ckpt_cfg, "save", None), load_dir):
+        if isinstance(checkpoint_root, str) and checkpoint_root:
+            checkpoint_dir = os.path.join(checkpoint_root, _NON_PERSISTENT_CKPT_SUBDIR)
+            if checkpoint_dir not in checkpoint_dirs:
+                checkpoint_dirs.append(checkpoint_dir)
+    return tuple(checkpoint_dirs)
+
+
 def _has_global_non_persistent_checkpoint(load_dir: str | None, ckpt_cfg: CheckpointConfig) -> bool:
     """Return whether the configured global non-persistent checkpoint source exists."""
     if ckpt_cfg.non_persistent_ckpt_type != "global":
         return False
 
-    non_persistent_global_dir = (
-        ckpt_cfg.non_persistent_global_ckpt_dir
-        if ckpt_cfg.non_persistent_global_ckpt_dir or load_dir is None
-        else os.path.join(load_dir, _NON_PERSISTENT_CKPT_SUBDIR)
-    )
-    return checkpoint_exists(non_persistent_global_dir)
+    return any(checkpoint_exists(path) for path in _get_global_non_persistent_checkpoint_dirs(load_dir, ckpt_cfg))
 
 
 def set_checkpoint_version(value: float) -> None:
@@ -2852,6 +2864,20 @@ def _load_checkpoint_from_path(
                     return 0, 0
             checkpoint_name = get_checkpoint_name(load_dir, iteration, release)
 
+        tp_pp_match = True
+        run_config_filename = get_checkpoint_run_config_filename(checkpoint_name)
+        if file_exists(run_config_filename):
+            run_config = read_run_config(run_config_filename)
+            ckpt_tp_pp = (
+                run_config["model"]["tensor_model_parallel_size"],
+                run_config["model"]["pipeline_model_parallel_size"],
+            )
+            run_tp_pp = (
+                cfg.model.tensor_model_parallel_size,
+                cfg.model.pipeline_model_parallel_size,
+            )
+            tp_pp_match = ckpt_tp_pp == run_tp_pp
+
         reader = _get_filesystem_reader(checkpoint_name)
         try:
             state_dict_metadata = reader.read_metadata().state_dict_metadata
@@ -2868,9 +2894,15 @@ def _load_checkpoint_from_path(
                 gen_sd_rerun_state = get_rerun_state_machine().state_dict(
                     data_iterator=None, ckpt_format=ckpt_format, force=True
                 )
-            if cfg.checkpoint.load_rng:
+            if cfg.checkpoint.load_rng and tp_pp_match:
                 gen_sd_rng_state = get_rng_state(
                     cfg.rng.data_parallel_random_init, ckpt_format, pg_collection=pg_collection
+                )
+            elif cfg.checkpoint.load_rng:
+                ignore_rng_state = True
+                print_rank_0(
+                    f"(TP, PP) mismatch after resume ({run_tp_pp} vs {ckpt_tp_pp} from checkpoint): "
+                    "RNG state will be ignored"
                 )
             if cfg.checkpoint.load_optim:
                 gen_sd_optim = optimizer
@@ -3524,14 +3556,18 @@ def _load_base_checkpoint(
             raise NotImplementedError(f"Checkpoint format {ckpt_format} not supported")
 
     # Try to load non-persistent checkpoint first
-    non_persistent_global_dir = (
-        ckpt_cfg.non_persistent_global_ckpt_dir
-        if ckpt_cfg.non_persistent_global_ckpt_dir or load_dir is None
-        else os.path.join(load_dir, _NON_PERSISTENT_CKPT_SUBDIR)
-    )
-    non_persistent_iteration = _get_non_persistent_iteration(
-        non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
-    )
+    non_persistent_global_dir = ""
+    non_persistent_iteration = -1
+    if ckpt_cfg.non_persistent_ckpt_type == "global":
+        for candidate_dir in _get_global_non_persistent_checkpoint_dirs(load_dir, ckpt_cfg):
+            candidate_iteration = _get_non_persistent_iteration(candidate_dir, "global", checkpointing_context)
+            if candidate_iteration > non_persistent_iteration:
+                non_persistent_global_dir = candidate_dir
+                non_persistent_iteration = candidate_iteration
+    else:
+        non_persistent_iteration = _get_non_persistent_iteration(
+            non_persistent_global_dir, ckpt_cfg.non_persistent_ckpt_type, checkpointing_context
+        )
 
     tracker_filename = "because load directory is not defined"
     if load_dir is not None:
@@ -3541,8 +3577,15 @@ def _load_base_checkpoint(
 
     if non_persistent_iteration != -1:  # there is a non-persistent checkpoint
         if non_persistent_iteration >= iteration:
-            # Non-persistent (global and local) state is written under checkpoint.save, already the root.
-            _record_dataloader_state_dir(checkpointing_context, ckpt_cfg.save)
+            dataloader_checkpoint_root = ckpt_cfg.save
+            if (
+                ckpt_cfg.non_persistent_ckpt_type == "global"
+                and not ckpt_cfg.non_persistent_global_ckpt_dir
+                and load_dir is not None
+                and non_persistent_global_dir == os.path.join(load_dir, _NON_PERSISTENT_CKPT_SUBDIR)
+            ):
+                dataloader_checkpoint_root = load_dir
+            _record_dataloader_state_dir(checkpointing_context, dataloader_checkpoint_root)
             return _load_non_persistent_base_checkpoint(
                 non_persistent_global_dir,
                 ckpt_cfg,

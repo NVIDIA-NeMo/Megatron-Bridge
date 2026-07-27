@@ -32,7 +32,7 @@ from megatron.core.msc_utils import MultiStorageClientFeature
 from megatron.core.tokenizers import MegatronTokenizer
 from torch.utils.data import Dataset
 
-from megatron.bridge.utils.common_utils import get_rank_safe
+from megatron.bridge.utils.common_utils import get_local_rank_preinit
 from megatron.bridge.utils.safe_pickle import safe_pickle_load
 
 
@@ -241,18 +241,17 @@ class _TextMemMapDataset(Dataset):
         if is_distributed and not rank_0_prepare_data():
             torch.distributed.barrier()
 
-        if is_distributed and get_rank_safe() == 0:
+        if is_distributed and get_local_rank_preinit() == 0:
             # If we are in a distributed multi-node set-up and index files are not stored on
             # a shared filesystem, then the index files created on global rank 0 are only
             # accessible to the workers on that node.
             #
             # Two cases may occur here:
             #
-            # 1. case of a shared filesystem, or global_rank==0: the index files are present in
-            #    the locally available filesystem, calling build_index_files() again is a no-op.
-            # 2. case of a non-shared filesystem, and global_rank>0: the index files are not
-            #    present in the locally available filesystem, calling build_index_files() again
-            #    will create them.
+            # 1. shared filesystem, or local rank 0 on the first node: the index files are present
+            #    locally, so calling build_index_files() again is a no-op.
+            # 2. non-shared filesystem, and local rank 0 on another node: the index files are not
+            #    present locally, so calling build_index_files() creates them.
             #
             # Outcome in all cases: all nodes have access to the index files in their filesystem.
             build_index_files(
