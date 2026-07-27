@@ -41,9 +41,7 @@ def _grouped_mm(
     if grouped_mm is None:
         grouped_mm = getattr(torch, "_grouped_mm", None)
     if grouped_mm is None:
-        raise RuntimeError(
-            "The Qwen3.5 H100 performance recipe requires PyTorch grouped_mm support."
-        )
+        raise RuntimeError("The Qwen3.5 H100 performance recipe requires PyTorch grouped_mm support.")
     return grouped_mm(lhs, rhs, offs=offsets)
 
 
@@ -105,14 +103,12 @@ class _Qwen35H100TorchGroupedMLP(TEGroupedMLP):
             raise RuntimeError("The H100 grouped-MM expert path requires SwiGLU")
         if self.config.moe_mlp_glu_interleave_size is not None:
             raise RuntimeError("The H100 grouped-MM expert path does not support GLU interleaving")
+        if self.config.activation_func_clamp_value is not None:
+            raise RuntimeError("The H100 grouped-MM expert path does not support activation clamping")
         if self.config.moe_apply_probs_on_input:
-            raise RuntimeError(
-                "The H100 grouped-MM expert path applies router probabilities after SwiGLU"
-            )
+            raise RuntimeError("The H100 grouped-MM expert path applies router probabilities after SwiGLU")
         if self.offload_expert_fc1 or self.offload_moe_act:
-            raise RuntimeError(
-                "The H100 grouped-MM expert path does not support fine-grained expert offload"
-            )
+            raise RuntimeError("The H100 grouped-MM expert path does not support fine-grained expert offload")
 
         _consolidate_expert_weights(self.linear_fc1, label="linear_fc1")
         _consolidate_expert_weights(self.linear_fc2, label="linear_fc2")
@@ -131,8 +127,7 @@ class _Qwen35H100TorchGroupedMLP(TEGroupedMLP):
             )
         if tokens_per_expert.dtype not in (torch.int32, torch.int64):
             raise RuntimeError(
-                "The H100 grouped-MM expert path requires integer expert counts, got "
-                f"{tokens_per_expert.dtype}."
+                f"The H100 grouped-MM expert path requires integer expert counts, got {tokens_per_expert.dtype}."
             )
 
         offsets = torch.cumsum(tokens_per_expert, dim=0, dtype=torch.int32)
@@ -145,7 +140,6 @@ class _Qwen35H100TorchGroupedMLP(TEGroupedMLP):
             fc1_output.view(-1, fc1_output.shape[-1]),
             permuted_probs.unsqueeze(-1),
             self.config.activation_func_fp8_input_store,
-            self.config.activation_func_clamp_value,
         )
         output = _grouped_mm(
             activation_output,
