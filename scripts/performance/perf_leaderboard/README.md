@@ -85,6 +85,10 @@ $OUT_DIR/
 
 ## Bit-wise determinism check (optional, separate)
 
+> This is the single-run **gb200 / bf16** variant (manual diff). For the **gb300 / MXFP8**
+> recipe's built-in `det-bitwise` / `det-bitwise2` arms at 128 GPU, see
+> [`REPRO-det-bitwise-gb300-mxfp8.md`](REPRO-det-bitwise-gb300-mxfp8.md).
+
 Submit a 2nd det run (no nsys) and diff its iter-50 lm-loss / mtp / grad-norm
 against any earlier paired det run (e.g. 2102770 or 2103151):
 

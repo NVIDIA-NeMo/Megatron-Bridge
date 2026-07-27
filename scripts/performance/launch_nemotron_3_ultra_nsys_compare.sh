@@ -64,7 +64,7 @@ WANDB_PROJECT="${WANDB_PROJECT:-mbridge-dev}"
 # Must exceed NSYS_STOP and the bit-wise sample points (…,40,50).
 TRAIN_ITERS="${TRAIN_ITERS:-50}"
 # Recipe selection knobs (default: the gb200/bf16 3D-parallel baseline).
-# For the PR#4911 gb300/MXFP8 FSDP recipe set GPU_TYPE=gb300 COMPUTE_DTYPE=fp8mx
+# For the PR#4911 gb300/MXFP8 FSDP recipe set GPU_TYPE=gb300 COMPUTE_DTYPE=fp8_mx
 # NVTE_CPU_OFFLOAD_V1=1 KEEP_RECIPE_DISPATCHER=1 (keep HybridEP instead of forcing alltoall).
 TIME_LIMIT="${TIME_LIMIT:-00:30:00}"
 GPU_TYPE="${GPU_TYPE:-gb200}"
