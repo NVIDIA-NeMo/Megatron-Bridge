@@ -28,8 +28,7 @@ trap cleanup EXIT
 pip3 install git+https://github.com/NVIDIA-NeMo/Megatron-Bridge.git@main --no-deps --no-build-isolation
 pip3 install git+https://github.com/NVIDIA/Megatron-LM.git@main --no-deps --no-build-isolation
 pip3 install "nvidia-modelopt[torch]>=0.37.0"
-pip3 install "transformers>=5.8,<=5.12.1"
-pip3 install "megatron-energon[av_decode]~=7.0"
+pip3 install "transformers>=5.8"
 ## cd to verl checkout root
 pip3 install -r requirements-test.txt
 pip3 install -r requirements.txt
