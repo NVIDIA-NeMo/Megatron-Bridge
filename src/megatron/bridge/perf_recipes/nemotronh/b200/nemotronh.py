@@ -20,6 +20,7 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
     _apply_nemotron_3_super_perf_defaults,
     _benchmark_common,
     _nemotron_3_super_nvfp4_precision,
+    _nemotron_3_ultra_fp8mx_config,
     _perf_precision,
     _with_global_batch_size,
     load_quantization_recipe,
@@ -206,6 +207,41 @@ def nemotron_3_super_pretrain_64gpu_b200_nvfp4_config() -> ConfigContainer:
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_256gpu_b200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 256× B200, MXFP8, Megatron-FSDP (HSDP).
+
+    TP1 / PP1 / CP1 / EP8 / ETP1, GBS 256 / MBS 1, seq 8192, HybridEP,
+    full-iteration CUDA graphs, selective recompute, and fine-grained activation
+    offload. The 64-GPU FSDP shard groups trade cross-node communication for a
+    lower per-GPU training-state footprint than the 8-GPU B300 configuration.
+    """
+    cfg = _nemotron_3_ultra_fp8mx_config(
+        num_gpus=256,
+        expert_model_parallel_size=8,
+        global_batch_size=256,
+        fsdp_shard_group_gpus=64,
+    )
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True,graph_capture_record_stream_reuse:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+        "NCCL_NVLS_ENABLE": 0,
+        # HybridEP follows the physical 8-GPU B200 NVLink domain even though
+        # Megatron-FSDP shards training state over a wider group.
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_CPU_OFFLOAD_V1": 1,
+        "NVTE_CUTEDSL_FUSED_GROUPED_MLP": 1,
     }
     return cfg
 

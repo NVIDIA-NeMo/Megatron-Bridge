@@ -30,12 +30,6 @@ from megatron.bridge.training.mixed_precision import MixedPrecisionConfig, nemot
 
 _TE_QUANT_CFG_PATH = Path(__file__).with_name("te_quant.cfg")
 
-# Number of GPUs in a single GB300 multi-node NVLink (MNNVL) domain
-# (16 nodes x 4 GPUs). Each Megatron-FSDP optimizer instance is sharded within one
-# NVLink domain (HSDP), matching ``--num-distributed-optimizer-instances $((nodes/16))``
-# in the reference Megatron-LM launch script.
-_GB300_NVLINK_DOMAIN_GPUS = 64
-
 
 def _with_global_batch_size(cfg: ConfigContainer, global_batch_size: int) -> ConfigContainer:
     cfg.train.global_batch_size = global_batch_size
@@ -116,11 +110,16 @@ def _apply_nemotron_3_ultra_perf_defaults(cfg: ConfigContainer) -> None:
     cfg.ddp.num_buckets = 48
 
 
-def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> None:
-    """Apply Megatron-FSDP (HSDP) settings for Nemotron 3 Ultra on GB300.
+def _apply_nemotron_3_ultra_fsdp_hsdp(
+    cfg: ConfigContainer,
+    *,
+    num_gpus: int,
+    fsdp_shard_group_gpus: int,
+) -> None:
+    """Apply topology-aware Megatron-FSDP (HSDP) settings for Nemotron 3 Ultra.
 
     Shards params/grads/optimizer
-    within each NVLink domain and replicate (optimizer-sharded) across domains, with
+    within each FSDP shard group and replicate (optimizer-sharded) across groups, with
     BF16 gradient comm, FP32 main params, and BF16 main grads. Applied last so it
     wins over the generic perf defaults.
     """
@@ -134,13 +133,14 @@ def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> No
     cfg.model.init_model_with_meta_device = True
     cfg.checkpoint.load = None
 
-    # HSDP: shard within an NVLink domain, replicate (optim-sharded) across domains.
-    num_optim_instances = max(1, num_gpus // _GB300_NVLINK_DOMAIN_GPUS)
+    # HSDP: shard within a hardware-appropriate group and replicate
+    # (optimizer-sharded) across groups.
+    num_optim_instances = max(1, num_gpus // fsdp_shard_group_gpus)
     cfg.ddp.num_distributed_optimizer_instances = num_optim_instances
 
-    # HSDP across NVLink domains. Megatron-FSDP
+    # HSDP across shard groups. Megatron-FSDP
     # only enables HSDP when num_distributed_optimizer_instances > 1; with a single
-    # NVLink domain HSDP is off, so the outer strategy must be "no_shard" (otherwise
+    # shard group HSDP is off, so the outer strategy must be "no_shard" (otherwise
     # the first param all-gather hits a None HSDP helper buffer).
     cfg.ddp.outer_dp_sharding_strategy = "optim" if num_optim_instances > 1 else "no_shard"
 
@@ -152,3 +152,77 @@ def _apply_nemotron_3_ultra_fsdp_hsdp(cfg: ConfigContainer, num_gpus: int) -> No
     cfg.model.gradient_accumulation_fusion = False
 
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+
+
+def _enable_nemotron_3_ultra_full_iteration_cuda_graphs(cfg: ConfigContainer) -> None:
+    """Enable the full-iteration CUDA-graph path used by Blackwell Ultra recipes."""
+    cfg.model.cuda_graph_impl = "full_iteration"
+    cfg.model.cuda_graph_scope = []
+    cfg.model.cuda_graph_warmup_steps = 3
+    cfg.rng.te_rng_tracker = True
+    cfg.model.use_te_rng_tracker = True
+
+    # Full-iteration graphs require fixed MoE buffer sizes. Keep the rank capacity
+    # bounded while retaining fused-grouped-MLP activation offload; MoE paged stash
+    # cannot be combined with that offload module.
+    cfg.model.moe_pad_experts_for_cuda_graph_inference = True
+    cfg.model.moe_expert_rank_capacity_factor = 1.5
+    cfg.model.fine_grained_offloading_max_inflight_offloads = 1
+
+    # Megatron-FSDP needs its CUDA-graph-aware synchronization path.
+    cfg.ddp.megatron_fsdp_cuda_graph_mode = True
+    cfg.ddp.fsdp_all_gather_in_start_param_sync = False
+
+
+def _nemotron_3_ultra_fp8mx_config(
+    *,
+    num_gpus: int,
+    expert_model_parallel_size: int,
+    global_batch_size: int,
+    fsdp_shard_group_gpus: int,
+) -> ConfigContainer:
+    """Build a Nemotron 3 Ultra MXFP8 Megatron-FSDP performance recipe."""
+    cfg = nemotron_3_ultra_pretrain_config()
+    cfg.mixed_precision = _perf_precision("fp8_mx")
+
+    # Parallelism
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.pipeline_model_parallel_size = 1
+    cfg.model.virtual_pipeline_model_parallel_size = None
+    cfg.model.context_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.expert_tensor_parallel_size = 1
+    cfg.model.pipeline_model_parallel_layout = None
+    cfg.model.seq_length = 8192
+
+    # Only tensors larger than 500MB are offloaded, which approximates
+    # offloading the moe_act input for sequence length 8192 and MBS 1.
+    cfg.model.min_offloaded_tensor_size = 500_000_000
+
+    # MXFP8 requires router padding for quantization.
+    cfg.model.moe_router_padding_for_quantization = True
+
+    cfg.model.expert_model_parallel_size = expert_model_parallel_size
+    cfg.train.global_batch_size = global_batch_size
+
+    # Fine-grained activation offloading. NVTE_CPU_OFFLOAD_V1 must be enabled
+    # by the hardware-specific recipe environment.
+    cfg.model.fine_grained_activation_offloading = True
+    cfg.model.offload_modules = ["fused_group_mlp"]
+
+    # Recompute the MoE expert activation output while the FC1 output is
+    # retained and offloaded to CPU.
+    cfg.model.recompute_granularity = "selective"
+    cfg.model.recompute_modules = ["moe_act"]
+
+    _apply_nemotron_3_ultra_perf_defaults(cfg)
+
+    # Apply HSDP / FSDP dtype overrides last so they win over generic defaults.
+    _apply_nemotron_3_ultra_fsdp_hsdp(
+        cfg,
+        num_gpus=num_gpus,
+        fsdp_shard_group_gpus=fsdp_shard_group_gpus,
+    )
+    _enable_nemotron_3_ultra_full_iteration_cuda_graphs(cfg)
+
+    return cfg

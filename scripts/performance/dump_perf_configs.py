@@ -289,6 +289,11 @@ COMBOS = [
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "bf16"),
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "fp8_mx"),
     ("nemotronh", "nemotron_3_super", "pretrain", 64, "b200", "nvfp4"),
+    # Nemotron 3 Ultra
+    ("nemotronh", "nemotron_3_ultra", "pretrain", 256, "gb300", "fp8_mx"),
+    ("nemotronh", "nemotron_3_ultra", "pretrain", 256, "b300", "fp8_mx"),
+    ("nemotronh", "nemotron_3_ultra", "pretrain", 256, "b200", "fp8_mx"),
+    ("nemotronh", "nemotron_3_ultra", "pretrain", 24, "h100", "bf16"),
     # NemotronH 56B
     ("nemotronh", "nemotronh_56b", "pretrain", 64, "gb300", "fp8_cs"),
     ("nemotronh", "nemotronh_56b", "pretrain", 256, "gb300", "fp8_cs"),

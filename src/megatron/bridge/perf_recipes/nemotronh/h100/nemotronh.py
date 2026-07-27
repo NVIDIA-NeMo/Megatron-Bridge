@@ -16,9 +16,11 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
+    _apply_nemotron_3_ultra_perf_defaults,
     _benchmark_common,
     _perf_precision,
     nemotron_3_nano_pretrain_config,
+    nemotron_3_ultra_pretrain_config,
     nemotronh_56b_pretrain_config,
 )
 
@@ -52,6 +54,36 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
         # NCCL user-buffer and launch settings.
         "NCCL_NVLS_ENABLE": 0,
         # Transformer Engine overlap settings for this model.
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+    }
+    return cfg
+
+
+def nemotron_3_ultra_pretrain_24gpu_h100_bf16_config() -> ConfigContainer:
+    """Nemotron 3 Ultra pretrain: 24× H100, BF16.
+
+    This keeps the validated H100 TP1 / PP3 / CP1 / EP8 topology and applies the
+    short performance-run defaults. Unlike the Blackwell variants, it does not
+    enable MXFP8, cuTeDSL fused grouped MLP, activation offload, or full-iteration
+    CUDA graphs.
+    """
+    cfg = nemotron_3_ultra_pretrain_config()
+    cfg.mixed_precision = _perf_precision("bf16")
+
+    _apply_nemotron_3_ultra_perf_defaults(cfg)
+    cfg.model.use_transformer_engine_op_fuser = False
+    cfg.env_vars = {
+        **COMMON_PERF_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NCCL_GRAPH_REGISTER": 0,
+        "PYTORCH_CUDA_ALLOC_CONF": "expandable_segments:True",
+        "TORCH_NCCL_AVOID_RECORD_STREAMS": 1,
+        "NCCL_NVLS_ENABLE": 0,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 8,
+        "USE_MNNVL": 0,
         "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
         "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
     }
