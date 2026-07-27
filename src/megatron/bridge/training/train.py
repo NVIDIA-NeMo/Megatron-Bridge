@@ -135,6 +135,7 @@ def train(
     process_non_loss_data_func: Optional[Callable] = None,
     non_loss_data_func: Optional[Callable] = None,
     callback_manager: CallbackManager | None = None,
+    is_inprocess_restart_retry: bool = False,
 ) -> None:
     """Main training loop.
 
@@ -153,6 +154,9 @@ def train(
         process_non_loss_data_func: Optional function to process non-loss data during evaluation.
         non_loss_data_func: Optional function to compute non-loss data during evaluation.
         callback_manager: Optional CallbackManager for custom callback execution.
+        is_inprocess_restart_retry: True when this call is an in-process restart
+            retry re-entering ``train()`` mid-run. Used to suppress the ``eval_at_start`` pass on
+            recovery re-entries.
 
     Warnings:
         This is an experimental API and is subject to change in backwards
@@ -412,7 +416,8 @@ def train(
         if energy_monitor is not None:
             energy_monitor.resume()
 
-    if val_config.eval_at_start and global_state.train_state.do_valid:
+    # Skipped on in-process restart retries so recovery does not re-run validation.
+    if val_config.eval_at_start and global_state.train_state.do_valid and not is_inprocess_restart_retry:
         _run_validation(
             f"iteration {global_state.train_state.step} (pre-train validation)",
             toggle_pre_hook=False,

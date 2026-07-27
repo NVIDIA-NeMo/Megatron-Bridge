@@ -119,8 +119,10 @@ def _pretrain(
     should_destroy_process_group = not dist.is_initialized()
 
     # Handle in-process restart store prefix
+    is_inprocess_restart_retry = False
     if inprocess_call_wrapper is not None:
         restart_attempt = inprocess_call_wrapper.iteration
+        is_inprocess_restart_retry = restart_attempt > 0
         store = dist.PrefixStore(str(restart_attempt), store)
 
     config = state.cfg
@@ -150,6 +152,7 @@ def _pretrain(
                 checkpoint_manager,
                 pg_collection,
                 callback_manager=callback_manager,
+                is_inprocess_restart_retry=is_inprocess_restart_retry,
             )
 
         barrier_and_log("after training is done")
