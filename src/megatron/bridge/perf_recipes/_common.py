@@ -45,6 +45,7 @@ def _benchmark_common(cfg: ConfigContainer, cross_entropy_impl: str = "te") -> N
     cfg.train.manual_gc_interval = 100
 
     cfg.checkpoint.save = None
+    cfg.checkpoint.load = None
 
     cfg.logger.log_interval = 1
     cfg.logger.tensorboard_dir = None

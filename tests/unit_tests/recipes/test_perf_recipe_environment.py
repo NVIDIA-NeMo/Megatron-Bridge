@@ -98,10 +98,10 @@ def test_common_environment_defaults_are_small_and_universal():
     assert COMMON_PERF_ENV_VARS == {"TORCH_NCCL_HIGH_PRIORITY": 1}
 
 
-def test_benchmark_common_preserves_legacy_manual_gc_defaults():
+def test_benchmark_common_disables_checkpoint_io_and_preserves_legacy_manual_gc_defaults():
     cfg = SimpleNamespace(
         train=SimpleNamespace(train_iters=0, eval_iters=1, manual_gc=False, manual_gc_interval=0),
-        checkpoint=SimpleNamespace(save="checkpoint"),
+        checkpoint=SimpleNamespace(save="checkpoint", load="checkpoint"),
         logger=SimpleNamespace(log_interval=10, tensorboard_dir="tensorboard"),
         ddp=SimpleNamespace(check_for_nan_in_grad=True, check_for_large_grads=True, grad_reduce_in_fp32=True),
         rerun_state_machine=SimpleNamespace(check_for_nan_in_loss=True),
@@ -121,6 +121,8 @@ def test_benchmark_common_preserves_legacy_manual_gc_defaults():
 
     assert cfg.train.manual_gc is True
     assert cfg.train.manual_gc_interval == 100
+    assert cfg.checkpoint.save is None
+    assert cfg.checkpoint.load is None
 
 
 def test_every_flat_recipe_builder_declares_its_environment_inline():

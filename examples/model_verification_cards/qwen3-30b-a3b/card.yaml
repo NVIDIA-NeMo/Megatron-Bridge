@@ -507,7 +507,7 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
         --recipe qwen3_30b_a3b_pretrain_16gpu_h100_bf16_config
-        --mode pretrain --max_steps 50 checkpoint.save=null checkpoint.load=null
+        --mode pretrain --max_steps 50
       last_verified: 2026-07-27
       metrics:
         initial_loss: 12.34643
