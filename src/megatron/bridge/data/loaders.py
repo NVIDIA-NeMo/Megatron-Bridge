@@ -358,16 +358,16 @@ def build_train_valid_test_data_loaders(
     )
 
     def _build_eval_test_dataloaders(
-        ds: Any, consumed_samples: int, dataloader_type: str
+        ds: Any, consumed_samples: int | list[int], dataloader_type: str
     ) -> DataLoader | list[DataLoader] | None:
         """Build the dataloader(s) for a validation or test dataset slot.
 
         Args:
             ds: A single evaluation dataset, or a list with one dataset per
                 validation set when ``multiple_validation_sets`` is enabled.
-            consumed_samples: Sample offset the sampler resumes from. Applied
-                to every set alike; there is no per-set consumed-samples
-                accounting.
+            consumed_samples: Sample offset the sampler resumes from. A single
+                int is applied to every dataset; a list supplies one offset per
+                dataset (per-set validation resume bookkeeping).
             dataloader_type: Sampler style, passed through to
                 ``build_pretraining_data_loader``.
 
@@ -376,7 +376,8 @@ def build_train_valid_test_data_loaders(
             None when ``ds`` is None.
         """
         if isinstance(ds, list):
-            return [_build_eval_test_dataloaders(d, consumed_samples, dataloader_type) for d in ds]
+            offsets = consumed_samples if isinstance(consumed_samples, list) else [consumed_samples] * len(ds)
+            return [_build_eval_test_dataloaders(d, off, dataloader_type) for d, off in zip(ds, offsets)]
         return build_pretraining_data_loader(
             ds,
             consumed_samples,
@@ -394,13 +395,30 @@ def build_train_valid_test_data_loaders(
             seed=sampler_seed,
         )
 
+    # Single sizing authority for the per-set counters; reset + warn on a set-count change across
+    # resume (dataset identity is not tracked).
+    if cfg.validation.multiple_validation_sets and cfg.validation.eval_iters > 0 and isinstance(valid_ds, list):
+        num_sets = len(valid_ds)
+        restored = train_state.consumed_valid_samples_per_set
+        count_changed = len(restored) != num_sets
+        if count_changed and restored:
+            print_rank_0(
+                f"WARNING: number of validation sets changed from {len(restored)} to {num_sets} "
+                "since the checkpoint; resetting per-set consumed-sample counters."
+            )
+        if count_changed:
+            train_state.consumed_valid_samples_per_set = [0] * num_sets
+
     if cfg.validation.skip_train and cfg.validation.eval_iters > 0:
         valid_dataloader = _build_eval_test_dataloaders(valid_ds, 0, cfg.dataset.dataloader_type)
     elif cfg.validation.eval_iters > 0:
         val_dataloader_type = "cyclic" if isinstance(cfg.dataset, GPTDatasetConfig) else cfg.dataset.dataloader_type
-        valid_dataloader = _build_eval_test_dataloaders(
-            valid_ds, train_state.consumed_valid_samples, val_dataloader_type
-        )
+        if cfg.validation.multiple_validation_sets:
+            # Resume each validation set from its own consumed-samples offset.
+            valid_consumed_samples = train_state.consumed_valid_samples_per_set
+        else:
+            valid_consumed_samples = train_state.consumed_valid_samples
+        valid_dataloader = _build_eval_test_dataloaders(valid_ds, valid_consumed_samples, val_dataloader_type)
 
     if cfg.validation.eval_iters > 0:
         test_dataloader = _build_eval_test_dataloaders(test_ds, 0, cfg.dataset.dataloader_type)

@@ -39,7 +39,7 @@ def _make_state(
         wandb_logger=wandb_logger,
         mlflow_logger=None,
         comet_logger=None,
-        train_state=SimpleNamespace(step=7, consumed_train_samples=56),
+        train_state=SimpleNamespace(step=7, consumed_train_samples=56, consumed_valid_samples_per_set=[]),
         cfg=SimpleNamespace(
             logger=SimpleNamespace(log_validation_ppl_to_tensorboard=log_validation_ppl_to_tensorboard),
             validation=SimpleNamespace(
@@ -93,7 +93,7 @@ def _make_evaluate_state(*, eval_iters, exit_duration_in_mins=None):
     )
 
 
-def _run_evaluate(*, state, model, callback_manager, is_test=False, timelimit_hit=False):
+def _run_evaluate(*, state, model, callback_manager, is_test=False, timelimit_hit=False, valid_set_index=None):
     pg_collection = SimpleNamespace(
         pp=SimpleNamespace(size=lambda: 1),
         dp=SimpleNamespace(size=lambda: 1),
@@ -127,6 +127,7 @@ def _run_evaluate(*, state, model, callback_manager, is_test=False, timelimit_hi
             p2p_communicator=MagicMock(),
             callback_manager=callback_manager,
             is_test=is_test,
+            valid_set_index=valid_set_index,
         )
 
 
@@ -232,6 +233,26 @@ def test_evaluate_and_print_results_multiple_validation_sets(
     printed = " ".join(str(call.args[0]) for call in mock_print_rank_last.call_args_list)
     for suffix in expected_suffixes:
         assert f"validation{suffix} loss" in printed
+
+
+@patch("megatron.bridge.training.eval.print_rank_last")
+@patch("megatron.bridge.training.eval.evaluate")
+def test_evaluate_and_print_results_dispatches_per_set_index(mock_evaluate, mock_print_rank_last):
+    """Each validation set is evaluated with its own valid_set_index."""
+    mock_evaluate.side_effect = [({"lm loss": torch.tensor(1.0)}, None, False) for _ in range(2)]
+    state = _make_state(multiple_validation_sets=True)
+
+    evaluate_and_print_results(
+        state=state,
+        prefix="iteration 0",
+        forward_step_func=MagicMock(),
+        data_iterator=[object(), object()],
+        model=[MagicMock()],
+        config=SimpleNamespace(),
+        write_to_tensorboard=False,
+    )
+
+    assert [call.kwargs["valid_set_index"] for call in mock_evaluate.call_args_list] == [0, 1]
 
 
 @patch("megatron.bridge.training.eval.evaluate")
@@ -454,6 +475,23 @@ def test_evaluate_timelimit_fires_start_but_not_end_callback():
 
     assert result == (None, None, True)
     assert observed == [("on_eval_start", False)]
+
+
+def test_evaluate_advances_only_the_indexed_per_set_counter():
+    """With valid_set_index set, evaluate advances that set's counter and leaves the scalar alone."""
+    state = _make_evaluate_state(eval_iters=1)  # eval_global_batch_size defaults to 1
+    state.train_state.consumed_valid_samples = 0
+    state.train_state.consumed_valid_samples_per_set = [0, 0]
+
+    _run_evaluate(
+        state=state,
+        model=_ModeTrackingModel(),
+        callback_manager=CallbackManager(),
+        valid_set_index=1,
+    )
+
+    assert state.train_state.consumed_valid_samples_per_set == [0, 1]
+    assert state.train_state.consumed_valid_samples == 0
 
 
 def test_evaluate_uses_injected_eval_data_parallel_size_for_microbatches():

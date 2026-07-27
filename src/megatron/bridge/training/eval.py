@@ -64,6 +64,7 @@ def evaluate(
     pg_collection: Optional[Union[ProcessGroupCollection, "MultiModuleProcessGroupCollection"]] = None,
     callback_manager: CallbackManager | None = None,
     is_test: bool = False,
+    valid_set_index: int | None = None,
 ) -> tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]:
     """Evaluation function.
 
@@ -85,6 +86,10 @@ def evaluate(
         callback_manager (Optional[CallbackManager]): Optional callback manager for firing callbacks.
         is_test (bool, optional): Whether this is test evaluation (vs validation). Defaults to False.
             Controls which callback events are fired (on_test_* vs on_eval_*).
+        valid_set_index (int | None, optional): Index of the validation set being evaluated when
+            ``multiple_validation_sets`` is enabled. Selects the per-set ``consumed_valid_samples``
+            counter to advance; the caller must have sized ``train_state.consumed_valid_samples_per_set``
+            to cover this index. Defaults to None (single aggregate counter).
 
     Returns:
         tuple[Optional[dict[str, torch.Tensor]], Optional[Any], bool]: A tuple containing:
@@ -306,7 +311,10 @@ def evaluate(
                     else:
                         raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
 
-            state.train_state.consumed_valid_samples += eval_batch_size
+            if valid_set_index is not None:
+                state.train_state.consumed_valid_samples_per_set[valid_set_index] += eval_batch_size
+            else:
+                state.train_state.consumed_valid_samples += eval_batch_size
 
             if state.cfg.train.exit_duration_in_mins:
                 train_time = (time.time() - state.start_time) / 60.0
@@ -470,7 +478,9 @@ def evaluate_and_print_results(
     set_loss_dict = None
     for index, set_data_iterator in enumerate(data_iterators):
         suffix = ""
+        valid_set_index = None
         if val_config.multiple_validation_sets and not is_test:
+            valid_set_index = index
             if val_config.validation_set_names:
                 suffix = f"-{val_config.validation_set_names[index]}"
             else:
@@ -489,6 +499,7 @@ def evaluate_and_print_results(
             pg_collection=pg_collection,
             callback_manager=callback_manager,
             is_test=is_test,
+            valid_set_index=valid_set_index,
         )
 
         # Timelimit hit during evaluation
