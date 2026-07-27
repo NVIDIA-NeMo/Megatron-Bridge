@@ -714,6 +714,7 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cuda_graph_module_names(cfg.model) == ["attn", "moe_router", "moe_preprocess"]
     assert cfg.model.moe_token_dispatcher_type == "flex"
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_flex_dispatcher_num_sms == 32
     assert cfg.model.moe_router_force_load_balancing is True
     assert cfg.model.moe_shared_expert_overlap is False
     assert cfg.comm_overlap.overlap_moe_expert_parallel_comm is False
@@ -724,6 +725,10 @@ def test_qwen35_text_35b_a3b_h100_bf16_perf_recipe(
     assert cfg.optimizer.exp_avg_sq_dtype == torch.bfloat16
     assert cfg.mixed_precision.bf16 is True
     assert cfg.train.train_iters == 50
+    assert cfg.env_vars["CUDA_DEVICE_MAX_CONNECTIONS"] == 32
+    assert cfg.env_vars["NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN"] == 8
+    assert cfg.env_vars["NUM_OF_TOKENS_PER_CHUNK_COMBINE_API"] == 128
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
 
 
 def test_qwen3_30b_a3b_h100_fp8_perf_recipe_keeps_cuda_graphs_disabled(

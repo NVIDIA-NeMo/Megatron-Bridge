@@ -28,7 +28,18 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: 7b3c40b727a81ade12a903fbdb648434dff6db97  # pragma: allowlist secret
+  bridge_commit: ab5f69ae7056bad28a2e3973d2b07f5f5a815b3e  # pragma: allowlist secret
+  megatron_core_commit: 6cd6ea530e18776da54297bbf88292264264bcd3  # pragma: allowlist secret
+  recipe_name: qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
+  recipe_source: src/megatron/bridge/perf_recipes/qwen/h100/qwen35.py
+  scheduler: slurm
+  nodes: 2
+  gpus_per_node: 8
+  required_environment:
+    - SLURM_ACCOUNT
+    - SLURM_PARTITION
+    - CONTAINER_IMAGE
+    - HF_HOME
 
 items:
   hf_to_megatron_cpu:
@@ -198,10 +209,19 @@ items:
     H100:
       status: unverified
       precision: bf16
-      command: >
-        ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
-        --max_steps 50
+      command: |
+        : "${SLURM_ACCOUNT:?Set SLURM_ACCOUNT}"
+        : "${SLURM_PARTITION:?Set SLURM_PARTITION}"
+        : "${CONTAINER_IMAGE:?Set CONTAINER_IMAGE}"
+        : "${HF_HOME:?Set HF_HOME to a shared model-cache directory}"
+        ./scripts/training/train.sh \
+          --nodes 2 --gpus-per-node 8 --no-gpu-resource-request \
+          --account "$SLURM_ACCOUNT" --partition "$SLURM_PARTITION" \
+          --time 00:30:00 --container-image "$CONTAINER_IMAGE" \
+          --mount "$PWD:/opt/Megatron-Bridge" --mount "$HF_HOME:$HF_HOME" \
+          --env HF_HOME \
+          --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config \
+          --mode pretrain --max_steps 50
       last_verified: null
       metrics:
         initial_loss: null
