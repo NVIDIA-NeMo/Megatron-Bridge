@@ -154,7 +154,7 @@ items:
           scopes: [attn, mamba]
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_5_nano_pretrain_8gpu_h100_bf16_config
+        --recipe nemotron_3_5_nano_pretrain_config
         --mode pretrain --dataset megatron-indexed --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
@@ -192,7 +192,7 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --additional-slurm-params segment=2
-        --recipe nemotron_3_5_nano_gb200_pretrain_config
+        --recipe nemotron_3_5_nano_pretrain_4k_config
         --mode pretrain --dataset megatron-indexed --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
@@ -279,7 +279,7 @@ items:
         moe_dispatcher: deepep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config
+        --recipe nemotron_3_5_nano_sft_openmathinstruct2_packed_config
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-h100/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-h100/sft-checkpoints
@@ -305,7 +305,7 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --additional-slurm-params segment=2
-        --recipe nemotron_3_5_nano_sft_8gpu_gb200_bf16_openmathinstruct2_packed_config
+        --recipe nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config
         --mode sft --max_steps 100
         --pretrained_checkpoint work/model-verification/nemotron-3.5-nano-gb200/imported-megatron/iter_0000000
         --save_dir work/model-verification/nemotron-3.5-nano-gb200/sft-checkpoints
@@ -382,7 +382,7 @@ items:
         moe_dispatcher: deepep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_5_nano_sft_8gpu_h100_bf16_config
+        --recipe nemotron_3_5_nano_sft_config
         --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768
         --lr 5e-6 --min_lr 0 --warmup_iters 10
         --tensor_model_parallel_size 2 --context_parallel_size 2
@@ -427,7 +427,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe nemotron_3_5_nano_sft_8gpu_h100_bf16_config
+        --recipe nemotron_3_5_nano_sft_config
         --mode sft --dataset openmathinstruct2 --max_steps 100 --seq_length 32768
         --lr 5e-6 --min_lr 0 --warmup_iters 10
         --context_parallel_size 2 --expert_tensor_parallel_size 1
@@ -472,7 +472,7 @@ items:
         moe_dispatcher: deepep
       command: >
         ./scripts/training/train.sh --nodes 1 --gpus-per-node 8
-        --recipe nemotron_3_5_nano_peft_8gpu_h100_bf16_config
+        --recipe nemotron_3_5_nano_peft_config
         --mode lora --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
         --lr 1e-4 --min_lr 0 --warmup_iters 10
         --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1
@@ -512,7 +512,7 @@ items:
         moe_dispatcher: hybridep
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
-        --recipe nemotron_3_5_nano_peft_8gpu_h100_bf16_config
+        --recipe nemotron_3_5_nano_peft_config
         --mode lora --dataset openmathinstruct2 --max_steps 100 --seq_length 4096
         --lr 1e-4 --min_lr 0 --warmup_iters 10
         --tensor_model_parallel_size 2 --expert_tensor_parallel_size 1
@@ -551,7 +551,7 @@ items:
       depends_on: pretrain
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 8
-        --recipe nemotron_3_5_nano_pretrain_8gpu_h100_bf16_config
+        --recipe nemotron_3_5_nano_pretrain_config
         --mode pretrain --dataset megatron-indexed --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
@@ -590,7 +590,7 @@ items:
       command: >
         ./scripts/training/train.sh --nodes 2 --gpus-per-node 4
         --additional-slurm-params segment=2
-        --recipe nemotron_3_5_nano_gb200_pretrain_config
+        --recipe nemotron_3_5_nano_pretrain_4k_config
         --mode pretrain --dataset megatron-indexed --max_steps 20
         --lr 3e-4 --min_lr 3e-5 --warmup_iters 8
         'dataset.blend=[["work/data/rp2/perp_middle/middle_01_text_document"],null]'
