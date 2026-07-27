@@ -361,7 +361,53 @@ class TestNemotronHBridge:
         # Check MTP configuration mappings
         assert result.mtp_num_layers == 2
         assert result.mtp_hybrid_override_pattern == "*E"
+        assert result.mtp_use_repeated_layer is True
         assert result.keep_mtp_spec_in_bf16 is True
+        assert result.mtp_loss_scaling_factor == 0.3
+
+    @pytest.mark.parametrize("num_nextn_predict_layers", [None, 0])
+    def test_provider_bridge_disables_mtp_naturally(
+        self,
+        nemotron_nano_v2_config_dict,
+        num_nextn_predict_layers,
+    ):
+        """HF configs without enabled MTP produce a normal non-MTP provider."""
+        from types import SimpleNamespace
+
+        config_dict = {
+            **nemotron_nano_v2_config_dict,
+            "n_routed_experts": 0,
+            "mtp_hybrid_override_pattern": "*E",
+            "keep_mtp_spec_in_bf16": True,
+        }
+        if num_nextn_predict_layers is not None:
+            config_dict["num_nextn_predict_layers"] = num_nextn_predict_layers
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = SimpleNamespace(**config_dict)
+
+        result = NemotronHBridge().provider_bridge(mock_pretrained)
+
+        assert result.mtp_num_layers == 0
+        assert result.mtp_hybrid_override_pattern is None
+        assert result.mtp_use_repeated_layer is False
+        assert result.keep_mtp_spec_in_bf16 is False
+
+    def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotron_nano_v2_config_dict):
+        """An enabled HF MTP config must describe its hybrid block."""
+        from types import SimpleNamespace
+
+        mock_pretrained = Mock(spec=PreTrainedCausalLM)
+        mock_pretrained.config = SimpleNamespace(
+            **{
+                **nemotron_nano_v2_config_dict,
+                "n_routed_experts": 0,
+                "num_nextn_predict_layers": 1,
+            }
+        )
+
+        with pytest.raises(ValueError, match="mtp_hybrid_override_pattern"):
+            NemotronHBridge().provider_bridge(mock_pretrained)
 
     def test_provider_bridge_no_moe_when_attribute_missing(self, nemotron_nano_v2_config_dict):
         """Test that MoE configs are not added when n_routed_experts attribute is missing."""
@@ -972,38 +1018,28 @@ class TestMTPFlatteningQKVMapping:
 class TestNemotronHBridgeMTPIntegration:
     """Test NemotronHBridge methods related to MTP layer handling."""
 
-    def test_build_conversion_tasks_caches_mtp_pattern(self):
-        """Test that build_conversion_tasks caches mtp_layers_per_block from config."""
+    @pytest.mark.parametrize(
+        ("hf_config", "expected_mtp_mappings"),
+        [
+            ({}, False),
+            ({"num_nextn_predict_layers": 0, "mtp_hybrid_override_pattern": "*E"}, False),
+            ({"num_nextn_predict_layers": 1, "mtp_hybrid_override_pattern": "*E"}, True),
+        ],
+    )
+    def test_mapping_registry_uses_hf_config(self, hf_config, expected_mtp_mappings):
+        """Registry construction follows the HF config stored on the bridge."""
         bridge = NemotronHBridge()
+        bridge.hf_config = SimpleNamespace(**hf_config)
 
-        mock_config = Mock(spec=[])
-        mock_config.mtp_hybrid_override_pattern = "*E*"
-        mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = mock_config
+        registry = bridge.mapping_registry()
 
-        # build_conversion_tasks calls super() which needs megatron_model — mock it
-        with patch.object(MegatronModelBridge, "build_conversion_tasks", return_value=[]):
-            bridge.build_conversion_tasks(mock_pretrained, Mock())
-
-        assert bridge._mtp_layers_per_block == 3  # len("*E*")
-
-    def test_build_conversion_tasks_no_mtp_pattern(self):
-        """Test build_conversion_tasks when mtp_hybrid_override_pattern is missing."""
-        bridge = NemotronHBridge()
-
-        mock_config = Mock(spec=[])  # spec=[] means hasattr returns False for unset attrs
-        mock_pretrained = Mock(spec=PreTrainedCausalLM)
-        mock_pretrained.config = mock_config
-
-        with patch.object(MegatronModelBridge, "build_conversion_tasks", return_value=[]):
-            bridge.build_conversion_tasks(mock_pretrained, Mock())
-
-        assert bridge._mtp_layers_per_block == 0
+        mtp_mappings = [mapping for mapping in registry.mappings if isinstance(mapping, _MTPFlatteningMapping)]
+        assert bool(mtp_mappings) is expected_mtp_mappings
 
     def test_mapping_registry_with_mtp(self):
         """Test mapping_registry includes MTP flattening mappings when mtp is configured."""
         bridge = NemotronHBridge()
-        bridge._mtp_layers_per_block = 2
+        bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E")
 
         registry = bridge.mapping_registry()
 
@@ -1030,7 +1066,7 @@ class TestNemotronHBridgeMTPIntegration:
     def test_mapping_registry_resolves_representative_mtp_params(self):
         """Verify current MTP mappings resolve to concrete HF parameter names."""
         bridge = NemotronHBridge()
-        bridge._mtp_layers_per_block = 2
+        bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E")
 
         registry = bridge.mapping_registry()
 
@@ -1048,7 +1084,7 @@ class TestNemotronHBridgeMTPIntegration:
 
     def test_quantized_mtp_amax_mappings_preserve_flattened_layer_indices(self):
         bridge = NemotronHBridge()
-        bridge._mtp_layers_per_block = 5
+        bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=1, mtp_hybrid_override_pattern="*E*M-")
 
         with patch.dict(os.environ, {"ENABLE_BRIDGE_QUANT_MAPPING": "1"}):
             registry = bridge.mapping_registry()
@@ -1097,14 +1133,12 @@ class TestNemotronHBridgeMTPIntegration:
         assert final_norm_mapping.hf_param == "backbone.norm_f.weight"
         assert final_layernorm_mapping.hf_param == "backbone.norm_f.weight"
 
-    def test_mapping_registry_without_mtp_logs_warning(self):
-        """Test mapping_registry logs warning when mtp_layers_per_block is 0."""
+    def test_mapping_registry_without_mtp_skips_mtp_mappings(self):
+        """A non-MTP model builds its normal registry without MTP mappings."""
         bridge = NemotronHBridge()
-        bridge._mtp_layers_per_block = 0
+        bridge.hf_config = SimpleNamespace(num_nextn_predict_layers=0)
 
-        with patch("megatron.bridge.models.nemotronh.nemotron_h_bridge.logger") as mock_logger:
-            registry = bridge.mapping_registry()
-            mock_logger.warning.assert_called_once()
+        registry = bridge.mapping_registry()
 
         # Should NOT contain any MTP flattening mappings
         mtp_mappings = [m for m in registry.mappings if isinstance(m, _MTPFlatteningMapping)]

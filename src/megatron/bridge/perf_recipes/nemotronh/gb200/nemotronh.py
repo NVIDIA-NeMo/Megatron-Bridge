@@ -17,6 +17,7 @@ from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     _TE_QUANT_CFG_PATH,
     ConfigContainer,
+    _apply_nemotron_3_nano_perf_defaults,
     _apply_nemotron_3_super_perf_defaults,
     _benchmark_common,
     _nemotron_3_super_nvfp4_precision,
@@ -209,6 +210,7 @@ def nemotron_3_super_pretrain_64gpu_gb200_nvfp4_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, BF16."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("bf16")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -259,6 +261,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, MXFP8."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("fp8_mx")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -309,6 +312,7 @@ def nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 8× GB200, NVFP4."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("nvfp4")
 
     cfg.model.tensor_model_parallel_size = 1
@@ -355,4 +359,69 @@ def nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
         # NVFP4 fast-math path.
         "NVTE_USE_FAST_MATH": 1,
     }
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Nano pretrain: 8× GB200, BF16."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config() -> ConfigContainer:
+    """Nemotron 3.5 Nano pretrain: 8× GB200, MXFP8."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_fp8mx_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_fsdp_config() -> ConfigContainer:
+    """Nemotron 3.5 Nano pretrain: 8× GB200, MXFP8, Megatron FSDP."""
+    cfg = nemotron_3_5_nano_pretrain_8gpu_gb200_fp8mx_config()
+
+    # FSDP reduces the model-state footprint enough to use the larger measured
+    # microbatch. Megatron FSDP registers module hooks that Transformer Engine
+    # CUDA graph capture rejects.
+    cfg.train.global_batch_size = 384
+    cfg.train.micro_batch_size = 3
+    cfg.model.cuda_graph_impl = "none"
+    cfg.model.cuda_graph_scope = []
+
+    cfg.model.init_model_with_meta_device = True
+    cfg.mixed_precision.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.dist.use_megatron_fsdp = True
+    cfg.ddp.use_megatron_fsdp = True
+    cfg.ddp.num_distributed_optimizer_instances = 1
+    cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
+    cfg.ddp.outer_dp_sharding_strategy = "no_shard"
+    cfg.ddp.average_in_collective = False
+    cfg.ddp.keep_fp8_transpose_cache = False
+    cfg.ddp.reuse_grad_buf_for_mxfp8_param_ag = False
+    cfg.optimizer.reuse_grad_buf_for_mxfp8_param_ag = False
+
+    cfg.checkpoint.load = None
+    cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_8gpu_gb200_nvfp4_config() -> ConfigContainer:
+    """Nemotron 3.5 Nano pretrain: 8× GB200, NVFP4."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_nvfp4_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     return cfg

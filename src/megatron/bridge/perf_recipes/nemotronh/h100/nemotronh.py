@@ -16,6 +16,7 @@
 from megatron.bridge.perf_recipes.environment import COMMON_PERF_ENV_VARS
 from megatron.bridge.perf_recipes.nemotronh.common import (
     ConfigContainer,
+    _apply_nemotron_3_nano_perf_defaults,
     _benchmark_common,
     _perf_precision,
     nemotron_3_nano_pretrain_config,
@@ -61,6 +62,7 @@ def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, BF16, recompute MoE+layernorm."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("bf16")
     cfg.model.recompute_granularity = "selective"
 
@@ -84,6 +86,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 16
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -113,6 +116,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     """Nemotron 3 Nano pretrain: 16× H100, FP8 current-scaling, recompute."""
     cfg = nemotron_3_nano_pretrain_config()
+    _apply_nemotron_3_nano_perf_defaults(cfg)
     cfg.mixed_precision = _perf_precision("fp8_cs")
     cfg.model.recompute_granularity = "selective"
 
@@ -136,6 +140,7 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
 
     _benchmark_common(cfg)
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_hybridep_num_sms = 16
     # Keep process settings next to the recipe so users can see the exact benchmark environment.
     cfg.env_vars = {
         **COMMON_PERF_ENV_VARS,
@@ -159,4 +164,28 @@ def nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
         "NVTE_NORM_BWD_USE_CUDNN": 1,
         "NVTE_NORM_FWD_USE_CUDNN": 1,
     }
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
+    """Nemotron 3.5 Nano pretrain: 16× H100, BF16."""
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
+    """Nemotron 3.5 Nano pretrain: 16× H100, FP8 current-scaling."""
+    cfg = nemotron_3_nano_pretrain_16gpu_h100_fp8cs_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     return cfg
