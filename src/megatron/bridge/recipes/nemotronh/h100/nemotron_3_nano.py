@@ -270,8 +270,8 @@ def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
 # =============================================================================
 
 
-def _nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Build a full SFT config for Nemotron 3 Nano.
+def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
+    """Return a full SFT config for Nemotron 3 Nano.
 
     Default parallelism: TP=1, PP=1, EP=8, SP=False
 
@@ -395,11 +395,6 @@ def _nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
         **COMMON_RECIPE_ENV_VARS,
     }
     return cfg
-
-
-def nemotron_3_nano_sft_8gpu_h100_bf16_config() -> ConfigContainer:
-    """Return a full SFT config for Nemotron 3 Nano."""
-    return _nemotron_3_nano_sft_8gpu_h100_bf16_config()
 
 
 def nemotron_3_5_nano_sft_config() -> ConfigContainer:
