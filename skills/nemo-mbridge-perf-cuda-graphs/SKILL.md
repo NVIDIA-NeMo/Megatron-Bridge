@@ -9,8 +9,6 @@ license: Apache-2.0
 Stable documentation: @docs/training/cuda-graphs.md
 Card: @skills/nemo-mbridge-perf-cuda-graphs/card.yaml
 
-<!-- NVSkills CI refresh: 2026-06-15. No instruction changes. -->
-
 ## What It Is
 
 CUDA graphs capture GPU operations once and replay them with minimal

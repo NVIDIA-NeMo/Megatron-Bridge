@@ -9,8 +9,6 @@ license: Apache-2.0
 Stable docs: @docs/training/activation-recomputation.md
 Card: @skills/nemo-mbridge-perf-activation-recompute/card.yaml
 
-<!-- NVSkills CI refresh: 2026-06-15. No instruction changes. -->
-
 ## What It Is
 
 Activation recompute trades GPU compute for memory by discarding intermediate
