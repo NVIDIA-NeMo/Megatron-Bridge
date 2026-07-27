@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Convert official DataComp img2dataset shards into Qwen-VL Energon data.
+"""Convert official DataComp img2dataset shards into ChatML Energon data.
 
 The official DataComp downloader writes one JPEG, caption TXT, and metadata
 JSON member per successful sample. This converter preserves the caption as the
@@ -21,7 +21,7 @@ ChatML samples are directly consumable by Bridge's ``ChatMLWebdataset``.
 
 Usage::
 
-    uv run python examples/models/qwen/qwen3_vl/prepare_datacomp_energon.py \
+    uv run python tutorials/data/datacomp/prepare_datacomp_energon.py \
         --source-dir /path/to/datacomp/shards \
         --output-dir /path/to/datacomp-energon \
         --minimum-train-samples 512000 \
@@ -356,7 +356,7 @@ def convert(
             "objective": "causal image-conditioned caption generation",
             "prompt": prompt,
             "assistant_target": "original DataComp caption",
-            "loss_mask": "assistant tokens only; applied by the Qwen ChatML collator",
+            "loss_mask": "assistant tokens only; applied by the selected ChatML VLM collator",
             "validation_fraction": validation_fraction,
             "split_identity": "DataComp uid",
             "split_hash": "first 64 bits of SHA-256, big endian",

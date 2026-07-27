@@ -7,6 +7,7 @@ import sys
 import tarfile
 import types
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from PIL import Image
@@ -14,7 +15,9 @@ from PIL import Image
 
 pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).parents[3]
-SCRIPT = REPO_ROOT / "examples" / "models" / "qwen" / "qwen3_vl" / "prepare_datacomp_energon.py"
+SCRIPT = REPO_ROOT / "tutorials" / "data" / "datacomp" / "prepare_datacomp_energon.py"
+AUDIT_SCRIPT = REPO_ROOT / "tutorials" / "data" / "datacomp" / "audit_download.py"
+METADATA_SCRIPT = REPO_ROOT / "tutorials" / "data" / "datacomp" / "download_metadata.py"
 
 
 def _load_module() -> dict:
@@ -65,7 +68,7 @@ def test_stable_split_validates_fraction_and_is_deterministic():
         stable_split("sample", 1.0)
 
 
-def test_convert_writes_deterministic_qwen_chatml_shards(tmp_path: Path):
+def test_convert_writes_deterministic_chatml_shards(tmp_path: Path):
     module = _load_module()
     source = tmp_path / "source"
     source.mkdir()
@@ -185,3 +188,64 @@ def test_prepare_energon_dataset_indexes_nonempty_splits(tmp_path: Path, monkeyp
 
     with pytest.raises(ValueError, match="At least one converted split"):
         prepare(tmp_path, counts={"train": 0, "val": 0}, num_workers=1)
+
+
+def test_audit_download_matches_completion_stats_to_tar_members(tmp_path: Path):
+    module = runpy.run_path(str(AUDIT_SCRIPT))
+    audit_download = module["audit_download"]
+    _write_source_shard(tmp_path / "00000000.tar")
+    (tmp_path / "00000000_stats.json").write_text(
+        json.dumps({"count": 3, "successes": 2}),
+        encoding="utf-8",
+    )
+
+    assert audit_download(
+        tmp_path,
+        expected_shards=1,
+        expected_attempts=3,
+        minimum_successes=2,
+    ) == {
+        "attempted": 3,
+        "successes": 2,
+        "complete_shards": 1,
+        "tar_samples": 2,
+    }
+
+    with pytest.raises(RuntimeError, match="require at least 3"):
+        audit_download(
+            tmp_path,
+            expected_shards=1,
+            expected_attempts=3,
+            minimum_successes=3,
+        )
+
+
+def test_download_metadata_writes_validated_manifest(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    module = runpy.run_path(str(METADATA_SCRIPT))
+    source = tmp_path / "source.parquet"
+    source.write_bytes(b"pinned parquet payload")
+    digest = module["_sha256"](source)
+    expected_files = {"source.parquet": (7, source.stat().st_size, digest)}
+    parquet = SimpleNamespace(
+        metadata=SimpleNamespace(num_rows=7),
+        schema_arrow=SimpleNamespace(names=["uid", "url", "text", "face_bboxes"]),
+    )
+    download_metadata = module["download_metadata"]
+    monkeypatch.setitem(download_metadata.__globals__, "EXPECTED_FILES", expected_files)
+    monkeypatch.setitem(download_metadata.__globals__, "hf_hub_download", lambda **_: source)
+    monkeypatch.setattr(download_metadata.__globals__["pq"], "ParquetFile", lambda _: parquet)
+
+    manifest = download_metadata(tmp_path / "metadata")
+
+    assert manifest["repo_id"] == module["DATACOMP_REPO_ID"]
+    assert manifest["revision"] == module["DATACOMP_REVISION"]
+    assert manifest["files"] == [
+        {
+            "filename": "source.parquet",
+            "rows": 7,
+            "bytes": source.stat().st_size,
+            "sha256": digest,
+            "columns": ["uid", "url", "text", "face_bboxes"],
+        }
+    ]
+    assert json.loads((tmp_path / "metadata" / "metadata-manifest.json").read_text()) == manifest

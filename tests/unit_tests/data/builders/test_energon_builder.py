@@ -162,6 +162,7 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
         micro_batch_size=1,
         task_encoder=HFEnergonTaskEncoderConfig(
             hf_processor_path="org/model",
+            hf_processor_revision="0123456789abcdef",
             visual_keys=("pixel_values", "image_sizes"),
             min_pixels=100,
             max_pixels=200,
@@ -173,18 +174,36 @@ def test_generic_hf_factory_uses_collate_time_packing(monkeypatch: pytest.Monkey
     encoder = object()
     encoder_cls = MagicMock(return_value=encoder)
     monkeypatch.setattr("megatron.bridge.data.builders.energon.is_safe_repo", lambda **_: False)
-    monkeypatch.setattr(
-        "megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained",
-        lambda *_, **__: processor,
-    )
+    load_processor = MagicMock(return_value=processor)
+    monkeypatch.setattr("megatron.bridge.data.builders.energon.AutoProcessor.from_pretrained", load_processor)
     monkeypatch.setattr("megatron.bridge.data.energon.hf_task_encoder.HFTaskEncoder", encoder_cls)
 
     assert build_energon_task_encoder(config) is encoder
+    load_processor.assert_called_once_with(
+        "org/model",
+        revision="0123456789abcdef",
+        trust_remote_code=False,
+    )
     assert encoder_cls.call_args.kwargs["enable_in_batch_packing"] is True
     assert encoder_cls.call_args.kwargs["in_batch_packing_pad_to_multiple_of"] == 4
     assert encoder_cls.call_args.kwargs["visual_keys"] == ("pixel_values", "image_sizes")
     assert encoder_cls.call_args.kwargs["min_pixels"] == 100
     assert encoder_cls.call_args.kwargs["max_pixels"] == 200
+
+
+def test_generic_hf_config_rejects_empty_processor_revision():
+    config = EnergonDatasetConfig(
+        path="/data/shards",
+        seq_length=2048,
+        micro_batch_size=1,
+        task_encoder=HFEnergonTaskEncoderConfig(
+            hf_processor_path="org/model",
+            hf_processor_revision=" ",
+        ),
+    )
+
+    with pytest.raises(ValueError, match="hf_processor_revision"):
+        config.validate()
 
 
 def test_nemotron_factory_preserves_omni_settings(monkeypatch: pytest.MonkeyPatch):

@@ -244,58 +244,6 @@ def test_sync_model_dataset_sequence_length_uses_canonical_dataset_field(recipe_
     assert config.model.seq_length == 256
 
 
-@pytest.mark.parametrize(
-    ("dataset_micro_batch_size", "train_micro_batch_size", "cli_overrides", "expected"),
-    [
-        (2, 1, ["train.micro_batch_size=1"], 1),
-        (1, 1, ["dataset.micro_batch_size=1", "train.micro_batch_size=1"], 1),
-        (2, 1, ["dataset.micro_batch_size=2", "train.micro_batch_size=1"], 2),
-    ],
-)
-def test_sync_energon_micro_batch_size_respects_explicit_dataset_value(
-    recipe_runner: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
-    dataset_micro_batch_size: int,
-    train_micro_batch_size: int,
-    cli_overrides: list[str],
-    expected: int,
-) -> None:
-    class EnergonDatasetConfig:
-        def __init__(self) -> None:
-            self.micro_batch_size = dataset_micro_batch_size
-
-    builders = ModuleType("megatron.bridge.data.builders")
-    builders.EnergonDatasetConfig = EnergonDatasetConfig
-    monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders", builders)
-    config = SimpleNamespace(
-        train=SimpleNamespace(micro_batch_size=train_micro_batch_size),
-        dataset=EnergonDatasetConfig(),
-    )
-
-    assert recipe_runner.sync_energon_micro_batch_size(config, cli_overrides=cli_overrides) is config
-    assert config.dataset.micro_batch_size == expected
-
-
-def test_sync_energon_micro_batch_size_ignores_other_dataset_types(
-    recipe_runner: ModuleType,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    class EnergonDatasetConfig:
-        pass
-
-    builders = ModuleType("megatron.bridge.data.builders")
-    builders.EnergonDatasetConfig = EnergonDatasetConfig
-    monkeypatch.setitem(sys.modules, "megatron.bridge.data.builders", builders)
-    dataset = SimpleNamespace(micro_batch_size=2)
-    config = SimpleNamespace(
-        train=SimpleNamespace(micro_batch_size=1),
-        dataset=dataset,
-    )
-
-    assert recipe_runner.sync_energon_micro_batch_size(config, cli_overrides=[]) is config
-    assert dataset.micro_batch_size == 2
-
-
 def test_sync_model_pipeline_layout_uses_overridden_topology(recipe_runner: ModuleType) -> None:
     layout = [["first"], ["middle"], ["middle"], ["last"]]
     layout_builder = Mock(return_value=layout)

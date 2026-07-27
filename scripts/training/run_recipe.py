@@ -98,7 +98,6 @@ from recipe_runner import (  # noqa: E402
     load_forward_step,
     load_recipe,
     run_config,
-    sync_energon_micro_batch_size,
     sync_finetuning_cp_invariants,
     sync_model_dataset_sequence_length,
     sync_model_pipeline_layout,
@@ -384,7 +383,8 @@ def _apply_dataset(recipe: ConfigContainer, args: argparse.Namespace) -> ConfigC
 
     recipe.dataset = build_dataset_config(recipe, args.dataset)
     requested_train_mode = _train_mode(args.mode)
-    if dataset_train_mode(recipe.dataset) != requested_train_mode:
+    required_train_mode = dataset_train_mode(recipe.dataset)
+    if required_train_mode is not None and required_train_mode != requested_train_mode:
         raise ValueError(f"Mode '{args.mode}' is incompatible with dataset '{args.dataset}'.")
     return recipe
 
@@ -420,7 +420,6 @@ def main(argv: list[str] | None = None) -> None:
     recipe = _apply_dataset(recipe, args)
     recipe = apply_determinism(recipe, deterministic=args.deterministic)
     recipe = apply_cli_overrides(recipe, cli_overrides)
-    recipe = sync_energon_micro_batch_size(recipe, cli_overrides=cli_overrides)
     recipe = sync_model_pipeline_layout(recipe, cli_overrides=cli_overrides)
     if benchmark_metadata is not None:
         recipe = _apply_benchmark_runtime_defaults(recipe, benchmark_metadata, cli_overrides)

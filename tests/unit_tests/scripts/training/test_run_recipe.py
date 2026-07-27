@@ -46,7 +46,6 @@ def _load_module():
         "load_forward_step",
         "load_recipe",
         "run_config",
-        "sync_energon_micro_batch_size",
         "sync_finetuning_cp_invariants",
         "sync_model_pipeline_layout",
         "sync_offline_packing_alignment",
@@ -57,7 +56,6 @@ def _load_module():
     recipe_runner.apply_determinism.side_effect = lambda config, **_: config
     recipe_runner.apply_runtime_environment.side_effect = lambda config: config
     recipe_runner.bootstrap_recipe_environment.side_effect = lambda config, **_: config
-    recipe_runner.sync_energon_micro_batch_size.side_effect = lambda config, **_: config
     recipe_runner.sync_finetuning_cp_invariants.side_effect = lambda config, **_: config
     recipe_runner.sync_model_pipeline_layout.side_effect = lambda config, **_: config
     recipe_runner.sync_offline_packing_alignment.side_effect = lambda config: config
@@ -65,9 +63,10 @@ def _load_module():
     recipe_runner.load_forward_step.return_value = object()
 
     dataset_utils = types.ModuleType("megatron.bridge.recipes.utils.dataset_utils")
-    pretraining_datasets = {"mock", "megatron-indexed", "qwen-vl-energon"}
+    pretraining_datasets = {"mock", "megatron-indexed"}
     dataset_names = {
         *pretraining_datasets,
+        "energon",
         "squad",
         "tulu3",
         "openmathinstruct2",
@@ -91,9 +90,13 @@ def _load_module():
             split=None,
         )
     )
-    dataset_utils.dataset_train_mode = Mock(
-        side_effect=lambda dataset: "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
-    )
+
+    def dataset_train_mode(dataset):
+        if dataset.dataset_name == "energon":
+            return None
+        return "pretrain" if dataset.dataset_name in pretraining_datasets else "finetune"
+
+    dataset_utils.dataset_train_mode = Mock(side_effect=dataset_train_mode)
     config_module = types.ModuleType("megatron.bridge.training.config")
     config_module.ConfigContainer = object
     stub_modules = {
@@ -237,9 +240,9 @@ def test_kimi_supported_pp_vp_override_refreshes_pipeline_layout():
             pipeline_model_parallel_size=16,
             virtual_pipeline_model_parallel_size=None,
             pipeline_model_parallel_layout=default_layout,
-            _pipeline_model_parallel_layout_builder=lambda pp, vp: overridden_layout
-            if (pp, vp) == (4, 1)
-            else default_layout,
+            _pipeline_model_parallel_layout_builder=lambda pp, vp: (
+                overridden_layout if (pp, vp) == (4, 1) else default_layout
+            ),
         )
     )
     handles.recipe_runner.load_recipe.return_value = config
@@ -739,7 +742,7 @@ def test_local_dataset_names_use_presets_then_apply_config_overrides(public_name
     handles.recipe_runner.apply_cli_overrides.assert_called_once_with(config, options)
 
 
-def test_qwen_vl_energon_uses_pretrain_mode_and_qwen_step():
+def test_energon_uses_requested_pretrain_mode_and_qwen_step():
     module, handles = _load_module()
     config = SimpleNamespace()
     handles.recipe_runner.load_recipe.return_value = config
@@ -751,58 +754,25 @@ def test_qwen_vl_energon_uses_pretrain_mode_and_qwen_step():
             "--mode",
             "pretrain",
             "--dataset",
-            "qwen-vl-energon",
+            "energon",
             "--step-func",
             "qwen3_vl_step",
             "dataset.path=/data/datacomp-energon",
         ]
     )
 
-    handles.build_dataset_config.assert_called_once_with(config, "qwen-vl-energon")
+    handles.build_dataset_config.assert_called_once_with(config, "energon")
     handles.recipe_runner.load_forward_step.assert_called_once_with("qwen3_vl_step", mode="pretrain")
     assert handles.recipe_runner.run_config.call_args.kwargs["mode"] == "pretrain"
 
 
-def test_qwen_vl_energon_syncs_micro_batch_size_after_cli_overrides():
+@pytest.mark.parametrize("mode", ["pretrain", "sft", "lora", "dora"])
+def test_energon_is_compatible_with_all_training_modes(mode):
     module, handles = _load_module()
-    config = SimpleNamespace(train=SimpleNamespace(micro_batch_size=2))
-    dataset = SimpleNamespace(dataset_name="qwen-vl-energon", micro_batch_size=2)
-    handles.recipe_runner.load_recipe.return_value = config
-    handles.build_dataset_config.return_value = dataset
-    call_order = []
+    config = SimpleNamespace()
 
-    def apply_overrides(resolved_config, overrides):
-        call_order.append("overrides")
-        assert overrides == ["train.micro_batch_size=1"]
-        resolved_config.train.micro_batch_size = 1
-        return resolved_config
-
-    def sync_micro_batch_size(resolved_config, *, cli_overrides):
-        call_order.append("sync")
-        assert cli_overrides == ["train.micro_batch_size=1"]
-        resolved_config.dataset.micro_batch_size = resolved_config.train.micro_batch_size
-        return resolved_config
-
-    handles.recipe_runner.apply_cli_overrides.side_effect = apply_overrides
-    handles.recipe_runner.sync_energon_micro_batch_size.side_effect = sync_micro_batch_size
-
-    module.main(
-        [
-            "--recipe",
-            "qwen35_vl_35b_a3b_pretrain_mock_config",
-            "--mode",
-            "pretrain",
-            "--dataset",
-            "qwen-vl-energon",
-            "--micro_batch_size",
-            "1",
-        ]
-    )
-
-    assert call_order == ["overrides", "sync"]
-    resolved = handles.recipe_runner.run_config.call_args.kwargs["config"]
-    assert resolved.train.micro_batch_size == 1
-    assert resolved.dataset.micro_batch_size == 1
+    assert module._apply_dataset(config, SimpleNamespace(dataset="energon", mode=mode)) is config
+    handles.build_dataset_config.assert_called_once_with(config, "energon")
 
 
 @pytest.mark.parametrize(
