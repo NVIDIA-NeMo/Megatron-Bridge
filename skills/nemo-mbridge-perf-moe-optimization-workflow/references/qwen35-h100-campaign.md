@@ -436,3 +436,43 @@ forward and 3.553 ms forward+backward versus 0.495 and 1.389 ms for grouped MM.
 That is 2.06x/2.56x slower and raised peak allocation from 1.033 to 1.272 GiB.
 Reject the primitive before full training; static GEMM shapes did not repay
 padding, data movement, and autograd cost.
+
+Port performance-critical runtime code into the reviewable change before
+calling a recipe reproducible. The pinned public-stack control after native
+H100 HybridEP alignment averaged 24.70215 seconds / about 238.43 model
+TFLOP/s/GPU over exact-2-node steps 5--8. The first reviewable FlashQLA 0.1.2
+GDN sample reduced that mean to 23.205475 seconds / about 253.808 model
+TFLOP/s/GPU, but its Slurm step exited 0:0 while the enclosing batch exited 9:0
+after one rank missed the shutdown window. A pinned-version rerun with the
+longer shutdown window completed the config dry-run, all eight training steps,
+and focused runtime tests with an overall 0:0 exit. Its steps 5--8 averaged
+23.254625 seconds / about 253.271 model TFLOP/s/GPU, a 6.22% throughput gain
+over the pinned control, with finite losses and gradients and zero skipped or
+NaN iterations. Record training health and terminal health separately; only
+the second run is passing short-run evidence.
+
+Fail closed on the exact external kernel version and make its path explicit in
+the published launch command. A lazy import with only a helpful error message
+does not prove that the measured version was loaded. Check
+`flash_qla.__version__ == "0.1.2"` in the reviewable runtime and pass its
+container-mounted Python prefix through `PYTHONPATH`; do not rely on an
+untracked `sitecustomize.py` or a user-specific source tree. FlashQLA also
+needs a shared persistent `TILELANG_CACHE_DIR`, and the grouped-expert path
+benefits from a persistent `TORCHINDUCTOR_CACHE_DIR`. A cold-cache allocation
+spent its bounded runtime compiling without producing an iteration.
+
+Treat static capacity as a compiler shape, not only a routing scalar. On the
+pinned PR stack, changing capacity factor from 1.05 to 1.02 created a new
+TorchInductor specialization. Ranks progressed differently while sharing the
+new cache and eventually reached an NCCL watchdog before iteration 1, so the
+run supplied neither overflow nor timing evidence. Prewarm a new static shape
+with isolated rank-local cache writes or an explicit compile barrier before a
+distributed A/B; do not interpret a compilation rendezvous failure as a
+capacity result.
+
+The current reviewable runtime is still far from the acceptance gate:
+253.271 model TFLOP/s/GPU is 11.85% below 287.305 and needs another 13.44%
+throughput improvement, to at most 20.4999 seconds per step. Even the
+22.340925-second development-stack winner is 8.22% below the gate. Do not spend
+a 50-step verification allocation until a shorter exact-topology run crosses
+the threshold with terminal exit 0:0.

@@ -30,10 +30,12 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: ff24fbbbd3bbb93dea7b45a648977131c44c599e  # pragma: allowlist secret
+  bridge_commit: d43d312372408c9716f59ce46e72b7a2def55ac1  # pragma: allowlist secret
   megatron_core_commit: 6cd6ea530e18776da54297bbf88292264264bcd3  # pragma: allowlist secret
+  flash_qla_version: "0.1.2"
   recipe_name: qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
   recipe_source: src/megatron/bridge/perf_recipes/qwen/h100/qwen35.py
+  runtime_source: src/megatron/bridge/perf_recipes/qwen/h100/qwen35_runtime.py
   scheduler: slurm
   nodes: 2
   gpus_per_node: 8
@@ -42,9 +44,15 @@ verification_environment:
     - SLURM_PARTITION
     - CONTAINER_IMAGE
     - HF_HOME
+    - FLASH_QLA_ROOT
+    - KERNEL_CACHE_ROOT
   model_cache_requirements: >
     HF_HOME must be readable and writable. Its token file must be readable or
     absent. Offline runs must contain both pinned Hugging Face snapshots.
+    FLASH_QLA_ROOT must be a container-compatible Python prefix containing
+    flash_qla 0.1.2 and its pinned dependencies. KERNEL_CACHE_ROOT must be a
+    shared writable path; all ranks reuse its TileLang and TorchInductor
+    caches.
 
 items:
   hf_to_megatron_cpu:
@@ -219,25 +227,36 @@ items:
         : "${SLURM_PARTITION:?Set SLURM_PARTITION}"
         : "${CONTAINER_IMAGE:?Set CONTAINER_IMAGE}"
         : "${HF_HOME:?Set HF_HOME to a shared model-cache directory}"
+        : "${FLASH_QLA_ROOT:?Set FLASH_QLA_ROOT to a flash_qla 0.1.2 Python prefix}"
+        : "${KERNEL_CACHE_ROOT:?Set KERNEL_CACHE_ROOT to a shared writable cache}"
+        export PYTHONPATH=/opt/flash-qla
+        export TILELANG_CACHE_DIR="$KERNEL_CACHE_ROOT/tilelang"
+        export TORCHINDUCTOR_CACHE_DIR="$KERNEL_CACHE_ROOT/torchinductor"
+        mkdir -p "$TILELANG_CACHE_DIR" "$TORCHINDUCTOR_CACHE_DIR"
         ./scripts/training/train.sh \
           --nodes 2 --gpus-per-node 8 --no-gpu-resource-request \
           --account "$SLURM_ACCOUNT" --partition "$SLURM_PARTITION" \
           --time 00:45:00 --container-image "$CONTAINER_IMAGE" \
           --mount "$PWD:/opt/Megatron-Bridge" --mount "$HF_HOME:$HF_HOME" \
-          --env HF_HOME \
+          --mount "$FLASH_QLA_ROOT:/opt/flash-qla" \
+          --mount "$KERNEL_CACHE_ROOT:$KERNEL_CACHE_ROOT" \
+          --env HF_HOME --env PYTHONPATH --env TILELANG_CACHE_DIR \
+          --env TORCHINDUCTOR_CACHE_DIR \
           --recipe qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config \
           --mode pretrain --max_steps 50
       last_verified: null
       latest_probe:
         date: 2026-07-27
-        job_id: 5716939
-        bridge_commit: ab5f69ae7056bad28a2e3973d2b07f5f5a815b3e  # pragma: allowlist secret
-        steps_completed: 10
+        job_id: 5717967
+        bridge_commit: d43d312372408c9716f59ce46e72b7a2def55ac1  # pragma: allowlist secret
+        steps_completed: 8
         terminal_state: completed
-        initial_loss: 12.82952
-        final_loss: 0.08893608
-        steps_5_10_step_time_ms_avg: 30301.633
-        steps_5_10_model_tflops_per_gpu_avg: 194.417
+        training_step_exit_code: "0:0"
+        batch_exit_code: "0:0"
+        initial_loss: 12.82939
+        final_loss: 0.3416926
+        steps_5_8_step_time_ms_avg: 23254.625
+        steps_5_8_model_tflops_per_gpu_avg: 253.271
         skipped_iterations: 0
         nan_iterations: 0
       latest_attempt:
@@ -265,48 +284,26 @@ items:
         41-50 averaged 31.751010 seconds and 185.560 model TFLOP/s/GPU, which
         is 35.41% below the gate. The completion and stability requirements
         passed, but the throughput requirement did not, so this item remains
-        unverified. An experimental development stack using FlashQLA,
-        HybridEP, fused permutation, device-resident static dispatcher
-        metadata, Hopper grouped expert matrix multiplication, one-connection
-        launch ordering, and normal-priority shared-expert overlap averaged
-        22.340925 seconds per step over steps 5-8, or about 263.67 model
-        TFLOP/s/GPU. Losses and gradients were finite with zero skipped or NaN
-        iterations. This is 8.22% below the gate. The accepted short-run fused
-        HybridEP template used effective
-        preprocessing, dispatch, and combine chunks of 64 tokens. A matched
-        full-field 128-token template averaged 23.5981 seconds per step over
-        its two steady samples, or about 249.62 model TFLOP/s/GPU, and was
-        rejected. Optimizer-step parameter-gather overlap was also rejected
-        before iteration 1: both matching fields resolved to true, but one
-        PP1 model chunk left an empty remaining-chunk optimizer group during
-        DistributedOptimizer construction, so it produced no performance
-        sample. A later exact-16-H100 PP2/EP8 topology experiment placed one
-        pipeline stage and one EP8 group on each node. Its balanced
-        Et*20|t*20mL layout averaged 27.436850 seconds / 214.697813 model
-        TFLOP/s/GPU; an Et*21|t*19mL split improved to 26.593400 seconds /
-        221.507280 model TFLOP/s/GPU but remained 19.03% slower than the
-        TP1/PP1/EP16 short-run control. Node-local EP did not offset the
-        pipeline and 128-microstep schedule cost. A torch 2.13 / CUDA 13.3 /
-        TE 2.17 migration then passed a fresh-cache FlashQLA forward/backward
-        smoke and completed a matched HybridEP control at 24.236950 seconds /
-        243.043440 model TFLOP/s/GPU, 8.49% slower than the accepted torch 2.12
-        short-run control. Its NCCL-EP candidate completed bootstrap and
-        entered iteration 0, but all 16 ranks timed out in the first real
-        dispatch with NCCL error 2 at nccl_ep.cc:886, so it produced no
-        performance sample. A later exact-two-node fused gated-RMSNorm A/B
-        measured 22.549100 seconds / 261.235779 model TFLOP/s/GPU for its
-        control and 22.207450 seconds / 265.254754 model TFLOP/s/GPU for its
-        candidate, a 1.54% same-allocation throughput signal. The required
-        direct fused-kernel marker was absent, so this candidate was not
-        promoted over the accepted 263.67 model TFLOP/s/GPU short-run result.
-        An official DeepEP V2 extension subsequently built successfully, but
-        its required 16-rank BF16 dispatch/combine gate stopped before training
-        because the allocated nodes exposed CUDA driver API 12.2, which was
-        incompatible with the candidate PyTorch/CUDA runtime. That run is an
-        environment limitation, not dispatcher performance data. Further
-        optimization is deferred at this delivery point. If resumed, first
-        preflight node-driver compatibility, then rerun the real 16-rank
-        DeepEP V2 gate and same-allocation dispatcher A/B, directly verify the
-        fused gated-RMSNorm kernel path, and only promote a candidate after the
-        exact 50-step acceptance protocol passes. These experimental runtime
-        changes are not public recipe defaults, so the item remains unverified.
+        unverified. The current PR includes the formerly external H100 runtime:
+        FlashQLA 0.1.2, HybridEP fused permutation, device-resident static
+        dispatcher metadata, a fail-closed route-capacity assertion, Hopper
+        grouped expert matrix multiplication, one-connection launch ordering,
+        and normal-priority shared-expert overlap. Exact-two-node PR runtime
+        probe 5717967 completed all eight training steps and exited 0:0 with
+        finite losses and gradients and zero skipped or NaN iterations. Steps
+        5-8 averaged 23.254625 seconds, or about 253.271 model TFLOP/s/GPU, a
+        6.22%
+        throughput improvement over the 238.43 model TFLOP/s/GPU pinned-stack
+        control. It remains 11.85% below the gate and would need another 13.44%
+        throughput increase, to at most 20.4999 seconds per step. The best
+        development-stack short run remains 22.340925 seconds / about 263.67
+        model TFLOP/s/GPU, 8.22% below the gate. A current-pinned
+        full-field 128-token HybridEP template regressed by about 5.6% versus
+        the accepted 64/64/64 template and was reverted. A capacity-factor
+        1.02 screen required a fresh static-shape compilation; rank-divergent
+        compilation against the shared cache ended in an NCCL watchdog before
+        iteration 1, so it produced no capacity or performance evidence.
+        FlashQLA cold compilation also consumed the first bounded allocation
+        without an iteration; verification must use the shared persistent
+        caches declared above. The exact 50-step gate has not been rerun on
+        the current PR runtime, and no result at or above 287.305 exists.
