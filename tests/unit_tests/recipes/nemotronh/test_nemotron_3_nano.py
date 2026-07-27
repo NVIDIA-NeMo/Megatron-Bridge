@@ -108,6 +108,7 @@ class TestNemotron3NanoPretrain:
         assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
         assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
+        assert config.train.global_batch_size == 384
 
     def test_pretrain_recipes_do_not_expose_mtp_flag(self):
         """Nemotron 3 and 3.5 pretraining use distinct parameterless factories."""

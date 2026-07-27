@@ -173,7 +173,7 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_tensor_parallel_size == 1
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.global_batch_size == 384
     assert cfg.train.micro_batch_size == 1
 
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
@@ -204,20 +204,20 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.env_vars["USE_MNNVL"] == 0
 
 
-def test_nemotron_3_5_nano_4k_convergence_recipe_uses_perf_execution_policy():
-    """The 4K convergence recipe keeps safety checks while using the measured fast path."""
-    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_4k_config
+def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
+    """The 8K convergence recipe keeps safety checks while using the measured fast path."""
+    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_8k_config
     from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
-    cfg = nemotron_3_5_nano_pretrain_4k_config()
+    cfg = nemotron_3_5_nano_pretrain_8k_config()
 
-    assert cfg.model.seq_length == 4096
-    assert cfg.dataset.seq_length == 4096
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
     assert cfg.model.tensor_model_parallel_size == 1
     assert cfg.model.pipeline_model_parallel_size == 1
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_model_parallel_size == 8
-    assert cfg.train.global_batch_size == 512
+    assert cfg.train.global_batch_size == 384
     assert cfg.train.micro_batch_size == 2
 
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
@@ -241,6 +241,40 @@ def test_nemotron_3_5_nano_4k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
+    """The BF16 FSDP recipe changes only FSDP-required execution settings."""
+    from megatron.bridge.recipes.nemotronh import (
+        nemotron_3_5_nano_pretrain_8k_config,
+        nemotron_3_5_nano_pretrain_8k_fsdp_config,
+    )
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    reference = nemotron_3_5_nano_pretrain_8k_config()
+    cfg = nemotron_3_5_nano_pretrain_8k_fsdp_config()
+
+    assert cfg.model.seq_length == reference.model.seq_length == 8192
+    assert cfg.dataset.seq_length == reference.dataset.seq_length == 8192
+    assert cfg.train.global_batch_size == reference.train.global_batch_size == 384
+    assert cfg.train.micro_batch_size == reference.train.micro_batch_size == 2
+    assert cfg.model.moe_router_force_load_balancing is reference.model.moe_router_force_load_balancing is False
+    assert cfg.optimizer == reference.optimizer
+    assert cfg.scheduler == reference.scheduler
+    assert cfg.mixed_precision == reference.mixed_precision
+    assert cfg.rng == reference.rng
+
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
+    assert cfg.model.init_model_with_meta_device is True
+    assert cfg.dist.use_megatron_fsdp is True
+    assert cfg.ddp.use_megatron_fsdp is True
+    assert cfg.ddp.num_distributed_optimizer_instances == 1
+    assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
+    assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
+    assert cfg.ddp.average_in_collective is False
+    assert cfg.checkpoint.load is None
+    assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
 
 
 def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():

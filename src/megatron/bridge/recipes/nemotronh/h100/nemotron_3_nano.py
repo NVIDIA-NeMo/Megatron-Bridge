@@ -255,6 +255,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     """Return the Nemotron 3.5 Nano BF16 pretraining config."""
     cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
+    cfg.train.global_batch_size = 384
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
