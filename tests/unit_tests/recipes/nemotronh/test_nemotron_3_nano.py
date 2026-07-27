@@ -304,7 +304,7 @@ class TestNemotron3NanoSft:
         bridge.to_megatron_provider.return_value = provider
 
         with patch.object(recipe_module.AutoBridge, "from_hf_pretrained", return_value=bridge):
-            config = recipe_module.nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config()
+            config = recipe_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
 
         assert config.model.tensor_model_parallel_size == 2
         assert config.model.sequence_parallel is True

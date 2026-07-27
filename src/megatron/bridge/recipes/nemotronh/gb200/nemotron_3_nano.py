@@ -19,7 +19,7 @@ import torch
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
 from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
-    nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config,
+    nemotron_3_5_nano_sft_openmathinstruct2_packed_config,
 )
 from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
@@ -157,8 +157,8 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
-    """Return the Nemotron 3.5 Nano BF16 pretraining config for eight GB200 GPUs."""
+def nemotron_3_5_nano_pretrain_4k_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Nano BF16 4K pretraining config."""
     cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
@@ -169,9 +169,9 @@ def nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
     return cfg
 
 
-def nemotron_3_5_nano_sft_8gpu_gb200_bf16_openmathinstruct2_packed_config() -> ConfigContainer:
-    """Return the optimized 4K packed OpenMathInstruct-2 SFT config for eight GB200 GPUs."""
-    cfg = nemotron_3_5_nano_sft_16gpu_h100_bf16_openmathinstruct2_packed_config()
+def nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config() -> ConfigContainer:
+    """Return the optimized TP1 4K packed OpenMathInstruct-2 SFT config."""
+    cfg = nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
 
     cfg.model.tensor_model_parallel_size = 1
     cfg.model.sequence_parallel = False
@@ -210,13 +210,11 @@ def nemotron_3_5_nano_sft_8gpu_gb200_bf16_openmathinstruct2_packed_config() -> C
 # alias lets the GB200 release case select the hardware recipe without changing
 # the legacy ``nemotron_3_nano_pretrain_config`` default.
 nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config
-nemotron_3_5_nano_gb200_pretrain_config = nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config
 
 
 __all__ = [
-    "nemotron_3_5_nano_gb200_pretrain_config",
-    "nemotron_3_5_nano_pretrain_8gpu_gb200_bf16_config",
-    "nemotron_3_5_nano_sft_8gpu_gb200_bf16_openmathinstruct2_packed_config",
+    "nemotron_3_5_nano_pretrain_4k_config",
+    "nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
 ]

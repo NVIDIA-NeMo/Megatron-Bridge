@@ -20,6 +20,7 @@
 #
 
 import importlib
+import re
 from typing import Callable
 
 import pytest
@@ -35,6 +36,16 @@ _NEMOTRONH_RECIPE_FUNCS = [
     for name in getattr(_nemotronh_module, "__all__", [])
     if callable(getattr(_nemotronh_module, name, None)) and not name.startswith("nemotronh_")
 ]
+
+
+def test_nemotron_3_5_nano_library_recipe_names_are_hardware_agnostic():
+    """Library names describe behavior and do not collide with performance recipes."""
+    perf_module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+    library_names = {name for name in _nemotronh_module.__all__ if name.startswith("nemotron_3_5_nano_")}
+    perf_names = {name for name in dir(perf_module) if name.startswith("nemotron_3_5_nano_")}
+
+    assert all(re.search(r"(?:\d+gpu|h100|b200|b300|gb200|gb300)", name) is None for name in library_names)
+    assert library_names.isdisjoint(perf_names)
 
 
 class _FakeModelProvider:
@@ -192,12 +203,12 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.env_vars["USE_MNNVL"] == 0
 
 
-def test_nemotron_3_5_nano_gb200_convergence_recipe_uses_perf_execution_policy():
-    """The GB200 convergence recipe keeps safety checks while using the measured fast path."""
-    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_gb200_pretrain_config
+def test_nemotron_3_5_nano_4k_convergence_recipe_uses_perf_execution_policy():
+    """The 4K convergence recipe keeps safety checks while using the measured fast path."""
+    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_4k_config
     from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
 
-    cfg = nemotron_3_5_nano_gb200_pretrain_config()
+    cfg = nemotron_3_5_nano_pretrain_4k_config()
 
     assert cfg.model.seq_length == 4096
     assert cfg.dataset.seq_length == 4096
@@ -230,9 +241,9 @@ def test_nemotron_3_5_nano_gb200_convergence_recipe_uses_perf_execution_policy()
     assert cfg.env_vars["USE_MNNVL"] == 1
 
 
-def test_nemotron_3_5_nano_gb200_openmath_sft_recipe_uses_tuned_defaults():
-    """The GB200 packed SFT recipe owns the measured topology and run contract."""
-    cfg = _nemotronh_module.nemotron_3_5_nano_sft_8gpu_gb200_bf16_openmathinstruct2_packed_config()
+def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
+    """The TP1 packed SFT recipe owns the measured topology and run contract."""
+    cfg = _nemotronh_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config()
 
     assert cfg.model.seq_length == 4096
     assert cfg.model.tensor_model_parallel_size == 1
