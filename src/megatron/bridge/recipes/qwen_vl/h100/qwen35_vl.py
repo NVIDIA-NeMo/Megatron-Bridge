@@ -140,7 +140,12 @@ def qwen35_vl_27b_pretrain_16gpu_h100_bf16_mock_config() -> ConfigContainer:
 
 
 def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
-    """Return a pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B (MoE)."""
+    """Return the shared 8-GPU pre-training config for Qwen3.5/Qwen3.6-VL 35B-A3B.
+
+    The recipe uses TP4/PP2/EP4, freezes the language and vision towers, trains
+    the vision projection, and owns the MBS1/GBS512 batch contract used by
+    image-caption pre-training datasets.
+    """
     cfg = _pretrain_common()
 
     hf_path = "Qwen/Qwen3.5-35B-A3B"
@@ -156,6 +161,8 @@ def qwen35_vl_35b_a3b_pretrain_8gpu_h100_bf16_mock_config() -> ConfigContainer:
     cfg.model.freeze_vision_projection = False
     cfg.model.seq_length = 4096
     cfg.model.expert_model_parallel_size = 4
+    cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
 
     cfg.optimizer, cfg.scheduler = distributed_fused_adam_with_cosine_annealing(
         lr_warmup_iters=500,
