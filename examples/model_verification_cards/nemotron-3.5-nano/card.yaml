@@ -211,29 +211,15 @@ items:
         last_10_steps_model_tflops_per_gpu_avg: 536.450
         peak_allocated_memory_gib: 130.12
         peak_reserved_memory_gib: 137.39
-      matched_non_fsdp_comparison:
-        precision: fp8_mx
-        cuda_graphs: disabled
-        global_batch_size: 384
-        micro_batch_size: 3
-        metrics:
-          initial_loss: 12.18152
-          final_loss: 1.515283
-          last_10_steps_step_time_ms_avg: 12661.000
-          last_10_steps_model_tflops_per_gpu_avg: 874.150
-          peak_allocated_memory_gib: 175.29
-          peak_reserved_memory_gib: 180.65
-        fsdp_throughput_delta_percent: -9.01
-        fsdp_reserved_memory_delta_gib: -6.79
       expected_result: >
         On two complete four-GPU GB200 nodes in one segment-2 NVLink domain,
-        the real-data RP2 run completes exactly 20 finite-loss optimizer steps
-        with natural routing and finite LM/MTP-1/MTP-2 losses. LM loss is
-        12.17388 -> 7.125405, steps 11-20 average 13,362.640 ms / 536.450
-        TFLOP/s/GPU, no iteration is skipped or NaN, and complete checkpoints
-        are written at steps 10 and 20. The nested matched non-FSDP control is
-        a separate MXFP8 mock-data performance run used only for the paired
-        FSDP throughput and memory comparison.
+        the sequence-length-4,096, GBS/MBS 512/2 real-data RP2 run completes
+        exactly 20 finite-loss optimizer steps with natural routing and finite
+        LM/MTP-1/MTP-2 losses. LM loss is 12.17388 -> 7.125405, steps 11-20
+        average 13,362.640 ms / 536.450 TFLOP/s/GPU, no iteration is skipped or
+        NaN, and complete checkpoints are written at steps 10 and 20. This
+        result should not be compared with pretrain.H100, which uses sequence
+        length 8,192 and GBS/MBS 1024/1.
 
   pretrain_fsdp:
     GB200:
@@ -262,13 +248,13 @@ items:
         finite-loss optimizer steps with GBS/MBS 384/3, active MTP-1 and MTP-2
         losses, and no skipped or NaN iterations. LM loss is 12.19034 ->
         3.913218, and steps 11-20 average 13,917.000 ms / 795.390
-        TFLOP/s/GPU. The matched non-FSDP control is recorded under
-        pretrain.GB200; its LM loss is 12.18152 -> 1.515283, so these short
-        benchmark loss trajectories are not numerically equivalent. FSDP uses
-        6.79 GiB less peak reserved memory and is 9.01% slower. Increasing the
-        FSDP microbatch from two to three improves throughput by 29.24%; fixed
-        and max-pool double buffering regress throughput, and Transformer
-        Engine CUDA graphs are incompatible with FSDP module hooks.
+        TFLOP/s/GPU with 169.54 GiB peak allocated and 173.86 GiB peak reserved
+        memory. This result should not be compared with pretrain.GB200 or
+        pretrain_performance.GB200. Functional pretrain uses BF16 real RP2 at
+        4,096 tokens with GBS/MBS 512/2, natural routing, and CUDA graphs; the
+        performance leaf uses BF16 mock data with GBS/MBS 512/2 and CUDA
+        graphs. This FSDP leaf uses MXFP8 mock data at 8,192 tokens with GBS/MBS
+        384/3, forced routing, and no CUDA graphs.
 
   sft:
     H100:
@@ -661,4 +647,6 @@ items:
         exactly 50 steps with finite LM/MTP-1/MTP-2 losses and no skipped or NaN
         iterations. Transformer Engine CUDA graphs cover attention, Mamba,
         MoE-router, and MoE-preprocess scopes. Steps 41-50 average at most 20
-        seconds per step and at least 780 model TFLOP/s/GPU.
+        seconds per step and at least 780 model TFLOP/s/GPU. This result should
+        not be compared with pretrain_performance.H100 because the hardware
+        recipes use GBS/MBS 512/2 and 1024/1, respectively.

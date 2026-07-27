@@ -142,7 +142,6 @@ ITEM_KEYS = frozenset(
         "enabled_features",
         "metrics",
         "resume_comparison",
-        "matched_non_fsdp_comparison",
     }
 )
 RESUME_KEYS = frozenset(
@@ -154,18 +153,6 @@ RESUME_KEYS = frozenset(
         "sentinels_match",
     }
 )
-MATCHED_NON_FSDP_COMPARISON_KEYS = frozenset(
-    {
-        "precision",
-        "cuda_graphs",
-        "global_batch_size",
-        "micro_batch_size",
-        "metrics",
-        "fsdp_throughput_delta_percent",
-        "fsdp_reserved_memory_delta_gib",
-    }
-)
-
 FORBIDDEN_KEY_FRAGMENTS = (
     "account",
     "cluster",
@@ -686,94 +673,6 @@ def _validate_metrics(
         for name in sorted(METRIC_NAMES):
             if metrics.get(name) is not None:
                 errors.append(f"{_pointer(*path, name)}: must be null for status {status}")
-
-
-def _validate_matched_non_fsdp_comparison(
-    pretrain_item: Mapping[str, Any],
-    fsdp_item: Mapping[str, Any] | None,
-    *,
-    pretrain_path: tuple[str, ...],
-    fsdp_path: tuple[str, ...],
-    errors: list[str],
-) -> None:
-    """Validate the non-FSDP control recorded under the matching pretrain leaf."""
-    path = (*pretrain_path, "matched_non_fsdp_comparison")
-    value = pretrain_item.get("matched_non_fsdp_comparison")
-    fsdp_status = fsdp_item.get("status") if fsdp_item is not None else None
-    if value is None:
-        if fsdp_status == "verified":
-            errors.append(f"{_pointer(*path)}: required for verified {_pointer(*fsdp_path)}")
-        return
-    if fsdp_item is None:
-        errors.append(f"{_pointer(*path)}: no matching {_pointer(*fsdp_path)} leaf")
-
-    comparison = _as_mapping(value, path=path, errors=errors)
-    if comparison is None:
-        return
-    _check_keys(
-        comparison,
-        allowed=MATCHED_NON_FSDP_COMPARISON_KEYS,
-        required=MATCHED_NON_FSDP_COMPARISON_KEYS,
-        path=path,
-        errors=errors,
-    )
-    if comparison.get("cuda_graphs") != "disabled":
-        errors.append(f"{_pointer(*path, 'cuda_graphs')}: expected disabled for the matched FSDP control")
-
-    precision = comparison.get("precision")
-    if not isinstance(precision, str) or precision not in PRECISIONS:
-        errors.append(f"{_pointer(*path, 'precision')}: expected one of {sorted(PRECISIONS)}")
-    elif fsdp_item is not None and precision != fsdp_item.get("precision"):
-        errors.append(f"{_pointer(*path, 'precision')}: must match {_pointer(*fsdp_path, 'precision')}")
-
-    for name in ("global_batch_size", "micro_batch_size"):
-        field_value = comparison.get(name)
-        if not isinstance(field_value, int) or isinstance(field_value, bool) or field_value <= 0:
-            errors.append(f"{_pointer(*path, name)}: expected a positive integer")
-
-    _validate_metrics(
-        comparison,
-        item_name="pretrain_fsdp",
-        item_path=path,
-        status="verified",
-        errors=errors,
-    )
-
-    for name in ("fsdp_throughput_delta_percent", "fsdp_reserved_memory_delta_gib"):
-        field_value = comparison.get(name)
-        if not _is_finite_number(field_value):
-            errors.append(f"{_pointer(*path, name)}: expected a finite number")
-
-    if fsdp_status != "verified":
-        return
-    fsdp_metrics = fsdp_item.get("metrics") if fsdp_item is not None else None
-    control_metrics = comparison.get("metrics")
-    if not isinstance(fsdp_metrics, Mapping) or not isinstance(control_metrics, Mapping):
-        return
-    fsdp_tflops = fsdp_metrics.get("last_10_steps_model_tflops_per_gpu_avg")
-    control_tflops = control_metrics.get("last_10_steps_model_tflops_per_gpu_avg")
-    throughput_delta = comparison.get("fsdp_throughput_delta_percent")
-    if (
-        all(_is_finite_number(value) for value in (fsdp_tflops, control_tflops, throughput_delta))
-        and float(control_tflops) > 0
-    ):
-        expected_delta = (float(fsdp_tflops) / float(control_tflops) - 1.0) * 100.0
-        if not math.isclose(float(throughput_delta), expected_delta, abs_tol=0.02):
-            errors.append(
-                f"{_pointer(*path, 'fsdp_throughput_delta_percent')}: expected {expected_delta:.2f} "
-                "from the FSDP and control throughput metrics"
-            )
-
-    fsdp_reserved = fsdp_metrics.get("peak_reserved_memory_gib")
-    control_reserved = control_metrics.get("peak_reserved_memory_gib")
-    memory_delta = comparison.get("fsdp_reserved_memory_delta_gib")
-    if all(_is_finite_number(value) for value in (fsdp_reserved, control_reserved, memory_delta)):
-        expected_delta = float(fsdp_reserved) - float(control_reserved)
-        if not math.isclose(float(memory_delta), expected_delta, abs_tol=0.02):
-            errors.append(
-                f"{_pointer(*path, 'fsdp_reserved_memory_delta_gib')}: expected {expected_delta:.2f} "
-                "from the FSDP and control peak-reserved-memory metrics"
-            )
 
 
 def _argument_value(command: str, argument: str) -> str | None:
@@ -1612,8 +1511,6 @@ def _validate_item(
 
     if item_name == "checkpoint_resume":
         _validate_resume(item, item_path=path, status=status, errors=errors)
-    if item_name != "pretrain" and item.get("matched_non_fsdp_comparison") is not None:
-        errors.append(f"{_pointer(*path, 'matched_non_fsdp_comparison')}: field is allowed only on pretrain")
     if item_name == "sft_export_inference" and item.get("depends_on") != "sft":
         errors.append(f"{_pointer(*path, 'depends_on')}: must be sft")
     if item_name == "manual_forward_pass":
@@ -1820,27 +1717,6 @@ def _validate_card(card: Mapping[str, Any], raw: str, deny_terms: tuple[str, ...
                 default_bridge_commit=default_bridge_commit if isinstance(default_bridge_commit, str) else None,
                 errors=errors,
             )
-
-        pretrain_variants = hardware_groups.get("pretrain", {})
-        fsdp_variants = hardware_groups.get("pretrain_fsdp", {})
-        for hardware in sorted((set(pretrain_variants) | set(fsdp_variants)) - {"all"}):
-            pretrain_item = pretrain_variants.get(hardware)
-            fsdp_item = fsdp_variants.get(hardware)
-            fsdp_status = fsdp_item.get("status") if fsdp_item is not None else None
-            if pretrain_item is None:
-                if fsdp_status == "verified":
-                    errors.append(
-                        f"{_pointer('items', 'pretrain_fsdp', hardware)}: verified FSDP requires pretrain.{hardware}"
-                    )
-                continue
-            if pretrain_item.get("matched_non_fsdp_comparison") is not None or fsdp_status == "verified":
-                _validate_matched_non_fsdp_comparison(
-                    pretrain_item,
-                    fsdp_item,
-                    pretrain_path=("items", "pretrain", hardware),
-                    fsdp_path=("items", "pretrain_fsdp", hardware),
-                    errors=errors,
-                )
 
         item_leaves = list(_iter_item_leaves(items))
         performance_variants = hardware_groups.get("pretrain_performance", {})

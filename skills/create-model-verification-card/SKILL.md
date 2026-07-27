@@ -71,12 +71,12 @@ unverified.
 
 Add `pretrain_fsdp` as an optional hardware-scoped item when a first-class
 Megatron FSDP performance recipe exists for the exact model variant. Record
-the FSDP result under `pretrain_fsdp.<hardware>` and its non-FSDP control under
-the corresponding `pretrain.<hardware>.matched_non_fsdp_comparison`. This
-keeps each run's metrics with the execution mode that produced them. Keep the
-pair separate from checkpoint-resume and tuned non-FSDP
-`pretrain_performance` results. It does not claim checkpoint save/load unless
-a separate functional item records that evidence.
+the FSDP result under `pretrain_fsdp.<hardware>`. Keep it separate from
+checkpoint-resume and tuned non-FSDP `pretrain_performance` results. Do not
+embed a baseline, control, computed delta, or relative speedup under another
+item; agents can derive valid comparisons from the standalone commands,
+resolved recipes, and raw metrics. The FSDP item does not claim checkpoint
+save/load unless a separate functional item records that evidence.
 
 A concrete `pretrain_performance.<hardware>` leaf means a tuned canonical
 performance recipe exists for that hardware. Its item status states whether
@@ -192,15 +192,11 @@ When an FSDP recipe exists, mirror only its concrete leaves:
     GB200: verified
 ```
 
-Each verified `pretrain_fsdp` leaf must compare the FSDP recipe with a
-non-FSDP control that uses the same model, precision, sequence length, global
-batch size, micro batch size, data source, parallelism, and CUDA-graph policy.
-Record the control as `pretrain.<hardware>.matched_non_fsdp_comparison`,
-including its precision, initial/final loss, final-10 timing and throughput,
-and peak allocated/reserved memory. Record the signed FSDP throughput and
-reserved-memory deltas there as well. Keep CUDA graphs disabled in both
-variants when graph hooks are incompatible with FSDP. Do not imply loss parity:
-record both trajectories and state when they differ.
+Do not add prose comparisons, control payloads, computed deltas, or relative
+speedups to performance leaves. Agents can compare standalone runs
+automatically after resolving their recipes. The only exception is a concise
+warning that names two superficially similar runs that must **not** be compared
+and the exact convergence-contract differences that make them incompatible.
 
 The index may declare an allowlisted public hardware target such as `GB200`
 before detailed evidence exists. It must also include every concrete hardware
@@ -309,11 +305,29 @@ loss sentinels for every layout and do not claim step-by-step numerical parity.
 
 Performance settings are **intended** to preserve training semantics, not
 guaranteed to be bitwise neutral. Parallel reductions, fusions, recompute, and
-dispatcher implementations can change floating-point order. After changing
-them, require finite loss, no skipped iterations, and compatible loss sentinels
-before calling the mapping verified. Anything that changes arithmetic
-precision, forced router balancing, token dropping, packing, or effective batch
-construction is a convergence change, even when introduced to improve speed.
+dispatcher implementations can change floating-point order. Every paired run
+used to claim that a performance-related feature preserves convergence must
+start from the same weights and use the same clean Bridge commit, dataset and
+revision, sample order, tokenizer, sequence length, global batch size, token
+budget, optimizer steps, seeds, objective, routing, precision, optimizer, and
+learning-rate schedule. Change only the feature under test and unavoidable
+execution settings. Keep micro batch size and gradient accumulation unchanged
+when possible; if either changes, require the same loss check but do not claim
+step-by-step numerical identity. If a verified run deliberately changes any
+convergence field, make the exact deviation explicit in its command or
+`expected_result`.
+
+Compare LM and auxiliary-loss values at every shared optimizer step. Each
+candidate value must satisfy
+`abs(candidate - reference) <= 1e-6 + 0.01 * abs(reference)`. Require finite
+losses, zero skipped or NaN iterations, and the same qualitative loss trend.
+If any convergence field differs or any loss falls outside this bound, do not
+claim that the feature is convergence-neutral. Treat the result as standalone
+performance evidence, investigate the discrepancy, and explicitly identify
+the pair as not comparable only when the card would otherwise invite a false
+comparison. Anything that changes arithmetic precision, forced router
+balancing, token dropping, packing, or effective batch construction is a
+convergence change, even when introduced to improve speed.
 
 The **benchmark-only configuration** may deliberately change semantics to find
 an upper throughput bound. It includes mock data, forced MoE load balancing,
@@ -605,10 +619,14 @@ For every verified training item, record:
 
 Optionally record `peak_allocated_memory_gib` and
 `peak_reserved_memory_gib`. They are required on verified `pretrain_fsdp`
-leaves. The corresponding `pretrain.<hardware>.matched_non_fsdp_comparison`
-must record all six metrics for the control—initial/final loss, final-10
-timing/throughput, and peak allocated/reserved memory—plus its batch sizes and
-the signed FSDP throughput and reserved-memory deltas.
+leaves.
+
+Record raw metrics for each run only. Do not store comparison payloads,
+throughput or memory deltas, speedups, or prose ranking one performance run
+against another. Agents can calculate those from standalone leaves after
+checking that their resolved convergence contracts match. A concise
+not-comparable warning is allowed only when it prevents a misleading
+comparison and names the specific mismatched fields.
 
 Parse all fields from each complete keyed optimizer-step line. Do not collect
 loss, time, and throughput independently and zip them. Reject missing,
@@ -668,7 +686,7 @@ an item verified merely to make validation pass.
 - Keep all twelve core inventory items and use only the four statuses. Include
   `pretrain_performance` only when the exact variant has a canonical public
   performance recipe, and `pretrain_fsdp` only when an exact FSDP performance
-  recipe and matched non-FSDP control exist.
+  recipe has a completed standalone verification run.
 - Start the summary with the exact untuned performance disclaimer unless at
   least one concrete `pretrain_performance` hardware leaf exists; never use an
   `all` placeholder, and scope any tuned claim to the exact concrete leaf.
@@ -697,7 +715,11 @@ an item verified merely to make validation pass.
   with `qwen3_30b_a3b_convergence_v2` or record the exception and classify the
   result as support verification rather than cross-model convergence evidence.
 - Change only the execution/performance contract while tuning throughput, and
-  recheck loss sentinels after numerically non-bitwise changes.
+  require every shared-step loss to match within the declared 1% relative plus
+  `1e-6` absolute bound after numerically non-bitwise changes.
+- Keep performance leaves free of control payloads, computed deltas, speedups,
+  and comparison prose. Mention two runs together only to warn that differing
+  convergence contracts make them unsuitable for comparison.
 - Leave recipe global and micro batch sizes unchanged in card commands.
 - Save full SFT, export it to HF, and record an exact deterministic N-token HF
   completion in a two-command ordered list.
