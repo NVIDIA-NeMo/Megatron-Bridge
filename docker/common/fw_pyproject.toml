@@ -103,6 +103,8 @@ override-dependencies = [
     "nvidia-cusparse-cu12; sys_platform == 'never'",
     "nvidia-cusparselt-cu12; sys_platform == 'never'",
     "nvidia-nccl-cu12; sys_platform == 'never'",
+    # Keep aligned with the Megatron-Bridge project; fw-final performs a separate unlocked sync.
+    "cuda-tile==1.4.0",
     "nvidia-cudnn-frontend==1.24.0",
     "nvidia-cutlass-dsl[cu13]; sys_platform == 'never'", # Rely on system site packages install
     "tensorrt-llm; sys_platform == 'never'",
