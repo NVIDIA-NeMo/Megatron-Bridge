@@ -106,6 +106,7 @@ class TestNemotron3NanoPretrain:
         assert config.model.calculate_per_token_loss == base_config.model.calculate_per_token_loss
         assert config.model.use_te_rng_tracker == base_config.model.use_te_rng_tracker
         assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
+        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
 
     def test_pretrain_recipes_do_not_expose_mtp_flag(self):
@@ -268,6 +269,7 @@ class TestNemotron3NanoSft:
     ):
         """SFT and PEFT derive the provider from Nemotron 3 before applying MTP."""
         provider = HybridModelProvider()
+        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
         bridge = Mock()
         bridge.to_megatron_provider.return_value = provider
 
@@ -282,6 +284,7 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_use_repeated_layer is bool(mtp_num_layers)
         assert config.model.keep_mtp_spec_in_bf16 is bool(mtp_num_layers)
         assert config.model.mtp_loss_scaling_factor == (0.3 if mtp_num_layers else 0.1)
+        assert config.model.hf_model_id == tokenizer_model
         assert config.tokenizer.tokenizer_model == tokenizer_model
 
     @pytest.mark.parametrize(
@@ -323,6 +326,7 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_use_repeated_layer is True
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
 
     def test_finetuning_recipes_do_not_expose_model_id(self):
@@ -335,6 +339,7 @@ class TestNemotron3NanoSft:
     def test_nemotron_3_5_openmath_sft_recipe_owns_verified_h100_defaults(self):
         """The dedicated H100 recipe makes the standard packed SFT command concise."""
         provider = HybridModelProvider()
+        provider.hf_model_id = recipe_module._NEMOTRON_3_NANO_MODEL_ID
         bridge = Mock()
         bridge.to_megatron_provider.return_value = provider
 
@@ -347,6 +352,7 @@ class TestNemotron3NanoSft:
         assert config.model.mtp_use_repeated_layer is True
         assert config.model.keep_mtp_spec_in_bf16 is True
         assert config.model.mtp_loss_scaling_factor == 0.3
+        assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.model.tensor_model_parallel_size == 2
         assert config.model.sequence_parallel is True
         assert config.model.expert_tensor_parallel_size == 1

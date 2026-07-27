@@ -32,6 +32,7 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+# Placeholder until the public Nemotron 3.5 Nano repository is released.
 _NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 _OPENMATHINSTRUCT2_REVISION = "469216e3f46f4dacf476b382e192485ea51a143e"  # pragma: allowlist secret
 
@@ -259,6 +260,7 @@ def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 
@@ -408,6 +410,7 @@ def nemotron_3_5_nano_sft_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 
@@ -634,6 +637,7 @@ def nemotron_3_5_nano_peft_config(peft_scheme: str | PEFT = "lora") -> ConfigCon
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
     cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 

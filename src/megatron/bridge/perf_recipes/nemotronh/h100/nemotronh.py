@@ -25,6 +25,10 @@ from megatron.bridge.perf_recipes.nemotronh.common import (
 from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
+# Placeholder until the public Nemotron 3.5 Nano repository is released.
+_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+
+
 def nemotronh_56b_pretrain_64gpu_h100_fp8cs_config() -> ConfigContainer:
     """NemotronH 56B pretrain: 64× H100, FP8 current-scaling."""
     cfg = nemotronh_56b_pretrain_config()
@@ -176,7 +180,8 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_bf16_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg
 
 
@@ -188,5 +193,6 @@ def nemotron_3_5_nano_pretrain_16gpu_h100_fp8cs_config() -> ConfigContainer:
     cfg.model.mtp_use_repeated_layer = True
     cfg.model.keep_mtp_spec_in_bf16 = True
     cfg.model.mtp_loss_scaling_factor = 0.3
-    cfg.tokenizer.tokenizer_model = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
     return cfg

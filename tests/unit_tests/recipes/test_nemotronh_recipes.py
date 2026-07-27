@@ -198,6 +198,7 @@ def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
     assert cfg.env_vars["USE_MNNVL"] == 0
@@ -236,6 +237,7 @@ def test_nemotron_3_5_nano_4k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
     assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
     assert cfg.env_vars["USE_MNNVL"] == 1
@@ -255,6 +257,7 @@ def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
     assert cfg.model.moe_hybridep_num_sms == 32
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 
     assert cfg.dataset.seq_length == 4096
     assert cfg.dataset.hf_dataset.dataset_name == "openmathinstruct2"
