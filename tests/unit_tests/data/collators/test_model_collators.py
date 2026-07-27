@@ -22,7 +22,6 @@ import megatron.bridge.models.glm_vl.data.collate_fn as glm_vl_collate
 import megatron.bridge.models.kimi_vl.data.collate_fn as kimi_collate
 import megatron.bridge.models.ministral3.data.collate_fn as ministral3_collate
 import megatron.bridge.models.nemotron_omni.data.collate_fn as nemotron_omni_collate
-import megatron.bridge.models.nemotron_vl.data.collate_fn as nemotron_vl_collate
 import megatron.bridge.models.qwen_audio.data.collate_fn as qwen_audio_collate
 import megatron.bridge.models.qwen_vl.data.collate_fn as qwen_vl_collate
 from megatron.bridge.data.collators.registry import model_collate_required_for_all_examples, resolve_model_collate
@@ -38,7 +37,6 @@ collate = SimpleNamespace(
     glm4v_collate_fn=glm_vl_collate.glm4v_collate_fn,
     kimi_k25_vl_collate_fn=kimi_collate.kimi_k25_vl_collate_fn,
     ministral3_collate_fn=ministral3_collate.ministral3_collate_fn,
-    nemotron_nano_v2_vl_collate_fn=nemotron_vl_collate.nemotron_nano_v2_vl_collate_fn,
     nemotron_omni_collate_fn=nemotron_omni_collate.nemotron_omni_collate_fn,
     qwen2_5_collate_fn=qwen_vl_collate.qwen2_5_collate_fn,
     qwen2_audio_collate_fn=qwen_audio_collate.qwen2_audio_collate_fn,
@@ -1672,35 +1670,6 @@ def test_ministral3_nonpacked_collate_supervises_each_rows_last_real_token(monke
     assert batch["labels"][1].tolist() == [-100, 2, -100, -100, -100]
 
 
-def test_nemotron_vl_video_collate_rejects_in_batch_packing():
-    examples = [{"conversation": [{"role": "user", "content": [{"type": "video", "path": "video.mp4"}]}]}]
-
-    with pytest.raises(ValueError, match="does not support in-batch packing"):
-        collate.nemotron_nano_v2_vl_collate_fn(examples, object(), enable_in_batch_packing=True)
-
-
-def test_nemotron_vl_assistant_mask_boundaries_match_chat_template():
-    class _Tokenizer:
-        chat_template = None
-
-        def encode(self, text, add_special_tokens=False):  # noqa: ARG002
-            return {
-                nemotron_vl_collate.NEMOTRON_VL_ASSISTANT_START: [101, 102],
-                nemotron_vl_collate.NEMOTRON_VL_ASSISTANT_END: [103],
-            }[text]
-
-    processor = SimpleNamespace(tokenizer=_Tokenizer())
-    boundary_config = nemotron_vl_collate._nemotron_vl_assistant_mask_boundary_config(processor)
-    mask = nemotron_vl_collate.build_assistant_loss_mask(
-        [{"role": "assistant", "content": "answer"}],
-        torch.tensor([1, 101, 102, 30, 31, 103, 2]),
-        processor,
-        boundary_config=boundary_config,
-    )
-
-    assert mask.tolist() == [0.0, 0.0, 0.0, 1.0, 1.0, 1.0, 0.0]
-
-
 class _Gemma4ProcessorBase:
     """Minimal Gemma4Processor stub for ministral3_collate_fn tests."""
 
@@ -2483,64 +2452,3 @@ def test_nemotron_omni_collate_checks_temporal_model_expansion_before_truncation
             use_temporal_video_embedder=True,
             patch_dim=16,
         )
-
-
-class _NemotronVLProcessor:
-    def __init__(self, input_ids: torch.Tensor, num_patches: list[int]):
-        self.tokenizer = _NemotronOmniTokenizer()
-        self.input_ids = input_ids
-        self.num_patches = num_patches
-
-    def apply_chat_template(self, conversations, **kwargs):  # noqa: ARG002
-        return {
-            "input_ids": self.input_ids.clone(),
-            "attention_mask": (self.input_ids != self.tokenizer.pad_token_id).to(dtype=torch.long),
-            "num_patches": torch.tensor(self.num_patches, dtype=torch.long),
-            "pixel_values": torch.ones(sum(self.num_patches), 3, 16, 16),
-        }
-
-
-def test_nemotron_vl_collate_uses_each_rows_flat_image_tile_counts(monkeypatch):
-    vl_img_start_id = 131073
-    vl_img_end_id = 131074
-    raw_rows = torch.tensor(
-        [
-            [10, 11, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-            [20, vl_img_start_id, 92, 92, 92, 92, vl_img_end_id, 21, 2, 0, 0, 0, 0, 0, 0],
-            [
-                30,
-                vl_img_start_id,
-                92,
-                92,
-                92,
-                vl_img_end_id,
-                32,
-                vl_img_start_id,
-                92,
-                92,
-                92,
-                92,
-                vl_img_end_id,
-                31,
-                2,
-            ],
-        ]
-    )
-    processor = _NemotronVLProcessor(raw_rows, [1, 2, 3])
-    monkeypatch.setattr(nemotron_vl_collate, "extract_skipped_token_ids", lambda processor: torch.empty(0))
-    monkeypatch.setattr(nemotron_vl_collate, "_nemotron_vl_assistant_mask_boundary_config", lambda processor: None)
-    monkeypatch.setattr(nemotron_vl_collate, "build_assistant_loss_mask", _sentinel_assistant_loss_mask)
-
-    batch = collate.nemotron_nano_v2_vl_collate_fn(_heterogeneous_nemotron_examples(), processor)
-
-    assert batch["input_ids"].shape == (3, 13)
-    assert batch["input_ids"].tolist() == [
-        [10, 11, 2, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
-        [20, vl_img_start_id, 92, vl_img_end_id, 21, 2, 0, 0, 0, 0, 0, 0, 0],
-        [30, vl_img_start_id, 92, 92, vl_img_end_id, 32, vl_img_start_id, 92, 92, 92, vl_img_end_id, 31, 2],
-    ]
-    assert batch["attention_mask"].shape == batch["input_ids"].shape
-    assert batch["num_patches"].tolist() == [1, 1, 1, 1, 1, 1]
-    assert batch["num_patches"].dtype == torch.int
-    assert int((batch["input_ids"] == 92).sum()) == batch["num_patches"].numel()
-    assert batch["loss_mask"].nonzero(as_tuple=False).tolist() == [[0, 0], [1, 3], [2, 10]]
