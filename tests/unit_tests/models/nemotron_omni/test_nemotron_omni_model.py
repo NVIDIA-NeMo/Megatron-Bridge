@@ -32,12 +32,14 @@ from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni import (
     NemotronOmniModel,
     _pixel_shuffle_dynamic_resolution,
 )
+from megatron.bridge.models.nemotron_omni.modeling_nemotron_omni_llava import NemotronOmniLlavaModel
 from megatron.bridge.models.nemotron_omni.nemotron_omni_provider import (
     NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT,
     NEMOTRON_OMNI_LLAVA_CONTRACT,
     NemotronOmniLlavaModelProvider,
     NemotronOmniModelProvider,
 )
+from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
 
 
 class _FakeLanguageModel(nn.Module):
@@ -259,6 +261,13 @@ def test_llava_provider_preserves_existing_radio_cpe_default():
     provider = NemotronOmniLlavaModelProvider(nemotron_omni_contract=NEMOTRON_OMNI_LLAVA_CONTRACT)
 
     assert provider.radio_interpolate_only_cpe is True
+
+
+def test_llava_model_emits_deprecation_notice(monkeypatch):
+    monkeypatch.setattr(NemotronVLModel, "__init__", lambda *_args, **_kwargs: None)
+
+    with pytest.warns(FutureWarning, match="NemotronOmniLlavaModel is deprecated"):
+        NemotronOmniLlavaModel()
 
 
 def test_llava_provider_emits_deprecation_notice(monkeypatch):

@@ -12,7 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import warnings
+
+from megatron.core.models.multimodal.llava_model import LLaVAModel
+
 from megatron.bridge.models.nemotron_vl.modeling_nemotron_vl import NemotronVLModel
+from megatron.bridge.models.nemotron_vl.nemotron_vl_provider import NemotronVLModelProvider
 
 
 class NemotronOmniLlavaModel(NemotronVLModel):
@@ -26,6 +31,38 @@ class NemotronOmniLlavaModel(NemotronVLModel):
     for the canonical processor-expanded sequence and collator-owned packing
     contract.
     """
+
+    def __init__(
+        self,
+        config: NemotronVLModelProvider | None = None,
+        *,
+        llava_model: LLaVAModel | None = None,
+        pre_process: bool | None = True,
+        post_process: bool | None = True,
+        vp_stage: int | None = None,
+    ) -> None:
+        """Construct the deprecated LLaVA compatibility model.
+
+        Args:
+            config: Provider used to construct the wrapped model.
+            llava_model: Fully assembled MCore LLaVA model.
+            pre_process: Whether this pipeline stage owns input processing.
+            post_process: Whether this pipeline stage owns output processing.
+            vp_stage: Optional virtual pipeline stage.
+        """
+        warnings.warn(
+            "NemotronOmniLlavaModel is deprecated; use NemotronOmniModel with the canonical "
+            "processor-expanded sequence contract.",
+            FutureWarning,
+            stacklevel=2,
+        )
+        super().__init__(
+            config=config,
+            llava_model=llava_model,
+            pre_process=pre_process,
+            post_process=post_process,
+            vp_stage=vp_stage,
+        )
 
     def freeze(
         self,
