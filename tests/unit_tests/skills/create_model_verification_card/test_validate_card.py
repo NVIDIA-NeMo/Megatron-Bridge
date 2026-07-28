@@ -227,3 +227,59 @@ def test_sft_export_inference_accepts_hf_inference_launcher():
     )
 
     assert errors == []
+
+
+@pytest.mark.parametrize(
+    ("resume_initialization", "expected_errors"),
+    [
+        ("", []),
+        (
+            "--pretrained_checkpoint work/imported",
+            [
+                "/items/checkpoint_resume/H100/command: direct resume must omit the pretrained checkpoint "
+                "and load only the reference checkpoint"
+            ],
+        ),
+        (
+            "checkpoint.pretrained_checkpoint=work/imported",
+            [
+                "/items/checkpoint_resume/H100/command: direct resume must omit the pretrained checkpoint "
+                "and load only the reference checkpoint"
+            ],
+        ),
+    ],
+)
+def test_resume_reference_only_warm_start(resume_initialization, expected_errors):
+    validator = _load_validator()
+    errors = []
+    common_command = (
+        "./scripts/training/train.sh --nodes 1 --gpus-per-node 8 "
+        "--recipe vlm_pretrain --mode pretrain --dataset energon --max_steps 100"
+    )
+
+    validator._validate_resume_against_pretrain(
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} {resume_initialization} "
+                "--load_dir work/reference --save_dir work/resume "
+                "checkpoint.ckpt_step=50 logger.save_config_filepath=work/resume.yaml"
+            ),
+        },
+        {
+            "status": "verified",
+            "bridge_commit": "commit",
+            "command": (
+                f"{common_command} "
+                "--pretrained_checkpoint work/imported --save_dir work/reference checkpoint.load=null "
+                "logger.save_config_filepath=work/reference.yaml"
+            ),
+        },
+        resume_path=("items", "checkpoint_resume", "H100"),
+        pretrain_path=("items", "pretrain", "H100"),
+        default_bridge_commit=None,
+        errors=errors,
+    )
+
+    assert errors == expected_errors

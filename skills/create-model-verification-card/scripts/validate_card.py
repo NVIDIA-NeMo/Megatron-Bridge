@@ -682,6 +682,7 @@ def _resume_reference_settings(command: str) -> list[tuple[str, str, str | None]
     ignored_arguments = {
         "--load-dir",
         "--load_dir",
+        "--pretrained_checkpoint",
         "--save-dir",
         "--save-interval",
         "--save_dir",
@@ -693,11 +694,15 @@ def _resume_reference_settings(command: str) -> list[tuple[str, str, str | None]
         "checkpoint.load",
         "checkpoint.load_optim",
         "checkpoint.load_rng",
+        "checkpoint.pretrained_checkpoint",
         "checkpoint.save",
         "checkpoint.save_optim",
         "checkpoint.save_rng",
     }
-    ignored_runtime_overrides = {"train.empty_unused_memory_level"}
+    ignored_runtime_overrides = {
+        "logger.save_config_filepath",
+        "train.empty_unused_memory_level",
+    }
     settings: list[tuple[str, str, str | None]] = []
     index = 1  # Both commands are validated separately as train.sh invocations.
     while index < len(tokens):
@@ -1016,6 +1021,13 @@ def _validate_resume_against_pretrain(
     if _config_override_values(pretrain_command, "checkpoint.save"):
         errors.append(
             f"{_pointer(*pretrain_command_path)}: use the canonical --save_dir argument, not checkpoint.save"
+        )
+    if _argument_values(resume_command, "--pretrained_checkpoint") or _config_override_values(
+        resume_command, "checkpoint.pretrained_checkpoint"
+    ):
+        errors.append(
+            f"{_pointer(*resume_command_path)}: direct resume must omit the pretrained checkpoint "
+            "and load only the reference checkpoint"
         )
 
     required_reference_values = {

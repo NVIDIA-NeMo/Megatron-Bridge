@@ -553,7 +553,11 @@ result. Private executor configuration stays outside the card.
   reference. For each declared loss sentinel, require this bound:
   `abs(resumed - reference) <= 1e-6 + 0.01 * abs(reference)`. Tighter
   model-specific tolerances are allowed. Do not repeat the pre-checkpoint
-  training segment.
+  training segment. When the uninterrupted reference intentionally warm-starts
+  from `--pretrained_checkpoint`, omit that fallback from the resume command;
+  the middle checkpoint already contains the initialized model state. Persist
+  each run's post-setup config to its own path so the resume does not overwrite
+  the reference evidence.
 - **Performance (when present):** Use the exact canonical public performance
   recipe. Keep its bounded mock-data run separate from the real-data functional
   run and state public hardware plus thresholds.
