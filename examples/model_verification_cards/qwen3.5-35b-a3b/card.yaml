@@ -30,7 +30,7 @@ model:
   min_transformers_version: "5.8.1"
 verification_environment:
   base_container: nvcr.io/nvidia/nemo:26.06
-  bridge_commit: d43d312372408c9716f59ce46e72b7a2def55ac1  # pragma: allowlist secret
+  bridge_commit: 44f322e24cee9417c4d7c35047223e607c3143bb  # pragma: allowlist secret
   megatron_core_commit: 6cd6ea530e18776da54297bbf88292264264bcd3  # pragma: allowlist secret
   flash_qla_version: "0.1.2"
   recipe_name: qwen35_text_35b_a3b_pretrain_16gpu_h100_bf16_config
@@ -247,18 +247,48 @@ items:
       last_verified: null
       latest_probe:
         date: 2026-07-27
-        job_id: 5717967
-        bridge_commit: d43d312372408c9716f59ce46e72b7a2def55ac1  # pragma: allowlist secret
+        job_id: 5719802
+        array_task_job_ids: [5719848, 5719802]
+        bridge_commit: 44f322e24cee9417c4d7c35047223e607c3143bb  # pragma: allowlist secret
+        megatron_core_commit: 6cd6ea530e18776da54297bbf88292264264bcd3  # pragma: allowlist secret
+        model_overrides: []
+        nodes: 2
+        gpus_per_node: 8
         steps_completed: 8
         terminal_state: completed
         training_step_exit_code: "0:0"
         batch_exit_code: "0:0"
         initial_loss: 12.82939
-        final_loss: 0.3416926
-        steps_5_8_step_time_ms_avg: 23254.625
-        steps_5_8_model_tflops_per_gpu_avg: 253.271
+        final_loss: 0.3438379
+        steps_5_8_step_time_ms_avg: 23340.825
+        steps_5_8_model_tflops_per_gpu_avg: 252.375
         skipped_iterations: 0
         nan_iterations: 0
+      newer_mcore_compatibility_probe:
+        date: 2026-07-27
+        job_id: 5719802
+        bridge_commit: 44f322e24cee9417c4d7c35047223e607c3143bb  # pragma: allowlist secret
+        megatron_core_commit: aed727d4f14202dd8dc780044f2ab046a21f82c6  # pragma: allowlist secret
+        model_overrides: []
+        steps_completed: 8
+        terminal_state: completed
+        training_step_exit_code: "0:0"
+        batch_exit_code: "0:0"
+        initial_loss: 12.82951
+        final_loss: 0.3355037
+        steps_5_8_step_time_ms_avg: 22606.775
+        steps_5_8_model_tflops_per_gpu_avg: 260.575
+        skipped_iterations: 0
+        nan_iterations: 0
+      matched_implementation_comparison:
+        date: 2026-07-27
+        job_id: 5719416
+        megatron_core_commit: aed727d4f14202dd8dc780044f2ab046a21f82c6  # pragma: allowlist secret
+        bridge_steps_5_8_step_time_ms_avg: 22499.000
+        development_steps_5_8_step_time_ms_avg: 22483.200
+        bridge_relative_step_time_delta_percent: 0.070
+        terminal_state: completed
+        exit_code: "0:0"
       latest_attempt:
         date: 2026-07-27
         job_id: 5716977
@@ -288,22 +318,26 @@ items:
         FlashQLA 0.1.2, HybridEP fused permutation, device-resident static
         dispatcher metadata, a fail-closed route-capacity assertion, Hopper
         grouped expert matrix multiplication, one-connection launch ordering,
-        and normal-priority shared-expert overlap. Exact-two-node PR runtime
-        probe 5717967 completed all eight training steps and exited 0:0 with
-        finite losses and gradients and zero skipped or NaN iterations. Steps
-        5-8 averaged 23.254625 seconds, or about 253.271 model TFLOP/s/GPU, a
-        6.22%
-        throughput improvement over the 238.43 model TFLOP/s/GPU pinned-stack
-        control. It remains 11.85% below the gate and would need another 13.44%
-        throughput increase, to at most 20.4999 seconds per step. The best
-        development-stack short run remains 22.340925 seconds / about 263.67
-        model TFLOP/s/GPU, 8.22% below the gate. A current-pinned
-        full-field 128-token HybridEP template regressed by about 5.6% versus
-        the accepted 64/64/64 template and was reverted. A capacity-factor
-        1.02 screen required a fresh static-shape compilation; rank-divergent
-        compilation against the shared cache ended in an NCCL watchdog before
-        iteration 1, so it produced no capacity or performance evidence.
-        FlashQLA cold compilation also consumed the first bounded allocation
-        without an iteration; verification must use the shared persistent
-        caches declared above. The exact 50-step gate has not been rerun on
-        the current PR runtime, and no result at or above 287.305 exists.
+        normal-priority shared-expert overlap, and pinned/newer MCore API
+        compatibility. Exact-two-node job 5719802 ran the public recipe for
+        eight steps with no model overrides on both the pinned MCore and newer
+        candidate MCore. Both paths exited 0:0 with finite losses and
+        gradients and zero skipped or NaN iterations. The pinned path averaged
+        23.340825 seconds / 252.375 model TFLOP/s/GPU over steps 5-8; the newer
+        MCore path averaged 22.606775 seconds / 260.575 model TFLOP/s/GPU.
+        Matched job 5719416 then compared the reviewable Bridge runtime with
+        the development winner back-to-back on the same nodes and MCore:
+        22.4990 versus 22.4832 seconds, a 0.070% difference. That closes the
+        Bridge implementation gap to measurement noise; the remaining deficit
+        is not evidence of an unported runtime patch. Even the newer-MCore
+        exact-command probe remains 9.30% below the gate and needs about 10.26%
+        more throughput. A current-pinned full-field 128-token HybridEP
+        template regressed by about 5.6% versus the accepted 64/64/64 template
+        and was reverted. A capacity-factor 1.02 screen required a fresh
+        static-shape compilation; rank-divergent compilation against the
+        shared cache ended in an NCCL watchdog before iteration 1, so it
+        produced no capacity or performance evidence. FlashQLA cold
+        compilation also consumed the first bounded allocation without an
+        iteration; verification must use the shared persistent caches declared
+        above. The exact 50-step gate has not been rerun on the current PR
+        runtime, and no result at or above 287.305 exists.

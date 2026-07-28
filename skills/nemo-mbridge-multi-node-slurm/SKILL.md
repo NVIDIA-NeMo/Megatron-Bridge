@@ -198,6 +198,29 @@ uv run python -m torch.distributed.run --nproc_per_node=8 \
 | `No space left on device` during `uv` or `pip` | Container's `/root/.cache/` is full | Redirect: `export UV_CACHE_DIR=<SHARED_FS>/uv_cache` |
 | `ModuleNotFoundError: No module named 'megatron.core.activations'` | Container's pre-installed megatron-core conflicts with local `3rdparty/Megatron-LM` | Install local: `pip install -e 3rdparty/Megatron-LM --no-deps --no-build-isolation` |
 
+### QoS fragmentation workaround for diagnostic A/B runs
+
+If an exact 2-node interactive request remains pending under
+`QOSGrpNodeLimit` while lower-priority 1-node jobs repeatedly consume newly
+free nodes, a two-element Slurm array can remove that fragmentation for a
+diagnostic run:
+
+- request one exclusive node per array task with `#SBATCH --array=0-1`
+- let task 0 atomically publish its hostname to a unique file on shared storage
+- make both tasks wait for that file, then launch one
+  `torch.distributed.run` agent per node with `node_rank=$SLURM_ARRAY_TASK_ID`
+- give the first task a bounded rendezvous timeout long enough for the second
+  task to start
+- validate both array-task exit codes and both distributed-step exit codes
+
+This intentionally lets task 0 hold one node while task 1 waits for the next
+free node. Use it only for controlled diagnostics: partial array starts consume
+allocation time, a missing partner must fail closed, and the result does not
+replace a required final run in one atomic multi-node allocation. A matched
+Qwen3.5 16-H100 A/B on 2026-07-27 used this pattern after an atomic 2-node
+request was repeatedly fragmented; both array tasks and both distributed steps
+completed `0:0`.
+
 ---
 
 ## Debugging Multi-Node Failures

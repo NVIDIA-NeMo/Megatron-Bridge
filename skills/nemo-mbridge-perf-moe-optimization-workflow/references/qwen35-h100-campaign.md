@@ -476,3 +476,29 @@ throughput improvement, to at most 20.4999 seconds per step. Even the
 22.340925-second development-stack winner is 8.22% below the gate. Do not spend
 a 50-step verification allocation until a shorter exact-topology run crosses
 the threshold with terminal exit 0:0.
+
+Separate an implementation gap from ordinary node and time-window variance
+with a back-to-back run on the same allocation. Job 5719416 used the same
+eos0046/eos0066 pair and candidate MCore for both sides. The reviewable Bridge
+runtime averaged 22.4990 seconds / about 261.8 model TFLOP/s/GPU over steps
+5--8; the development winner averaged 22.4832 seconds / about 262.0 model
+TFLOP/s/GPU. The 15.8-millisecond difference was 0.070%. Both sides completed
+all eight iterations with finite losses, zero skipped or NaN iterations, and
+all array tasks and distributed steps exited 0:0. The Bridge implementation
+gap is therefore closed to measurement noise for this configuration. The
+remaining acceptance gap is a model/runtime optimization gap: 261.8 remains
+8.88% below the 287.305 gate and needs about 9.74% more throughput. Do not
+invent another Bridge port solely from unmatched historical logs.
+
+Verify version compatibility through the recipe itself, not hidden command-line
+fields. Job 5719802 ran the same exact PR recipe command with no model
+overrides on both the pinned MCore and candidate commit
+`aed727d4f14202dd8dc780044f2ab046a21f82c6`. The pinned path averaged
+23.340825 seconds / 252.375 model TFLOP/s/GPU over steps 5--8; the candidate
+path averaged 22.606775 seconds / 260.575 model TFLOP/s/GPU. Both completed all
+eight iterations with finite losses, zero skipped or NaN iterations, and every
+array task and distributed step exited 0:0. Keep version branching inside the
+reviewable recipe/runtime: set newer GDN backend fields only when the config
+dataclass exposes them, preserve the newer MCore FlashQLA adapter, inject the
+raw kernel only for the pinned API, and branch on the weighted-SwiGLU call
+signature.
