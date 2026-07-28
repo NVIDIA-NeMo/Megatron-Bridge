@@ -164,6 +164,7 @@ def nemotron_3_5_nano_pretrain_8k_config() -> ConfigContainer:
     cfg.model.seq_length = 8192
     cfg.dataset.seq_length = 8192
     cfg.train.global_batch_size = 512
+    cfg.train.micro_batch_size = 1
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True

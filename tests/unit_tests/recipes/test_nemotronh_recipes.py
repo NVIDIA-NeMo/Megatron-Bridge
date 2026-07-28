@@ -220,7 +220,7 @@ def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == 2
+    assert cfg.train.micro_batch_size == 1
 
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is False
@@ -261,7 +261,7 @@ def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
     assert cfg.model.seq_length == reference.model.seq_length == 8192
     assert cfg.dataset.seq_length == reference.dataset.seq_length == 8192
     assert cfg.train.global_batch_size == reference.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == reference.train.micro_batch_size == 2
+    assert cfg.train.micro_batch_size == reference.train.micro_batch_size == 1
     assert cfg.model.moe_router_force_load_balancing is reference.model.moe_router_force_load_balancing is False
     assert cfg.optimizer == reference.optimizer
     assert cfg.scheduler == reference.scheduler
