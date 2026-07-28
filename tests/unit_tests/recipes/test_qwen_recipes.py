@@ -904,6 +904,126 @@ def test_qwen35_h100_flash_qla_runtime_rejects_new_mcore_fla_backend(
         qwen35_runtime._configure_flash_qla_gated_delta_rule(module)
 
 
+def test_qwen35_h100_fused_gated_rms_norm_requires_exact_fla_version(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the measured fused norm rejects a different FLA version."""
+    import sys
+    from types import ModuleType
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    fused_norm_gate = ModuleType("fla.modules.fused_norm_gate")
+    fused_norm_gate.rms_norm_gated = object()
+    monkeypatch.setitem(sys.modules, "fla.modules.fused_norm_gate", fused_norm_gate)
+    monkeypatch.setattr(qwen35_runtime.metadata, "version", lambda package: "0.4.1")
+
+    with pytest.raises(ImportError, match=r"requires flash-linear-attention==0\.4\.2; found 0\.4\.1"):
+        qwen35_runtime._load_fused_gated_rms_norm()
+
+
+def test_qwen35_h100_fused_gated_rms_norm_loads_pinned_fla_version(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test that the measured fused norm accepts the pinned FLA version."""
+    import sys
+    from types import ModuleType
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    fused_gated_rms_norm = object()
+    fused_norm_gate = ModuleType("fla.modules.fused_norm_gate")
+    fused_norm_gate.rms_norm_gated = fused_gated_rms_norm
+    monkeypatch.setitem(sys.modules, "fla.modules.fused_norm_gate", fused_norm_gate)
+    monkeypatch.setattr(qwen35_runtime.metadata, "version", lambda package: "0.4.2")
+
+    assert qwen35_runtime._load_fused_gated_rms_norm() is fused_gated_rms_norm
+
+
+def test_qwen35_h100_fused_gated_rms_norm_applies_measured_contract(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """Test the fused norm's version, shape, epsilon, activation, and gamma contract."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    kernel_calls: list[tuple[tuple[object, ...], dict[str, object]]] = []
+    result = torch.empty(2, 3)
+
+    def fused_gated_rms_norm(*args: object, **kwargs: object) -> torch.Tensor:
+        kernel_calls.append((args, kwargs))
+        return result
+
+    monkeypatch.setattr(
+        qwen35_runtime,
+        "_load_fused_gated_rms_norm",
+        lambda: fused_gated_rms_norm,
+    )
+    weight = torch.tensor([1.0, 2.0, 3.0])
+    module = SimpleNamespace(
+        activation="silu",
+        config=SimpleNamespace(
+            normalization="RMSNorm",
+            layernorm_epsilon=1.0e-5,
+            layernorm_zero_centered_gamma=False,
+        ),
+        out_norm=SimpleNamespace(
+            weight=weight,
+            bias=None,
+            eps=1.0e-6,
+            zero_centered_gamma=True,
+        ),
+    )
+
+    qwen35_runtime._configure_fused_gated_rms_norm(module)
+    x = torch.arange(6, dtype=torch.float32).reshape(1, 2, 3)
+    gate = torch.arange(6, dtype=torch.float32).reshape(1, 2, 3)
+    output = qwen35_runtime._apply_fused_gated_rms_norm(module, x, gate)
+
+    assert output is result
+    assert len(kernel_calls) == 1
+    args, kwargs = kernel_calls[0]
+    torch.testing.assert_close(args[0], x.reshape(2, 3))
+    torch.testing.assert_close(args[1], gate.reshape(2, 3))
+    torch.testing.assert_close(args[2], weight + 1.0)
+    assert args[3] is None
+    assert kwargs == {"activation": "swish", "eps": 1.0e-6}
+
+
+@pytest.mark.parametrize(
+    ("activation", "normalization", "weight", "bias", "match"),
+    [
+        ("gelu", "RMSNorm", torch.ones(3), None, "requires SiLU activation"),
+        ("silu", "LayerNorm", torch.ones(3), None, "requires RMSNorm"),
+        ("silu", "RMSNorm", None, None, "requires a norm weight and no bias"),
+        ("silu", "RMSNorm", torch.ones(3), torch.zeros(3), "requires a norm weight and no bias"),
+    ],
+)
+def test_qwen35_h100_fused_gated_rms_norm_rejects_incompatible_contract(
+    monkeypatch: pytest.MonkeyPatch,
+    activation: str,
+    normalization: str,
+    weight: torch.Tensor | None,
+    bias: torch.Tensor | None,
+    match: str,
+):
+    """Test that the fused norm fails closed outside the measured contract."""
+    from types import SimpleNamespace
+
+    from megatron.bridge.perf_recipes.qwen.h100 import qwen35_runtime
+
+    monkeypatch.setattr(qwen35_runtime, "_load_fused_gated_rms_norm", lambda: object())
+    module = SimpleNamespace(
+        activation=activation,
+        config=SimpleNamespace(normalization=normalization),
+        out_norm=SimpleNamespace(weight=weight, bias=bias),
+    )
+
+    with pytest.raises(RuntimeError, match=match):
+        qwen35_runtime._configure_fused_gated_rms_norm(module)
+
+
 @pytest.mark.parametrize(
     ("supports_clamp_value", "expected_argument_count"),
     [(False, 3), (True, 4)],

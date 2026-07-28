@@ -286,6 +286,27 @@ and a high-priority shared stream regressed to 22.381 seconds. For this exact
 2-node H100 stack, retain shared overlap, connections=1, and normal stream
 priority.
 
+A later reviewable fused gated-RMSNorm implementation added a second small,
+attributable win without changing the recipe topology. On the same two-node
+allocation, its fused-GDN control averaged 23.4425 seconds / 251.30 model
+TFLOP/s/GPU over steps 5--8, and fusing the GDN output RMSNorm with its SiLU
+gate averaged 23.1225 seconds / 254.75 model TFLOP/s/GPU. The 1.365% step-time
+and 1.373% throughput gains passed a real-shape BF16 output/gradient parity
+probe and both distributed runs exited 0:0. Retain the fusion, but keep
+22.341 seconds / 263.67 as the best absolute stack measurement until a matched
+fast-node rerun supersedes it; the slower-node A/B proves relative attribution,
+not the 287.305 acceptance gate. That matched normal-speed follow-up subsequently
+averaged 22.152850 seconds / 265.925 model TFLOP/s/GPU for the retained fusion,
+which is the new absolute short-run point. It remains 7.442% below the gate and
+needs another 8.040% throughput improvement.
+
+Transformer Engine's global `fused_residual_rmsnorm` flag did not stack with
+the local GDN norm+gate fusion. On the same allocation, changing only that flag
+to true averaged 22.190525 seconds / 265.450 model TFLOP/s/GPU, a 0.170%
+step-time and 0.179% throughput regression. Both sides completed eight finite
+steps with zero skipped or NaN iterations and successful exits. Keep the local
+GDN fusion and leave the global residual fusion disabled on this recipe.
+
 Adding TE-scoped attention/router/preprocess graphs to that shared-overlap
 winner did not improve it. Steps 5-8 averaged 22.365 seconds / about 263.39
 model TFLOP/s/GPU, 0.106% slower than eager, while iteration 1 grew to 150.351

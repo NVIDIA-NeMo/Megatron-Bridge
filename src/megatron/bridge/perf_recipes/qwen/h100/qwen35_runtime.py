@@ -18,6 +18,7 @@ from __future__ import annotations
 import inspect
 from dataclasses import replace
 from functools import partial
+from importlib import metadata
 from types import MethodType
 from typing import Any
 
@@ -37,6 +38,7 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 
 _H100_HYBRIDEP_BF16_ALIGNMENT = 16
 _FLASH_QLA_VERSION = "0.1.2"
+_FLASH_LINEAR_ATTENTION_VERSION = "0.4.2"
 _WEIGHTED_SWIGLU_FORWARD_HAS_CLAMP_VALUE = (
     "clamp_value" in inspect.signature(WeightedSwiGLUFunction.forward).parameters
 )
@@ -71,8 +73,65 @@ def _configure_flash_qla_gated_delta_rule(module: GatedDeltaNet) -> None:
         )
 
 
+def _load_fused_gated_rms_norm() -> Any:
+    """Load the measured FLA fused gated-RMSNorm kernel lazily."""
+    try:
+        from fla.modules.fused_norm_gate import rms_norm_gated
+
+        fla_version = metadata.version("flash-linear-attention")
+    except (ImportError, metadata.PackageNotFoundError) as exc:
+        raise ImportError(
+            f"The Qwen3.5 H100 performance recipe requires flash-linear-attention=={_FLASH_LINEAR_ATTENTION_VERSION}."
+        ) from exc
+
+    if fla_version != _FLASH_LINEAR_ATTENTION_VERSION:
+        raise ImportError(
+            "The Qwen3.5 H100 performance recipe requires "
+            f"flash-linear-attention=={_FLASH_LINEAR_ATTENTION_VERSION}; found {fla_version}."
+        )
+    return rms_norm_gated
+
+
+def _configure_fused_gated_rms_norm(module: GatedDeltaNet) -> None:
+    """Require and install the measured Qwen3.5 gated-RMSNorm fusion."""
+    out_norm = module.out_norm
+    if module.activation not in ("silu", "swish"):
+        raise RuntimeError("The Qwen3.5 H100 fused gated-RMSNorm path requires SiLU activation")
+    if module.config.normalization != "RMSNorm":
+        raise RuntimeError("The Qwen3.5 H100 fused gated-RMSNorm path requires RMSNorm")
+    if getattr(out_norm, "weight", None) is None or getattr(out_norm, "bias", None) is not None:
+        raise RuntimeError("The Qwen3.5 H100 fused gated-RMSNorm path requires a norm weight and no bias")
+    module._qwen35_fused_gated_rms_norm = _load_fused_gated_rms_norm()
+
+
+def _apply_fused_gated_rms_norm(
+    module: GatedDeltaNet,
+    x: torch.Tensor,
+    gate: torch.Tensor,
+) -> torch.Tensor:
+    """Fuse the GDN output RMSNorm and SiLU gate."""
+    x = x.reshape(-1, x.shape[-1])
+    gate = gate.reshape(-1, gate.shape[-1])
+    out_norm = module.out_norm
+    weight = out_norm.weight
+    if getattr(
+        out_norm,
+        "zero_centered_gamma",
+        module.config.layernorm_zero_centered_gamma,
+    ):
+        weight = weight + 1.0
+    return module._qwen35_fused_gated_rms_norm(
+        x,
+        gate,
+        weight,
+        None,
+        activation="swish",
+        eps=getattr(out_norm, "eps", module.config.layernorm_epsilon),
+    )
+
+
 class _Qwen35H100FlashQLAGatedDeltaNet(GatedDeltaNet):
-    """Gated Delta Net using the measured FlashQLA Hopper kernel."""
+    """Gated Delta Net using the measured FlashQLA and FLA Hopper kernels."""
 
     def __init__(self, *args: Any, **kwargs: Any) -> None:
         super().__init__(*args, **kwargs)
@@ -86,6 +145,11 @@ class _Qwen35H100FlashQLAGatedDeltaNet(GatedDeltaNet):
         if capability != (9, 0):
             raise RuntimeError(f"The Qwen3.5 H100 FlashQLA path requires SM90, got {capability}")
         _configure_flash_qla_gated_delta_rule(self)
+        _configure_fused_gated_rms_norm(self)
+
+    def _apply_gated_norm(self, x: torch.Tensor, gate: torch.Tensor) -> torch.Tensor:
+        """Apply the measured fused output norm and gate."""
+        return _apply_fused_gated_rms_norm(self, x, gate)
 
 
 def _setup_h100_static_hybridep_metadata(

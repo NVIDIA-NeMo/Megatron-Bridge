@@ -24,7 +24,9 @@ not additive:
 
 - tensorwise current-scaling FP8 was 21.14% slower than BF16
 - folding Q/K L2 normalization into FlashQLA was 3.45% lower throughput
-- a standalone fused GDN RMSNorm+SiLU gate was 0.61% slower
+- an early pre-final-stack standalone fused GDN RMSNorm+SiLU gate was 0.61%
+  slower; a later final-stack, same-allocation A/B reversed the sign, as
+  recorded below
 - FlashQLA's default 16 local chunks beat both 8 chunks (2.00% slower) and
   disabled intra-card partitioning (3.10% slower)
 - HybridEP 32 SMs beat both 24 SMs (0.48% slower) and 48 SMs (5.71% slower);
@@ -78,8 +80,9 @@ not additive:
   optimizer steps before declaring a topology memory-feasible
 
 These results illustrate why a combined patch must be decomposed into
-independent A/Bs: an apparent fused-norm gain in a combined experiment did not
-reproduce when isolated.
+independent A/Bs and rebaselined after the surrounding stack changes. The early
+apparent fused-norm gain did not reproduce when first isolated, while the later
+reviewable final-stack implementation did.
 
 Do not assume that lowering `main_params_dtype` will recover another full
 master-weight copy when using BF16 precision-aware optimizer (PAO). PAO enables
@@ -512,6 +515,37 @@ shared-expert grouped-SwiGLU implementation, but that path requires
 Transformer Engine 2.14 or newer and an NVFP4 or MXFP8 recipe; it rejects this
 BF16 H100 workload. Do not spend another exact-topology allocation on either
 candidate without first changing a matching execution contract.
+
+Rebaseline a rejected micro-fusion when the surrounding execution contract
+changes materially. The final reviewable GDN runtime used
+`flash-linear-attention==0.4.2` to fuse output RMSNorm with the SiLU gate,
+required RMSNorm with a weight and no bias, and preserved zero-centered gamma
+by passing `weight + 1`. A real GDN flattened shape of 131,072 rows by 128
+features matched the unfused BF16 reference with output/input-gradient/
+gate-gradient cosines of 0.999996066/0.999994576/0.999996006 and gamma-gradient
+cosine of 1.000000119.
+
+The exact 2-node/16-H100 same-allocation end-to-end A/B then held the Bridge
+recipe, candidate MCore, nodes, container, and caches fixed. Over steps 5--8,
+the reviewable fused-GDN control averaged 23.4425 seconds / 251.30 model
+TFLOP/s/GPU, while adding fused gated-RMSNorm averaged 23.1225 seconds /
+254.75 model TFLOP/s/GPU. That is a 1.365% step-time reduction and 1.373%
+throughput gain. Both distributed runs and both Slurm tasks exited 0:0, with no
+OOM, NCCL error, or CUDA error. Retain this fusion as an attributable Bridge
+win. A second same-allocation A/B on a normal-speed node pair established the
+new absolute short-run point: the retained fused gated-RMSNorm control averaged
+22.152850 seconds / 265.925 model TFLOP/s/GPU over steps 5--8. Its losses were
+finite, skipped and NaN iterations stayed at zero, and the distributed job
+exited 0:0. This remains 7.442% below the 287.305 gate and needs another 8.040%
+throughput improvement, so a 50-step verification run is still premature.
+
+Do not enable Transformer Engine's global `fused_residual_rmsnorm` solely
+because the GDN-local fusion won. On the same normal-speed allocation, changing
+only that flag from false to true averaged 22.190525 seconds / 265.450 model
+TFLOP/s/GPU over steps 5--8, a 0.170% step-time regression and 0.179%
+throughput regression versus the 22.152850-second control. Both sides completed
+eight finite steps with zero skipped or NaN iterations and 0:0 exits. Reject
+the global residual fusion as non-additive on this stack.
 
 Gate experimental NCCL EP below the training level. A minimal buffer probe
 with the production expert and receive-capacity shape registered its symmetric

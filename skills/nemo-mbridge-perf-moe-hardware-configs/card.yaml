@@ -243,6 +243,21 @@ best_configs:
     shared_expert_overlap_gate_gap_percent: 8.22
     shared_expert_overlap_rank0_max_allocated_gib: 61.460
     shared_expert_overlap_rank0_max_reserved_gib: 65.500
+    fused_gated_rmsnorm_control_step_time_ms: 23442.5
+    fused_gated_rmsnorm_control_tflops: 251.30
+    fused_gated_rmsnorm_step_time_ms: 23122.5
+    fused_gated_rmsnorm_tflops: 254.75
+    fused_gated_rmsnorm_step_time_gain_percent: 1.365
+    fused_gated_rmsnorm_throughput_gain_percent: 1.373
+    fused_gated_rmsnorm_min_output_or_gradient_cosine: 0.999994576
+    fused_gated_rmsnorm_normal_speed_step_time_ms: 22152.850
+    fused_gated_rmsnorm_normal_speed_tflops: 265.925
+    fused_gated_rmsnorm_gate_gap_percent: 7.442
+    fused_gated_rmsnorm_needed_throughput_gain_percent: 8.040
+    global_fused_residual_rmsnorm_step_time_ms: 22190.525
+    global_fused_residual_rmsnorm_tflops: 265.450
+    global_fused_residual_rmsnorm_step_time_regression_percent: 0.170
+    global_fused_residual_rmsnorm_throughput_regression_percent: 0.179
     numa_bound_step_time_ms: 22341.025
     numa_bound_tflops: 263.6688
     numa_bound_regression_percent: 0.000448

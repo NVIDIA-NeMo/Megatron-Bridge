@@ -228,6 +228,20 @@ items:
         reviewable Bridge runtime at 22.4990 seconds and the development
         runtime at 22.4832 seconds over steps 5-8, a 0.070% difference. This
         closes the Bridge implementation gap to measurement noise; the
-        remaining deficit is an optimization gap. The exact 50-step gate has
-        not been rerun on the current PR runtime, and no result at or above
-        287.305 exists, so this item remains unverified.
+        remaining deficit is an optimization gap. A subsequent exact
+        same-allocation short A/B retained one attributable improvement:
+        fusing the GDN output RMSNorm with its SiLU gate reduced the steps 5-8
+        mean from 23.4425 seconds / 251.30 model TFLOP/s/GPU to 23.1225 seconds
+        / 254.75 model TFLOP/s/GPU, a 1.365% step-time and 1.373% throughput
+        gain. Both sides exited 0:0 without OOM, NCCL, or CUDA errors, and a
+        real-shape BF16 primitive probe preserved outputs and gradients at
+        cosine >=0.999994576. A second same-allocation short run on a
+        normal-speed node pair put the retained fusion at 22.152850 seconds /
+        265.925 model TFLOP/s/GPU over steps 5-8, with finite losses, zero
+        skipped or NaN iterations, and exit 0:0. Enabling global TE
+        fused_residual_rmsnorm did not stack: it regressed to 22.190525 seconds
+        / 265.450 model TFLOP/s/GPU and was rejected. The retained short-run
+        result remains 7.442% below the gate and needs another 8.040%
+        throughput improvement. The exact 50-step gate has not been rerun on
+        the current PR runtime, and no result at or above 287.305 exists, so
+        this item remains unverified.
