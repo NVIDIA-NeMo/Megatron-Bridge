@@ -465,7 +465,7 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
     # Qwen3.5/3.6 hybrid layers include GatedDeltaNet, which owns its CP
     # communication and does not accept the attention-only cp_comm_type kwarg.
     # Standard Transformer Engine attention defaults an unset value to p2p.
-    assert cfg.model.cp_comm_type is None
+    assert getattr(cfg.model, "cp_comm_type", None) is None
     assert cfg.model.seq_length == 8192
     assert cfg.model.recompute_granularity == "full"
     assert cfg.model.recompute_method == "uniform"
