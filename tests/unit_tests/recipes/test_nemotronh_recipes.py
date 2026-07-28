@@ -220,13 +220,13 @@ def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.model.sequence_parallel is False
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == 2
 
     assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
     assert cfg.model.moe_router_force_load_balancing is False
-    assert cfg.model.cross_entropy_fusion_impl == "native"
-    assert cfg.model.cuda_graph_impl == "transformer_engine"
-    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
+    assert cfg.model.cross_entropy_fusion_impl == "te"
+    assert cfg.model.cuda_graph_impl == "none"
+    assert cuda_graph_module_names(cfg.model) == []
     assert cfg.model.recompute_granularity is None
     assert cfg.model.recompute_modules is None
 
@@ -236,8 +236,9 @@ def test_nemotron_3_5_nano_8k_convergence_recipe_uses_perf_execution_policy():
     assert cfg.ddp.grad_reduce_in_fp32 is False
     assert cfg.ddp.check_for_nan_in_grad is True
     assert cfg.ddp.check_for_large_grads is True
+    assert cfg.ddp.average_in_collective is False
     assert cfg.rerun_state_machine.check_for_nan_in_loss is True
-    assert cfg.checkpoint.save_interval == 200
+    assert cfg.checkpoint.save_interval == 50
     assert cfg.checkpoint.async_save is False
 
     assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
@@ -261,7 +262,7 @@ def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
     assert cfg.model.seq_length == reference.model.seq_length == 8192
     assert cfg.dataset.seq_length == reference.dataset.seq_length == 8192
     assert cfg.train.global_batch_size == reference.train.global_batch_size == 512
-    assert cfg.train.micro_batch_size == reference.train.micro_batch_size == 1
+    assert cfg.train.micro_batch_size == reference.train.micro_batch_size == 2
     assert cfg.model.moe_router_force_load_balancing is reference.model.moe_router_force_load_balancing is False
     assert cfg.optimizer == reference.optimizer
     assert cfg.scheduler == reference.scheduler
@@ -278,6 +279,9 @@ def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
     assert cfg.ddp.data_parallel_sharding_strategy == "optim_grads_params"
     assert cfg.ddp.outer_dp_sharding_strategy == "no_shard"
     assert cfg.ddp.average_in_collective is False
+    assert cfg.ddp.megatron_fsdp_main_params_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_main_grads_dtype == torch.float32
+    assert cfg.ddp.megatron_fsdp_grad_comm_dtype == torch.bfloat16
     assert cfg.checkpoint.load is None
     assert cfg.checkpoint.ckpt_format == "fsdp_dtensor"
 

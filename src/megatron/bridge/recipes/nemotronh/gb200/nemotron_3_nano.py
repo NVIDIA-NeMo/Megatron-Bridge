@@ -164,7 +164,12 @@ def nemotron_3_5_nano_pretrain_8k_config() -> ConfigContainer:
     cfg.model.seq_length = 8192
     cfg.dataset.seq_length = 8192
     cfg.train.global_batch_size = 512
-    cfg.train.micro_batch_size = 1
+    cfg.train.micro_batch_size = 2
+    cfg.model.cross_entropy_fusion_impl = "te"
+    cfg.model.cuda_graph_impl = "none"
+    set_cuda_graph_modules(cfg.model, [])
+    cfg.ddp.average_in_collective = False
+    cfg.checkpoint.save_interval = 50
     cfg.model.mtp_num_layers = 2
     cfg.model.mtp_hybrid_override_pattern = "*E"
     cfg.model.mtp_use_repeated_layer = True
@@ -191,6 +196,9 @@ def nemotron_3_5_nano_pretrain_8k_fsdp_config() -> ConfigContainer:
     cfg.ddp.data_parallel_sharding_strategy = "optim_grads_params"
     cfg.ddp.outer_dp_sharding_strategy = "no_shard"
     cfg.ddp.average_in_collective = False
+    cfg.ddp.megatron_fsdp_main_params_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_main_grads_dtype = torch.float32
+    cfg.ddp.megatron_fsdp_grad_comm_dtype = torch.bfloat16
 
     cfg.checkpoint.load = None
     cfg.checkpoint.ckpt_format = "fsdp_dtensor"
