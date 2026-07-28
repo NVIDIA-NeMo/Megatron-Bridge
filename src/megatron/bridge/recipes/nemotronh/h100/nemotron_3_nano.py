@@ -255,7 +255,7 @@ def nemotron_3_nano_pretrain_8gpu_h100_bf16_config() -> ConfigContainer:
 def nemotron_3_5_nano_pretrain_config() -> ConfigContainer:
     """Return the Nemotron 3.5 Nano BF16 pretraining config."""
     cfg = nemotron_3_nano_pretrain_8gpu_h100_bf16_config()
-    cfg.train.global_batch_size = 384
+    cfg.train.global_batch_size = 512
     # Split the 8K sequence across two ranks so each MTP head materializes only
     # half of its vocabulary-loss workspace on an 80-GiB H100. P2P retains the
     # fused-attention path for this model's grouped-query layout.

@@ -109,7 +109,7 @@ class TestNemotron3NanoPretrain:
         assert recipe_module._NEMOTRON_3_5_NANO_MODEL_ID == ("nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16")
         assert config.model.hf_model_id == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
         assert config.tokenizer.tokenizer_model == recipe_module._NEMOTRON_3_5_NANO_MODEL_ID
-        assert config.train.global_batch_size == 384
+        assert config.train.global_batch_size == 512
         assert config.model.context_parallel_size == 2
         assert config.model.cp_comm_type == "p2p"
         assert config.model.recompute_modules == ["moe", "layernorm", "core_attn"]
