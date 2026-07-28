@@ -18,6 +18,7 @@ from unittest.mock import Mock
 import pytest
 import torch
 
+from megatron.bridge.models.conversion.model_bridge import HFWeightTuple, MegatronModelBridge
 from megatron.bridge.models.conversion.param_mapping import (
     ColumnParallelMapping,
     ReplicatedMapping,
@@ -191,6 +192,47 @@ def test_kda_a_log_export_restores_zero_padding() -> None:
     assert result[name].shape == (128,)
     torch.testing.assert_close(result[name][:96], active, rtol=0, atol=0)
     assert torch.count_nonzero(result[name][96:]).item() == 0
+
+
+def test_export_preserves_unconverted_multimodal_weights(monkeypatch: pytest.MonkeyPatch) -> None:
+    """K3 keeps the published vision tower and projector in strict HF exports."""
+    language = torch.tensor([1.0])
+    vision = torch.tensor([2.0])
+    projector = torch.tensor([3.0])
+    unrelated = torch.tensor([4.0])
+    tensors = {
+        "vision_tower.encoder.weight": vision,
+        "mm_projector.proj.weight": projector,
+        "unrelated.weight": unrelated,
+    }
+
+    class _Source:
+        @staticmethod
+        def get_all_keys() -> list[str]:
+            return list(tensors)
+
+    class _State:
+        source = _Source()
+
+        def __getitem__(self, name: str) -> torch.Tensor:
+            return tensors[name]
+
+    monkeypatch.setattr(
+        MegatronModelBridge,
+        "stream_weights_megatron_to_hf",
+        lambda *_args, **_kwargs: iter((HFWeightTuple("language_model.weight", language),)),
+    )
+    pretrained = SimpleNamespace(state=_State())
+
+    result = list(KimiK3Bridge().stream_weights_megatron_to_hf([], pretrained))
+
+    assert [item.param_name for item in result] == [
+        "language_model.weight",
+        "vision_tower.encoder.weight",
+        "mm_projector.proj.weight",
+    ]
+    torch.testing.assert_close(result[1].weight, vision, rtol=0, atol=0)
+    torch.testing.assert_close(result[2].weight, projector, rtol=0, atol=0)
 
 
 def test_stage_boundary_pack_unpack_and_bank_schedule() -> None:
