@@ -36,6 +36,16 @@ scripts are named `{Tier}_{Description}.sh` (e.g., `L0_Launch_training.sh`).
 H100 and GB200 each have independent L0/L1/L2/flaky jobs. Moving a script to
 `flaky/` removes it from blocking CI on that hardware target only.
 
+### Tier assignment criteria
+
+Reserve L0 for high-risk shared paths and the smallest current set of
+representative first-tier gates. L1 holds secondary but still broadly useful
+coverage that runs on main, on schedules, and for opt-in PRs through the
+established `needs-more-tests` label. Place legacy, redundant, niche,
+specialized, or expensive model-family coverage in L2. Popularity alone does
+not determine a test's tier; weigh risk, representativeness, cost, and overlap
+with existing coverage.
+
 **Prefer unit tests over functional tests.** CI GPU resources are limited;
 every functional test slot has a real cost.
 

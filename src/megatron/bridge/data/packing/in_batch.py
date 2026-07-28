@@ -212,6 +212,9 @@ def build_mcore_thd_sequence_batch_from_rows(
         packed["cu_seqlens_kv_padded"] = cu_seqlens_padded_t
     packed["max_seqlen_q"] = torch.tensor(max(padded_lengths), dtype=torch.int32)
     packed["max_seqlen_kv"] = torch.tensor(max(padded_lengths), dtype=torch.int32)
+    # MCore uses total_tokens together with the physical (padded) boundaries
+    # to construct seq_idx, which resets Mamba/SSM state between packed rows.
+    packed["total_tokens"] = total_length
     return packed
 
 
@@ -314,6 +317,7 @@ def pack_right_padded_sequence_batch_to_mcore_thd(
         "cu_seqlens_kv_padded",
         "max_seqlen_q",
         "max_seqlen_kv",
+        "total_tokens",
         *(sequence_tensor_pad_values or {}),
     ):
         if key in packed:

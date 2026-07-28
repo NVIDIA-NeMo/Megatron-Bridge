@@ -18,10 +18,10 @@ Mirrors ``qwen_vl/modelling_qwen3_vl/transformer_block.py``: returns the
 per-layer ``TransformerLayerSubmodules`` spec consumed by Megatron's
 ``GPTModel``. Step3.7 reuses Step-3.5's hybrid full/sliding decoder layer
 (``build_step35_layer_spec``) verbatim — the function lives in
-``step35_modeling`` to keep all Step-3.5 spec-construction logic in one place.
+``step35_bridge`` to keep all Step-3.5 spec-construction logic in one place.
 """
 
-from megatron.bridge.models.stepfun.step35_modeling import build_step35_layer_spec
+from megatron.bridge.models.stepfun.step35_bridge import build_step35_layer_spec
 
 
 def get_step37_text_layer_spec(*args, **kwargs):

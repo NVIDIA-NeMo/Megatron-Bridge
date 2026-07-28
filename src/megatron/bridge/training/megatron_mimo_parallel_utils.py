@@ -214,6 +214,8 @@ def finalize_model_grads_multimodule(
 
     The `infra` and `module_to_grid_tuple` parameters are pre-bound via partial().
     We ignore the schedule-provided `pg_collection` and use per-module PGs.
+    The schedule-provided `force_all_reduce` flag is forwarded to MCore's
+    standard finalizer for each active module.
 
     When encoder DP > LLM DP (heterogeneous), the LLM's loss normalization
     divides by tokens for ALL samples it processes, but after bridge fan-out
@@ -226,7 +228,7 @@ def finalize_model_grads_multimodule(
         model: Model list (passed by schedule, ignored - we use module_to_grid_tuple).
         num_tokens: Token count for gradient scaling.
         pg_collection: Schedule-provided PG (ignored - we use per-module PGs).
-        force_all_reduce: Schedule-provided flag (ignored - per-module PGs control sync).
+        force_all_reduce: Schedule-provided flag forwarded to each per-module finalizer.
         infra: MegatronMIMOInfra with per-module pg_collections (keyword-only, bound via partial).
         module_to_grid_tuple: List of (module, grid) tuples (keyword-only, bound via partial).
     """
@@ -272,12 +274,14 @@ def finalize_model_grads_multimodule(
                             [module],
                             num_tokens=num_tokens,
                             pg_collection=module_pg,
+                            force_all_reduce=force_all_reduce,
                         )
                     else:
                         _finalize_model_grads(
                             [module],
                             num_tokens=None,
                             pg_collection=module_pg,
+                            force_all_reduce=force_all_reduce,
                         )
 
         # Phase 2: broadcast the correct global total from LLM to encoder
@@ -304,7 +308,12 @@ def finalize_model_grads_multimodule(
             if module is not None and is_current_rank_in_grid(grid):
                 _, module_pg = _find_module(grid)
                 if module_pg is not None:
-                    _finalize_model_grads([module], num_tokens=None, pg_collection=module_pg)
+                    _finalize_model_grads(
+                        [module],
+                        num_tokens=None,
+                        pg_collection=module_pg,
+                        force_all_reduce=force_all_reduce,
+                    )
 
                     module_dp = _get_dp_size_from_grid(grid)
                     if module_dp != llm_dp:

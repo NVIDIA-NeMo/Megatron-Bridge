@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import copy
 import inspect
 import logging
 import warnings
@@ -41,6 +42,19 @@ from megatron.bridge.utils.vocab_utils import calculate_padded_vocab_size
 
 
 logger = logging.getLogger(__name__)
+
+DEFAULT_MAMBA_CHUNK_SIZE = 128
+
+
+def _configure_mamba_chunk_size(stack_spec: ModuleSpec, chunk_size: int) -> ModuleSpec:
+    """Return a stack spec whose Mamba mixer uses the requested scan chunk size."""
+    if chunk_size == DEFAULT_MAMBA_CHUNK_SIZE:
+        return stack_spec
+
+    configured_spec = copy.deepcopy(stack_spec)
+    mixer_spec = configured_spec.submodules.mamba_layer.submodules.mixer
+    mixer_spec.params = {**mixer_spec.params, "chunk_size": chunk_size}
+    return configured_spec
 
 
 def modelopt_hybrid_stack_spec(config: "HybridModelProvider | None" = None) -> ModuleSpec:
@@ -107,6 +121,7 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     bf16: bool = True
     num_layers: int | None = None
     mamba_num_groups: int = 8
+    mamba_chunk_size: int = DEFAULT_MAMBA_CHUNK_SIZE
     num_attention_heads: int = 1
     hybrid_attention_ratio: float = 0.0
     hybrid_mlp_ratio: float = 0.0
@@ -114,17 +129,10 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     hybrid_layer_pattern: str | None = None
     seq_length: int = 8192
     # HybridModel with no attention has no need for position embeddings, so none is default.
-    position_embedding_type: Literal["learned_absolute", "rope", "yarn", "none"] = "none"
+    position_embedding_type: Literal["learned_absolute", "rope", "none"] = "none"
     rotary_percent: float = 1.0
     rotary_base: int = 10000
     seq_len_interpolation_factor: float | None = None
-    yarn_rotary_scaling_factor: float | None = None
-    yarn_original_max_position_embeddings: int | None = None
-    yarn_beta_fast: float | None = None
-    yarn_beta_slow: float | None = None
-    yarn_mscale: float | None = None
-    yarn_mscale_all_dim: float | None = None
-    yarn_correction_range_round_to_int: bool | None = None
     apply_rope_fusion: bool = True
     make_vocab_size_divisible_by: int = 128
     gated_linear_unit: bool = False
@@ -144,14 +152,17 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
     vocab_size: int | None = None
     should_pad_vocab: bool = False
     hf_model_id: str | None = None
+    """Optional HuggingFace model identifier associated with this provider."""
+
+    hf_model_revision: str | None = None
+    """Optional immutable HuggingFace revision used to construct this provider."""
+
     _pg_collection: ProcessGroupCollection | None = None
 
     # MTP
     mtp_num_layers: int | None = 0
     mtp_hybrid_override_pattern: str | None = None
     keep_mtp_spec_in_bf16: bool = False
-
-    """Optional HuggingFace model identifier associated with this provider."""
 
     # If True, restore modelopt_state that contains quantization, sparsity, and speculative decoding state.
     restore_modelopt_state: bool = False
@@ -162,6 +173,9 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         Calculates the number of layers from ``hybrid_layer_pattern`` and executes
         the deferred MCore post-init logic.
         """
+        if self.mamba_chunk_size < 1:
+            raise ValueError("mamba_chunk_size must be at least 1.")
+
         # Check if hybrid_override_pattern is specified and throw deprecation warning.
         used_hybrid_override_pattern = False
         if self.hybrid_override_pattern is not None:
@@ -240,12 +254,24 @@ class HybridModelProvider(TransformerConfig, ModelProviderMixin[MCoreHybridModel
         """Resolve the configured Hybrid stack spec."""
         hybrid_stack_spec = self.hybrid_stack_spec
         if hybrid_stack_spec is None:
-            return get_default_hybrid_stack_spec(self)
-        if not isinstance(hybrid_stack_spec, ModuleSpec):
+            resolved_spec = get_default_hybrid_stack_spec(self)
+        elif not isinstance(hybrid_stack_spec, ModuleSpec):
             if len(inspect.signature(hybrid_stack_spec).parameters) > 0:
-                return hybrid_stack_spec(self)
-            return hybrid_stack_spec()
-        return hybrid_stack_spec
+                resolved_spec = hybrid_stack_spec(self)
+            else:
+                resolved_spec = hybrid_stack_spec()
+        else:
+            resolved_spec = hybrid_stack_spec
+
+        if self.attention_backend in {AttnBackend.local, "local"}:
+            from megatron.core.transformer.dot_product_attention import DotProductAttention
+
+            resolved_spec = copy.deepcopy(resolved_spec)
+            attention_layer = getattr(resolved_spec.submodules, "attention_layer", None)
+            if attention_layer is not None:
+                attention_layer.submodules.self_attention.submodules.core_attention = DotProductAttention
+
+        return _configure_mamba_chunk_size(resolved_spec, self.mamba_chunk_size)
 
     def provide(self, pre_process=None, post_process=None, vp_stage=None) -> MCoreHybridModel:
         """Configure and instantiate a Megatron Core Hybrid model based on this configuration.

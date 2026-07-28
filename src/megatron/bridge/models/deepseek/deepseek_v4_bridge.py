@@ -497,7 +497,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             compress_rope_params = rope_params
         provider.rotary_base = float(main_rope_params.get("rope_theta", hf_config.rope_theta))  # 10000
         provider.csa_compress_rotary_base = float(
-            compress_rope_params.get("rope_theta", getattr(hf_config, "compress_rope_theta", provider.rotary_base))
+            getattr(hf_config, "compress_rope_theta", compress_rope_params.get("rope_theta", provider.rotary_base))
         )  # 160000
         provider.rotary_scaling_factor = float(compress_rope_params["factor"])  # 16
         provider.original_max_position_embeddings = int(
@@ -640,8 +640,14 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         V4 stores attention/embedding weights as float8_e4m3fn with 128x128-block
         scales, and expert FFN weights as MXFP4 packed (I8, 2 nibbles/byte) with
         F8_E8M0 per-32-element scales.  For dict hf_param (GatedMLPMapping etc.),
-        dequantizes each key individually so expert gate/up weights are also handled.
+        dequantizes each key independently so expert gate/up weights are handled.
+        Optional CSA indexer weights may use the legacy flat name or the native
+        Transformers scorer submodule name.
         """
+        if isinstance(hf_param, str) and hf_param not in hf_state_dict:
+            legacy_param = hf_param.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
+            if legacy_param in hf_state_dict:
+                hf_param = legacy_param
         return quantization_utils.maybe_dequantize_hf_quantized_weight(hf_param, hf_state_dict)
 
     # ------------------------------------------------------------------
@@ -738,7 +744,7 @@ class DeepSeekV4Bridge(MegatronModelBridge):
             ),
             _ReplicatedOptional(
                 "decoder.layers.*.self_attention.core_attention.indexer.linear_weights_proj.weight",
-                "layers.*.attn.indexer.weights_proj.weight",
+                "layers.*.attn.indexer.scorer.weights_proj.weight",
             ),
             # Indexer sub-compressor (each indexer has its own compressor)
             _ReplicatedOptional(
@@ -1002,6 +1008,19 @@ class DeepSeekV4Bridge(MegatronModelBridge):
         """
         if task.weight_dtype is not None:
             return converted_weights_dict
+        native_scorer_key = next(
+            (
+                key
+                for key in converted_weights_dict
+                if ".indexer.scorer.weights_proj." in key and key not in hf_state_dict
+            ),
+            None,
+        )
+        if native_scorer_key is not None:
+            legacy_key = native_scorer_key.replace(".indexer.scorer.weights_proj.", ".indexer.weights_proj.")
+            if legacy_key in hf_state_dict:
+                converted_weights_dict = dict(converted_weights_dict)
+                converted_weights_dict[legacy_key] = converted_weights_dict.pop(native_scorer_key)
         return quantization_utils.requantize_hf_weight_scale_pairs(
             converted_weights_dict,
             hf_state_dict,

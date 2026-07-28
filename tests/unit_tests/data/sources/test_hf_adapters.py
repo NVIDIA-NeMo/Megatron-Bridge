@@ -1,6 +1,7 @@
 # Copyright (c) 2026, NVIDIA CORPORATION.  All rights reserved.
 
 import json
+import random
 from types import SimpleNamespace
 
 import pytest
@@ -75,6 +76,20 @@ def test_cord_adapter_supports_plural_and_singular_ground_truth(ground_truth):
 
     assert adapted[0]["conversation"][0]["content"][0]["type"] == "image"
     assert adapted[0]["conversation"][1]["role"] == "assistant"
+
+
+def test_cord_adapter_multiple_ground_truths_is_independent_of_global_rng():
+    row = {
+        "image": SimpleNamespace(),
+        "ground_truth": json.dumps({"gt_parses": [{"name": "first"}, {"name": "second"}]}),
+    }
+
+    random.seed(42)
+    first_adaptation = adapt_hf_dataset([row], adapter_name="cord_v2")
+    random.seed(142)
+    second_adaptation = adapt_hf_dataset([row], adapter_name="cord_v2")
+
+    assert first_adaptation == second_adaptation
 
 
 @pytest.mark.parametrize(

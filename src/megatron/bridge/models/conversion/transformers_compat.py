@@ -193,8 +193,8 @@ def rope_scaling_factor_from_hf(config, default: float = 1.0) -> float:
     return default
 
 
-def full_attention_interval_from_hf(config, default: int = 4) -> int:
-    """Extract the full-attention interval from a Qwen3-Next-style HuggingFace config.
+def full_attention_interval_from_hf(config, default: int = 4) -> int | list[int]:
+    """Extract the full-attention layout from a Qwen3-Next-style HuggingFace config.
 
     In transformers <5.5 the interval was stored directly as
     ``config.full_attention_interval``. In transformers >=5.5 the field was
@@ -208,16 +208,22 @@ def full_attention_interval_from_hf(config, default: int = 4) -> int:
         default: Value to return if neither layout is present.
 
     Returns:
-        int: The interval at which standard attention layers appear.
+        int | list[int]: The legacy interval or the exact per-layer pattern,
+        where 1 is linear attention and 0 is full attention.
+
+    Raises:
+        ValueError: If an explicit layer type is unsupported.
     """
+    layer_types = getattr(config, "layer_types", None)
+    if isinstance(layer_types, list) and layer_types:
+        supported_layer_types = {"linear_attention": 1, "full_attention": 0}
+        try:
+            return [supported_layer_types[layer_type] for layer_type in layer_types]
+        except KeyError as error:
+            raise ValueError(f"Unsupported attention layer type: {error.args[0]}") from error
+
     interval = getattr(config, "full_attention_interval", None)
     if interval is not None:
         return interval
-
-    layer_types = getattr(config, "layer_types", None)
-    if layer_types:
-        for i, layer_type in enumerate(layer_types):
-            if layer_type == "full_attention":
-                return i + 1
 
     return default

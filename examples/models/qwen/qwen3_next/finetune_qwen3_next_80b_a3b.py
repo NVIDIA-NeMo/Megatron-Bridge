@@ -21,7 +21,7 @@ This mirrors the Llama example flow and uses the Qwen3-Next recipe helper.
 Examples:
     Loading pretrained weights (recommended for finetune):
         1) Import HF checkpoint to Megatron format:
-           $ python examples/conversion/convert_checkpoints.py import \
+           $ ./scripts/conversion/convert.sh import \
                --hf-model Qwen/Qwen3-Next-80B-A3B-Instruct \
                --megatron-path /path/to/megatron_ckpt
 
@@ -49,7 +49,7 @@ from typing import Tuple
 
 from omegaconf import OmegaConf
 
-from megatron.bridge.data.builders import GPTSFTDatasetConfig, HFDatasetSourceConfig
+from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig, HFDatasetSourceConfig
 from megatron.bridge.recipes.qwen.qwen3_next import qwen3_next_80b_a3b_sft_config
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.pretrain import pretrain
@@ -78,6 +78,7 @@ def _replace_with_custom_data_path(config: ConfigContainer, data_path: str) -> N
         ),
         hf_validation_dataset=None,
         hf_test_dataset=None,
+        preprocessing=ChatSFTPreprocessingConfig(),
     )
 
 

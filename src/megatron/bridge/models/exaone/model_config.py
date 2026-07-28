@@ -12,19 +12,69 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Provider-neutral EXAONE 4 model configuration."""
+"""Provider-neutral EXAONE model configurations."""
 
+from copy import copy
 from dataclasses import dataclass, field
 from typing import Callable, ClassVar
 
 import torch
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_decoder_block_spec, get_gpt_decoder_layer_specs
 from megatron.core.models.gpt.gpt_model import GPTModel
 from megatron.core.process_groups_config import ProcessGroupCollection
 from megatron.core.transformer.spec_utils import ModuleSpec
+from megatron.core.transformer.transformer_block import TransformerBlockSubmodules
 from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.exaone.layer_specs import exaone4_layer_spec
+from megatron.bridge.models.gpt.model_builder import LayerSpecGPTModelBuilder
 from megatron.bridge.models.gpt.model_config import BridgeGPTModelConfig
+
+
+try:
+    import transformer_engine  # noqa: F401
+
+    HAVE_TE = True
+except (ImportError, ModuleNotFoundError):
+    HAVE_TE = False
+
+
+class _MTPDenseLayerSpecsList(list):
+    """Return a dense layer spec when MCore asks which spec to use for MTP."""
+
+    def __init__(self, data: list[ModuleSpec], dense_mtp_spec: ModuleSpec) -> None:
+        super().__init__(data)
+        self._dense_mtp_spec = dense_mtp_spec
+
+    def __getitem__(self, index):
+        if isinstance(index, int) and index < 0:
+            return self._dense_mtp_spec
+        return super().__getitem__(index)
+
+
+def build_exaone_moe_layer_spec(
+    config: BridgeGPTModelConfig,
+    vp_stage: int | None = None,
+) -> TransformerBlockSubmodules:
+    """Build EXAONE MoE decoder specs while keeping MTP sub-layers dense."""
+    transformer = config.transformer
+    block = get_gpt_decoder_block_spec(
+        transformer,
+        use_transformer_engine=HAVE_TE,
+        vp_stage=vp_stage,
+    )
+    if transformer.mtp_num_layers:
+        dense_config = copy(transformer)
+        dense_config.moe_layer_freq = [0] * transformer.num_layers
+        dense_config.num_moe_experts = None
+        dense_config.moe_grouped_gemm = False
+        dense_mtp_spec = get_gpt_decoder_layer_specs(
+            dense_config,
+            use_transformer_engine=HAVE_TE,
+            vp_stage=vp_stage,
+        )[-1]
+        block.layer_specs = _MTPDenseLayerSpecsList(block.layer_specs, dense_mtp_spec)
+    return block
 
 
 @dataclass(kw_only=True)
@@ -76,4 +126,24 @@ class Exaone4ModelBuilder(GPTModelBuilder):
         return model
 
 
-__all__ = ["Exaone4ModelBuilder", "Exaone4ModelConfig"]
+@dataclass(kw_only=True)
+class ExaoneMoeModelConfig(BridgeGPTModelConfig):
+    """Builder config preserving EXAONE MoE's hybrid attention and dense MTP."""
+
+    builder: ClassVar[str] = "megatron.bridge.models.exaone.model_config.ExaoneMoeModelBuilder"
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = field(
+        default_factory=lambda: build_exaone_moe_layer_spec
+    )
+
+
+class ExaoneMoeModelBuilder(LayerSpecGPTModelBuilder):
+    """Build EXAONE MoE with the configured hybrid decoder spec."""
+
+
+__all__ = [
+    "Exaone4ModelBuilder",
+    "Exaone4ModelConfig",
+    "ExaoneMoeModelBuilder",
+    "ExaoneMoeModelConfig",
+    "build_exaone_moe_layer_spec",
+]

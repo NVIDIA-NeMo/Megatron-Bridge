@@ -40,6 +40,7 @@ class TokenizerConfig(MTrainTokenizerConfig):
         - use_fast (bool): Whether to use fast tokenizer implementation
         - trust_remote_code (bool): Whether to trust remote code when loading tokenizer
         - include_special_tokens (bool): Whether to include special tokens when converting text to ids
+        - revision (str): Hugging Face Hub revision used to resolve an immutable tokenizer snapshot
 
     Example:
         hf_tokenizer_kwargs = {
@@ -60,6 +61,12 @@ class TokenizerConfig(MTrainTokenizerConfig):
             "legacy": True,
         }
     """
+
+    chat_template_path: Optional[str] = None
+    """Path to a jinja chat template file, loaded at build time as ``chat_template``. Supports local
+    paths and ``msc://`` URLs. Mutually exclusive with ``chat_template``. Useful for supplying a
+    template from an external/process caller (e.g. CLI overrides) where inlining the jinja is
+    impractical."""
 
     tokenizer_prompt_format: Optional[str] = None
     """Prompt format for the tokenizer."""

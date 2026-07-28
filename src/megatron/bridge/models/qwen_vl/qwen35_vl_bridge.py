@@ -41,6 +41,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     ConcatenatedQKVMapping,
     ReplicatedMapping,
 )
+from megatron.bridge.models.conversion.utils import moe_experts_stored_packed
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.qwen.qwen35_bridge import (
     Qwen35Bridge,
@@ -279,9 +280,10 @@ class Qwen35VLMoEBridge(MegatronModelBridge):
         hf_pretrained = getattr(self, "hf_pretrained", None)
         if hasattr(hf_pretrained, "state") and hasattr(hf_pretrained.state, "source"):
             hf_keys = set(hf_pretrained.state.source.get_all_keys())
-        experts_packed = Qwen35MoEBridge._experts_are_packed(
-            hf_keys,
-            hf_prefix="model.language_model.",
+        experts_packed = moe_experts_stored_packed(
+            hf_pretrained,
+            "model.language_model.layers.",
+            default=True,
         )
         mtp_experts_packed = any(
             key.startswith("mtp.layers.") and ".mlp.experts.gate_up_proj" in key for key in hf_keys

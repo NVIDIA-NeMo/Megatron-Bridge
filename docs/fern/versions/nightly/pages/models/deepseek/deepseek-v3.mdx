@@ -46,7 +46,7 @@ model = bridge.get_megatron_model(model_config, wrap_with_ddp=False)
 ### Import Checkpoint from HF
 
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model deepseek-ai/DeepSeek-V3-Base \
   --megatron-path /checkpoints/deepseek_v3_megatron \
   --trust-remote-code

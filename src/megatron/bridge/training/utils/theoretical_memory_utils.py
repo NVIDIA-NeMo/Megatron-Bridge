@@ -111,6 +111,9 @@ class _ParameterCounts:
     dense_transformer: float
     routed_experts: float
     embeddings: float
+    dense_transformer_by_layer: tuple[float, ...]
+    routed_experts_by_layer: tuple[float, ...]
+    final_layernorm: float
 
     @property
     def total(self) -> float:
@@ -154,8 +157,12 @@ def estimate_training_memory(
     expert_parallel_size = _positive_int_attr(model_config, "expert_model_parallel_size", 1)
     expert_tensor_parallel_size = _positive_int_attr(model_config, "expert_tensor_parallel_size", 1)
 
-    dense_parameters_per_gpu = parameter_counts.dense_transformer / (pipeline_parallel_size * tensor_parallel_size)
-    dense_parameters_per_gpu += _embedding_parameters_on_most_loaded_shard(model_config)
+    dense_parameters_per_gpu = _dense_parameters_on_most_loaded_shard(
+        model_config,
+        parameter_counts,
+        pipeline_parallel_size=pipeline_parallel_size,
+        tensor_parallel_size=tensor_parallel_size,
+    )
     dense_optimizer_shard_size = _positive_int_attr(config, "data_parallel_size", 1) * context_parallel_size
     dense_bytes_per_parameter = _bytes_per_parameter(config, dense_optimizer_shard_size)
 
@@ -170,8 +177,12 @@ def estimate_training_memory(
     ]
 
     if parameter_counts.routed_experts > 0:
-        routed_expert_parameters_per_gpu = parameter_counts.routed_experts / (
-            pipeline_parallel_size * expert_parallel_size * expert_tensor_parallel_size
+        routed_expert_parameters_per_gpu = _routed_expert_parameters_on_most_loaded_shard(
+            model_config,
+            parameter_counts,
+            pipeline_parallel_size=pipeline_parallel_size,
+            expert_parallel_size=expert_parallel_size,
+            expert_tensor_parallel_size=expert_tensor_parallel_size,
         )
         expert_optimizer_shard_size = _expert_optimizer_shard_size(
             config,
@@ -423,7 +434,7 @@ def _compute_activation_memory_bytes(
 
 def _count_parameters(model_config: object) -> _ParameterCounts:
     hidden_size = model_config.hidden_size
-    layer_counts = _get_layer_counts(model_config)
+    moe_layer_pattern = _get_moe_layer_pattern(model_config)
     ffn_projection_factor = _ffn_projection_factor(model_config)
 
     query_projection_size = model_config.kv_channels * model_config.num_attention_heads
@@ -438,19 +449,20 @@ def _count_parameters(model_config: object) -> _ParameterCounts:
         * hidden_size
         * ((1 + (num_query_groups / model_config.num_attention_heads)) * query_projection_to_hidden_size_ratio)
     )
-    layernorm_parameters = (4 * hidden_size * layer_counts.total) + (2 * hidden_size)
-    dense_mlp_parameters = ffn_projection_factor * hidden_size * model_config.ffn_hidden_size * layer_counts.dense
+    layernorm_parameters_per_layer = 4 * hidden_size
+    final_layernorm_parameters = 2 * hidden_size
+    dense_mlp_parameters_per_layer = ffn_projection_factor * hidden_size * model_config.ffn_hidden_size
 
     shared_expert_intermediate_size = _optional_positive_int_attr(
         model_config,
         "moe_shared_expert_intermediate_size",
         0,
     )
-    shared_expert_parameters = ffn_projection_factor * hidden_size * shared_expert_intermediate_size * layer_counts.moe
+    shared_expert_parameters_per_layer = ffn_projection_factor * hidden_size * shared_expert_intermediate_size
 
-    routed_expert_parameters = 0.0
-    latent_projection_parameters = 0.0
-    if _has_moe(model_config) and layer_counts.moe > 0:
+    routed_expert_parameters_per_layer = 0.0
+    latent_projection_parameters_per_layer = 0.0
+    if _has_moe(model_config) and any(moe_layer_pattern):
         moe_ffn_hidden_size = _optional_positive_int_attr(
             model_config,
             "moe_ffn_hidden_size",
@@ -458,30 +470,30 @@ def _count_parameters(model_config: object) -> _ParameterCounts:
         )
         moe_latent_size = getattr(model_config, "moe_latent_size", None)
         if moe_latent_size is None:
-            routed_expert_parameters = (
-                ffn_projection_factor
-                * hidden_size
-                * moe_ffn_hidden_size
-                * model_config.num_moe_experts
-                * layer_counts.moe
+            routed_expert_parameters_per_layer = (
+                ffn_projection_factor * hidden_size * moe_ffn_hidden_size * model_config.num_moe_experts
             )
         else:
-            routed_expert_parameters = (
-                ffn_projection_factor
-                * moe_latent_size
-                * moe_ffn_hidden_size
-                * model_config.num_moe_experts
-                * layer_counts.moe
+            routed_expert_parameters_per_layer = (
+                ffn_projection_factor * moe_latent_size * moe_ffn_hidden_size * model_config.num_moe_experts
             )
-            latent_projection_parameters = 2 * hidden_size * moe_latent_size * layer_counts.moe
+            latent_projection_parameters_per_layer = 2 * hidden_size * moe_latent_size
 
-    dense_transformer_parameters = (
-        (attention_parameters_per_layer * layer_counts.total)
-        + layernorm_parameters
-        + dense_mlp_parameters
-        + shared_expert_parameters
-        + latent_projection_parameters
+    dense_transformer_by_layer = tuple(
+        attention_parameters_per_layer
+        + layernorm_parameters_per_layer
+        + (
+            shared_expert_parameters_per_layer + latent_projection_parameters_per_layer
+            if is_moe_layer
+            else dense_mlp_parameters_per_layer
+        )
+        for is_moe_layer in moe_layer_pattern
     )
+    routed_experts_by_layer = tuple(
+        routed_expert_parameters_per_layer if is_moe_layer else 0.0 for is_moe_layer in moe_layer_pattern
+    )
+    dense_transformer_parameters = sum(dense_transformer_by_layer) + final_layernorm_parameters
+    routed_expert_parameters = sum(routed_experts_by_layer)
 
     embedding_size = hidden_size * _get_vocab_size(model_config)
     embedding_parameters = embedding_size
@@ -492,43 +504,43 @@ def _count_parameters(model_config: object) -> _ParameterCounts:
         dense_transformer=dense_transformer_parameters,
         routed_experts=routed_expert_parameters,
         embeddings=embedding_parameters,
+        dense_transformer_by_layer=dense_transformer_by_layer,
+        routed_experts_by_layer=routed_experts_by_layer,
+        final_layernorm=final_layernorm_parameters,
     )
 
 
 def _get_layer_counts(model_config: object) -> _LayerCounts:
+    moe_layer_pattern = _get_moe_layer_pattern(model_config)
+    num_moe_layers = sum(moe_layer_pattern)
+    return _LayerCounts(
+        dense=len(moe_layer_pattern) - num_moe_layers,
+        moe=num_moe_layers,
+        total=len(moe_layer_pattern),
+    )
+
+
+def _get_moe_layer_pattern(model_config: object) -> tuple[bool, ...]:
     num_layers = _positive_int_attr(model_config, "num_layers", 1)
     if not _has_moe(model_config):
-        return _with_mtp_layers(model_config, dense=num_layers, moe=0)
-
-    moe_layer_freq = getattr(model_config, "moe_layer_freq", 1)
-    if isinstance(moe_layer_freq, int):
-        if moe_layer_freq <= 0:
-            raise ValueError("moe_layer_freq must be positive")
-        moe_layer_pattern = tuple(1 if layer_idx % moe_layer_freq == 0 else 0 for layer_idx in range(num_layers))
-    elif isinstance(moe_layer_freq, (list, tuple)):
-        if len(moe_layer_freq) != num_layers:
-            raise ValueError(f"Invalid moe_layer_freq length: expected {num_layers}, got {len(moe_layer_freq)}")
-        moe_layer_pattern = tuple(1 if layer else 0 for layer in moe_layer_freq)
+        moe_layer_pattern = (False,) * num_layers
     else:
-        raise ValueError(f"Unsupported moe_layer_freq value: {moe_layer_freq}")
+        moe_layer_freq = getattr(model_config, "moe_layer_freq", 1)
+        if isinstance(moe_layer_freq, int):
+            if moe_layer_freq <= 0:
+                raise ValueError("moe_layer_freq must be positive")
+            moe_layer_pattern = tuple(layer_idx % moe_layer_freq == 0 for layer_idx in range(num_layers))
+        elif isinstance(moe_layer_freq, (list, tuple)):
+            if len(moe_layer_freq) != num_layers:
+                raise ValueError(f"Invalid moe_layer_freq length: expected {num_layers}, got {len(moe_layer_freq)}")
+            moe_layer_pattern = tuple(bool(layer) for layer in moe_layer_freq)
+        else:
+            raise ValueError(f"Unsupported moe_layer_freq value: {moe_layer_freq}")
 
-    num_moe_layers = sum(moe_layer_pattern)
-    return _with_mtp_layers(model_config, dense=num_layers - num_moe_layers, moe=num_moe_layers)
-
-
-def _with_mtp_layers(model_config: object, *, dense: int, moe: int) -> _LayerCounts:
     mtp_num_layers = getattr(model_config, "mtp_num_layers", None) or 0
     if mtp_num_layers > 0:
-        last_layer_is_moe = 1 if moe > 0 and dense == 0 else 0
-        if _has_moe(model_config):
-            moe_layer_freq = getattr(model_config, "moe_layer_freq", 1)
-            if isinstance(moe_layer_freq, int):
-                last_layer_is_moe = 1 if ((model_config.num_layers - 1) % moe_layer_freq == 0) else 0
-            elif isinstance(moe_layer_freq, (list, tuple)):
-                last_layer_is_moe = 1 if moe_layer_freq[-1] else 0
-        moe += last_layer_is_moe * mtp_num_layers
-        dense += (1 - last_layer_is_moe) * mtp_num_layers
-    return _LayerCounts(dense=dense, moe=moe, total=dense + moe)
+        moe_layer_pattern += (moe_layer_pattern[-1],) * mtp_num_layers
+    return moe_layer_pattern
 
 
 def _embedding_parameters_on_most_loaded_shard(model_config: object) -> float:
@@ -540,6 +552,142 @@ def _embedding_parameters_on_most_loaded_shard(model_config: object) -> float:
     if not model_config.share_embeddings_and_output_weights and pipeline_parallel_size == 1:
         embedding_parameters += embedding_size / tensor_parallel_size
     return embedding_parameters
+
+
+def _dense_parameters_on_most_loaded_shard(
+    model_config: object,
+    parameter_counts: _ParameterCounts,
+    *,
+    pipeline_parallel_size: int,
+    tensor_parallel_size: int,
+) -> float:
+    pipeline_stage_layer_counts = _uneven_pipeline_stage_layer_counts(model_config, pipeline_parallel_size)
+    if pipeline_stage_layer_counts is None:
+        return parameter_counts.dense_transformer / (
+            pipeline_parallel_size * tensor_parallel_size
+        ) + _embedding_parameters_on_most_loaded_shard(model_config)
+
+    pipeline_stage_layer_indices = _uneven_pipeline_stage_layer_indices(
+        model_config,
+        pipeline_stage_layer_counts,
+    )
+    dense_parameters_by_stage = [
+        sum(parameter_counts.dense_transformer_by_layer[layer_idx] for layer_idx in stage_layer_indices)
+        for stage_layer_indices in pipeline_stage_layer_indices
+    ]
+
+    num_layers = _positive_int_attr(model_config, "num_layers", 1)
+    dense_parameters_by_stage[-1] += sum(parameter_counts.dense_transformer_by_layer[num_layers:])
+    dense_parameters_by_stage[-1] += parameter_counts.final_layernorm
+
+    embedding_parameters = model_config.hidden_size * _get_vocab_size(model_config)
+    dense_parameters_by_stage[0] += embedding_parameters
+    dense_parameters_by_stage[-1] += embedding_parameters
+    return max(dense_parameters_by_stage) / tensor_parallel_size
+
+
+def _routed_expert_parameters_on_most_loaded_shard(
+    model_config: object,
+    parameter_counts: _ParameterCounts,
+    *,
+    pipeline_parallel_size: int,
+    expert_parallel_size: int,
+    expert_tensor_parallel_size: int,
+) -> float:
+    pipeline_stage_layer_counts = _uneven_pipeline_stage_layer_counts(model_config, pipeline_parallel_size)
+    if pipeline_stage_layer_counts is None:
+        return parameter_counts.routed_experts / (
+            pipeline_parallel_size * expert_parallel_size * expert_tensor_parallel_size
+        )
+
+    routed_parameters_by_stage = [
+        sum(parameter_counts.routed_experts_by_layer[layer_idx] for layer_idx in stage_layer_indices)
+        for stage_layer_indices in _uneven_pipeline_stage_layer_indices(
+            model_config,
+            pipeline_stage_layer_counts,
+        )
+    ]
+    num_layers = _positive_int_attr(model_config, "num_layers", 1)
+    routed_parameters_by_stage[-1] += sum(parameter_counts.routed_experts_by_layer[num_layers:])
+    return max(routed_parameters_by_stage) / (expert_parallel_size * expert_tensor_parallel_size)
+
+
+def _uneven_pipeline_stage_layer_counts(
+    model_config: object,
+    pipeline_parallel_size: int,
+) -> tuple[int, ...] | None:
+    first_stage_layers = getattr(model_config, "num_layers_in_first_pipeline_stage", None)
+    last_stage_layers = getattr(model_config, "num_layers_in_last_pipeline_stage", None)
+    if first_stage_layers is None and last_stage_layers is None:
+        return None
+    if pipeline_parallel_size <= 1:
+        raise ValueError("Uneven pipeline stages require pipeline_model_parallel_size greater than 1")
+
+    layers_to_distribute = _positive_int_attr(model_config, "num_layers", 1)
+    pipeline_stages_left = pipeline_parallel_size
+    if first_stage_layers is not None:
+        first_stage_layers = _positive_int_attr(
+            model_config,
+            "num_layers_in_first_pipeline_stage",
+            1,
+        )
+        layers_to_distribute -= first_stage_layers
+        pipeline_stages_left -= 1
+    if last_stage_layers is not None:
+        last_stage_layers = _positive_int_attr(
+            model_config,
+            "num_layers_in_last_pipeline_stage",
+            1,
+        )
+        layers_to_distribute -= last_stage_layers
+        pipeline_stages_left -= 1
+
+    if pipeline_stages_left == 0:
+        if layers_to_distribute != 0:
+            raise ValueError("Uneven pipeline stage layer counts do not cover all model layers")
+        middle_stage_layers = 0
+    else:
+        if layers_to_distribute <= 0 or layers_to_distribute % pipeline_stages_left != 0:
+            raise ValueError("Model layers must divide evenly over the remaining pipeline stages")
+        middle_stage_layers = layers_to_distribute // pipeline_stages_left
+
+    stage_layer_counts = [middle_stage_layers] * pipeline_parallel_size
+    if first_stage_layers is not None:
+        stage_layer_counts[0] = first_stage_layers
+    if last_stage_layers is not None:
+        stage_layer_counts[-1] = last_stage_layers
+    return tuple(stage_layer_counts)
+
+
+def _uneven_pipeline_stage_layer_indices(
+    model_config: object,
+    pipeline_stage_layer_counts: tuple[int, ...],
+) -> tuple[tuple[int, ...], ...]:
+    virtual_pipeline_size = getattr(model_config, "virtual_pipeline_model_parallel_size", None)
+    if virtual_pipeline_size is None:
+        stage_layer_indices = []
+        layer_offset = 0
+        for stage_layer_count in pipeline_stage_layer_counts:
+            stage_layer_indices.append(tuple(range(layer_offset, layer_offset + stage_layer_count)))
+            layer_offset += stage_layer_count
+        return tuple(stage_layer_indices)
+
+    virtual_pipeline_size = _positive_int_attr(
+        model_config,
+        "virtual_pipeline_model_parallel_size",
+        1,
+    )
+    if any(stage_layer_count % virtual_pipeline_size != 0 for stage_layer_count in pipeline_stage_layer_counts):
+        raise ValueError("Each uneven pipeline stage layer count must divide over virtual pipeline stages")
+
+    stage_layer_indices = [[] for _ in pipeline_stage_layer_counts]
+    layer_offset = 0
+    for _ in range(virtual_pipeline_size):
+        for pipeline_rank, stage_layer_count in enumerate(pipeline_stage_layer_counts):
+            chunk_size = stage_layer_count // virtual_pipeline_size
+            stage_layer_indices[pipeline_rank].extend(range(layer_offset, layer_offset + chunk_size))
+            layer_offset += chunk_size
+    return tuple(tuple(indices) for indices in stage_layer_indices)
 
 
 def _bytes_per_parameter(config: ConfigContainer, optimizer_shard_size: int) -> float:

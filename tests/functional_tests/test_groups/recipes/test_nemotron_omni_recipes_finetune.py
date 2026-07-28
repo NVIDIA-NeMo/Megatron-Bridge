@@ -52,7 +52,6 @@ class _TinyNemotronOmniModelProvider(NemotronOmniModelProvider):
     img_end_token_id: int = 22
     sound_context_token_id: int = 27
     tokenizer_type: str = "nemotron6-moe"
-    dynamic_resolution: bool = False
     use_vision_backbone_fp8_arch: bool = False
     vision_proj_ffn_hidden_size: int = 256
     tensor_model_parallel_size: int = 1

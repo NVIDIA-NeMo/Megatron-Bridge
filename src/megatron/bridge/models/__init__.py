@@ -41,8 +41,17 @@ from megatron.bridge.models.ernie_vl import (
     Ernie45VLBridge,
     Ernie45VLModel,
 )
-from megatron.bridge.models.exaone import (
+from megatron.bridge.models.exaone.exaone4 import (
     Exaone4Bridge,
+)
+from megatron.bridge.models.exaone.exaone45 import (
+    Exaone45Bridge,
+    Exaone45Model,
+    Exaone45ModelProvider,
+)
+from megatron.bridge.models.exaone.exaone_moe import (
+    ExaoneMoeBridge,
+    ExaoneMoeModelProvider,
 )
 from megatron.bridge.models.falcon_h1 import (
     FalconH1Bridge,
@@ -65,6 +74,10 @@ from megatron.bridge.models.glm_vl import (
 )
 from megatron.bridge.models.gpt_oss import (
     GPTOSSBridge,
+)
+from megatron.bridge.models.gpt_provider import GPTModelProvider
+from megatron.bridge.models.hy_v3 import (
+    HYV3Bridge,
 )
 from megatron.bridge.models.hybrid import (
     HybridModelBuilder,
@@ -89,6 +102,11 @@ from megatron.bridge.models.mimo_v2_flash import (
 )
 from megatron.bridge.models.minimax_m2 import (
     MiniMaxM2Bridge,
+)
+from megatron.bridge.models.minimax_m3 import (
+    MiniMaxM3Bridge,
+    MiniMaxM3VLModel,
+    MiniMaxM3VLModelProvider,
 )
 from megatron.bridge.models.ministral3 import (
     Ministral3Bridge,
@@ -222,6 +240,7 @@ __all__ = [
     "GPTModelProvider",
     "GPTOSSBridge",
     "T5ModelProvider",
+    "HYV3Bridge",
     "HybridModelBuilder",
     "HybridModelConfig",
     "HybridModelProvider",
@@ -239,6 +258,9 @@ __all__ = [
     "Ministral3Model",
     "Ministral3ModelProvider",
     "MiniMaxM2Bridge",
+    "MiniMaxM3Bridge",
+    "MiniMaxM3VLModel",
+    "MiniMaxM3VLModelProvider",
     "OlMoEBridge",
     "OlMoEModelProvider",
     "NemotronHBridge",
@@ -294,4 +316,11 @@ __all__ = [
     "Step37Bridge",
     "Step37Model",
     "Step37ModelProvider",
+    # EXAONE
+    "Exaone4Bridge",
+    "Exaone45Bridge",
+    "Exaone45Model",
+    "Exaone45ModelProvider",
+    "ExaoneMoeBridge",
+    "ExaoneMoeModelProvider",
 ]

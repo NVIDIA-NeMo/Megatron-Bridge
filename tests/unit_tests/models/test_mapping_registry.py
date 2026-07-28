@@ -12,6 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from types import SimpleNamespace
+
 import pytest
 
 from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRegistry
@@ -114,6 +116,27 @@ class TestMegatronMappingRegistry:
         """Test reverse querying a non-existent destination name."""
         mapping = mapping_registry.hf_to_megatron_lookup("non.existent.weight")
         assert mapping is None
+
+    def test_lookup_and_explicit_resolution_preserve_process_groups(self, mapping_registry):
+        pg_collection = SimpleNamespace(pp=object(), ep=object(), tp=object(), expt_tp=object())
+        mapping_registry.set_process_groups_from_pg_collection(pg_collection)
+
+        exact = mapping_registry.megatron_to_hf_lookup("embedding.word_embeddings.weight")
+        forward = mapping_registry.megatron_to_hf_lookup("decoder.layers.5.self_attention.linear_qkv.weight")
+        reverse = mapping_registry.hf_to_megatron_lookup("model.layers.7.self_attn.q_proj.weight")
+        explicit_clone = mapping_registry.resolve_mapping(forward, ())
+        auto_registry = MegatronMappingRegistry(AutoMapping("decoder.weight", "model.weight"))
+        auto_registry.set_process_groups_from_pg_collection(pg_collection)
+        lazy_delegate = auto_registry.megatron_to_hf_lookup("decoder.weight")._get_or_create_mapping("column")
+
+        for mapping in (exact, forward, reverse, explicit_clone, lazy_delegate):
+            assert mapping.pp_group is pg_collection.pp
+            assert mapping.ep_group is pg_collection.ep
+            assert mapping._tp_group is pg_collection.tp
+            assert mapping._etp_group is pg_collection.expt_tp
+        for mapping in (forward, reverse, explicit_clone):
+            assert mapping._tp_mapping.pp_group is pg_collection.pp
+            assert mapping._tp_mapping._tp_group is pg_collection.tp
 
     def test_get_all_mappings(self, mapping_registry, sample_mappings):
         """Test retrieving all mappings."""

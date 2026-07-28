@@ -14,7 +14,7 @@
 
 """Functional smoke tests for Qwen3-VL pretrain mock recipes.
 
-Verifies that pretrain configs using MockVLMConversationProvider can:
+Verifies that pretrain configs using MockVLMSFTDatasetConfig can:
 1. Build a valid config and instantiate the model
 2. Run a short training loop without errors
 3. Save checkpoints correctly

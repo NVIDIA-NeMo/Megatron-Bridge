@@ -287,6 +287,7 @@ class TestGemma3CustomComponents:
                 rotary_base_local=10_000,
                 kv_channels=256,
                 rotary_percent=1.0,  # Add required parameter
+                use_cpu_initialization=True,
             )
 
             # Verify that RotaryEmbedding was called for local rope

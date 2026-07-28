@@ -14,6 +14,7 @@
 
 """Functional tests for flat performance recipe integration."""
 
+import importlib
 import inspect
 import sys
 from pathlib import Path
@@ -25,8 +26,27 @@ SCRIPTS_PERF_PATH = Path(__file__).parents[4] / "scripts" / "performance"
 sys.path.insert(0, str(SCRIPTS_PERF_PATH))
 
 
+class _OfflineKimiProvider:
+    """Minimal Kimi provider for env-only tests that must run with HF offline."""
+
+    vocab_size = 163840
+    apply_rope_fusion = False
+
+    def finalize(self):
+        return None
+
+
+class _OfflineKimiAutoBridge:
+    @classmethod
+    def from_hf_pretrained(cls, *args, **kwargs):
+        return cls()
+
+    def to_megatron_provider(self, *args, **kwargs):
+        return _OfflineKimiProvider()
+
+
 class TestPerfConfigIntegration:
-    """Test performance recipe integration with flat perf recipes and library recipes."""
+    """Test performance recipe integration with flat performance and model recipes."""
 
     def test_llama3_8b_flat_perf_config_instantiation(self):
         """Test that a Llama3 8B flat perf recipe can be instantiated."""
@@ -157,6 +177,86 @@ class TestPerfConfigIntegration:
         assert cfg.num_gpus == 1024
         assert cfg.global_batch_size == recipe.train.global_batch_size
         assert cfg.tensor_model_parallel_size == recipe.model.tensor_model_parallel_size
+        assert cfg.env_vars == recipe.env_vars
+        assert cfg.env_vars is not recipe.env_vars
+
+    @pytest.mark.parametrize(
+        ("family", "builder", "expected_env"),
+        [
+            (
+                "deepseek",
+                (
+                    "megatron.bridge.perf_recipes.deepseek.gb200.deepseek_v3:"
+                    "deepseek_v3_pretrain_256gpu_gb200_bf16_config"
+                ),
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "USE_MNNVL": 1,
+                    "NVTE_ALLOW_NONDETERMINISTIC_ALGO": 0,
+                },
+            ),
+            (
+                "gpt_oss",
+                ("megatron.bridge.perf_recipes.gpt_oss.gb200.gpt_oss:gpt_oss_120b_pretrain_64gpu_gb200_fp8mx_config"),
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "kimi",
+                "megatron.bridge.perf_recipes.kimi.gb300.kimi_k2:kimi_k2_pretrain_256gpu_gb300_fp8mx_config",
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "NVTE_NORM_FWD_USE_CUDNN": 1,
+                },
+            ),
+            (
+                "llama",
+                "megatron.bridge.perf_recipes.llama.h100.llama3:llama3_8b_pretrain_8gpu_h100_fp8cs_config",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NCCL_CTA_POLICY": 1},
+            ),
+            (
+                "nemotronh",
+                (
+                    "megatron.bridge.perf_recipes.nemotronh.gb200.nemotronh:"
+                    "nemotron_3_super_pretrain_64gpu_gb200_bf16_config"
+                ),
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "qwen",
+                ("megatron.bridge.perf_recipes.qwen.gb200.qwen3_moe:qwen3_30b_a3b_pretrain_8gpu_gb200_fp8mx_config"),
+                {
+                    "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+                    "NVLINK_DOMAIN_SIZE": 72,
+                    "TORCH_NCCL_AVOID_RECORD_STREAMS": 0,
+                },
+            ),
+            (
+                "qwen_vl",
+                (
+                    "megatron.bridge.perf_recipes.qwen_vl.gb200.qwen3_vl:"
+                    "qwen3_vl_30b_a3b_pretrain_8gpu_gb200_bf16_config"
+                ),
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "NVLINK_DOMAIN_SIZE": 72, "USE_MNNVL": 1},
+            ),
+            (
+                "wan",
+                "megatron.bridge.perf_recipes.wan.h100.wan:wan_14b_pretrain_32gpu_h100_bf16_config",
+                {"NVTE_FWD_LAYERNORM_SM_MARGIN": 20, "CUDA_DEVICE_MAX_CONNECTIONS": 1},
+            ),
+        ],
+    )
+    def test_nemo_ci_perf_family_builders_embed_environment_settings(self, family, builder, expected_env, monkeypatch):
+        """Direct builders for every active nemo-ci family should carry process settings."""
+        if family == "kimi":
+            kimi_recipe_module = importlib.import_module("megatron.bridge.recipes.kimi.h100.kimi_k2")
+            monkeypatch.setattr(kimi_recipe_module, "AutoBridge", _OfflineKimiAutoBridge)
+
+        module_name, function_name = builder.split(":", 1)
+        recipe = getattr(importlib.import_module(module_name), function_name)()
+
+        assert recipe.env_vars.items() >= expected_env.items(), family
 
     def test_generated_workload_metadata_is_not_required(self):
         """Test that removed perf configs do not leave a generated metadata mirror."""
@@ -204,11 +304,11 @@ class TestPerfConfigIntegration:
 
         assert variants == [None, "large_scale"]
 
-    def test_get_library_recipe_llama_sets_paths(self):
-        """Test that the library recipe helper sets expected /nemo_run paths."""
-        from utils.utils import get_library_recipe
+    def test_build_recipe_config_llama_sets_paths(self):
+        """Test that the recipe config helper sets expected /nemo_run paths."""
+        from utils.utils import build_recipe_config
 
-        cfg = get_library_recipe(
+        cfg = build_recipe_config(
             model_family_name="llama",
             model_recipe_name="llama3_8b",
             train_task="pretrain",
@@ -221,11 +321,11 @@ class TestPerfConfigIntegration:
         assert cfg.logger.wandb_exp_name == "test_experiment"
         assert cfg.logger.wandb_save_dir == "/nemo_run/test_experiment/wandb"
 
-    def test_get_library_recipe_deepseek_sets_paths(self):
-        """Test that get_library_recipe works with DeepSeek recipes."""
-        from utils.utils import get_library_recipe
+    def test_build_recipe_config_deepseek_sets_paths(self):
+        """Test that build_recipe_config works with DeepSeek recipes."""
+        from utils.utils import build_recipe_config
 
-        cfg = get_library_recipe(
+        cfg = build_recipe_config(
             model_family_name="deepseek",
             model_recipe_name="deepseek_v3",
             train_task="pretrain",

@@ -24,6 +24,21 @@ from rich.table import Table
 from transformers.configuration_utils import PretrainedConfig
 
 
+def mcore_to_hf_window_size(window_size: int | list[int] | tuple[int, int] | None) -> int | None:
+    """Convert an MCore inclusive attention window to the Hugging Face token count.
+
+    MCore represents a causal sliding window as ``(left, right)``, where the
+    current token is included in the Hugging Face window size. Checkpoint YAML
+    reloads tuples as lists, so both sequence types are accepted. Providers that
+    already store the Hugging Face scalar representation pass through unchanged.
+    """
+    if isinstance(window_size, (list, tuple)):
+        if len(window_size) != 2:
+            raise ValueError(f"Expected a two-element MCore window, got {window_size!r}")
+        return window_size[0] + 1
+    return window_size
+
+
 def unwrap_model(model, module_instances=None):
     """Unwrap a model (or list of models) to the underlying module.
     Extends ``megatron.core.utils.unwrap_model`` with awareness of ``MegatronFSDP``.
@@ -287,6 +302,44 @@ def extract_sort_key(param_name: str):
         numbers.append(-1)
     numbers = numbers[:2]  # Keep at most 2 numbers
     return numbers, param_name
+
+
+def moe_experts_stored_packed(hf_pretrained, layers_prefix: str, default: bool = False) -> bool:
+    """Whether a checkpoint stores routed MoE experts *fused* rather than *per-expert*.
+
+    Fused layout keys look like ``{layers_prefix}<L>.mlp.experts.gate_up_proj`` / ``.down_proj`` (a
+    single stacked tensor per projection), while the per-expert layout (what ``save_pretrained``
+    writes) uses ``{layers_prefix}<L>.mlp.experts.<i>.gate_proj|up_proj|down_proj.weight``. Which one a
+    checkpoint uses depends on the transformers version, so the bridge selects mappings accordingly.
+
+    Args:
+        hf_pretrained: The loaded HF model wrapper (its ``state.source`` provides the checkpoint keys).
+        layers_prefix: HF prefix up to and including ``layers.`` (e.g. ``"model.layers."`` for an LLM,
+            ``"model.language_model.layers."`` for a VLM).
+        default: Value returned when the checkpoint keys are unavailable (e.g. building mappings
+            without a loaded checkpoint, as in unit tests) or no routed-expert keys are found.
+
+    Returns:
+        ``True`` if experts are stored fused, ``False`` if per-expert, ``default`` if undetermined.
+
+    Raises:
+        ValueError: if the checkpoint mixes fused and per-expert layouts.
+    """
+    source = getattr(getattr(hf_pretrained, "state", None), "source", None)
+    if source is None or not hasattr(source, "get_all_keys"):
+        return default
+    prefix = re.escape(layers_prefix)
+    per_expert_re = re.compile(rf"^{prefix}\d+\.mlp\.experts\.\d+\.(?:gate|up|down)_proj\.weight$")
+    fused_re = re.compile(rf"^{prefix}\d+\.mlp\.experts\.(?:gate_up_proj|down_proj)$")
+    keys = list(source.get_all_keys())
+    has_per_expert = any(per_expert_re.match(k) for k in keys)
+    has_fused = any(fused_re.match(k) for k in keys)
+    if has_per_expert and has_fused:
+        raise ValueError(
+            f"Checkpoint mixes fused and per-expert MoE expert layouts under {layers_prefix}*.mlp.experts; "
+            "expected a single consistent layout."
+        )
+    return has_fused if (has_fused or has_per_expert) else default
 
 
 def get_causal_lm_class_name_via_auto_map(

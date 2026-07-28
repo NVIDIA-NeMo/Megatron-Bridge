@@ -15,6 +15,15 @@ uv sync
 
 Use `./scripts/switch_mcore.sh main` and `uv sync --locked` to return to the pinned main-branch submodule.
 
+The full-scale `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config` performance
+recipe preserves the stack validated by Megatron Bridge PR
+[#4824](https://github.com/NVIDIA-NeMo/Megatron-Bridge/pull/4824):
+`nvcr.io/nvidia/nemo:26.06.01` with Megatron-LM dev commit
+`9d46c924dce3818f2b5f894f7380712c780d1801` and the capability-check patch
+documented in that PR. The Megatron-LM commit pinned by the current
+Megatron Bridge `main` branch does not provide the required DeepSeek V4
+performance features, so it is not a supported runtime for that recipe.
+
 | Variant | HF path | Quant scheme | Validation |
 |---------|---------|--------------|------------|
 | DeepSeek-V4-Flash | `deepseek-ai/DeepSeek-V4-Flash` | FP8 attn + MXFP4 experts | Verified on GB200, last-token logit cosine 0.96-0.99 (short prompts ~0.98, long prompts >1024 tokens ~0.96-0.99) vs official inference |
@@ -39,6 +48,9 @@ Available Blackwell pretraining recipes:
 
 - `deepseek_v4_flash_pretrain_mxfp8_config`: Adam MXFP8
 - `deepseek_v4_flash_pretrain_muon_config`: Muon BF16
+- `deepseek_v4_pro_pretrain_256gpu_gb300_fp8mx_config`: 256-GPU GB300
+  performance configuration (requires the PR #4824 container and dev-MCore
+  stack described above)
 
 `slurm_pretrain.sh` is a GB200 launcher with `TP=1,PP=4,EP=8,CP=1` by default. Indexer loss are disabled for now and is planned for a follow-up.
 
@@ -76,7 +88,7 @@ GPUs per node differ by hardware, so 32 GPUs means a different node count:
 | GB200 NVL | 4 | 8 | `--nodes=8 --gpus-per-node=4` (default) |
 | H100/H200 | 8 | 4 | `--nodes=4 --gpus-per-node=8` |
 
-**Sequences are unpacked (SBHD).** The CSA/DSA indexer asserts `packed_seq_params is None` (`csa.py`), so packed/THD sequences are not yet supported on the sparse layers. The recipes ship an unpacked SQuAD config; do not pass `--packed_sequence`. Select another built-in source with `dataset.hf_dataset.dataset_name=gsm8k` (HF) or use `--dataset llm-finetune-preloaded dataset.dataset_root=<path>` (JSONL) — both stay unpacked by default.
+**Sequences are unpacked (SBHD).** The CSA/DSA indexer asserts `packed_seq_params is None` (`csa.py`), so packed/THD sequences are not yet supported on the sparse layers. The recipes ship an unpacked SQuAD config; do not set `dataset.enable_offline_packing=true`. Select another built-in source with `--dataset gsm8k` or use `--dataset local-jsonl dataset.dataset_root=<path>` for JSONL data — both stay unpacked by default.
 
 **Eval sizing.** Each evaluation draws `validation.eval_iters × global_batch_size` samples; if that exceeds your validation/test split the eval hangs trying to form a batch. `slurm_sft.sh` defaults to a small `EVAL_ITERS=2` and `DO_TEST=false` (the end-of-run test eval is the usual culprit on small test sets) — raise them only when your splits are large enough.
 

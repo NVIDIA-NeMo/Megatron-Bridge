@@ -20,6 +20,8 @@ import pytest
 from megatron.bridge.data.builders import ChatSFTPreprocessingConfig, GPTSFTDatasetConfig
 from megatron.bridge.data.builders.gpt_sft import GPTSFTDatasetBuilder
 from megatron.bridge.data.packing import PackedSequenceSpecs
+from megatron.bridge.training.tokenizers.config import TokenizerConfig
+from megatron.bridge.training.tokenizers.tokenizer import build_tokenizer
 
 
 @pytest.mark.parametrize("mkdir_error", [FileExistsError, FileNotFoundError])
@@ -80,3 +82,21 @@ def test_default_pack_path_fingerprints_preprocessing(tmp_path):
     )
 
     assert prompt_builder.default_pack_path != chat_builder.default_pack_path
+
+
+def test_default_pack_path_is_stable_for_equivalent_non_hf_tokenizers(tmp_path):
+    def build() -> GPTSFTDatasetBuilder:
+        tokenizer = build_tokenizer(TokenizerConfig(tokenizer_type="NullTokenizer", vocab_size=128))
+        return GPTSFTDatasetBuilder(
+            config=GPTSFTDatasetConfig(
+                dataset_root=tmp_path,
+                seq_length=128,
+                enable_offline_packing=True,
+                offline_packing_specs=PackedSequenceSpecs(packed_sequence_size=128),
+            ),
+            tokenizer=tokenizer,
+        )
+
+    first = build()
+    second = build()
+    assert first.default_pack_path == second.default_pack_path

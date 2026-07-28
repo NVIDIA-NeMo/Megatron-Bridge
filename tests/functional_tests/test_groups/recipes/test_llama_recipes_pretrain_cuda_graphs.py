@@ -52,6 +52,23 @@ LLAMA_PRETRAIN_RECIPES = [
             "ddp": {"check_for_nan_in_grad": False},
         },
     ),
+    (
+        llama32_1b_config,
+        "llama32_1b",
+        {
+            "model": {
+                "num_layers": 2,
+                "cuda_graph_impl": "local",
+                "cuda_graph_scope": ["full_iteration"],
+                "use_te_rng_tracker": True,
+            },
+            "optimizer": {"optimizer_cuda_graph": True},
+            # Disable checkpoint save as it's not supported currently with OptimizerCG.
+            "checkpoint": {"save": None},
+            "rerun_state_machine": {"check_for_nan_in_loss": False},
+            "ddp": {"check_for_nan_in_grad": False},
+        },
+    ),
 ]
 
 

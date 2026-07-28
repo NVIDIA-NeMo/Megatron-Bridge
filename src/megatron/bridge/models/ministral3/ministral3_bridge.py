@@ -119,6 +119,12 @@ class Ministral3Bridge(MegatronModelBridge):
 
         # Ministral 3 has separate text_config and vision_config
         text_config = getattr(hf_config, "text_config", hf_config)
+        tie_word_embeddings = getattr(text_config, "tie_word_embeddings", False)
+        # Transformers supplies a top-level default for composite configs even
+        # when the checkpoint declares the effective value only in text_config.
+        # Keep the config copied by save_hf_pretrained consistent with the
+        # language model and its exported lm_head.
+        hf_config.tie_word_embeddings = tie_word_embeddings
         dtype_config = hf_config if hasattr(hf_config, "torch_dtype") else text_config
         params_dtype = self.dtype_from_hf(dtype_config, default=torch.float32)
         provider = Ministral3ModelProvider(
@@ -129,7 +135,7 @@ class Ministral3Bridge(MegatronModelBridge):
             num_query_groups=text_config.num_key_value_heads,
             kv_channels=text_config.head_dim,
             seq_length=text_config.max_position_embeddings,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            share_embeddings_and_output_weights=tie_word_embeddings,
             rotary_base=text_config.rope_parameters["rope_theta"],
             vocab_size=text_config.vocab_size,
             params_dtype=params_dtype,
@@ -144,6 +150,8 @@ class Ministral3Bridge(MegatronModelBridge):
     def hf_config_to_model_config_kwargs(self, hf_config: Any) -> dict[str, Any]:
         """Convert a Ministral 3 HF config to pure builder-backed config kwargs."""
         text_config = getattr(hf_config, "text_config", hf_config)
+        tie_word_embeddings = getattr(text_config, "tie_word_embeddings", False)
+        hf_config.tie_word_embeddings = tie_word_embeddings
         # The base bridge rejects generic YaRN because GPTModelConfig cannot
         # represent it. Ministral3ModelConfig does represent every YaRN field,
         # so bypass only that generic guard and map the values below.
@@ -171,7 +179,7 @@ class Ministral3Bridge(MegatronModelBridge):
             rotary_base=rope_parameters.get("rope_theta", 1000000),
             attention_dropout=0.0,
             hidden_dropout=0.0,
-            share_embeddings_and_output_weights=getattr(hf_config, "tie_word_embeddings", False),
+            share_embeddings_and_output_weights=tie_word_embeddings,
             init_method_std=getattr(text_config, "initializer_range", 0.02),
             layernorm_epsilon=getattr(text_config, "rms_norm_eps", 1e-5),
             params_dtype=params_dtype,
@@ -201,10 +209,11 @@ class Ministral3Bridge(MegatronModelBridge):
     ) -> dict[str, object]:
         """Convert a Ministral 3 model config to its nested HuggingFace layout."""
         text_config = super().megatron_to_hf_config(model_config)
-        top_level_keys = ("architectures", "model_type", "tie_word_embeddings")
+        top_level_keys = ("architectures", "model_type")
         hf_config = {key: text_config.pop(key) for key in top_level_keys if key in text_config}
         if "torch_dtype" in text_config:
             hf_config["dtype"] = text_config.pop("torch_dtype")
+        hf_config["tie_word_embeddings"] = text_config.get("tie_word_embeddings", False)
         hf_config["text_config"] = text_config
         return hf_config
 

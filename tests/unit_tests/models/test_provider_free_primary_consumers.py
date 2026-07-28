@@ -32,7 +32,6 @@ PRIMARY_CONSUMER_ROOTS = (
 FORBIDDEN_CALLS = {"provider_bridge", "to_megatron_provider"}
 TEMPORARY_PROVIDER_COMPATIBILITY_TESTS = {
     Path("test_groups/models/exaone/test_exaone4_provider.py"),
-    Path("test_groups/models/mistral/test_mistral_provider.py"),
     Path("test_groups/models/olmoe/test_olmoe_provider.py"),
 }
 

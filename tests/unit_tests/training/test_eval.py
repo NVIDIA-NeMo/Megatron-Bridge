@@ -81,6 +81,7 @@ def _make_evaluate_state(*, eval_iters, exit_duration_in_mins=None):
 def _run_evaluate(*, state, model, callback_manager, is_test=False, timelimit_hit=False):
     pg_collection = SimpleNamespace(
         pp=SimpleNamespace(size=lambda: 1),
+        dp=SimpleNamespace(size=lambda: 1),
         dp_cp=object(),
     )
     rerun_state_machine = MagicMock()
@@ -221,3 +222,87 @@ def test_evaluate_timelimit_fires_start_but_not_end_callback():
 
     assert result == (None, None, True)
     assert observed == [("on_eval_start", False)]
+
+
+def test_evaluate_uses_injected_eval_data_parallel_size_for_microbatches():
+    """An injected eval process-group layout owns eval global-batch semantics."""
+    state = _make_evaluate_state(eval_iters=1)
+    state.cfg.validation.eval_global_batch_size = 4
+    state.cfg.validation.eval_micro_batch_size = 1
+    state.cfg.data_parallel_size = 2
+    model = _ModeTrackingModel()
+    forward_backward_func = MagicMock(return_value=[{}])
+    rerun_state_machine = MagicMock()
+    eval_pg_collection = SimpleNamespace(
+        pp=SimpleNamespace(size=lambda: 1),
+        dp=SimpleNamespace(size=lambda: 1),
+        dp_cp=object(),
+    )
+
+    with (
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=rerun_state_machine),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch("megatron.bridge.training.eval.get_forward_backward_func", return_value=forward_backward_func),
+        patch("megatron.bridge.training.eval.is_pp_last_stage", return_value=False),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_start"),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_end"),
+    ):
+        evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=object(),
+            model=[model],
+            process_non_loss_data_func=None,
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MagicMock(),
+            pg_collection=eval_pg_collection,
+        )
+
+    assert forward_backward_func.call_args.kwargs["num_microbatches"] == 4
+
+
+def test_evaluate_preserves_multimodule_data_parallel_accounting():
+    """MegatronMIMO collections do not expose one shared DP process group."""
+
+    class MultimodulePGCollection:
+        pass
+
+    class MultimoduleCommunicator:
+        is_pp_last_stage = False
+
+    state = _make_evaluate_state(eval_iters=1)
+    state.cfg.validation.eval_global_batch_size = 4
+    state.cfg.validation.eval_micro_batch_size = 1
+    state.cfg.data_parallel_size = 2
+    model = _ModeTrackingModel()
+    forward_backward_func = MagicMock(return_value=[{}])
+    rerun_state_machine = MagicMock()
+
+    with (
+        patch("megatron.bridge.training.eval.MultiModuleProcessGroupCollection", MultimodulePGCollection),
+        patch("megatron.bridge.training.eval.MultiModulePipelineCommunicator", MultimoduleCommunicator),
+        patch("megatron.bridge.training.eval.prepare_forward_step_func", return_value=MagicMock()),
+        patch("megatron.bridge.training.eval.get_model_config", return_value=SimpleNamespace()),
+        patch("megatron.bridge.training.eval.get_rerun_state_machine", return_value=rerun_state_machine),
+        patch("megatron.bridge.training.eval.is_full_iteration_cuda_graph", return_value=False),
+        patch(
+            "megatron.core.pipeline_parallel.schedules.forward_backward_pipelining_without_interleaving",
+            forward_backward_func,
+        ),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_start"),
+        patch("megatron.bridge.training.eval.fault_tolerance.on_eval_step_end"),
+    ):
+        evaluate(
+            state=state,
+            forward_step_func=MagicMock(),
+            data_iterator=object(),
+            model=[model],
+            process_non_loss_data_func=None,
+            config=SimpleNamespace(timers=state.timers),
+            p2p_communicator=MultimoduleCommunicator(),
+            pg_collection=MultimodulePGCollection(),
+        )
+
+    assert forward_backward_func.call_args.kwargs["num_microbatches"] == 2

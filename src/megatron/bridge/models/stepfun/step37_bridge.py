@@ -50,11 +50,13 @@ from megatron.bridge.models.conversion.param_mapping import (
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.stepfun.configuration_step37 import Step37Config
 from megatron.bridge.models.stepfun.modelling_step37.model import Step37Model
+from megatron.bridge.models.stepfun.step35_bridge import (
+    build_step35_layer_spec as build_step35_provider_layer_spec,
+)
 from megatron.bridge.models.stepfun.step35_mappings import (
     StackedExpertAutoMapping,
     StackedExpertGatedMLPMapping,
 )
-from megatron.bridge.models.stepfun.step35_modeling import build_step35_layer_spec
 from megatron.bridge.models.stepfun.step37_model_config import Step37ModelConfig
 
 
@@ -356,7 +358,7 @@ class Step37Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            provider.transformer_layer_spec = build_step35_layer_spec
+            provider.transformer_layer_spec = build_step35_provider_layer_spec
 
         # Per-layer hybrid full/sliding attention schedule.
         layer_types = getattr(text_config, "layer_types", None)

@@ -17,6 +17,42 @@ Use this skill to review a change in staged passes. Do not use subagents or tmux
 - Do not run the full test suite. Run only targeted checks, using `uv run python -m pytest` or the repo-approved command form.
 - Prefer findings with concrete file and line evidence. Drop low-confidence or purely stylistic comments unless the user asks for a strict style pass.
 
+## Repository Review Principles
+
+Apply these principles to implementation, APIs, recipes, tests, examples, and
+documentation. They are acceptance criteria, not optional polish.
+
+1. **Correctness is the gate.** Preserve numerical semantics, distributed
+   invariants, checkpoint compatibility, API contracts, and failure behavior.
+   Prefer an explicit error over a silent fallback that can produce incorrect
+   training, conversion, or inference results. Performance or simplicity never
+   justifies behavior that is wrong or cannot be validated.
+2. **Performance is a product requirement.** Once correctness is established,
+   protect throughput, latency, memory efficiency, and distributed scaling,
+   especially in training hot paths. Do not accept an avoidable regression for
+   cleaner-looking code or a more convenient abstraction without measurements
+   and an explicit tradeoff. Treat extra synchronization, communication,
+   materialization, copies, allocations, and host overhead as review concerns.
+3. **Design for both users and developers.** User-facing behavior should have
+   safe defaults, coherent configuration, actionable errors, and discoverable
+   examples. Developer-facing code should have explicit contracts, clear names
+   and ownership, local reasoning, focused tests, and minimal special cases.
+   Readability includes the public workflow as well as the implementation.
+4. **Keep optimized complexity behind clear boundaries.** A fast implementation
+   may be internally specialized, but it should not leak accidental complexity
+   into public APIs or every call site. Isolate the optimized path, document its
+   invariants, and test both its behavior and fallback or error path.
+
+Use this decision order:
+
+- Block incorrect or silently ambiguous behavior, even if it is faster.
+- Block an unjustified performance regression in a hot or distributed path;
+  require comparable measurements when the impact is material.
+- Between solutions with comparable correctness and performance, prefer the one
+  that is easier for users to operate and developers to understand and extend.
+- When usability and performance genuinely conflict, require the PR to state
+  the tradeoff and keep the simpler contract while containing optimized details.
+
 ## Wave 0: Intake
 
 Identify the review target and collect enough raw context to avoid guessing.
@@ -69,6 +105,32 @@ For changes that appear specific to one model or one training feature, check whe
 
 Trace how the change is reached in real workflows. Follow call sites across recipes, providers, launch scripts, configs, and downstream adapters. For distributed or performance-sensitive code, check rank behavior, process-group assumptions, collective ordering, recompute/offload/overlap interactions, and GPU-count constraints.
 
+### User And Developer Experience
+
+Review the complete user workflow, not only the changed function. Check whether
+defaults, configuration names, errors, docs, examples, and migration behavior
+make the feature safe and discoverable. Then review the developer workflow:
+whether contracts and ownership are explicit, names match semantics, the control
+flow can be understood locally, and new models or features can reuse the path
+without copying model-specific glue.
+
+Do not approve an abstraction solely because it reduces lines of code. It must
+also reduce user or developer complexity without obscuring runtime behavior.
+
+### Performance And Scalability
+
+Identify whether the change touches a hot path or changes communication,
+parallelism, memory lifetime, kernel selection, graph capture, data movement, or
+checkpoint I/O. Check end-to-end step time and peak memory where relevant, not
+only isolated kernel speed. Include startup, compile, capture, and scaling costs
+when they can dominate the actual workflow.
+
+For a claimed optimization or a material performance-sensitive change, ask for
+an apples-to-apples baseline using the same model, hardware class, parallelism,
+sequence length, and batch shape. If measurement is not feasible, require a
+bounded explanation of the expected cost and explicitly record the residual
+risk. Do not infer performance from code shape alone.
+
 ### Tests And Verification
 
 Check whether tests cover the changed contract, failure mode, and representative runtime path. Prefer unit tests unless the risk requires a functional test. In functional tests, enforce the repo rule that override patterns using `setattr(config_obj, key, value)` must first guard with `hasattr`.
@@ -89,6 +151,8 @@ For each candidate:
 - Confirm the affected line is reviewable, preferably an added or modified diff line.
 - Identify the exact failure scenario, user impact, or broken repository rule.
 - Check whether existing tests already cover it.
+- Check it against the repository principles: correctness, measured or reasoned
+  performance impact, and user/developer clarity.
 - Merge duplicates that point to the same root cause.
 - Assign a verdict: `CONFIRMED`, `DOWNGRADED`, `QUESTION`, or `DROP`.
 

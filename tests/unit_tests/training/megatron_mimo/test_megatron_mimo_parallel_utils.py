@@ -382,6 +382,7 @@ class TestFinalizeModelGradsMultimodule:
         finalize_model_grads_multimodule(
             [MagicMock()],  # model arg is ignored
             num_tokens,
+            force_all_reduce=True,
             infra=s.infra,
             module_to_grid_tuple=s.module_to_grid_tuple,
         )
@@ -390,8 +391,10 @@ class TestFinalizeModelGradsMultimodule:
         finalize_by_module = {call.args[0][0]: call.kwargs for call in mock_finalize.call_args_list}
         assert finalize_by_module[s.llm_module]["num_tokens"] is num_tokens
         assert finalize_by_module[s.llm_module]["pg_collection"] is s.llm_pg
+        assert finalize_by_module[s.llm_module]["force_all_reduce"] is True
         assert finalize_by_module[s.encoder_module]["num_tokens"] is None
         assert finalize_by_module[s.encoder_module]["pg_collection"] is s.encoder_pg
+        assert finalize_by_module[s.encoder_module]["force_all_reduce"] is True
 
         # Phase 2: broadcast the global total from the LLM's last rank (4 + 4 - 1).
         mock_dist.broadcast.assert_called_once()
@@ -421,6 +424,7 @@ class TestFinalizeModelGradsMultimodule:
         finalize_model_grads_multimodule(
             [MagicMock()],
             None,
+            force_all_reduce=True,
             infra=s.infra,
             module_to_grid_tuple=s.module_to_grid_tuple,
         )
@@ -428,6 +432,7 @@ class TestFinalizeModelGradsMultimodule:
         # All modules finalized without num_tokens (DDP does a plain mean).
         for call in mock_finalize.call_args_list:
             assert call.kwargs["num_tokens"] is None
+            assert call.kwargs["force_all_reduce"] is True
         assert mock_dist.broadcast.call_count == 0
 
         # encoder_dp (4) != llm_dp (2) -> scale by 4/2; LLM matches llm_dp -> no scale.

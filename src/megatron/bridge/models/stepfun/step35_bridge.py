@@ -42,6 +42,9 @@ from megatron.bridge.models.stepfun.step35_modeling import (
     Step35DecoderLayer,
     Step35SharedExpertMLP,
 )
+from megatron.bridge.models.stepfun.step35_modeling import (
+    build_step35_layer_spec as build_step35_model_layer_spec,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -143,7 +146,7 @@ class _MTPDenseLayerSpecsList(list):
         return super().__getitem__(idx)
 
 
-def step35_layer_spec(cfg, **kw):
+def build_step35_layer_spec(cfg, **kw):
     """Per-layer spec for Step3.5: dense for layers 0-2 and 45-47, MoE for 3-44.
 
     Also rewrites every main-decoder layer's ModuleSpec to use
@@ -211,7 +214,7 @@ class Step35ModelConfig(BridgeGPTModelConfig):
     """Builder-backed Step-3.5 config with its hybrid decoder layer spec."""
 
     builder: ClassVar[str] = "megatron.bridge.models.stepfun.step35_bridge.Step35ModelBuilder"
-    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = step35_layer_spec
+    transformer_layer_spec: Callable[..., TransformerBlockSubmodules] = build_step35_model_layer_spec
     layer_types: list[str] | None = None
     attention_other_setting: dict[str, Any] | None = None
     sliding_attention_setting: dict[str, Any] | None = None
@@ -299,10 +302,10 @@ class Step35Bridge(MegatronModelBridge):
                 if config_field.init and hasattr(base_provider, name)
             }
         )
-        if provider.head_wise_attn_gate and provider.attention_output_gate and _mcore_supports_head_wise_attn_gate():
+        if getattr(provider, "head_wise_attn_gate", False):
             # Native head-wise gates and the full-head output gate are mutually
-            # exclusive. Older MCore versions need the output-gate fallback.
-            provider.attention_output_gate = False
+            # exclusive; MCore without native support needs the output-gate fallback.
+            provider.attention_output_gate = not _mcore_supports_head_wise_attn_gate()
 
         mtp_layer_types = getattr(hf_config, "mtp_layer_types", None)
         if provider.layer_types is not None and mtp_layer_types:
@@ -402,11 +405,11 @@ class Step35Bridge(MegatronModelBridge):
                 if 0 <= idx < provider.num_layers:
                     moe_layer_freq[idx] = 1
             provider.moe_layer_freq = moe_layer_freq
-            # step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
+            # build_step35_layer_spec reads moe_layer_freq to produce per-layer dense/MoE
             # specs for the main decoder, and wraps layer_specs with _MTPDenseLayerSpecsList
             # so that get_gpt_mtp_block_spec_for_backend picks up a dense spec for MTP layers
             # (45-47 are not in moe_layers_enum).
-            provider.transformer_layer_spec = step35_layer_spec
+            provider.transformer_layer_spec = build_step35_layer_spec
 
         return provider
 

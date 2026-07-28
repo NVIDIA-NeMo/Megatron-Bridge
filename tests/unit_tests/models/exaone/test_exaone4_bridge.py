@@ -21,8 +21,8 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.training.models.gpt import GPTModelBuilder
 
 from megatron.bridge.models.conversion.model_bridge import MegatronModelBridge
-from megatron.bridge.models.exaone.exaone4_bridge import Exaone4Bridge
-from megatron.bridge.models.exaone.exaone4_provider import exaone4_layer_spec
+from megatron.bridge.models.exaone.exaone4.exaone4_bridge import Exaone4Bridge
+from megatron.bridge.models.exaone.exaone4.exaone4_provider import exaone4_layer_spec
 from megatron.bridge.models.exaone.model_config import Exaone4ModelBuilder
 from megatron.bridge.models.gpt_provider import GPTModelProvider
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM

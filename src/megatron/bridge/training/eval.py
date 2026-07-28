@@ -131,15 +131,18 @@ def evaluate(
 
     total_loss_dict = {}
 
-    # make validation batch size independent from training batch size
-    eval_batch_size = state.cfg.validation.eval_global_batch_size
-    eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
-    eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * state.cfg.data_parallel_size)
-
     # Determine if this is a multimodule evaluation (MegatronMIMO)
     is_multimodule = isinstance(pg_collection, MultiModuleProcessGroupCollection) or isinstance(
         p2p_communicator, MultiModulePipelineCommunicator
     )
+
+    # make validation batch size independent from training batch size
+    eval_batch_size = state.cfg.validation.eval_global_batch_size
+    eval_micro_batch_size = state.cfg.validation.eval_micro_batch_size
+    # MegatronMIMO has heterogeneous per-module DP groups and intentionally owns
+    # global-batch accounting through the container-level DP size.
+    eval_data_parallel_size = state.cfg.data_parallel_size if is_multimodule else pg_collection.dp.size()
+    eval_num_microbatches = eval_batch_size // (eval_micro_batch_size * eval_data_parallel_size)
 
     if is_multimodule and not isinstance(p2p_communicator, MultiModulePipelineCommunicator):
         raise ValueError(
@@ -175,6 +178,7 @@ def evaluate(
                     vp_size=state.cfg.model.virtual_pipeline_model_parallel_size,
                 ),
                 cuda_graph_warmup_steps=state.cfg.model.cuda_graph_warmup_steps,
+                use_single_mempool=state.cfg.model.cuda_graph_use_single_mempool,
             )
         else:
             forward_backward_func = get_forward_backward_func(

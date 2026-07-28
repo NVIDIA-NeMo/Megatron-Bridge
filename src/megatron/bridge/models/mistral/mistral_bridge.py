@@ -29,6 +29,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     QKVMapping,
 )
 from megatron.bridge.models.conversion.transformers_compat import rope_scaling_factor_from_hf, rope_theta_from_hf
+from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
 from megatron.bridge.models.mistral.mistral_provider import MistralModelProvider
 from megatron.bridge.models.mistral.model_config import MistralModelConfig
@@ -132,6 +133,13 @@ class MistralBridge(MegatronModelBridge):
             kv_channels=getattr(hf_config, "head_dim", None),
         )
         return config_kwargs
+
+    @classmethod
+    def megatron_to_hf_config(cls, model_config: MistralModelConfig | MistralModelProvider) -> dict:
+        """Convert a Mistral provider config back to Hugging Face format."""
+        hf_config = super().megatron_to_hf_config(model_config)
+        hf_config["sliding_window"] = mcore_to_hf_window_size(model_config.window_size)
+        return hf_config
 
     def mapping_registry(self) -> MegatronMappingRegistry:
         # Return MegatronMappingRegistry containing parameter mappings from Megatron to HF format

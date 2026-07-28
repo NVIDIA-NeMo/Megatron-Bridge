@@ -201,7 +201,7 @@ class TestKimiK25VLSftConfig:
         """Dataset uses sequence length 4096 and the model's HF processor path."""
         cfg = kimi_k25_vl_sft_config()
 
-        assert cfg.dataset.sequence_length == 4096
+        assert cfg.dataset.seq_length == 4096
         assert cfg.dataset.num_workers == 8
         assert cfg.dataset.enable_in_batch_packing is False
         assert cfg.dataset.hf_processor_path == "moonshotai/Kimi-K2.5"

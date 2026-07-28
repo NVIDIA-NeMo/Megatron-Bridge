@@ -125,6 +125,19 @@ def test_each_ministral3_sft_recipe_builds_config(recipe_func: Callable, monkeyp
     assert cfg.peft is None
 
 
+@pytest.mark.parametrize("recipe_func", _MINISTRAL3_SFT_FUNCS)
+def test_each_ministral3_sft_recipe_uses_recommended_learning_rate(
+    recipe_func: Callable, monkeypatch: pytest.MonkeyPatch
+):
+    """Test that each Ministral3 full-SFT recipe uses its recommended learning-rate range."""
+    patch_recipe_module_global(monkeypatch, _ministral3_module, "AutoBridge", _FakeAutoBridge)
+
+    cfg = recipe_func()
+
+    assert cfg.optimizer.lr == pytest.approx(5e-6)
+    assert cfg.optimizer.min_lr == pytest.approx(5e-7)
+
+
 @pytest.mark.parametrize("recipe_func", _MINISTRAL3_PEFT_FUNCS)
 def test_each_ministral3_peft_recipe_builds_config(recipe_func: Callable, monkeypatch: pytest.MonkeyPatch):
     """Test that each Ministral3 PEFT recipe function builds a valid configuration."""

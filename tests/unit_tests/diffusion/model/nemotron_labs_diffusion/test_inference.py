@@ -18,9 +18,16 @@ import pytest
 import torch
 
 import megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion as inf_mod
+from megatron.bridge.diffusion.common.dllm import (
+    add_gumbel_noise as shared_add_gumbel_noise,
+)
+from megatron.bridge.diffusion.common.dllm import (
+    get_num_transfer_tokens as shared_get_num_transfer_tokens,
+)
+from megatron.bridge.diffusion.common.dllm import (
+    get_transfer_index as shared_get_transfer_index,
+)
 from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron_labs_diffusion import (
-    add_gumbel_noise,
-    get_num_transfer_tokens,
     get_transfer_index,
     set_tp_group,
 )
@@ -29,161 +36,10 @@ from megatron.bridge.diffusion.models.nemotron_labs_diffusion.inference_nemotron
 pytestmark = [pytest.mark.unit]
 
 
-class TestAddGumbelNoise:
-    """Tests for add_gumbel_noise."""
-
-    def test_zero_temperature_returns_same_tensor(self):
-        logits = torch.randn(2, 10, 100)
-        result = add_gumbel_noise(logits, temperature=0)
-        assert torch.equal(result, logits)
-
-    def test_nonzero_temperature_changes_values(self):
-        torch.manual_seed(0)
-        logits = torch.randn(2, 10, 100)
-        result = add_gumbel_noise(logits, temperature=1.0)
-        assert not torch.equal(result.float(), logits)
-
-    def test_output_shape_preserved(self):
-        logits = torch.randn(3, 5, 50)
-        result = add_gumbel_noise(logits, temperature=1.0)
-        assert result.shape == logits.shape
-
-    def test_output_is_positive(self):
-        """exp/noise is always positive."""
-        logits = torch.randn(2, 8, 32)
-        result = add_gumbel_noise(logits, temperature=1.0)
-        assert (result > 0).all()
-
-    def test_argmax_may_differ_from_original(self):
-        """With temperature > 0, argmax can change."""
-        torch.manual_seed(1)
-        logits = torch.zeros(1, 1, 10)
-        logits[0, 0, 0] = 10.0  # Strong peak at 0
-        results = []
-        for _ in range(20):
-            r = add_gumbel_noise(logits.clone(), temperature=2.0)
-            results.append(torch.argmax(r).item())
-        # With high temperature, argmax should not always be 0
-        assert len(set(results)) > 1
-
-
-class TestGetNumTransferTokens:
-    """Tests for get_num_transfer_tokens."""
-
-    def test_evenly_divisible(self):
-        """When mask_num is divisible by steps, all entries equal base."""
-        mask_index = torch.ones(2, 10, dtype=torch.bool)  # 10 masked per row
-        result = get_num_transfer_tokens(mask_index, steps=5)
-        assert result.shape == (2, 5)
-        assert (result == 2).all()
-
-    def test_remainder_distributed_to_first_steps(self):
-        """Remainder tokens should be added to the first steps."""
-        mask_index = torch.ones(1, 7, dtype=torch.bool)  # 7 masked, steps=3 -> 2,2,3 or 3,2,2
-        result = get_num_transfer_tokens(mask_index, steps=3)
-        # base = 7//3 = 2, remainder = 1 -> first step gets +1
-        assert result[0, 0].item() == 3
-        assert result[0, 1].item() == 2
-        assert result[0, 2].item() == 2
-
-    def test_total_equals_mask_count(self):
-        """Sum of transfers per row must equal number of masked tokens."""
-        mask_index = torch.zeros(3, 20, dtype=torch.bool)
-        mask_index[:, :13] = True  # 13 masked per row
-        result = get_num_transfer_tokens(mask_index, steps=4)
-        assert (result.sum(dim=1) == 13).all()
-
-    def test_output_shape(self):
-        mask_index = torch.ones(4, 8, dtype=torch.bool)
-        result = get_num_transfer_tokens(mask_index, steps=4)
-        assert result.shape == (4, 4)
-
-    def test_single_step(self):
-        """With steps=1, all masked tokens transferred in one step."""
-        mask_index = torch.ones(2, 6, dtype=torch.bool)
-        result = get_num_transfer_tokens(mask_index, steps=1)
-        assert result.shape == (2, 1)
-        assert (result[:, 0] == 6).all()
-
-
-class TestGetTransferIndex:
-    """Tests for get_transfer_index."""
-
-    def _basic_call(
-        self, batch=1, seq=8, vocab=10, n_transfer=2, temperature=0.0, remasking="low_confidence", neg_entropy=False
-    ):
-        torch.manual_seed(0)
-        logits = torch.randn(batch, seq, vocab)
-        mask_index = torch.zeros(batch, seq, dtype=torch.bool)
-        mask_index[:, :4] = True  # first 4 positions masked
-        x = torch.randint(0, vocab, (batch, seq))
-        num_transfer_tokens = torch.full((batch,), n_transfer, dtype=torch.long)
-        return get_transfer_index(
-            logits,
-            temperature,
-            remasking,
-            mask_index,
-            x,
-            num_transfer_tokens,
-            threshold=None,
-            neg_entropy=neg_entropy,
-        )
-
-    def test_output_shapes(self):
-        x0, transfer_index = self._basic_call(batch=2, seq=8, vocab=10)
-        assert x0.shape == (2, 8)
-        assert transfer_index.shape == (2, 8)
-
-    def test_transfer_index_is_bool(self):
-        _, transfer_index = self._basic_call()
-        assert transfer_index.dtype == torch.bool
-
-    def test_exactly_n_tokens_transferred_per_row(self):
-        """Number of True entries in transfer_index per row must equal n_transfer."""
-        _, transfer_index = self._basic_call(batch=3, seq=12, n_transfer=3)
-        assert (transfer_index.sum(dim=1) == 3).all()
-
-    def test_transfer_only_from_masked_positions(self):
-        """transfer_index must only select positions where mask_index is True."""
-        torch.manual_seed(0)
-        logits = torch.randn(1, 8, 10)
-        mask_index = torch.zeros(1, 8, dtype=torch.bool)
-        mask_index[:, :4] = True
-        x = torch.randint(0, 10, (1, 8))
-        num_transfer_tokens = torch.tensor([2])
-        _, transfer_index = get_transfer_index(logits, 0.0, "low_confidence", mask_index, x, num_transfer_tokens)
-        # All transferred positions must have been masked
-        assert not transfer_index[:, 4:].any()
-
-    def test_unmasked_positions_keep_original_x(self):
-        """x0 at non-masked positions should equal original x."""
-        torch.manual_seed(0)
-        logits = torch.randn(1, 8, 10)
-        mask_index = torch.zeros(1, 8, dtype=torch.bool)
-        mask_index[:, :4] = True
-        x = torch.randint(0, 10, (1, 8))
-        num_transfer_tokens = torch.tensor([2])
-        x0, _ = get_transfer_index(logits, 0.0, "low_confidence", mask_index, x, num_transfer_tokens)
-        # Non-masked positions should keep original x values
-        assert torch.equal(x0[:, 4:], x[:, 4:])
-
-    def test_random_remasking_strategy(self):
-        """random remasking should not raise and produce valid transfer_index."""
-        torch.manual_seed(0)
-        x0, transfer_index = self._basic_call(remasking="random")
-        assert transfer_index.dtype == torch.bool
-        assert (transfer_index.sum(dim=1) == 2).all()
-
-    def test_invalid_remasking_strategy_raises(self):
-        torch.manual_seed(0)
-        with pytest.raises(NotImplementedError):
-            self._basic_call(remasking="invalid_strategy")
-
-    def test_neg_entropy_mode(self):
-        """neg_entropy=True uses entropy-based confidence — should not raise."""
-        x0, transfer_index = self._basic_call(neg_entropy=True)
-        assert transfer_index.dtype == torch.bool
-        assert (transfer_index.sum(dim=1) == 2).all()
+def test_sampling_helpers_reexport_shared_implementations():
+    assert inf_mod.add_gumbel_noise is shared_add_gumbel_noise
+    assert inf_mod.get_num_transfer_tokens is shared_get_num_transfer_tokens
+    assert inf_mod.get_transfer_index is shared_get_transfer_index
 
 
 # ---------------------------------------------------------------------------
@@ -234,30 +90,6 @@ def _make_logits(batch, seq_len, vocab_size=50):
 
 class TestGetTransferIndexThreshold:
     """Tests for the threshold branch in get_transfer_index (lines 80-88)."""
-
-    def test_threshold_overrides_num_transfer_tokens(self):
-        """When threshold is not None, num_transfer_tokens is overridden to mask count."""
-        torch.manual_seed(0)
-        batch, seq, vocab = 2, 8, 20
-        logits = torch.randn(batch, seq, vocab)
-        mask_index = torch.zeros(batch, seq, dtype=torch.bool)
-        mask_index[:, :4] = True  # 4 masked positions per row
-        x = torch.randint(0, vocab, (batch, seq))
-        # Pass n_transfer=1 — with threshold set it should be overridden to 4
-        num_transfer_tokens = torch.full((batch,), 1, dtype=torch.long)
-        x0, transfer_index = get_transfer_index(
-            logits,
-            0.0,
-            "low_confidence",
-            mask_index,
-            x,
-            num_transfer_tokens,
-            threshold=0.0,
-            neg_entropy=False,
-        )
-        assert x0.shape == (batch, seq)
-        assert transfer_index.shape == (batch, seq)
-        assert transfer_index.dtype == torch.bool
 
     def test_threshold_filters_low_confidence_tokens(self):
         """With a very high threshold, low-confidence tokens are excluded from transfer_index."""
@@ -494,6 +326,27 @@ class TestGenerateAr:
         prompt_len, max_new_tokens = 4, 5
         result, *_ = self._run_generate_ar(prompt_len=prompt_len, max_new_tokens=max_new_tokens)
         assert result.shape == (1, prompt_len + max_new_tokens)
+
+    def test_generate_ar_selects_from_full_vocab_with_parallel_output(self):
+        """TP generation selects the global maximum, not a rank-local vocabulary index."""
+        model, _ = _make_mock_model()
+        prompt = torch.zeros(1, 1, dtype=torch.long)
+
+        def fake_mcore_forward(*, input_ids, position_ids, attention_mask, runtime_gather_output=None):
+            del position_ids, attention_mask
+            vocab_size = 8 if runtime_gather_output else 4
+            logits = torch.zeros(input_ids.shape[0], input_ids.shape[1], vocab_size)
+            logits[:, :, 2] = 5.0
+            if runtime_gather_output:
+                logits[:, :, 6] = 10.0
+            return logits
+
+        model.side_effect = fake_mcore_forward
+
+        with patch(f"{_MODULE}._tp_send_cmd"):
+            result = generate_ar(model, prompt, max_new_tokens=1)
+
+        assert result[0, -1].item() == 6
 
     def test_generate_ar_with_temperature(self):
         """temperature > 0 uses multinomial sampling; output length is still correct."""

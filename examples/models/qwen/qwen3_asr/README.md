@@ -17,14 +17,14 @@ export WORKSPACE=/your/custom/path
 ### Import HF → Megatron
 To import the HF model to your desired Megatron path:
 ```bash
-uv run python examples/conversion/convert_checkpoints.py import \
+./scripts/conversion/convert.sh import \
   --hf-model Qwen/Qwen3-ASR-1.7B \
   --megatron-path ${WORKSPACE}/models/Qwen3-ASR-1.7B
 ```
 
 ### Export Megatron → HF
 ```bash
-uv run python examples/conversion/convert_checkpoints.py export \
+./scripts/conversion/convert.sh export \
   --hf-model Qwen/Qwen3-ASR-1.7B \
   --megatron-path ${WORKSPACE}/models/Qwen3-ASR-1.7B/iter_0000000 \
   --hf-path ${WORKSPACE}/models/Qwen3-ASR-1.7B-hf-export

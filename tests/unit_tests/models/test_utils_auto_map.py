@@ -15,11 +15,13 @@
 
 from unittest.mock import patch
 
+import pytest
 from transformers.configuration_utils import PretrainedConfig
 
 from megatron.bridge.models.conversion.utils import (
     get_causal_lm_class_name_via_auto_map,
     is_modelopt_dynamic_module,
+    moe_experts_stored_packed,
 )
 
 
@@ -73,3 +75,50 @@ def test_is_modelopt_dynamic_module_returns_false_when_modelopt_not_installed():
 
     with patch("builtins.__import__", side_effect=_block_modelopt):
         assert is_modelopt_dynamic_module(object()) is False
+
+
+class _FakePretrained:
+    """Minimal stand-in exposing state.source.get_all_keys() for moe_experts_stored_packed."""
+
+    def __init__(self, keys):
+        source = type("Source", (), {"get_all_keys": lambda self: keys})()
+        self.state = type("State", (), {"source": source})()
+
+
+def _expert_keys(layers_prefix, packed):
+    if packed:
+        return [f"{layers_prefix}0.mlp.experts.gate_up_proj", f"{layers_prefix}0.mlp.experts.down_proj"]
+    return [
+        f"{layers_prefix}0.mlp.experts.0.gate_proj.weight",
+        f"{layers_prefix}0.mlp.experts.0.up_proj.weight",
+        f"{layers_prefix}0.mlp.experts.0.down_proj.weight",
+    ]
+
+
+def test_moe_experts_stored_packed_detects_fused():
+    hf = _FakePretrained(_expert_keys("model.layers.", packed=True))
+    assert moe_experts_stored_packed(hf, "model.layers.") is True
+
+
+def test_moe_experts_stored_packed_detects_per_expert():
+    hf = _FakePretrained(_expert_keys("model.layers.", packed=False))
+    assert moe_experts_stored_packed(hf, "model.layers.") is False
+
+
+def test_moe_experts_stored_packed_vlm_prefix():
+    prefix = "model.language_model.layers."
+    assert moe_experts_stored_packed(_FakePretrained(_expert_keys(prefix, packed=True)), prefix) is True
+    assert moe_experts_stored_packed(_FakePretrained(_expert_keys(prefix, packed=False)), prefix) is False
+
+
+def test_moe_experts_stored_packed_returns_default_when_unavailable():
+    # No routed-expert keys, or no usable source -> the provided default.
+    assert moe_experts_stored_packed(_FakePretrained([]), "model.layers.", default=False) is False
+    assert moe_experts_stored_packed(_FakePretrained([]), "model.layers.", default=True) is True
+    assert moe_experts_stored_packed(None, "model.layers.", default=True) is True
+
+
+def test_moe_experts_stored_packed_raises_on_mixed_layout():
+    keys = _expert_keys("model.layers.", packed=True) + _expert_keys("model.layers.", packed=False)
+    with pytest.raises(ValueError, match="mixes fused and per-expert"):
+        moe_experts_stored_packed(_FakePretrained(keys), "model.layers.")

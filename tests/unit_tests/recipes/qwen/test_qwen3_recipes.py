@@ -14,7 +14,7 @@ class _FakeModelConfig:
 
 
 class _FakeBridge:
-    def to_megatron_provider(self, load_weights=False):
+    def get_model_config(self):
         return _FakeModelConfig()
 
     @staticmethod

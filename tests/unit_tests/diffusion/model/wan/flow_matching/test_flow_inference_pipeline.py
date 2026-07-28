@@ -18,6 +18,7 @@ from unittest.mock import MagicMock
 
 import pytest
 import torch
+from transformers import UMT5Config, UMT5EncoderModel
 
 from megatron.bridge.diffusion.models.wan.flow_matching.flow_inference_pipeline import (
     FlowInferencePipeline,
@@ -614,4 +615,30 @@ class TestGenerate:
             seed=42,
             offload_model=False,
         )
+        assert isinstance(result, torch.Tensor)
+
+    def test_generate_with_t5_cpu(self, pipeline_for_generate):
+        pip = pipeline_for_generate
+        pip.t5_cpu = True
+        pip.text_encoder = UMT5EncoderModel(
+            UMT5Config(
+                vocab_size=32,
+                d_model=32,
+                d_kv=8,
+                d_ff=64,
+                num_layers=1,
+                num_heads=4,
+                dropout_rate=0.0,
+            )
+        )
+
+        result = pip.generate(
+            prompts=["a cat"],
+            sizes=[(16, 16)],
+            frame_nums=[5],
+            sampling_steps=2,
+            seed=42,
+            offload_model=False,
+        )
+
         assert isinstance(result, torch.Tensor)

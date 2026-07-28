@@ -83,7 +83,8 @@ def main() -> None:
 
     # Check for ModelOpt state
     checkpoint_to_check = cfg.checkpoint.pretrained_checkpoint or cfg.checkpoint.load
-    if checkpoint_to_check and has_modelopt_state(checkpoint_to_check):
+    ckpt_step = None if cfg.checkpoint.pretrained_checkpoint else cfg.checkpoint.ckpt_step
+    if checkpoint_to_check and has_modelopt_state(checkpoint_to_check, ckpt_step=ckpt_step):
         cfg.model.restore_modelopt_state = True
         # ModelOpt quantization does not support gradient accumulation fusion
         cfg.model.gradient_accumulation_fusion = False

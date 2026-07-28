@@ -25,6 +25,7 @@ from megatron.bridge.models.conversion.param_mapping import (
     GatedMLPMapping,
     QKVMapping,
 )
+from megatron.bridge.models.conversion.utils import mcore_to_hf_window_size
 from megatron.bridge.models.gemma.gemma2_provider import Gemma2ModelProvider
 from megatron.bridge.models.gemma.model_config import Gemma2ModelConfig
 from megatron.bridge.models.hf_pretrained.causal_lm import PreTrainedCausalLM
@@ -105,7 +106,7 @@ class Gemma2Bridge(MegatronModelBridge):
         hf_config["final_logit_softcapping"] = provider.final_logit_softcapping
 
         if getattr(provider, "window_size", None) is not None:
-            hf_config["sliding_window"] = provider.window_size[0] + 1
+            hf_config["sliding_window"] = mcore_to_hf_window_size(provider.window_size)
 
         return hf_config
 

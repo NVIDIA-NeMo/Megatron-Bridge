@@ -34,6 +34,7 @@ from megatron.bridge.data.packing import PackedSequenceSpecs
 from megatron.bridge.data.packing.paths import (
     is_packed_parquet_spec,
     resolve_packed_parquet_paths,
+    resolve_packed_parquet_paths_with_retry,
 )
 from megatron.bridge.data.sft_processing import (
     ChatSFTPreprocessingConfig,
@@ -436,7 +437,9 @@ def build_gpt_sft_split(
     path_str = str(path)
     if is_packed_parquet_spec(path_str):
         try:
-            path_exists = bool(resolve_packed_parquet_paths(path_str))
+            # Retry with directory-metadata refresh: on NFS filesystems a non-producer
+            # node can transiently see zero files right after rank 0 wrote them (#4207).
+            path_exists = bool(resolve_packed_parquet_paths_with_retry(path_str))
         except ValueError:
             path_exists = False
     elif MultiStorageClientFeature.is_enabled():
@@ -905,7 +908,12 @@ class GPTSFTDatasetBuilder:
                 tokenizer_model_name = name.replace("/", "--")
             return tokenizer_model_name
         else:
-            return f"unknown_tokenizer_{hash(self.tokenizer)}"
+            identifiers = getattr(self.tokenizer, "unique_identifiers", None)
+            if not isinstance(identifiers, dict):
+                identifiers = {"class": f"{type(self.tokenizer).__module__}.{type(self.tokenizer).__qualname__}"}
+            encoded_identifiers = json.dumps(identifiers, sort_keys=True, separators=(",", ":"), default=str)
+            fingerprint = hashlib.sha256(encoded_identifiers.encode("utf-8")).hexdigest()[:12]
+            return f"unknown_tokenizer_{fingerprint}"
 
 
 def gpt_sft_train_valid_test_datasets_provider(

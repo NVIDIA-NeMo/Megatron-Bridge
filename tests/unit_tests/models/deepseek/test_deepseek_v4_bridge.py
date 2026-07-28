@@ -78,7 +78,7 @@ def _deepseek_v4_hf_config():
         o_lora_rank=1024,
         rope_theta=10000,
         compress_rope_theta=160000,
-        rope_scaling={"factor": 16, "original_max_position_embeddings": 65536},
+        rope_scaling={"factor": 16, "original_max_position_embeddings": 65536, "rope_theta": 10000},
         num_hidden_layers=4,
         num_nextn_predict_layers=1,
         num_hash_layers=3,
@@ -148,6 +148,27 @@ class TestNativeDeepSeekV4ConfigTranslation:
 
 class TestDeepSeekV4QuantizedExport:
     """DSv4 export must regenerate quantized weights and scale tensors."""
+
+    def test_import_accepts_legacy_flat_indexer_weight_name(self):
+        bridge = DeepSeekV4Bridge()
+        flat_name = "layers.1.attn.indexer.weights_proj.weight"
+        scorer_name = "layers.1.attn.indexer.scorer.weights_proj.weight"
+        weight = torch.randn(4, 4, dtype=torch.bfloat16)
+
+        result = bridge.maybe_modify_loaded_hf_weight(scorer_name, {flat_name: weight})
+
+        assert result is weight
+
+    def test_export_uses_legacy_flat_indexer_weight_name_when_source_requires_it(self):
+        bridge = DeepSeekV4Bridge()
+        scorer_name = "layers.1.attn.indexer.scorer.weights_proj.weight"
+        flat_name = "layers.1.attn.indexer.weights_proj.weight"
+        weight = torch.randn(4, 4, dtype=torch.bfloat16)
+
+        result = bridge.maybe_modify_converted_hf_weight(_dummy_task(), {scorer_name: weight}, {flat_name: weight})
+
+        assert scorer_name not in result
+        assert result[flat_name] is weight
 
     def test_export_quantizes_fp8_weight_and_emits_scale(self):
         bridge = DeepSeekV4Bridge()
@@ -411,6 +432,7 @@ class TestDeepSeekV4RotaryPercent:
             out = bridge.provider_bridge(hf_pretrained)
 
         assert out.rotary_percent == 1.0
+        assert out.csa_compress_rotary_base == 160000
 
 
 class TestDeepSeekV4HardwareDefaults:

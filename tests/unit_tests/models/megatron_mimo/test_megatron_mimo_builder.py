@@ -3,7 +3,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import build_hypercomm_grids
+from megatron.bridge.models.megatron_mimo.megatron_mimo_builder import EXPERT_VIEW_NAME, build_hypercomm_grids
 from megatron.bridge.models.megatron_mimo.megatron_mimo_config import (
     MegatronMIMOParallelismConfig,
     ModuleParallelismConfig,
@@ -38,8 +38,7 @@ class TestBuildHypercommGrids:
         assert "language" in grids
         assert grids["language"] == mock_grid
 
-        # Check grid was created with the dense (base) view shape: [tp, cp, dp_base, pp]
-        # where dp_base == etp * dp == 1 * 2 == 2.
+        # Check grid was created with the dense (base) view shape: [tp, cp, dp, pp].
         mock_grid_class.assert_called_once()
         call_kwargs = mock_grid_class.call_args[1]
         assert call_kwargs["shape"] == [2, 1, 2, 2]  # [tp, cp, dp, pp]
@@ -47,27 +46,26 @@ class TestBuildHypercommGrids:
         assert call_kwargs["rank_offset"] == 0
         assert call_kwargs["backend"] == "nccl"
 
-        # Check the expert view was registered.
-        mock_grid.register_view.assert_called_once()
-        view_args, view_kwargs = mock_grid.register_view.call_args
-        assert view_args[0] == "expert"
-        assert view_kwargs["dim_names"] == ["expt_tp", "ep", "expt_dp", "pp"]
-        assert view_kwargs["shared_dims"] == ["pp"]
+        mock_grid.register_view.assert_called_once_with(
+            EXPERT_VIEW_NAME,
+            shape=[1, 1, 4, 2],
+            dim_names=["expt_tp", "ep", "expt_dp", "pp"],
+            shared_dims=["pp"],
+        )
 
-        # Check dense process groups were created (base view).
-        create_pg_calls = [call[0][0] for call in mock_grid.create_pg.call_args_list]
-        assert ["tp"] in create_pg_calls
-        assert ["cp"] in create_pg_calls
-        assert ["pp"] in create_pg_calls
-        assert ["dp"] in create_pg_calls
-        assert ["dp", "cp"] in create_pg_calls
-        assert ["tp", "cp", "dp", "pp"] in create_pg_calls
-        # Check expert process groups were created (expert view).
-        assert ["ep"] in create_pg_calls
-        assert ["expt_tp"] in create_pg_calls
-        assert ["expt_dp"] in create_pg_calls
-        assert ["expt_tp", "ep"] in create_pg_calls
-        assert ["expt_tp", "ep", "pp"] in create_pg_calls
+        # Check all process groups were created
+        create_pg_calls = [(call.args[0], call.kwargs.get("view")) for call in mock_grid.create_pg.call_args_list]
+        assert (["tp"], None) in create_pg_calls
+        assert (["cp"], None) in create_pg_calls
+        assert (["pp"], None) in create_pg_calls
+        assert (["dp"], None) in create_pg_calls
+        assert (["dp", "cp"], None) in create_pg_calls
+        assert (["ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_dp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["tp", "cp", "dp", "pp"], None) in create_pg_calls
+        assert (["expt_tp", "ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp", "ep", "pp"], EXPERT_VIEW_NAME) in create_pg_calls
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_with_multiple_modules(self, mock_grid_class):
@@ -136,13 +134,13 @@ class TestBuildHypercommGrids:
         # Check both grids created with different shapes
         assert mock_grid_class.call_count == 2
 
-        # First call (llm): base view [tp, cp, dp_base, pp] == [8, 1, 1, 2] (dp_base == etp * dp == 1).
+        # First call (llm): base view [tp, cp, dp, pp] == [8, 1, 1, 2].
         first_call_kwargs = mock_grid_class.call_args_list[0][1]
         assert first_call_kwargs["shape"] == [8, 1, 1, 2]
         assert first_call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
         assert first_call_kwargs["rank_offset"] == 0
 
-        # Second call (encoder): base view [2, 1, 2, 1] (dp_base == etp * dp == 2).
+        # Second call (encoder): base view [2, 1, 2, 1].
         second_call_kwargs = mock_grid_class.call_args_list[1][1]
         assert second_call_kwargs["shape"] == [2, 1, 2, 1]
         assert second_call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
@@ -156,7 +154,6 @@ class TestBuildHypercommGrids:
                 "language": ModuleParallelismConfig(
                     tensor_model_parallel_size=2,
                     context_parallel_size=2,
-                    expert_tensor_parallel_size=2,
                     pipeline_model_parallel_size=2,
                     data_parallel_size=2,
                 ),
@@ -166,8 +163,8 @@ class TestBuildHypercommGrids:
         mock_grid = MagicMock()
         create_pg_calls = []
 
-        def track_create_pg(dims, view=None):
-            create_pg_calls.append(dims)
+        def track_create_pg(dims, *, view=None):
+            create_pg_calls.append((dims, view))
             return MagicMock()
 
         mock_grid.create_pg = track_create_pg
@@ -175,17 +172,52 @@ class TestBuildHypercommGrids:
 
         build_hypercomm_grids(megatron_mimo_config)
 
-        # Verify dense dimension groups created (base view)
-        assert ["tp"] in create_pg_calls
-        assert ["cp"] in create_pg_calls
-        assert ["pp"] in create_pg_calls
-        assert ["dp"] in create_pg_calls
+        # Verify all dimension groups created
+        assert (["tp"], None) in create_pg_calls
+        assert (["cp"], None) in create_pg_calls
+        assert (["pp"], None) in create_pg_calls
+        assert (["dp"], None) in create_pg_calls
         # Verify composite group created
-        assert ["dp", "cp"] in create_pg_calls
-        # Verify expert dimension groups created (expert view)
-        assert ["ep"] in create_pg_calls
-        assert ["expt_tp"] in create_pg_calls
-        assert ["expt_dp"] in create_pg_calls
+        assert (["dp", "cp"], None) in create_pg_calls
+        assert (["tp", "cp"], None) in create_pg_calls
+        assert (["tp", "pp"], None) in create_pg_calls
+        assert (["tp", "dp", "cp"], None) in create_pg_calls
+        assert (["tp", "cp", "dp", "pp"], None) in create_pg_calls
+        assert (["ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_dp"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp", "ep"], EXPERT_VIEW_NAME) in create_pg_calls
+        assert (["expt_tp", "ep", "pp"], EXPERT_VIEW_NAME) in create_pg_calls
+
+    @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
+    def test_build_registers_non_default_language_expert_view(self, mock_grid_class):
+        """Non-default language EP/ETP is represented as a separate expert view."""
+        megatron_mimo_config = MegatronMIMOParallelismConfig(
+            module_parallelisms={
+                "language": ModuleParallelismConfig(
+                    tensor_model_parallel_size=4,
+                    expert_model_parallel_size=2,
+                    expert_tensor_parallel_size=2,
+                    pipeline_model_parallel_size=2,
+                    data_parallel_size=2,
+                ),
+            }
+        )
+
+        mock_grid = MagicMock()
+        mock_grid.create_pg = MagicMock(return_value=MagicMock())
+        mock_grid_class.return_value = mock_grid
+
+        build_hypercomm_grids(megatron_mimo_config)
+
+        mock_grid_class.assert_called_once()
+        assert mock_grid_class.call_args.kwargs["shape"] == [4, 1, 2, 2]
+        mock_grid.register_view.assert_called_once_with(
+            EXPERT_VIEW_NAME,
+            shape=[2, 2, 2, 2],
+            dim_names=["expt_tp", "ep", "expt_dp", "pp"],
+            shared_dims=["pp"],
+        )
 
     @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
     def test_build_uses_nccl_backend(self, mock_grid_class):
@@ -236,50 +268,3 @@ class TestBuildHypercommGrids:
 
         encoder_kwargs = mock_grid_class.call_args_list[1][1]
         assert encoder_kwargs["rank_offset"] == 4
-
-    @patch("megatron.core.hyper_comm_grid.HyperCommGrid")
-    def test_build_registers_expert_view_for_expert_tensor_parallel(self, mock_grid_class):
-        """etp>1 factors into a dedicated expert view; the dense base view folds etp into dp."""
-        megatron_mimo_config = MegatronMIMOParallelismConfig(
-            module_parallelisms={
-                "language": ModuleParallelismConfig(
-                    tensor_model_parallel_size=4,
-                    context_parallel_size=1,
-                    expert_tensor_parallel_size=2,
-                    pipeline_model_parallel_size=1,
-                    data_parallel_size=1,
-                ),
-            }
-        )
-
-        mock_grid = MagicMock()
-        mock_grid.create_pg = MagicMock(return_value=MagicMock())
-        mock_grid_class.return_value = mock_grid
-
-        build_hypercomm_grids(megatron_mimo_config)
-
-        # num_ranks == tp*cp*etp*pp*dp == 4*1*2*1*1 == 8.
-        # Dense base view folds etp into dp: dp_base == num_ranks/(tp*cp*pp) == 8/4 == 2.
-        call_kwargs = mock_grid_class.call_args[1]
-        assert call_kwargs["shape"] == [4, 1, 2, 1]  # [tp, cp, dp_base, pp]
-        assert call_kwargs["dim_names"] == ["tp", "cp", "dp", "pp"]
-
-        # Expert view re-factors the same 8 ranks: expt_tp == etp == 2, ep == 1,
-        # expt_dp == num_ranks/(etp*pp) == 8/2 == 4.
-        mock_grid.register_view.assert_called_once()
-        view_args, view_kwargs = mock_grid.register_view.call_args
-        assert view_args[0] == "expert"
-        assert view_kwargs["shape"] == [2, 1, 4, 1]  # [expt_tp, ep, expt_dp, pp]
-        assert view_kwargs["dim_names"] == ["expt_tp", "ep", "expt_dp", "pp"]
-        assert view_kwargs["shared_dims"] == ["pp"]
-
-        # Expert groups are created on the expert view; dense groups stay on the base view.
-        expert_dims = [c.args[0] for c in mock_grid.create_pg.call_args_list if c.kwargs.get("view") == "expert"]
-        dense_dims = [c.args[0] for c in mock_grid.create_pg.call_args_list if c.kwargs.get("view") is None]
-        assert ["expt_tp", "ep", "pp"] in expert_dims
-        assert ["expt_tp", "ep"] in expert_dims
-        assert ["ep"] in expert_dims
-        assert ["expt_dp"] in expert_dims
-        assert ["expt_tp"] in expert_dims
-        assert ["tp", "cp", "dp", "pp"] in dense_dims
-        assert ["dp"] in dense_dims

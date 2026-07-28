@@ -39,7 +39,10 @@ from megatron.bridge.models.stepfun.step35_bridge import (
     Step35ModelConfig,
     Step35SharedExpertMLP,
     _MTPDenseLayerSpecsList,
-    step35_layer_spec,
+    build_step35_layer_spec,
+)
+from megatron.bridge.models.stepfun.step35_modeling import (
+    build_step35_layer_spec as build_step35_model_layer_spec,
 )
 
 
@@ -191,7 +194,7 @@ class TestStep35BridgeRegistration:
         assert restored.layer_types == result.layer_types
         assert restored.rotary_percents == result.rotary_percents
         assert restored.transformer.activation_func is result.transformer.activation_func
-        assert restored.transformer_layer_spec is step35_layer_spec
+        assert restored.transformer_layer_spec is build_step35_model_layer_spec
 
     def test_model_config_uses_native_head_wise_gate_without_output_fallback(self):
         hf_config = _make_hf_config(use_head_wise_attn_gate=True, attention_output_gate=True)
@@ -340,6 +343,32 @@ class TestStep35BridgeProviderBridge:
 
         assert p.head_wise_attn_gate is True
         assert p.attention_output_gate is True
+
+    def test_head_wise_gate_without_native_support_enables_output_gate_fallback(self, monkeypatch):
+        """The published Step-3.5-Flash config carries no ``attention_output_gate``."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: False)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": None,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is True
+
+    def test_head_wise_gate_with_native_support_keeps_output_gate_off(self, monkeypatch):
+        """With native scalar gates, no fallback is enabled for the published config."""
+        monkeypatch.setattr(_step35_bridge_mod, "_mcore_supports_head_wise_attn_gate", lambda: True)
+        _, p = self._run(
+            hf_overrides={
+                "attention_output_gate": None,
+                "use_head_wise_attn_gate": True,
+            },
+        )
+
+        assert p.head_wise_attn_gate is True
+        assert p.attention_output_gate is False
 
     def test_attention_output_gate_preserved_without_head_wise_gate(self):
         _, p = self._run(
@@ -510,16 +539,27 @@ class TestStep35BridgeProviderBridge:
 
     def test_transformer_layer_spec_uses_custom_builder(self):
         _, p = self._run()
-        assert p.transformer_layer_spec is step35_layer_spec
+        assert p.transformer_layer_spec is build_step35_layer_spec
+
+    def test_transformer_layer_spec_target_passes_checkpoint_load_validation(self):
+        """The serialized spec target must be loadable by the checkpoint instantiate path."""
+        from megatron.bridge.utils.instantiate_utils import _validate_target_prefix
+
+        _, p = self._run()
+        spec = p.transformer_layer_spec
+        target = f"{spec.__module__}.{spec.__qualname__}"
+        # Raises InstantiationException for private path segments — the exact
+        # gate that rejects a converted checkpoint's run_config on load.
+        _validate_target_prefix(target=target, full_key="transformer_layer_spec")
 
 
 # ---------------------------------------------------------------------------
-# step35_layer_spec
+# build_step35_layer_spec
 # ---------------------------------------------------------------------------
 
 
 class TestBuildStep35LayerSpec:
-    """Cover the per-spec rewrite loop in ``step35_layer_spec``.
+    """Cover the per-spec rewrite loop in ``build_step35_layer_spec``.
 
     Mocks out the two Megatron-Core spec builders so the test can run without
     a real backend, and feeds them a hand-rolled mix of MoE and dense layer
@@ -560,7 +600,7 @@ class TestBuildStep35LayerSpec:
                 return_value=fake_dense_mtp,
             ) as mock_dense,
         ):
-            out = step35_layer_spec(cfg)
+            out = build_step35_layer_spec(cfg)
         return out, fake_dense_mtp, mock_block, mock_dense, cfg
 
     def test_moe_shared_experts_rebound_to_step35_shared_expert_mlp(self):

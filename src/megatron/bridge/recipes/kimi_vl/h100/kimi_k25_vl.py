@@ -16,6 +16,7 @@ import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _sft_common_vlm
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.recipes.utils.optimizer_utils import (
     distributed_muon_with_cosine_annealing,
 )
@@ -92,7 +93,7 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
 
     # Dataset config - mock data by default
     cfg.dataset.blend = None
-    cfg.dataset.sequence_length = 4096
+    cfg.dataset.seq_length = 4096
     cfg.dataset.num_workers = 8
     cfg.dataset.enable_in_batch_packing = False
     cfg.dataset.hf_processor_path = "moonshotai/Kimi-K2.5"
@@ -184,6 +185,10 @@ def kimi_k25_vl_sft_512gpu_h100_bf16_config() -> ConfigContainer:
     # MoE Force Load Balancing
     cfg.model.moe_router_force_load_balancing = False
 
+    # Keep the complete process environment visible on the recipe.
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+    }
     return cfg
 
 

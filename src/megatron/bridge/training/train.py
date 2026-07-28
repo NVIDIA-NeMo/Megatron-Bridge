@@ -113,6 +113,15 @@ except ImportError:
     HAS_PAGED_STASHING = False
 
 
+# For Optimizer CUDA graph support
+try:
+    from megatron.core.optimizer.optimizer_cuda_graph import OptimizerCudaGraphWrapper
+
+    HAS_OPTIMIZER_CUDA_GRAPH = True
+except ImportError:
+    HAS_OPTIMIZER_CUDA_GRAPH = False
+
+
 def train(
     forward_step_func: ForwardStepCallable,
     model: list[MegatronModule],
@@ -305,8 +314,17 @@ def train(
     )
     if is_full_iteration_cuda_graph(config.model):
         forward_backward_func = FullCudaGraphWrapper(
-            forward_backward_func, cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps
+            forward_backward_func,
+            cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps,
+            use_single_mempool=config.model.cuda_graph_use_single_mempool,
         )
+    if config.optimizer.optimizer_cuda_graph and HAS_OPTIMIZER_CUDA_GRAPH:
+        optimizer.step = OptimizerCudaGraphWrapper(
+            optimizer.step,
+            cuda_graph_warmup_steps=config.model.cuda_graph_warmup_steps,
+            use_single_mempool=config.model.cuda_graph_use_single_mempool,
+        )
+
     # Wrap model with PagedStashRunner when moe_expert_rank_capacity_factor padding is enabled.
     # PagedStashRunner is responsible for detecting overflow and re-running iteration in eager-mode without padding.
     if HAS_PAGED_STASHING and config.model.moe_expert_rank_capacity_factor is not None:
@@ -340,16 +358,20 @@ def train(
             ),
         )
 
-    # Disable forward pre-hook to start training to ensure that errors in checkpoint loading
-    # or random initialization don't propagate to all ranks in first all-gather (which is a
-    # no-op if things work correctly).
+    # Keep the forward pre-hook enabled for MXFP8 resume so parameter gathering
+    # and MXFP8 staging match an uninterrupted iteration. Other runs retain the
+    # first-iteration validation path below.
     if should_toggle_forward_pre_hook:
-        disable_forward_pre_hook(model, param_sync=False)
-        # Also remove param_sync_func temporarily so that sync calls made in
-        # `forward_backward_func` are no-ops.
         param_sync_func = model_config.param_sync_func
-        model_config.param_sync_func = None
-        pre_hook_enabled = False
+        is_mxfp8_resume = start_iteration > 0 and str(model_config.fp8_recipe).lower().endswith("mxfp8")
+        if not is_mxfp8_resume:
+            disable_forward_pre_hook(model, param_sync=False)
+            # Also remove param_sync_func temporarily so that sync calls made in
+            # `forward_backward_func` are no-ops.
+            model_config.param_sync_func = None
+            pre_hook_enabled = False
+        else:
+            pre_hook_enabled = True
 
     # Run training iterations till done.
     while global_state.train_state.step < train_config.train_iters:
@@ -519,7 +541,7 @@ def train(
                 # Enable forward pre-hook after training step has successfully run. All subsequent
                 # forward passes will use the forward pre-hook / `param_sync_func` in
                 # `forward_backward_func`.
-                if should_toggle_forward_pre_hook:
+                if should_toggle_forward_pre_hook and not pre_hook_enabled:
                     enable_forward_pre_hook(model)
                     model_config.param_sync_func = param_sync_func
                     pre_hook_enabled = True
@@ -1589,7 +1611,7 @@ def _handle_mxfp8_param_buffer_copy(
 
     However, we should skip this on the first iteration when forward_pre_hook is disabled,
     because:
-    1. The first iteration's params are already in param.data (from init or checkpoint).
+    1. A fresh run's first-iteration params are already in param.data from initialization.
     2. Without forward_pre_hook, finish_param_sync() won't be called to zero the grad buffer,
        so the main grads will be polluted by the main params.
 
@@ -1632,6 +1654,11 @@ def _delete_cuda_graphs(cuda_graph_helper: TECudaGraphHelper):
     # https://github.com/pytorch/pytorch/issues/115388#issuecomment-3009880966
     if "training" in FullCudaGraphWrapper.cuda_graph:
         del FullCudaGraphWrapper.cuda_graph["training"]
+
+    # Explicitly delete optimizer CUDA graph
+    if HAS_OPTIMIZER_CUDA_GRAPH and OptimizerCudaGraphWrapper.cuda_graph is not None:
+        del OptimizerCudaGraphWrapper.cuda_graph
+        OptimizerCudaGraphWrapper.cuda_graph = None
 
     # Cleanup CUDA graphs object for partial Cuda-graphs (implemented in TransformerEngine).
     # Guard on graphs_created(): with TE-scoped graphs (e.g. cuda_graph_scope="attn") the helper
