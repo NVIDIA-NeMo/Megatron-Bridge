@@ -21,7 +21,7 @@ from megatron.bridge.models.conversion.mapping_registry import MegatronMappingRe
 
 
 HF_MODEL_ID = "Qwen/Qwen3-30B-A3B"
-HF_REVISION = "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"
+HF_REVISION = "ad44e777bcd18fa416d9da3bd8f70d33ebb85d39"  # pragma: allowlist secret
 HF_ARCHITECTURE = "Qwen3MoeForCausalLM"
 MIN_TRANSFORMERS_VERSION = "5.8.1"
 
