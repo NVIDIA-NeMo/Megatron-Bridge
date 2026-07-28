@@ -54,6 +54,8 @@ class _FakeModelCfg:
     def __init__(self):
         self.cross_entropy_fusion_impl = "native"
         self.context_parallel_size = 1
+        self.gdn_pre_gated_delta_rule_fusion = False
+        self.gated_delta_rule_backend = "fla"
 
     def finalize(self):
         # qwen3 recipe may call finalize(); make it a no-op
