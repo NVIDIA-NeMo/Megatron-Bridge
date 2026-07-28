@@ -46,6 +46,7 @@ _RECIPE_FUNCS = [
 
 class _FakeModelCfg:
     dynamic_resolution = True
+    add_sound_encoder = True
 
     def finalize(self):
         return None
@@ -150,6 +151,7 @@ def test_cord_v2_sft_recipe_uses_hf_dataset_config(fake_processor):
     assert cfg.dataset.enable_in_batch_packing is False
     assert cfg.dataset.dataloader_type == "cyclic"
     assert cfg.model.temporal_patch_dim == 1
+    assert cfg.model.add_sound_encoder is False
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
 
@@ -173,6 +175,7 @@ def test_cord_v2_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
     assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.add_sound_encoder is False
     assert cfg.model.freeze_sound_projection is True
 
 
@@ -193,6 +196,7 @@ def test_valor32k_sft_recipe_uses_temporal_omni_task_encoder_config(fake_process
     assert cfg.model.temporal_patch_dim == 2
     assert cfg.model.separate_video_embedder is True
     assert cfg.model.temporal_ckpt_compat is True
+    assert cfg.model.add_sound_encoder is True
     assert cfg.model.freeze_sound_projection is False
     assert cfg.peft is None
 
@@ -217,4 +221,5 @@ def test_valor32k_peft_recipe_configures_lora_and_freezing(fake_processor):
     assert cfg.peft.alpha == 32
     assert cfg.checkpoint.load is None
     assert cfg.model.freeze_vision_projection is True
+    assert cfg.model.add_sound_encoder is True
     assert cfg.model.freeze_sound_projection is True

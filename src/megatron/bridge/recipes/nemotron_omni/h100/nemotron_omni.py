@@ -63,11 +63,13 @@ def nemotron_omni_cord_v2_sft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a VL SFT config for Nemotron Omni on CORD v2.
 
     Vision-language finetuning on the CORD v2 receipt parsing dataset.
+    Sound modules are omitted because this dataset contains only image-text samples.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
+    cfg.model.add_sound_encoder = False
     cfg.dataset = DirectHFSFTDatasetConfig(
         seq_length=4096,
         preprocessing=ChatSFTPreprocessingConfig(),
@@ -92,7 +94,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
     """Return a LoRA PEFT config for Nemotron Omni on CORD v2.
 
     LoRA adapters are applied to attention, Mamba, and FC1/FC2 projections.
-    Vision and sound base modules remain frozen while matching adapters are trainable.
+    Vision base modules remain frozen and sound modules are omitted.
     Default configuration: 4 GPUs (TP=4).
     Uses nemotron_omni_step (pass --step_func nemotron_omni_step).
     """
@@ -100,6 +102,7 @@ def nemotron_omni_cord_v2_peft_4gpu_h100_bf16_config() -> ConfigContainer:
 
     cfg = _nemotron_omni_base()
     cfg.model.temporal_patch_dim = 1
+    cfg.model.add_sound_encoder = False
     cfg.peft = LoRA(
         target_modules=["linear_qkv", "linear_proj", "in_proj", "out_proj", "linear_fc1", "linear_fc2"],
         dim=16,

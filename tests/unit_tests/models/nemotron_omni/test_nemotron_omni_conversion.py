@@ -138,6 +138,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert isinstance(provider, NemotronOmniModelProvider)
     assert provider.nemotron_omni_contract == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
     assert provider.has_sound is True
+    assert provider.add_sound_encoder is True
     assert provider.language_model_type == "nemotron6-moe"
     assert provider.hidden_size == 256
     assert provider.ffn_hidden_size == 512
@@ -162,6 +163,7 @@ def test_nemotron_omni_provider_bridge_maps_public_config_fields():
     assert provider.temporal_ckpt_compat is True
     serialized = ConfigContainer._convert_value_to_dict(provider)
     assert serialized["nemotron_omni_contract"] == NEMOTRON_OMNI_EXPANDED_SEQUENCE_CONTRACT
+    assert serialized["add_sound_encoder"] is True
 
 
 def test_nemotron_omni_provider_rejects_static_resolution():
@@ -211,6 +213,16 @@ def test_canonical_provider_builds_dedicated_model(monkeypatch):
     assert provider.provide() is model
     model_factory.assert_called_once()
     llava_factory.assert_not_called()
+
+
+def test_nemotron_omni_provider_can_omit_sound_modules():
+    provider = NemotronOmniModelProvider(has_sound=True, add_sound_encoder=False)
+
+    sound_model, sound_projection = provider._build_sound_modules(None, None, add_encoder=True)
+
+    assert provider.has_sound is True
+    assert sound_model is None
+    assert sound_projection is None
 
 
 def test_nemotron_omni_vision_projection_uses_squared_relu():

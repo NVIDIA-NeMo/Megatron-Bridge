@@ -158,6 +158,9 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
     dynamic_resolution: Literal[True] = True
 
     has_sound: bool = False
+    # Keep checkpoint capability separate from per-run construction. Disabling
+    # the encoder also omits its dependent projector.
+    add_sound_encoder: bool = True
     sound_model_type: str = "parakeet"
     sound_hidden_size: int = 1024
     sound_projection_hidden_size: int = 4096
@@ -277,6 +280,20 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         )
         return BridgeSoundEncoder(config)
 
+    def _build_sound_modules(self, language_cfg, language_spec, *, add_encoder: bool):
+        """Build optional sound modules on the encoder pipeline stage."""
+        if not (self.has_sound and self.add_sound_encoder and add_encoder):
+            return None, None
+
+        sound_model = self._build_sound_encoder()
+        sound_projection = MultimodalProjector(
+            config=self._build_sound_projection_config(language_cfg),
+            submodules=copy.deepcopy(get_language_mlp_submodules(language_spec)),
+            projector_type="mlp",
+            input_size=self.sound_hidden_size,
+        )
+        return sound_model, sound_projection
+
     def _provide_llava(self, pre_process=None, post_process=None, vp_stage=None):
         """Assemble the legacy LLaVA collapse/expand implementation.
 
@@ -301,22 +318,12 @@ class _NemotronOmniModelProviderBase(NemotronVLModelProvider):
         add_encoder_flag = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
         add_decoder_flag = True
 
-        # Build sound components (only on PP first stage, only when sound present)
-        sound_model = None
-        sound_projection = None
         sound_token_index = self.sound_context_token_id
-
-        if self.has_sound and add_encoder_flag:
-            sound_model = self._build_sound_encoder()
-
-            sound_proj_cfg = self._build_sound_projection_config(language_cfg)
-            sound_proj_spec = copy.deepcopy(get_language_mlp_submodules(language_spec))
-            sound_projection = MultimodalProjector(
-                config=sound_proj_cfg,
-                submodules=sound_proj_spec,
-                projector_type="mlp",
-                input_size=self.sound_hidden_size,
-            )
+        sound_model, sound_projection = self._build_sound_modules(
+            language_cfg,
+            language_spec,
+            add_encoder=add_encoder_flag,
+        )
 
         llava_model = LLaVAModel(
             language_transformer_config=language_cfg,
@@ -417,16 +424,11 @@ class NemotronOmniModelProvider(_NemotronOmniModelProviderBase):
 
         add_encoder = parallel_state.is_pipeline_first_stage() if self.pipeline_model_parallel_size > 1 else True
 
-        sound_model = None
-        sound_projection = None
-        if self.has_sound and add_encoder:
-            sound_model = self._build_sound_encoder()
-            sound_projection = MultimodalProjector(
-                config=self._build_sound_projection_config(language_cfg),
-                submodules=copy.deepcopy(get_language_mlp_submodules(language_spec)),
-                projector_type="mlp",
-                input_size=self.sound_hidden_size,
-            )
+        sound_model, sound_projection = self._build_sound_modules(
+            language_cfg,
+            language_spec,
+            add_encoder=add_encoder,
+        )
 
         model = NemotronOmniModel(
             language_transformer_config=language_cfg,
