@@ -1484,6 +1484,58 @@ class TestLoadCheckpoint:
 
         mock_load_hf.assert_not_called()
 
+    def test_fsdp_layout_change_ignores_rng_state(self, load_checkpoint_fixtures):
+        """FSDP resharding must not partially restore TP/PP-keyed RNG state."""
+        cfg = load_checkpoint_fixtures["mock_cfg"]
+        cfg.checkpoint.ckpt_format = "fsdp_dtensor"
+        cfg.checkpoint.load_optim = False
+        cfg.model.tensor_model_parallel_size = 2
+        cfg.model.pipeline_model_parallel_size = 1
+        cfg.peft = None
+
+        pg_collection = Mock()
+        pg_collection.tp.size.return_value = 2
+        pg_collection.pp.size.return_value = 1
+
+        reader = Mock()
+        reader.read_metadata.return_value.state_dict_metadata = {}
+
+        with (
+            patch("megatron.bridge.training.checkpointing.is_hf_checkpoint_dir", return_value=False),
+            patch("megatron.bridge.training.checkpointing.is_checkpoint_iteration_directory", return_value=True),
+            patch("megatron.bridge.training.checkpointing.file_exists", return_value=True),
+            patch("megatron.bridge.training.checkpointing.read_run_config") as mock_read_run_config,
+            patch("megatron.bridge.training.checkpointing._get_filesystem_reader", return_value=reader),
+            patch("megatron.bridge.training.checkpointing.get_rng_state", return_value="fresh") as mock_get_rng_state,
+            patch(
+                "megatron.bridge.training.checkpointing.generate_state_dict", return_value={"model": {}}
+            ) as mock_generate,
+            patch(
+                "megatron.bridge.training.checkpointing._load_base_checkpoint",
+                return_value=(None, "", False, None),
+            ),
+        ):
+            mock_read_run_config.return_value = {
+                "model": {
+                    "tensor_model_parallel_size": 1,
+                    "pipeline_model_parallel_size": 1,
+                }
+            }
+
+            result = _load_checkpoint_from_path(
+                "/checkpoints/iter_0000003",
+                load_checkpoint_fixtures["mock_state"],
+                load_checkpoint_fixtures["mock_model"],
+                load_checkpoint_fixtures["mock_optimizer"],
+                load_checkpoint_fixtures["mock_scheduler"],
+                pg_collection=pg_collection,
+            )
+
+        assert result == (0, 0)
+        mock_read_run_config.assert_called_once_with("/checkpoints/iter_0000003/run_config.yaml")
+        mock_get_rng_state.assert_not_called()
+        assert mock_generate.call_args.kwargs["rng_state"] is None
+
     @patch("torch.distributed.is_initialized")
     @patch("megatron.bridge.training.checkpointing._build_auto_bridge_for_save")
     def test_load_hf_pretrained_checkpoint_initializes_from_hf_source(

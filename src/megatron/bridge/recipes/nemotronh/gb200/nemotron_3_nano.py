@@ -12,12 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""GB200 pretraining recipe for Nemotron 3 Nano."""
+"""GB200 training recipes for Nemotron 3 Nano."""
 
 import torch
 
 from megatron.bridge import AutoBridge
 from megatron.bridge.recipes.common import _pretrain_common
+from megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano import (
+    nemotron_3_5_nano_sft_openmathinstruct2_packed_config,
+)
+from megatron.bridge.recipes.utils.environment_utils import COMMON_RECIPE_ENV_VARS
 from megatron.bridge.training.comm_overlap import CommOverlapConfig
 from megatron.bridge.training.config import ConfigContainer
 from megatron.bridge.training.mixed_precision import get_mixed_precision_config
@@ -25,6 +29,8 @@ from megatron.bridge.utils.cuda_graph import set_cuda_graph_modules
 
 
 _NEMOTRON_3_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3-Nano-30B-A3B-BF16"
+# Placeholder until the public Nemotron 3.5 Nano repository is released.
+_NEMOTRON_3_5_NANO_MODEL_ID = "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
 
 
 def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
@@ -65,16 +71,16 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.model.moe_token_dispatcher_type = "flex"
     cfg.model.moe_flex_dispatcher_backend = "hybridep"
-    cfg.model.moe_flex_dispatcher_num_sms = 16
-    cfg.model.moe_hybridep_num_sms = None
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_hybridep_num_sms = 16
     cfg.model.moe_shared_expert_overlap = False
     cfg.model.moe_router_force_load_balancing = False
 
     cfg.train.train_iters = 39735
-    cfg.train.global_batch_size = 3072
+    cfg.train.global_batch_size = 512
     cfg.train.micro_batch_size = 2
-    cfg.train.manual_gc = False
-    cfg.train.manual_gc_interval = 0
+    cfg.train.manual_gc = True
+    cfg.train.manual_gc_interval = 100
 
     cfg.model.transformer_impl = "transformer_engine"
 
@@ -115,24 +121,90 @@ def nemotron_3_nano_pretrain_8gpu_gb200_bf16_config() -> ConfigContainer:
 
     cfg.comm_overlap = CommOverlapConfig(
         tp_comm_bootstrap_backend="nccl",
-        tp_comm_overlap=False,
+        tp_comm_overlap=True,
     )
     cfg.comm_overlap.delay_wgrad_compute = False
     cfg.comm_overlap.overlap_moe_expert_parallel_comm = False
 
     cfg.checkpoint.save_interval = 200
+    cfg.checkpoint.async_save = False
     cfg.checkpoint.ckpt_assume_constant_structure = True
     cfg.checkpoint.dist_ckpt_strictness = "log_all"
 
     cfg.ddp.overlap_grad_reduce = True
     cfg.ddp.overlap_param_gather = True
-    cfg.ddp.check_for_nan_in_grad = False
+    cfg.ddp.check_for_nan_in_grad = True
+    cfg.ddp.check_for_large_grads = True
     cfg.ddp.use_distributed_optimizer = True
     cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.rerun_state_machine.check_for_nan_in_loss = True
 
     cfg.model.init_method_std = 0.0173
     cfg.model.use_fused_weighted_squared_relu = True
 
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
+
+    return cfg
+
+
+def nemotron_3_5_nano_pretrain_4k_config() -> ConfigContainer:
+    """Return the Nemotron 3.5 Nano BF16 4K pretraining config."""
+    cfg = nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
+    cfg.model.mtp_num_layers = 2
+    cfg.model.mtp_hybrid_override_pattern = "*E"
+    cfg.model.mtp_use_repeated_layer = True
+    cfg.model.keep_mtp_spec_in_bf16 = True
+    cfg.model.mtp_loss_scaling_factor = 0.3
+    cfg.model.hf_model_id = _NEMOTRON_3_5_NANO_MODEL_ID
+    cfg.tokenizer.tokenizer_model = _NEMOTRON_3_5_NANO_MODEL_ID
+    return cfg
+
+
+def nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config() -> ConfigContainer:
+    """Return the optimized TP1 4K packed OpenMathInstruct-2 SFT config."""
+    cfg = nemotron_3_5_nano_sft_openmathinstruct2_packed_config()
+
+    cfg.model.tensor_model_parallel_size = 1
+    cfg.model.sequence_parallel = False
+    cfg.model.moe_flex_dispatcher_backend = "hybridep"
+    cfg.model.moe_flex_dispatcher_num_sms = None
+    cfg.model.moe_hybridep_num_sms = 32
+    cfg.model.recompute_granularity = None
+    cfg.model.recompute_modules = None
+    cfg.model.recompute_method = None
+    cfg.model.recompute_num_layers = None
+
+    cfg.train.empty_unused_memory_level = 0
+    # Match the validated GB200 BF16 pretraining reduction policy.
+    cfg.mixed_precision = get_mixed_precision_config(cfg.mixed_precision)
+    cfg.mixed_precision.grad_reduce_in_fp32 = False
+    cfg.ddp.grad_reduce_in_fp32 = False
+    cfg.ddp.overlap_param_gather = True
+    cfg.optimizer.overlap_param_gather = True
+
+    cfg.env_vars = {
+        **COMMON_RECIPE_ENV_VARS,
+        "CUDA_DEVICE_MAX_CONNECTIONS": 32,
+        "NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN": 8,
+        "NUM_OF_TOKENS_PER_CHUNK_COMBINE_API": 128,
+        "NVLINK_DOMAIN_SIZE": 72,
+        "USE_MNNVL": 1,
+        "NVTE_BWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_FWD_LAYERNORM_SM_MARGIN": 20,
+        "NVTE_NORM_BWD_USE_CUDNN": 1,
+        "NVTE_NORM_FWD_USE_CUDNN": 1,
+    }
     return cfg
 
 
@@ -143,6 +215,8 @@ nemotron_3_nano_gb200_pretrain_config = nemotron_3_nano_pretrain_8gpu_gb200_bf16
 
 
 __all__ = [
+    "nemotron_3_5_nano_pretrain_4k_config",
+    "nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config",
     "nemotron_3_nano_gb200_pretrain_config",
     "nemotron_3_nano_pretrain_8gpu_gb200_bf16_config",
 ]

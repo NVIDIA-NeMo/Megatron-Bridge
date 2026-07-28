@@ -338,6 +338,82 @@ class TestHFTaskEncoderBatch(unittest.TestCase):
             encoder.batch([sample])
 
 
+def test_nemotron_vl_registry_accepts_decoded_energon_video(monkeypatch):
+    from megatron.bridge.models.nemotron_vl import nemotron_vl_utils
+    from megatron.bridge.models.nemotron_vl.data import collate_fn as nemotron_vl_collate
+
+    class _Tokenizer:
+        pad_token = "<pad>"
+        pad_token_id = 0
+        eos_token = "<eos>"
+        eos_token_id = 1
+
+        def convert_tokens_to_ids(self, token):
+            return {"<video>": 9, "<image>": 10}[token]
+
+    class NemotronNanoVLV2Processor:
+        def __init__(self):
+            self.tokenizer = _Tokenizer()
+            self.video_payloads = None
+
+        def apply_chat_template(self, conversations, **kwargs):
+            del conversations, kwargs
+            return ["rendered prompt"]
+
+        def __call__(self, *, videos, **kwargs):
+            del kwargs
+            self.video_payloads = videos
+            return {
+                "input_ids": torch.tensor([[1, 2, 3]]),
+                "num_patches": torch.tensor([1]),
+                "pixel_values_videos": torch.ones(1, 3, 2, 2),
+            }
+
+    monkeypatch.setattr(
+        nemotron_vl_collate,
+        "extract_skipped_token_ids",
+        lambda processor: torch.empty(0, dtype=torch.long),
+    )
+    monkeypatch.setattr(
+        nemotron_vl_collate,
+        "_nemotron_vl_assistant_mask_boundary_config",
+        lambda processor: None,
+    )
+    monkeypatch.setattr(
+        nemotron_vl_collate,
+        "build_assistant_loss_mask",
+        lambda example, input_ids, *args, **kwargs: torch.zeros_like(input_ids, dtype=torch.float32),
+    )
+    monkeypatch.setattr(
+        nemotron_vl_utils,
+        "adjust_image_tokens",
+        lambda batch, *args, **kwargs: batch,
+    )
+
+    processor = NemotronNanoVLV2Processor()
+    encoder = HFTaskEncoder(processor=processor, seq_length=128)
+    sample = _make_chatml_sample(
+        conversation=json.dumps(
+            [
+                {
+                    "role": "user",
+                    "content": [{"type": "video"}, {"type": "text", "text": "Describe the video."}],
+                },
+                {"role": "assistant", "content": "A moving square."},
+            ]
+        ),
+        videos=[[torch.ones(3, 2, 2)]],
+    )
+
+    encoded = encoder.encode_sample(sample)
+    decoded_frames = encoded.example["conversation"][0]["content"][0]["video"]
+    batch = encoder.batch([encoded])
+
+    assert isinstance(batch, HFEnergonBatch)
+    assert processor.video_payloads is not None
+    assert processor.video_payloads[0][0] is decoded_frames[0]
+
+
 class TestHFTaskEncoderEncodeBatch(unittest.TestCase):
     def test_encode_batch(self):
         processor = _make_processor()

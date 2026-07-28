@@ -20,9 +20,11 @@
 #
 
 import importlib
+import re
 from typing import Callable
 
 import pytest
+import torch
 
 from megatron.bridge.training.utils.omegaconf_utils import OverridesError, process_config_with_overrides
 from tests.unit_tests.recipes.recipe_test_utils import patch_recipe_module_global
@@ -34,6 +36,16 @@ _NEMOTRONH_RECIPE_FUNCS = [
     for name in getattr(_nemotronh_module, "__all__", [])
     if callable(getattr(_nemotronh_module, name, None)) and not name.startswith("nemotronh_")
 ]
+
+
+def test_nemotron_3_5_nano_library_recipe_names_are_hardware_agnostic():
+    """Library names describe behavior and do not collide with performance recipes."""
+    perf_module = importlib.import_module("megatron.bridge.perf_recipes.nemotronh")
+    library_names = {name for name in _nemotronh_module.__all__ if name.startswith("nemotron_3_5_nano_")}
+    perf_names = {name for name in dir(perf_module) if name.startswith("nemotron_3_5_nano_")}
+
+    assert all(re.search(r"(?:\d+gpu|h100|b200|b300|gb200|gb300)", name) is None for name in library_names)
+    assert library_names.isdisjoint(perf_names)
 
 
 class _FakeModelProvider:
@@ -62,6 +74,7 @@ def _patch_hf_backed_recipe_providers(monkeypatch: pytest.MonkeyPatch) -> None:
     """Keep AutoBridge-backed recipe construction deterministic and offline."""
     for module_name in (
         "megatron.bridge.recipes.nemotronh.gb200.nemotron_3_nano",
+        "megatron.bridge.recipes.nemotronh.h100.nemotron_3_nano",
         "megatron.bridge.recipes.nemotronh.nemotron_3_super",
         "megatron.bridge.recipes.nemotronh.nemotron_3_ultra",
     ):
@@ -144,6 +157,129 @@ def test_nemotron_3_nano_gb200_defers_vocab_size_to_training_tokenizer():
     cfg = _nemotronh_module.nemotron_3_nano_pretrain_8gpu_gb200_bf16_config()
 
     assert cfg.model.vocab_size is None
+
+
+def test_nemotron_3_5_nano_h100_convergence_recipe_uses_perf_execution_policy():
+    """The H100 convergence recipe keeps safety checks while using the measured fast path."""
+    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_config
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = nemotron_3_5_nano_pretrain_config()
+
+    assert cfg.model.seq_length == 8192
+    assert cfg.dataset.seq_length == 8192
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.train.global_batch_size == 1024
+    assert cfg.train.micro_batch_size == 1
+
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba"]
+    assert cfg.model.recompute_granularity == "selective"
+    assert cfg.model.recompute_modules == ["moe", "layernorm"]
+
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.optimizer.use_precision_aware_optimizer is False
+    assert cfg.optimizer.main_grads_dtype == torch.float32
+    assert cfg.optimizer.main_params_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_dtype == torch.float32
+    assert cfg.optimizer.exp_avg_sq_dtype == torch.float32
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.checkpoint.save_interval == 200
+    assert cfg.checkpoint.async_save is False
+
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 8
+    assert cfg.env_vars["USE_MNNVL"] == 0
+
+
+def test_nemotron_3_5_nano_4k_convergence_recipe_uses_perf_execution_policy():
+    """The 4K convergence recipe keeps safety checks while using the measured fast path."""
+    from megatron.bridge.recipes.nemotronh import nemotron_3_5_nano_pretrain_4k_config
+    from megatron.bridge.utils.cuda_graph import cuda_graph_module_names
+
+    cfg = nemotron_3_5_nano_pretrain_4k_config()
+
+    assert cfg.model.seq_length == 4096
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.train.global_batch_size == 512
+    assert cfg.train.micro_batch_size == 2
+
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_router_force_load_balancing is False
+    assert cfg.model.cross_entropy_fusion_impl == "native"
+    assert cfg.model.cuda_graph_impl == "transformer_engine"
+    assert cuda_graph_module_names(cfg.model) == ["attn", "mamba", "moe_router", "moe_preprocess"]
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.check_for_nan_in_grad is True
+    assert cfg.ddp.check_for_large_grads is True
+    assert cfg.rerun_state_machine.check_for_nan_in_loss is True
+    assert cfg.checkpoint.save_interval == 200
+    assert cfg.checkpoint.async_save is False
+
+    assert cfg.tokenizer.tokenizer_type == "HuggingFaceTokenizer"
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.tokenizer.tokenizer_model == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
+
+
+def test_nemotron_3_5_nano_openmath_sft_tp1_recipe_uses_tuned_defaults():
+    """The TP1 packed SFT recipe owns the measured topology and run contract."""
+    cfg = _nemotronh_module.nemotron_3_5_nano_sft_openmathinstruct2_packed_tp1_config()
+
+    assert cfg.model.seq_length == 4096
+    assert cfg.model.tensor_model_parallel_size == 1
+    assert cfg.model.pipeline_model_parallel_size == 1
+    assert cfg.model.sequence_parallel is False
+    assert cfg.model.expert_tensor_parallel_size == 1
+    assert cfg.model.expert_model_parallel_size == 8
+    assert cfg.model.moe_flex_dispatcher_backend == "hybridep"
+    assert cfg.model.moe_hybridep_num_sms == 32
+    assert cfg.model.recompute_granularity is None
+    assert cfg.model.recompute_modules is None
+    assert cfg.model.hf_model_id == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+
+    assert cfg.dataset.seq_length == 4096
+    assert cfg.dataset.hf_dataset.dataset_name == "openmathinstruct2"
+    expected_revision = "469216e3f46f4dacf476b382e192485ea51a143e"  # pragma: allowlist secret
+    assert cfg.dataset.hf_dataset.load_kwargs == {"revision": expected_revision}
+    assert cfg.dataset.enable_offline_packing is True
+    assert cfg.dataset.offline_packing_specs.packed_sequence_size == 4096
+    assert cfg.dataset.offline_packing_specs.pad_seq_to_mult == 2
+    assert cfg.dataset.offline_packing_specs.tokenizer_model_name == "nvidia/NVIDIA-Nemotron-3.5-Nano-30B-A3B-BF16"
+
+    assert cfg.train.train_iters == 100
+    assert cfg.train.global_batch_size == 128
+    assert cfg.train.micro_batch_size == 1
+    assert cfg.train.empty_unused_memory_level == 0
+    assert cfg.mixed_precision.grad_reduce_in_fp32 is False
+    assert cfg.ddp.grad_reduce_in_fp32 is False
+    assert cfg.ddp.overlap_param_gather is True
+    assert cfg.optimizer.overlap_param_gather is True
+    assert cfg.checkpoint.async_save is False
+
+    assert cfg.env_vars["NVLINK_DOMAIN_SIZE"] == 72
+    assert cfg.env_vars["USE_MNNVL"] == 1
 
 
 def test_nemotron_nano_9b_v2_lora_defaults():

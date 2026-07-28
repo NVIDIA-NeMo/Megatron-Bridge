@@ -1,5 +1,9 @@
 # DeepSeek V2
 
+> **Deprecation notice:** DeepSeek V2 and DeepSeek V2 Lite support is no
+> longer actively maintained or tested against current upstream checkpoints and
+> will be removed in Megatron Bridge 0.7.0.
+
 [DeepSeek-V2](https://github.com/deepseek-ai/DeepSeek-V2) is a Mixture-of-Experts (MoE) language model that uses innovative Multi-head Latent Attention (MLA) for efficient inference and DeepSeekMoE architecture for economical training and inference. The model achieves performance comparable to GPT-4 while using significantly fewer activated parameters. More information is available in the companion paper ["DeepSeek-V2: A Strong, Economical, and Efficient Mixture-of-Experts Language Model"](https://arxiv.org/abs/2405.04434).
 
 DeepSeek V2 models are supported via the Bridge system with auto-detected configuration and weight mapping.
