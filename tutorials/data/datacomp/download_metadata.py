@@ -26,27 +26,27 @@ from huggingface_hub import hf_hub_download
 
 logger = logging.getLogger(__name__)
 DATACOMP_REPO_ID = "mlfoundations/datacomp_1b"
-DATACOMP_REVISION = "086ebeee20d4cc3b3e7c05ae703fcf278ae3a759"
+DATACOMP_REVISION = "086ebeee20d4cc3b3e7c05ae703fcf278ae3a759"  # pragma: allowlist secret
 EXPECTED_FILES = {
     "0035af9f90f581816acf269df5eb37ad.parquet": (
         532_229,
         130_506_429,
-        "e3633f90e78b827c8b667c88b8a1dce542e72feacc85be9e27f4706ed71fe1ce",
+        "e3633f90e78b827c8b667c88b8a1dce542e72feacc85be9e27f4706ed71fe1ce",  # pragma: allowlist secret
     ),
     "003da708d909c8cab24c7dcf4d04c371.parquet": (
         517_671,
         126_593_324,
-        "5d2d4b0adc840b23dd9bbca04ed351f7904a6346b310326d0b34256ea1b8b0a8",
+        "5d2d4b0adc840b23dd9bbca04ed351f7904a6346b310326d0b34256ea1b8b0a8",  # pragma: allowlist secret
     ),
     "00818e301428c0573aac33fb4c1b5f02.parquet": (
         542_935,
         132_871_668,
-        "d3bb081586d8dcf1da4883a37becb57fa18759ad83a2a1e484528719f42be047",
+        "d3bb081586d8dcf1da4883a37becb57fa18759ad83a2a1e484528719f42be047",  # pragma: allowlist secret
     ),
     "00aa8e74b038faf4d69ac89e84a318ba.parquet": (
         540_499,
         132_277_520,
-        "9138d1c135e9b3452e3273f8bdf10b95c55e86b7007234c70d8cd36a12441bc4",
+        "9138d1c135e9b3452e3273f8bdf10b95c55e86b7007234c70d8cd36a12441bc4",  # pragma: allowlist secret
     ),
 }
 REQUIRED_COLUMNS = {"uid", "url", "text", "face_bboxes"}

@@ -48,7 +48,7 @@ from PIL import Image
 
 logger = logging.getLogger(__name__)
 DATACOMP_REPO_ID = "mlfoundations/datacomp_1b"
-DATACOMP_REVISION = "086ebeee20d4cc3b3e7c05ae703fcf278ae3a759"
+DATACOMP_REVISION = "086ebeee20d4cc3b3e7c05ae703fcf278ae3a759"  # pragma: allowlist secret
 DEFAULT_PROMPT = "Describe this image."
 EXPECTED_RAW_EXTENSIONS = frozenset({"jpg", "json", "txt"})
 DATASET_YAML = """\
