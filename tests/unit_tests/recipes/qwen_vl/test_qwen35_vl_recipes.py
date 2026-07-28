@@ -462,7 +462,10 @@ def test_qwen35_vl_35b_a3b_long_context_sft_defaults(monkeypatch: pytest.MonkeyP
     assert cfg.model.context_parallel_size == 2
     assert cfg.model.expert_model_parallel_size == 8
     assert cfg.model.calculate_per_token_loss is True
-    assert cfg.model.cp_comm_type == "p2p"
+    # Qwen3.5/3.6 hybrid layers include GatedDeltaNet, which owns its CP
+    # communication and does not accept the attention-only cp_comm_type kwarg.
+    # Standard Transformer Engine attention defaults an unset value to p2p.
+    assert cfg.model.cp_comm_type is None
     assert cfg.model.seq_length == 8192
     assert cfg.model.recompute_granularity == "full"
     assert cfg.model.recompute_method == "uniform"

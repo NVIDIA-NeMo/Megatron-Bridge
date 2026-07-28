@@ -950,7 +950,6 @@ def qwen35_vl_35b_a3b_sft_long_context_32gpu_h100_bf16_config() -> ConfigContain
 
     cfg.model.context_parallel_size = 2
     cfg.model.calculate_per_token_loss = True
-    cfg.model.cp_comm_type = "p2p"
     cfg.model.seq_length = 8192
     cfg.model.recompute_granularity = "full"
     cfg.model.recompute_method = "uniform"
