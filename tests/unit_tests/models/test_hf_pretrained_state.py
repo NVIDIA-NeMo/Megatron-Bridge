@@ -194,3 +194,54 @@ def test_save_generator_writes_shard_as_soon_as_its_remaining_keys_arrive(tmp_pa
         (str(tmp_path / "output" / first_shard), {"model.first.weight", "model.first.bias"}),
         (str(tmp_path / "output" / second_shard), {"model.second.weight", "model.second.bias"}),
     ]
+
+
+def test_distributed_save_generator_writes_shard_before_generator_is_exhausted(tmp_path, monkeypatch) -> None:
+    first_shard = "model-00001-of-00002.safetensors"
+    second_shard = "model-00002-of-00002.safetensors"
+    _write_safetensors_index(
+        tmp_path,
+        {
+            "model.first.weight": first_shard,
+            "model.first.bias": first_shard,
+            "model.second.weight": second_shard,
+            "model.second.bias": second_shard,
+        },
+    )
+    source = SafeTensorsStateSource(tmp_path)
+    saved_shards: list[tuple[str, set[str]]] = []
+
+    monkeypatch.setattr(torch.distributed, "is_available", lambda: True)
+    monkeypatch.setattr(torch.distributed, "is_initialized", lambda: True)
+    monkeypatch.setattr(torch.distributed, "get_world_size", lambda: 1)
+    monkeypatch.setattr(torch.distributed, "get_rank", lambda: 0)
+    monkeypatch.setattr(torch.distributed, "barrier", lambda: None)
+
+    def gather_rank_zero(output: list[object | None], value: object) -> None:
+        output[0] = value
+
+    monkeypatch.setattr(torch.distributed, "all_gather_object", gather_rank_zero)
+
+    def record_save(tensors: dict[str, torch.Tensor], output_file: str | Path) -> None:
+        saved_shards.append((str(output_file), set(tensors)))
+
+    monkeypatch.setattr("safetensors.torch.save_file", record_save)
+
+    def tensors() -> Iterator[tuple[str, torch.Tensor]]:
+        yield "model.first.weight", torch.ones(1)
+        assert saved_shards == []
+
+        yield "model.second.weight", torch.full((1,), 2.0)
+        assert saved_shards == []
+
+        yield "model.first.bias", torch.zeros(1)
+        assert saved_shards == [(str(tmp_path / "output" / first_shard), {"model.first.weight", "model.first.bias"})]
+
+        yield "model.second.bias", torch.full((1,), 3.0)
+
+    source.save_generator(tensors(), tmp_path / "output", distributed_save=True)
+
+    assert saved_shards == [
+        (str(tmp_path / "output" / first_shard), {"model.first.weight", "model.first.bias"}),
+        (str(tmp_path / "output" / second_shard), {"model.second.weight", "model.second.bias"}),
+    ]

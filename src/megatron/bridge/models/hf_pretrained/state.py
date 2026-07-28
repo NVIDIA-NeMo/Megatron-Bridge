@@ -967,36 +967,29 @@ class SafeTensorsStateSource(StateSource):
                 torch.distributed.barrier()
             return
 
-        all_expected_keys: Set[str] = set(key_to_filename_map.keys())
-        all_yielded_keys = set()
         filename_to_keys_map: Dict[str, Set[str]] = defaultdict(set)
-        for key, fname in key_to_filename_map.items():
-            filename_to_keys_map[fname].add(key)
-
-        all_filenames = sorted(filename_to_keys_map.keys())
+        if is_saver_rank:
+            for key, fname in key_to_filename_map.items():
+                filename_to_keys_map[fname].add(key)
+            all_filenames = sorted(filename_to_keys_map)
+        else:
+            all_filenames = []
 
         # Distribute files among saver ranks (one per node)
         if is_saver_rank:
             assigned_filenames = [fname for idx, fname in enumerate(all_filenames) if idx % num_savers == saver_index]
             assigned_filenames_set = set(assigned_filenames)
-            assigned_expected_keys: Set[str] = (
-                set().union(*(filename_to_keys_map[fname] for fname in assigned_filenames))
-                if assigned_filenames
-                else set()
-            )
         else:
             assigned_filenames = []
             assigned_filenames_set = set()
-            assigned_expected_keys = set()
 
+        files_to_save = {fname: filename_to_keys_map[fname] for fname in assigned_filenames}
+        remaining_keys_by_file = {fname: set(keys) for fname, keys in files_to_save.items()}
         buffered_tensors: Dict[str, torch.Tensor] = {}
-        actually_saved_keys: Set[str] = set()
         local_saved_tensor_bytes = 0
 
         for name, tensor in generator:
-            all_yielded_keys.add(name)
-
-            if name not in all_expected_keys:
+            if name not in key_to_filename_map:
                 if strict:
                     raise KeyError(
                         f"Tensor '{name}' from generator not found in the original model structure. "
@@ -1012,41 +1005,84 @@ class SafeTensorsStateSource(StateSource):
                     continue
                 buffered_tensors[name] = tensor
 
-        if is_saver_rank:
-            missing_keys = assigned_expected_keys - set(buffered_tensors.keys())
-            if missing_keys:
-                missing_keys_sorted = sorted(missing_keys)
-                missing_preview = ", ".join(missing_keys_sorted[:20])
-                missing_suffix = ""
-                if len(missing_keys_sorted) > 20:
-                    missing_suffix = f", ... (+{len(missing_keys_sorted) - 20} more)"
-                print(
-                    f"Rank {rank}: Missing {len(missing_keys_sorted)} tensors for keys: "
-                    f"{missing_preview}{missing_suffix}",
-                    flush=True,
-                )
-
-            for fname in assigned_filenames:
-                keys_for_file = filename_to_keys_map[fname]
-                tensors_to_save = {k: buffered_tensors[k] for k in keys_for_file if k in buffered_tensors}
-                if not tensors_to_save:
+                remaining_keys = remaining_keys_by_file.get(fname)
+                if remaining_keys is None:
+                    # The shard was already saved. Preserve the existing
+                    # duplicate-key behavior by ignoring the repeated tensor.
+                    del buffered_tensors[name]
                     continue
-                output_file_path = _resolve_output_shard_path(output_path, fname)
-                output_file_path.parent.mkdir(parents=True, exist_ok=True)
-                save_file(tensors_to_save, output_file_path)
-                actually_saved_keys.update(tensors_to_save.keys())
-                local_saved_tensor_bytes += sum(
-                    tensor.numel() * tensor.element_size() for tensor in tensors_to_save.values()
-                )
+
+                remaining_keys.discard(name)
+                if not remaining_keys:
+                    keys_for_file = files_to_save[fname]
+                    tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file}
+                    output_file_path = _resolve_output_shard_path(output_path, fname)
+                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                    save_file(tensors_to_save, output_file_path)
+                    local_saved_tensor_bytes += sum(
+                        saved_tensor.numel() * saved_tensor.element_size() for saved_tensor in tensors_to_save.values()
+                    )
+
+                    for key in keys_for_file:
+                        del buffered_tensors[key]
+                    del tensors_to_save
+                    del files_to_save[fname]
+                    del remaining_keys_by_file[fname]
+
+        missing_keys = set().union(*remaining_keys_by_file.values()) if remaining_keys_by_file else set()
+        if is_saver_rank and missing_keys:
+            missing_keys_sorted = sorted(missing_keys)
+            missing_preview = ", ".join(missing_keys_sorted[:20])
+            missing_suffix = ""
+            if len(missing_keys_sorted) > 20:
+                missing_suffix = f", ... (+{len(missing_keys_sorted) - 20} more)"
+            print(
+                f"Rank {rank}: Missing {len(missing_keys_sorted)} tensors for keys: {missing_preview}{missing_suffix}",
+                flush=True,
+            )
+
+        if is_saver_rank and not strict:
+            for fname in list(files_to_save):
+                keys_for_file = files_to_save[fname]
+                tensors_to_save = {key: buffered_tensors[key] for key in keys_for_file if key in buffered_tensors}
+                if tensors_to_save:
+                    output_file_path = _resolve_output_shard_path(output_path, fname)
+                    output_file_path.parent.mkdir(parents=True, exist_ok=True)
+                    save_file(tensors_to_save, output_file_path)
+                    local_saved_tensor_bytes += sum(
+                        saved_tensor.numel() * saved_tensor.element_size() for saved_tensor in tensors_to_save.values()
+                    )
+                    for key in tensors_to_save:
+                        del buffered_tensors[key]
+                    del tensors_to_save
+
+        if buffered_tensors:
+            print(
+                f"Rank {rank}: Warning: {len(buffered_tensors)} tensors were yielded but not saved because their "
+                "corresponding file shards were incomplete.",
+                flush=True,
+            )
+
+        # In strict mode an incomplete shard is not written, so every key in
+        # that shard is unsaved. In non-strict mode partial shards are written
+        # and only keys not yielded by the generator remain unsaved.
+        if strict:
+            local_unsaved_keys = set().union(*files_to_save.values()) if files_to_save else set()
+        else:
+            local_unsaved_keys = missing_keys
+
+        if is_saver_rank and local_unsaved_keys and strict:
+            keys_sorted = sorted(local_unsaved_keys)
+            preview = ", ".join(keys_sorted[:20])
+            suffix = f", ... (+{len(keys_sorted) - 20} more)" if len(keys_sorted) > 20 else ""
+            print(
+                f"Rank {rank}: Error: {len(keys_sorted)} tensors not written: {preview}{suffix}",
+                flush=True,
+            )
 
         # Strict-mode check: ensure all expected tensors were written. Aggregate
         # per-rank missing counts so all ranks raise consistently (avoids hangs
         # on the trailing barriers).
-        if is_saver_rank:
-            local_unsaved_keys = assigned_expected_keys - actually_saved_keys
-        else:
-            local_unsaved_keys = set()
-
         if is_distributed:
             gathered_save_status: list[tuple[int, int] | None] = [None] * world_size
             torch.distributed.all_gather_object(
@@ -1060,14 +1096,6 @@ class SafeTensorsStateSource(StateSource):
             total_saved_tensor_bytes = local_saved_tensor_bytes
 
         if total_unsaved_count and strict:
-            if local_unsaved_keys:
-                keys_sorted = sorted(local_unsaved_keys)
-                preview = ", ".join(keys_sorted[:20])
-                suffix = f", ... (+{len(keys_sorted) - 20} more)" if len(keys_sorted) > 20 else ""
-                print(
-                    f"Rank {rank}: Error: {len(keys_sorted)} tensors not written: {preview}{suffix}",
-                    flush=True,
-                )
             raise RuntimeError(
                 f"{total_unsaved_count} tensors from the original checkpoint were not written. "
                 "Re-run with strict=False to save the partial checkpoint instead of failing."
@@ -1092,7 +1120,15 @@ class SafeTensorsStateSource(StateSource):
             else:
                 all_saved_keys_aggregated = set()
         else:
-            all_saved_keys_aggregated = actually_saved_keys
+            from safetensors import safe_open
+
+            all_saved_keys_aggregated = set()
+            for fname in all_filenames:
+                file_path = _resolve_output_shard_path(output_path, fname)
+                if not file_path.exists():
+                    continue
+                with safe_open(file_path, framework="pt", device="cpu") as f:
+                    all_saved_keys_aggregated.update(f.keys())
 
         if rank == 0:
             original_index_file = self.path / "model.safetensors.index.json"
