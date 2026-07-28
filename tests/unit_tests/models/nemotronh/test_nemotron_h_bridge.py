@@ -368,14 +368,14 @@ class TestNemotronHBridge:
     @pytest.mark.parametrize("num_nextn_predict_layers", [None, 0])
     def test_provider_bridge_disables_mtp_naturally(
         self,
-        nemotron_nano_v2_config_dict,
+        active_nemotronh_config_dict,
         num_nextn_predict_layers,
     ):
         """HF configs without enabled MTP produce a normal non-MTP provider."""
         from types import SimpleNamespace
 
         config_dict = {
-            **nemotron_nano_v2_config_dict,
+            **active_nemotronh_config_dict,
             "n_routed_experts": 0,
             "mtp_hybrid_override_pattern": "*E",
             "keep_mtp_spec_in_bf16": True,
@@ -393,14 +393,14 @@ class TestNemotronHBridge:
         assert result.mtp_use_repeated_layer is False
         assert result.keep_mtp_spec_in_bf16 is False
 
-    def test_provider_bridge_rejects_incomplete_mtp_config(self, nemotron_nano_v2_config_dict):
+    def test_provider_bridge_rejects_incomplete_mtp_config(self, active_nemotronh_config_dict):
         """An enabled HF MTP config must describe its hybrid block."""
         from types import SimpleNamespace
 
         mock_pretrained = Mock(spec=PreTrainedCausalLM)
         mock_pretrained.config = SimpleNamespace(
             **{
-                **nemotron_nano_v2_config_dict,
+                **active_nemotronh_config_dict,
                 "n_routed_experts": 0,
                 "num_nextn_predict_layers": 1,
             }
