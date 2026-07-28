@@ -270,7 +270,8 @@ def test_nemotron_3_5_nano_8k_fsdp_recipe_preserves_convergence_contract():
 
     assert cfg.model.cuda_graph_impl == "none"
     assert cuda_graph_module_names(cfg.model) == []
-    assert cfg.model.init_model_with_meta_device is True
+    assert getattr(cfg.model, "init_model_with_meta_device", False) is False
+    assert getattr(reference.model, "init_model_with_meta_device", False) is False
     assert cfg.dist.use_megatron_fsdp is True
     assert cfg.ddp.use_megatron_fsdp is True
     assert cfg.ddp.num_distributed_optimizer_instances == 1

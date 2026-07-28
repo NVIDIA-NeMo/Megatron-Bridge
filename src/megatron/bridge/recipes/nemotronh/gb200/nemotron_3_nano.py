@@ -184,7 +184,6 @@ def nemotron_3_5_nano_pretrain_8k_fsdp_config() -> ConfigContainer:
     # reference recipe and change only FSDP and its required execution knobs.
     cfg.model.cuda_graph_impl = "none"
     set_cuda_graph_modules(cfg.model, [])
-    cfg.model.init_model_with_meta_device = True
 
     cfg.dist.use_megatron_fsdp = True
     cfg.ddp.use_megatron_fsdp = True
