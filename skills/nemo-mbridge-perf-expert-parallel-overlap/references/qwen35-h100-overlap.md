@@ -69,6 +69,23 @@ TFLOP/s/GPU. Primitive critical-path headroom is not an end-to-end win unless
 the selected connection count and dependency graph actually execute the
 delayed wgrad concurrently with useful communication.
 
+A later exact two-node experiment distinguished MCore's combined
+`delay_wgrad_compute` mechanism from that split grouped-wgrad probe. First,
+forcing shared-expert overlap inside the owner-stream-release,
+connections=1 combined EP schedule reduced iterations 2--3 from 45.48935 to
+23.3590 seconds. The recovered schedule was finite and exited 0:0, but it was
+still 5.44% slower than the 22.152850-second no-EP-overlap winner.
+
+Adding `delay_wgrad_compute=True` did not produce a timing sample: ranks OOMed
+in the first iteration while requesting another 970 MiB near 78.35 GiB in
+use. Selective GDN recompute alone reduced peak allocation materially but
+regressed the shared+EP control from 23.02380 to 25.29230 seconds. Combining
+that recompute headroom with delayed wgrad still OOMed on all 16 ranks while
+requesting another 970 MiB or 1.89 GiB. Do not infer that a large recovery
+relative to a pathological EP-overlap control makes the combined schedule
+competitive, and require a first finite optimizer step before timing delayed
+wgrad.
+
 ## Early attention activation release
 
 When EP overlap increases peak memory because the overlapped forward allocates

@@ -255,4 +255,23 @@ items:
         retained short-run result remains 7.442% below the gate and needs
         another 8.040% throughput improvement. The exact 50-step gate has not
         been rerun on the current PR runtime, and no result at or above
-        287.305 exists, so this item remains unverified.
+        287.305 exists, so this item remains unverified. The historical
+        287.305-TFLOP/s/GPU success belongs to the separate Qwen3-30B-A3B
+        model card; it is a cross-model target here, not a previously
+        reproduced Qwen3.5 result. The FLOPs implementation was audited and
+        already includes Qwen3.5 routed/shared experts, GDN, MTP layer work,
+        MTP projection/norm work, and both logits, so the remaining gap is not
+        a missing FLOPs-accounting correction. An exact two-node follow-up made
+        shared-expert and combined EP overlap finite and reduced the matched
+        EP-overlap control from 45.48935 to 23.3590 seconds, but remained
+        slower than the retained no-EP-overlap winner. A bracketed DDP overlap
+        follow-up used 22.25945/22.23195-second controls: gradient-only averaged
+        22.25170 seconds and gradient-plus-parameter overlap averaged 22.31050
+        seconds, both noise-level or negative. Its microbatch-two plus
+        selective-GDN-recompute plus FP8-activation-store case completed finite
+        steps but averaged 39.89815 seconds / 147.65 model TFLOP/s/GPU. A final
+        follow-up measured a 23.02380-second shared-plus-EP control; selective
+        GDN recompute regressed to 25.29230 seconds, delayed wgrad OOMed, and
+        delayed wgrad plus GDN recompute still OOMed on all 16 ranks. None of
+        these candidates changes the unverified status or justifies another
+        50-step acceptance run.

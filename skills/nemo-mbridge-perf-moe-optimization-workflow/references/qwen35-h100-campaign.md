@@ -593,3 +593,51 @@ no first iteration or loss completed, and Slurm ended the job as `TIMEOUT`
 after 15:13. This is neither an OOM claim nor a valid timing sample; it is a
 failed progress/feasibility gate. Reject MBS2 with FP8 activation storage and
 retain microbatch size 1.
+
+Do not treat a threshold copied from another model as a historical result for
+the target model. The 287.305-model-TFLOP/s/GPU, 20.992-second verified
+50-step result belongs to Qwen3-30B-A3B, not Qwen3.5-35B-A3B. Qwen3 used
+plain EP overlap to hide 36.55% of communication, while the measured Qwen3.5
+GDN schedule regressed under that mechanism. The Bridge FLOPs calculator was
+also audited: it includes routed and shared experts, GDN layers, the MTP layer
+type inherited from the final decoder layer, MTP projection/norm work, and
+both logits. The Qwen3.5 265.925 result is therefore not missing an 8% FLOPs
+accounting correction. Keep 287.305 as an explicit cross-model acceptance
+target only; do not describe it as a previously reproduced Qwen3.5 result.
+
+Job 5721613 tested whether shared-expert overlap could repair the pathological
+combined EP-overlap schedule. The owner-stream-release/connections=1 EP
+control averaged 45.48935 seconds over iterations 2--3. Forcing shared-expert
+overlap inside the same combined schedule reduced the mean to 23.3590 seconds
+and about 252.25 model TFLOP/s/GPU. Losses and gradients were finite,
+skipped/NaN counts stayed zero, and all distributed steps plus the batch
+exited 0:0. This is a 48.65% recovery relative to the matched EP-overlap
+control, but it remained 5.44% slower than the accepted 22.152850-second
+no-EP-overlap winner. Rank-0 iteration-2 peak allocated/reserved memory was
+70.401/77.146 GiB. Reject the combined schedule despite the causal recovery.
+
+Job 5721913 bracketed ordinary DDP overlap with no-overlap controls on one
+exact two-node allocation. The controls averaged 22.25945 and 22.23195
+seconds over iterations 2--3. Gradient-reduce overlap averaged 22.25170
+seconds, 0.027% slower than the two-control mean; gradient-reduce plus
+parameter-gather overlap averaged 22.31050 seconds, 0.291% slower. Every case
+completed with finite numerics and exit 0:0. Do not promote either
+noise-level result.
+
+The same job made microbatch two progress by combining selective GDN recompute
+with FP8 activation-function input storage. It completed three finite steps,
+but iterations 2--3 averaged 39.89815 seconds and about 147.65 model
+TFLOP/s/GPU. Rank-0 iteration-2 peak allocated/reserved memory reached
+75.154/76.099 GiB with 64 allocator retries. This was 79.45% slower than the
+22.23195-second repeated control. Passing the first-iteration feasibility gate
+did not create a throughput candidate.
+
+Job 5722042 then isolated shared-plus-combined-EP overlap with delayed wgrad
+and GDN recompute. Its shared+EP control averaged 23.02380 seconds. Selective
+GDN recompute reduced rank-0 iteration-2 peak allocation from 70.401 to
+58.895 GiB but averaged 25.29230 seconds, a 9.85% regression. Delayed wgrad
+without recompute OOMed during the first iteration when ranks needed another
+970 MiB near 78.35 GiB in use. Delayed wgrad plus GDN recompute still OOMed
+on all 16 ranks while requesting another 970 MiB or 1.89 GiB. The memory saved
+by architecture-specific recompute was insufficient for deferred expert
+wgrad storage, and its standalone compute cost was already negative.
